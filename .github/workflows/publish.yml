@@ -31,6 +31,8 @@ jobs:
         run: |
           echo "Contents of nupkg folder:"
           dir nupkg
-
+          
       - name: Push to NuGet.org
+        working-directory: JetDatabaseReader
         run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{secrets.NUGET_API_KEY}} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
