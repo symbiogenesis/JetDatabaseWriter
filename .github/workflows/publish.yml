@@ -19,13 +19,18 @@ jobs:
           dotnet-version: '8.0.x'
       
       - name: Restore dependencies
-        run: dotnet restore
-      
+        run: dotnet restore JetDatabaseReader/JetDatabaseReader.csproj
+
       - name: Build
-        run: dotnet build -c Release --no-restore
-      
+        run: dotnet build JetDatabaseReader/JetDatabaseReader.csproj -c Release --no-restore
+
       - name: Create NuGet package
-        run: dotnet pack -c Release --no-build -o ./nupkg
-      
+        run: dotnet pack JetDatabaseReader/JetDatabaseReader.csproj -c Release --no-build -o ./nupkg
+
+      - name: List files (debug)
+        run: |
+          echo "Contents of nupkg folder:"
+          dir nupkg
+
       - name: Push to NuGet.org
         run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{secrets.NUGET_API_KEY}} --source https://api.nuget.org/v3/index.json --skip-duplicate
