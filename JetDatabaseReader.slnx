@@ -1,3 +1,4 @@
 <Solution>
+  <Project Path="JetDatabaseReader.Tests/JetDatabaseReader.Tests.csproj" />
   <Project Path="JetDatabaseReader/JetDatabaseReader.csproj" />
 </Solution>

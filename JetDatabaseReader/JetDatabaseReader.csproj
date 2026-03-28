@@ -4,21 +4,25 @@
     <LangVersion>7.3</LangVersion>
     <Nullable>disable</Nullable>
     <PackageId>JetDatabaseReader</PackageId>
-    <Version>1.0.0</Version>
+    <Version>2.0.0</Version>
     <Authors>Diego Rípera</Authors>
-    <Company>Diego Rípera</Company>
-    <Description>Pure-managed reader for Microsoft Access JET databases (.mdb/.accdb). No OleDB, ODBC, or ACE drivers required.</Description>
+    <Company>Rípera</Company>
+    <Description>Pure-managed reader for Microsoft Access JET databases (.mdb/.accdb). No OleDB, ODBC, or ACE drivers required. v2: typed DataTables and object[] streaming by default.</Description>
     <PackageTags>access;jet;mdb;accdb;database;microsoft-access</PackageTags>
     <PackageProjectUrl>https://github.com/diegoripera/JetDatabaseReader</PackageProjectUrl>
     <RepositoryUrl>https://github.com/diegoripera/JetDatabaseReader</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>v2.0.0 — Breaking changes: ReadTable() now returns typed DataTable; StreamRows() now returns IEnumerable&lt;object[]&gt;; factory method AccessReader.Open() required. See CHANGELOG.md for full details.</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
   <ItemGroup>
     <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
   </ItemGroup>
 </Project>
