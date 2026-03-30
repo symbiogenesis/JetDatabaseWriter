@@ -7,7 +7,7 @@
 
 Pure-managed .NET library for reading Microsoft Access JET databases — no OleDB, ODBC, or ACE/Jet driver installation required.
 
-> **v2.0** introduced typed DataTables and typed streaming by default. **v2.1** adds structured schema types (`ColumnSize`, `TableStat`, `FirstTableResult`) and promotes CLR types for column metadata. See [CHANGELOG.md](CHANGELOG.md) and the [migration guide](#migration-from-v1) for breaking changes.
+> **v2.0** introduced typed DataTables and typed streaming by default. **v2.1** adds structured schema types (`ColumnSize`, `TableStat`, `FirstTableResult`). **v2.2** cleans up the `TableResult` API (`ReadTableAsStrings`, `ToDataTable`, ACCDB encryption fix). See [CHANGELOG.md](CHANGELOG.md) and the [migration guide](#migration-from-v1) for breaking changes.
 
 ---
 
@@ -94,7 +94,7 @@ DataTable dt = reader.ReadTableAsStringDataTable("Products");
 // every column is typeof(string)
 ```
 
-### Table preview with schema
+### Table preview with schema — typed
 
 ```csharp
 TableResult preview = reader.ReadTable("Products", maxRows: 20);
@@ -102,9 +102,22 @@ foreach (TableColumn col in preview.Schema)
 {
     Type   clrType = col.Type;            // e.g. typeof(int), typeof(string)
     string display = col.Size.ToString(); // e.g. "4 bytes", "255 chars", "LVAL"
-    bool   isLval  = col.Size.Unit == ColumnSizeUnit.Lval;
     Console.WriteLine($"{col.Name}: {clrType.Name} ({col.Size})");
 }
+
+// Convert to DataTable with CLR-typed columns
+DataTable dt = preview.ToDataTable();
+// dt.Columns["UnitPrice"].DataType == typeof(decimal)
+```
+
+### Table preview with schema — strings
+
+```csharp
+StringTableResult preview = reader.ReadTableAsStrings("Products", maxRows: 20);
+string firstCell = preview.Rows[0][0];  // always a string
+
+// Convert to DataTable — all columns typeof(string)
+DataTable dt = preview.ToDataTable();
 ```
 
 ---
@@ -161,6 +174,8 @@ IEnumerable<string[]> recent = reader.Query("Orders")
 ```csharp
 List<string>                  tables = await reader.ListTablesAsync();
 DataTable                     dt     = await reader.ReadTableAsync("Orders");
+TableResult                   typed  = await reader.ReadTableAsync("Orders", 50);
+StringTableResult             str    = await reader.ReadTableAsStringsAsync("Orders", 50);
 DatabaseStatistics            stats  = await reader.GetStatisticsAsync();
 Dictionary<string, DataTable> all    = await reader.ReadAllTablesAsync();
 Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync();
@@ -259,9 +274,22 @@ var dt = r.ReadTableAsDataTable("Orders");             // v1 — string columns
 var dt = r.ReadTable("Orders");                        // v2 ✅ typed
 var dt = r.ReadTableAsStringDataTable("Orders");       // v2 compat
 
-// Preview (v2.0.0 → v2.0.1: type rename)
+// Preview — typed rows (v2.2: Rows is now List<object[]>, was List<List<string>>)
 TablePreviewResult t = r.ReadTable("T", 10);           // v2.0.0 ❌
-TableResult        t = r.ReadTable("T", 10);           // v2.0.1+ ✅
+TableResult        t = r.ReadTable("T", 10);           // v2.0.1–v2.1 ✅ (Rows was List<List<string>>)
+TableResult        t = r.ReadTable("T", 10);           // v2.2 ✅ Rows is now List<object[]>
+
+// Preview — string rows (v2.2: new dedicated API)
+StringTableResult  s = r.ReadTableAsStrings("T", 10); // v2.2 ✅
+string val = s.Rows[0][2];                             // always string
+
+// bool overload removed (v2.2)
+TableResult t = r.ReadTable("T", 10, typedValues: true);  // v2.1 ❌ removed
+TableResult t = r.ReadTable("T", 10);                     // v2.2 ✅
+
+// ToDataTable (v2.2: new on both result types)
+DataTable dtTyped = r.ReadTable("T", 100).ToDataTable();         // CLR-typed columns
+DataTable dtStr   = r.ReadTableAsStrings("T", 100).ToDataTable(); // string columns
 
 // Schema properties (v2.0.1 → v2.1.0)
 col.TypeName  // v2.0.1 ❌ — string e.g. "Long Integer"
@@ -273,9 +301,10 @@ col.Size      // v2.1.0 ✅ — ColumnSize struct (.Value, .Unit, .ToString())
 foreach (var (n, r, c) in reader.GetTableStats())       // v2.0 ❌ tuple
 foreach (TableStat s in reader.GetTableStats())         // v2.1 ✅ named type
 
-// First table (v2.1.0)
+// First table (v2.1.0 → v2.2.0: base class changed)
 TableResult      r = reader.ReadFirstTable();           // v2.0 ❌
-FirstTableResult r = reader.ReadFirstTable();           // v2.1 ✅ + r.TableCount
+FirstTableResult r = reader.ReadFirstTable();           // v2.1+ ✅ + r.TableCount
+// Note: FirstTableResult now extends StringTableResult (v2.2)
 
 // Streaming
 foreach (string[] row in r.StreamRows("T"))            // v1

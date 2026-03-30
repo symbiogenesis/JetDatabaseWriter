@@ -155,11 +155,14 @@ namespace JetDatabaseReader
             try { _ansiEncoding = Encoding.GetEncoding(_codePage); }
             catch { _ansiEncoding = Encoding.UTF8; _codePage = 65001; }
 
-            // Offset 0x62: encryption flag (Jet4) — bit 0x02 = RC4, bit 0x01 = Office97
-            // Jet3 has no standard encryption flag location; we check magic signature corruption instead
-            if (_jet4 && hdr.Length > 0x62)
+            // Offset 0x62: encryption flag — only valid for Jet4 (ver == 1, Access 2000-2003).
+            // ACCDB format (ver >= 2, Access 2007+) has completely different header semantics
+            // at this offset; applying the Jet4 check to ACCDB files produces false positives.
+            // Truly encrypted ACCDB files are detected later when the catalog page is unreadable.
+            if (_jet4 && ver == 1 && hdr.Length > 0x62)
             {
                 byte encFlag = hdr[0x62];
+                // bit 0x01 = Office97 password, bit 0x02 = RC4 password
                 if ((encFlag & 0x03) != 0)
                     throw new NotSupportedException(
                         "This database is encrypted or password-protected. " +
@@ -349,69 +352,6 @@ namespace JetDatabaseReader
             byte[] page = ReadPage(n);
             _pageCache?.Add(n, page);
             return page;
-        }
-
-        // ── Column / table metadata ───────────────────────────────────────
-
-        private sealed class ColumnInfo
-        {
-            public byte   Type;
-            public int    ColNum;    // col_num: absolute column number (includes deleted cols)
-            public int    VarIdx;    // offset_V: 0-based index in var_table
-            public int    FixedOff;  // offset_F: byte offset within the fixed area
-            public int    Size;      // col_len (0 for MEMO/OLE/variable)
-            public byte   Flags;
-            public string Name = string.Empty;
-
-            // Inherently fixed-length types are always fixed regardless of FLAG_FIXED.
-            // Variable-length types (TEXT, BINARY, MEMO, OLE) are always variable.
-            // For any other type, fall back to the FLAG_FIXED bit in the descriptor.
-            public bool IsFixed
-            {
-                get
-                {
-                    switch (Type)
-                    {
-                        case T_BOOL:
-                        case T_BYTE:
-                        case T_INT:
-                        case T_LONG:
-                        case T_MONEY:
-                        case T_FLOAT:
-                        case T_DOUBLE:
-                        case T_DATETIME:
-                        case T_GUID:
-                        case T_NUMERIC:
-                            return true;
-                        case T_TEXT:
-                        case T_BINARY:
-                        case T_MEMO:
-                        case T_OLE:
-                            return false;
-                        default:
-                            return (Flags & FLAG_FIXED) != 0;
-                    }
-                }
-            }
-        }
-
-        private sealed class TableDef
-        {
-            public List<ColumnInfo> Columns = new List<ColumnInfo>();
-            public long RowCount;  // num_rows from TDEF page offset 16
-            public bool HasDeletedColumns;  // true if ColNum sequence has gaps
-        }
-
-        // Result type for the internal LVAL chain reader.
-        private sealed class LvalChainResult
-        {
-            public byte[] Data { get; }
-            public string Error { get; }
-
-            private LvalChainResult(byte[] data, string error) { Data = data; Error = error; }
-
-            public static LvalChainResult Success(byte[] data) => new LvalChainResult(data, null);
-            public static LvalChainResult Failure(string error) => new LvalChainResult(null, error);
         }
 
         // ── TDEF reading ──────────────────────────────────────────────────
@@ -794,8 +734,8 @@ namespace JetDatabaseReader
         /// <summary>
         /// Reads up to <paramref name="maxRows"/> rows from the table named
         /// <paramref name="tableName"/> (case-insensitive).
-        /// Returns column headers, sampled rows (as strings), and per-column schema.
-        /// Useful for previewing table structure and data.
+        /// Returns column headers, rows with native CLR types (int, DateTime, decimal, etc.) in <see cref="TableResult.Rows"/>, and per-column schema.
+        /// Use <see cref="ReadTableAsStrings"/> when raw string values are needed instead.
         /// </summary>
         public TableResult ReadTable(string tableName, int maxRows)
         {
@@ -806,6 +746,67 @@ namespace JetDatabaseReader
             if (entry == null)
                 return new TableResult
                 {
+                    Headers   = new List<string>(),
+                    Rows = new List<object[]>(),
+                    Schema    = new List<TableColumn>()
+                };
+
+            TableDef td = ReadTableDef(entry.TDefPage);
+            if (td == null || td.Columns.Count == 0)
+                return new TableResult
+                {
+                    Headers   = new List<string>(),
+                    Rows = new List<object[]>(),
+                    Schema    = new List<TableColumn>()
+                };
+
+            var headers   = td.Columns.ConvertAll(c => c.Name);
+            var schema    = td.Columns.ConvertAll(c => new TableColumn
+            {
+                Name = c.Name,
+                Type = TypeCodeToClrType(c.Type),
+                Size = SizeForColumn(c)
+            });
+            var typedRows = new List<object[]>();
+            long total    = _fs.Length / _pgSz;
+
+            for (long p = 3; p < total && typedRows.Count < maxRows; p++)
+            {
+                byte[] page = ReadPageCached(p);
+                if (page[0] != 0x01) continue;
+                if ((long)Ri32(page, _dpTDefOff) != entry.TDefPage) continue;
+
+                foreach (List<string> row in EnumerateRows(page, td))
+                {
+                    var typedRow = new object[row.Count];
+                    for (int i = 0; i < row.Count && i < td.Columns.Count; i++)
+                    {
+                        Type colType = TypeCodeToClrType(td.Columns[i].Type);
+                        typedRow[i] = TypedValueParser.ParseValue(row[i], colType);
+                    }
+                    typedRows.Add(typedRow);
+                    if (typedRows.Count >= maxRows) break;
+                }
+            }
+
+            return new TableResult { Headers = headers, Rows = typedRows, Schema = schema, TableName = tableName };
+        }
+
+        /// <summary>
+        /// Reads up to <paramref name="maxRows"/> rows from the table named
+        /// <paramref name="tableName"/> (case-insensitive) with all values as strings.
+        /// Returns column headers, string rows in <see cref="StringTableResult.Rows"/>, and per-column schema.
+        /// Use <see cref="ReadTable(string, int)"/> when native CLR types are preferred.
+        /// </summary>
+        public StringTableResult ReadTableAsStrings(string tableName, int maxRows)
+        {
+            ThrowIfDisposed();
+            Guard.NotNullOrEmpty(tableName, nameof(tableName));
+            CatalogEntry entry = GetCatalogEntry(tableName);
+
+            if (entry == null)
+                return new StringTableResult
+                {
                     Headers = new List<string>(),
                     Rows    = new List<List<string>>(),
                     Schema  = new List<TableColumn>()
@@ -813,7 +814,7 @@ namespace JetDatabaseReader
 
             TableDef td = ReadTableDef(entry.TDefPage);
             if (td == null || td.Columns.Count == 0)
-                return new TableResult
+                return new StringTableResult
                 {
                     Headers = new List<string>(),
                     Rows    = new List<List<string>>(),
@@ -823,9 +824,9 @@ namespace JetDatabaseReader
             var headers = td.Columns.ConvertAll(c => c.Name);
             var schema  = td.Columns.ConvertAll(c => new TableColumn
             {
-                Name     = c.Name,
-                Type     = TypeCodeToClrType(c.Type),
-                Size     = SizeForColumn(c)
+                Name = c.Name,
+                Type = TypeCodeToClrType(c.Type),
+                Size = SizeForColumn(c)
             });
             var rows  = new List<List<string>>();
             long total = _fs.Length / _pgSz;
@@ -843,7 +844,7 @@ namespace JetDatabaseReader
                 }
             }
 
-            return new TableResult { Headers = headers, Rows = rows, Schema = schema, TableName = tableName };
+            return new StringTableResult { Headers = headers, Rows = rows, Schema = schema, TableName = tableName };
         }
 
         private static string TypeCodeToName(byte t)
@@ -1230,11 +1231,20 @@ namespace JetDatabaseReader
 
         /// <summary>
         /// Async overload of <see cref="ReadTable(string, int)"/>.
-        /// Reads up to <paramref name="maxRows"/> rows and schema information asynchronously.
+        /// Reads up to <paramref name="maxRows"/> rows with native CLR types asynchronously.
         /// </summary>
         public Task<TableResult> ReadTableAsync(string tableName, int maxRows)
         {
             return Task.Run(() => ReadTable(tableName, maxRows));
+        }
+
+        /// <summary>
+        /// Async overload of <see cref="ReadTableAsStrings(string, int)"/>.
+        /// Reads up to <paramref name="maxRows"/> rows as strings asynchronously.
+        /// </summary>
+        public Task<StringTableResult> ReadTableAsStringsAsync(string tableName, int maxRows)
+        {
+            return Task.Run(() => ReadTableAsStrings(tableName, maxRows));
         }
 
         /// <summary>

@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="PUBLISH.md" />
+  </Folder>
   <Project Path="JetDatabaseReader.Tests/JetDatabaseReader.Tests.csproj" />
   <Project Path="JetDatabaseReader/JetDatabaseReader.csproj" />
 </Solution>

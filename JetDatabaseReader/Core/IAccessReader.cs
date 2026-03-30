@@ -53,16 +53,30 @@ namespace JetDatabaseReader
 
         /// <summary>
         /// Reads up to <paramref name="maxRows"/> rows from the table named
-        /// <paramref name="tableName"/> (case-insensitive).
-        /// Returns column headers, sampled rows (as strings), and per-column schema.
+        /// <paramref name="tableName"/> (case-insensitive) with native CLR types.
+        /// Rows are in <see cref="TableResult.Rows"/>.
+        /// Use <see cref="ReadTableAsStrings"/> when raw string values are needed.
         /// </summary>
         TableResult ReadTable(string tableName, int maxRows);
 
         /// <summary>
+        /// Reads up to <paramref name="maxRows"/> rows from the table named
+        /// <paramref name="tableName"/> (case-insensitive) with all values as strings.
+        /// Rows are in <see cref="StringTableResult.Rows"/>.
+        /// </summary>
+        StringTableResult ReadTableAsStrings(string tableName, int maxRows);
+
+        /// <summary>
         /// Async overload of <see cref="ReadTable(string, int)"/>.
-        /// Reads up to <paramref name="maxRows"/> rows and schema information asynchronously.
+        /// Reads up to <paramref name="maxRows"/> rows with native CLR types asynchronously.
         /// </summary>
         Task<TableResult> ReadTableAsync(string tableName, int maxRows);
+
+        /// <summary>
+        /// Async overload of <see cref="ReadTableAsStrings(string, int)"/>.
+        /// Reads up to <paramref name="maxRows"/> rows as strings asynchronously.
+        /// </summary>
+        Task<StringTableResult> ReadTableAsStringsAsync(string tableName, int maxRows);
 
         /// <summary>
         /// Yields rows from <paramref name="tableName"/> as properly typed object arrays without collecting them all in memory.

@@ -80,7 +80,10 @@ namespace JetDatabaseReader.Tests
             string table = reader.ListTables()[0];
             var reported = new List<int>();
 
-            foreach (object[] _ in reader.StreamRows(table, new Progress<int>(reported.Add))) { }
+            // Use synchronous IProgress<T> to avoid Progress<T>'s thread-pool dispatch,
+            // which can fire callbacks after the foreach completes and cause a collection
+            // modification exception when iterating for assertion.
+            foreach (object[] _ in reader.StreamRows(table, new SyncProgress<int>(reported.Add))) { }
 
             foreach (int v in reported) v.Should().BeGreaterThanOrEqualTo(0);
         }
@@ -144,7 +147,7 @@ namespace JetDatabaseReader.Tests
                 if (count >= 100_000) break; // process first 100 K rows
             }
 
-            long after   = GC.GetTotalMemory(forceFullCollection: false);
+            long after   = GC.GetTotalMemory(forceFullCollection: true);
             long deltaMb = (after - before) / (1024 * 1024);
 
             // Streaming 100 K rows should not grow heap beyond 200 MB
@@ -173,7 +176,7 @@ namespace JetDatabaseReader.Tests
         [Fact]
         public void StreamRows_Matrix_DoesNotExceedReasonableMemory()
         {
-            string path = TestDatabases.Matrix;
+            string path = TestDatabases.LargeFile;
             if (!TestDatabases.IsReadable(path)) return; // skip if not present or encrypted
 
             long before = GC.GetTotalMemory(forceFullCollection: true);
@@ -189,7 +192,7 @@ namespace JetDatabaseReader.Tests
                 if (count >= 100_000) break; // process first 100 K rows
             }
 
-            long after   = GC.GetTotalMemory(forceFullCollection: false);
+            long after   = GC.GetTotalMemory(forceFullCollection: true);
             long deltaMb = (after - before) / (1024 * 1024);
 
             deltaMb.Should().BeLessThan(200,
@@ -199,7 +202,7 @@ namespace JetDatabaseReader.Tests
         [Fact]
         public void StreamRows_Matrix_ReadsAllTablesWithoutException()
         {
-            string path = TestDatabases.Matrix;
+            string path = TestDatabases.LargeFile;
             if (!TestDatabases.IsReadable(path)) return; // skip if not present or encrypted
 
             using var reader = TestDatabases.Open(path, new AccessReaderOptions { PageCacheSize = 512 });
@@ -210,6 +213,20 @@ namespace JetDatabaseReader.Tests
             string first = tables[0];
             int count = reader.StreamRows(first).Take(1000).Count();
             count.Should().BeGreaterThanOrEqualTo(0);
+        }
+
+        // ── Helpers ───────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Synchronous IProgress&lt;T&gt; that invokes the callback directly on the reporting
+        /// thread. Use in tests instead of Progress&lt;T&gt; to avoid thread-pool dispatch races
+        /// when asserting the collected values immediately after iteration.
+        /// </summary>
+        private sealed class SyncProgress<T> : IProgress<T>
+        {
+            private readonly Action<T> _action;
+            public SyncProgress(Action<T> action) => _action = action;
+            public void Report(T value) => _action(value);
         }
     }
 }

@@ -307,5 +307,13 @@ namespace JetDatabaseReader.Tests
             Action act = () => AccessReader.Open(@"C:\no\such\file.mdb");
             act.Should().Throw<System.IO.FileNotFoundException>();
         }
+
+        [Theory]
+        [MemberData(nameof(TestDatabases.AllExisting), MemberType = typeof(TestDatabases))]
+        public void Open_WhenFileExists_IsNotPasswordProtected(string path)
+        {
+            Action act = () => { using var r = TestDatabases.Open(path); };
+            act.Should().NotThrow<NotSupportedException>();
+        }
     }
 }

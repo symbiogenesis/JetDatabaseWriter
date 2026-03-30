@@ -20,8 +20,14 @@ namespace JetDatabaseReader.Tests
             Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AdventureLT2008.mdb");
 
         // Local-only large file — not added to the project or repository.
-        public const string Matrix = @"C:\temp\large_access_file.accdb";
+        public const string LargeFile = @"D:\Diego\Downloads\DB Matrix.accdb";
 
+        // User's local downloaded .mdb files — not added to the project or repository.
+        // Note: JetDatabaseReader reads these with FileStream; Windows MOTW macro blocking
+        // (Zone.Identifier ADS) does not affect raw file reads — only Access VBA execution.
+        // To unblock for Access: Unblock-File -Path "<path>" in PowerShell.
+        public const string R3188_W_PO  = @"D:\Diego\Downloads\R3188_20260321-20260327_W_PO.mdb";
+        public const string R419_TR_TPI = @"D:\Diego\Downloads\R419_20260213_D_TR_TPI.mdb";
 
         // ── MemberData sets ───────────────────────────────────────────────
 
@@ -29,13 +35,20 @@ namespace JetDatabaseReader.Tests
         internal static bool IsReadable(string path)
         {
             if (!File.Exists(path)) return false;
-            try { using var r = AccessReader.Open(path); return true; }
-            catch { return false; }
+            try
+            {
+                using var r = AccessReader.Open(path);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>All databases (skips any that don't exist or can't be opened).</summary>
         public static IEnumerable<object[]> All =>
-            new[] { Matrix, NorthwindTraders, AdventureWorks }
+            new[] { LargeFile, NorthwindTraders, AdventureWorks, R3188_W_PO, R419_TR_TPI }
                 .Where(IsReadable)
                 .Select(p => new object[] { p });
 
@@ -43,6 +56,22 @@ namespace JetDatabaseReader.Tests
         public static IEnumerable<object[]> Small =>
             new[] { NorthwindTraders, AdventureWorks }
                 .Where(IsReadable)
+                .Select(p => new object[] { p });
+
+        /// <summary>The user's local downloaded .mdb files (skips any that can't be opened).</summary>
+        public static IEnumerable<object[]> Downloads =>
+            new[] { R3188_W_PO, R419_TR_TPI }
+                .Where(IsReadable)
+                .Select(p => new object[] { p });
+
+        /// <summary>
+        /// All known database files that exist on disk, without an IsReadable check.
+        /// Use this when you need to assert something about files that may fail to open
+        /// (e.g., verifying they are not password-protected).
+        /// </summary>
+        public static IEnumerable<object[]> AllExisting =>
+            new[] { LargeFile, NorthwindTraders, AdventureWorks, R3188_W_PO, R419_TR_TPI }
+                .Where(File.Exists)
                 .Select(p => new object[] { p });
 
         // ── Helpers ───────────────────────────────────────────────────────

@@ -5,6 +5,75 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [2.2.0] — 2026-04-01
+
+### ⚠️ Breaking Changes
+
+| Area | Before | After |
+|------|--------|-------|
+| **`TableResult.Rows`** | `List<List<string>>` — string rows | `List<object[]>` — typed CLR rows |
+| **`ReadTable(string, int)`** | Returned string rows in `Rows` | Now returns typed rows in `Rows` |
+| **`ReadTable(string, int, bool)`** | Bool flag selecting typed vs string mode | **Removed** — use `ReadTable` (typed) or `ReadTableAsStrings` (strings) |
+| **`ReadTableAsync(string, int, bool)`** | Async counterpart of removed overload | **Removed** |
+| **`FirstTableResult`** | Extended `TableResult` | Now extends `StringTableResult` |
+
+### ✨ New Type: `StringTableResult`
+
+Dedicated result class for string-mode reads, returned by `ReadTableAsStrings`. Mirrors `TableResult` but `Rows` is `List<List<string>>`.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `Headers` | `List<string>` | Column names |
+| `Rows` | `List<List<string>>` | String rows |
+| `Schema` | `List<TableColumn>` | Per-column schema |
+| `TableName` | `string` | Source table name |
+| `RowCount` | `int` | Computed row count |
+| `ToDataTable()` | `DataTable` | All columns `typeof(string)` |
+
+### ✨ New Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `ReadTableAsStrings(string, int)` | `StringTableResult` | Sampled string-mode read |
+| `ReadTableAsStringsAsync(string, int)` | `Task<StringTableResult>` | Async variant |
+| `TableResult.ToDataTable()` | `DataTable` | Convert typed result — column types from `Schema` |
+| `StringTableResult.ToDataTable()` | `DataTable` | Convert string result — all columns `typeof(string)` |
+
+### 🔧 Improvements & Bug Fixes
+
+- **ACCDB encryption false positive fixed** — The Jet4 encryption flag at offset `0x62` is now only checked for `ver == 1` (Access 2000–2003 `.mdb`). Access 2007+ format databases (`ver >= 2`) set unrelated bits at that offset and were incorrectly rejected with `NotSupportedException`. All `.accdb` files and `.mdb` files saved in Access 2007–2019 format are now readable.
+- **Model files split** — `ColumnSizeUnit`, `ColumnSize`, and `TableColumn` each have their own `.cs` file.
+
+### 📦 Migration Guide
+
+```csharp
+// ── ReadTable — Rows is now typed ─────────────────────────────────────
+// Before (v2.1): string rows in Rows
+TableResult r = reader.ReadTable("Orders", 10);
+string val = r.Rows[0][2];                 // List<List<string>>
+
+// After (v2.2): typed rows in Rows
+TableResult r = reader.ReadTable("Orders", 10);
+object val = r.Rows[0][2];                 // List<object[]>
+
+// ── ReadTableAsStrings — dedicated string API ─────────────────────────
+StringTableResult sr = reader.ReadTableAsStrings("Orders", 10);
+string val = sr.Rows[0][2];                // List<List<string>>
+
+// ── bool overload removed ─────────────────────────────────────────────
+// Before ❌
+TableResult r = reader.ReadTable("Orders", 10, typedValues: true);
+// After ✅
+TableResult        r  = reader.ReadTable("Orders", 10);
+StringTableResult  sr = reader.ReadTableAsStrings("Orders", 10);
+
+// ── ToDataTable ───────────────────────────────────────────────────────
+DataTable typed   = reader.ReadTable("Orders", 100).ToDataTable();
+DataTable strings = reader.ReadTableAsStrings("Orders", 100).ToDataTable();
+```
+
+---
+
 ## [2.1.0] — 2026-03-30
 
 ### ⚠️ Breaking Changes
@@ -15,7 +84,6 @@ This project follows [Semantic Versioning](https://semver.org/).
 | **`TableColumn.SizeDesc`** | `string` — e.g. `"4 bytes"` | **Removed** — replaced by `Size` (`ColumnSize` struct) |
 | **`ReadFirstTable()`** | Returned `TableResult` | Now returns `FirstTableResult` (subclass of `TableResult`) |
 | **`GetTableStats()`** | Returned `List<(string Name, long RowCount, int ColumnCount)>` | Now returns `List<TableStat>` |
-| **`TableResult`** | `sealed` class | Unsealed — serves as base class for `FirstTableResult` |
 
 ### ✨ New Types
 

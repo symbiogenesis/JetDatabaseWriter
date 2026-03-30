@@ -26,6 +26,6 @@ namespace JetDatabaseReader
         /// File sharing mode. Default: Read (other processes may read but not write while the database is open).
         /// Set to <see cref="FileShare.ReadWrite"/> when another application (e.g. Microsoft Access) holds a write lock on the file.
         /// </summary>
-        public FileShare FileShare { get; set; } = FileShare.Read;
+        public FileShare FileShare { get; set; } = FileShare.ReadWrite;
     }
 }
