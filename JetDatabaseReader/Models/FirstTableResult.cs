@@ -7,7 +7,7 @@ namespace JetDatabaseReader
     /// </summary>
     public sealed class FirstTableResult : StringTableResult
     {
-        /// <summary>Total number of user tables found in the database.</summary>
+        /// <summary>Gets or sets the total number of user tables found in the database.</summary>
         public int TableCount { get; set; }
     }
 }
