@@ -1,16 +1,22 @@
-using System.Collections.Generic;
-
 namespace JetDatabaseReader
 {
+    using System.Collections.Generic;
+
     internal sealed class ColumnInfo
     {
-        public byte   Type;
-        public int    ColNum;    // col_num: absolute column number (includes deleted cols)
-        public int    VarIdx;    // offset_V: 0-based index in var_table
-        public int    FixedOff;  // offset_F: byte offset within the fixed area
-        public int    Size;      // col_len (0 for MEMO/OLE/variable)
-        public byte   Flags;
-        public string Name = string.Empty;
+        public byte Type { get; set; }
+
+        public int ColNum { get; set; } // col_num: absolute column number (includes deleted cols)
+
+        public int VarIdx { get; set; } // offset_V: 0-based index in var_table
+
+        public int FixedOff { get; set; } // offset_F: byte offset within the fixed area
+
+        public int Size { get; set; } // col_len (0 for MEMO/OLE/variable)
+
+        public byte Flags { get; set; }
+
+        public string Name { get; set; } = string.Empty;
 
         // Inherently fixed-length types are always fixed regardless of FLAG_FIXED.
         // Variable-length types (TEXT, BINARY, MEMO, OLE) are always variable.

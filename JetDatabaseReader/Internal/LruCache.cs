@@ -1,8 +1,8 @@
-using System.Collections.Generic;
-using System.Linq;
-
 namespace JetDatabaseReader
 {
+    using System.Collections.Generic;
+    using System.Linq;
+
     /// <summary>
     /// Thread-safe LRU (Least Recently Used) cache implementation.
     /// Evicts the oldest entry when capacity is reached.
@@ -15,12 +15,6 @@ namespace JetDatabaseReader
         private readonly Dictionary<TKey, LinkedListNode<CacheItem>> _cache;
         private readonly LinkedList<CacheItem> _lruList;
         private readonly object _lock = new object();
-
-        private sealed class CacheItem
-        {
-            public TKey Key { get; set; }
-            public TValue Value { get; set; }
-        }
 
         public LruCache(int capacity)
         {
@@ -52,6 +46,7 @@ namespace JetDatabaseReader
                     value = node.Value.Value;
                     return true;
                 }
+
                 value = default;
                 return false;
             }
@@ -75,7 +70,7 @@ namespace JetDatabaseReader
                 {
                     var last = _lruList.Last;
                     _lruList.RemoveLast();
-                    _cache.Remove(last.Value.Key);
+                    _ = _cache.Remove(last.Value.Key);
                 }
 
                 // Add new item
@@ -102,11 +97,19 @@ namespace JetDatabaseReader
                 if (_cache.TryGetValue(key, out var node))
                 {
                     _lruList.Remove(node);
-                    _cache.Remove(key);
+                    _ = _cache.Remove(key);
                     return true;
                 }
+
                 return false;
             }
+        }
+
+        private sealed class CacheItem
+        {
+            public TKey Key { get; set; }
+
+            public TValue Value { get; set; }
         }
     }
 }

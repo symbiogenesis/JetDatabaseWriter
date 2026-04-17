@@ -6,17 +6,17 @@ namespace JetDatabaseReader
     /// </summary>
     public sealed class TableStat
     {
-        /// <summary>Table name.</summary>
+        /// <summary>Gets or sets the table name.</summary>
         public string Name { get; set; }
 
         /// <summary>
-        /// Row count stored in the TDEF page.
+        /// Gets or sets the row count stored in the TDEF page.
         /// May be stale after bulk deletes or imports without a Compact &amp; Repair.
         /// Use <see cref="IAccessReader.GetRealRowCount"/> for an accurate count.
         /// </summary>
         public long RowCount { get; set; }
 
-        /// <summary>Number of columns defined in the table schema.</summary>
+        /// <summary>Gets or sets the number of columns defined in the table schema.</summary>
         public int ColumnCount { get; set; }
     }
 }
