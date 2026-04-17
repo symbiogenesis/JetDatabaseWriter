@@ -269,7 +269,7 @@ public class TableResultConversionTests
         var result = new StringTableResult
         {
             Headers = ["Id", "Name", "Date"],
-            Rows = [new() { "1", "Alice", "2024-01-01" }],
+            Rows = [["1", "Alice", "2024-01-01"]],
         };
 
         DataTable dt = result.ToDataTable();
@@ -305,7 +305,7 @@ public class TableResultConversionTests
         var result = new StringTableResult
         {
             Headers = ["Id"],
-            Rows = [new() { "1" }, new() { "2" }],
+            Rows = [["1"], ["2"]],
         };
 
         DataTable dt = result.ToDataTable();
@@ -319,7 +319,7 @@ public class TableResultConversionTests
         var result = new StringTableResult
         {
             Headers = ["Id", "Name"],
-            Rows = [new() { "7", "Bob" }],
+            Rows = [["7", "Bob"]],
         };
 
         DataTable dt = result.ToDataTable();
