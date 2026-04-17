@@ -1,6 +1,12 @@
 <Solution>
   <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path=".gitignore" />
+    <File Path="CHANGELOG.md" />
+    <File Path="Directory.Build.props" />
+    <File Path="LICENSE" />
     <File Path="PUBLISH.md" />
+    <File Path="stylecop.json" />
   </Folder>
   <Project Path="JetDatabaseReader.Tests/JetDatabaseReader.Tests.csproj" />
   <Project Path="JetDatabaseReader/JetDatabaseReader.csproj" />
