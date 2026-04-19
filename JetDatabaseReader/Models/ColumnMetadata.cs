@@ -28,6 +28,6 @@ public sealed class ColumnMetadata
     /// <summary>Gets or sets the zero-based ordinal position in the table.</summary>
     public int Ordinal { get; set; }
 
-    /// <summary>Gets or sets the size description (e.g., "2 bytes", "255 chars", "LVAL").</summary>
-    public string SizeDescription { get; set; }
+    /// <summary>Gets or sets the structured size — use <see cref="ColumnSize.ToString"/> for a human-readable description.</summary>
+    public ColumnSize Size { get; set; }
 }

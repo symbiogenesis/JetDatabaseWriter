@@ -21,7 +21,7 @@ using System.Threading.Tasks;
 ///   ✓ All standard data types (Text, Integer, Date, GUID, Currency, etc.)
 ///   ✓ MEMO fields (inline + single-page + multi-page LVAL chains)
 ///   ✓ OLE Object fields — auto-detects images (JPEG/PNG/GIF/BMP), documents (PDF/DOC/RTF), archives (ZIP)
-///   ✓ Streaming API — process millions of rows without OOM (StreamRows, ReadTableAsDataTable)
+///   ✓ Streaming API — process millions of rows without OOM (StreamRows, ReadTable)
 ///   ✓ Progress reporting — IProgress&lt;int&gt; callbacks for long operations
 ///   ✓ Page cache — 256-page LRU cache (default 1 MB) for 50%+ performance boost
 ///   ✓ Catalog caching — single MSysObjects scan, reused across calls
@@ -769,7 +769,7 @@ public sealed class AccessReader : IAccessReader
             IsNullable = true,
             IsFixedLength = col.IsFixed,
             Ordinal = index,
-            SizeDescription = SizeDescForColumn(col),
+            Size = SizeForColumn(col),
         }).ToList();
     }
 
@@ -1071,9 +1071,6 @@ public sealed class AccessReader : IAccessReader
             default: return col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable;
         }
     }
-
-    // Used by ColumnMetadata.SizeDescription which keeps a plain string.
-    private static string SizeDescForColumn(ColumnInfo col) => SizeForColumn(col).ToString();
 
     private static Type TypeCodeToClrType(byte typeCode)
     {
