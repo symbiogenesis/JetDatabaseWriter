@@ -6,7 +6,7 @@ using System;
 /// Structured column size: a numeric <see cref="Value"/> paired with a <see cref="ColumnSizeUnit"/>.
 /// Use <see cref="ToString"/> for a human-readable description.
 /// </summary>
-public readonly struct ColumnSize : IEquatable<ColumnSize>
+public readonly record struct ColumnSize
 {
     /// <summary>Variable-length with no declared maximum.</summary>
     public static readonly ColumnSize Variable = new ColumnSize(null, ColumnSizeUnit.Variable);
@@ -25,18 +25,6 @@ public readonly struct ColumnSize : IEquatable<ColumnSize>
 
     /// <summary>Gets the unit in which <see cref="Value"/> is expressed.</summary>
     public ColumnSizeUnit Unit { get; }
-
-    /// <summary>Determines whether two <see cref="ColumnSize"/> values are equal.</summary>
-    public static bool operator ==(ColumnSize left, ColumnSize right)
-    {
-        return left.Equals(right);
-    }
-
-    /// <summary>Determines whether two <see cref="ColumnSize"/> values are not equal.</summary>
-    public static bool operator !=(ColumnSize left, ColumnSize right)
-    {
-        return !left.Equals(right);
-    }
 
     /// <summary>Creates a fixed size expressed in bits.</summary>
     /// <returns></returns>
@@ -62,23 +50,5 @@ public readonly struct ColumnSize : IEquatable<ColumnSize>
             case ColumnSizeUnit.Lval: return "LVAL";
             default: return string.Empty;
         }
-    }
-
-    /// <inheritdoc/>
-    public bool Equals(ColumnSize other)
-    {
-        return Value == other.Value && Unit == other.Unit;
-    }
-
-    /// <inheritdoc/>
-    public override bool Equals(object obj)
-    {
-        return obj is ColumnSize other && Equals(other);
-    }
-
-    /// <inheritdoc/>
-    public override int GetHashCode()
-    {
-        return (Value.GetHashCode() * 397) ^ Unit.GetHashCode();
     }
 }

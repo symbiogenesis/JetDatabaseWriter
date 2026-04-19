@@ -4,7 +4,7 @@ namespace JetDatabaseReader;
 /// Name, stored row-count, and column-count for a single user table.
 /// Returned as an element of the list from <see cref="IAccessReader.GetTableStats"/>.
 /// </summary>
-public sealed class TableStat
+public sealed record TableStat
 {
     /// <summary>Gets or sets the table name.</summary>
     public string Name { get; set; } = string.Empty;

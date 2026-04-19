@@ -1207,13 +1207,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         foreach (RowBound rb in EnumerateLiveRowBounds(page))
         {
-            yield return new RowLocation
-            {
-                PageNumber = pageNumber,
-                RowIndex = rb.RowIndex,
-                RowStart = rb.RowStart,
-                RowSize = rb.RowSize,
-            };
+            yield return new RowLocation(pageNumber, rb.RowIndex, rb.RowStart, rb.RowSize);
         }
     }
 
@@ -1231,6 +1225,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         WritePage(pageNumber, page);
     }
 
+    private readonly record struct RowLocation(long PageNumber, int RowIndex, int RowStart, int RowSize)
+    {
+        public long PageNumber { get; } = PageNumber;
+
+        public int RowIndex { get; } = RowIndex;
+
+        public int RowStart { get; } = RowStart;
+
+        public int RowSize { get; } = RowSize;
+    }
+
     private sealed class CatalogRow
     {
         public long PageNumber { get; set; }
@@ -1244,17 +1249,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         public long Flags { get; set; }
 
         public long TDefPage { get; set; }
-    }
-
-    private sealed class RowLocation
-    {
-        public long PageNumber { get; set; }
-
-        public int RowIndex { get; set; }
-
-        public int RowStart { get; set; }
-
-        public int RowSize { get; set; }
     }
 
     private sealed class PageInsertTarget

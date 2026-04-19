@@ -5,7 +5,7 @@ using System;
 /// <summary>
 /// Schema entry for a single column in a <see cref="TableResult"/>.
 /// </summary>
-public sealed class TableColumn
+public sealed record TableColumn
 {
     /// <summary>Gets or sets the column name.</summary>
     public string Name { get; set; } = string.Empty;

@@ -740,7 +740,7 @@ public abstract class AccessBase : IAccessBase
 
     // ── Inner types ──────────────────────────────────────────────────
 
-    private protected readonly struct RowBound
+    private protected readonly record struct RowBound
     {
         public RowBound(int rowIndex, int rowStart, int rowSize)
         {
@@ -756,7 +756,7 @@ public abstract class AccessBase : IAccessBase
         public int RowSize { get; }
     }
 
-    private protected sealed class CatalogEntry
+    private protected sealed record CatalogEntry
     {
         public string Name { get; set; } = string.Empty;
 

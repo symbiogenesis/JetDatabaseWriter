@@ -5,7 +5,7 @@ using System;
 /// <summary>
 /// Defines a column for use with <see cref="IAccessWriter.CreateTable"/>.
 /// </summary>
-public sealed class ColumnDefinition
+public sealed record ColumnDefinition
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="ColumnDefinition"/> class.

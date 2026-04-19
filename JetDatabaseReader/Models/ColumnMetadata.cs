@@ -5,7 +5,7 @@ using System;
 /// <summary>
 /// Rich metadata about a database column including type, size, and nullability information.
 /// </summary>
-public sealed class ColumnMetadata
+public sealed record ColumnMetadata
 {
     /// <summary>Gets or sets the column name.</summary>
     public string Name { get; set; } = string.Empty;

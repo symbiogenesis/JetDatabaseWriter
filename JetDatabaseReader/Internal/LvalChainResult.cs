@@ -1,7 +1,7 @@
 namespace JetDatabaseReader;
 
 // Result type for the internal LVAL chain reader.
-internal sealed class LvalChainResult
+internal sealed record LvalChainResult
 {
     private LvalChainResult(byte[]? data, string? error)
     {
