@@ -203,17 +203,12 @@ public class AccessReaderStreamTests
         Assert.True(count >= 0);
     }
 
-    // ── Matrix (local-only large file) — smoke test ───────────────────
+    // ── Jackcess — memory-efficiency smoke test ─────────────────────
 
-    [Fact]
-    public void StreamRows_Matrix_DoesNotExceedReasonableMemory()
+    [Theory]
+    [MemberData(nameof(TestDatabases.Jackcess), MemberType = typeof(TestDatabases))]
+    public void StreamRows_Jackcess_DoesNotExceedReasonableMemory(string path)
     {
-        string path = TestDatabases.LargeFile;
-        if (!TestDatabases.IsReadable(path))
-        {
-            return; // skip if not present or encrypted
-        }
-
         long before = GC.GetTotalMemory(forceFullCollection: true);
 
         using var reader = TestDatabases.Open(path, new AccessReaderOptions { PageCacheSize = 256 });
@@ -237,15 +232,10 @@ public class AccessReaderStreamTests
         Assert.True(deltaMb < 200, $"Streaming should not load the whole file into memory (delta: {deltaMb} MB)");
     }
 
-    [Fact]
-    public void StreamRows_Matrix_ReadsAllTablesWithoutException()
+    [Theory]
+    [MemberData(nameof(TestDatabases.Jackcess), MemberType = typeof(TestDatabases))]
+    public void StreamRows_Jackcess_ReadsAllTablesWithoutException(string path)
     {
-        string path = TestDatabases.LargeFile;
-        if (!TestDatabases.IsReadable(path))
-        {
-            return; // skip if not present or encrypted
-        }
-
         using var reader = TestDatabases.Open(path, new AccessReaderOptions { PageCacheSize = 512 });
         List<string> tables = reader.ListTables();
 
