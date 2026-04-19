@@ -3,7 +3,6 @@ namespace JetDatabaseReader.Tests;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FluentAssertions;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
@@ -30,7 +29,7 @@ public class AccessReaderStreamTests
 
         IEnumerable<object[]> rows = reader.StreamRows(stat.Name);
 
-        _ = rows.Should().NotBeEmpty(because: $"table '{stat.Name}' should have rows");
+        Assert.NotEmpty(rows);
     }
 
     [Theory]
@@ -43,9 +42,7 @@ public class AccessReaderStreamTests
 
         foreach (object[] row in reader.StreamRows(table).Take(50))
         {
-            _ = row.Should().HaveCount(
-                colCount,
-                because: $"every typed row must match the schema column count");
+            Assert.Equal(colCount, row.Length);
         }
     }
 
@@ -59,7 +56,7 @@ public class AccessReaderStreamTests
         int streamCount = reader.StreamRows(table).Count();
         int dtCount = reader.ReadTable(table)!.Rows.Count;
 
-        _ = streamCount.Should().Be(dtCount);
+        Assert.Equal(dtCount, streamCount);
     }
 
     [Theory]
@@ -83,8 +80,7 @@ public class AccessReaderStreamTests
             return;
         }
 
-        _ = firstRow[numericColIdx].Should().NotBeOfType<string>(
-            because: "typed stream should not return strings for numeric/date columns");
+        Assert.IsNotType<string>(firstRow[numericColIdx]);
     }
 
     [Theory]
@@ -105,7 +101,7 @@ public class AccessReaderStreamTests
 
         foreach (int v in reported)
         {
-            _ = v.Should().BeGreaterThanOrEqualTo(0);
+            Assert.True(v >= 0);
         }
     }
 
@@ -122,7 +118,7 @@ public class AccessReaderStreamTests
             return; // all tables are empty — nothing to assert
         }
 
-        _ = reader.StreamRowsAsStrings(stat.Name).Should().NotBeEmpty();
+        Assert.NotEmpty(reader.StreamRowsAsStrings(stat.Name));
     }
 
     [Theory]
@@ -136,8 +132,7 @@ public class AccessReaderStreamTests
         {
             foreach (string cell in row)
             {
-                _ = (cell == null || cell is string).Should().BeTrue(
-                    because: "StreamRowsAsStrings must only yield strings or nulls");
+                Assert.True(cell == null || cell is string);
             }
         }
     }
@@ -152,7 +147,7 @@ public class AccessReaderStreamTests
         int typedCount = reader.StreamRows(table).Count();
         int stringCount = reader.StreamRowsAsStrings(table).Count();
 
-        _ = stringCount.Should().Be(typedCount);
+        Assert.Equal(typedCount, stringCount);
     }
 
     // ── Matrix (2 GB) — memory-efficiency smoke test ──────────────────
@@ -186,9 +181,7 @@ public class AccessReaderStreamTests
         long deltaMb = (after - before) / (1024 * 1024);
 
         // Streaming 100 K rows should not grow heap beyond 200 MB
-        _ = deltaMb.Should().BeLessThan(
-            200,
-            because: "streaming should not load the whole file into memory");
+        Assert.True(deltaMb < 200, $"Streaming should not load the whole file into memory (delta: {deltaMb} MB)");
     }
 
     [Fact]
@@ -203,11 +196,11 @@ public class AccessReaderStreamTests
         using var reader = TestDatabases.Open(path, new AccessReaderOptions { PageCacheSize = 512 });
         List<string> tables = reader.ListTables();
 
-        _ = tables.Should().NotBeEmpty();
+        Assert.NotEmpty(tables);
 
         string first = tables[0];
         int count = reader.StreamRows(first).Take(1000).Count();
-        _ = count.Should().BeGreaterThanOrEqualTo(0);
+        Assert.True(count >= 0);
     }
 
     // ── Matrix (local-only large file) — smoke test ───────────────────
@@ -241,9 +234,7 @@ public class AccessReaderStreamTests
         long after = GC.GetTotalMemory(forceFullCollection: true);
         long deltaMb = (after - before) / (1024 * 1024);
 
-        _ = deltaMb.Should().BeLessThan(
-            200,
-            because: "streaming should not load the whole file into memory");
+        Assert.True(deltaMb < 200, $"Streaming should not load the whole file into memory (delta: {deltaMb} MB)");
     }
 
     [Fact]
@@ -258,11 +249,11 @@ public class AccessReaderStreamTests
         using var reader = TestDatabases.Open(path, new AccessReaderOptions { PageCacheSize = 512 });
         List<string> tables = reader.ListTables();
 
-        _ = tables.Should().NotBeEmpty();
+        Assert.NotEmpty(tables);
 
         string first = tables[0];
         int count = reader.StreamRows(first).Take(1000).Count();
-        _ = count.Should().BeGreaterThanOrEqualTo(0);
+        Assert.True(count >= 0);
     }
 
     // ── StreamRows<T> (generic POCO) ──────────────────────────────────
@@ -284,7 +275,7 @@ public class AccessReaderStreamTests
         int typedCount = reader.StreamRows(table).Count();
         int genericCount = reader.StreamRows<StreamGenericRow>(table).Count();
 
-        _ = genericCount.Should().Be(typedCount);
+        Assert.Equal(typedCount, genericCount);
     }
 
     [Theory]
@@ -296,7 +287,7 @@ public class AccessReaderStreamTests
 
         foreach (StreamGenericRow item in reader.StreamRows<StreamGenericRow>(table).Take(50))
         {
-            _ = item.Should().NotBeNull();
+            Assert.NotNull(item);
         }
     }
 
@@ -315,7 +306,7 @@ public class AccessReaderStreamTests
 
         foreach (int v in reported)
         {
-            _ = v.Should().BeGreaterThanOrEqualTo(0);
+            Assert.True(v >= 0);
         }
     }
 
@@ -337,7 +328,7 @@ public class AccessReaderStreamTests
             }
         }
 
-        _ = count.Should().BeLessThanOrEqualTo(3);
+        Assert.True(count <= 3);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────

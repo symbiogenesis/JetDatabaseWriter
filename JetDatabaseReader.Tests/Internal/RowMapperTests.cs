@@ -2,7 +2,6 @@ namespace JetDatabaseReader.Tests;
 
 using System;
 using System.Collections.Generic;
-using FluentAssertions;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
@@ -59,10 +58,10 @@ public class RowMapperTests
 
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
 
-        index.Should().HaveCount(3);
-        index[0].Should().NotBeNull();
-        index[1].Should().NotBeNull();
-        index[2].Should().NotBeNull();
+        Assert.Equal(3, index.Length);
+        Assert.NotNull(index[0]);
+        Assert.NotNull(index[1]);
+        Assert.NotNull(index[2]);
     }
 
     [Fact]
@@ -72,9 +71,9 @@ public class RowMapperTests
 
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
 
-        index[0]!.Name.Should().Be("Id");
-        index[1]!.Name.Should().Be("Name");
-        index[2]!.Name.Should().Be("Price");
+        Assert.Equal("Id", index[0]!.Name);
+        Assert.Equal("Name", index[1]!.Name);
+        Assert.Equal("Price", index[2]!.Name);
     }
 
     [Fact]
@@ -84,9 +83,9 @@ public class RowMapperTests
 
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
 
-        index[0].Should().NotBeNull();
-        index[1].Should().BeNull();
-        index[2].Should().NotBeNull();
+        Assert.NotNull(index[0]);
+        Assert.Null(index[1]);
+        Assert.NotNull(index[2]);
     }
 
     [Fact]
@@ -96,7 +95,7 @@ public class RowMapperTests
 
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
 
-        index.Should().BeEmpty();
+        Assert.Empty(index);
     }
 
     [Fact]
@@ -106,8 +105,8 @@ public class RowMapperTests
 
         var index = RowMapper<ReadOnlyPoco>.BuildIndex(headers);
 
-        index[0].Should().NotBeNull();
-        index[1].Should().BeNull("read-only properties should not be mapped");
+        Assert.NotNull(index[0]);
+        Assert.Null(index[1]);
     }
 
     // ── Map — basic ───────────────────────────────────────────────────
@@ -121,9 +120,9 @@ public class RowMapperTests
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
-        result.Id.Should().Be(42);
-        result.Name.Should().Be("Widget");
-        result.Price.Should().Be(9.99m);
+        Assert.Equal(42, result.Id);
+        Assert.Equal("Widget", result.Name);
+        Assert.Equal(9.99m, result.Price);
     }
 
     [Fact]
@@ -135,9 +134,9 @@ public class RowMapperTests
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
-        result.Id.Should().Be(1);
-        result.Name.Should().Be("Gadget");
-        result.Price.Should().Be(0m, "unmatched property stays at default");
+        Assert.Equal(1, result.Id);
+        Assert.Equal("Gadget", result.Name);
+        Assert.Equal(0m, result.Price);
     }
 
     // ── Map — nulls ──────────────────────────────────────────────────
@@ -151,7 +150,7 @@ public class RowMapperTests
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
-        result.Name.Should().Be(string.Empty, "null should leave default intact");
+        Assert.Equal(string.Empty, result.Name);
     }
 
     [Fact]
@@ -163,7 +162,7 @@ public class RowMapperTests
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
-        result.Name.Should().Be(string.Empty);
+        Assert.Equal(string.Empty, result.Name);
     }
 
     // ── Map — nullable properties ────────────────────────────────────
@@ -178,9 +177,9 @@ public class RowMapperTests
 
         NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
 
-        result.Id.Should().Be(7);
-        result.Name.Should().Be("Test");
-        result.CreatedDate.Should().Be(date);
+        Assert.Equal(7, result.Id);
+        Assert.Equal("Test", result.Name);
+        Assert.Equal(date, result.CreatedDate);
     }
 
     [Fact]
@@ -192,8 +191,8 @@ public class RowMapperTests
 
         NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
 
-        result.Id.Should().Be(1);
-        result.CreatedDate.Should().BeNull();
+        Assert.Equal(1, result.Id);
+        Assert.Null(result.CreatedDate);
     }
 
     // ── Map — type coercion ──────────────────────────────────────────
@@ -207,8 +206,8 @@ public class RowMapperTests
 
         TypeMismatchPoco result = RowMapper<TypeMismatchPoco>.Map(row, index);
 
-        result.Id.Should().Be(42L);
-        result.Price.Should().Be(19.99);
+        Assert.Equal(42L, result.Id);
+        Assert.Equal(19.99, result.Price);
     }
 
     // ── Map — row/index length mismatches ────────────────────────────
@@ -222,8 +221,8 @@ public class RowMapperTests
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
-        result.Id.Should().Be(5);
-        result.Name.Should().Be(string.Empty, "unmapped due to short row");
+        Assert.Equal(5, result.Id);
+        Assert.Equal(string.Empty, result.Name);
     }
 
     [Fact]
@@ -235,8 +234,8 @@ public class RowMapperTests
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
-        result.Id.Should().Be(5);
-        result.Name.Should().Be(string.Empty);
+        Assert.Equal(5, result.Id);
+        Assert.Equal(string.Empty, result.Name);
     }
 
     // ── Map — empty POCO ─────────────────────────────────────────────
@@ -250,7 +249,7 @@ public class RowMapperTests
 
         EmptyPoco result = RowMapper<EmptyPoco>.Map(row, index);
 
-        result.Should().NotBeNull();
+        Assert.NotNull(result);
     }
 
     // ── Map — multiple rows share same index ─────────────────────────
@@ -266,11 +265,11 @@ public class RowMapperTests
         SimpleProduct result1 = RowMapper<SimpleProduct>.Map(row1, index);
         SimpleProduct result2 = RowMapper<SimpleProduct>.Map(row2, index);
 
-        result1.Id.Should().Be(1);
-        result1.Name.Should().Be("Alpha");
-        result2.Id.Should().Be(2);
-        result2.Name.Should().Be("Beta");
-        result1.Should().NotBeSameAs(result2);
+        Assert.Equal(1, result1.Id);
+        Assert.Equal("Alpha", result1.Name);
+        Assert.Equal(2, result2.Id);
+        Assert.Equal("Beta", result2.Name);
+        Assert.NotSame(result1, result2);
     }
 
     // ── Map — value already correct type (fast path) ─────────────────
@@ -284,9 +283,9 @@ public class RowMapperTests
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
 
-        result.Id.Should().Be(99);
-        result.Name.Should().Be("Direct");
-        result.Price.Should().Be(5.5m);
+        Assert.Equal(99, result.Id);
+        Assert.Equal("Direct", result.Name);
+        Assert.Equal(5.5m, result.Price);
     }
 
     // ── ToRow — reverse mapping ──────────────────────────────────────
@@ -300,10 +299,10 @@ public class RowMapperTests
 
         object[] row = RowMapper<SimpleProduct>.ToRow(product, index);
 
-        row.Should().HaveCount(3);
-        row[0].Should().Be(7);
-        row[1].Should().Be("Bolt");
-        row[2].Should().Be(1.25m);
+        Assert.Equal(3, row.Length);
+        Assert.Equal(7, row[0]);
+        Assert.Equal("Bolt", row[1]);
+        Assert.Equal(1.25m, row[2]);
     }
 
     [Fact]
@@ -315,8 +314,8 @@ public class RowMapperTests
 
         object[] row = RowMapper<SimpleProduct>.ToRow(product, index);
 
-        row[0].Should().Be(3);
-        row[1].Should().Be(DBNull.Value);
+        Assert.Equal(3, row[0]);
+        Assert.Equal(DBNull.Value, row[1]);
     }
 
     [Fact]
@@ -328,8 +327,8 @@ public class RowMapperTests
 
         object[] row = RowMapper<NullableProduct>.ToRow(product, index);
 
-        row[0].Should().Be(1);
-        row[1].Should().Be(DBNull.Value);
+        Assert.Equal(1, row[0]);
+        Assert.Equal(DBNull.Value, row[1]);
     }
 
     [Fact]
@@ -342,8 +341,8 @@ public class RowMapperTests
         object[] row = RowMapper<SimpleProduct>.ToRow(original, index);
         SimpleProduct roundTripped = RowMapper<SimpleProduct>.Map(row, index);
 
-        roundTripped.Id.Should().Be(original.Id);
-        roundTripped.Name.Should().Be(original.Name);
-        roundTripped.Price.Should().Be(original.Price);
+        Assert.Equal(original.Id, roundTripped.Id);
+        Assert.Equal(original.Name, roundTripped.Name);
+        Assert.Equal(original.Price, roundTripped.Price);
     }
 }

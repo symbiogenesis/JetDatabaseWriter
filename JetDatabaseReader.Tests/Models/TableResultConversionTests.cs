@@ -3,7 +3,6 @@ namespace JetDatabaseReader.Tests;
 using System;
 using System.Collections.Generic;
 using System.Data;
-using FluentAssertions;
 using Xunit;
 
 /// <summary>
@@ -20,9 +19,9 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Should().NotBeNull();
-        _ = dt.Columns.Count.Should().Be(0);
-        _ = dt.Rows.Count.Should().Be(0);
+        Assert.NotNull(dt);
+        Assert.Empty(dt.Columns);
+        Assert.Equal(0, dt.Rows.Count);
     }
 
     [Fact]
@@ -40,8 +39,8 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Columns.Count.Should().Be(2);
-        _ = dt.Rows.Count.Should().Be(0);
+        Assert.Equal(2, dt.Columns.Count);
+        Assert.Equal(0, dt.Rows.Count);
     }
 
     // ── TableResult.ToDataTable — structural mapping ──────────────────
@@ -53,7 +52,7 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.TableName.Should().Be("Orders");
+        Assert.Equal("Orders", dt.TableName);
     }
 
     [Fact]
@@ -69,7 +68,7 @@ public class TableResultConversionTests
 
         for (int i = 0; i < result.Headers.Count; i++)
         {
-            _ = dt.Columns[i].ColumnName.Should().Be(result.Headers[i]);
+            Assert.Equal(result.Headers[i], dt.Columns[i].ColumnName);
         }
     }
 
@@ -90,9 +89,9 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Columns["Id"]!.DataType.Should().Be<int>();
-        _ = dt.Columns["CreatedAt"]!.DataType.Should().Be<DateTime>();
-        _ = dt.Columns["Total"]!.DataType.Should().Be<decimal>();
+        Assert.Equal(typeof(int), dt.Columns["Id"]!.DataType);
+        Assert.Equal(typeof(DateTime), dt.Columns["CreatedAt"]!.DataType);
+        Assert.Equal(typeof(decimal), dt.Columns["Total"]!.DataType);
     }
 
     [Fact]
@@ -106,7 +105,7 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Columns["Col1"]!.DataType.Should().Be<object>();
+        Assert.Equal(typeof(object), dt.Columns["Col1"]!.DataType);
     }
 
     // ── TableResult.ToDataTable — row data ────────────────────────────
@@ -123,7 +122,7 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Rows.Count.Should().Be(3);
+        Assert.Equal(3, dt.Rows.Count);
     }
 
     [Fact]
@@ -142,8 +141,8 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Rows[0]["Id"].Should().Be(42);
-        _ = dt.Rows[0]["Name"].Should().Be("Alice");
+        Assert.Equal(42, dt.Rows[0]["Id"]);
+        Assert.Equal("Alice", dt.Rows[0]["Name"]);
     }
 
     [Fact]
@@ -158,7 +157,7 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Rows[0]["Name"].Should().Be(DBNull.Value);
+        Assert.Equal(DBNull.Value, dt.Rows[0]["Name"]);
     }
 
     // ── TableResult.ToDataTable — integration ─────────────────────────
@@ -172,7 +171,7 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Columns.Count.Should().Be(result.Headers.Count);
+        Assert.Equal(result.Headers.Count, dt.Columns.Count);
     }
 
     [Theory]
@@ -184,7 +183,7 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Rows.Count.Should().Be(result.RowCount);
+        Assert.Equal(result.RowCount, dt.Rows.Count);
     }
 
     [Theory]
@@ -198,9 +197,7 @@ public class TableResultConversionTests
 
         for (int i = 0; i < result.Schema.Count; i++)
         {
-            _ = dt.Columns[i].DataType.Should().Be(
-                result.Schema[i].Type,
-                because: $"column '{result.Headers[i]}' should use its schema CLR type");
+            Assert.Equal(result.Schema[i].Type, dt.Columns[i].DataType);
         }
     }
 
@@ -214,15 +211,11 @@ public class TableResultConversionTests
         DataTable direct = reader.ReadTable(table)!;
         DataTable converted = reader.ReadTable(table, maxRows: int.MaxValue).ToDataTable();
 
-        _ = converted.Columns.Count.Should().Be(direct.Columns.Count);
+        Assert.Equal(direct.Columns.Count, converted.Columns.Count);
         for (int i = 0; i < direct.Columns.Count; i++)
         {
-            _ = converted.Columns[i].ColumnName.Should().Be(
-                direct.Columns[i].ColumnName,
-                because: $"column {i} name should match");
-            _ = converted.Columns[i].DataType.Should().Be(
-                direct.Columns[i].DataType,
-                because: $"column '{direct.Columns[i].ColumnName}' type should match");
+            Assert.Equal(direct.Columns[i].ColumnName, converted.Columns[i].ColumnName);
+            Assert.Equal(direct.Columns[i].DataType, converted.Columns[i].DataType);
         }
     }
 
@@ -235,9 +228,9 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Should().NotBeNull();
-        _ = dt.Columns.Count.Should().Be(0);
-        _ = dt.Rows.Count.Should().Be(0);
+        Assert.NotNull(dt);
+        Assert.Empty(dt.Columns);
+        Assert.Equal(0, dt.Rows.Count);
     }
 
     [Fact]
@@ -247,8 +240,8 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Columns.Count.Should().Be(2);
-        _ = dt.Rows.Count.Should().Be(0);
+        Assert.Equal(2, dt.Columns.Count);
+        Assert.Equal(0, dt.Rows.Count);
     }
 
     // ── StringTableResult.ToDataTable — structural mapping ────────────
@@ -260,7 +253,7 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.TableName.Should().Be("Customers");
+        Assert.Equal("Customers", dt.TableName);
     }
 
     [Fact]
@@ -276,7 +269,7 @@ public class TableResultConversionTests
 
         foreach (DataColumn col in dt.Columns)
         {
-            _ = col.DataType.Should().Be<string>(because: "StringTableResult.ToDataTable should produce only string columns");
+            Assert.Equal(typeof(string), col.DataType);
         }
     }
 
@@ -293,7 +286,7 @@ public class TableResultConversionTests
 
         for (int i = 0; i < result.Headers.Count; i++)
         {
-            _ = dt.Columns[i].ColumnName.Should().Be(result.Headers[i]);
+            Assert.Equal(result.Headers[i], dt.Columns[i].ColumnName);
         }
     }
 
@@ -310,7 +303,7 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Rows.Count.Should().Be(2);
+        Assert.Equal(2, dt.Rows.Count);
     }
 
     [Fact]
@@ -324,8 +317,8 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Rows[0]["Id"].Should().Be("7");
-        _ = dt.Rows[0]["Name"].Should().Be("Bob");
+        Assert.Equal("7", dt.Rows[0]["Id"]);
+        Assert.Equal("Bob", dt.Rows[0]["Name"]);
     }
 
     // ── StringTableResult.ToDataTable — integration ───────────────────
@@ -339,7 +332,7 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Columns.Count.Should().Be(result.Headers.Count);
+        Assert.Equal(result.Headers.Count, dt.Columns.Count);
     }
 
     [Theory]
@@ -351,7 +344,7 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Rows.Count.Should().Be(result.RowCount);
+        Assert.Equal(result.RowCount, dt.Rows.Count);
     }
 
     [Theory]
@@ -364,12 +357,10 @@ public class TableResultConversionTests
         DataTable direct = reader.ReadTableAsStringDataTable(table)!;
         DataTable converted = reader.ReadTableAsStrings(table, maxRows: int.MaxValue).ToDataTable();
 
-        _ = converted.Columns.Count.Should().Be(direct.Columns.Count);
+        Assert.Equal(direct.Columns.Count, converted.Columns.Count);
         for (int i = 0; i < direct.Columns.Count; i++)
         {
-            _ = converted.Columns[i].ColumnName.Should().Be(
-                direct.Columns[i].ColumnName,
-                because: $"column {i} name should match ReadTableAsStringDataTable");
+            Assert.Equal(direct.Columns[i].ColumnName, converted.Columns[i].ColumnName);
         }
     }
 }

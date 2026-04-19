@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
-using FluentAssertions;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
@@ -27,7 +26,7 @@ public class AccessReaderReadTests
 
         DataTable dt = reader.ReadTable(table)!;
 
-        _ = dt.Should().NotBeNull();
+        Assert.NotNull(dt);
     }
 
     [Theory]
@@ -39,7 +38,7 @@ public class AccessReaderReadTests
 
         DataTable dt = reader.ReadTable(table)!;
 
-        _ = dt.TableName.Should().Be(table);
+        Assert.Equal(table, dt.TableName);
     }
 
     [Theory]
@@ -52,7 +51,7 @@ public class AccessReaderReadTests
         DataTable dt = reader.ReadTable(table)!;
         var meta = reader.GetColumnMetadata(table);
 
-        _ = dt.Columns.Count.Should().Be(meta.Count);
+        Assert.Equal(meta.Count, dt.Columns.Count);
     }
 
     [Theory]
@@ -67,9 +66,7 @@ public class AccessReaderReadTests
 
         for (int i = 0; i < meta.Count; i++)
         {
-            _ = dt.Columns[i].DataType.Should().Be(
-                meta[i].ClrType,
-                because: $"column '{meta[i].Name}' should have CLR type {meta[i].ClrType.Name}");
+            Assert.Equal(meta[i].ClrType, dt.Columns[i].DataType);
         }
     }
 
@@ -82,8 +79,8 @@ public class AccessReaderReadTests
 
         DataTable dt = reader.ReadTable(tableName: null)!;
 
-        _ = dt.Should().NotBeNull();
-        _ = dt.TableName.Should().Be(first);
+        Assert.NotNull(dt);
+        Assert.Equal(first, dt.TableName);
     }
 
     [Theory]
@@ -95,7 +92,7 @@ public class AccessReaderReadTests
         foreach (string table in reader.ListTables())
         {
             DataTable dt = reader.ReadTable(table)!;
-            _ = dt.Should().NotBeNull(because: $"table '{table}' should be readable");
+            Assert.NotNull(dt);
         }
     }
 
@@ -112,7 +109,7 @@ public class AccessReaderReadTests
 
         foreach (DataColumn col in dt.Columns)
         {
-            _ = col.DataType.Should().Be<string>(because: $"ReadTableAsStringDataTable should produce only string columns");
+            Assert.Equal(typeof(string), col.DataType);
         }
     }
 
@@ -126,7 +123,7 @@ public class AccessReaderReadTests
         DataTable typed = reader.ReadTable(table)!;
         DataTable string_ = reader.ReadTableAsStringDataTable(table)!;
 
-        _ = string_.Rows.Count.Should().Be(typed.Rows.Count);
+        Assert.Equal(typed.Rows.Count, string_.Rows.Count);
     }
 
     [Theory]
@@ -139,7 +136,7 @@ public class AccessReaderReadTests
         DataTable typed = reader.ReadTable(table)!;
         DataTable string_ = reader.ReadTableAsStringDataTable(table)!;
 
-        _ = string_.Columns.Count.Should().Be(typed.Columns.Count);
+        Assert.Equal(typed.Columns.Count, string_.Columns.Count);
     }
 
     // ── ReadAllTables ─────────────────────────────────────────────────
@@ -153,7 +150,7 @@ public class AccessReaderReadTests
 
         Dictionary<string, DataTable> all = reader.ReadAllTables();
 
-        _ = all.Keys.Should().BeEquivalentTo(expected);
+        Assert.Equivalent(expected, all.Keys);
     }
 
     [Theory]
@@ -169,8 +166,7 @@ public class AccessReaderReadTests
             .SelectMany(dt => dt.Columns.Cast<DataColumn>())
             .Any(col => col.DataType != typeof(string));
 
-        _ = anyTypedColumn.Should().BeTrue(
-            because: "ReadAllTables should return at least one non-string typed column");
+        Assert.True(anyTypedColumn);
     }
 
     // ── ReadAllTablesAsStrings ────────────────────────────────────────
@@ -187,7 +183,7 @@ public class AccessReaderReadTests
         {
             foreach (DataColumn col in dt.Columns)
             {
-                _ = col.DataType.Should().Be<string>(because: $"ReadAllTablesAsStrings column '{tableName}.{col.ColumnName}' should be string");
+                Assert.Equal(typeof(string), col.DataType);
             }
         }
     }
@@ -203,9 +199,7 @@ public class AccessReaderReadTests
 
         foreach (string name in typed.Keys)
         {
-            _ = strings[name].Rows.Count.Should().Be(
-                typed[name].Rows.Count,
-                because: $"table '{name}' row count should match");
+            Assert.Equal(typed[name].Rows.Count, strings[name].Rows.Count);
         }
     }
 
@@ -228,7 +222,7 @@ public class AccessReaderReadTests
         TableResult typed = reader.ReadTable(table, 100);
         List<GenericRow> generic = reader.ReadTable<GenericRow>(table, 100);
 
-        _ = generic.Should().HaveCount(typed.Rows.Count);
+        Assert.Equal(typed.Rows.Count, generic.Count);
     }
 
     [Theory]
@@ -240,7 +234,7 @@ public class AccessReaderReadTests
 
         List<GenericRow> items = reader.ReadTable<GenericRow>(table, 10);
 
-        _ = items.Should().AllSatisfy(item => item.Should().NotBeNull());
+        Assert.All(items, item => Assert.NotNull(item));
     }
 
     [Theory]
@@ -252,7 +246,7 @@ public class AccessReaderReadTests
 
         List<GenericRow> items = reader.ReadTable<GenericRow>(table, 2);
 
-        _ = items.Should().HaveCountLessThanOrEqualTo(2);
+        Assert.True(items.Count <= 2);
     }
 
     [Theory]
@@ -264,7 +258,7 @@ public class AccessReaderReadTests
         foreach (string table in reader.ListTables())
         {
             List<GenericRow> items = reader.ReadTable<GenericRow>(table, 5);
-            _ = items.Should().NotBeNull(because: $"table '{table}' should be readable via generic overload");
+            Assert.NotNull(items);
         }
     }
 
@@ -283,7 +277,7 @@ public class AccessReaderReadTests
         // Every reported value should be non-negative; ForEach handles zero callbacks gracefully
         foreach (int v in reported)
         {
-            _ = v.Should().BeGreaterThanOrEqualTo(0);
+            Assert.True(v >= 0);
         }
     }
 }

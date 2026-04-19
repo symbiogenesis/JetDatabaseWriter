@@ -3,7 +3,6 @@ namespace JetDatabaseReader.Tests;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
-using FluentAssertions;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
@@ -29,7 +28,7 @@ public class AccessReaderQueryTests
 
         IEnumerable<object[]> result = reader.Query(table).Execute();
 
-        _ = result.Should().HaveCount(expected);
+        Assert.Equal(expected, result.Count());
     }
 
     [Theory]
@@ -41,7 +40,7 @@ public class AccessReaderQueryTests
 
         IEnumerable<object[]> result = reader.Query(table).Take(3).Execute();
 
-        _ = result.Should().HaveCountLessThanOrEqualTo(3);
+        Assert.True(result.Count() <= 3);
     }
 
     [Theory]
@@ -56,7 +55,7 @@ public class AccessReaderQueryTests
             .Where(_ => false)
             .Execute();
 
-        _ = none.Should().BeEmpty();
+        Assert.Empty(none);
     }
 
     [Theory]
@@ -71,7 +70,7 @@ public class AccessReaderQueryTests
             .Where(_ => true)
             .Execute();
 
-        _ = all.Should().HaveCount(expected);
+        Assert.Equal(expected, all.Count());
     }
 
     // ── Typed chain: FirstOrDefault ───────────────────────────────────
@@ -90,7 +89,7 @@ public class AccessReaderQueryTests
         string table = stat.Name;
         object[]? first = reader.Query(table).FirstOrDefault();
 
-        _ = first.Should().NotBeNull();
+        Assert.NotNull(first);
     }
 
     [Theory]
@@ -104,7 +103,7 @@ public class AccessReaderQueryTests
             .Where(_ => false)
             .FirstOrDefault();
 
-        _ = result.Should().BeNull();
+        Assert.Null(result);
     }
 
     // ── Typed chain: Count ────────────────────────────────────────────
@@ -119,7 +118,7 @@ public class AccessReaderQueryTests
 
         int count = reader.Query(table).Count();
 
-        _ = count.Should().Be(expected);
+        Assert.Equal(expected, count);
     }
 
     [Theory]
@@ -131,7 +130,7 @@ public class AccessReaderQueryTests
 
         int count = reader.Query(table).Where(_ => false).Count();
 
-        _ = count.Should().Be(0);
+        Assert.Equal(0, count);
     }
 
     // ── String chain: ExecuteAsStrings ────────────────────────────────
@@ -146,7 +145,7 @@ public class AccessReaderQueryTests
 
         IEnumerable<string[]> result = reader.Query(table).ExecuteAsStrings();
 
-        _ = result.Should().HaveCount(expected);
+        Assert.Equal(expected, result.Count());
     }
 
     [Theory]
@@ -158,7 +157,7 @@ public class AccessReaderQueryTests
 
         IEnumerable<string[]> result = reader.Query(table).Take(3).ExecuteAsStrings();
 
-        _ = result.Should().HaveCountLessThanOrEqualTo(3);
+        Assert.True(result.Count() <= 3);
     }
 
     [Theory]
@@ -173,7 +172,7 @@ public class AccessReaderQueryTests
             .WhereAsStrings(_ => false)
             .ExecuteAsStrings();
 
-        _ = none.Should().BeEmpty();
+        Assert.Empty(none);
     }
 
     [Theory]
@@ -187,7 +186,7 @@ public class AccessReaderQueryTests
         {
             foreach (string cell in row)
             {
-                _ = (cell == null || cell is string).Should().BeTrue();
+                Assert.True(cell == null || cell is string);
             }
         }
     }
@@ -208,7 +207,7 @@ public class AccessReaderQueryTests
         string table = stat.Name;
         string[]? first = reader.Query(table).FirstOrDefaultAsStrings();
 
-        _ = first.Should().NotBeNull();
+        Assert.NotNull(first);
     }
 
     [Theory]
@@ -222,7 +221,7 @@ public class AccessReaderQueryTests
             .WhereAsStrings(_ => false)
             .FirstOrDefaultAsStrings();
 
-        _ = result.Should().BeNull();
+        Assert.Null(result);
     }
 
     // ── String chain: CountAsStrings ──────────────────────────────────
@@ -237,7 +236,7 @@ public class AccessReaderQueryTests
         int typed = reader.Query(table).Count();
         int string_ = reader.Query(table).CountAsStrings();
 
-        _ = string_.Should().Be(typed);
+        Assert.Equal(typed, string_);
     }
 
     // ── Take affects both chains ──────────────────────────────────────
@@ -252,8 +251,8 @@ public class AccessReaderQueryTests
 
         TableQuery query = reader.Query(table).Take(limit);
 
-        _ = query.Execute().Should().HaveCountLessThanOrEqualTo(limit);
-        _ = query.ExecuteAsStrings().Should().HaveCountLessThanOrEqualTo(limit);
+        Assert.True(query.Execute().Count() <= limit);
+        Assert.True(query.ExecuteAsStrings().Count() <= limit);
     }
 
     // ── Generic chain: Execute<T> ─────────────────────────────────────
@@ -275,7 +274,7 @@ public class AccessReaderQueryTests
         int typedCount = reader.Query(table).Execute().Count();
         int genericCount = reader.Query(table).Execute<QueryRow>().Count();
 
-        _ = genericCount.Should().Be(typedCount);
+        Assert.Equal(typedCount, genericCount);
     }
 
     [Theory]
@@ -287,7 +286,7 @@ public class AccessReaderQueryTests
 
         IEnumerable<QueryRow> result = reader.Query(table).Take(3).Execute<QueryRow>();
 
-        _ = result.Should().HaveCountLessThanOrEqualTo(3);
+        Assert.True(result.Count() <= 3);
     }
 
     [Theory]
@@ -301,7 +300,7 @@ public class AccessReaderQueryTests
             .Where(_ => false)
             .Execute<QueryRow>();
 
-        _ = none.Should().BeEmpty();
+        Assert.Empty(none);
     }
 
     [Theory]
@@ -313,7 +312,7 @@ public class AccessReaderQueryTests
 
         foreach (QueryRow item in reader.Query(table).Take(20).Execute<QueryRow>())
         {
-            _ = item.Should().NotBeNull();
+            Assert.NotNull(item);
         }
     }
 
@@ -333,7 +332,7 @@ public class AccessReaderQueryTests
         string table = stat.Name;
         QueryRow? first = reader.Query(table).FirstOrDefault<QueryRow>();
 
-        _ = first.Should().NotBeNull();
+        Assert.NotNull(first);
     }
 
     [Theory]
@@ -347,7 +346,7 @@ public class AccessReaderQueryTests
             .Where(_ => false)
             .FirstOrDefault<QueryRow>();
 
-        _ = result.Should().BeNull();
+        Assert.Null(result);
     }
 
     // ── Generic chain: Take affects Execute<T> ────────────────────────
@@ -360,7 +359,6 @@ public class AccessReaderQueryTests
         string table = reader.ListTables()[0];
         const int limit = 2;
 
-        _ = reader.Query(table).Take(limit).Execute<QueryRow>()
-            .Should().HaveCountLessThanOrEqualTo(limit);
+        Assert.True(reader.Query(table).Take(limit).Execute<QueryRow>().Count() <= limit);
     }
 }

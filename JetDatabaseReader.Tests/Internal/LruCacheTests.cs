@@ -1,6 +1,5 @@
 namespace JetDatabaseReader.Tests;
 
-using FluentAssertions;
 using Xunit;
 
 public class LruCacheTests
@@ -12,8 +11,8 @@ public class LruCacheTests
 
         cache.Add("a", 1);
 
-        cache.TryGetValue("a", out int value).Should().BeTrue();
-        value.Should().Be(1);
+        Assert.True(cache.TryGetValue("a", out int value));
+        Assert.Equal(1, value);
     }
 
     [Fact]
@@ -21,7 +20,7 @@ public class LruCacheTests
     {
         var cache = new LruCache<string, int>(4);
 
-        cache.TryGetValue("missing", out _).Should().BeFalse();
+        Assert.False(cache.TryGetValue("missing", out _));
     }
 
     [Fact]
@@ -29,12 +28,12 @@ public class LruCacheTests
     {
         var cache = new LruCache<string, int>(4);
 
-        cache.Count.Should().Be(0);
+        Assert.Equal(0, cache.Count);
 
         cache.Add("a", 1);
         cache.Add("b", 2);
 
-        cache.Count.Should().Be(2);
+        Assert.Equal(2, cache.Count);
     }
 
     [Fact]
@@ -45,9 +44,9 @@ public class LruCacheTests
         cache.Add("a", 1);
         cache.Add("a", 42);
 
-        cache.TryGetValue("a", out int value).Should().BeTrue();
-        value.Should().Be(42);
-        cache.Count.Should().Be(1);
+        Assert.True(cache.TryGetValue("a", out int value));
+        Assert.Equal(42, value);
+        Assert.Equal(1, cache.Count);
     }
 
     [Fact]
@@ -62,11 +61,11 @@ public class LruCacheTests
         // Adding a fourth entry should evict "a" (oldest).
         cache.Add("d", 4);
 
-        cache.Count.Should().Be(3);
-        cache.TryGetValue("a", out _).Should().BeFalse();
-        cache.TryGetValue("b", out _).Should().BeTrue();
-        cache.TryGetValue("c", out _).Should().BeTrue();
-        cache.TryGetValue("d", out _).Should().BeTrue();
+        Assert.Equal(3, cache.Count);
+        Assert.False(cache.TryGetValue("a", out _));
+        Assert.True(cache.TryGetValue("b", out _));
+        Assert.True(cache.TryGetValue("c", out _));
+        Assert.True(cache.TryGetValue("d", out _));
     }
 
     [Fact]
@@ -84,8 +83,8 @@ public class LruCacheTests
         // Adding "d" should now evict "b" (the new LRU) instead of "a".
         cache.Add("d", 4);
 
-        cache.TryGetValue("a", out _).Should().BeTrue();
-        cache.TryGetValue("b", out _).Should().BeFalse();
+        Assert.True(cache.TryGetValue("a", out _));
+        Assert.False(cache.TryGetValue("b", out _));
     }
 
     [Fact]
@@ -103,9 +102,9 @@ public class LruCacheTests
         // Adding "d" should evict "b" (the LRU), not "a".
         cache.Add("d", 4);
 
-        cache.TryGetValue("a", out int value).Should().BeTrue();
-        value.Should().Be(10);
-        cache.TryGetValue("b", out _).Should().BeFalse();
+        Assert.True(cache.TryGetValue("a", out int value));
+        Assert.Equal(10, value);
+        Assert.False(cache.TryGetValue("b", out _));
     }
 
     [Fact]
@@ -122,11 +121,11 @@ public class LruCacheTests
         // Evict 2, add 4
         cache.Add(4, "four");
 
-        cache.Count.Should().Be(2);
-        cache.TryGetValue(1, out _).Should().BeFalse();
-        cache.TryGetValue(2, out _).Should().BeFalse();
-        cache.TryGetValue(3, out _).Should().BeTrue();
-        cache.TryGetValue(4, out _).Should().BeTrue();
+        Assert.Equal(2, cache.Count);
+        Assert.False(cache.TryGetValue(1, out _));
+        Assert.False(cache.TryGetValue(2, out _));
+        Assert.True(cache.TryGetValue(3, out _));
+        Assert.True(cache.TryGetValue(4, out _));
     }
 
     [Fact]
@@ -137,10 +136,10 @@ public class LruCacheTests
         cache.Add("a", 1);
         cache.Add("b", 2);
 
-        cache.Count.Should().Be(1);
-        cache.TryGetValue("a", out _).Should().BeFalse();
-        cache.TryGetValue("b", out int value).Should().BeTrue();
-        value.Should().Be(2);
+        Assert.Equal(1, cache.Count);
+        Assert.False(cache.TryGetValue("a", out _));
+        Assert.True(cache.TryGetValue("b", out int value));
+        Assert.Equal(2, value);
     }
 
     [Fact]
@@ -151,11 +150,11 @@ public class LruCacheTests
         cache.Add(100, "hundred");
         cache.Add(200, "two hundred");
 
-        cache.TryGetValue(100, out string? v1).Should().BeTrue();
-        v1.Should().Be("hundred");
+        Assert.True(cache.TryGetValue(100, out string? v1));
+        Assert.Equal("hundred", v1);
 
-        cache.TryGetValue(200, out string? v2).Should().BeTrue();
-        v2.Should().Be("two hundred");
+        Assert.True(cache.TryGetValue(200, out string? v2));
+        Assert.Equal("two hundred", v2);
     }
 
     [Fact]
@@ -175,9 +174,9 @@ public class LruCacheTests
         // Adding "d" should evict "c".
         cache.Add("d", 4);
 
-        cache.TryGetValue("c", out _).Should().BeFalse();
-        cache.TryGetValue("a", out _).Should().BeTrue();
-        cache.TryGetValue("b", out _).Should().BeTrue();
-        cache.TryGetValue("d", out _).Should().BeTrue();
+        Assert.False(cache.TryGetValue("c", out _));
+        Assert.True(cache.TryGetValue("a", out _));
+        Assert.True(cache.TryGetValue("b", out _));
+        Assert.True(cache.TryGetValue("d", out _));
     }
 }

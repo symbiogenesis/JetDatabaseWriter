@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
-using FluentAssertions;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
@@ -31,23 +30,19 @@ public sealed class AccessWriterTests : IDisposable
 
         using var writer = AccessWriter.Open(temp);
 
-        writer.Should().NotBeNull();
+        Assert.NotNull(writer);
     }
 
     [Fact]
     public void Open_WithMissingFile_ThrowsFileNotFoundException()
     {
-        Action act = () => AccessWriter.Open(@"C:\nonexistent\fake.mdb");
-
-        act.Should().Throw<FileNotFoundException>();
+        Assert.Throws<FileNotFoundException>(() => AccessWriter.Open(@"C:\nonexistent\fake.mdb"));
     }
 
     [Fact]
     public void Open_WithNullPath_ThrowsArgumentException()
     {
-        Action act = () => AccessWriter.Open(null!);
-
-        act.Should().Throw<ArgumentException>();
+        Assert.Throws<ArgumentException>(() => AccessWriter.Open(null!));
     }
 
     [Theory]
@@ -58,9 +53,9 @@ public sealed class AccessWriterTests : IDisposable
         var writer = AccessWriter.Open(temp);
 
         writer.Dispose();
-        Action act = () => writer.Dispose();
+        var ex = Record.Exception(() => writer.Dispose());
 
-        act.Should().NotThrow();
+        Assert.Null(ex);
     }
 
     // ── InsertRow ─────────────────────────────────────────────────────
@@ -90,7 +85,7 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             long newCount = reader.GetRealRowCount(tableName);
-            newCount.Should().Be(originalCount + 1);
+            Assert.Equal(originalCount + 1, newCount);
         }
     }
 
@@ -108,9 +103,7 @@ public sealed class AccessWriterTests : IDisposable
             tableName = reader.ListTables()[0];
         }
 
-        Action act = () => writer.InsertRow(tableName, null!);
-
-        act.Should().Throw<ArgumentNullException>();
+        Assert.Throws<ArgumentNullException>(() => writer.InsertRow(tableName, null!));
     }
 
     [Theory]
@@ -137,11 +130,11 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             DataTable dt = reader.ReadTable(tableName)!;
-            dt.Rows.Count.Should().BeGreaterThan(0);
+            Assert.True(dt.Rows.Count > 0);
 
             // The last row should contain our inserted data
             DataRow lastRow = dt.Rows[dt.Rows.Count - 1];
-            lastRow.Should().NotBeNull();
+            Assert.NotNull(lastRow);
         }
     }
 
@@ -166,7 +159,7 @@ public sealed class AccessWriterTests : IDisposable
         using var writer = AccessWriter.Open(temp);
         int inserted = writer.InsertRows(tableName, rows);
 
-        inserted.Should().Be(5);
+        Assert.Equal(5, inserted);
     }
 
     [Theory]
@@ -195,7 +188,7 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             long newCount = reader.GetRealRowCount(tableName);
-            newCount.Should().Be(originalCount + 3);
+            Assert.Equal(originalCount + 3, newCount);
         }
     }
 
@@ -241,7 +234,7 @@ public sealed class AccessWriterTests : IDisposable
 
         int updated = writer.UpdateRows(tableName, predicateCol, predicateVal, updates);
 
-        updated.Should().BeGreaterThan(0);
+        Assert.True(updated > 0);
     }
 
     [Theory]
@@ -290,7 +283,7 @@ public sealed class AccessWriterTests : IDisposable
             DataTable dt = reader.ReadTable(tableName)!;
             bool found = dt.AsEnumerable().Any(row =>
                 row[targetCol] is string s && s == sentinel);
-            found.Should().BeTrue("the updated sentinel value should be readable");
+            Assert.True(found);
         }
     }
 
@@ -338,7 +331,7 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             long newCount = reader.GetRealRowCount(tableName);
-            newCount.Should().Be(originalCount);
+            Assert.Equal(originalCount, newCount);
         }
     }
 
@@ -376,12 +369,12 @@ public sealed class AccessWriterTests : IDisposable
             deleted = writer.DeleteRows(tableName, predicateCol, predicateVal);
         }
 
-        deleted.Should().BeGreaterThan(0);
+        Assert.True(deleted > 0);
 
         using (var reader = AccessReader.Open(temp))
         {
             long newCount = reader.GetRealRowCount(tableName);
-            newCount.Should().Be(originalCount - deleted);
+            Assert.Equal(originalCount - deleted, newCount);
         }
     }
 
@@ -402,7 +395,7 @@ public sealed class AccessWriterTests : IDisposable
         // Use a value that won't exist in any table
         int deleted = writer.DeleteRows(tableName, "NONEXISTENT_COLUMN_XYZ", "IMPOSSIBLE_VALUE_12345");
 
-        deleted.Should().Be(0);
+        Assert.Equal(0, deleted);
     }
 
     [Theory]
@@ -447,7 +440,7 @@ public sealed class AccessWriterTests : IDisposable
 
                 return val.Equals(predicateVal);
             });
-            stillPresent.Should().BeFalse("deleted rows should no longer appear");
+            Assert.False(stillPresent);
         }
     }
 
@@ -475,7 +468,7 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             var tables = reader.ListTables();
-            tables.Should().Contain(newTableName);
+            Assert.Contains(newTableName, tables);
         }
     }
 
@@ -501,7 +494,7 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             var meta = reader.GetColumnMetadata(newTableName);
-            meta.Should().HaveCount(3);
+            Assert.Equal(3, meta.Count);
         }
     }
 
@@ -526,7 +519,7 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             long count = reader.GetRealRowCount(newTableName);
-            count.Should().Be(0);
+            Assert.Equal(0, count);
         }
     }
 
@@ -553,10 +546,10 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             long count = reader.GetRealRowCount(newTableName);
-            count.Should().Be(2);
+            Assert.Equal(2, count);
 
             DataTable dt = reader.ReadTable(newTableName)!;
-            dt.Rows.Count.Should().Be(2);
+            Assert.Equal(2, dt.Rows.Count);
         }
     }
 
@@ -583,7 +576,7 @@ public sealed class AccessWriterTests : IDisposable
         // Verify it exists
         using (var reader = AccessReader.Open(temp))
         {
-            reader.ListTables().Should().Contain(newTableName);
+            Assert.Contains(newTableName, reader.ListTables());
         }
 
         // Drop it
@@ -595,7 +588,7 @@ public sealed class AccessWriterTests : IDisposable
         // Verify it's gone
         using (var reader = AccessReader.Open(temp))
         {
-            reader.ListTables().Should().NotContain(newTableName);
+            Assert.DoesNotContain(newTableName, reader.ListTables());
         }
     }
 
@@ -630,7 +623,7 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             var tables = reader.ListTables();
-            tables.Should().BeEquivalentTo(originalTables);
+            Assert.Equivalent(originalTables, tables);
         }
     }
 
@@ -644,9 +637,7 @@ public sealed class AccessWriterTests : IDisposable
         var writer = AccessWriter.Open(temp);
         writer.Dispose();
 
-        Action act = () => writer.InsertRow("AnyTable", new object[] { 1 });
-
-        act.Should().Throw<ObjectDisposedException>();
+        Assert.Throws<ObjectDisposedException>(() => writer.InsertRow("AnyTable", new object[] { 1 }));
     }
 
     [Theory]
@@ -656,9 +647,8 @@ public sealed class AccessWriterTests : IDisposable
         string temp = CopyToTemp(path);
 
         using var writer = AccessWriter.Open(temp);
-        Action act = () => writer.CreateTable(null!, new List<ColumnDefinition>());
 
-        act.Should().Throw<ArgumentException>();
+        Assert.Throws<ArgumentException>(() => writer.CreateTable(null!, new List<ColumnDefinition>()));
     }
 
     [Theory]
@@ -668,9 +658,8 @@ public sealed class AccessWriterTests : IDisposable
         string temp = CopyToTemp(path);
 
         using var writer = AccessWriter.Open(temp);
-        Action act = () => writer.CreateTable("Test", null!);
 
-        act.Should().Throw<ArgumentNullException>();
+        Assert.Throws<ArgumentNullException>(() => writer.CreateTable("Test", null!));
     }
 
     [Theory]
@@ -680,9 +669,8 @@ public sealed class AccessWriterTests : IDisposable
         string temp = CopyToTemp(path);
 
         using var writer = AccessWriter.Open(temp);
-        Action act = () => writer.DeleteRows(null!, "Col", "Val");
 
-        act.Should().Throw<ArgumentException>();
+        Assert.Throws<ArgumentException>(() => writer.DeleteRows(null!, "Col", "Val"));
     }
 
     // ── Roundtrip: multiple data types ────────────────────────────────
@@ -712,13 +700,13 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             var meta = reader.GetColumnMetadata(newTableName);
-            meta.Should().HaveCount(6);
-            meta[0].ClrType.Should().Be<int>();
-            meta[1].ClrType.Should().Be<string>();
-            meta[2].ClrType.Should().Be<DateTime>();
-            meta[3].ClrType.Should().Be<double>();
-            meta[4].ClrType.Should().Be<bool>();
-            meta[5].ClrType.Should().Be<decimal>();
+            Assert.Equal(6, meta.Count);
+            Assert.Equal(typeof(int), meta[0].ClrType);
+            Assert.Equal(typeof(string), meta[1].ClrType);
+            Assert.Equal(typeof(DateTime), meta[2].ClrType);
+            Assert.Equal(typeof(double), meta[3].ClrType);
+            Assert.Equal(typeof(bool), meta[4].ClrType);
+            Assert.Equal(typeof(decimal), meta[5].ClrType);
         }
     }
 
@@ -749,14 +737,14 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             DataTable dt = reader.ReadTable(newTableName)!;
-            dt.Rows.Count.Should().Be(1);
+            Assert.Equal(1, dt.Rows.Count);
 
             DataRow row = dt.Rows[0];
-            Convert.ToInt32(row["IntCol"], System.Globalization.CultureInfo.InvariantCulture).Should().Be(42);
-            row["TextCol"].Should().Be("Test Value");
-            Convert.ToDateTime(row["DateCol"], System.Globalization.CultureInfo.InvariantCulture).Should().Be(date);
-            Convert.ToDouble(row["DoubleCol"], System.Globalization.CultureInfo.InvariantCulture).Should().BeApproximately(3.14, 0.001);
-            Convert.ToBoolean(row["BoolCol"], System.Globalization.CultureInfo.InvariantCulture).Should().BeTrue();
+            Assert.Equal(42, Convert.ToInt32(row["IntCol"], System.Globalization.CultureInfo.InvariantCulture));
+            Assert.Equal("Test Value", row["TextCol"]);
+            Assert.Equal(date, Convert.ToDateTime(row["DateCol"], System.Globalization.CultureInfo.InvariantCulture));
+            Assert.Equal(3.14, Convert.ToDouble(row["DoubleCol"], System.Globalization.CultureInfo.InvariantCulture), 3);
+            Assert.True(Convert.ToBoolean(row["BoolCol"], System.Globalization.CultureInfo.InvariantCulture));
         }
     }
 
@@ -791,7 +779,7 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             long count = reader.GetRealRowCount(tableName);
-            count.Should().Be(1);
+            Assert.Equal(1, count);
         }
     }
 
@@ -817,9 +805,9 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             List<WriterPoco> items = reader.ReadTable<WriterPoco>(tableName, 100);
-            items.Should().ContainSingle();
-            items[0].Id.Should().Be(42);
-            items[0].Label.Should().Be("Roundtrip");
+            Assert.Single(items);
+            Assert.Equal(42, items[0].Id);
+            Assert.Equal("Roundtrip", items[0].Label);
         }
     }
 
@@ -836,9 +824,8 @@ public sealed class AccessWriterTests : IDisposable
         }
 
         using var writer = AccessWriter.Open(temp);
-        Action act = () => writer.InsertRow<WriterPoco>(tableName, null!);
 
-        act.Should().Throw<ArgumentNullException>();
+        Assert.Throws<ArgumentNullException>(() => writer.InsertRow<WriterPoco>(tableName, null!));
     }
 
     // ── InsertRows<T> (generic bulk) ──────────────────────────────────
@@ -862,7 +849,7 @@ public sealed class AccessWriterTests : IDisposable
         writer.CreateTable(tableName, columns);
         int inserted = writer.InsertRows(tableName, items);
 
-        inserted.Should().Be(5);
+        Assert.Equal(5, inserted);
     }
 
     [Theory]
@@ -889,7 +876,7 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             long count = reader.GetRealRowCount(tableName);
-            count.Should().Be(3);
+            Assert.Equal(3, count);
         }
     }
 
@@ -921,9 +908,9 @@ public sealed class AccessWriterTests : IDisposable
         using (var reader = AccessReader.Open(temp))
         {
             List<WriterPoco> readBack = reader.ReadTable<WriterPoco>(tableName, 100);
-            readBack.Should().HaveCount(2);
-            readBack.Should().Contain(p => p.Id == 10 && p.Label == "Alpha");
-            readBack.Should().Contain(p => p.Id == 20 && p.Label == "Beta");
+            Assert.Equal(2, readBack.Count);
+            Assert.Contains(readBack, p => p.Id == 10 && p.Label == "Alpha");
+            Assert.Contains(readBack, p => p.Id == 20 && p.Label == "Beta");
         }
     }
 

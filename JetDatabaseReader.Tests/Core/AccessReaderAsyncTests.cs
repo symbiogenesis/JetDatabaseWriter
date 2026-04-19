@@ -3,7 +3,6 @@ namespace JetDatabaseReader.Tests;
 using System.Collections.Generic;
 using System.Data;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
@@ -25,7 +24,8 @@ public class AccessReaderAsyncTests
 
         List<string> tables = await reader.ListTablesAsync();
 
-        _ = tables.Should().NotBeNullOrEmpty();
+        Assert.NotNull(tables);
+        Assert.NotEmpty(tables);
     }
 
     [Theory]
@@ -39,7 +39,7 @@ public class AccessReaderAsyncTests
 #pragma warning restore CA1849
         List<string> async_ = await reader.ListTablesAsync();
 
-        _ = async_.Should().BeEquivalentTo(sync);
+        Assert.Equivalent(sync, async_);
     }
 
     // ── ReadTableAsync ────────────────────────────────────────────────
@@ -53,7 +53,7 @@ public class AccessReaderAsyncTests
 
         DataTable dt = (await reader.ReadTableAsync(table))!;
 
-        _ = dt.Should().NotBeNull();
+        Assert.NotNull(dt);
     }
 
     [Theory]
@@ -68,7 +68,7 @@ public class AccessReaderAsyncTests
 
         for (int i = 0; i < meta.Count; i++)
         {
-            _ = dt.Columns[i].DataType.Should().Be(meta[i].ClrType);
+            Assert.Equal(meta[i].ClrType, dt.Columns[i].DataType);
         }
     }
 
@@ -84,7 +84,7 @@ public class AccessReaderAsyncTests
 #pragma warning restore CA1849
         DataTable asyncDt = (await reader.ReadTableAsync(table))!;
 
-        _ = asyncDt.Rows.Count.Should().Be(syncDt.Rows.Count);
+        Assert.Equal(syncDt.Rows.Count, asyncDt.Rows.Count);
     }
 
     // ── GetStatisticsAsync ────────────────────────────────────────────
@@ -100,9 +100,9 @@ public class AccessReaderAsyncTests
 #pragma warning restore CA1849
         DatabaseStatistics async_ = await reader.GetStatisticsAsync();
 
-        _ = async_.TotalPages.Should().Be(sync.TotalPages);
-        _ = async_.TableCount.Should().Be(sync.TableCount);
-        _ = async_.Version.Should().Be(sync.Version);
+        Assert.Equal(sync.TotalPages, async_.TotalPages);
+        Assert.Equal(sync.TableCount, async_.TableCount);
+        Assert.Equal(sync.Version, async_.Version);
     }
 
     // ── ReadAllTablesAsync ────────────────────────────────────────────
@@ -116,7 +116,7 @@ public class AccessReaderAsyncTests
 
         Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync();
 
-        _ = all.Keys.Should().BeEquivalentTo(expected);
+        Assert.Equivalent(expected, all.Keys);
     }
 
     [Theory]
@@ -132,9 +132,7 @@ public class AccessReaderAsyncTests
 
         foreach (string name in sync.Keys)
         {
-            _ = async_[name].Rows.Count.Should().Be(
-                sync[name].Rows.Count,
-                because: $"table '{name}' row count should match");
+            Assert.Equal(sync[name].Rows.Count, async_[name].Rows.Count);
         }
     }
 
@@ -151,7 +149,7 @@ public class AccessReaderAsyncTests
         foreach (var (_, dt) in all)
             foreach (DataColumn col in dt.Columns)
             {
-                _ = col.DataType.Should().Be<string>();
+                Assert.Equal(typeof(string), col.DataType);
             }
     }
 
@@ -166,7 +164,7 @@ public class AccessReaderAsyncTests
 
         foreach (string name in typed.Keys)
         {
-            _ = strings[name].Rows.Count.Should().Be(typed[name].Rows.Count);
+            Assert.Equal(typed[name].Rows.Count, strings[name].Rows.Count);
         }
     }
 
@@ -191,7 +189,7 @@ public class AccessReaderAsyncTests
 #pragma warning restore CA1849
         List<AsyncGenericRow> async_ = await reader.ReadTableAsync<AsyncGenericRow>(table, 100);
 
-        _ = async_.Should().HaveCount(sync.Count);
+        Assert.Equal(sync.Count, async_.Count);
     }
 
     [Theory]
@@ -203,7 +201,7 @@ public class AccessReaderAsyncTests
 
         List<AsyncGenericRow> items = await reader.ReadTableAsync<AsyncGenericRow>(table, 10);
 
-        _ = items.Should().AllSatisfy(item => item.Should().NotBeNull());
+        Assert.All(items, item => Assert.NotNull(item));
     }
 
     [Theory]
@@ -216,6 +214,6 @@ public class AccessReaderAsyncTests
         TableResult nonGeneric = await reader.ReadTableAsync(table, 100);
         List<AsyncGenericRow> generic = await reader.ReadTableAsync<AsyncGenericRow>(table, 100);
 
-        _ = generic.Should().HaveCount(nonGeneric.Rows.Count);
+        Assert.Equal(nonGeneric.Rows.Count, generic.Count);
     }
 }

@@ -2,7 +2,7 @@ namespace JetDatabaseReader.Tests;
 
 using System;
 using System.Collections.Generic;
-using FluentAssertions;
+using System.Linq;
 using Xunit;
 
 /// <summary>
@@ -11,6 +11,9 @@ using Xunit;
 /// </summary>
 public class AccessReaderCoreTests
 {
+    private static readonly int[] ValidPageSizes = [2048, 4096];
+    private static readonly string[] ValidVersions = ["Jet3", "Jet4/ACE"];
+
     // ── ListTables ────────────────────────────────────────────────────
 
     [Theory]
@@ -21,7 +24,8 @@ public class AccessReaderCoreTests
 
         List<string> tables = reader.ListTables();
 
-        _ = tables.Should().NotBeNullOrEmpty();
+        Assert.NotNull(tables);
+        Assert.NotEmpty(tables);
     }
 
     [Theory]
@@ -32,7 +36,7 @@ public class AccessReaderCoreTests
 
         List<string> tables = reader.ListTables();
 
-        _ = tables.Should().AllSatisfy(name => name.Should().NotBeNullOrWhiteSpace());
+        Assert.All(tables, name => Assert.False(string.IsNullOrWhiteSpace(name)));
     }
 
     [Theory]
@@ -43,7 +47,7 @@ public class AccessReaderCoreTests
 
         List<string> tables = reader.ListTables();
 
-        _ = tables.Should().OnlyHaveUniqueItems();
+        Assert.Equal(tables.Count, tables.Distinct().Count());
     }
 
     // ── GetTableStats ─────────────────────────────────────────────────
@@ -57,7 +61,7 @@ public class AccessReaderCoreTests
         var stats = reader.GetTableStats();
         var tables = reader.ListTables();
 
-        _ = stats.Should().HaveCount(tables.Count);
+        Assert.Equal(tables.Count, stats.Count);
     }
 
     [Theory]
@@ -68,10 +72,10 @@ public class AccessReaderCoreTests
 
         var stats = reader.GetTableStats();
 
-        _ = stats.Should().AllSatisfy(s =>
+        Assert.All(stats, s =>
         {
-            _ = s.RowCount.Should().BeGreaterThanOrEqualTo(0);
-            _ = s.ColumnCount.Should().BeGreaterThan(0);
+            Assert.True(s.RowCount >= 0);
+            Assert.True(s.ColumnCount > 0);
         });
     }
 
@@ -85,9 +89,9 @@ public class AccessReaderCoreTests
 
         var dt = reader.GetTablesAsDataTable();
 
-        _ = dt.Columns["TableName"]!.DataType.Should().Be<string>();
-        _ = dt.Columns["RowCount"]!.DataType.Should().Be<long>();
-        _ = dt.Columns["ColumnCount"]!.DataType.Should().Be<int>();
+        Assert.Equal(typeof(string), dt.Columns["TableName"]!.DataType);
+        Assert.Equal(typeof(long), dt.Columns["RowCount"]!.DataType);
+        Assert.Equal(typeof(int), dt.Columns["ColumnCount"]!.DataType);
     }
 
     [Theory]
@@ -99,7 +103,7 @@ public class AccessReaderCoreTests
         var dt = reader.GetTablesAsDataTable();
         var tables = reader.ListTables();
 
-        _ = dt.Rows.Count.Should().Be(tables.Count);
+        Assert.Equal(tables.Count, dt.Rows.Count);
     }
 
     // ── GetStatistics ─────────────────────────────────────────────────
@@ -112,9 +116,9 @@ public class AccessReaderCoreTests
 
         DatabaseStatistics stats = reader.GetStatistics();
 
-        _ = stats.TotalPages.Should().BeGreaterThan(0);
-        _ = stats.DatabaseSizeBytes.Should().Be(stats.TotalPages * stats.PageSize);
-        _ = stats.PageSize.Should().BeOneOf(2048, 4096);
+        Assert.True(stats.TotalPages > 0);
+        Assert.Equal(stats.TotalPages * stats.PageSize, stats.DatabaseSizeBytes);
+        Assert.Contains(stats.PageSize, ValidPageSizes);
     }
 
     [Theory]
@@ -125,7 +129,7 @@ public class AccessReaderCoreTests
 
         DatabaseStatistics stats = reader.GetStatistics();
 
-        _ = stats.Version.Should().BeOneOf("Jet3", "Jet4/ACE");
+        Assert.Contains(stats.Version, ValidVersions);
     }
 
     [Theory]
@@ -137,7 +141,7 @@ public class AccessReaderCoreTests
         DatabaseStatistics stats = reader.GetStatistics();
         int tableCount = reader.ListTables().Count;
 
-        _ = stats.TableCount.Should().Be(tableCount);
+        Assert.Equal(tableCount, stats.TableCount);
     }
 
     [Theory]
@@ -148,7 +152,7 @@ public class AccessReaderCoreTests
 
         DatabaseStatistics stats = reader.GetStatistics();
 
-        _ = stats.TotalRows.Should().BeGreaterThanOrEqualTo(0);
+        Assert.True(stats.TotalRows >= 0);
     }
 
     // ── GetColumnMetadata ─────────────────────────────────────────────
@@ -162,7 +166,7 @@ public class AccessReaderCoreTests
         foreach (string table in reader.ListTables())
         {
             List<ColumnMetadata> meta = reader.GetColumnMetadata(table);
-            _ = meta.Should().NotBeEmpty(because: $"table '{table}' should have columns");
+            Assert.NotEmpty(meta);
         }
     }
 
@@ -177,7 +181,7 @@ public class AccessReaderCoreTests
 
         for (int i = 0; i < meta.Count; i++)
         {
-            _ = meta[i].Ordinal.Should().Be(i);
+            Assert.Equal(i, meta[i].Ordinal);
         }
     }
 
@@ -190,7 +194,7 @@ public class AccessReaderCoreTests
 
         List<ColumnMetadata> meta = reader.GetColumnMetadata(table);
 
-        _ = meta.Should().AllSatisfy(m => m.ClrType.Should().NotBeNull());
+        Assert.All(meta, m => Assert.NotNull(m.ClrType));
     }
 
     // ── GetRealRowCount ───────────────────────────────────────────────
@@ -204,7 +208,7 @@ public class AccessReaderCoreTests
 
         long count = reader.GetRealRowCount(table);
 
-        _ = count.Should().BeGreaterThanOrEqualTo(0);
+        Assert.True(count >= 0);
     }
 
     [Theory]
@@ -218,8 +222,8 @@ public class AccessReaderCoreTests
         long tdef = reader.GetTableStats().Find(s => s.Name == table)!.RowCount;
 
         // Real row count may differ from TDEF after deletes — both must be >= 0
-        _ = real.Should().BeGreaterThanOrEqualTo(0);
-        _ = tdef.Should().BeGreaterThanOrEqualTo(0);
+        Assert.True(real >= 0);
+        Assert.True(tdef >= 0);
     }
 
     // ── ReadFirstTable ────────────────────────────────────────────────
@@ -232,9 +236,9 @@ public class AccessReaderCoreTests
 
         FirstTableResult result = reader.ReadFirstTable();
 
-        _ = result.Headers.Should().NotBeEmpty();
-        _ = result.TableName.Should().NotBeNullOrWhiteSpace();
-        _ = result.TableCount.Should().BeGreaterThan(0);
+        Assert.NotEmpty(result.Headers);
+        Assert.False(string.IsNullOrWhiteSpace(result.TableName));
+        Assert.True(result.TableCount > 0);
     }
 
     // ── ReadTable (preview overload) ──────────────────────────────────
@@ -248,10 +252,10 @@ public class AccessReaderCoreTests
 
         TableResult preview = reader.ReadTable(table, maxRows: 10);
 
-        _ = preview.Headers.Should().HaveCount(preview.Schema.Count);
+        Assert.Equal(preview.Schema.Count, preview.Headers.Count);
         for (int i = 0; i < preview.Headers.Count; i++)
         {
-            _ = preview.Headers[i].Should().Be(preview.Schema[i].Name);
+            Assert.Equal(preview.Schema[i].Name, preview.Headers[i]);
         }
     }
 
@@ -265,7 +269,7 @@ public class AccessReaderCoreTests
 
         TableResult preview = reader.ReadTable(table, maxRows: max);
 
-        _ = preview.Rows.Should().HaveCountLessThanOrEqualTo(max);
+        Assert.True(preview.Rows.Count <= max);
     }
 
     [Theory]
@@ -279,7 +283,7 @@ public class AccessReaderCoreTests
 
         foreach (var row in preview.Rows)
         {
-            _ = row.Should().HaveCount(preview.Headers.Count);
+            Assert.Equal(preview.Headers.Count, row.Length);
         }
     }
 
@@ -295,8 +299,8 @@ public class AccessReaderCoreTests
 
         var reader = TestDatabases.Open(TestDatabases.AdventureWorks);
         reader.Dispose();
-        Action second = () => reader.Dispose();
-        _ = second.Should().NotThrow();
+        var ex = Record.Exception(() => reader.Dispose());
+        Assert.Null(ex);
     }
 
     [Fact]
@@ -309,22 +313,20 @@ public class AccessReaderCoreTests
 
         var reader = TestDatabases.Open(TestDatabases.AdventureWorks);
         reader.Dispose();
-        Action act = () => reader.ListTables();
-        _ = act.Should().Throw<ObjectDisposedException>();
+        Assert.Throws<ObjectDisposedException>(() => reader.ListTables());
     }
 
     [Fact]
     public void Open_WhenFileNotFound_ThrowsFileNotFoundException()
     {
-        Action act = () => AccessReader.Open(@"C:\no\such\file.mdb");
-        _ = act.Should().Throw<System.IO.FileNotFoundException>();
+        Assert.Throws<System.IO.FileNotFoundException>(() => AccessReader.Open(@"C:\no\such\file.mdb"));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.AllExisting), MemberType = typeof(TestDatabases))]
     public void Open_WhenFileExists_IsNotPasswordProtected(string path)
     {
-        Action act = () => { using var r = TestDatabases.Open(path); };
-        _ = act.Should().NotThrow<NotSupportedException>();
+        var ex = Record.Exception(() => { using var r = TestDatabases.Open(path); });
+        Assert.Null(ex);
     }
 }
