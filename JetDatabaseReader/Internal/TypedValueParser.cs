@@ -1,126 +1,125 @@
-namespace JetDatabaseReader
+namespace JetDatabaseReader;
+
+using System;
+using System.Globalization;
+
+/// <summary>
+/// Helper class for parsing string values into proper CLR types.
+/// </summary>
+internal static class TypedValueParser
 {
-    using System;
-    using System.Globalization;
-
-    /// <summary>
-    /// Helper class for parsing string values into proper CLR types.
-    /// </summary>
-    internal static class TypedValueParser
-    {
 #pragma warning disable CA1031 // Catch a more specific exception type
-        public static object ParseValue(string value, Type targetType)
+    public static object ParseValue(string value, Type targetType)
+    {
+        if (string.IsNullOrEmpty(value))
         {
-            if (string.IsNullOrEmpty(value))
+            return DBNull.Value;
+        }
+
+        try
+        {
+            if (targetType == typeof(string))
             {
-                return DBNull.Value;
-            }
-
-            try
-            {
-                if (targetType == typeof(string))
-                {
-                    return value;
-                }
-
-                if (targetType == typeof(bool))
-                {
-                    return ParseBoolean(value);
-                }
-
-                if (targetType == typeof(byte))
-                {
-                    return byte.Parse(value, CultureInfo.InvariantCulture);
-                }
-
-                if (targetType == typeof(short))
-                {
-                    return short.Parse(value, CultureInfo.InvariantCulture);
-                }
-
-                if (targetType == typeof(int))
-                {
-                    return int.Parse(value, CultureInfo.InvariantCulture);
-                }
-
-                if (targetType == typeof(long))
-                {
-                    return long.Parse(value, CultureInfo.InvariantCulture);
-                }
-
-                if (targetType == typeof(float))
-                {
-                    return float.Parse(value, CultureInfo.InvariantCulture);
-                }
-
-                if (targetType == typeof(double))
-                {
-                    return double.Parse(value, CultureInfo.InvariantCulture);
-                }
-
-                if (targetType == typeof(decimal))
-                {
-                    return decimal.Parse(value, CultureInfo.InvariantCulture);
-                }
-
-                if (targetType == typeof(DateTime))
-                {
-                    return DateTime.Parse(value, CultureInfo.InvariantCulture);
-                }
-
-                if (targetType == typeof(Guid))
-                {
-                    return Guid.Parse(value);
-                }
-
-                if (targetType == typeof(byte[]))
-                {
-                    return ParseByteArray(value);
-                }
-
                 return value;
             }
-            catch
+
+            if (targetType == typeof(bool))
             {
-                return DBNull.Value;
+                return ParseBoolean(value);
             }
+
+            if (targetType == typeof(byte))
+            {
+                return byte.Parse(value, CultureInfo.InvariantCulture);
+            }
+
+            if (targetType == typeof(short))
+            {
+                return short.Parse(value, CultureInfo.InvariantCulture);
+            }
+
+            if (targetType == typeof(int))
+            {
+                return int.Parse(value, CultureInfo.InvariantCulture);
+            }
+
+            if (targetType == typeof(long))
+            {
+                return long.Parse(value, CultureInfo.InvariantCulture);
+            }
+
+            if (targetType == typeof(float))
+            {
+                return float.Parse(value, CultureInfo.InvariantCulture);
+            }
+
+            if (targetType == typeof(double))
+            {
+                return double.Parse(value, CultureInfo.InvariantCulture);
+            }
+
+            if (targetType == typeof(decimal))
+            {
+                return decimal.Parse(value, CultureInfo.InvariantCulture);
+            }
+
+            if (targetType == typeof(DateTime))
+            {
+                return DateTime.Parse(value, CultureInfo.InvariantCulture);
+            }
+
+            if (targetType == typeof(Guid))
+            {
+                return Guid.Parse(value);
+            }
+
+            if (targetType == typeof(byte[]))
+            {
+                return ParseByteArray(value);
+            }
+
+            return value;
         }
+        catch
+        {
+            return DBNull.Value;
+        }
+    }
 #pragma warning restore CA1031
 
-        private static bool ParseBoolean(string value)
+    private static bool ParseBoolean(string value)
+    {
+        if (string.Equals(value, "True", StringComparison.OrdinalIgnoreCase) ||
+            value == "1" || value == "-1")
         {
-            if (string.Equals(value, "True", StringComparison.OrdinalIgnoreCase) ||
-                value == "1" || value == "-1")
-            {
-                return true;
-            }
-
-            if (string.Equals(value, "False", StringComparison.OrdinalIgnoreCase) ||
-                value == "0")
-            {
-                return false;
-            }
-
-            return bool.Parse(value);
+            return true;
         }
 
-        private static byte[] ParseByteArray(string hexString)
+        if (string.Equals(value, "False", StringComparison.OrdinalIgnoreCase) ||
+            value == "0")
         {
-            // Format: "XX-XX-XX-XX" from BitConverter.ToString
-            if (string.IsNullOrEmpty(hexString))
-            {
-                return Array.Empty<byte>();
-            }
-
-            string[] parts = hexString.Split('-');
-            byte[] result = new byte[parts.Length];
-
-            for (int i = 0; i < parts.Length; i++)
-            {
-                result[i] = Convert.ToByte(parts[i], 16);
-            }
-
-            return result;
+            return false;
         }
+
+        return bool.Parse(value);
+    }
+
+    private static byte[] ParseByteArray(string hexString)
+    {
+        // Format: "XX-XX-XX-XX" from BitConverter.ToString
+        if (string.IsNullOrEmpty(hexString))
+        {
+            return Array.Empty<byte>();
+        }
+
+        string[] parts = hexString.Split('-');
+        byte[] result = new byte[parts.Length];
+
+        for (int i = 0; i < parts.Length; i++)
+        {
+            result[i] = Convert.ToByte(parts[i], 16);
+        }
+
+        return result;
     }
 }

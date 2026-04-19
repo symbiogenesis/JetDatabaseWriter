@@ -1,52 +1,51 @@
-namespace JetDatabaseReader
+namespace JetDatabaseReader;
+
+using System;
+
+/// <summary>
+/// Helper methods for input validation and guard clauses.
+/// </summary>
+internal static class Guard
 {
-    using System;
-
-    /// <summary>
-    /// Helper methods for input validation and guard clauses.
-    /// </summary>
-    internal static class Guard
+    public static void NotNull(object value, string paramName)
     {
-        public static void NotNull(object value, string paramName)
+        if (value == null)
         {
-            if (value == null)
-            {
-                throw new ArgumentNullException(paramName);
-            }
+            throw new ArgumentNullException(paramName);
         }
+    }
 
-        public static void NotNullOrEmpty(string value, string paramName)
+    public static void NotNullOrEmpty(string value, string paramName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
         {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                throw new ArgumentException("Value cannot be null or empty", paramName);
-            }
+            throw new ArgumentException("Value cannot be null or empty", paramName);
         }
+    }
 
-        public static void InRange(int value, int min, int max, string paramName)
+    public static void InRange(int value, int min, int max, string paramName)
+    {
+        if (value < min || value > max)
         {
-            if (value < min || value > max)
-            {
-                throw new ArgumentOutOfRangeException(
-                    paramName,
-                    $"Value must be between {min} and {max}");
-            }
+            throw new ArgumentOutOfRangeException(
+                paramName,
+                $"Value must be between {min} and {max}");
         }
+    }
 
-        public static void Positive(int value, string paramName)
+    public static void Positive(int value, string paramName)
+    {
+        if (value <= 0)
         {
-            if (value <= 0)
-            {
-                throw new ArgumentOutOfRangeException(paramName, "Value must be positive");
-            }
+            throw new ArgumentOutOfRangeException(paramName, "Value must be positive");
         }
+    }
 
-        public static void NotDisposed(bool disposed, string objectName)
+    public static void NotDisposed(bool disposed, string objectName)
+    {
+        if (disposed)
         {
-            if (disposed)
-            {
-                throw new ObjectDisposedException(objectName);
-            }
+            throw new ObjectDisposedException(objectName);
         }
     }
 }

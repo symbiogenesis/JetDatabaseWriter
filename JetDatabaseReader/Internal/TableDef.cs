@@ -1,13 +1,12 @@
-namespace JetDatabaseReader
+namespace JetDatabaseReader;
+
+using System.Collections.Generic;
+
+internal sealed class TableDef
 {
-    using System.Collections.Generic;
+    public List<ColumnInfo> Columns { get; set; } = new List<ColumnInfo>();
 
-    internal sealed class TableDef
-    {
-        public List<ColumnInfo> Columns { get; set; } = new List<ColumnInfo>();
+    public long RowCount { get; set; } // num_rows from TDEF page offset 16
 
-        public long RowCount { get; set; } // num_rows from TDEF page offset 16
-
-        public bool HasDeletedColumns { get; set; } // true if ColNum sequence has gaps
-    }
+    public bool HasDeletedColumns { get; set; } // true if ColNum sequence has gaps
 }

@@ -1,115 +1,114 @@
-namespace JetDatabaseReader
+namespace JetDatabaseReader;
+
+using System.Collections.Generic;
+using System.Linq;
+
+/// <summary>
+/// Thread-safe LRU (Least Recently Used) cache implementation.
+/// Evicts the oldest entry when capacity is reached.
+/// </summary>
+/// <typeparam name="TKey">The type of keys in the cache.</typeparam>
+/// <typeparam name="TValue">The type of values in the cache.</typeparam>
+internal sealed class LruCache<TKey, TValue>
 {
-    using System.Collections.Generic;
-    using System.Linq;
+    private readonly int _capacity;
+    private readonly Dictionary<TKey, LinkedListNode<CacheItem>> _cache;
+    private readonly LinkedList<CacheItem> _lruList;
+    private readonly object _lock = new object();
 
-    /// <summary>
-    /// Thread-safe LRU (Least Recently Used) cache implementation.
-    /// Evicts the oldest entry when capacity is reached.
-    /// </summary>
-    /// <typeparam name="TKey">The type of keys in the cache.</typeparam>
-    /// <typeparam name="TValue">The type of values in the cache.</typeparam>
-    internal sealed class LruCache<TKey, TValue>
+    public LruCache(int capacity)
     {
-        private readonly int _capacity;
-        private readonly Dictionary<TKey, LinkedListNode<CacheItem>> _cache;
-        private readonly LinkedList<CacheItem> _lruList;
-        private readonly object _lock = new object();
+        _capacity = capacity;
+        _cache = new Dictionary<TKey, LinkedListNode<CacheItem>>(capacity);
+        _lruList = new LinkedList<CacheItem>();
+    }
 
-        public LruCache(int capacity)
-        {
-            _capacity = capacity;
-            _cache = new Dictionary<TKey, LinkedListNode<CacheItem>>(capacity);
-            _lruList = new LinkedList<CacheItem>();
-        }
-
-        public int Count
-        {
-            get
-            {
-                lock (_lock)
-                {
-                    return _cache.Count;
-                }
-            }
-        }
-
-        public bool TryGetValue(TKey key, out TValue value)
+    public int Count
+    {
+        get
         {
             lock (_lock)
             {
-                if (_cache.TryGetValue(key, out var node))
-                {
-                    // Move to front (most recently used)
-                    _lruList.Remove(node);
-                    _lruList.AddFirst(node);
-                    value = node.Value.Value;
-                    return true;
-                }
-
-                value = default;
-                return false;
+                return _cache.Count;
             }
         }
+    }
 
-        public void Add(TKey key, TValue value)
+    public bool TryGetValue(TKey key, out TValue value)
+    {
+        lock (_lock)
         {
-            lock (_lock)
+            if (_cache.TryGetValue(key, out var node))
             {
-                if (_cache.TryGetValue(key, out var existingNode))
-                {
-                    // Update existing entry
-                    _lruList.Remove(existingNode);
-                    _lruList.AddFirst(existingNode);
-                    existingNode.Value.Value = value;
-                    return;
-                }
-
-                // Evict LRU item if at capacity
-                if (_cache.Count >= _capacity)
-                {
-                    var last = _lruList.Last;
-                    _lruList.RemoveLast();
-                    _ = _cache.Remove(last.Value.Key);
-                }
-
-                // Add new item
-                var cacheItem = new CacheItem { Key = key, Value = value };
-                var node = new LinkedListNode<CacheItem>(cacheItem);
+                // Move to front (most recently used)
+                _lruList.Remove(node);
                 _lruList.AddFirst(node);
-                _cache[key] = node;
+                value = node.Value.Value;
+                return true;
             }
-        }
 
-        public void Clear()
+            value = default;
+            return false;
+        }
+    }
+
+    public void Add(TKey key, TValue value)
+    {
+        lock (_lock)
         {
-            lock (_lock)
+            if (_cache.TryGetValue(key, out var existingNode))
             {
-                _cache.Clear();
-                _lruList.Clear();
+                // Update existing entry
+                _lruList.Remove(existingNode);
+                _lruList.AddFirst(existingNode);
+                existingNode.Value.Value = value;
+                return;
             }
-        }
 
-        public bool Remove(TKey key)
-        {
-            lock (_lock)
+            // Evict LRU item if at capacity
+            if (_cache.Count >= _capacity)
             {
-                if (_cache.TryGetValue(key, out var node))
-                {
-                    _lruList.Remove(node);
-                    _ = _cache.Remove(key);
-                    return true;
-                }
-
-                return false;
+                var last = _lruList.Last;
+                _lruList.RemoveLast();
+                _ = _cache.Remove(last.Value.Key);
             }
-        }
 
-        private sealed class CacheItem
+            // Add new item
+            var cacheItem = new CacheItem { Key = key, Value = value };
+            var node = new LinkedListNode<CacheItem>(cacheItem);
+            _lruList.AddFirst(node);
+            _cache[key] = node;
+        }
+    }
+
+    public void Clear()
+    {
+        lock (_lock)
         {
-            public TKey Key { get; set; }
-
-            public TValue Value { get; set; }
+            _cache.Clear();
+            _lruList.Clear();
         }
+    }
+
+    public bool Remove(TKey key)
+    {
+        lock (_lock)
+        {
+            if (_cache.TryGetValue(key, out var node))
+            {
+                _lruList.Remove(node);
+                _ = _cache.Remove(key);
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    private sealed class CacheItem
+    {
+        public TKey Key { get; set; }
+
+        public TValue Value { get; set; }
     }
 }
