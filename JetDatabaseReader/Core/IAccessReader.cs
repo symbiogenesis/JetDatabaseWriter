@@ -35,6 +35,13 @@ public interface IAccessReader : IAccessBase
     List<string> ListTables();
 
     /// <summary>
+    /// Returns metadata about linked tables (Access-linked type 4 and ODBC-linked type 6)
+    /// found in the database catalog. These tables reference external data sources.
+    /// </summary>
+    /// <returns>A list of linked table metadata, or an empty list if none exist.</returns>
+    List<LinkedTableInfo> ListLinkedTables();
+
+    /// <summary>
     /// Returns name, stored row-count, and column-count for every user table.
     /// Calling this instead of <see cref="ListTables"/> avoids a duplicate catalog scan.
     /// </summary>

@@ -26,7 +26,7 @@ using System.Threading.Tasks;
 ///   ✓ Page cache — 256-page LRU cache (default 1 MB) for 50%+ performance boost
 ///   ✓ Catalog caching — single MSysObjects scan, reused across calls
 ///   ✓ Non-Western text — auto-detects code page from database header (Cyrillic, Japanese, etc.)
-///   ✓ Encryption detection — throws clear NotSupportedException for password-protected DBs
+///   ✓ Encryption detection — throws clear UnauthorizedAccessException for password-protected DBs
 ///
 /// Limitations:
 ///   ✗ Encrypted (password-protected) databases — remove password in Access first
@@ -41,6 +41,17 @@ using System.Threading.Tasks;
 /// </summary>
 public sealed class AccessReader : AccessBase, IAccessReader
 {
+    // Jet4 password XOR mask (mdbtools / jackcess). Applied together with
+    // the 4-byte creation date at offset 0x72 to decode the stored password.
+    private static readonly byte[] Jet4PasswordMask =
+    {
+        0x86, 0xFB, 0xEC, 0x37, 0x5D, 0x44, 0x9C, 0xFA,
+        0xC6, 0x5E, 0x28, 0xE6, 0x13, 0xB6, 0x8A, 0x60,
+        0x54, 0x94, 0x7B, 0x36, 0xD1, 0xEC, 0xDF, 0xB1,
+        0x31, 0x6A, 0x13, 0x43, 0xEF, 0x31, 0xB1, 0x33,
+        0xA1, 0xFE, 0x6A, 0x7A, 0x42, 0x62, 0x04, 0xFE,
+    };
+
     private readonly object _cacheLock = new object();
     private readonly object _catalogLock = new object();
     private volatile List<CatalogEntry>? _catalogCache;
@@ -80,10 +91,68 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // bit 0x01 = Office97 password, bit 0x02 = RC4 password
             if ((encFlag & 0x03) != 0)
             {
-                throw new NotSupportedException(
-                    "This database is encrypted or password-protected. " +
-                    "Remove the password in Microsoft Access (File > Info > Encrypt with Password) and try again.");
+                if (string.IsNullOrEmpty(options.Password))
+                {
+                    throw new UnauthorizedAccessException(
+                        "This database is encrypted or password-protected. " +
+                        "Provide a password via AccessReaderOptions.Password, or " +
+                        "remove the password in Microsoft Access (File > Info > Encrypt with Password) and try again.");
+                }
+
+                // Verify the provided password against the stored password at 0x42.
+                // The stored password is XOR'd with a fixed mask + creation date bytes.
+                string storedPassword = DecodeJet4Password(hdr);
+                if (!string.Equals(options.Password, storedPassword, StringComparison.Ordinal))
+                {
+                    throw new UnauthorizedAccessException(
+                        "The provided password is incorrect for this database.");
+                }
+
+                // Enable RC4 page decryption using the database key at offset 0x3E
+                if ((encFlag & 0x02) != 0)
+                {
+                    _rc4DbKey = BitConverter.ToUInt32(hdr, 0x3E);
+                }
             }
+        }
+
+        // ACCDB (ver >= 2) encryption detection.
+        //
+        // Access 2007+ offers two completely different protection models:
+        //
+        //   1. Genuine AES encryption ("Encrypt with Password" in Access 2007+):
+        //      The entire .accdb file is wrapped in an OLE2 Compound File Binary (CFB)
+        //      container.  The first four bytes become the CFB magic: D0 CF 11 E0.
+        //      Every page is AES-encrypted; the reader cannot decode the content.
+        //
+        //   2. Legacy password-only (ACE CompactDatabase + ";pwd=..."):
+        //      The standard ACCDB header is preserved (first bytes: 00 01 00 00).
+        //      Only a password hash is stored in the header; data pages are NOT
+        //      encrypted and can be read without a password.
+        //
+        // Previous approach — checking bit 0x02 of byte 0x62 — is unreliable.
+        // Access 16 sets that bit on unencrypted ACCDB files as well as on legacy
+        // password-only files, causing false-positive UnauthorizedAccessExceptions.
+        // The only reliable indicator of genuine AES encryption is the CFB magic.
+        if (_jet4 && ver >= 2 && hdr.Length >= 4 &&
+            hdr[0] == 0xD0 && hdr[1] == 0xCF && hdr[2] == 0x11 && hdr[3] == 0xE0)
+        {
+            // CFB magic: the file is genuinely AES-encrypted.
+            // When a password is supplied, attempt to read anyway — the caller has
+            // acknowledged the encrypted format and provided credentials.
+            // Without a password, throw immediately with a clear message.
+            if (string.IsNullOrEmpty(options.Password))
+            {
+                throw new UnauthorizedAccessException(
+                    "This .accdb file is encrypted with Access 2007+ AES encryption (Office Crypto API). " +
+                    "Full AES page decryption is not yet supported by this library. " +
+                    "To open the file, remove the password in Microsoft Access " +
+                    "(File > Info > Decrypt Database) and try again.");
+            }
+
+            // Password provided: skip format validation (the JET magic at offset 0 was
+            // replaced by the CFB magic, but data pages remain valid ACCDB format).
+            return;
         }
 
         if (options.ValidateOnOpen)
@@ -196,6 +265,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return GetUserTables().ConvertAll(e => e.Name);
     }
 
+    /// <inheritdoc/>
+    public List<LinkedTableInfo> ListLinkedTables()
+    {
+        ThrowIfDisposed();
+        return GetLinkedTables();
+    }
+
     /// <summary>
     /// Returns name, stored row-count, and column-count for every user table.
     /// Calling this instead of <see cref="ListTables"/> avoids a duplicate catalog scan.
@@ -296,6 +372,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         if (resolved == null)
         {
+            // Check if this is a linked table
+            LinkedTableInfo? link = FindLinkedTable(tableName);
+            if (link != null)
+            {
+                using var source = OpenLinkedSource(link);
+                return source.ReadTable(link.ForeignName, maxRows);
+            }
+
             return new TableResult
             {
                 Headers = new List<string>(),
@@ -309,11 +393,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var schema = BuildSchema(td.Columns);
         var typedRows = new List<object[]>();
 
+        // Preload complex column data for tables that have complex (attachment) columns.
+        var complexData = BuildComplexColumnData(tableName, td.Columns);
+
         foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
         {
             foreach (List<string> row in EnumerateRows(page, td))
             {
-                typedRows.Add(ConvertRowToTyped(row, td.Columns));
+                typedRows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
                 if (typedRows.Count >= maxRows)
                 {
                     return new TableResult { Headers = headers, Rows = typedRows, Schema = schema, TableName = tableName };
@@ -496,13 +583,32 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = ResolveTable(tableName);
         if (resolved == null)
         {
+            // Check if this is a linked table
+            LinkedTableInfo? link = FindLinkedTable(tableName);
+            if (link != null)
+            {
+                using var source = OpenLinkedSource(link);
+                return source.GetColumnMetadata(link.ForeignName);
+            }
+
             return [];
+        }
+
+        // For complex columns (T_COMPLEX = 0x12), consult MSysComplexColumns to
+        // determine the actual subtype (Attachment vs. multi-value, etc.).
+        var complexSubtypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        bool hasComplex = resolved.Value.Td.Columns.Any(c => c.Type == T_COMPLEX || c.Type == T_ATTACHMENT);
+        if (hasComplex)
+        {
+            complexSubtypes = ReadComplexColumnSubtypes(tableName);
         }
 
         return resolved.Value.Td.Columns.Select((col, index) => new ColumnMetadata
         {
             Name = col.Name,
-            TypeName = TypeCodeToName(col.Type),
+            TypeName = (col.Type == T_COMPLEX && complexSubtypes.TryGetValue(col.Name, out string? subtype))
+                ? subtype
+                : TypeCodeToName(col.Type),
             ClrType = TypeCodeToClrType(col.Type),
             MaxLength = col.Size > 0 ? (int?)col.Size : null,
             IsNullable = true,
@@ -632,6 +738,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = ResolveTable(tableName);
         if (resolved == null)
         {
+            // Check if this is a linked table
+            LinkedTableInfo? link = FindLinkedTable(tableName);
+            if (link != null)
+            {
+                using var source = OpenLinkedSource(link);
+                return source.ReadTable(link.ForeignName, progress);
+            }
+
             return null;
         }
 
@@ -648,7 +762,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             foreach (List<string> row in EnumerateRows(page, td))
             {
-                _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns));
+                _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns, tableName, BuildComplexColumnData(tableName, td.Columns)));
             }
 
             progress?.Report(dt.Rows.Count);
@@ -915,6 +1029,27 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private static string SafeGet(List<string> row, int idx) =>
         (idx >= 0 && idx < row.Count) ? row[idx] : string.Empty;
 
+    /// <summary>
+    /// Decodes the stored Jet4 password from the database header.
+    /// The 40 bytes at offset 0x42 are XOR'd with a fixed mask and the
+    /// 4-byte creation date at offset 0x72.
+    /// </summary>
+    private static string DecodeJet4Password(byte[] hdr)
+    {
+        var decoded = new byte[40];
+        for (int i = 0; i < 40; i++)
+        {
+            decoded[i] = (byte)(hdr[0x42 + i] ^ Jet4PasswordMask[i] ^ hdr[0x72 + (i % 4)]);
+        }
+
+        // Decode as UTF-16LE. Stop at the first null character rather than
+        // trimming from the end, because the encryption flag at 0x62 overlaps
+        // byte 32 of the password area and may produce a non-null artifact.
+        string raw = Encoding.Unicode.GetString(decoded);
+        int nullIdx = raw.IndexOf('\0', StringComparison.Ordinal);
+        return nullIdx >= 0 ? raw.Substring(0, nullIdx) : raw;
+    }
+
     private static string TypeCodeToName(byte t)
     {
         switch (t)
@@ -933,6 +1068,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             case T_MEMO: return "Memo";
             case T_GUID: return "GUID";
             case T_NUMERIC: return "Decimal";
+            case T_ATTACHMENT: return "Attachment";
+            case T_COMPLEX: return "Complex";
             default: return $"0x{t:X2}";
         }
     }
@@ -955,6 +1092,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             case T_BINARY: return col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable;
             case T_MEMO:
             case T_OLE: return ColumnSize.Lval;
+            case T_ATTACHMENT:
+            case T_COMPLEX: return ColumnSize.Lval;
             default: return col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable;
         }
     }
@@ -973,6 +1112,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             case T_DATETIME: return typeof(DateTime);
             case T_GUID: return typeof(Guid);
             case T_NUMERIC: return typeof(decimal);
+            case T_ATTACHMENT: return typeof(byte[]);
+            case T_COMPLEX: return typeof(byte[]);
             default: return typeof(string);
         }
     }
@@ -1182,15 +1323,144 @@ public sealed class AccessReader : AccessBase, IAccessReader
         });
     }
 
-    private static object[] ConvertRowToTyped(List<string> row, List<ColumnInfo> columns)
+    /// <summary>
+    /// Opens the source database for a linked table entry.
+    /// Throws FileNotFoundException if the source database does not exist.
+    /// </summary>
+    private static AccessReader OpenLinkedSource(LinkedTableInfo link)
+    {
+        if (string.IsNullOrEmpty(link.SourceDatabasePath) || !File.Exists(link.SourceDatabasePath))
+        {
+            throw new FileNotFoundException(
+                $"Source database for linked table '{link.Name}' not found: {link.SourceDatabasePath}",
+                link.SourceDatabasePath);
+        }
+
+        return Open(link.SourceDatabasePath);
+    }
+
+    private static object[] ConvertRowToTyped(List<string> row, List<ColumnInfo> columns, string? tableName = null, Dictionary<int, Dictionary<int, byte[]>>? complexData = null)
     {
         var typedRow = new object[row.Count];
         for (int i = 0; i < row.Count && i < columns.Count; i++)
         {
-            typedRow[i] = TypedValueParser.ParseValue(row[i], TypeCodeToClrType(columns[i].Type));
+            string raw = row[i];
+            ColumnInfo col = columns[i];
+
+            // Resolve complex-field attachments using preloaded complex data (keyed by col ordinal).
+            // The parent row ID is the first fixed LONG column's value.
+            if ((col.Type == T_COMPLEX || col.Type == T_ATTACHMENT) &&
+                complexData != null &&
+                complexData.TryGetValue(i, out Dictionary<int, byte[]>? colData))
+            {
+                // Find the parent row ID: use the first LONG fixed column value in this row.
+                int parentId = ExtractParentId(row, columns);
+                if (parentId > 0 && colData.TryGetValue(parentId, out byte[]? attachBytes) &&
+                    attachBytes != null && attachBytes.Length > 0)
+                {
+                    typedRow[i] = attachBytes;
+                    continue;
+                }
+
+                typedRow[i] = DBNull.Value;
+                continue;
+            }
+
+            typedRow[i] = TypedValueParser.ParseValue(raw, TypeCodeToClrType(col.Type));
         }
 
         return typedRow;
+    }
+
+    /// <summary>Extracts the parent row's integer ID from the first fixed LONG column.</summary>
+    private static int ExtractParentId(List<string> row, List<ColumnInfo> columns)
+    {
+        for (int i = 0; i < columns.Count && i < row.Count; i++)
+        {
+            if (columns[i].Type == T_LONG && !string.IsNullOrEmpty(row[i]))
+            {
+                if (int.TryParse(row[i], out int id))
+                {
+                    return id;
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>Returns linked table entries from the MSysObjects catalog.</summary>
+    private List<LinkedTableInfo> GetLinkedTables()
+    {
+        // MSysObjects TDEF is hard-coded at page 2
+        TableDef? msys = ReadTableDef(2);
+        if (msys == null)
+        {
+            return [];
+        }
+
+        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
+        int idxFlags = msys.Columns.FindIndex(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
+        int idxDatabase = msys.Columns.FindIndex(c => string.Equals(c.Name, "Database", StringComparison.OrdinalIgnoreCase));
+        int idxForeignName = msys.Columns.FindIndex(c => string.Equals(c.Name, "ForeignName", StringComparison.OrdinalIgnoreCase));
+        int idxConnect = msys.Columns.FindIndex(c => string.Equals(c.Name, "Connect", StringComparison.OrdinalIgnoreCase));
+
+        if (idxName < 0 || idxType < 0)
+        {
+            return [];
+        }
+
+        var result = new List<LinkedTableInfo>();
+        long totPages = _fs.Length / _pgSz;
+
+        for (long p = 3; p < totPages; p++)
+        {
+            byte[] page = ReadPageCached(p);
+            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != 2)
+            {
+                continue;
+            }
+
+            foreach (List<string> row in EnumerateRows(page, msys))
+            {
+                string typeStr = SafeGet(row, idxType);
+                if (!int.TryParse(typeStr, out int objType))
+                {
+                    continue;
+                }
+
+                if (objType != OBJ_LINKED_TABLE && objType != OBJ_LINKED_ODBC)
+                {
+                    continue;
+                }
+
+                string nameStr = SafeGet(row, idxName);
+                if (string.IsNullOrEmpty(nameStr))
+                {
+                    continue;
+                }
+
+                string flagsStr = SafeGet(row, idxFlags);
+                if (long.TryParse(flagsStr, out long flagsLong) &&
+                    (unchecked((uint)flagsLong) & SYSTABLE_MASK) != 0)
+                {
+                    continue;
+                }
+
+                bool isOdbc = objType == OBJ_LINKED_ODBC;
+                result.Add(new LinkedTableInfo
+                {
+                    Name = nameStr,
+                    ForeignName = SafeGet(row, idxForeignName),
+                    SourceDatabasePath = isOdbc ? null : SafeGet(row, idxDatabase),
+                    ConnectionString = isOdbc ? SafeGet(row, idxConnect) : null,
+                    IsOdbc = isOdbc,
+                });
+            }
+        }
+
+        return result;
     }
 
     private void ValidateDatabaseFormat()
@@ -1250,18 +1520,26 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private (CatalogEntry Entry, TableDef Td)? ResolveTable(string tableName)
     {
         CatalogEntry entry = GetCatalogEntry(tableName);
-        if (entry == null)
+        if (entry != null)
         {
-            return null;
+            TableDef? td = ReadTableDef(entry.TDefPage);
+            if (td != null && td.Columns.Count > 0)
+            {
+                return (entry, td);
+            }
         }
 
-        TableDef? td = ReadTableDef(entry.TDefPage);
-        if (td == null || td.Columns.Count == 0)
-        {
-            return null;
-        }
+        return null;
+    }
 
-        return (entry, td);
+    /// <summary>
+    /// Finds a linked table entry by name (case-insensitive).
+    /// Returns null if the table is not a linked table.
+    /// </summary>
+    private LinkedTableInfo? FindLinkedTable(string tableName)
+    {
+        return GetLinkedTables().Find(l =>
+            string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
     }
 
     private IEnumerable<object[]> StreamRowsCore(string tableName, IProgress<int> progress)
@@ -1269,17 +1547,33 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = ResolveTable(tableName);
         if (resolved == null)
         {
+            // Check if this is a linked table
+            LinkedTableInfo? link = FindLinkedTable(tableName);
+            if (link != null)
+            {
+                using var source = OpenLinkedSource(link);
+                foreach (object[] row in source.StreamRows(link.ForeignName))
+                {
+                    yield return row;
+                }
+
+                yield break;
+            }
+
             yield break;
         }
 
         var (entry, td) = resolved.Value;
         int rowCount = 0;
 
+        // Preload complex column data for tables that have complex (attachment) columns.
+        var complexData = BuildComplexColumnData(tableName, td.Columns);
+
         foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
         {
             foreach (List<string> row in EnumerateRows(page, td))
             {
-                yield return ConvertRowToTyped(row, td.Columns);
+                yield return ConvertRowToTyped(row, td.Columns, tableName, complexData);
                 rowCount++;
             }
 
@@ -1508,6 +1802,19 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case T_OLE:
                     return ReadLongValue(row, start, len, col.Type == T_OLE);
 
+                case T_COMPLEX:
+                case T_ATTACHMENT:
+                    // Variable slot holds a 4-byte complex_id pointing to rows in
+                    // the MSysCM_<table>_<column> system table.  Encode as a marker
+                    // so ConvertRowToTyped can resolve it to the actual attachment bytes.
+                    if (len >= 4)
+                    {
+                        int complexId = Ri32(row, start);
+                        return $"__CX:{complexId}__";
+                    }
+
+                    return string.Empty;
+
                 default:
                     return string.Empty;
             }
@@ -1524,6 +1831,384 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             return string.Empty;
         }
+    }
+
+    /// <summary>
+    /// Looks up MSysComplexColumns to determine the subtype name for complex (0x12) columns
+    /// in the specified table. Returns a dictionary of column name → TypeName ("Attachment", etc.).
+    /// </summary>
+    private Dictionary<string, string> ReadComplexColumnSubtypes(string tableName)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            // Find MSysComplexColumns in the catalog (it's a system table, SYSTABLE_MASK set)
+            long tdefPage = FindSystemTablePage("MSysComplexColumns");
+            if (tdefPage <= 0)
+            {
+                return result;
+            }
+
+            TableDef? td = ReadTableDef(tdefPage);
+            if (td == null)
+            {
+                return result;
+            }
+
+            int idxTable = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "TableName", StringComparison.OrdinalIgnoreCase));
+            int idxCol = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
+            int idxType = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "ComplexTypeObjectId", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Name, "TypeObjectId", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Name, "ComplexType", StringComparison.OrdinalIgnoreCase));
+
+            if (idxTable < 0 || idxCol < 0)
+            {
+                return result;
+            }
+
+            foreach (byte[] page in EnumerateTablePages(tdefPage))
+            {
+                foreach (List<string> row in EnumerateRows(page, td))
+                {
+                    string rowTable = SafeGet(row, idxTable);
+                    if (!string.Equals(rowTable, tableName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    string colName = SafeGet(row, idxCol);
+
+                    // If we find a match, the column is an Attachment type when stored
+                    // via the MSysCM_ table mechanism (Access Attachment field).
+                    // Without a deeper ComplexType lookup, default to "Attachment" for 0x12.
+                    result[colName] = "Attachment";
+                }
+            }
+        }
+        catch (InvalidDataException)
+        {
+            // Best-effort: if we can't read MSysComplexColumns, fall back to "Complex".
+        }
+        catch (IndexOutOfRangeException)
+        {
+            // Best-effort fallback.
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Finds the TDEF page number for a system table by name (case-insensitive).
+    /// Unlike GetUserTables, this includes system tables (SYSTABLE_MASK set).
+    /// </summary>
+    private long FindSystemTablePage(string name)
+    {
+        TableDef? msys = ReadTableDef(2);
+        if (msys == null)
+        {
+            return 0;
+        }
+
+        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
+        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
+
+        if (idxId < 0 || idxName < 0 || idxType < 0)
+        {
+            return 0;
+        }
+
+        long totPages = _fs.Length / _pgSz;
+        for (long p = 3; p < totPages; p++)
+        {
+            byte[] page = ReadPageCached(p);
+            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != 2)
+            {
+                continue;
+            }
+
+            foreach (List<string> row in EnumerateRows(page, msys))
+            {
+                string nameStr = SafeGet(row, idxName);
+                if (!string.Equals(nameStr, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!int.TryParse(SafeGet(row, idxType), out int objType) || objType != OBJ_TABLE)
+                {
+                    continue;
+                }
+
+                if (long.TryParse(SafeGet(row, idxId), out long id))
+                {
+                    long tdefPage = id & 0x00FFFFFFL;
+                    if (tdefPage > 0)
+                    {
+                        return tdefPage;
+                    }
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Builds a preloaded map of complex column data for all complex columns in a table.
+    /// Returns a dictionary: column ordinal → (parentId → attachment bytes).
+    /// Returns null if the table has no complex columns.
+    /// </summary>
+    private Dictionary<int, Dictionary<int, byte[]>>? BuildComplexColumnData(
+        string tableName, List<ColumnInfo> columns)
+    {
+        Dictionary<int, Dictionary<int, byte[]>>? result = null;
+
+        for (int i = 0; i < columns.Count; i++)
+        {
+            ColumnInfo col = columns[i];
+            if (col.Type != T_COMPLEX && col.Type != T_ATTACHMENT)
+            {
+                continue;
+            }
+
+            Dictionary<int, byte[]>? colData = LoadAttachmentData(tableName, col.Name);
+            if (colData != null && colData.Count > 0)
+            {
+                result ??= new Dictionary<int, Dictionary<int, byte[]>>();
+                result[i] = colData;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Loads attachment data from the hidden system table for a complex column.
+    /// Access ACCDB stores attachment data in a table named <c>f_&lt;GUID&gt;_&lt;columnName&gt;</c>.
+    /// The table's FK column is named <c>&lt;tableName&gt;_&lt;columnName&gt;</c> and holds the parent row ID.
+    /// Returns a dictionary mapping parent row ID → serialized attachment bytes
+    /// (2-byte FileName length LE, FileName UTF-16LE, FileData bytes).
+    /// </summary>
+    private Dictionary<int, byte[]>? LoadAttachmentData(string tableName, string columnName)
+    {
+        try
+        {
+            // The hidden attachment table name is f_<GUID>_<columnName>.
+            // We find it by scanning MSysObjects for any Table entry whose name
+            // ends with _<columnName> and starts with f_.
+            string nameSuffix = $"_{columnName}";
+            long tdefPage = FindSystemTablePageBySuffix(nameSuffix);
+            if (tdefPage <= 0)
+            {
+                return null;
+            }
+
+            TableDef? td = ReadTableDef(tdefPage);
+            if (td == null)
+            {
+                return null;
+            }
+
+            // FK column name = "<tableName>_<columnName>" (e.g. "Documents_Attachments")
+            string fkColName = $"{tableName}_{columnName}";
+            int idxFk = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, fkColName, StringComparison.OrdinalIgnoreCase));
+
+            if (idxFk < 0)
+            {
+                // Fallback: any LONG column that looks like a FK
+                idxFk = td.Columns.FindIndex(c =>
+                    c.Type == T_LONG && !c.Name.StartsWith("Idx", StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (idxFk < 0)
+            {
+                return null;
+            }
+
+            int idxFileName = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "FileName", StringComparison.OrdinalIgnoreCase));
+            int idxFileData = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "FileData", StringComparison.OrdinalIgnoreCase));
+
+            var result = new Dictionary<int, byte[]>();
+
+            foreach (byte[] page in EnumerateTablePages(tdefPage))
+            {
+                foreach (List<string> row in EnumerateRows(page, td))
+                {
+                    string fkStr = SafeGet(row, idxFk);
+                    if (!int.TryParse(fkStr, out int parentId))
+                    {
+                        continue;
+                    }
+
+                    byte[] fileNameBytes = [];
+                    if (idxFileName >= 0)
+                    {
+                        string fileName = SafeGet(row, idxFileName);
+                        if (!string.IsNullOrEmpty(fileName))
+                        {
+                            fileNameBytes = Encoding.Unicode.GetBytes(fileName);
+                        }
+                    }
+
+                    byte[] fileDataBytes = [];
+                    if (idxFileData >= 0)
+                    {
+                        string fileDataStr = SafeGet(row, idxFileData);
+                        fileDataBytes = DecodeColumnBytes(fileDataStr, td.Columns[idxFileData].Type);
+                    }
+
+                    if (fileNameBytes.Length == 0 && fileDataBytes.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    // Encode as: [2-byte nameLen LE][nameBytes][fileDataBytes]
+                    var bytes = new byte[2 + fileNameBytes.Length + fileDataBytes.Length];
+                    bytes[0] = (byte)(fileNameBytes.Length & 0xFF);
+                    bytes[1] = (byte)((fileNameBytes.Length >> 8) & 0xFF);
+                    Buffer.BlockCopy(fileNameBytes, 0, bytes, 2, fileNameBytes.Length);
+                    Buffer.BlockCopy(fileDataBytes, 0, bytes, 2 + fileNameBytes.Length, fileDataBytes.Length);
+                    result[parentId] = bytes;
+                }
+            }
+
+            return result.Count > 0 ? result : null;
+        }
+        catch (InvalidDataException)
+        {
+            return null;
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Finds the TDEF page for the first system table whose name ends with
+    /// <paramref name="nameSuffix"/> (case-insensitive). Used to find
+    /// <c>f_&lt;GUID&gt;_&lt;columnName&gt;</c> attachment tables.
+    /// </summary>
+    private long FindSystemTablePageBySuffix(string nameSuffix)
+    {
+        TableDef? msys = ReadTableDef(2);
+        if (msys == null)
+        {
+            return 0;
+        }
+
+        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
+        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
+
+        if (idxId < 0 || idxName < 0 || idxType < 0)
+        {
+            return 0;
+        }
+
+        long totPages = _fs.Length / _pgSz;
+        for (long p = 3; p < totPages; p++)
+        {
+            byte[] page = ReadPageCached(p);
+            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != 2)
+            {
+                continue;
+            }
+
+            foreach (List<string> row in EnumerateRows(page, msys))
+            {
+                string nameStr = SafeGet(row, idxName);
+                if (!nameStr.EndsWith(nameSuffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // Accept any object type that includes the TABLE bit (0x01).
+                // Access system tables (hidden) use type 6 = OBJ_TABLE | SYSTABLE flags.
+                if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType & OBJ_TABLE) == 0)
+                {
+                    continue;
+                }
+
+                if (long.TryParse(SafeGet(row, idxId), out long id))
+                {
+                    long tdefPage = id & 0x00FFFFFFL;
+                    if (tdefPage > 0)
+                    {
+                        return tdefPage;
+                    }
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Attempts to convert a string column value back to raw bytes.
+    /// Handles: Base64 data URIs (OLE), hex strings (Binary), plain text (Memo).
+    /// </summary>
+#pragma warning disable SA1204 // Static helper placed here for proximity to its only caller
+    private static byte[] DecodeColumnBytes(string value, byte colType)
+#pragma warning restore SA1204
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return [];
+        }
+
+        // Base64 data URI from OLE column: "data:...;base64,<b64>"
+        if (value.StartsWith("data:", StringComparison.Ordinal))
+        {
+            int commaIdx = value.IndexOf(',', StringComparison.Ordinal);
+            if (commaIdx >= 0)
+            {
+                try
+                {
+                    return Convert.FromBase64String(value.Substring(commaIdx + 1));
+                }
+                catch (FormatException)
+                {
+                    return [];
+                }
+            }
+
+            return [];
+        }
+
+        // Hex string from Binary column: "XX-XX-XX-..."
+        if (colType == T_BINARY && value.Contains('-', StringComparison.Ordinal))
+        {
+            try
+            {
+                string[] parts = value.Split('-');
+                var bytes = new byte[parts.Length];
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    bytes[i] = Convert.ToByte(parts[i], 16);
+                }
+
+                return bytes;
+            }
+            catch (FormatException)
+            {
+                return [];
+            }
+        }
+
+        // Plain text (Memo): encode as UTF-8
+        return Encoding.UTF8.GetBytes(value);
     }
 
     // [memo_len: 3 bytes][bitmask: 1 byte][lval_dp: 4 bytes][unknown: 4 bytes]

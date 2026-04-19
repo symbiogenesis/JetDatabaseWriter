@@ -27,4 +27,11 @@ public sealed class AccessReaderOptions
     /// Set to <see cref="FileShare.ReadWrite"/> when another application (e.g. Microsoft Access) holds a write lock on the file.
     /// </summary>
     public FileShare FileShare { get; set; } = FileShare.ReadWrite;
+
+    /// <summary>
+    /// Gets or sets the password for opening encrypted databases.
+    /// When null or empty, no decryption is attempted.
+    /// Supports Jet3 (XOR), Jet4 (RC4), and ACCDB (AES) encryption.
+    /// </summary>
+    public string? Password { get; set; }
 }

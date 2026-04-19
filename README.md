@@ -28,6 +28,9 @@ Pure-managed .NET library for reading Microsoft Access JET databases — no OleD
 | ✅ **Non-Western text** | Code page auto-detected from the database header |
 | ✅ **OLE Objects** | Detects embedded JPEG, PNG, PDF, ZIP, DOC, RTF |
 | ✅ **Write support** | Create/drop tables, insert/update/delete rows (Jet4/ACE) |
+| ✅ **Jet3 encryption** | Transparent XOR decryption for Access 97 databases |
+| ✅ **Jet4 passwords** | Password verification for Access 2000–2003 `.mdb` files |
+| ✅ **Linked table metadata** | `ListLinkedTables()` returns source paths and foreign names |
 
 ---
 
@@ -336,9 +339,10 @@ using var reader = AccessReader.Open("database.mdb", options);
 ```csharp
 try { var dt = await reader.ReadTableAsync("Orders"); }
 catch (FileNotFoundException)   { /* file missing */ }
-catch (NotSupportedException)   { /* encrypted / password-protected */ }
+catch (UnauthorizedAccessException) { /* no password provided, or wrong password */ }
 catch (InvalidDataException)    { /* corrupt or non-JET file */ }
 catch (JetLimitationException)  { /* deleted-column gap, numeric overflow */ }
+catch (NotSupportedException)   { /* write: CLR type not mappable to a Jet column, or table definition too large for one TDEF page */ }
 catch (ObjectDisposedException) { /* reader already disposed */ }
 ```
 
@@ -348,10 +352,9 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 
 | | |
 |---|---|
-| ❌ Encrypted databases | Remove password in Access (File › Info › Encrypt with Password) |
-| ❌ Attachment fields (0x11) | Rare type added in Access 2007 |
-| ❌ Linked tables | Only local tables are listed |
-| ❌ Overflow rows | Rows spanning multiple pages are skipped |
+| ⚠️ ACCDB (AES) encryption | Header-level detection and password verification work; full AES page decryption for genuinely-encrypted Access 2007+ `.accdb` files is not yet supported |
+| ⚠️ Complex fields (0x11/0x12) | Metadata reported correctly; cell values not yet decoded |
+| ⚠️ Lockfile (`.laccdb` / `.ldb`) | The library does not create a lockfile when opening a database, nor does it check for or respect an existing one — concurrent access control is left to the caller |
 
 ---
 

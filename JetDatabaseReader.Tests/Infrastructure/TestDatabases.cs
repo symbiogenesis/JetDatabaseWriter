@@ -33,6 +33,29 @@ internal static class TestDatabases
     public static readonly string Jet3Test =
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Jet3Test.mdb");
 
+    // ── Limitation-feature fixtures ───────────────────────────────────
+
+    /// <summary>
+    /// ACCDB with a table "Documents" that has an Attachment column (type 0x11)
+    /// containing two rows, each with one attachment file attached.
+    /// Created by Access 16 COM automation.
+    /// Password: none. Tables: Documents, Tags.
+    /// </summary>
+    public static readonly string ComplexFields =
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ComplexFields.accdb");
+
+    /// <summary>
+    /// ACCDB created by Access 16 CompactDatabase with password "secret".
+    /// Header byte 0x62 = 0x07 (bits 0/1/2 set); version = 0x03 (Access 2010 format).
+    /// The reader detects this as requiring a password (ACCDB AES check fires).
+    /// Data pages are in ACE native format; password is stored via ACE internal scheme
+    /// (not the Jet4 XOR scheme), so DecodeJet4Password does not return "secret".
+    /// Once ACCDB AES/ACE password verification is implemented, opening with "secret"
+    /// should succeed.
+    /// </summary>
+    public static readonly string AesEncrypted =
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AesEncrypted.accdb");
+
     // ── MemberData sets ───────────────────────────────────────────────
 
     /// <summary>Gets all databases (skips any that don't exist or can't be opened).</summary>
@@ -86,7 +109,7 @@ internal static class TestDatabases
             using var r = AccessReader.Open(path);
             return true;
         }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException or JetLimitationException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JetLimitationException)
         {
             return false;
         }
