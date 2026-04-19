@@ -42,6 +42,8 @@ internal sealed class ColumnInfo
                 case 0x09: // T_BINARY
                 case 0x0C: // T_MEMO
                 case 0x0B: // T_OLE
+                case 0x11: // T_ATTACHMENT
+                case 0x12: // T_COMPLEX
                     return false;
                 default:
                     return (Flags & 0x01) != 0; // FLAG_FIXED
