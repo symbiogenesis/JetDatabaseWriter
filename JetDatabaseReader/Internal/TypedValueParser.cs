@@ -18,67 +18,22 @@ internal static class TypedValueParser
 
         try
         {
-            if (targetType == typeof(string))
+            return Type.GetTypeCode(targetType) switch
             {
-                return value;
-            }
-
-            if (targetType == typeof(bool))
-            {
-                return ParseBoolean(value);
-            }
-
-            if (targetType == typeof(byte))
-            {
-                return byte.Parse(value, CultureInfo.InvariantCulture);
-            }
-
-            if (targetType == typeof(short))
-            {
-                return short.Parse(value, CultureInfo.InvariantCulture);
-            }
-
-            if (targetType == typeof(int))
-            {
-                return int.Parse(value, CultureInfo.InvariantCulture);
-            }
-
-            if (targetType == typeof(long))
-            {
-                return long.Parse(value, CultureInfo.InvariantCulture);
-            }
-
-            if (targetType == typeof(float))
-            {
-                return float.Parse(value, CultureInfo.InvariantCulture);
-            }
-
-            if (targetType == typeof(double))
-            {
-                return double.Parse(value, CultureInfo.InvariantCulture);
-            }
-
-            if (targetType == typeof(decimal))
-            {
-                return decimal.Parse(value, CultureInfo.InvariantCulture);
-            }
-
-            if (targetType == typeof(DateTime))
-            {
-                return DateTime.Parse(value, CultureInfo.InvariantCulture);
-            }
-
-            if (targetType == typeof(Guid))
-            {
-                return Guid.Parse(value);
-            }
-
-            if (targetType == typeof(byte[]))
-            {
-                return ParseByteArray(value);
-            }
-
-            return value;
+                TypeCode.String => value,
+                TypeCode.Boolean => ParseBoolean(value),
+                TypeCode.Byte => byte.Parse(value, CultureInfo.InvariantCulture),
+                TypeCode.Int16 => short.Parse(value, CultureInfo.InvariantCulture),
+                TypeCode.Int32 => int.Parse(value, CultureInfo.InvariantCulture),
+                TypeCode.Int64 => long.Parse(value, CultureInfo.InvariantCulture),
+                TypeCode.Single => float.Parse(value, CultureInfo.InvariantCulture),
+                TypeCode.Double => double.Parse(value, CultureInfo.InvariantCulture),
+                TypeCode.Decimal => decimal.Parse(value, CultureInfo.InvariantCulture),
+                TypeCode.DateTime => DateTime.Parse(value, CultureInfo.InvariantCulture),
+                _ when targetType == typeof(Guid) => Guid.Parse(value),
+                _ when targetType == typeof(byte[]) => ParseByteArray(value),
+                _ => value,
+            };
         }
         catch
         {
@@ -109,17 +64,21 @@ internal static class TypedValueParser
         // Format: "XX-XX-XX-XX" from BitConverter.ToString
         if (string.IsNullOrEmpty(hexString))
         {
-            return Array.Empty<byte>();
+            return [];
         }
 
-        string[] parts = hexString.Split('-');
-        byte[] result = new byte[parts.Length];
+        int count = (hexString.Length + 1) / 3;
+        byte[] result = new byte[count];
 
-        for (int i = 0; i < parts.Length; i++)
+        for (int i = 0; i < count; i++)
         {
-            result[i] = Convert.ToByte(parts[i], 16);
+            int offset = i * 3;
+            result[i] = (byte)((HexCharToNibble(hexString[offset]) << 4) | HexCharToNibble(hexString[offset + 1]));
         }
 
         return result;
     }
+
+    private static int HexCharToNibble(char c) =>
+        c <= '9' ? c - '0' : (c & ~0x20) - 'A' + 10;
 }
