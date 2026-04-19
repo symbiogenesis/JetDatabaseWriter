@@ -1127,7 +1127,7 @@ public sealed class AccessWriter : IAccessWriter
             int allowed = _jet4 ? maxSize & ~1 : maxSize;
             if (allowed <= 0)
             {
-                return Array.Empty<byte>();
+                return [];
             }
 
             Array.Resize(ref bytes, allowed);
@@ -1817,13 +1817,13 @@ public sealed class AccessWriter : IAccessWriter
     {
         public long PageNumber { get; set; }
 
-        public byte[] Page { get; set; } = Array.Empty<byte>();
+        public byte[] Page { get; set; } = [];
     }
 
     private sealed class FixedValueChunk
     {
         public int Offset { get; set; }
 
-        public byte[] Bytes { get; set; } = Array.Empty<byte>();
+        public byte[] Bytes { get; set; } = [];
     }
 }
