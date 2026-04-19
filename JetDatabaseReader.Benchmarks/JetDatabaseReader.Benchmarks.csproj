@@ -3,12 +3,17 @@
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0</TargetFramework>
         <!-- BenchmarkDotNet requires public types and underscore-named methods are idiomatic -->
-        <NoWarn>$(NoWarn);CA1515;CA1707;CA1034</NoWarn>
+        <NoWarn>$(NoWarn);CA1515;CA1707;CA1034;CA1822</NoWarn>
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\JetDatabaseReader\JetDatabaseReader.csproj" />
     </ItemGroup>
     <ItemGroup>
         <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+    </ItemGroup>
+    <ItemGroup>
+        <None Include="..\JetDatabaseReader.Tests\NorthwindTraders.accdb" Link="NorthwindTraders.accdb">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
     </ItemGroup>
 </Project>
