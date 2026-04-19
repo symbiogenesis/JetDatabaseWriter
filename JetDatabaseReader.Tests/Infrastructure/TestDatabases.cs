@@ -12,28 +12,16 @@ using Xunit;
 /// </summary>
 internal static class TestDatabases
 {
-    // ── Paths ─────────────────────────────────────────────────────────
-
-    // Local-only large file — not added to the project or repository.
-    public const string LargeFile = @"D:\Diego\Downloads\DB Matrix.accdb";
-
-    // User's local downloaded .mdb files — not added to the project or repository.
-    // Note: JetDatabaseReader reads these with FileStream; Windows MOTW macro blocking
-    // (Zone.Identifier ADS) does not affect raw file reads — only Access VBA execution.
-    // To unblock for Access: Unblock-File -Path "<path>" in PowerShell.
-    public const string R3188_W_PO = @"D:\Diego\Downloads\R3188_20260321-20260327_W_PO.mdb";
-    public const string R419_TR_TPI = @"D:\Diego\Downloads\R419_20260213_D_TR_TPI.mdb";
+    // ── Paths ────────────────────────────────────────────────────────
 
     public static readonly string NorthwindTraders =
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NorthwindTraders.accdb");
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "NorthwindTraders.accdb");
 
     public static readonly string AdventureWorks =
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AdventureLT2008.mdb");
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "AdventureLT2008.mdb");
 
     public static readonly string Jet3Test =
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Jet3Test.mdb");
-
-    // ── Limitation-feature fixtures ───────────────────────────────────
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "Jet3Test.mdb");
 
     /// <summary>
     /// ACCDB with a table "Documents" that has an Attachment column (type 0x11)
@@ -42,7 +30,7 @@ internal static class TestDatabases
     /// Password: none. Tables: Documents, Tags.
     /// </summary>
     public static readonly string ComplexFields =
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ComplexFields.accdb");
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "ComplexFields.accdb");
 
     /// <summary>
     /// ACCDB created by Access 16 CompactDatabase with password "secret".
@@ -54,23 +42,49 @@ internal static class TestDatabases
     /// should succeed.
     /// </summary>
     public static readonly string AesEncrypted =
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AesEncrypted.accdb");
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "AesEncrypted.accdb");
 
-    // ── MemberData sets ───────────────────────────────────────────────
+    /// <summary>Jackcess V1997 (Jet 3 / Access 97) general-purpose test database.</summary>
+    public static readonly string TestV1997 =
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "testV1997.mdb");
+
+    /// <summary>Jackcess V2000 (Jet 4 / Access 2000) general-purpose test database.</summary>
+    public static readonly string TestV2000 =
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "testV2000.mdb");
+
+    /// <summary>Jackcess V2003 (Jet 4 / Access 2003) general-purpose test database.</summary>
+    public static readonly string TestV2003 =
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "testV2003.mdb");
+
+    /// <summary>Jackcess V2007 (ACE / Access 2007) general-purpose test database.</summary>
+    public static readonly string TestV2007 =
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "testV2007.accdb");
+
+    /// <summary>Jackcess V2010 (ACE / Access 2010) general-purpose test database.</summary>
+    public static readonly string TestV2010 =
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "testV2010.accdb");
+
+    /// <summary>Jackcess V2019 (ACE / Access 2019) extended date/time test database.</summary>
+    public static readonly string ExtDateTestV2019 =
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "extDateTestV2019.accdb");
+
+    private static readonly string[] InRepoDatabases =
+        [NorthwindTraders, AdventureWorks, Jet3Test, TestV1997, TestV2000, TestV2003, TestV2007, TestV2010, ExtDateTestV2019];
+
+    // ── MemberData sets (properties) ──────────────────────────────────
 
     /// <summary>Gets all databases (skips any that don't exist or can't be opened).</summary>
     public static TheoryData<string> All => ToTheoryData(
-        new[] { LargeFile, NorthwindTraders, AdventureWorks, Jet3Test, R3188_W_PO, R419_TR_TPI }
-            .Where(IsReadable));
+        InRepoDatabases.Where(IsReadable));
 
-    /// <summary>Gets the smaller databases (skips any that can't be opened).</summary>
+    /// <summary>Gets the smaller in-repo databases (skips any that can't be opened).</summary>
     public static TheoryData<string> Small => ToTheoryData(
         new[] { NorthwindTraders, AdventureWorks, Jet3Test }
             .Where(IsReadable));
 
-    /// <summary>Gets the user's local downloaded .mdb files (skips any that can't be opened).</summary>
-    public static TheoryData<string> Downloads => ToTheoryData(
-        new[] { R3188_W_PO, R419_TR_TPI }
+    /// <summary>Gets the Jackcess test databases across multiple Access versions.</summary>
+    public static TheoryData<string> Jackcess => ToTheoryData(
+        new[] { TestV1997, TestV2000, TestV2003, TestV2007, TestV2010, ExtDateTestV2019 }
             .Where(IsReadable));
 
     /// <summary>
@@ -79,10 +93,9 @@ internal static class TestDatabases
     /// (e.g., verifying they are not password-protected).
     /// </summary>
     public static TheoryData<string> AllExisting => ToTheoryData(
-        new[] { LargeFile, NorthwindTraders, AdventureWorks, Jet3Test, R3188_W_PO, R419_TR_TPI }
-            .Where(File.Exists));
+        InRepoDatabases.Where(File.Exists));
 
-    // ── Helpers ───────────────────────────────────────────────────────
+    // ── Helpers (methods) ─────────────────────────────────────────────
 
     /// <summary>
     /// Returns a skip reason string when the file is missing, or null when it exists.

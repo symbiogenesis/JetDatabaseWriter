@@ -22,20 +22,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="AdventureLT2008.mdb">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="AesEncrypted.accdb">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="ComplexFields.accdb">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="Jet3Test.mdb">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="NorthwindTraders.accdb">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <None Include="Databases\*.mdb;Databases\*.accdb" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
