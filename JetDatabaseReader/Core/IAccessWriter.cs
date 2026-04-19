@@ -7,7 +7,7 @@ using System.Collections.Generic;
 /// Interface for writing to Microsoft Access JET databases (.mdb / .accdb).
 /// Provides methods for creating tables, inserting, updating, and deleting rows.
 /// </summary>
-public interface IAccessWriter : IDisposable
+public interface IAccessWriter : IAccessBase
 {
     /// <summary>
     /// Creates a new table with the specified columns.

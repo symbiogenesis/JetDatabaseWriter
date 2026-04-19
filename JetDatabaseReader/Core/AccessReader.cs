@@ -39,78 +39,14 @@ using System.Threading.Tasks;
 ///
 /// Original C implementation by mdbtools contributors (see HACKING.md for details).
 /// </summary>
-public sealed class AccessReader : IAccessReader
+public sealed class AccessReader : AccessBase, IAccessReader
 {
-    // ── Column type codes (mdbtools HACKING.md) ──────────────────────
-    private const byte T_BOOL = 0x01; // 1 bit  – stored in null_mask
-    private const byte T_BYTE = 0x02; // 1 byte
-    private const byte T_INT = 0x03; // 2 bytes (signed)
-    private const byte T_LONG = 0x04; // 4 bytes (signed)
-    private const byte T_MONEY = 0x05; // 8 bytes (int64 / 10000)
-    private const byte T_FLOAT = 0x06; // 4 bytes (IEEE 754)
-    private const byte T_DOUBLE = 0x07; // 8 bytes (IEEE 754)
-    private const byte T_DATETIME = 0x08; // 8 bytes (OA date)
-    private const byte T_BINARY = 0x09; // variable (≤ 255 bytes)
-    private const byte T_TEXT = 0x0A; // variable (UCS-2 in Jet4, ANSI in Jet3)
-    private const byte T_OLE = 0x0B; // LVAL
-    private const byte T_MEMO = 0x0C; // LVAL or inline
-    private const byte T_GUID = 0x0F; // 16 bytes
-    private const byte T_NUMERIC = 0x10; // 17 bytes scaled decimal
-
-    // Catalog (MSysObjects) constants
-    private const int OBJ_TABLE = 1;
-    private const uint SYSTABLE_MASK = 0x80000002U;
-
-    // ── Format-specific offsets ───────────────────────────────────────
-
-    // Data page
-    private readonly int _dpTDefOff;    // offset of tdef_pg (4 bytes)
-    private readonly int _dpNumRows;    // offset of num_rows (2 bytes)
-    private readonly int _dpRowsStart;  // offset of first row-offset entry
-
-    // TDEF page (absolute offsets within the TDEF byte array)
-    private readonly int _tdNumCols;    // offset of num_cols    (2 bytes)
-    private readonly int _tdNumRealIdx; // offset of num_real_idx (4 bytes)
-    private readonly int _tdBlockEnd;   // first byte after table-definition block
-
-    // Column descriptor (per-column, fixed-size block)
-    private readonly int _colDescSz;
-    private readonly int _colTypeOff;
-    private readonly int _colVarOff;    // offset_V – var-col index
-    private readonly int _colFixedOff;  // offset_F – byte offset in fixed area
-    private readonly int _colSzOff;     // col_len
-    private readonly int _colFlagsOff;  // bitmask
-    private readonly int _colNumOff;    // col_num (includes deleted)
-
-    // Per-real-index entry size (skipped during column parsing)
-    private readonly int _realIdxEntrySz;
-
-    // Row field sizes (differ between Jet3 and Jet4)
-    private readonly int _numColsFldSz;  // 1 or 2
-    private readonly int _varEntrySz;    // 1 or 2  (var_table entry)
-    private readonly int _eodFldSz;      // 1 or 2
-    private readonly int _varLenFldSz;   // 1 or 2
-
-    private readonly int _pgSz;
-    private readonly bool _jet4;
-    private readonly FileStream _fs;
-    private readonly Encoding _ansiEncoding;
-    private readonly int _codePage;
     private readonly object _cacheLock = new object();
     private readonly object _catalogLock = new object();
     private volatile List<CatalogEntry>? _catalogCache;
     private volatile LruCache<long, byte[]>? _pageCache;
-    private bool _disposed;
     private long _cacheHits;
     private long _cacheMisses;
-
-    static AccessReader()
-    {
-        // On .NET Core / .NET 5+ code-page encodings (e.g. Windows-1252) are not
-        // available by default. Register them once so GetEncoding() works for any
-        // ANSI code page stored in the JET database header.
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessReader"/> class.
@@ -119,6 +55,7 @@ public sealed class AccessReader : IAccessReader
     /// <param name="path">The path to the Access database file.</param>
     /// <param name="options">Options for configuring the AccessReader.</param>
     private AccessReader(string path, AccessReaderOptions options)
+        : base(new FileStream(path, FileMode.Open, options.FileAccess, options.FileShare))
     {
         Guard.NotNullOrEmpty(path, nameof(path));
         Guard.NotNull(options, nameof(options));
@@ -127,46 +64,15 @@ public sealed class AccessReader : IAccessReader
         PageCacheSize = options.PageCacheSize;
         ParallelPageReadsEnabled = options.ParallelPageReadsEnabled;
 
-        _fs = new FileStream(path, FileMode.Open, options.FileAccess, options.FileShare);
-
-        // Read enough of the database definition page (page 0)
-        var hdr = new byte[0x80];
-        _ = _fs.Read(hdr, 0, hdr.Length);
-
-        // Offset 0x14: 0 = Jet3, ≥ 1 = Jet4+
-        byte ver = hdr[0x14];
-        _jet4 = ver >= 1;
-        _pgSz = _jet4 ? 4096 : 2048;
-
-        // Offset 0x3C (Jet4) or 0x3A (Jet3): sort order / code page ID
-        // Common: 1033=en-US(1252), 1049=ru(1251), 1041=ja(932)
-        int cpOffset = _jet4 ? 0x3C : 0x3A;
-        int sortOrder = (hdr.Length > cpOffset + 1) ? Ru16(hdr, cpOffset) : 0;
-        _codePage = (sortOrder >> 8) & 0xFF;
-        if (_codePage == 0)
-        {
-            _codePage = 1252;  // default to Windows-1252 if unknown
-        }
-
-        try
-        {
-            _ansiEncoding = Encoding.GetEncoding(_codePage);
-        }
-        catch (ArgumentException)
-        {
-            _ansiEncoding = Encoding.UTF8;
-            _codePage = 65001;
-        }
-        catch (NotSupportedException)
-        {
-            _ansiEncoding = Encoding.UTF8;
-            _codePage = 65001;
-        }
-
         // Offset 0x62: encryption flag — only valid for Jet4 (ver == 1, Access 2000-2003).
         // ACCDB format (ver >= 2, Access 2007+) has completely different header semantics
         // at this offset; applying the Jet4 check to ACCDB files produces false positives.
         // Truly encrypted ACCDB files are detected later when the catalog page is unreadable.
+        _ = _fs.Seek(0, SeekOrigin.Begin);
+        var hdr = new byte[0x80];
+        _ = _fs.Read(hdr, 0, hdr.Length);
+        byte ver = hdr[0x14];
+
         if (_jet4 && ver == 1 && hdr.Length > 0x62)
         {
             byte encFlag = hdr[0x62];
@@ -178,67 +84,6 @@ public sealed class AccessReader : IAccessReader
                     "This database is encrypted or password-protected. " +
                     "Remove the password in Microsoft Access (File > Info > Encrypt with Password) and try again.");
             }
-        }
-
-        if (_jet4)
-        {
-            // ── Jet4 / ACE (Access 2000 – 2019, .mdb + .accdb) ──────
-            // Data page
-            _dpTDefOff = 4;
-            _dpNumRows = 12;   // extra 4-byte field after tdef_pg
-            _dpRowsStart = 14;
-
-            // TDEF: 8-byte header + 55-byte Jet4 block = 63 total
-            //   num_cols    at 8 + 37 = 45
-            //   num_real_idx at 8 + 43 = 51
-            _tdNumCols = 45;
-            _tdNumRealIdx = 51;
-            _tdBlockEnd = 63;
-
-            // Column descriptor (25 bytes)
-            _colDescSz = 25;
-            _colTypeOff = 0;   // col_type  (1)
-            _colVarOff = 7;   // offset_V  (2): 1+4+2
-            _colFixedOff = 21;   // offset_F  (2): 1+4+2+2+2+2+2+1+1+4
-            _colSzOff = 23;   // col_len   (2)
-            _colFlagsOff = 15;   // bitmask   (1): 1+4+2+2+2+2+2
-            _colNumOff = 5;   // col_num   (2)
-
-            _realIdxEntrySz = 12;
-            _numColsFldSz = 2;
-            _varEntrySz = 2;
-            _eodFldSz = 2;
-            _varLenFldSz = 2;
-        }
-        else
-        {
-            // ── Jet3 (Access 97, .mdb) ────────────────────────────
-            // Data page
-            _dpTDefOff = 4;
-            _dpNumRows = 8;
-            _dpRowsStart = 10;
-
-            // TDEF: 8-byte header + 35-byte Jet3 block = 43 total
-            //   num_cols    at 8 + 17 = 25
-            //   num_real_idx at 8 + 23 = 31
-            _tdNumCols = 25;
-            _tdNumRealIdx = 31;
-            _tdBlockEnd = 43;
-
-            // Column descriptor (18 bytes)
-            _colDescSz = 18;
-            _colTypeOff = 0;   // col_type  (1)
-            _colVarOff = 3;   // offset_V  (2): 1+2
-            _colFixedOff = 14;   // offset_F  (2): 1+2+2+2+2+2+2+1
-            _colSzOff = 16;   // col_len   (2)
-            _colFlagsOff = 13;   // bitmask   (1)
-            _colNumOff = 1;   // col_num   (2)
-
-            _realIdxEntrySz = 8;
-            _numColsFldSz = 1;
-            _varEntrySz = 1;
-            _eodFldSz = 1;
-            _varLenFldSz = 1;
         }
 
         if (options.ValidateOnOpen)
@@ -277,32 +122,6 @@ public sealed class AccessReader : IAccessReader
         options ??= new AccessReaderOptions();
 
         return new AccessReader(path, options);
-    }
-
-    public void Dispose()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        try
-        {
-            _fs?.Dispose();
-            lock (_cacheLock)
-            {
-                _pageCache = null;
-            }
-
-            lock (_catalogLock)
-            {
-                _catalogCache?.Clear();
-            }
-        }
-        finally
-        {
-            _disposed = true;
-        }
     }
 
     /// <summary>
@@ -919,646 +738,37 @@ public sealed class AccessReader : IAccessReader
         return Task.Run(() => ReadAllTablesAsStrings(progress));
     }
 
-    private static ushort Ru16(byte[] b, int o) =>
-        (ushort)(b[o] | (b[o + 1] << 8));
-
-    private static int Ri32(byte[] b, int o) =>
-        b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24);
-
-    private static uint Ru32(byte[] b, int o) => (uint)Ri32(b, o);
-
-    private static string SafeGet(List<string> row, int idx) =>
-        (idx >= 0 && idx < row.Count) ? row[idx] : string.Empty;
-
-    private static string TypeCodeToName(byte t)
-    {
-        switch (t)
-        {
-            case T_BOOL: return "Yes/No";
-            case T_BYTE: return "Byte";
-            case T_INT: return "Integer";
-            case T_LONG: return "Long Integer";
-            case T_MONEY: return "Currency";
-            case T_FLOAT: return "Single";
-            case T_DOUBLE: return "Double";
-            case T_DATETIME: return "Date/Time";
-            case T_BINARY: return "Binary";
-            case T_TEXT: return "Text";
-            case T_OLE: return "OLE Object";
-            case T_MEMO: return "Memo";
-            case T_GUID: return "GUID";
-            case T_NUMERIC: return "Decimal";
-            default: return $"0x{t:X2}";
-        }
-    }
-
-    private static ColumnSize SizeForColumn(ColumnInfo col)
-    {
-        switch (col.Type)
-        {
-            case T_BOOL: return ColumnSize.FromBits(1);
-            case T_BYTE: return ColumnSize.FromBytes(1);
-            case T_INT: return ColumnSize.FromBytes(2);
-            case T_LONG: return ColumnSize.FromBytes(4);
-            case T_MONEY: return ColumnSize.FromBytes(8);
-            case T_FLOAT: return ColumnSize.FromBytes(4);
-            case T_DOUBLE: return ColumnSize.FromBytes(8);
-            case T_DATETIME: return ColumnSize.FromBytes(8);
-            case T_GUID: return ColumnSize.FromBytes(16);
-            case T_NUMERIC: return ColumnSize.FromBytes(17);
-            case T_TEXT: return ColumnSize.FromChars(col.Size > 0 ? col.Size / 2 : 255);
-            case T_BINARY: return col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable;
-            case T_MEMO:
-            case T_OLE: return ColumnSize.Lval;
-            default: return col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable;
-        }
-    }
-
-    private static Type TypeCodeToClrType(byte typeCode)
-    {
-        switch (typeCode)
-        {
-            case T_BOOL: return typeof(bool);
-            case T_BYTE: return typeof(byte);
-            case T_INT: return typeof(short);
-            case T_LONG: return typeof(int);
-            case T_MONEY: return typeof(decimal);
-            case T_FLOAT: return typeof(float);
-            case T_DOUBLE: return typeof(double);
-            case T_DATETIME: return typeof(DateTime);
-            case T_GUID: return typeof(Guid);
-            case T_NUMERIC: return typeof(decimal);
-            default: return typeof(string);
-        }
-    }
-
-    /// <summary>Returns the expected byte size for a fixed-length column type.</summary>
-    private static int FixedSize(byte type, int declaredSize)
-    {
-        switch (type)
-        {
-            case T_BYTE: return 1;
-            case T_INT: return 2;
-            case T_LONG: return 4;
-            case T_MONEY: return 8;
-            case T_FLOAT: return 4;
-            case T_DOUBLE: return 8;
-            case T_DATETIME: return 8;
-            case T_GUID: return 16;
-            case T_NUMERIC: return 17;
-            default: return declaredSize > 0 ? declaredSize : 0;
-        }
-    }
-
-    private static string ReadFixed(byte[] row, int start, ColumnInfo col, int sz)
-    {
-        try
-        {
-            return col.Type switch
-            {
-                T_BYTE => row[start].ToString(System.Globalization.CultureInfo.InvariantCulture),
-                T_INT => ((short)Ru16(row, start)).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                T_LONG => Ri32(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                T_FLOAT => BitConverter.ToSingle(row, start).ToString("G", System.Globalization.CultureInfo.InvariantCulture),
-                T_DOUBLE => BitConverter.ToDouble(row, start).ToString("G", System.Globalization.CultureInfo.InvariantCulture),
-                T_DATETIME => OaDateToString(BitConverter.ToDouble(row, start)),
-                T_MONEY => (BitConverter.ToInt64(row, start) / 10000.0m).ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
-                T_NUMERIC => ReadNumeric(row, start),
-                T_GUID => ReadGuid(row, start),
-                _ => BitConverter.ToString(row, start, Math.Min(sz, 8)),
-            };
-        }
-        catch (JetLimitationException)
-        {
-            throw;
-        }
-        catch (ArgumentException)
-        {
-            return string.Empty;
-        }
-        catch (OverflowException)
-        {
-            return string.Empty;
-        }
-        catch (IndexOutOfRangeException)
-        {
-            return string.Empty;
-        }
-    }
-
-    /// <summary>
-    /// Scans the first 512 bytes for known file magic numbers (images, PDFs, Office docs, archives).
-    /// Typical Access OLE fields wrap files in an OLE container (~78-byte header),
-    /// so this scans beyond the OLE envelope to find the real file bytes.
-    /// Returns a data-URI with appropriate MIME type, or null if no known format is found.
-    /// </summary>
-    private static string? TryDecodeOleObject(byte[] b, int start, int len)
-    {
-        if (b == null || len < 4)
-        {
-            return null;
-        }
-
-        int scanEnd = Math.Min(start + len, start + 512);
-        for (int i = start; i < scanEnd - 3; i++)
-        {
-            // ── Images ──
-            // JPEG: FF D8 FF
-            if (b[i] == 0xFF && b[i + 1] == 0xD8 && b[i + 2] == 0xFF)
-            {
-                int fileLen = start + len - i;
-                return "data:image/jpeg;base64," + Convert.ToBase64String(b, i, fileLen);
-            }
-
-            // PNG: 89 50 4E 47
-            if (b[i] == 0x89 && b[i + 1] == 0x50 && b[i + 2] == 0x4E && b[i + 3] == 0x47)
-            {
-                int fileLen = start + len - i;
-                return "data:image/png;base64," + Convert.ToBase64String(b, i, fileLen);
-            }
-
-            // GIF: 47 49 46
-            if (b[i] == 0x47 && b[i + 1] == 0x49 && b[i + 2] == 0x46)
-            {
-                int fileLen = start + len - i;
-                return "data:image/gif;base64," + Convert.ToBase64String(b, i, fileLen);
-            }
-
-            // BMP: 42 4D
-            if (b[i] == 0x42 && b[i + 1] == 0x4D)
-            {
-                int fileLen = start + len - i;
-                return "data:image/bmp;base64," + Convert.ToBase64String(b, i, fileLen);
-            }
-
-            // ── Documents ──
-            // PDF: 25 50 44 46 (%PDF)
-            if (b[i] == 0x25 && b[i + 1] == 0x50 && b[i + 2] == 0x44 && b[i + 3] == 0x46)
-            {
-                int fileLen = start + len - i;
-                return "data:application/pdf;base64," + Convert.ToBase64String(b, i, fileLen);
-            }
-
-            // ZIP (also DOCX/XLSX/PPTX): 50 4B 03 04 (PK..)
-            if (i + 3 < scanEnd && b[i] == 0x50 && b[i + 1] == 0x4B && b[i + 2] == 0x03 && b[i + 3] == 0x04)
-            {
-                int fileLen = start + len - i;
-
-                // Check if it's an Office Open XML file by looking for [Content_Types].xml signature
-                // For simplicity, return generic zip MIME
-                return "data:application/zip;base64," + Convert.ToBase64String(b, i, fileLen);
-            }
-
-            // DOC (Word 97-2003): D0 CF 11 E0 (OLE compound file)
-            if (i + 3 < scanEnd && b[i] == 0xD0 && b[i + 1] == 0xCF && b[i + 2] == 0x11 && b[i + 3] == 0xE0)
-            {
-                int fileLen = start + len - i;
-                return "data:application/msword;base64," + Convert.ToBase64String(b, i, fileLen);
-            }
-
-            // RTF: 7B 5C 72 74 ({\rt)
-            if (i + 3 < scanEnd && b[i] == 0x7B && b[i + 1] == 0x5C && b[i + 2] == 0x72 && b[i + 3] == 0x74)
-            {
-                int fileLen = start + len - i;
-                return "data:application/rtf;base64," + Convert.ToBase64String(b, i, fileLen);
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Decodes Jet4 text (UCS-2 / UTF-16LE).
-    /// If data starts with the compressed-unicode marker 0xFF 0xFE, the
-    /// JET4 compressed-string algorithm is applied first.
-    /// </summary>
-    private static string DecodeJet4Text(byte[] b, int start, int len)
-    {
-        if (len < 2)
-        {
-            return string.Empty;
-        }
-
-        if (b[start] == 0xFF && b[start + 1] == 0xFE)
-        {
-            return DecompressJet4(b, start + 2, len - 2);
-        }
-
-        // Plain UCS-2 LE — length must be even
-        int evenLen = len & ~1;
-        return evenLen > 0 ? Encoding.Unicode.GetString(b, start, evenLen) : string.Empty;
-    }
-
-    /// <summary>
-    /// Decodes the JET4 "compressed unicode" encoding.
-    /// A 0x00 byte toggles between 1-byte compressed (ASCII) and 2-byte
-    /// uncompressed (UCS-2) mode.
-    /// </summary>
-    private static string DecompressJet4(byte[] b, int start, int len)
-    {
-        var sb = new StringBuilder(len);
-        bool compressed = true;
-        int i = start, end = start + len;
-
-        while (i < end)
-        {
-            if (compressed)
-            {
-                if (b[i] == 0x00)
-                {
-                    compressed = false;
-                    i++;
-                    continue;
-                }
-
-                _ = sb.Append((char)b[i++]);
-            }
-            else
-            {
-                if (i + 1 >= end)
-                {
-                    break;
-                }
-
-                if (b[i] == 0x00 && b[i + 1] == 0x00)
-                {
-                    compressed = true;
-                    i += 2;
-                    continue;
-                }
-
-                _ = sb.Append((char)(b[i] | (b[i + 1] << 8)));
-                i += 2;
-            }
-        }
-
-        return sb.ToString();
-    }
-
-    private static string OaDateToString(double oaDate)
-    {
-        try
-        {
-            return DateTime.FromOADate(oaDate).ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
-        }
-        catch (ArgumentException)
-        {
-            return string.Empty;
-        }
-    }
-
-    /// <summary>
-    /// Reads a Jet NUMERIC (17 bytes):
-    ///   [precision(1)][scale(1)][sign(1)][pad(1)][96-bit LE integer: lo(4)+mid(4)+hi(4)]
-    /// Uses the <see cref="decimal(int,int,int,bool,byte)"/> constructor which accepts any
-    /// 96-bit integer directly — no manual multiply-chain needed.
-    /// </summary>
-    private static string ReadNumeric(byte[] b, int start)
-    {
-        if (start + 16 > b.Length)
-        {
-            return string.Empty;
-        }
-
-        byte scale = b[start + 1];
-        bool neg = b[start + 2] != 0;
-        uint lo = Ru32(b, start + 4);
-        uint mid = Ru32(b, start + 8);
-        uint hi = Ru32(b, start + 12);
-
-        // decimal(int lo, int mid, int hi, bool isNegative, byte scale) requires scale ≤ 28
-        if (scale > 28)
-        {
-            throw new JetLimitationException(
-                $"T_NUMERIC scale {scale} exceeds the .NET decimal maximum of 28.");
-        }
-
-        try
-        {
-            return new decimal((int)lo, (int)mid, (int)hi, neg, scale).ToString("G", System.Globalization.CultureInfo.InvariantCulture);
-        }
-        catch (OverflowException ex)
-        {
-            throw new JetLimitationException(
-                $"T_NUMERIC value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})", ex);
-        }
-    }
-
-    private static string ReadGuid(byte[] b, int start)
-    {
-        if (start + 16 > b.Length)
-        {
-            return string.Empty;
-        }
-
-        // First three groups are stored little-endian in the Jet format
-        return string.Format(
-            System.Globalization.CultureInfo.InvariantCulture,
-            "{{{0:X2}{1:X2}{2:X2}{3:X2}-{4:X2}{5:X2}-{6:X2}{7:X2}-{8:X2}{9:X2}-{10:X2}{11:X2}{12:X2}{13:X2}{14:X2}{15:X2}}}",
-            b[start + 3],
-            b[start + 2],
-            b[start + 1],
-            b[start],
-            b[start + 5],
-            b[start + 4],
-            b[start + 7],
-            b[start + 6],
-            b[start + 8],
-            b[start + 9],
-            b[start + 10],
-            b[start + 11],
-            b[start + 12],
-            b[start + 13],
-            b[start + 14],
-            b[start + 15]);
-    }
-
-    private static List<TableColumn> BuildSchema(List<ColumnInfo> columns)
-    {
-        return columns.ConvertAll(c => new TableColumn
-        {
-            Name = c.Name,
-            Type = TypeCodeToClrType(c.Type),
-            Size = SizeForColumn(c),
-        });
-    }
-
-    private static object[] ConvertRowToTyped(List<string> row, List<ColumnInfo> columns)
-    {
-        var typedRow = new object[row.Count];
-        for (int i = 0; i < row.Count && i < columns.Count; i++)
-        {
-            typedRow[i] = TypedValueParser.ParseValue(row[i], TypeCodeToClrType(columns[i].Type));
-        }
-
-        return typedRow;
-    }
-
-    private void ValidateDatabaseFormat()
-    {
-        if (_fs.Length < 128)
-        {
-            throw new InvalidDataException("File too small to be a valid JET database");
-        }
-
-        // Verify the JET magic signature at offset 0: 00 01 00 00
-        _ = _fs.Seek(0, SeekOrigin.Begin);
-        var magic = new byte[4];
-        int read = _fs.Read(magic, 0, 4);
-        if (read < 4 || magic[0] != 0x00 || magic[1] != 0x01 || magic[2] != 0x00 || magic[3] != 0x00)
-        {
-            throw new InvalidDataException(
-                $"File does not have a valid JET magic signature " +
-                $"(expected 00 01 00 00, got {magic[0]:X2} {magic[1]:X2} {magic[2]:X2} {magic[3]:X2}).");
-        }
-    }
-
-    private void ThrowIfDisposed()
+    /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
     {
         if (_disposed)
         {
-            throw new ObjectDisposedException(nameof(AccessReader));
+            return;
         }
-    }
 
-    private byte[] ReadPage(long n)
-    {
-        var buf = new byte[_pgSz];
-        _ = _fs.Seek(n * _pgSz, SeekOrigin.Begin);
-
-        // FileStream.Read is not guaranteed to return all bytes in one call
-        int read = 0;
-        while (read < _pgSz)
+        try
         {
-            int got = _fs.Read(buf, read, _pgSz - read);
-            if (got == 0)
+            if (disposing)
             {
-                break;
-            }
-
-            read += got;
-        }
-
-        return buf;
-    }
-
-    /// <summary>Reads a page through the cache if enabled (PageCacheSize > 0).</summary>
-    private byte[] ReadPageCached(long n)
-    {
-        ThrowIfDisposed();
-
-        if (PageCacheSize < 0)
-        {
-            return ReadPage(n);  // cache disabled
-        }
-
-        // Lazy-init: only one thread creates the cache; LruCache is internally thread-safe
-        // so subsequent TryGetValue/Add calls need no outer lock.
-        if (_pageCache == null && PageCacheSize > 0)
-        {
-            lock (_cacheLock)
-            {
-                if (_pageCache == null)
+                lock (_cacheLock)
                 {
-                    _pageCache = new LruCache<long, byte[]>(PageCacheSize);
+                    _pageCache = null;
+                }
+
+                lock (_catalogLock)
+                {
+                    _catalogCache?.Clear();
                 }
             }
         }
-
-        if (_pageCache != null && _pageCache.TryGetValue(n, out byte[] cached))
+        finally
         {
-            _ = Interlocked.Increment(ref _cacheHits);
-            return cached;
-        }
-
-        _ = Interlocked.Increment(ref _cacheMisses);
-        byte[] page = ReadPage(n);
-        _pageCache?.Add(n, page);
-        return page;
-    }
-
-    /// <summary>
-    /// Concatenates the TDEF page chain starting at <paramref name="startPage"/>
-    /// into a single byte array.  Pages after the first have their 8-byte
-    /// TDEF header stripped before appending.
-    /// </summary>
-    private byte[]? ReadTDefBytes(long startPage)
-    {
-        var parts = new List<byte[]>();
-        var seen = new HashSet<long>();
-        long pg = startPage;
-
-        while (pg != 0 && !seen.Contains(pg))
-        {
-            _ = seen.Add(pg);
-            byte[] p = ReadPage(pg);
-            if (p[0] != 0x02)
-            {
-                break;   // not a TDEF page
-            }
-
-            parts.Add(p);
-            pg = Ru32(p, 4);           // next_pg (0 = end of chain)
-        }
-
-        if (parts.Count == 0)
-        {
-            return null;
-        }
-
-        if (parts.Count == 1)
-        {
-            return parts[0];
-        }
-
-        // Concatenate: full first page, then continuation pages minus 8-byte TDEF header
-        int total = parts[0].Length;
-        for (int i = 1; i < parts.Count; i++)
-        {
-            total += parts[i].Length - 8;
-        }
-
-        var result = new byte[total];
-        Buffer.BlockCopy(parts[0], 0, result, 0, parts[0].Length);
-        int pos = parts[0].Length;
-        for (int i = 1; i < parts.Count; i++)
-        {
-            int len = parts[i].Length - 8;
-            Buffer.BlockCopy(parts[i], 8, result, pos, len);
-            pos += len;
-        }
-
-        return result;
-    }
-
-    private TableDef? ReadTableDef(long tdefPage)
-    {
-        byte[]? td = ReadTDefBytes(tdefPage);
-        if (td == null || td.Length < _tdBlockEnd)
-        {
-            return null;
-        }
-
-        int numCols = Ru16(td, _tdNumCols);
-        int numRealIdx = Ri32(td, _tdNumRealIdx);
-
-        // Safety: corrupt or unusual TDEFs can report absurd index counts
-        if (numRealIdx < 0 || numRealIdx > 1000)
-        {
-            numRealIdx = 0;
-        }
-
-        if (numCols > 4096)
-        {
-            return null;
-        }
-
-        // Column descriptors follow immediately after block + first real-idx entries
-        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
-        int namePos = colStart + (numCols * _colDescSz);
-
-        if (namePos > td.Length)
-        {
-            return null;
-        }
-
-        var cols = new List<ColumnInfo>(numCols);
-        for (int i = 0; i < numCols; i++)
-        {
-            int o = colStart + (i * _colDescSz);
-            if (o + _colDescSz > td.Length)
-            {
-                break;
-            }
-
-            cols.Add(new ColumnInfo
-            {
-                Type = td[o + _colTypeOff],
-                ColNum = Ru16(td, o + _colNumOff),
-                VarIdx = Ru16(td, o + _colVarOff),
-                FixedOff = Ru16(td, o + _colFixedOff),
-                Size = Ru16(td, o + _colSzOff),
-                Flags = td[o + _colFlagsOff],
-            });
-        }
-
-        // Column names follow directly after all descriptors (in TDEF / descriptor order).
-        // Names MUST be read before sorting so each name maps to the correct descriptor.
-        for (int i = 0; i < cols.Count; i++)
-        {
-            int nameLen = ReadColumnName(td, ref namePos, out string name);
-            if (nameLen < 0)
-            {
-                break;
-            }
-
-            cols[i].Name = name;
-        }
-
-        // Sort by col_num AFTER names are assigned.
-        // Row data (null_mask bits, numCols check) is indexed by col_num,
-        // not by TDEF position.  mdbtools does the same sort (mdb_col_comparer).
-        cols.Sort((a, b) => a.ColNum.CompareTo(b.ColNum));
-
-        // Detect deleted-column gaps: if ColNum sequence has gaps, flag it
-        bool hasDeletedColumns = cols.Count >= 2
-            && cols[cols.Count - 1].ColNum - cols[0].ColNum != cols.Count - 1;
-
-        return new TableDef
-        {
-            Columns = cols,
-            RowCount = td.Length > 20 ? (long)Ru32(td, 16) : 0,
-            HasDeletedColumns = hasDeletedColumns,
-        };
-    }
-
-    /// <summary>
-    /// Reads a single column name from the TDEF byte array at <paramref name="pos"/>,
-    /// advancing <paramref name="pos"/> past the name bytes.
-    /// Returns the byte length consumed, or -1 if the name extends beyond <paramref name="td"/>.
-    /// </summary>
-    private int ReadColumnName(byte[] td, ref int pos, out string name)
-    {
-        name = string.Empty;
-        if (pos >= td.Length)
-        {
-            return -1;
-        }
-
-        if (_jet4)
-        {
-            if (pos + 2 > td.Length)
-            {
-                return -1;
-            }
-
-            int len = Ru16(td, pos);
-            pos += 2;
-            if (pos + len > td.Length)
-            {
-                return -1;
-            }
-
-            name = Encoding.Unicode.GetString(td, pos, len);
-            pos += len;
-            return len + 2;
-        }
-        else
-        {
-            int len = td[pos++];
-            if (pos + len > td.Length)
-            {
-                return -1;
-            }
-
-            name = _ansiEncoding.GetString(td, pos, len);
-            pos += len;
-            return len + 1;
+            base.Dispose(disposing);
         }
     }
 
-    /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
-    private List<CatalogEntry> GetUserTables()
+        /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
+    private protected override List<CatalogEntry> GetUserTables()
     {
         if (_catalogCache != null)
         {
@@ -1682,31 +892,7 @@ public sealed class AccessReader : IAccessReader
         }
     }
 
-    /// <summary>Finds a catalog entry by name (case-insensitive) without re-scanning the catalog.</summary>
-    private CatalogEntry GetCatalogEntry(string tableName)
-    {
-        return GetUserTables().Find(e =>
-            string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private (CatalogEntry Entry, TableDef Td)? ResolveTable(string tableName)
-    {
-        CatalogEntry entry = GetCatalogEntry(tableName);
-        if (entry == null)
-        {
-            return null;
-        }
-
-        TableDef? td = ReadTableDef(entry.TDefPage);
-        if (td == null || td.Columns.Count == 0)
-        {
-            return null;
-        }
-
-        return (entry, td);
-    }
-
-    private IEnumerable<byte[]> EnumerateTablePages(long tdefPage)
+    private protected override IEnumerable<byte[]> EnumerateTablePages(long tdefPage)
     {
         long total = _fs.Length / _pgSz;
         for (long p = 3; p < total; p++)
@@ -1724,6 +910,358 @@ public sealed class AccessReader : IAccessReader
 
             yield return page;
         }
+    }
+
+    private static string SafeGet(List<string> row, int idx) =>
+        (idx >= 0 && idx < row.Count) ? row[idx] : string.Empty;
+
+    private static string TypeCodeToName(byte t)
+    {
+        switch (t)
+        {
+            case T_BOOL: return "Yes/No";
+            case T_BYTE: return "Byte";
+            case T_INT: return "Integer";
+            case T_LONG: return "Long Integer";
+            case T_MONEY: return "Currency";
+            case T_FLOAT: return "Single";
+            case T_DOUBLE: return "Double";
+            case T_DATETIME: return "Date/Time";
+            case T_BINARY: return "Binary";
+            case T_TEXT: return "Text";
+            case T_OLE: return "OLE Object";
+            case T_MEMO: return "Memo";
+            case T_GUID: return "GUID";
+            case T_NUMERIC: return "Decimal";
+            default: return $"0x{t:X2}";
+        }
+    }
+
+    private static ColumnSize SizeForColumn(ColumnInfo col)
+    {
+        switch (col.Type)
+        {
+            case T_BOOL: return ColumnSize.FromBits(1);
+            case T_BYTE: return ColumnSize.FromBytes(1);
+            case T_INT: return ColumnSize.FromBytes(2);
+            case T_LONG: return ColumnSize.FromBytes(4);
+            case T_MONEY: return ColumnSize.FromBytes(8);
+            case T_FLOAT: return ColumnSize.FromBytes(4);
+            case T_DOUBLE: return ColumnSize.FromBytes(8);
+            case T_DATETIME: return ColumnSize.FromBytes(8);
+            case T_GUID: return ColumnSize.FromBytes(16);
+            case T_NUMERIC: return ColumnSize.FromBytes(17);
+            case T_TEXT: return ColumnSize.FromChars(col.Size > 0 ? col.Size / 2 : 255);
+            case T_BINARY: return col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable;
+            case T_MEMO:
+            case T_OLE: return ColumnSize.Lval;
+            default: return col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable;
+        }
+    }
+
+    private static Type TypeCodeToClrType(byte typeCode)
+    {
+        switch (typeCode)
+        {
+            case T_BOOL: return typeof(bool);
+            case T_BYTE: return typeof(byte);
+            case T_INT: return typeof(short);
+            case T_LONG: return typeof(int);
+            case T_MONEY: return typeof(decimal);
+            case T_FLOAT: return typeof(float);
+            case T_DOUBLE: return typeof(double);
+            case T_DATETIME: return typeof(DateTime);
+            case T_GUID: return typeof(Guid);
+            case T_NUMERIC: return typeof(decimal);
+            default: return typeof(string);
+        }
+    }
+
+    private static string ReadFixed(byte[] row, int start, ColumnInfo col, int sz)
+    {
+        try
+        {
+            return col.Type switch
+            {
+                T_BYTE => row[start].ToString(System.Globalization.CultureInfo.InvariantCulture),
+                T_INT => ((short)Ru16(row, start)).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                T_LONG => Ri32(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                T_FLOAT => BitConverter.ToSingle(row, start).ToString("G", System.Globalization.CultureInfo.InvariantCulture),
+                T_DOUBLE => BitConverter.ToDouble(row, start).ToString("G", System.Globalization.CultureInfo.InvariantCulture),
+                T_DATETIME => OaDateToString(BitConverter.ToDouble(row, start)),
+                T_MONEY => (BitConverter.ToInt64(row, start) / 10000.0m).ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+                T_NUMERIC => ReadNumeric(row, start),
+                T_GUID => ReadGuid(row, start),
+                _ => BitConverter.ToString(row, start, Math.Min(sz, 8)),
+            };
+        }
+        catch (JetLimitationException)
+        {
+            throw;
+        }
+        catch (ArgumentException)
+        {
+            return string.Empty;
+        }
+        catch (OverflowException)
+        {
+            return string.Empty;
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Scans the first 512 bytes for known file magic numbers (images, PDFs, Office docs, archives).
+    /// Typical Access OLE fields wrap files in an OLE container (~78-byte header),
+    /// so this scans beyond the OLE envelope to find the real file bytes.
+    /// Returns a data-URI with appropriate MIME type, or null if no known format is found.
+    /// </summary>
+    private static string? TryDecodeOleObject(byte[] b, int start, int len)
+    {
+        if (b == null || len < 4)
+        {
+            return null;
+        }
+
+        int scanEnd = Math.Min(start + len, start + 512);
+        for (int i = start; i < scanEnd - 3; i++)
+        {
+            // ── Images ──
+            // JPEG: FF D8 FF
+            if (b[i] == 0xFF && b[i + 1] == 0xD8 && b[i + 2] == 0xFF)
+            {
+                int fileLen = start + len - i;
+                return "data:image/jpeg;base64," + Convert.ToBase64String(b, i, fileLen);
+            }
+
+            // PNG: 89 50 4E 47
+            if (b[i] == 0x89 && b[i + 1] == 0x50 && b[i + 2] == 0x4E && b[i + 3] == 0x47)
+            {
+                int fileLen = start + len - i;
+                return "data:image/png;base64," + Convert.ToBase64String(b, i, fileLen);
+            }
+
+            // GIF: 47 49 46
+            if (b[i] == 0x47 && b[i + 1] == 0x49 && b[i + 2] == 0x46)
+            {
+                int fileLen = start + len - i;
+                return "data:image/gif;base64," + Convert.ToBase64String(b, i, fileLen);
+            }
+
+            // BMP: 42 4D
+            if (b[i] == 0x42 && b[i + 1] == 0x4D)
+            {
+                int fileLen = start + len - i;
+                return "data:image/bmp;base64," + Convert.ToBase64String(b, i, fileLen);
+            }
+
+            // ── Documents ──
+            // PDF: 25 50 44 46 (%PDF)
+            if (b[i] == 0x25 && b[i + 1] == 0x50 && b[i + 2] == 0x44 && b[i + 3] == 0x46)
+            {
+                int fileLen = start + len - i;
+                return "data:application/pdf;base64," + Convert.ToBase64String(b, i, fileLen);
+            }
+
+            // ZIP (also DOCX/XLSX/PPTX): 50 4B 03 04 (PK..)
+            if (i + 3 < scanEnd && b[i] == 0x50 && b[i + 1] == 0x4B && b[i + 2] == 0x03 && b[i + 3] == 0x04)
+            {
+                int fileLen = start + len - i;
+
+                // Check if it's an Office Open XML file by looking for [Content_Types].xml signature
+                // For simplicity, return generic zip MIME
+                return "data:application/zip;base64," + Convert.ToBase64String(b, i, fileLen);
+            }
+
+            // DOC (Word 97-2003): D0 CF 11 E0 (OLE compound file)
+            if (i + 3 < scanEnd && b[i] == 0xD0 && b[i + 1] == 0xCF && b[i + 2] == 0x11 && b[i + 3] == 0xE0)
+            {
+                int fileLen = start + len - i;
+                return "data:application/msword;base64," + Convert.ToBase64String(b, i, fileLen);
+            }
+
+            // RTF: 7B 5C 72 74 ({\rt)
+            if (i + 3 < scanEnd && b[i] == 0x7B && b[i + 1] == 0x5C && b[i + 2] == 0x72 && b[i + 3] == 0x74)
+            {
+                int fileLen = start + len - i;
+                return "data:application/rtf;base64," + Convert.ToBase64String(b, i, fileLen);
+            }
+        }
+
+        return null;
+    }
+
+    private static string OaDateToString(double oaDate)
+    {
+        try
+        {
+            return DateTime.FromOADate(oaDate).ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+        }
+        catch (ArgumentException)
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Reads a Jet NUMERIC (17 bytes):
+    ///   [precision(1)][scale(1)][sign(1)][pad(1)][96-bit LE integer: lo(4)+mid(4)+hi(4)]
+    /// Uses the <see cref="decimal(int,int,int,bool,byte)"/> constructor which accepts any
+    /// 96-bit integer directly — no manual multiply-chain needed.
+    /// </summary>
+    private static string ReadNumeric(byte[] b, int start)
+    {
+        if (start + 16 > b.Length)
+        {
+            return string.Empty;
+        }
+
+        byte scale = b[start + 1];
+        bool neg = b[start + 2] != 0;
+        uint lo = Ru32(b, start + 4);
+        uint mid = Ru32(b, start + 8);
+        uint hi = Ru32(b, start + 12);
+
+        // decimal(int lo, int mid, int hi, bool isNegative, byte scale) requires scale ≤ 28
+        if (scale > 28)
+        {
+            throw new JetLimitationException(
+                $"T_NUMERIC scale {scale} exceeds the .NET decimal maximum of 28.");
+        }
+
+        try
+        {
+            return new decimal((int)lo, (int)mid, (int)hi, neg, scale).ToString("G", System.Globalization.CultureInfo.InvariantCulture);
+        }
+        catch (OverflowException ex)
+        {
+            throw new JetLimitationException(
+                $"T_NUMERIC value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})", ex);
+        }
+    }
+
+    private static string ReadGuid(byte[] b, int start)
+    {
+        if (start + 16 > b.Length)
+        {
+            return string.Empty;
+        }
+
+        // First three groups are stored little-endian in the Jet format
+        return string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            "{{{0:X2}{1:X2}{2:X2}{3:X2}-{4:X2}{5:X2}-{6:X2}{7:X2}-{8:X2}{9:X2}-{10:X2}{11:X2}{12:X2}{13:X2}{14:X2}{15:X2}}}",
+            b[start + 3],
+            b[start + 2],
+            b[start + 1],
+            b[start],
+            b[start + 5],
+            b[start + 4],
+            b[start + 7],
+            b[start + 6],
+            b[start + 8],
+            b[start + 9],
+            b[start + 10],
+            b[start + 11],
+            b[start + 12],
+            b[start + 13],
+            b[start + 14],
+            b[start + 15]);
+    }
+
+    private static List<TableColumn> BuildSchema(List<ColumnInfo> columns)
+    {
+        return columns.ConvertAll(c => new TableColumn
+        {
+            Name = c.Name,
+            Type = TypeCodeToClrType(c.Type),
+            Size = SizeForColumn(c),
+        });
+    }
+
+    private static object[] ConvertRowToTyped(List<string> row, List<ColumnInfo> columns)
+    {
+        var typedRow = new object[row.Count];
+        for (int i = 0; i < row.Count && i < columns.Count; i++)
+        {
+            typedRow[i] = TypedValueParser.ParseValue(row[i], TypeCodeToClrType(columns[i].Type));
+        }
+
+        return typedRow;
+    }
+
+    private void ValidateDatabaseFormat()
+    {
+        if (_fs.Length < 128)
+        {
+            throw new InvalidDataException("File too small to be a valid JET database");
+        }
+
+        // Verify the JET magic signature at offset 0: 00 01 00 00
+        _ = _fs.Seek(0, SeekOrigin.Begin);
+        var magic = new byte[4];
+        int read = _fs.Read(magic, 0, 4);
+        if (read < 4 || magic[0] != 0x00 || magic[1] != 0x01 || magic[2] != 0x00 || magic[3] != 0x00)
+        {
+            throw new InvalidDataException(
+                $"File does not have a valid JET magic signature " +
+                $"(expected 00 01 00 00, got {magic[0]:X2} {magic[1]:X2} {magic[2]:X2} {magic[3]:X2}).");
+        }
+    }
+
+    /// <summary>Reads a page through the cache if enabled (PageCacheSize > 0).</summary>
+    private byte[] ReadPageCached(long n)
+    {
+        ThrowIfDisposed();
+
+        if (PageCacheSize < 0)
+        {
+            return ReadPage(n);  // cache disabled
+        }
+
+        // Lazy-init: only one thread creates the cache; LruCache is internally thread-safe
+        // so subsequent TryGetValue/Add calls need no outer lock.
+        if (_pageCache == null && PageCacheSize > 0)
+        {
+            lock (_cacheLock)
+            {
+                if (_pageCache == null)
+                {
+                    _pageCache = new LruCache<long, byte[]>(PageCacheSize);
+                }
+            }
+        }
+
+        if (_pageCache != null && _pageCache.TryGetValue(n, out byte[] cached))
+        {
+            _ = Interlocked.Increment(ref _cacheHits);
+            return cached;
+        }
+
+        _ = Interlocked.Increment(ref _cacheMisses);
+        byte[] page = ReadPage(n);
+        _pageCache?.Add(n, page);
+        return page;
+    }
+
+    private (CatalogEntry Entry, TableDef Td)? ResolveTable(string tableName)
+    {
+        CatalogEntry entry = GetCatalogEntry(tableName);
+        if (entry == null)
+        {
+            return null;
+        }
+
+        TableDef? td = ReadTableDef(entry.TDefPage);
+        if (td == null || td.Columns.Count == 0)
+        {
+            return null;
+        }
+
+        return (entry, td);
     }
 
     private IEnumerable<object[]> StreamRowsCore(string tableName, IProgress<int> progress)
@@ -1775,64 +1313,14 @@ public sealed class AccessReader : IAccessReader
     /// <summary>Yields decoded rows from a single data page.</summary>
     private IEnumerable<List<string>> EnumerateRows(byte[] page, TableDef td)
     {
-        int numRows = Ru16(page, _dpNumRows);
-        if (numRows == 0)
+        foreach (RowBound rb in EnumerateLiveRowBounds(page))
         {
-            yield break;
-        }
-
-        // Collect all raw offset entries (including deleted / overflow)
-        // so we can compute boundaries for live rows
-        var rawOffsets = new int[numRows];
-        for (int r = 0; r < numRows; r++)
-        {
-            rawOffsets[r] = Ru16(page, _dpRowsStart + (r * 2));
-        }
-
-        // Extract and sort physical positions (lower 13 bits) for boundary computation
-        var positions = new int[numRows];
-        int posCount = 0;
-        for (int r = 0; r < numRows; r++)
-        {
-            int pos = rawOffsets[r] & 0x1FFF;
-            if (pos > 0 && pos < _pgSz)
-            {
-                positions[posCount++] = pos;
-            }
-        }
-
-        Array.Sort(positions, 0, posCount);
-
-        for (int r = 0; r < numRows; r++)
-        {
-            int raw = rawOffsets[r];
-            if ((raw & 0xC000) != 0)
-            {
-                continue; // deleted or overflow
-            }
-
-            int rowStart = raw & 0x1FFF;
-
-            // Row ends just before the next higher row start, or at page end
-            int rowEnd = _pgSz - 1;
-            int searchIdx = Array.BinarySearch(positions, 0, posCount, rowStart);
-
-            // searchIdx >= 0: exact match; next higher is at searchIdx + 1
-            // searchIdx < 0: ~searchIdx is the insertion point (first element > rowStart)
-            int nextIdx = searchIdx >= 0 ? searchIdx + 1 : ~searchIdx;
-            if (nextIdx < posCount)
-            {
-                rowEnd = positions[nextIdx] - 1;
-            }
-
-            int rowSize = rowEnd - rowStart + 1;
-            if (rowSize < _numColsFldSz)
+            if (rb.RowSize < _numColsFldSz)
             {
                 continue;
             }
 
-            // Pass the page buffer directly with absolute row bounds — no per-row copy
-            List<string>? values = CrackRow(page, rowStart, rowSize, td);
+            List<string>? values = CrackRow(page, rb.RowStart, rb.RowSize, td);
             if (values != null)
             {
                 yield return values;
@@ -2307,12 +1795,5 @@ public sealed class AccessReader : IAccessReader
         }
 
         return isOle ? $"(OLE chain error: {chain.Error})" : $"(memo chain error: {chain.Error})";
-    }
-
-    private sealed class CatalogEntry
-    {
-        public string Name { get; set; } = string.Empty;
-
-        public long TDefPage { get; set; }
     }
 }

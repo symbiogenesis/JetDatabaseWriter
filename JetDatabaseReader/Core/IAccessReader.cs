@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 /// Interface for reading Microsoft Access JET databases (.mdb / .accdb).
 /// Provides methods for listing tables, reading data, and streaming large datasets.
 /// </summary>
-public interface IAccessReader : IDisposable
+public interface IAccessReader : IAccessBase
 {
     /// <summary>Gets or sets a value indicating whether GetUserTables logs verbose hex dumps for debugging. Default: false.</summary>
     bool DiagnosticsEnabled { get; set; }

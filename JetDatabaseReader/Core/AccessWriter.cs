@@ -9,143 +9,25 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 
-#pragma warning disable SA1204 // Static members should appear before non-static members
 #pragma warning disable CA1822 // Mark members as static
 
 /// <summary>
 /// Pure-managed writer for Microsoft Access JET databases (.mdb / .accdb).
 /// Supports creating tables, inserting, updating, and deleting rows.
 /// </summary>
-public sealed class AccessWriter : IAccessWriter
+public sealed class AccessWriter : AccessBase, IAccessWriter
 {
-    private const byte T_BOOL = 0x01;
-    private const byte T_BYTE = 0x02;
-    private const byte T_INT = 0x03;
-    private const byte T_LONG = 0x04;
-    private const byte T_MONEY = 0x05;
-    private const byte T_FLOAT = 0x06;
-    private const byte T_DOUBLE = 0x07;
-    private const byte T_DATETIME = 0x08;
-    private const byte T_BINARY = 0x09;
-    private const byte T_TEXT = 0x0A;
-    private const byte T_OLE = 0x0B;
-    private const byte T_MEMO = 0x0C;
-    private const byte T_GUID = 0x0F;
-    private const byte T_NUMERIC = 0x10;
-
-    private const int ObjTable = 1;
-    private const uint SysTableMask = 0x80000002U;
     private const int MaxInlineMemoBytes = 1024;
     private const int MaxInlineOleBytes = 256;
 
-    private readonly FileStream _fs;
     private readonly string _path;
-    private readonly bool _jet4;
-    private readonly Encoding _ansiEncoding;
-    private readonly int _pgSz;
-    private readonly int _dpTDefOff;
-    private readonly int _dpNumRows;
-    private readonly int _dpRowsStart;
-    private readonly int _tdNumCols;
-    private readonly int _tdNumRealIdx;
-    private readonly int _tdBlockEnd;
-    private readonly int _colDescSz;
-    private readonly int _colTypeOff;
-    private readonly int _colVarOff;
-    private readonly int _colFixedOff;
-    private readonly int _colSzOff;
-    private readonly int _colFlagsOff;
-    private readonly int _colNumOff;
-    private readonly int _realIdxEntrySz;
-    private readonly int _numColsFldSz;
-    private readonly int _varEntrySz;
-    private readonly int _eodFldSz;
-    private readonly int _varLenFldSz;
 
     private List<CatalogEntry>? _catalogCache;
-    private bool _disposed;
-
-    static AccessWriter()
-    {
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-    }
 
     private AccessWriter(string path, FileStream fs)
+        : base(fs)
     {
         _path = path;
-        _fs = fs;
-
-        var hdr = new byte[0x80];
-        _ = _fs.Seek(0, SeekOrigin.Begin);
-        _ = _fs.Read(hdr, 0, hdr.Length);
-
-        byte ver = hdr[0x14];
-        _jet4 = ver >= 1;
-        _pgSz = _jet4 ? 4096 : 2048;
-
-        int cpOffset = _jet4 ? 0x3C : 0x3A;
-        int sortOrder = (hdr.Length > cpOffset + 1) ? Ru16(hdr, cpOffset) : 0;
-        int codePage = (sortOrder >> 8) & 0xFF;
-        if (codePage == 0)
-        {
-            codePage = 1252;
-        }
-
-        try
-        {
-            _ansiEncoding = Encoding.GetEncoding(codePage);
-        }
-        catch (ArgumentException)
-        {
-            _ansiEncoding = Encoding.UTF8;
-        }
-        catch (NotSupportedException)
-        {
-            _ansiEncoding = Encoding.UTF8;
-        }
-
-        if (_jet4)
-        {
-            _dpTDefOff = 4;
-            _dpNumRows = 12;
-            _dpRowsStart = 14;
-            _tdNumCols = 45;
-            _tdNumRealIdx = 51;
-            _tdBlockEnd = 63;
-            _colDescSz = 25;
-            _colTypeOff = 0;
-            _colVarOff = 7;
-            _colFixedOff = 21;
-            _colSzOff = 23;
-            _colFlagsOff = 15;
-            _colNumOff = 5;
-            _realIdxEntrySz = 12;
-            _numColsFldSz = 2;
-            _varEntrySz = 2;
-            _eodFldSz = 2;
-            _varLenFldSz = 2;
-        }
-        else
-        {
-            _dpTDefOff = 4;
-            _dpNumRows = 8;
-            _dpRowsStart = 10;
-            _tdNumCols = 25;
-            _tdNumRealIdx = 31;
-            _tdBlockEnd = 43;
-            _colDescSz = 18;
-            _colTypeOff = 0;
-            _colVarOff = 3;
-            _colFixedOff = 14;
-            _colSzOff = 16;
-            _colFlagsOff = 13;
-            _colNumOff = 1;
-            _realIdxEntrySz = 8;
-            _numColsFldSz = 1;
-            _varEntrySz = 1;
-            _eodFldSz = 1;
-            _varLenFldSz = 1;
-        }
     }
 
     /// <summary>
@@ -171,7 +53,7 @@ public sealed class AccessWriter : IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(columns, nameof(columns));
-        Guard.NotDisposed(_disposed, nameof(AccessWriter));
+        ThrowIfDisposed();
 
         if (columns.Count == 0)
         {
@@ -195,7 +77,7 @@ public sealed class AccessWriter : IAccessWriter
     public void DropTable(string tableName)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotDisposed(_disposed, nameof(AccessWriter));
+        ThrowIfDisposed();
 
         TableDef? msys = ReadTableDef(2);
         if (msys == null)
@@ -211,12 +93,12 @@ public sealed class AccessWriter : IAccessWriter
                 continue;
             }
 
-            if (row.ObjectType != ObjTable)
+            if (row.ObjectType != OBJ_TABLE)
             {
                 continue;
             }
 
-            if ((unchecked((uint)row.Flags) & SysTableMask) != 0)
+            if ((unchecked((uint)row.Flags) & SYSTABLE_MASK) != 0)
             {
                 continue;
             }
@@ -236,7 +118,7 @@ public sealed class AccessWriter : IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(values, nameof(values));
-        Guard.NotDisposed(_disposed, nameof(AccessWriter));
+        ThrowIfDisposed();
 
         CatalogEntry entry = GetRequiredCatalogEntry(tableName);
         TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
@@ -248,7 +130,7 @@ public sealed class AccessWriter : IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(rows, nameof(rows));
-        Guard.NotDisposed(_disposed, nameof(AccessWriter));
+        ThrowIfDisposed();
 
         CatalogEntry entry = GetRequiredCatalogEntry(tableName);
         TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
@@ -270,7 +152,7 @@ public sealed class AccessWriter : IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(item, nameof(item));
-        Guard.NotDisposed(_disposed, nameof(AccessWriter));
+        ThrowIfDisposed();
 
         CatalogEntry entry = GetRequiredCatalogEntry(tableName);
         TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
@@ -285,7 +167,7 @@ public sealed class AccessWriter : IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(items, nameof(items));
-        Guard.NotDisposed(_disposed, nameof(AccessWriter));
+        ThrowIfDisposed();
 
         CatalogEntry entry = GetRequiredCatalogEntry(tableName);
         TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
@@ -309,7 +191,7 @@ public sealed class AccessWriter : IAccessWriter
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
         Guard.NotNull(updatedValues, nameof(updatedValues));
-        Guard.NotDisposed(_disposed, nameof(AccessWriter));
+        ThrowIfDisposed();
 
         if (updatedValues.Count == 0)
         {
@@ -374,7 +256,7 @@ public sealed class AccessWriter : IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
-        Guard.NotDisposed(_disposed, nameof(AccessWriter));
+        ThrowIfDisposed();
 
         CatalogEntry entry = GetRequiredCatalogEntry(tableName);
         TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
@@ -407,69 +289,75 @@ public sealed class AccessWriter : IAccessWriter
     }
 
     /// <inheritdoc/>
-    public void Dispose()
+    protected override void Dispose(bool disposing)
     {
         if (_disposed)
         {
             return;
         }
 
-        try
+        base.Dispose(disposing);
+    }
+
+    private protected override List<CatalogEntry> GetUserTables()
+    {
+        if (_catalogCache != null)
         {
-            _fs?.Dispose();
+            return _catalogCache;
         }
-        finally
+
+        TableDef? msys = ReadTableDef(2);
+        if (msys == null)
         {
-            _disposed = true;
+            _catalogCache = new List<CatalogEntry>();
+            return _catalogCache;
         }
-    }
 
-    private static ushort Ru16(byte[] b, int o)
-    {
-        return (ushort)(b[o] | (b[o + 1] << 8));
-    }
-
-    private static int Ri32(byte[] b, int o)
-    {
-        return b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24);
-    }
-
-    private static uint Ru32(byte[] b, int o)
-    {
-        return (uint)Ri32(b, o);
-    }
-
-    private static void Wu16(byte[] b, int o, int value)
-    {
-        b[o] = (byte)(value & 0xFF);
-        b[o + 1] = (byte)((value >> 8) & 0xFF);
-    }
-
-    private static void Wi32(byte[] b, int o, int value)
-    {
-        b[o] = (byte)(value & 0xFF);
-        b[o + 1] = (byte)((value >> 8) & 0xFF);
-        b[o + 2] = (byte)((value >> 16) & 0xFF);
-        b[o + 3] = (byte)((value >> 24) & 0xFF);
-    }
-
-    private static void WriteUInt24(byte[] b, int o, int value)
-    {
-        b[o] = (byte)(value & 0xFF);
-        b[o + 1] = (byte)((value >> 8) & 0xFF);
-        b[o + 2] = (byte)((value >> 16) & 0xFF);
-    }
-
-    private static void WriteField(byte[] b, int o, int fieldSize, int value)
-    {
-        if (fieldSize == 1)
+        var result = new List<CatalogEntry>();
+        foreach (CatalogRow row in EnumerateCatalogRows(msys))
         {
-            b[o] = (byte)value;
+            if (row.ObjectType != OBJ_TABLE)
+            {
+                continue;
+            }
+
+            if ((unchecked((uint)row.Flags) & SYSTABLE_MASK) != 0)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrEmpty(row.Name) || row.TDefPage <= 0)
+            {
+                continue;
+            }
+
+            result.Add(new CatalogEntry { Name = row.Name, TDefPage = row.TDefPage });
         }
-        else
+
+        _catalogCache = result;
+        return _catalogCache;
+    }
+
+    private static byte[]? EncodeOleValue(object value)
+    {
+        byte[]? data = value as byte[];
+        if (data == null)
         {
-            Wu16(b, o, value);
+            string? stringValue = value as string;
+            if (string.IsNullOrEmpty(stringValue) || stringValue.Length > 128)
+            {
+                return null;
+            }
+
+            data = Encoding.UTF8.GetBytes(stringValue);
         }
+
+        if (data.Length > MaxInlineOleBytes)
+        {
+            return null;
+        }
+
+        return WrapInlineLongValue(data);
     }
 
     private static bool ValuesEqual(object left, object right)
@@ -482,100 +370,6 @@ public sealed class AccessWriter : IAccessWriter
         }
 
         return object.Equals(left, right);
-    }
-
-    private static int FixedSize(byte type, int declaredSize)
-    {
-        switch (type)
-        {
-            case T_BYTE: return 1;
-            case T_INT: return 2;
-            case T_LONG: return 4;
-            case T_MONEY: return 8;
-            case T_FLOAT: return 4;
-            case T_DOUBLE: return 8;
-            case T_DATETIME: return 8;
-            case T_GUID: return 16;
-            case T_NUMERIC: return 17;
-            default: return declaredSize > 0 ? declaredSize : 0;
-        }
-    }
-
-    private static string ReadFixedString(byte[] row, int start, byte type, int size)
-    {
-        try
-        {
-            switch (type)
-            {
-                case T_BYTE:
-                    return row[start].ToString(CultureInfo.InvariantCulture);
-                case T_INT:
-                    return ((short)Ru16(row, start)).ToString(CultureInfo.InvariantCulture);
-                case T_LONG:
-                    return Ri32(row, start).ToString(CultureInfo.InvariantCulture);
-                case T_FLOAT:
-                    return BitConverter.ToSingle(row, start).ToString("G", CultureInfo.InvariantCulture);
-                case T_DOUBLE:
-                    return BitConverter.ToDouble(row, start).ToString("G", CultureInfo.InvariantCulture);
-                case T_DATETIME:
-                    return DateTime.FromOADate(BitConverter.ToDouble(row, start)).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-                case T_MONEY:
-                    return (BitConverter.ToInt64(row, start) / 10000.0m).ToString("F4", CultureInfo.InvariantCulture);
-                case T_GUID:
-                    return new Guid(ReadGuidBytes(row, start)).ToString("B");
-                case T_NUMERIC:
-                    return ReadNumericString(row, start);
-                default:
-                    return BitConverter.ToString(row, start, Math.Min(size, 8));
-            }
-        }
-        catch (ArgumentException)
-        {
-            return string.Empty;
-        }
-        catch (IndexOutOfRangeException)
-        {
-            return string.Empty;
-        }
-        catch (OverflowException)
-        {
-            return string.Empty;
-        }
-    }
-
-    private static byte[] ReadGuidBytes(byte[] b, int start)
-    {
-        var guidBytes = new byte[16];
-        Buffer.BlockCopy(b, start, guidBytes, 0, 16);
-        return guidBytes;
-    }
-
-    private static string ReadNumericString(byte[] b, int start)
-    {
-        if (start + 16 >= b.Length)
-        {
-            return string.Empty;
-        }
-
-        byte scale = b[start + 1];
-        bool negative = b[start + 2] != 0;
-        uint lo = Ru32(b, start + 4);
-        uint mid = Ru32(b, start + 8);
-        uint hi = Ru32(b, start + 12);
-
-        if (scale > 28)
-        {
-            return string.Empty;
-        }
-
-        try
-        {
-            return new decimal((int)lo, (int)mid, (int)hi, negative, scale).ToString("G", CultureInfo.InvariantCulture);
-        }
-        catch (OverflowException)
-        {
-            return string.Empty;
-        }
     }
 
     private static byte TypeCodeFromDefinition(ColumnDefinition column)
@@ -614,62 +408,9 @@ public sealed class AccessWriter : IAccessWriter
         return type == T_TEXT || type == T_BINARY || type == T_MEMO || type == T_OLE;
     }
 
-    private DataTable ReadTableSnapshot(string tableName)
-    {
-        var options = new AccessReaderOptions { FileShare = FileShare.ReadWrite, ValidateOnOpen = false };
-        using (var reader = AccessReader.Open(_path, options))
-        {
-            return reader.ReadTable(tableName) ?? new DataTable(tableName);
-        }
-    }
-
-    private CatalogEntry GetRequiredCatalogEntry(string tableName)
-    {
-        CatalogEntry entry = GetCatalogEntry(tableName);
-        if (entry == null)
-        {
-            throw new InvalidOperationException($"Table '{tableName}' was not found.");
-        }
-
-        return entry;
-    }
-
-    private TableDef ReadRequiredTableDef(long tdefPage, string tableName)
-    {
-        TableDef? tableDef = ReadTableDef(tdefPage);
-        if (tableDef == null)
-        {
-            throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
-        }
-
-        return tableDef;
-    }
-
     private static int FindColumnIndex(TableDef tableDef, string columnName)
     {
         return tableDef.Columns.FindIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private void InsertCatalogEntry(string tableName, long tdefPageNumber)
-    {
-        TableDef msys = ReadRequiredTableDef(2, "MSysObjects");
-        var values = new object[msys.Columns.Count];
-        DateTime now = DateTime.UtcNow;
-
-        for (int i = 0; i < msys.Columns.Count; i++)
-        {
-            values[i] = DBNull.Value;
-        }
-
-        SetValue(msys, values, "Id", (int)tdefPageNumber);
-        SetValue(msys, values, "ParentId", 0);
-        SetValue(msys, values, "Name", tableName);
-        SetValue(msys, values, "Type", (short)ObjTable);
-        SetValue(msys, values, "DateCreate", now);
-        SetValue(msys, values, "DateUpdate", now);
-        SetValue(msys, values, "Flags", 0);
-
-        InsertRowInternal(2, msys, values);
     }
 
     private static void SetValue(TableDef tableDef, object[] values, string columnName, object value)
@@ -752,6 +493,93 @@ public sealed class AccessWriter : IAccessWriter
             default:
                 return 0;
         }
+    }
+
+    private static void SetNullMaskBit(byte[] mask, int columnNumber, bool state)
+    {
+        if (columnNumber < 0)
+        {
+            return;
+        }
+
+        int byteIndex = columnNumber / 8;
+        int bitIndex = columnNumber % 8;
+        if (byteIndex >= mask.Length)
+        {
+            return;
+        }
+
+        if (state)
+        {
+            mask[byteIndex] = (byte)(mask[byteIndex] | (1 << bitIndex));
+        }
+    }
+
+    private static byte[]? WrapInlineLongValue(byte[]? data)
+    {
+        if (data == null)
+        {
+            return null;
+        }
+
+        var buffer = new byte[12 + data.Length];
+        WriteUInt24(buffer, 0, data.Length);
+        buffer[3] = 0x80;
+        Buffer.BlockCopy(data, 0, buffer, 12, data.Length);
+        return buffer;
+    }
+
+    private DataTable ReadTableSnapshot(string tableName)
+    {
+        var options = new AccessReaderOptions { FileShare = FileShare.ReadWrite, ValidateOnOpen = false };
+        using (var reader = AccessReader.Open(_path, options))
+        {
+            return reader.ReadTable(tableName) ?? new DataTable(tableName);
+        }
+    }
+
+    private CatalogEntry GetRequiredCatalogEntry(string tableName)
+    {
+        CatalogEntry entry = GetCatalogEntry(tableName);
+        if (entry == null)
+        {
+            throw new InvalidOperationException($"Table '{tableName}' was not found.");
+        }
+
+        return entry;
+    }
+
+    private TableDef ReadRequiredTableDef(long tdefPage, string tableName)
+    {
+        TableDef? tableDef = ReadTableDef(tdefPage);
+        if (tableDef == null)
+        {
+            throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
+        }
+
+        return tableDef;
+    }
+
+    private void InsertCatalogEntry(string tableName, long tdefPageNumber)
+    {
+        TableDef msys = ReadRequiredTableDef(2, "MSysObjects");
+        var values = new object[msys.Columns.Count];
+        DateTime now = DateTime.UtcNow;
+
+        for (int i = 0; i < msys.Columns.Count; i++)
+        {
+            values[i] = DBNull.Value;
+        }
+
+        SetValue(msys, values, "Id", (int)tdefPageNumber);
+        SetValue(msys, values, "ParentId", 0);
+        SetValue(msys, values, "Name", tableName);
+        SetValue(msys, values, "Type", (short)OBJ_TABLE);
+        SetValue(msys, values, "DateCreate", now);
+        SetValue(msys, values, "DateUpdate", now);
+        SetValue(msys, values, "Flags", 0);
+
+        InsertRowInternal(2, msys, values);
     }
 
     private byte[] BuildTDefPage(TableDef tableDef)
@@ -1062,26 +890,6 @@ public sealed class AccessWriter : IAccessWriter
         return size >= 0 && column.FixedOff >= 0 && column.FixedOff + size < _pgSz;
     }
 
-    private static void SetNullMaskBit(byte[] mask, int columnNumber, bool state)
-    {
-        if (columnNumber < 0)
-        {
-            return;
-        }
-
-        int byteIndex = columnNumber / 8;
-        int bitIndex = columnNumber % 8;
-        if (byteIndex >= mask.Length)
-        {
-            return;
-        }
-
-        if (state)
-        {
-            mask[byteIndex] = (byte)(mask[byteIndex] | (1 << bitIndex));
-        }
-    }
-
     private byte[]? EncodeFixedValue(ColumnInfo column, object value) => column.Type switch
     {
         T_BYTE => [Convert.ToByte(value, CultureInfo.InvariantCulture)],
@@ -1174,42 +982,6 @@ public sealed class AccessWriter : IAccessWriter
         return WrapInlineLongValue(data);
     }
 
-    private static byte[]? EncodeOleValue(object value)
-    {
-        byte[]? data = value as byte[];
-        if (data == null)
-        {
-            string? stringValue = value as string;
-            if (string.IsNullOrEmpty(stringValue) || stringValue.Length > 128)
-            {
-                return null;
-            }
-
-            data = Encoding.UTF8.GetBytes(stringValue);
-        }
-
-        if (data.Length > MaxInlineOleBytes)
-        {
-            return null;
-        }
-
-        return WrapInlineLongValue(data);
-    }
-
-    private static byte[]? WrapInlineLongValue(byte[]? data)
-    {
-        if (data == null)
-        {
-            return null;
-        }
-
-        var buffer = new byte[12 + data.Length];
-        WriteUInt24(buffer, 0, data.Length);
-        buffer[3] = 0x80;
-        Buffer.BlockCopy(data, 0, buffer, 12, data.Length);
-        return buffer;
-    }
-
     private byte[] EncodeNumericValue(decimal value)
     {
         int[] bits = decimal.GetBits(value);
@@ -1239,220 +1011,6 @@ public sealed class AccessWriter : IAccessWriter
         Wi32(buffer, 8, bits[1]);
         Wi32(buffer, 12, bits[2]);
         return buffer;
-    }
-
-    private byte[] ReadPage(long pageNumber)
-    {
-        var buffer = new byte[_pgSz];
-        _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-
-        int read = 0;
-        while (read < _pgSz)
-        {
-            int got = _fs.Read(buffer, read, _pgSz - read);
-            if (got == 0)
-            {
-                break;
-            }
-
-            read += got;
-        }
-
-        return buffer;
-    }
-
-    private void WritePage(long pageNumber, byte[] page)
-    {
-        _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-        _fs.Write(page, 0, page.Length);
-        _fs.Flush();
-    }
-
-    private long AppendPage(byte[] page)
-    {
-        long pageNumber = _fs.Length / _pgSz;
-        _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-        _fs.Write(page, 0, page.Length);
-        _fs.Flush();
-        return pageNumber;
-    }
-
-    private byte[]? ReadTDefBytes(long startPage)
-    {
-        var seen = new HashSet<long>();
-        long pageNumber = startPage;
-        byte[]? first = null;
-        MemoryStream? ms = null;
-
-        while (pageNumber != 0 && seen.Add(pageNumber))
-        {
-            byte[] page = ReadPage(pageNumber);
-            if (page[0] != 0x02)
-            {
-                break;
-            }
-
-            if (first == null)
-            {
-                first = page;
-            }
-            else
-            {
-                if (ms == null)
-                {
-                    ms = new MemoryStream(first.Length * 2);
-                    ms.Write(first, 0, first.Length);
-                }
-
-                ms.Write(page, 8, page.Length - 8);
-            }
-
-            pageNumber = Ru32(page, 4);
-        }
-
-        if (ms != null)
-        {
-            ms.Dispose();
-            return ms.ToArray();
-        }
-
-        return first;
-    }
-
-    private TableDef? ReadTableDef(long tdefPage)
-    {
-        byte[]? td = ReadTDefBytes(tdefPage);
-        if (td == null || td.Length < _tdBlockEnd)
-        {
-            return null;
-        }
-
-        int numCols = Ru16(td, _tdNumCols);
-        int numRealIdx = Math.Clamp(Ri32(td, _tdNumRealIdx), 0, 1000);
-
-        if (numCols > 4096)
-        {
-            return null;
-        }
-
-        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
-        int namePos = colStart + (numCols * _colDescSz);
-        if (namePos > td.Length)
-        {
-            return null;
-        }
-
-        var cols = new List<ColumnInfo>(numCols);
-        for (int i = 0; i < numCols; i++)
-        {
-            int o = colStart + (i * _colDescSz);
-            if (o + _colDescSz > td.Length)
-            {
-                break;
-            }
-
-            cols.Add(new ColumnInfo
-            {
-                Type = td[o + _colTypeOff],
-                ColNum = Ru16(td, o + _colNumOff),
-                VarIdx = Ru16(td, o + _colVarOff),
-                FixedOff = Ru16(td, o + _colFixedOff),
-                Size = Ru16(td, o + _colSzOff),
-                Flags = td[o + _colFlagsOff],
-            });
-        }
-
-        for (int i = 0; i < cols.Count; i++)
-        {
-            if (!TryReadColumnName(td, ref namePos, out string name))
-            {
-                break;
-            }
-
-            cols[i].Name = name;
-        }
-
-        cols.Sort((a, b) => a.ColNum.CompareTo(b.ColNum));
-
-        return new TableDef
-        {
-            Columns = cols,
-            RowCount = td.Length > 20 ? (long)Ru32(td, 16) : 0,
-            HasDeletedColumns = cols.Count >= 2 && cols[^1].ColNum - cols[0].ColNum + 1 != cols.Count,
-        };
-    }
-
-    private bool TryReadColumnName(byte[] td, ref int namePos, out string name)
-    {
-        name = string.Empty;
-        if (namePos >= td.Length)
-        {
-            return false;
-        }
-
-        int lenSize = _jet4 ? 2 : 1;
-        if (namePos + lenSize > td.Length)
-        {
-            return false;
-        }
-
-        int len = _jet4 ? Ru16(td, namePos) : td[namePos];
-        namePos += lenSize;
-
-        if (namePos + len > td.Length)
-        {
-            return false;
-        }
-
-        name = _jet4
-            ? Encoding.Unicode.GetString(td, namePos, len)
-            : _ansiEncoding.GetString(td, namePos, len);
-        namePos += len;
-        return true;
-    }
-
-    private List<CatalogEntry> GetUserTables()
-    {
-        if (_catalogCache != null)
-        {
-            return _catalogCache;
-        }
-
-        TableDef? msys = ReadTableDef(2);
-        if (msys == null)
-        {
-            _catalogCache = new List<CatalogEntry>();
-            return _catalogCache;
-        }
-
-        var result = new List<CatalogEntry>();
-        foreach (CatalogRow row in EnumerateCatalogRows(msys))
-        {
-            if (row.ObjectType != ObjTable)
-            {
-                continue;
-            }
-
-            if ((unchecked((uint)row.Flags) & SysTableMask) != 0)
-            {
-                continue;
-            }
-
-            if (string.IsNullOrEmpty(row.Name) || row.TDefPage <= 0)
-            {
-                continue;
-            }
-
-            result.Add(new CatalogEntry { Name = row.Name, TDefPage = row.TDefPage });
-        }
-
-        _catalogCache = result;
-        return _catalogCache;
-    }
-
-    private CatalogEntry GetCatalogEntry(string tableName)
-    {
-        return GetUserTables().Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
     }
 
     private void InvalidateCatalogCache()
@@ -1610,65 +1168,6 @@ public sealed class AccessWriter : IAccessWriter
         }
     }
 
-    private string DecodeJet4Text(byte[] bytes, int start, int length)
-    {
-        if (length < 2)
-        {
-            return string.Empty;
-        }
-
-        if (bytes[start] == 0xFF && bytes[start + 1] == 0xFE)
-        {
-            return DecompressJet4(bytes, start + 2, length - 2);
-        }
-
-        int evenLength = length & ~1;
-        return evenLength > 0 ? Encoding.Unicode.GetString(bytes, start, evenLength) : string.Empty;
-    }
-
-    private string DecompressJet4(byte[] bytes, int start, int length)
-    {
-        var sb = new StringBuilder(length);
-        bool compressed = true;
-        int i = start;
-        int end = start + length;
-
-        while (i < end)
-        {
-            if (compressed)
-            {
-                if (bytes[i] == 0x00)
-                {
-                    compressed = false;
-                    i++;
-                    continue;
-                }
-
-                sb.Append((char)bytes[i]);
-                i++;
-            }
-            else
-            {
-                if (i + 1 >= end)
-                {
-                    break;
-                }
-
-                if (bytes[i] == 0x00 && bytes[i + 1] == 0x00)
-                {
-                    compressed = true;
-                    i += 2;
-                    continue;
-                }
-
-                sb.Append((char)(bytes[i] | (bytes[i + 1] << 8)));
-                i += 2;
-            }
-        }
-
-        return sb.ToString();
-    }
-
     private int ParseInt32(string value)
     {
         int parsed;
@@ -1706,49 +1205,14 @@ public sealed class AccessWriter : IAccessWriter
 
     private IEnumerable<RowLocation> EnumerateLiveRowLocations(long pageNumber, byte[] page)
     {
-        int numRows = Ru16(page, _dpNumRows);
-        if (numRows == 0)
+        foreach (RowBound rb in EnumerateLiveRowBounds(page))
         {
-            yield break;
-        }
-
-        var rawOffsets = new int[numRows];
-        for (int r = 0; r < numRows; r++)
-        {
-            rawOffsets[r] = Ru16(page, _dpRowsStart + (r * 2));
-        }
-
-        int[] positions = rawOffsets
-            .Select(o => o & 0x1FFF)
-            .Where(o => o > 0 && o < _pgSz)
-            .OrderBy(o => o)
-            .ToArray();
-
-        for (int r = 0; r < numRows; r++)
-        {
-            int raw = rawOffsets[r];
-            if ((raw & 0x8000) != 0 || (raw & 0x4000) != 0)
-            {
-                continue;
-            }
-
-            int rowStart = raw & 0x1FFF;
-            int rowEnd = _pgSz - 1;
-            foreach (int pos in positions)
-            {
-                if (pos > rowStart)
-                {
-                    rowEnd = pos - 1;
-                    break;
-                }
-            }
-
             yield return new RowLocation
             {
                 PageNumber = pageNumber,
-                RowIndex = r,
-                RowStart = rowStart,
-                RowSize = rowEnd - rowStart + 1,
+                RowIndex = rb.RowIndex,
+                RowStart = rb.RowStart,
+                RowSize = rb.RowSize,
             };
         }
     }
@@ -1765,13 +1229,6 @@ public sealed class AccessWriter : IAccessWriter
 
         Wu16(page, offsetPos, raw | 0x8000);
         WritePage(pageNumber, page);
-    }
-
-    private sealed class CatalogEntry
-    {
-        public string Name { get; set; } = string.Empty;
-
-        public long TDefPage { get; set; }
     }
 
     private sealed class CatalogRow
