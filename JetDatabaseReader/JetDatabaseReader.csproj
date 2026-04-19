@@ -2,17 +2,17 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <PackageId>JetDatabaseReader</PackageId>
-    <Version>2.2.0</Version>
+    <Version>3.0.0</Version>
     <Authors>Diego Ripera</Authors>
     <Company>Ripera</Company>
-    <Description>Pure-managed reader for Microsoft Access JET databases (.mdb/.accdb). No OleDB, ODBC, or ACE drivers required. v2: typed DataTables and object[] streaming by default.</Description>
+    <Description>Pure-managed reader and writer for Microsoft Access JET databases (.mdb/.accdb). No OleDB, ODBC, or ACE drivers required. v3: write support (CreateTable, InsertRow, UpdateRows, DeleteRows), netstandard2.1 target, strongly typed API.</Description>
     <PackageTags>access;jet;mdb;accdb;database;microsoft-access</PackageTags>
     <PackageProjectUrl>https://github.com/diegoripera/JetDatabaseReader</PackageProjectUrl>
     <RepositoryUrl>https://github.com/diegoripera/JetDatabaseReader</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>v2.0.0 — Breaking changes: ReadTable() now returns typed DataTable; StreamRows() now returns IEnumerable&lt;object[]&gt;; factory method AccessReader.Open() required. See CHANGELOG.md for full details.</PackageReleaseNotes>
+    <PackageReleaseNotes>v3.0.0 — Write support: CreateTable, DropTable, InsertRow, InsertRows, UpdateRows, DeleteRows via new AccessWriter / IAccessWriter. Targets netstandard2.1. Strongly typed ColumnDefinition API. See CHANGELOG.md for full details.</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
