@@ -2,7 +2,6 @@ namespace JetDatabaseReader.Tests;
 
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using FluentAssertions;
 using Xunit;
 
@@ -58,7 +57,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Name", "Price" };
 
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
 
         index.Should().HaveCount(3);
         index[0].Should().NotBeNull();
@@ -71,7 +70,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "ID", "nAmE", "PRICE" };
 
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
 
         index[0]!.Name.Should().Be("Id");
         index[1]!.Name.Should().Be("Name");
@@ -83,7 +82,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "UnknownColumn", "Price" };
 
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
 
         index[0].Should().NotBeNull();
         index[1].Should().BeNull();
@@ -95,7 +94,7 @@ public class RowMapperTests
     {
         var headers = new List<string>();
 
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
 
         index.Should().BeEmpty();
     }
@@ -105,7 +104,7 @@ public class RowMapperTests
     {
         var headers = new List<string> { "Id", "Computed" };
 
-        PropertyInfo?[] index = RowMapper<ReadOnlyPoco>.BuildIndex(headers);
+        var index = RowMapper<ReadOnlyPoco>.BuildIndex(headers);
 
         index[0].Should().NotBeNull();
         index[1].Should().BeNull("read-only properties should not be mapped");
@@ -117,7 +116,7 @@ public class RowMapperTests
     public void Map_AllColumnsMatch_SetsAllProperties()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 42, "Widget", 9.99m };
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
@@ -131,7 +130,7 @@ public class RowMapperTests
     public void Map_UnmatchedColumn_IsIgnored()
     {
         var headers = new List<string> { "Id", "UnknownColumn", "Name" };
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 1, "extra-value", "Gadget" };
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
@@ -147,7 +146,7 @@ public class RowMapperTests
     public void Map_NullValue_LeavesPropertyAtDefault()
     {
         var headers = new List<string> { "Id", "Name" };
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 1, null! };
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
@@ -159,7 +158,7 @@ public class RowMapperTests
     public void Map_DBNullValue_LeavesPropertyAtDefault()
     {
         var headers = new List<string> { "Id", "Name" };
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 1, DBNull.Value };
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
@@ -173,7 +172,7 @@ public class RowMapperTests
     public void Map_NullableProperty_WithValue_SetsProperty()
     {
         var headers = new List<string> { "Id", "Name", "CreatedDate" };
-        PropertyInfo?[] index = RowMapper<NullableProduct>.BuildIndex(headers);
+        var index = RowMapper<NullableProduct>.BuildIndex(headers);
         var date = new DateTime(2025, 6, 15);
         var row = new object[] { 7, "Test", date };
 
@@ -188,7 +187,7 @@ public class RowMapperTests
     public void Map_NullableProperty_WithNull_StaysNull()
     {
         var headers = new List<string> { "Id", "CreatedDate" };
-        PropertyInfo?[] index = RowMapper<NullableProduct>.BuildIndex(headers);
+        var index = RowMapper<NullableProduct>.BuildIndex(headers);
         var row = new object[] { 1, DBNull.Value };
 
         NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
@@ -203,7 +202,7 @@ public class RowMapperTests
     public void Map_IntToLong_ConvertsSuccessfully()
     {
         var headers = new List<string> { "Id", "Price" };
-        PropertyInfo?[] index = RowMapper<TypeMismatchPoco>.BuildIndex(headers);
+        var index = RowMapper<TypeMismatchPoco>.BuildIndex(headers);
         var row = new object[] { 42, 19.99m };
 
         TypeMismatchPoco result = RowMapper<TypeMismatchPoco>.Map(row, index);
@@ -218,7 +217,7 @@ public class RowMapperTests
     public void Map_RowShorterThanIndex_MapsAvailableValues()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 5 }; // only one value
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
@@ -231,7 +230,7 @@ public class RowMapperTests
     public void Map_RowLongerThanIndex_IgnoresExtraValues()
     {
         var headers = new List<string> { "Id" };
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 5, "extra1", "extra2" };
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
@@ -246,7 +245,7 @@ public class RowMapperTests
     public void Map_EmptyPoco_ReturnsNewInstance()
     {
         var headers = new List<string> { "Id", "Name" };
-        PropertyInfo?[] index = RowMapper<EmptyPoco>.BuildIndex(headers);
+        var index = RowMapper<EmptyPoco>.BuildIndex(headers);
         var row = new object[] { 1, "test" };
 
         EmptyPoco result = RowMapper<EmptyPoco>.Map(row, index);
@@ -260,7 +259,7 @@ public class RowMapperTests
     public void Map_MultipleRows_ProducesIndependentInstances()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row1 = new object[] { 1, "Alpha", 10m };
         var row2 = new object[] { 2, "Beta", 20m };
 
@@ -280,7 +279,7 @@ public class RowMapperTests
     public void Map_ValueAlreadyCorrectType_SkipsConversion()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var row = new object[] { 99, "Direct", 5.5m };
 
         SimpleProduct result = RowMapper<SimpleProduct>.Map(row, index);
@@ -296,7 +295,7 @@ public class RowMapperTests
     public void ToRow_AllPropertiesMatch_ReturnsCorrectValues()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var product = new SimpleProduct { Id = 7, Name = "Bolt", Price = 1.25m };
 
         object[] row = RowMapper<SimpleProduct>.ToRow(product, index);
@@ -311,7 +310,7 @@ public class RowMapperTests
     public void ToRow_UnmatchedColumn_ProducesDBNull()
     {
         var headers = new List<string> { "Id", "Unknown" };
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var product = new SimpleProduct { Id = 3 };
 
         object[] row = RowMapper<SimpleProduct>.ToRow(product, index);
@@ -324,7 +323,7 @@ public class RowMapperTests
     public void ToRow_NullPropertyValue_ProducesDBNull()
     {
         var headers = new List<string> { "Id", "Name" };
-        PropertyInfo?[] index = RowMapper<NullableProduct>.BuildIndex(headers);
+        var index = RowMapper<NullableProduct>.BuildIndex(headers);
         var product = new NullableProduct { Id = 1, Name = null };
 
         object[] row = RowMapper<NullableProduct>.ToRow(product, index);
@@ -337,7 +336,7 @@ public class RowMapperTests
     public void ToRow_RoundTrips_WithMap()
     {
         var headers = new List<string> { "Id", "Name", "Price" };
-        PropertyInfo?[] index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var original = new SimpleProduct { Id = 42, Name = "Gadget", Price = 19.99m };
 
         object[] row = RowMapper<SimpleProduct>.ToRow(original, index);

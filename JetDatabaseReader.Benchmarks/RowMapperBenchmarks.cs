@@ -1,12 +1,11 @@
 namespace JetDatabaseReader.Benchmarks;
 
-using System.Reflection;
 using BenchmarkDotNet.Attributes;
 
 [MemoryDiagnoser]
 public class RowMapperBenchmarks
 {
-    private PropertyInfo?[] _index = null!;
+    private RowMapper<SampleEntity>.Accessor?[] _index = null!;
     private object[] _row = null!;
     private SampleEntity _entity = null!;
     private string[] _headers = null!;
@@ -28,7 +27,7 @@ public class RowMapperBenchmarks
     }
 
     [Benchmark]
-    public PropertyInfo?[] BuildIndex() => RowMapper<SampleEntity>.BuildIndex(_headers);
+    public object BuildIndex() => RowMapper<SampleEntity>.BuildIndex(_headers);
 
     [Benchmark]
     public SampleEntity Map() => RowMapper<SampleEntity>.Map(_row, _index);
