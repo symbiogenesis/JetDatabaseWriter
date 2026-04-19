@@ -1082,35 +1082,20 @@ public sealed class AccessWriter : IAccessWriter
         }
     }
 
-    private byte[]? EncodeFixedValue(ColumnInfo column, object value)
+    private byte[]? EncodeFixedValue(ColumnInfo column, object value) => column.Type switch
     {
-        switch (column.Type)
-        {
-            case T_BYTE:
-                return new[] { Convert.ToByte(value, CultureInfo.InvariantCulture) };
-            case T_INT:
-                return BitConverter.GetBytes(Convert.ToInt16(value, CultureInfo.InvariantCulture));
-            case T_LONG:
-                return BitConverter.GetBytes(Convert.ToInt32(value, CultureInfo.InvariantCulture));
-            case T_FLOAT:
-                return BitConverter.GetBytes(Convert.ToSingle(value, CultureInfo.InvariantCulture));
-            case T_DOUBLE:
-                return BitConverter.GetBytes(Convert.ToDouble(value, CultureInfo.InvariantCulture));
-            case T_DATETIME:
-                return BitConverter.GetBytes(Convert.ToDateTime(value, CultureInfo.InvariantCulture).ToOADate());
-            case T_MONEY:
-                decimal currency = Convert.ToDecimal(value, CultureInfo.InvariantCulture);
-                long scaledCurrency = decimal.ToInt64(decimal.Round(currency * 10000m, 0, MidpointRounding.AwayFromZero));
-                return BitConverter.GetBytes(scaledCurrency);
-            case T_NUMERIC:
-                return EncodeNumericValue(Convert.ToDecimal(value, CultureInfo.InvariantCulture));
-            case T_GUID:
-                Guid guid = value is Guid ? (Guid)value : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture));
-                return guid.ToByteArray();
-            default:
-                return null;
-        }
-    }
+        T_BYTE => [Convert.ToByte(value, CultureInfo.InvariantCulture)],
+        T_INT => BitConverter.GetBytes(Convert.ToInt16(value, CultureInfo.InvariantCulture)),
+        T_LONG => BitConverter.GetBytes(Convert.ToInt32(value, CultureInfo.InvariantCulture)),
+        T_FLOAT => BitConverter.GetBytes(Convert.ToSingle(value, CultureInfo.InvariantCulture)),
+        T_DOUBLE => BitConverter.GetBytes(Convert.ToDouble(value, CultureInfo.InvariantCulture)),
+        T_DATETIME => BitConverter.GetBytes(Convert.ToDateTime(value, CultureInfo.InvariantCulture).ToOADate()),
+        T_MONEY => BitConverter.GetBytes(decimal.ToInt64(decimal.Round(
+            Convert.ToDecimal(value, CultureInfo.InvariantCulture) * 10000m, 0, MidpointRounding.AwayFromZero))),
+        T_NUMERIC => EncodeNumericValue(Convert.ToDecimal(value, CultureInfo.InvariantCulture)),
+        T_GUID => (value is Guid g ? g : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!)).ToByteArray(),
+        _ => null,
+    };
 
     private byte[]? EncodeVariableValue(ColumnInfo column, object value)
     {
