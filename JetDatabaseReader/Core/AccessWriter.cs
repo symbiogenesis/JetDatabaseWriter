@@ -1221,7 +1221,7 @@ public sealed class AccessWriter : IAccessWriter
         byte scale = (byte)((flags >> 16) & 0x7F);
 
         decimal absolute = Math.Abs(value);
-        string digits = absolute.ToString(CultureInfo.InvariantCulture).Replace(".", string.Empty);
+        string digits = absolute.ToString(CultureInfo.InvariantCulture).Replace(".", string.Empty, StringComparison.Ordinal);
         if (string.IsNullOrEmpty(digits))
         {
             digits = "0";
