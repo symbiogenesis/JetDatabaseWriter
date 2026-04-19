@@ -26,5 +26,5 @@ public sealed class ReadProgress
     public int EstimatedRowsRemaining { get; set; }
 
     /// <summary>Gets or sets the current table being processed.</summary>
-    public string TableName { get; set; }
+    public string TableName { get; set; } = string.Empty;
 }

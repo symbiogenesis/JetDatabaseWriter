@@ -54,7 +54,7 @@ public class AccessReaderStreamTests
         string table = reader.ListTables()[0];
 
         int streamCount = reader.StreamRows(table).Count();
-        int dtCount = reader.ReadTable(table).Rows.Count;
+        int dtCount = reader.ReadTable(table)!.Rows.Count;
 
         _ = streamCount.Should().Be(dtCount);
     }

@@ -12,16 +12,16 @@ using System.Data;
 public class TableResult
 {
     /// <summary>Gets or sets the ordered list of column names.</summary>
-    public List<string> Headers { get; set; }
+    public List<string> Headers { get; set; } = new List<string>();
 
     /// <summary>Gets or sets up to <c>maxRows</c> rows with native CLR types (int, DateTime, decimal, etc.).</summary>
-    public List<object[]> Rows { get; set; }
+    public List<object[]> Rows { get; set; } = new List<object[]>();
 
     /// <summary>Gets or sets the per-column schema information in the same order as <see cref="Headers"/>.</summary>
-    public List<TableColumn> Schema { get; set; }
+    public List<TableColumn> Schema { get; set; } = new List<TableColumn>();
 
     /// <summary>Gets or sets the name of the table this result was read from.</summary>
-    public string TableName { get; set; }
+    public string TableName { get; set; } = string.Empty;
 
     /// <summary>Gets the total number of rows in the result.</summary>
     public int RowCount => Rows?.Count ?? 0;

@@ -61,7 +61,7 @@ public sealed class AccessWriter : IAccessWriter
     private readonly int _eodFldSz;
     private readonly int _varLenFldSz;
 
-    private List<CatalogEntry> _catalogCache;
+    private List<CatalogEntry>? _catalogCache;
     private bool _disposed;
 
     static AccessWriter()
@@ -200,7 +200,7 @@ public sealed class AccessWriter : IAccessWriter
 
         EnsureJet4WriteSupported();
 
-        TableDef msys = ReadTableDef(2);
+        TableDef? msys = ReadTableDef(2);
         if (msys == null)
         {
             return;
@@ -652,7 +652,7 @@ public sealed class AccessWriter : IAccessWriter
 
     private TableDef ReadRequiredTableDef(long tdefPage, string tableName)
     {
-        TableDef tableDef = ReadTableDef(tdefPage);
+        TableDef? tableDef = ReadTableDef(tdefPage);
         if (tableDef == null)
         {
             throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
@@ -835,7 +835,7 @@ public sealed class AccessWriter : IAccessWriter
     private PageInsertTarget FindInsertTarget(long tdefPage, int rowLength)
     {
         long total = _fs.Length / _pgSz;
-        PageInsertTarget candidate = null;
+        PageInsertTarget? candidate = null;
 
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
@@ -962,7 +962,7 @@ public sealed class AccessWriter : IAccessWriter
                     continue;
                 }
 
-                byte[] fixedValue = EncodeFixedValue(column, value);
+                byte[]? fixedValue = EncodeFixedValue(column, value);
                 if (fixedValue == null)
                 {
                     continue;
@@ -974,7 +974,7 @@ public sealed class AccessWriter : IAccessWriter
             }
             else
             {
-                byte[] variableValue = EncodeVariableValue(column, value);
+                byte[]? variableValue = EncodeVariableValue(column, value);
                 if (variableValue == null)
                 {
                     continue;
@@ -1070,7 +1070,7 @@ public sealed class AccessWriter : IAccessWriter
         }
     }
 
-    private byte[] EncodeFixedValue(ColumnInfo column, object value)
+    private byte[]? EncodeFixedValue(ColumnInfo column, object value)
     {
         switch (column.Type)
         {
@@ -1100,7 +1100,7 @@ public sealed class AccessWriter : IAccessWriter
         }
     }
 
-    private byte[] EncodeVariableValue(ColumnInfo column, object value)
+    private byte[]? EncodeVariableValue(ColumnInfo column, object value)
     {
         switch (column.Type)
         {
@@ -1117,7 +1117,7 @@ public sealed class AccessWriter : IAccessWriter
         }
     }
 
-    private byte[] EncodeTextValue(string value, int maxSize)
+    private byte[]? EncodeTextValue(string? value, int maxSize)
     {
         if (value == null)
         {
@@ -1139,12 +1139,12 @@ public sealed class AccessWriter : IAccessWriter
         return bytes;
     }
 
-    private byte[] EncodeBinaryValue(object value, int maxSize)
+    private byte[]? EncodeBinaryValue(object value, int maxSize)
     {
-        byte[] bytes = value as byte[];
+        byte[]? bytes = value as byte[];
         if (bytes == null)
         {
-            string stringValue = Convert.ToString(value, CultureInfo.InvariantCulture);
+            string? stringValue = Convert.ToString(value, CultureInfo.InvariantCulture);
             if (string.IsNullOrEmpty(stringValue))
             {
                 return null;
@@ -1161,7 +1161,7 @@ public sealed class AccessWriter : IAccessWriter
         return bytes;
     }
 
-    private byte[] EncodeMemoValue(string value)
+    private byte[]? EncodeMemoValue(string? value)
     {
         if (value == null)
         {
@@ -1177,12 +1177,12 @@ public sealed class AccessWriter : IAccessWriter
         return WrapInlineLongValue(data);
     }
 
-    private static byte[] EncodeOleValue(object value)
+    private static byte[]? EncodeOleValue(object value)
     {
-        byte[] data = value as byte[];
+        byte[]? data = value as byte[];
         if (data == null)
         {
-            string stringValue = value as string;
+            string? stringValue = value as string;
             if (string.IsNullOrEmpty(stringValue) || stringValue.Length > 128)
             {
                 return null;
@@ -1199,7 +1199,7 @@ public sealed class AccessWriter : IAccessWriter
         return WrapInlineLongValue(data);
     }
 
-    private static byte[] WrapInlineLongValue(byte[] data)
+    private static byte[]? WrapInlineLongValue(byte[]? data)
     {
         if (data == null)
         {
@@ -1275,7 +1275,7 @@ public sealed class AccessWriter : IAccessWriter
         return pageNumber;
     }
 
-    private byte[] ReadTDefBytes(long startPage)
+    private byte[]? ReadTDefBytes(long startPage)
     {
         var parts = new List<byte[]>();
         var seen = new HashSet<long>();
@@ -1324,9 +1324,9 @@ public sealed class AccessWriter : IAccessWriter
         return result;
     }
 
-    private TableDef ReadTableDef(long tdefPage)
+    private TableDef? ReadTableDef(long tdefPage)
     {
-        byte[] td = ReadTDefBytes(tdefPage);
+        byte[]? td = ReadTDefBytes(tdefPage);
         if (td == null || td.Length < _tdBlockEnd)
         {
             return null;
@@ -1434,7 +1434,7 @@ public sealed class AccessWriter : IAccessWriter
             return _catalogCache;
         }
 
-        TableDef msys = ReadTableDef(2);
+        TableDef? msys = ReadTableDef(2);
         if (msys == null)
         {
             _catalogCache = new List<CatalogEntry>();
@@ -1785,7 +1785,7 @@ public sealed class AccessWriter : IAccessWriter
 
     private sealed class CatalogEntry
     {
-        public string Name { get; set; }
+        public string Name { get; set; } = string.Empty;
 
         public long TDefPage { get; set; }
     }
@@ -1796,7 +1796,7 @@ public sealed class AccessWriter : IAccessWriter
 
         public int RowIndex { get; set; }
 
-        public string Name { get; set; }
+        public string Name { get; set; } = string.Empty;
 
         public int ObjectType { get; set; }
 
@@ -1820,13 +1820,13 @@ public sealed class AccessWriter : IAccessWriter
     {
         public long PageNumber { get; set; }
 
-        public byte[] Page { get; set; }
+        public byte[] Page { get; set; } = Array.Empty<byte>();
     }
 
     private sealed class FixedValueChunk
     {
         public int Offset { get; set; }
 
-        public byte[] Bytes { get; set; }
+        public byte[] Bytes { get; set; } = Array.Empty<byte>();
     }
 }

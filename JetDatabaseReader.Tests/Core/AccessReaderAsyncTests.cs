@@ -48,7 +48,7 @@ public class AccessReaderAsyncTests
         using var reader = TestDatabases.Open(path);
         string table = (await reader.ListTablesAsync())[0];
 
-        DataTable dt = await reader.ReadTableAsync(table);
+        DataTable dt = (await reader.ReadTableAsync(table))!;
 
         _ = dt.Should().NotBeNull();
     }
@@ -61,7 +61,7 @@ public class AccessReaderAsyncTests
         string table = (await reader.ListTablesAsync())[0];
         var meta = reader.GetColumnMetadata(table);
 
-        DataTable dt = await reader.ReadTableAsync(table);
+        DataTable dt = (await reader.ReadTableAsync(table))!;
 
         for (int i = 0; i < meta.Count; i++)
         {
@@ -77,9 +77,9 @@ public class AccessReaderAsyncTests
         string table = (await reader.ListTablesAsync())[0];
 
 #pragma warning disable CA1849 // Intentional: comparing sync result against async result
-        DataTable syncDt = reader.ReadTable(table);
+        DataTable syncDt = reader.ReadTable(table)!;
 #pragma warning restore CA1849
-        DataTable asyncDt = await reader.ReadTableAsync(table);
+        DataTable asyncDt = (await reader.ReadTableAsync(table))!;
 
         _ = asyncDt.Rows.Count.Should().Be(syncDt.Rows.Count);
     }

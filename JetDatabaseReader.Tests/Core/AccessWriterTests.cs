@@ -133,7 +133,7 @@ public sealed class AccessWriterTests : IDisposable
 
         using (var reader = AccessReader.Open(temp))
         {
-            DataTable dt = reader.ReadTable(tableName);
+            DataTable dt = reader.ReadTable(tableName)!;
             dt.Rows.Count.Should().BeGreaterThan(0);
 
             // The last row should contain our inserted data
@@ -223,7 +223,7 @@ public sealed class AccessWriterTests : IDisposable
             targetCol = textCol.Name;
 
             // Read first row to get a real predicate value
-            DataTable dt = reader.ReadTable(tableName);
+            DataTable dt = reader.ReadTable(tableName)!;
             if (dt.Rows.Count == 0)
             {
                 return; // skip empty tables
@@ -264,7 +264,7 @@ public sealed class AccessWriterTests : IDisposable
 
             targetCol = textCol.Name;
 
-            DataTable dt = reader.ReadTable(tableName);
+            DataTable dt = reader.ReadTable(tableName)!;
             if (dt.Rows.Count == 0)
             {
                 return;
@@ -284,7 +284,7 @@ public sealed class AccessWriterTests : IDisposable
 
         using (var reader = AccessReader.Open(temp))
         {
-            DataTable dt = reader.ReadTable(tableName);
+            DataTable dt = reader.ReadTable(tableName)!;
             bool found = dt.AsEnumerable().Any(row =>
                 row[targetCol] is string s && s == sentinel);
             found.Should().BeTrue("the updated sentinel value should be readable");
@@ -316,7 +316,7 @@ public sealed class AccessWriterTests : IDisposable
 
             targetCol = textCol.Name;
 
-            DataTable dt = reader.ReadTable(tableName);
+            DataTable dt = reader.ReadTable(tableName)!;
             if (dt.Rows.Count == 0)
             {
                 return;
@@ -357,7 +357,7 @@ public sealed class AccessWriterTests : IDisposable
             originalCount = reader.GetRealRowCount(tableName);
             var columns = reader.GetColumnMetadata(tableName);
 
-            DataTable dt = reader.ReadTable(tableName);
+            DataTable dt = reader.ReadTable(tableName)!;
             if (dt.Rows.Count == 0)
             {
                 return;
@@ -416,7 +416,7 @@ public sealed class AccessWriterTests : IDisposable
             tableName = reader.ListTables()[0];
             var columns = reader.GetColumnMetadata(tableName);
 
-            DataTable dt = reader.ReadTable(tableName);
+            DataTable dt = reader.ReadTable(tableName)!;
             if (dt.Rows.Count == 0)
             {
                 return;
@@ -433,7 +433,7 @@ public sealed class AccessWriterTests : IDisposable
 
         using (var reader = AccessReader.Open(temp))
         {
-            DataTable dt = reader.ReadTable(tableName);
+            DataTable dt = reader.ReadTable(tableName)!;
             bool stillPresent = dt.AsEnumerable().Any(row =>
             {
                 object val = row[predicateCol];
@@ -552,7 +552,7 @@ public sealed class AccessWriterTests : IDisposable
             long count = reader.GetRealRowCount(newTableName);
             count.Should().Be(2);
 
-            DataTable dt = reader.ReadTable(newTableName);
+            DataTable dt = reader.ReadTable(newTableName)!;
             dt.Rows.Count.Should().Be(2);
         }
     }
@@ -745,7 +745,7 @@ public sealed class AccessWriterTests : IDisposable
 
         using (var reader = AccessReader.Open(temp))
         {
-            DataTable dt = reader.ReadTable(newTableName);
+            DataTable dt = reader.ReadTable(newTableName)!;
             dt.Rows.Count.Should().Be(1);
 
             DataRow row = dt.Rows[0];

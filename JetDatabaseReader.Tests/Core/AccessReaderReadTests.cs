@@ -22,7 +22,7 @@ public class AccessReaderReadTests
         using var reader = TestDatabases.Open(path);
         string table = reader.ListTables()[0];
 
-        DataTable dt = reader.ReadTable(table);
+        DataTable dt = reader.ReadTable(table)!;
 
         _ = dt.Should().NotBeNull();
     }
@@ -34,7 +34,7 @@ public class AccessReaderReadTests
         using var reader = TestDatabases.Open(path);
         string table = reader.ListTables()[0];
 
-        DataTable dt = reader.ReadTable(table);
+        DataTable dt = reader.ReadTable(table)!;
 
         _ = dt.TableName.Should().Be(table);
     }
@@ -46,7 +46,7 @@ public class AccessReaderReadTests
         using var reader = TestDatabases.Open(path);
         string table = reader.ListTables()[0];
 
-        DataTable dt = reader.ReadTable(table);
+        DataTable dt = reader.ReadTable(table)!;
         var meta = reader.GetColumnMetadata(table);
 
         _ = dt.Columns.Count.Should().Be(meta.Count);
@@ -59,7 +59,7 @@ public class AccessReaderReadTests
         using var reader = TestDatabases.Open(path);
         string table = reader.ListTables()[0];
 
-        DataTable dt = reader.ReadTable(table);
+        DataTable dt = reader.ReadTable(table)!;
         var meta = reader.GetColumnMetadata(table);
 
         for (int i = 0; i < meta.Count; i++)
@@ -77,7 +77,7 @@ public class AccessReaderReadTests
         using var reader = TestDatabases.Open(path);
         string first = reader.ListTables()[0];
 
-        DataTable dt = reader.ReadTable(tableName: null);
+        DataTable dt = reader.ReadTable(tableName: null)!;
 
         _ = dt.Should().NotBeNull();
         _ = dt.TableName.Should().Be(first);
@@ -91,7 +91,7 @@ public class AccessReaderReadTests
 
         foreach (string table in reader.ListTables())
         {
-            DataTable dt = reader.ReadTable(table);
+            DataTable dt = reader.ReadTable(table)!;
             _ = dt.Should().NotBeNull(because: $"table '{table}' should be readable");
         }
     }
@@ -105,7 +105,7 @@ public class AccessReaderReadTests
         using var reader = TestDatabases.Open(path);
         string table = reader.ListTables()[0];
 
-        DataTable dt = reader.ReadTableAsStringDataTable(table);
+        DataTable dt = reader.ReadTableAsStringDataTable(table)!;
 
         foreach (DataColumn col in dt.Columns)
         {
@@ -120,8 +120,8 @@ public class AccessReaderReadTests
         using var reader = TestDatabases.Open(path);
         string table = reader.ListTables()[0];
 
-        DataTable typed = reader.ReadTable(table);
-        DataTable string_ = reader.ReadTableAsStringDataTable(table);
+        DataTable typed = reader.ReadTable(table)!;
+        DataTable string_ = reader.ReadTableAsStringDataTable(table)!;
 
         _ = string_.Rows.Count.Should().Be(typed.Rows.Count);
     }
@@ -133,8 +133,8 @@ public class AccessReaderReadTests
         using var reader = TestDatabases.Open(path);
         string table = reader.ListTables()[0];
 
-        DataTable typed = reader.ReadTable(table);
-        DataTable string_ = reader.ReadTableAsStringDataTable(table);
+        DataTable typed = reader.ReadTable(table)!;
+        DataTable string_ = reader.ReadTableAsStringDataTable(table)!;
 
         _ = string_.Columns.Count.Should().Be(typed.Columns.Count);
     }

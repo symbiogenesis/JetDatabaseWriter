@@ -16,8 +16,8 @@ public sealed class TableQuery
     private readonly AccessReader _reader;
     private readonly string _tableName;
     private int? _limit;
-    private Func<object[], bool> _typedFilter;
-    private Func<string[], bool> _stringFilter;
+    private Func<object[], bool>? _typedFilter;
+    private Func<string[], bool>? _stringFilter;
 
     internal TableQuery(AccessReader reader, string tableName)
     {

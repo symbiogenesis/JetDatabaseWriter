@@ -96,7 +96,7 @@ public interface IAccessReader : IDisposable
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <returns></returns>
-    IEnumerable<object[]> StreamRows(string tableName, IProgress<int> progress = null);
+    IEnumerable<object[]> StreamRows(string tableName, IProgress<int>? progress = null);
 
     /// <summary>
     /// Yields rows from <paramref name="tableName"/> as string arrays without collecting them all in memory.
@@ -106,7 +106,7 @@ public interface IAccessReader : IDisposable
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <returns></returns>
-    IEnumerable<string[]> StreamRowsAsStrings(string tableName, IProgress<int> progress = null);
+    IEnumerable<string[]> StreamRowsAsStrings(string tableName, IProgress<int>? progress = null);
 
     /// <summary>
     /// Reads the entire table into a DataTable with all columns typed as strings.
@@ -116,7 +116,7 @@ public interface IAccessReader : IDisposable
     /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <returns></returns>
-    DataTable ReadTableAsStringDataTable(string tableName = null, IProgress<int> progress = null);
+    DataTable? ReadTableAsStringDataTable(string? tableName = null, IProgress<int>? progress = null);
 
     /// <summary>
     /// Returns rich metadata for all columns in the specified table.
@@ -136,14 +136,14 @@ public interface IAccessReader : IDisposable
     /// This is the recommended method for bulk reading.
     /// </summary>
     /// <returns></returns>
-    Dictionary<string, DataTable> ReadAllTables(IProgress<string> progress = null);
+    Dictionary<string, DataTable> ReadAllTables(IProgress<string>? progress = null);
 
     /// <summary>
     /// Reads all tables into a dictionary of DataTables with all columns typed as strings.
     /// Use this for compatibility scenarios.
     /// </summary>
     /// <returns></returns>
-    Dictionary<string, DataTable> ReadAllTablesAsStrings(IProgress<string> progress = null);
+    Dictionary<string, DataTable> ReadAllTablesAsStrings(IProgress<string>? progress = null);
 
     /// <summary>
     /// Reads the entire table into a DataTable with properly typed columns.
@@ -153,7 +153,7 @@ public interface IAccessReader : IDisposable
     /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <returns></returns>
-    DataTable ReadTable(string tableName = null, IProgress<int> progress = null);
+    DataTable? ReadTable(string? tableName = null, IProgress<int>? progress = null);
 
     // ── Async Methods ──────────────────────────────────────────────────
 
@@ -166,7 +166,7 @@ public interface IAccessReader : IDisposable
     /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    Task<DataTable> ReadTableAsync(string tableName = null, IProgress<int> progress = null);
+    Task<DataTable?> ReadTableAsync(string? tableName = null, IProgress<int>? progress = null);
 
     /// <summary>
     /// Returns statistical information about the database asynchronously.
@@ -179,14 +179,14 @@ public interface IAccessReader : IDisposable
     /// Each table's columns use their native CLR types (int, DateTime, decimal, etc.).
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    Task<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<string> progress = null);
+    Task<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<string>? progress = null);
 
     /// <summary>
     /// Reads all tables into a dictionary of DataTables with all columns typed as strings asynchronously.
     /// Use this for compatibility scenarios.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    Task<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<string> progress = null);
+    Task<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<string>? progress = null);
 
     /// <summary>
     /// Creates a fluent query interface for the specified table.

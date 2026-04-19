@@ -20,13 +20,13 @@ public sealed class DatabaseStatistics
     public long TotalRows { get; set; }
 
     /// <summary>Gets or sets the row count for each table.</summary>
-    public Dictionary<string, long> TableRowCounts { get; set; }
+    public Dictionary<string, long> TableRowCounts { get; set; } = new Dictionary<string, long>();
 
     /// <summary>Gets or sets the page cache hit rate percentage (0-100).</summary>
     public int PageCacheHitRate { get; set; }
 
     /// <summary>Gets or sets the JET version string (e.g., "Jet4/ACE", "Jet3").</summary>
-    public string Version { get; set; }
+    public string Version { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the page size in bytes (2048 for Jet3, 4096 for Jet4).</summary>
     public int PageSize { get; set; }

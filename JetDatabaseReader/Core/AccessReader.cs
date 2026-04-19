@@ -98,8 +98,8 @@ public sealed class AccessReader : IAccessReader
     private readonly int _codePage;
     private readonly object _cacheLock = new object();
     private readonly object _catalogLock = new object();
-    private volatile List<CatalogEntry> _catalogCache;
-    private volatile LruCache<long, byte[]> _pageCache;
+    private volatile List<CatalogEntry>? _catalogCache;
+    private volatile LruCache<long, byte[]>? _pageCache;
     private bool _disposed;
     private long _cacheHits;
     private long _cacheMisses;
@@ -265,7 +265,7 @@ public sealed class AccessReader : IAccessReader
     /// <param name="path">Path to the .mdb or .accdb file.</param>
     /// <param name="options">Optional configuration options.</param>
     /// <returns>An AccessReader instance for the specified database.</returns>
-    public static AccessReader Open(string path, AccessReaderOptions options = null)
+    public static AccessReader Open(string path, AccessReaderOptions? options = null)
     {
         Guard.NotNullOrEmpty(path, nameof(path));
 
@@ -331,7 +331,7 @@ public sealed class AccessReader : IAccessReader
         }
 
         CatalogEntry entry = tables[0];
-        TableDef td = ReadTableDef(entry.TDefPage);
+        TableDef? td = ReadTableDef(entry.TDefPage);
         if (td == null || td.Columns.Count == 0)
         {
             return new FirstTableResult
@@ -401,7 +401,7 @@ public sealed class AccessReader : IAccessReader
         var result = new List<TableStat>(entries.Count);
         foreach (var e in entries)
         {
-            TableDef td = ReadTableDef(e.TDefPage);
+            TableDef? td = ReadTableDef(e.TDefPage);
             result.Add(new TableStat
             {
                 Name = e.Name,
@@ -514,7 +514,7 @@ public sealed class AccessReader : IAccessReader
             };
         }
 
-        TableDef td = ReadTableDef(entry.TDefPage);
+        TableDef? td = ReadTableDef(entry.TDefPage);
         if (td == null || td.Columns.Count == 0)
         {
             return new TableResult
@@ -593,7 +593,7 @@ public sealed class AccessReader : IAccessReader
             };
         }
 
-        TableDef td = ReadTableDef(entry.TDefPage);
+        TableDef? td = ReadTableDef(entry.TDefPage);
         if (td == null || td.Columns.Count == 0)
         {
             return new StringTableResult
@@ -649,11 +649,11 @@ public sealed class AccessReader : IAccessReader
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <returns>An enumerable of object arrays, each representing a row with typed values.</returns>
-    public IEnumerable<object[]> StreamRows(string tableName, IProgress<int> progress = null)
+    public IEnumerable<object[]> StreamRows(string tableName, IProgress<int>? progress = null)
     {
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        return StreamRowsCore(tableName, progress);
+        return StreamRowsCore(tableName, progress!);
     }
 
     /// <summary>
@@ -664,11 +664,11 @@ public sealed class AccessReader : IAccessReader
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <returns>An enumerable of string arrays, each representing a row with string values.</returns>
-    public IEnumerable<string[]> StreamRowsAsStrings(string tableName, IProgress<int> progress = null)
+    public IEnumerable<string[]> StreamRowsAsStrings(string tableName, IProgress<int>? progress = null)
     {
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        return StreamRowsAsStringsCore(tableName, progress);
+        return StreamRowsAsStringsCore(tableName, progress!);
     }
 
     /// <summary>
@@ -679,7 +679,7 @@ public sealed class AccessReader : IAccessReader
     /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <returns>A <see cref="DataTable"/> containing all rows with columns typed as strings, or null if the table doesn't exist or has no columns.</returns>
-    public DataTable ReadTableAsStringDataTable(string tableName = null, IProgress<int> progress = null)
+    public DataTable? ReadTableAsStringDataTable(string? tableName = null, IProgress<int>? progress = null)
     {
         ThrowIfDisposed();
 
@@ -701,7 +701,7 @@ public sealed class AccessReader : IAccessReader
             return null;
         }
 
-        TableDef td = ReadTableDef(entry.TDefPage);
+        TableDef? td = ReadTableDef(entry.TDefPage);
         if (td == null || td.Columns.Count == 0)
         {
             return null;
@@ -754,7 +754,7 @@ public sealed class AccessReader : IAccessReader
             return new List<ColumnMetadata>();
         }
 
-        TableDef td = ReadTableDef(entry.TDefPage);
+        TableDef? td = ReadTableDef(entry.TDefPage);
         if (td == null)
         {
             return new List<ColumnMetadata>();
@@ -817,7 +817,7 @@ public sealed class AccessReader : IAccessReader
     /// </summary>
     /// <param name="progress">Optional progress reporter — receives table name as each table is read.</param>
     /// <returns>A <see cref="Dictionary{TKey, TValue}"/> mapping table names to their corresponding <see cref="DataTable"/> with properly typed columns.</returns>
-    public Dictionary<string, DataTable> ReadAllTables(IProgress<string> progress = null)
+    public Dictionary<string, DataTable> ReadAllTables(IProgress<string>? progress = null)
     {
         ThrowIfDisposed();
 
@@ -827,7 +827,7 @@ public sealed class AccessReader : IAccessReader
         foreach (var table in tables)
         {
             progress?.Report($"Reading {table.Name}...");
-            result[table.Name] = ReadTable(table.Name);
+            result[table.Name] = ReadTable(table.Name)!;
         }
 
         return result;
@@ -839,7 +839,7 @@ public sealed class AccessReader : IAccessReader
     /// </summary>
     /// <param name="progress">Optional progress reporter — receives table name after each table is read.</param>
     /// <returns>A dictionary of DataTables with all columns typed as strings.</returns>
-    public Dictionary<string, DataTable> ReadAllTablesAsStrings(IProgress<string> progress = null)
+    public Dictionary<string, DataTable> ReadAllTablesAsStrings(IProgress<string>? progress = null)
     {
         ThrowIfDisposed();
 
@@ -849,7 +849,7 @@ public sealed class AccessReader : IAccessReader
         foreach (var table in tables)
         {
             progress?.Report($"Reading {table.Name}...");
-            result[table.Name] = ReadTableAsStringDataTable(table.Name);
+            result[table.Name] = ReadTableAsStringDataTable(table.Name)!;
         }
 
         return result;
@@ -875,7 +875,7 @@ public sealed class AccessReader : IAccessReader
     /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
-    public DataTable ReadTable(string tableName = null, IProgress<int> progress = null)
+    public DataTable? ReadTable(string? tableName = null, IProgress<int>? progress = null)
     {
         ThrowIfDisposed();
 
@@ -896,7 +896,7 @@ public sealed class AccessReader : IAccessReader
             return null;
         }
 
-        TableDef td = ReadTableDef(entry.TDefPage);
+        TableDef? td = ReadTableDef(entry.TDefPage);
         if (td == null || td.Columns.Count == 0)
         {
             return null;
@@ -957,7 +957,7 @@ public sealed class AccessReader : IAccessReader
     /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
-    public Task<DataTable> ReadTableAsync(string tableName = null, IProgress<int> progress = null)
+    public Task<DataTable?> ReadTableAsync(string? tableName = null, IProgress<int>? progress = null)
     {
         return Task.Run(() => ReadTable(tableName, progress));
     }
@@ -1001,7 +1001,7 @@ public sealed class AccessReader : IAccessReader
     /// </summary>
     /// <param name="progress">Optional progress reporter for table names.</param>
     /// <returns>A dictionary mapping table names to their corresponding DataTables.</returns>
-    public Task<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<string> progress = null)
+    public Task<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<string>? progress = null)
     {
         return Task.Run(() => ReadAllTables(progress));
     }
@@ -1012,7 +1012,7 @@ public sealed class AccessReader : IAccessReader
     /// </summary>
     /// <param name="progress">Optional progress reporter for table names.</param>
     /// <returns>A dictionary mapping table names to their corresponding DataTables with all columns as strings.</returns>
-    public Task<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<string> progress = null)
+    public Task<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<string>? progress = null)
     {
         return Task.Run(() => ReadAllTablesAsStrings(progress));
     }
@@ -1160,7 +1160,7 @@ public sealed class AccessReader : IAccessReader
     /// so this scans beyond the OLE envelope to find the real file bytes.
     /// Returns a data-URI with appropriate MIME type, or null if no known format is found.
     /// </summary>
-    private static string TryDecodeOleObject(byte[] b, int start, int len)
+    private static string? TryDecodeOleObject(byte[] b, int start, int len)
     {
         if (b == null || len < 4)
         {
@@ -1469,7 +1469,7 @@ public sealed class AccessReader : IAccessReader
     /// into a single byte array.  Pages after the first have their 8-byte
     /// TDEF header stripped before appending.
     /// </summary>
-    private byte[] ReadTDefBytes(long startPage)
+    private byte[]? ReadTDefBytes(long startPage)
     {
         var parts = new List<byte[]>();
         var seen = new HashSet<long>();
@@ -1518,9 +1518,9 @@ public sealed class AccessReader : IAccessReader
         return result;
     }
 
-    private TableDef ReadTableDef(long tdefPage)
+    private TableDef? ReadTableDef(long tdefPage)
     {
-        byte[] td = ReadTDefBytes(tdefPage);
+        byte[]? td = ReadTDefBytes(tdefPage);
         if (td == null || td.Length < _tdBlockEnd)
         {
             return null;
@@ -1651,7 +1651,7 @@ public sealed class AccessReader : IAccessReader
             _ = diag.AppendLine($"JET: {(_jet4 ? "Jet4/ACE" : "Jet3")}  PageSize: {_pgSz}  TotalPages: {_fs.Length / _pgSz}");
 
             // MSysObjects TDEF is hard-coded at page 2 by the Jet engine
-            TableDef msys = ReadTableDef(2);
+            TableDef? msys = ReadTableDef(2);
             if (msys == null)
             {
                 _ = diag.AppendLine("ERROR: Page 2 is not a valid TDEF page (null returned).");
@@ -1772,7 +1772,7 @@ public sealed class AccessReader : IAccessReader
             yield break;
         }
 
-        TableDef td = ReadTableDef(entry.TDefPage);
+        TableDef? td = ReadTableDef(entry.TDefPage);
         if (td == null || td.Columns.Count == 0)
         {
             yield break;
@@ -1818,7 +1818,7 @@ public sealed class AccessReader : IAccessReader
             yield break;
         }
 
-        TableDef td = ReadTableDef(entry.TDefPage);
+        TableDef? td = ReadTableDef(entry.TDefPage);
         if (td == null || td.Columns.Count == 0)
         {
             yield break;
@@ -1906,7 +1906,7 @@ public sealed class AccessReader : IAccessReader
             }
 
             // Pass the page buffer directly with absolute row bounds — no per-row copy
-            List<string> values = CrackRow(page, rowStart, rowSize, td);
+            List<string>? values = CrackRow(page, rowStart, rowSize, td);
             if (values != null)
             {
                 yield return values;
@@ -1915,7 +1915,7 @@ public sealed class AccessReader : IAccessReader
     }
 
     /// <summary>Decodes a single row's bytes (within <paramref name="page"/>) into string values per column.</summary>
-    private List<string> CrackRow(byte[] page, int rowStart, int rowSize, TableDef td)
+    private List<string>? CrackRow(byte[] page, int rowStart, int rowSize, TableDef td)
     {
         if (rowSize < _numColsFldSz)
         {
@@ -2121,7 +2121,7 @@ public sealed class AccessReader : IAccessReader
     /// Reads <paramref name="maxLen"/> bytes from a single LVAL data page / row.
     /// lval_dp encoding: upper 24 bits = page number, lower 8 bits = row index.
     /// </summary>
-    private byte[] ReadLvalBytes(uint lvalDp, int maxLen)
+    private byte[]? ReadLvalBytes(uint lvalDp, int maxLen)
     {
         try
         {
@@ -2349,7 +2349,7 @@ public sealed class AccessReader : IAccessReader
         {
             // Single LVAL page — lval_dp = (pageNumber << 8) | rowIndex
             uint lvalDp = Ru32(row, start + 4);
-            byte[] lvalData = ReadLvalBytes(lvalDp, memoLen);
+            byte[]? lvalData = ReadLvalBytes(lvalDp, memoLen);
 
             if (lvalData != null)
             {
@@ -2385,7 +2385,7 @@ public sealed class AccessReader : IAccessReader
 
     private sealed class CatalogEntry
     {
-        public string Name { get; set; }
+        public string Name { get; set; } = string.Empty;
 
         public long TDefPage { get; set; }
     }

@@ -47,7 +47,7 @@ internal sealed class LruCache<TKey, TValue>
                 return true;
             }
 
-            value = default;
+            value = default!;
             return false;
         }
     }
@@ -107,8 +107,8 @@ internal sealed class LruCache<TKey, TValue>
 
     private sealed class CacheItem
     {
-        public TKey Key { get; set; }
+        public TKey Key { get; set; } = default!;
 
-        public TValue Value { get; set; }
+        public TValue Value { get; set; } = default!;
     }
 }

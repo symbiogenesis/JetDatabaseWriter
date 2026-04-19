@@ -8,13 +8,13 @@ using System;
 public sealed class ColumnMetadata
 {
     /// <summary>Gets or sets the column name.</summary>
-    public string Name { get; set; }
+    public string Name { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the Access-friendly type name (e.g., "Text", "Long Integer", "Date/Time").</summary>
-    public string TypeName { get; set; }
+    public string TypeName { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the CLR type that best represents this column.</summary>
-    public Type ClrType { get; set; }
+    public Type ClrType { get; set; } = typeof(object);
 
     /// <summary>Gets or sets the maximum length for variable-length columns, or null for fixed-length.</summary>
     public int? MaxLength { get; set; }

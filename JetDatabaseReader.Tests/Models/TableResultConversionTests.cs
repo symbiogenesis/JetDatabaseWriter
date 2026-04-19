@@ -211,7 +211,7 @@ public class TableResultConversionTests
         using var reader = TestDatabases.Open(path);
         string table = reader.ListTables()[0];
 
-        DataTable direct = reader.ReadTable(table);
+        DataTable direct = reader.ReadTable(table)!;
         DataTable converted = reader.ReadTable(table, maxRows: int.MaxValue).ToDataTable();
 
         _ = converted.Columns.Count.Should().Be(direct.Columns.Count);
@@ -361,7 +361,7 @@ public class TableResultConversionTests
         using var reader = TestDatabases.Open(path);
         string table = reader.ListTables()[0];
 
-        DataTable direct = reader.ReadTableAsStringDataTable(table);
+        DataTable direct = reader.ReadTableAsStringDataTable(table)!;
         DataTable converted = reader.ReadTableAsStrings(table, maxRows: int.MaxValue).ToDataTable();
 
         _ = converted.Columns.Count.Should().Be(direct.Columns.Count);

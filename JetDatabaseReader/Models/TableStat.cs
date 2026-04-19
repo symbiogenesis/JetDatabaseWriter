@@ -7,7 +7,7 @@ namespace JetDatabaseReader;
 public sealed class TableStat
 {
     /// <summary>Gets or sets the table name.</summary>
-    public string Name { get; set; }
+    public string Name { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets or sets the row count stored in the TDEF page.
