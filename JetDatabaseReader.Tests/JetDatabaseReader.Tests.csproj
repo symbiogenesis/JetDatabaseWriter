@@ -26,6 +26,9 @@
     <None Include="AdventureLT2008.mdb">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include="Jet3Test.mdb">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include="NorthwindTraders.accdb">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

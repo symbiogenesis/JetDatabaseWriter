@@ -173,8 +173,6 @@ public sealed class AccessWriter : IAccessWriter
         Guard.NotNull(columns, nameof(columns));
         Guard.NotDisposed(_disposed, nameof(AccessWriter));
 
-        EnsureJet4WriteSupported();
-
         if (columns.Count == 0)
         {
             throw new ArgumentException("At least one column is required", nameof(columns));
@@ -185,7 +183,7 @@ public sealed class AccessWriter : IAccessWriter
             throw new InvalidOperationException($"Table '{tableName}' already exists.");
         }
 
-        TableDef tableDef = BuildTableDefinition(columns);
+        TableDef tableDef = BuildTableDefinition(columns, _jet4);
         byte[] tdefPage = BuildTDefPage(tableDef);
         long tdefPageNumber = AppendPage(tdefPage);
 
@@ -198,8 +196,6 @@ public sealed class AccessWriter : IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotDisposed(_disposed, nameof(AccessWriter));
-
-        EnsureJet4WriteSupported();
 
         TableDef? msys = ReadTableDef(2);
         if (msys == null)
@@ -242,8 +238,6 @@ public sealed class AccessWriter : IAccessWriter
         Guard.NotNull(values, nameof(values));
         Guard.NotDisposed(_disposed, nameof(AccessWriter));
 
-        EnsureJet4WriteSupported();
-
         CatalogEntry entry = GetRequiredCatalogEntry(tableName);
         TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
         InsertRowInternal(entry.TDefPage, tableDef, values);
@@ -255,8 +249,6 @@ public sealed class AccessWriter : IAccessWriter
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(rows, nameof(rows));
         Guard.NotDisposed(_disposed, nameof(AccessWriter));
-
-        EnsureJet4WriteSupported();
 
         CatalogEntry entry = GetRequiredCatalogEntry(tableName);
         TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
@@ -280,8 +272,6 @@ public sealed class AccessWriter : IAccessWriter
         Guard.NotNull(item, nameof(item));
         Guard.NotDisposed(_disposed, nameof(AccessWriter));
 
-        EnsureJet4WriteSupported();
-
         CatalogEntry entry = GetRequiredCatalogEntry(tableName);
         TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
         var headers = tableDef.Columns.ConvertAll(c => c.Name);
@@ -296,8 +286,6 @@ public sealed class AccessWriter : IAccessWriter
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(items, nameof(items));
         Guard.NotDisposed(_disposed, nameof(AccessWriter));
-
-        EnsureJet4WriteSupported();
 
         CatalogEntry entry = GetRequiredCatalogEntry(tableName);
         TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
@@ -322,8 +310,6 @@ public sealed class AccessWriter : IAccessWriter
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
         Guard.NotNull(updatedValues, nameof(updatedValues));
         Guard.NotDisposed(_disposed, nameof(AccessWriter));
-
-        EnsureJet4WriteSupported();
 
         if (updatedValues.Count == 0)
         {
@@ -389,8 +375,6 @@ public sealed class AccessWriter : IAccessWriter
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
         Guard.NotDisposed(_disposed, nameof(AccessWriter));
-
-        EnsureJet4WriteSupported();
 
         CatalogEntry entry = GetRequiredCatalogEntry(tableName);
         TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
@@ -474,6 +458,18 @@ public sealed class AccessWriter : IAccessWriter
         b[o] = (byte)(value & 0xFF);
         b[o + 1] = (byte)((value >> 8) & 0xFF);
         b[o + 2] = (byte)((value >> 16) & 0xFF);
+    }
+
+    private static void WriteField(byte[] b, int o, int fieldSize, int value)
+    {
+        if (fieldSize == 1)
+        {
+            b[o] = (byte)value;
+        }
+        else
+        {
+            Wu16(b, o, value);
+        }
     }
 
     private static bool ValuesEqual(object left, object right)
@@ -666,14 +662,6 @@ public sealed class AccessWriter : IAccessWriter
         }
     }
 
-    private void EnsureJet4WriteSupported()
-    {
-        if (!_jet4)
-        {
-            throw new NotSupportedException("Write support currently requires a Jet4/ACE-format database.");
-        }
-    }
-
     private DataTable ReadTableSnapshot(string tableName)
     {
         var options = new AccessReaderOptions { FileShare = FileShare.ReadWrite, ValidateOnOpen = false };
@@ -741,7 +729,7 @@ public sealed class AccessWriter : IAccessWriter
         }
     }
 
-    private static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns)
+    private static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, bool jet4)
     {
         var result = new TableDef();
         int fixedOffset = 0;
@@ -752,7 +740,7 @@ public sealed class AccessWriter : IAccessWriter
             ColumnDefinition definition = columns[i];
             byte type = TypeCodeFromDefinition(definition);
             bool variable = IsVariableType(type);
-            int size = GetDeclaredSize(type, definition.MaxLength);
+            int size = GetDeclaredSize(type, definition.MaxLength, jet4);
 
             var column = new ColumnInfo
             {
@@ -780,7 +768,7 @@ public sealed class AccessWriter : IAccessWriter
         return result;
     }
 
-    private static int GetDeclaredSize(byte type, int maxLength)
+    private static int GetDeclaredSize(byte type, int maxLength, bool jet4)
     {
         switch (type)
         {
@@ -805,7 +793,8 @@ public sealed class AccessWriter : IAccessWriter
             case T_NUMERIC:
                 return 17;
             case T_TEXT:
-                return Math.Max(2, (maxLength > 0 ? maxLength : 255) * 2);
+                int charLen = maxLength > 0 ? maxLength : 255;
+                return jet4 ? Math.Max(2, charLen * 2) : charLen;
             case T_BINARY:
                 return maxLength > 0 ? maxLength : 255;
             default:
@@ -825,14 +814,17 @@ public sealed class AccessWriter : IAccessWriter
         page[1] = 0x01;
         Wi32(page, 4, 0);
         Wi32(page, 16, 0);
-        page[40] = 0x4E;
-        Wu16(page, 41, numCols);
-        Wu16(page, 43, numVarCols);
-        Wu16(page, 45, numCols);
-        Wi32(page, 47, 0);
-        Wi32(page, 51, 0);
-        Wi32(page, 55, 0);
-        Wi32(page, 59, 0);
+
+        // TDEF header fields: offsets are relative to _tdNumCols / _tdNumRealIdx
+        // so both JET3 and JET4 layouts are covered.
+        page[_tdNumCols - 5] = 0x4E;
+        Wu16(page, _tdNumCols - 4, numCols);
+        Wu16(page, _tdNumCols - 2, numVarCols);
+        Wu16(page, _tdNumCols, numCols);
+        Wi32(page, _tdNumRealIdx - 4, 0);
+        Wi32(page, _tdNumRealIdx, 0);
+        Wi32(page, _tdNumRealIdx + 4, 0);
+        Wi32(page, _tdNumRealIdx + 8, 0);
 
         for (int i = 0; i < numCols; i++)
         {
@@ -846,14 +838,23 @@ public sealed class AccessWriter : IAccessWriter
             Wu16(page, o + _colFixedOff, col.FixedOff);
             Wu16(page, o + _colSzOff, col.Size);
 
-            byte[] nameBytes = Encoding.Unicode.GetBytes(col.Name);
-            if (namePos + 2 + nameBytes.Length > page.Length)
+            byte[] nameBytes = _jet4 ? Encoding.Unicode.GetBytes(col.Name) : _ansiEncoding.GetBytes(col.Name);
+            int nameLenSize = _jet4 ? 2 : 1;
+            if (namePos + nameLenSize + nameBytes.Length > page.Length)
             {
                 throw new NotSupportedException("Table definition does not fit within a single TDEF page.");
             }
 
-            Wu16(page, namePos, nameBytes.Length);
-            namePos += 2;
+            if (_jet4)
+            {
+                Wu16(page, namePos, nameBytes.Length);
+            }
+            else
+            {
+                page[namePos] = (byte)nameBytes.Length;
+            }
+
+            namePos += nameLenSize;
             Buffer.BlockCopy(nameBytes, 0, page, namePos, nameBytes.Length);
             namePos += nameBytes.Length;
         }
@@ -1053,11 +1054,23 @@ public sealed class AccessWriter : IAccessWriter
         }
 
         int eod = currentOffset;
-        int rowLength = _numColsFldSz + fixedArea.Length + variablePayload.Sum(bytes => bytes.Length) + _eodFldSz + (varLen * _varEntrySz) + _varLenFldSz + nullMask.Length;
+        int varPayloadSize = variablePayload.Sum(bytes => bytes.Length);
+        int baseRowLength = _numColsFldSz + fixedArea.Length + varPayloadSize + _eodFldSz + (varLen * _varEntrySz) + _varLenFldSz + nullMask.Length;
+
+        // Jet3 rows include a jump table whose size depends on total row length.
+        int jumpSize = _jet4 ? 0 : baseRowLength / 256;
+        int rowLength = baseRowLength + jumpSize;
+        int finalJump = _jet4 ? 0 : rowLength / 256;
+        if (finalJump != jumpSize)
+        {
+            jumpSize = finalJump;
+            rowLength = baseRowLength + jumpSize;
+        }
+
         var row = new byte[rowLength];
         int pos = 0;
 
-        Wu16(row, pos, numCols);
+        WriteField(row, pos, _numColsFldSz, numCols);
         pos += _numColsFldSz;
 
         if (fixedArea.Length > 0)
@@ -1072,16 +1085,19 @@ public sealed class AccessWriter : IAccessWriter
             pos += payload.Length;
         }
 
-        Wu16(row, pos, eod);
+        WriteField(row, pos, _eodFldSz, eod);
         pos += _eodFldSz;
 
         for (int varIndex = varLen - 1; varIndex >= 0; varIndex--)
         {
-            Wu16(row, pos, variableOffsets[varIndex]);
+            WriteField(row, pos, _varEntrySz, variableOffsets[varIndex]);
             pos += _varEntrySz;
         }
 
-        Wu16(row, pos, varLen);
+        // Jet3 jump table (entries are zero for newly written rows).
+        pos += jumpSize;
+
+        WriteField(row, pos, _varLenFldSz, varLen);
         pos += _varLenFldSz;
         Buffer.BlockCopy(nullMask, 0, row, pos, nullMask.Length);
 

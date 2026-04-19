@@ -30,16 +30,19 @@ internal static class TestDatabases
     public static readonly string AdventureWorks =
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AdventureLT2008.mdb");
 
+    public static readonly string Jet3Test =
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Jet3Test.mdb");
+
     // ── MemberData sets ───────────────────────────────────────────────
 
     /// <summary>Gets all databases (skips any that don't exist or can't be opened).</summary>
     public static TheoryData<string> All => ToTheoryData(
-        new[] { LargeFile, NorthwindTraders, AdventureWorks, R3188_W_PO, R419_TR_TPI }
+        new[] { LargeFile, NorthwindTraders, AdventureWorks, Jet3Test, R3188_W_PO, R419_TR_TPI }
             .Where(IsReadable));
 
     /// <summary>Gets the smaller databases (skips any that can't be opened).</summary>
     public static TheoryData<string> Small => ToTheoryData(
-        new[] { NorthwindTraders, AdventureWorks }
+        new[] { NorthwindTraders, AdventureWorks, Jet3Test }
             .Where(IsReadable));
 
     /// <summary>Gets the user's local downloaded .mdb files (skips any that can't be opened).</summary>
@@ -53,7 +56,7 @@ internal static class TestDatabases
     /// (e.g., verifying they are not password-protected).
     /// </summary>
     public static TheoryData<string> AllExisting => ToTheoryData(
-        new[] { LargeFile, NorthwindTraders, AdventureWorks, R3188_W_PO, R419_TR_TPI }
+        new[] { LargeFile, NorthwindTraders, AdventureWorks, Jet3Test, R3188_W_PO, R419_TR_TPI }
             .Where(File.Exists));
 
     // ── Helpers ───────────────────────────────────────────────────────
