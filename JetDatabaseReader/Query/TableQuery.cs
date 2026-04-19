@@ -1,152 +1,151 @@
-namespace JetDatabaseReader
+namespace JetDatabaseReader;
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+/// <summary>
+/// Provides a fluent API for querying table data with filtering and limiting.
+/// Supports both typed (<c>object[]</c>) and string (<c>string[]</c>) row access.
+///
+/// Typed chain  (recommended): <see cref="Where"/>      → <see cref="Execute"/>              / <see cref="FirstOrDefault"/>        / <see cref="Count"/>.
+/// String chain (compat):      <see cref="WhereAsStrings"/> → <see cref="ExecuteAsStrings"/> / <see cref="FirstOrDefaultAsStrings"/> / <see cref="CountAsStrings"/>.
+/// </summary>
+public sealed class TableQuery
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Linq;
+    private readonly AccessReader _reader;
+    private readonly string _tableName;
+    private int? _limit;
+    private Func<object[], bool> _typedFilter;
+    private Func<string[], bool> _stringFilter;
+
+    internal TableQuery(AccessReader reader, string tableName)
+    {
+        _reader = reader;
+        _tableName = tableName;
+    }
+
+    // ── Filter ────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Provides a fluent API for querying table data with filtering and limiting.
-    /// Supports both typed (<c>object[]</c>) and string (<c>string[]</c>) row access.
-    ///
-    /// Typed chain  (recommended): <see cref="Where"/>      → <see cref="Execute"/>              / <see cref="FirstOrDefault"/>        / <see cref="Count"/>.
-    /// String chain (compat):      <see cref="WhereAsStrings"/> → <see cref="ExecuteAsStrings"/> / <see cref="FirstOrDefaultAsStrings"/> / <see cref="CountAsStrings"/>.
+    /// Filters rows using a predicate over properly typed values.
+    /// Works with <see cref="Execute"/>, <see cref="FirstOrDefault"/>, and <see cref="Count"/>.
     /// </summary>
-    public sealed class TableQuery
+    /// <returns></returns>
+    public TableQuery Where(Func<object[], bool> predicate)
     {
-        private readonly AccessReader _reader;
-        private readonly string _tableName;
-        private int? _limit;
-        private Func<object[], bool> _typedFilter;
-        private Func<string[], bool> _stringFilter;
+        Guard.NotNull(predicate, nameof(predicate));
+        _typedFilter = predicate;
+        return this;
+    }
 
-        internal TableQuery(AccessReader reader, string tableName)
+    /// <summary>
+    /// Filters rows using a predicate over string values.
+    /// Works with <see cref="ExecuteAsStrings"/>, <see cref="FirstOrDefaultAsStrings"/>, and <see cref="CountAsStrings"/>.
+    /// </summary>
+    /// <returns></returns>
+    public TableQuery WhereAsStrings(Func<string[], bool> predicate)
+    {
+        Guard.NotNull(predicate, nameof(predicate));
+        _stringFilter = predicate;
+        return this;
+    }
+
+    // ── Limit ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Limits the number of rows returned by any Execute method.
+    /// </summary>
+    /// <returns></returns>
+    public TableQuery Take(int count)
+    {
+        Guard.Positive(count, nameof(count));
+        _limit = count;
+        return this;
+    }
+
+    // ── Typed execution ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Executes the query and returns matching rows as properly typed object arrays.
+    /// Each element is the native CLR type (int, DateTime, decimal, etc.) or <see cref="DBNull.Value"/> for nulls.
+    /// </summary>
+    /// <returns></returns>
+    public IEnumerable<object[]> Execute()
+    {
+        IEnumerable<object[]> rows = _reader.StreamRows(_tableName);
+
+        if (_typedFilter != null)
         {
-            _reader = reader;
-            _tableName = tableName;
+            rows = rows.Where(_typedFilter);
         }
 
-        // ── Filter ────────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Filters rows using a predicate over properly typed values.
-        /// Works with <see cref="Execute"/>, <see cref="FirstOrDefault"/>, and <see cref="Count"/>.
-        /// </summary>
-        /// <returns></returns>
-        public TableQuery Where(Func<object[], bool> predicate)
+        if (_limit.HasValue)
         {
-            Guard.NotNull(predicate, nameof(predicate));
-            _typedFilter = predicate;
-            return this;
+            rows = rows.Take(_limit.Value);
         }
 
-        /// <summary>
-        /// Filters rows using a predicate over string values.
-        /// Works with <see cref="ExecuteAsStrings"/>, <see cref="FirstOrDefaultAsStrings"/>, and <see cref="CountAsStrings"/>.
-        /// </summary>
-        /// <returns></returns>
-        public TableQuery WhereAsStrings(Func<string[], bool> predicate)
+        return rows;
+    }
+
+    /// <summary>
+    /// Executes the query and returns the first matching typed row, or null if no matches.
+    /// </summary>
+    /// <returns></returns>
+    public object[] FirstOrDefault()
+    {
+        return Execute().FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Executes the query and returns the count of typed rows matching the filter.
+    /// </summary>
+    /// <returns></returns>
+    public int Count()
+    {
+        return Execute().Count();
+    }
+
+    // ── String execution ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Executes the query and returns matching rows as string arrays.
+    /// Use this for compatibility scenarios or when you need raw string data.
+    /// For most use cases, prefer <see cref="Execute"/> which returns properly typed data.
+    /// </summary>
+    /// <returns></returns>
+    public IEnumerable<string[]> ExecuteAsStrings()
+    {
+        IEnumerable<string[]> rows = _reader.StreamRowsAsStrings(_tableName);
+
+        if (_stringFilter != null)
         {
-            Guard.NotNull(predicate, nameof(predicate));
-            _stringFilter = predicate;
-            return this;
+            rows = rows.Where(_stringFilter);
         }
 
-        // ── Limit ─────────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Limits the number of rows returned by any Execute method.
-        /// </summary>
-        /// <returns></returns>
-        public TableQuery Take(int count)
+        if (_limit.HasValue)
         {
-            Guard.Positive(count, nameof(count));
-            _limit = count;
-            return this;
+            rows = rows.Take(_limit.Value);
         }
 
-        // ── Typed execution ───────────────────────────────────────────────
+        return rows;
+    }
 
-        /// <summary>
-        /// Executes the query and returns matching rows as properly typed object arrays.
-        /// Each element is the native CLR type (int, DateTime, decimal, etc.) or <see cref="DBNull.Value"/> for nulls.
-        /// </summary>
-        /// <returns></returns>
-        public IEnumerable<object[]> Execute()
-        {
-            IEnumerable<object[]> rows = _reader.StreamRows(_tableName);
+    /// <summary>
+    /// Executes the query and returns the first matching string row, or null if no matches.
+    /// </summary>
+    /// <returns></returns>
+    public string[] FirstOrDefaultAsStrings()
+    {
+        return ExecuteAsStrings().FirstOrDefault();
+    }
 
-            if (_typedFilter != null)
-            {
-                rows = rows.Where(_typedFilter);
-            }
-
-            if (_limit.HasValue)
-            {
-                rows = rows.Take(_limit.Value);
-            }
-
-            return rows;
-        }
-
-        /// <summary>
-        /// Executes the query and returns the first matching typed row, or null if no matches.
-        /// </summary>
-        /// <returns></returns>
-        public object[] FirstOrDefault()
-        {
-            return Execute().FirstOrDefault();
-        }
-
-        /// <summary>
-        /// Executes the query and returns the count of typed rows matching the filter.
-        /// </summary>
-        /// <returns></returns>
-        public int Count()
-        {
-            return Execute().Count();
-        }
-
-        // ── String execution ──────────────────────────────────────────────
-
-        /// <summary>
-        /// Executes the query and returns matching rows as string arrays.
-        /// Use this for compatibility scenarios or when you need raw string data.
-        /// For most use cases, prefer <see cref="Execute"/> which returns properly typed data.
-        /// </summary>
-        /// <returns></returns>
-        public IEnumerable<string[]> ExecuteAsStrings()
-        {
-            IEnumerable<string[]> rows = _reader.StreamRowsAsStrings(_tableName);
-
-            if (_stringFilter != null)
-            {
-                rows = rows.Where(_stringFilter);
-            }
-
-            if (_limit.HasValue)
-            {
-                rows = rows.Take(_limit.Value);
-            }
-
-            return rows;
-        }
-
-        /// <summary>
-        /// Executes the query and returns the first matching string row, or null if no matches.
-        /// </summary>
-        /// <returns></returns>
-        public string[] FirstOrDefaultAsStrings()
-        {
-            return ExecuteAsStrings().FirstOrDefault();
-        }
-
-        /// <summary>
-        /// Executes the query and returns the count of string rows matching the filter.
-        /// </summary>
-        /// <returns></returns>
-        public int CountAsStrings()
-        {
-            return ExecuteAsStrings().Count();
-        }
+    /// <summary>
+    /// Executes the query and returns the count of string rows matching the filter.
+    /// </summary>
+    /// <returns></returns>
+    public int CountAsStrings()
+    {
+        return ExecuteAsStrings().Count();
     }
 }
