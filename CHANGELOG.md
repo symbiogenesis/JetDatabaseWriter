@@ -5,6 +5,57 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [3.0.0] — 2026-04-19
+
+### ⚠️ Breaking Changes
+
+| Area | Before | After |
+|------|--------|-------|
+| **Target framework** | `net8.0` | `netstandard2.1` — broader compatibility (any .NET Standard 2.1+ runtime) |
+
+### ✨ Write Support — `AccessWriter` / `IAccessWriter`
+
+New pure-managed writer for `.mdb` / `.accdb` files. No OleDB, ODBC, or ACE drivers required.
+
+| Method | Description |
+|--------|-------------|
+| `AccessWriter.Open(path)` | Factory method — opens an existing database for writing |
+| `CreateTable(name, columns)` | Create a new table from `ColumnDefinition` list |
+| `DropTable(name)` | Drop an existing table and its data |
+| `InsertRow(table, object[])` | Insert a single row (positional values) |
+| `InsertRow<T>(table, item)` | Insert a single row by mapping POCO properties to columns |
+| `InsertRows(table, IEnumerable<object[]>)` | Bulk insert (positional values) |
+| `InsertRows<T>(table, IEnumerable<T>)` | Bulk insert by mapping POCO properties |
+| `UpdateRows(table, predCol, predVal, updates)` | Update rows matching a predicate column/value |
+| `DeleteRows(table, predCol, predVal)` | Delete rows matching a predicate column/value |
+
+### ✨ Strongly Typed Column Definition API
+
+New `ColumnDefinition` class for defining table schemas with CLR types:
+
+```csharp
+var columns = new List<ColumnDefinition>
+{
+    new ColumnDefinition("Id", typeof(int)),
+    new ColumnDefinition("Name", typeof(string), maxLength: 100),
+    new ColumnDefinition("Created", typeof(DateTime)),
+};
+
+using var writer = AccessWriter.Open("db.mdb");
+writer.CreateTable("MyTable", columns);
+writer.InsertRow("MyTable", new object[] { 1, "Alice", DateTime.Now });
+```
+
+### ✨ `IAccessWriter` Interface
+
+Fully testable and mockable write interface — mirrors `IAccessReader` for read operations.
+
+### 🔧 Improvements
+
+- **Target changed to `netstandard2.1`** — the library now runs on .NET Core 3.0+, .NET 5+, Mono 6.4+, and Unity 2021.2+ without recompilation.
+
+---
+
 ## [2.2.0] — 2026-04-01
 
 ### ⚠️ Breaking Changes
