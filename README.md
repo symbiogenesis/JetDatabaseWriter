@@ -22,10 +22,12 @@ Pure-managed .NET library for reading Microsoft Access JET databases — no OleD
 | ✅ **Streaming API** | Process millions of rows without loading the whole file |
 | ✅ **Async support** | Full `Task<T>`-based async for all major operations |
 | ✅ **Page cache** | 256-page LRU cache (~1 MB, configurable) |
+| ✅ **Generic POCO mapping** | `ReadTable<T>()`, `StreamRows<T>()`, `InsertRow<T>()` — no manual casting |
 | ✅ **Fluent query** | `Query().Where().Take().Execute()` — typed and string chains |
 | ✅ **Progress reporting** | `IProgress<int>` callbacks on all long operations |
 | ✅ **Non-Western text** | Code page auto-detected from the database header |
 | ✅ **OLE Objects** | Detects embedded JPEG, PNG, PDF, ZIP, DOC, RTF |
+| ✅ **Write support** | Create/drop tables, insert/update/delete rows (Jet4/ACE) |
 
 ---
 
@@ -87,6 +89,23 @@ DataTable dt = reader.ReadTable("Products");
 // dt.Columns["Discontinued"].DataType == typeof(bool)
 ```
 
+### Generic POCO mapping — strongly typed
+
+```csharp
+public class Product
+{
+    public int ProductID { get; set; }
+    public string ProductName { get; set; }
+    public decimal UnitPrice { get; set; }
+    public bool Discontinued { get; set; }
+}
+
+List<Product> products = reader.ReadTable<Product>("Products", maxRows: 100);
+decimal total = products.Where(p => !p.Discontinued).Sum(p => p.UnitPrice);
+```
+
+Property names are matched to column headers **case-insensitively**. Unmatched properties keep their default value. The type `T` must be a class with a parameterless constructor.
+
 ### String DataTable — compatibility
 
 ```csharp
@@ -136,6 +155,13 @@ foreach (object[] row in reader.StreamRows("BigTable", progress))
 }
 ```
 
+### Generic streaming — strongly typed
+
+```csharp
+foreach (Product p in reader.StreamRows<Product>("Products"))
+    Console.WriteLine($"{p.ProductName}: {p.UnitPrice:C}");
+```
+
 ### String streaming — compatibility
 
 ```csharp
@@ -175,6 +201,7 @@ IEnumerable<string[]> recent = reader.Query("Orders")
 List<string>                  tables = await reader.ListTablesAsync();
 DataTable                     dt     = await reader.ReadTableAsync("Orders");
 TableResult                   typed  = await reader.ReadTableAsync("Orders", 50);
+List<Order>                   orders = await reader.ReadTableAsync<Order>("Orders", 50);
 StringTableResult             str    = await reader.ReadTableAsStringsAsync("Orders", 50);
 DatabaseStatistics            stats  = await reader.GetStatisticsAsync();
 Dictionary<string, DataTable> all    = await reader.ReadAllTablesAsync();
@@ -192,6 +219,73 @@ Dictionary<string, DataTable> all = reader.ReadAllTables(
 
 // String columns (compatibility)
 Dictionary<string, DataTable> allStr = reader.ReadAllTablesAsStrings();
+```
+
+---
+
+## Writing Data
+
+> Requires Jet4/ACE format — `.mdb` (Access 2000+) or `.accdb`.
+
+```csharp
+using var writer = AccessWriter.Open("database.mdb");
+```
+
+### Create & drop tables
+
+```csharp
+writer.CreateTable("Contacts", new[]
+{
+    new ColumnDefinition("ContactID", typeof(int)),
+    new ColumnDefinition("Name",      typeof(string), maxLength: 100),
+    new ColumnDefinition("Email",     typeof(string), maxLength: 255),
+    new ColumnDefinition("Score",     typeof(decimal)),
+});
+
+writer.DropTable("Contacts");
+```
+
+### Insert rows
+
+```csharp
+// Single row — object array
+writer.InsertRow("Contacts", new object[] { 1, "Alice", "alice@example.com", 95.5m });
+
+// Multiple rows — object arrays
+writer.InsertRows("Contacts", new[]
+{
+    new object[] { 2, "Bob",   "bob@example.com",   88.0m },
+    new object[] { 3, "Carol", "carol@example.com", 92.3m },
+});
+```
+
+### Generic insert — POCO
+
+```csharp
+public class Contact
+{
+    public int ContactID { get; set; }
+    public string Name { get; set; }
+    public string Email { get; set; }
+    public decimal Score { get; set; }
+}
+
+writer.InsertRow("Contacts", new Contact { ContactID = 4, Name = "Dave", Email = "dave@example.com", Score = 77.1m });
+
+writer.InsertRows("Contacts", new[]
+{
+    new Contact { ContactID = 5, Name = "Eve",   Email = "eve@example.com",   Score = 91.0m },
+    new Contact { ContactID = 6, Name = "Frank", Email = "frank@example.com", Score = 85.4m },
+});
+```
+
+### Update & delete
+
+```csharp
+int updated = writer.UpdateRows("Contacts", "ContactID", 1,
+    new Dictionary<string, object> { ["Score"] = 99.9m });
+
+int deleted = writer.DeleteRows("Contacts", "ContactID", 3);
 ```
 
 ---
@@ -258,7 +352,6 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 | ❌ Attachment fields (0x11) | Rare type added in Access 2007 |
 | ❌ Linked tables | Only local tables are listed |
 | ❌ Overflow rows | Rows spanning multiple pages are skipped |
-| ❌ Write operations | Read-only library |
 
 ---
 
@@ -270,7 +363,6 @@ var r = new JetDatabaseReader("db.mdb");              // v1 ❌
 var r = AccessReader.Open("db.mdb");                   // ✅
 
 // Typed DataTable
-var dt = r.ReadTableAsDataTable("Orders");             // v1 ❌
 var dt = r.ReadTable("Orders");                        // ✅ typed columns
 var dt = r.ReadTableAsStringDataTable("Orders");       // ✅ string columns
 
@@ -297,7 +389,18 @@ FirstTableResult r = reader.ReadFirstTable();           // + r.TableCount
 
 // Streaming
 foreach (object[] row in r.StreamRows("T")) { }        // ✅ typed
+foreach (Product p in r.StreamRows<Product>("T")) { }   // ✅ generic
 foreach (string[] row in r.StreamRowsAsStrings("T")) { } // ✅ string compat
+
+// Generic POCO mapping (new)
+List<Product> p = r.ReadTable<Product>("T", 100);       // ✅ read as List<T>
+List<Product> p = await r.ReadTableAsync<Product>("T", 100); // ✅ async
+
+// Writing (new — Jet4/ACE only)
+using var w = AccessWriter.Open("db.mdb");
+w.InsertRow("T", new object[] { 1, "text" });           // ✅ object array
+w.InsertRow("T", new Product { ... });                  // ✅ generic POCO
+w.InsertRows("T", products);                            // ✅ bulk generic
 
 // Bulk
 var all = r.ReadAllTables();                           // ✅ typed columns

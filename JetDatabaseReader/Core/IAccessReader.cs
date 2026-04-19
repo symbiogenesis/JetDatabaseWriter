@@ -66,6 +66,16 @@ public interface IAccessReader : IDisposable
     TableResult ReadTable(string tableName, int maxRows);
 
     /// <summary>
+    /// Reads up to <paramref name="maxRows"/> rows from <paramref name="tableName"/>
+    /// and maps each row to an instance of <typeparamref name="T"/>.
+    /// Property names are matched to column headers (case-insensitive).
+    /// </summary>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <returns></returns>
+    List<T> ReadTable<T>(string tableName, int maxRows)
+        where T : class, new();
+
+    /// <summary>
     /// Reads up to <paramref name="maxRows"/> rows from the table named
     /// <paramref name="tableName"/> (case-insensitive) with all values as strings.
     /// Rows are in <see cref="StringTableResult.Rows"/>.
@@ -79,6 +89,15 @@ public interface IAccessReader : IDisposable
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
     Task<TableResult> ReadTableAsync(string tableName, int maxRows);
+
+    /// <summary>
+    /// Async overload of <see cref="ReadTable{T}(string, int)"/>.
+    /// Reads up to <paramref name="maxRows"/> rows mapped to <typeparamref name="T"/> asynchronously.
+    /// </summary>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
+    Task<List<T>> ReadTableAsync<T>(string tableName, int maxRows)
+        where T : class, new();
 
     /// <summary>
     /// Async overload of <see cref="ReadTableAsStrings(string, int)"/>.
@@ -97,6 +116,17 @@ public interface IAccessReader : IDisposable
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <returns></returns>
     IEnumerable<object[]> StreamRows(string tableName, IProgress<int>? progress = null);
+
+    /// <summary>
+    /// Yields rows from <paramref name="tableName"/> mapped to instances of <typeparamref name="T"/>.
+    /// Property names are matched to column headers (case-insensitive). Unmatched properties keep their default value.
+    /// </summary>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
+    /// <returns></returns>
+    IEnumerable<T> StreamRows<T>(string tableName, IProgress<int>? progress = null)
+        where T : class, new();
 
     /// <summary>
     /// Yields rows from <paramref name="tableName"/> as string arrays without collecting them all in memory.

@@ -33,12 +33,31 @@ public interface IAccessWriter : IDisposable
     void InsertRow(string tableName, object[] values);
 
     /// <summary>
+    /// Inserts a single row by mapping a POCO's properties to the table's columns (case-insensitive name match).
+    /// </summary>
+    /// <typeparam name="T">A class with a parameterless constructor whose public readable properties match column names.</typeparam>
+    /// <param name="tableName">Target table name (case-insensitive).</param>
+    /// <param name="item">The object whose properties supply the column values.</param>
+    void InsertRow<T>(string tableName, T item)
+        where T : class, new();
+
+    /// <summary>
     /// Inserts multiple rows into the specified table in a single operation.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="rows">Collection of rows, each containing column values in table-column order.</param>
     /// <returns>The number of rows inserted.</returns>
     int InsertRows(string tableName, IEnumerable<object[]> rows);
+
+    /// <summary>
+    /// Inserts multiple rows by mapping each POCO's properties to the table's columns (case-insensitive name match).
+    /// </summary>
+    /// <typeparam name="T">A class with a parameterless constructor whose public readable properties match column names.</typeparam>
+    /// <param name="tableName">Target table name (case-insensitive).</param>
+    /// <param name="items">Collection of objects whose properties supply the column values.</param>
+    /// <returns>The number of rows inserted.</returns>
+    int InsertRows<T>(string tableName, IEnumerable<T> items)
+        where T : class, new();
 
     /// <summary>
     /// Updates rows in the specified table where the predicate column matches the given value.

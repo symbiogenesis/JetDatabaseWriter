@@ -6,6 +6,9 @@ using System.Linq;
 using FluentAssertions;
 using Xunit;
 
+#pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
+#pragma warning disable SA1201 // Nested test POCOs before test methods is standard xUnit convention
+
 /// <summary>
 /// Tests for TableQuery — both the typed chain and the string chain.
 ///
@@ -251,5 +254,113 @@ public class AccessReaderQueryTests
 
         _ = query.Execute().Should().HaveCountLessThanOrEqualTo(limit);
         _ = query.ExecuteAsStrings().Should().HaveCountLessThanOrEqualTo(limit);
+    }
+
+    // ── Generic chain: Execute<T> ─────────────────────────────────────
+
+    private sealed class QueryRow
+    {
+        public int Id { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
+    public void ExecuteGeneric_WithoutFilter_RowCountMatchesExecute(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+
+        int typedCount = reader.Query(table).Execute().Count();
+        int genericCount = reader.Query(table).Execute<QueryRow>().Count();
+
+        _ = genericCount.Should().Be(typedCount);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
+    public void ExecuteGeneric_WithTake_LimitsResults(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+
+        IEnumerable<QueryRow> result = reader.Query(table).Take(3).Execute<QueryRow>();
+
+        _ = result.Should().HaveCountLessThanOrEqualTo(3);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
+    public void ExecuteGeneric_WithWhere_FiltersRows(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+
+        IEnumerable<QueryRow> none = reader.Query(table)
+            .Where(_ => false)
+            .Execute<QueryRow>();
+
+        _ = none.Should().BeEmpty();
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
+    public void ExecuteGeneric_ReturnsNonNullInstances(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+
+        foreach (QueryRow item in reader.Query(table).Take(20).Execute<QueryRow>())
+        {
+            _ = item.Should().NotBeNull();
+        }
+    }
+
+    // ── Generic chain: FirstOrDefault<T> ──────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
+    public void FirstOrDefaultGeneric_WithoutFilter_ReturnsNonNull(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        TableStat? stat = reader.GetTableStats().FirstOrDefault(s => s.RowCount > 0);
+        if (stat == null)
+        {
+            return;
+        }
+
+        string table = stat.Name;
+        QueryRow? first = reader.Query(table).FirstOrDefault<QueryRow>();
+
+        _ = first.Should().NotBeNull();
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
+    public void FirstOrDefaultGeneric_WhenNoRowMatches_ReturnsNull(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+
+        QueryRow? result = reader.Query(table)
+            .Where(_ => false)
+            .FirstOrDefault<QueryRow>();
+
+        _ = result.Should().BeNull();
+    }
+
+    // ── Generic chain: Take affects Execute<T> ────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
+    public void Take_AffectsExecuteGeneric(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+        const int limit = 2;
+
+        _ = reader.Query(table).Take(limit).Execute<QueryRow>()
+            .Should().HaveCountLessThanOrEqualTo(limit);
     }
 }
