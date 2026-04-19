@@ -19,6 +19,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="JetDatabaseReader.Tests" />
+    <InternalsVisibleTo Include="JetDatabaseReader.Benchmarks" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\README.md" Pack="true" PackagePath="\" />
