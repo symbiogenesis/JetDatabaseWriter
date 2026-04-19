@@ -581,85 +581,37 @@ public sealed class AccessWriter : IAccessWriter
     private static byte TypeCodeFromDefinition(ColumnDefinition column)
     {
         Type clrType = column.ClrType;
-        if (clrType == typeof(bool))
-        {
-            return T_BOOL;
-        }
 
-        if (clrType == typeof(byte))
+        switch (Type.GetTypeCode(clrType))
         {
-            return T_BYTE;
-        }
+            case TypeCode.Boolean: return T_BOOL;
+            case TypeCode.Byte: return T_BYTE;
+            case TypeCode.Int16: return T_INT;
+            case TypeCode.Int32: return T_LONG;
+            case TypeCode.Single: return T_FLOAT;
+            case TypeCode.Double: return T_DOUBLE;
+            case TypeCode.DateTime: return T_DATETIME;
+            case TypeCode.Decimal: return T_NUMERIC;
+            case TypeCode.String:
+                return column.MaxLength > 0 && column.MaxLength <= 255 ? T_TEXT : T_MEMO;
+            default:
+                if (clrType == typeof(Guid))
+                {
+                    return T_GUID;
+                }
 
-        if (clrType == typeof(short))
-        {
-            return T_INT;
-        }
+                if (clrType == typeof(byte[]))
+                {
+                    return column.MaxLength > 0 && column.MaxLength <= 255 ? T_BINARY : T_OLE;
+                }
 
-        if (clrType == typeof(int))
-        {
-            return T_LONG;
+                throw new NotSupportedException($"CLR type '{clrType}' is not supported for table creation.");
         }
-
-        if (clrType == typeof(float))
-        {
-            return T_FLOAT;
-        }
-
-        if (clrType == typeof(double))
-        {
-            return T_DOUBLE;
-        }
-
-        if (clrType == typeof(DateTime))
-        {
-            return T_DATETIME;
-        }
-
-        if (clrType == typeof(decimal))
-        {
-            return T_NUMERIC;
-        }
-
-        if (clrType == typeof(Guid))
-        {
-            return T_GUID;
-        }
-
-        if (clrType == typeof(byte[]))
-        {
-            return column.MaxLength > 0 && column.MaxLength <= 255 ? T_BINARY : T_OLE;
-        }
-
-        if (clrType == typeof(string))
-        {
-            return column.MaxLength > 0 && column.MaxLength <= 255 ? T_TEXT : T_MEMO;
-        }
-
-        throw new NotSupportedException($"CLR type '{clrType}' is not supported for table creation.");
     }
 
     private static bool IsVariableType(byte type)
     {
         return type == T_TEXT || type == T_BINARY || type == T_MEMO || type == T_OLE;
-    }
-
-    private static Type TypeCodeToClrType(byte typeCode)
-    {
-        switch (typeCode)
-        {
-            case T_BOOL: return typeof(bool);
-            case T_BYTE: return typeof(byte);
-            case T_INT: return typeof(short);
-            case T_LONG: return typeof(int);
-            case T_MONEY: return typeof(decimal);
-            case T_FLOAT: return typeof(float);
-            case T_DOUBLE: return typeof(double);
-            case T_DATETIME: return typeof(DateTime);
-            case T_GUID: return typeof(Guid);
-            case T_NUMERIC: return typeof(decimal);
-            default: return typeof(string);
-        }
     }
 
     private DataTable ReadTableSnapshot(string tableName)
