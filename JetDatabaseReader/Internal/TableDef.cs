@@ -4,7 +4,7 @@ using System.Collections.Generic;
 
 internal sealed class TableDef
 {
-    public List<ColumnInfo> Columns { get; set; } = new List<ColumnInfo>();
+    public List<ColumnInfo> Columns { get; set; } = [];
 
     public long RowCount { get; set; } // num_rows from TDEF page offset 16
 
