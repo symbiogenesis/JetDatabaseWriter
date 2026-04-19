@@ -291,7 +291,7 @@ public sealed class AccessReader : IAccessReader
             _fs?.Dispose();
             lock (_cacheLock)
             {
-                _pageCache?.Clear();
+                _pageCache = null;
             }
 
             lock (_catalogLock)

@@ -3,7 +3,6 @@ namespace JetDatabaseReader;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 
 /// <summary>
 /// Provides a fluent API for querying table data with filtering and limiting.
@@ -120,7 +119,7 @@ public sealed class TableQuery
     {
         List<ColumnMetadata> meta = _reader.GetColumnMetadata(_tableName);
         var headers = meta.ConvertAll(m => m.Name);
-        PropertyInfo?[] index = RowMapper<T>.BuildIndex(headers);
+        RowMapper<T>.Accessor?[] index = RowMapper<T>.BuildIndex(headers);
 
         foreach (object[] row in Execute())
         {
