@@ -21,8 +21,8 @@ public class TableResultConversionTests
         DataTable dt = result.ToDataTable();
 
         _ = dt.Should().NotBeNull();
-        _ = dt.Columns.Should().BeEmpty();
-        _ = dt.Rows.Should().BeEmpty();
+        _ = dt.Columns.Count.Should().Be(0);
+        _ = dt.Rows.Count.Should().Be(0);
     }
 
     [Fact]
@@ -40,8 +40,8 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Columns.Should().HaveCount(2);
-        _ = dt.Rows.Should().BeEmpty();
+        _ = dt.Columns.Count.Should().Be(2);
+        _ = dt.Rows.Count.Should().Be(0);
     }
 
     // ── TableResult.ToDataTable — structural mapping ──────────────────
@@ -236,8 +236,8 @@ public class TableResultConversionTests
         DataTable dt = result.ToDataTable();
 
         _ = dt.Should().NotBeNull();
-        _ = dt.Columns.Should().BeEmpty();
-        _ = dt.Rows.Should().BeEmpty();
+        _ = dt.Columns.Count.Should().Be(0);
+        _ = dt.Rows.Count.Should().Be(0);
     }
 
     [Fact]
@@ -247,8 +247,8 @@ public class TableResultConversionTests
 
         DataTable dt = result.ToDataTable();
 
-        _ = dt.Columns.Should().HaveCount(2);
-        _ = dt.Rows.Should().BeEmpty();
+        _ = dt.Columns.Count.Should().Be(2);
+        _ = dt.Rows.Count.Should().Be(0);
     }
 
     // ── StringTableResult.ToDataTable — structural mapping ────────────
