@@ -274,7 +274,7 @@ public sealed class AccessReader : IAccessReader
             throw new FileNotFoundException($"Database file not found: {path}", path);
         }
 
-        options = options ?? new AccessReaderOptions();
+        options ??= new AccessReaderOptions();
 
         return new AccessReader(path, options);
     }
@@ -344,29 +344,17 @@ public sealed class AccessReader : IAccessReader
             };
         }
 
-        var headers = td.Columns.Select(c => c.Name).ToList();
+        var headers = td.Columns.ConvertAll(c => c.Name);
         var rows = new List<List<string>>();
-        long total = _fs.Length / _pgSz;
 
-        for (long p = 3; p < total && rows.Count < maxRows; p++)
+        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
         {
-            byte[] page = ReadPageCached(p);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            if ((long)Ri32(page, _dpTDefOff) != entry.TDefPage)
-            {
-                continue;
-            }
-
             foreach (List<string> row in EnumerateRows(page, td))
             {
                 rows.Add(row);
                 if (rows.Count >= maxRows)
                 {
-                    break;
+                    return new FirstTableResult { Headers = headers, Rows = rows, Schema = new List<TableColumn>(), TableName = entry.Name, TableCount = tables.Count };
                 }
             }
         }
@@ -453,33 +441,16 @@ public sealed class AccessReader : IAccessReader
         }
 
         long count = 0;
-        long total = _fs.Length / _pgSz;
 
-        for (long p = 3; p < total; p++)
+        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
         {
-            byte[] page = ReadPageCached(p);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            if ((long)Ri32(page, _dpTDefOff) != entry.TDefPage)
-            {
-                continue;
-            }
-
             int numRows = Ru16(page, _dpNumRows);
             for (int r = 0; r < numRows; r++)
             {
                 int raw = Ru16(page, _dpRowsStart + (r * 2));
-                if ((raw & 0x8000) != 0)
+                if ((raw & 0xC000) != 0)
                 {
-                    continue; // deleted
-                }
-
-                if ((raw & 0x4000) != 0)
-                {
-                    continue; // overflow
+                    continue; // deleted or overflow
                 }
 
                 count++;
@@ -502,9 +473,9 @@ public sealed class AccessReader : IAccessReader
     {
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        CatalogEntry entry = GetCatalogEntry(tableName);
+        var resolved = ResolveTable(tableName);
 
-        if (entry == null)
+        if (resolved == null)
         {
             return new TableResult
             {
@@ -514,53 +485,19 @@ public sealed class AccessReader : IAccessReader
             };
         }
 
-        TableDef? td = ReadTableDef(entry.TDefPage);
-        if (td == null || td.Columns.Count == 0)
-        {
-            return new TableResult
-            {
-                Headers = new List<string>(),
-                Rows = new List<object[]>(),
-                Schema = new List<TableColumn>(),
-            };
-        }
-
+        var (entry, td) = resolved.Value;
         var headers = td.Columns.ConvertAll(c => c.Name);
-        var schema = td.Columns.ConvertAll(c => new TableColumn
-        {
-            Name = c.Name,
-            Type = TypeCodeToClrType(c.Type),
-            Size = SizeForColumn(c),
-        });
+        var schema = BuildSchema(td.Columns);
         var typedRows = new List<object[]>();
-        long total = _fs.Length / _pgSz;
 
-        for (long p = 3; p < total && typedRows.Count < maxRows; p++)
+        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
         {
-            byte[] page = ReadPageCached(p);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            if ((long)Ri32(page, _dpTDefOff) != entry.TDefPage)
-            {
-                continue;
-            }
-
             foreach (List<string> row in EnumerateRows(page, td))
             {
-                var typedRow = new object[row.Count];
-                for (int i = 0; i < row.Count && i < td.Columns.Count; i++)
-                {
-                    Type colType = TypeCodeToClrType(td.Columns[i].Type);
-                    typedRow[i] = TypedValueParser.ParseValue(row[i], colType);
-                }
-
-                typedRows.Add(typedRow);
+                typedRows.Add(ConvertRowToTyped(row, td.Columns));
                 if (typedRows.Count >= maxRows)
                 {
-                    break;
+                    return new TableResult { Headers = headers, Rows = typedRows, Schema = schema, TableName = tableName };
                 }
             }
         }
@@ -597,9 +534,9 @@ public sealed class AccessReader : IAccessReader
     {
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        CatalogEntry entry = GetCatalogEntry(tableName);
+        var resolved = ResolveTable(tableName);
 
-        if (entry == null)
+        if (resolved == null)
         {
             return new StringTableResult
             {
@@ -609,46 +546,19 @@ public sealed class AccessReader : IAccessReader
             };
         }
 
-        TableDef? td = ReadTableDef(entry.TDefPage);
-        if (td == null || td.Columns.Count == 0)
-        {
-            return new StringTableResult
-            {
-                Headers = new List<string>(),
-                Rows = new List<List<string>>(),
-                Schema = new List<TableColumn>(),
-            };
-        }
-
+        var (entry, td) = resolved.Value;
         var headers = td.Columns.ConvertAll(c => c.Name);
-        var schema = td.Columns.ConvertAll(c => new TableColumn
-        {
-            Name = c.Name,
-            Type = TypeCodeToClrType(c.Type),
-            Size = SizeForColumn(c),
-        });
+        var schema = BuildSchema(td.Columns);
         var rows = new List<List<string>>();
-        long total = _fs.Length / _pgSz;
 
-        for (long p = 3; p < total && rows.Count < maxRows; p++)
+        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
         {
-            byte[] page = ReadPageCached(p);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            if ((long)Ri32(page, _dpTDefOff) != entry.TDefPage)
-            {
-                continue;
-            }
-
             foreach (List<string> row in EnumerateRows(page, td))
             {
                 rows.Add(row);
                 if (rows.Count >= maxRows)
                 {
-                    break;
+                    return new StringTableResult { Headers = headers, Rows = rows, Schema = schema, TableName = tableName };
                 }
             }
         }
@@ -728,38 +638,21 @@ public sealed class AccessReader : IAccessReader
             tableName = tables[0].Name;
         }
 
-        CatalogEntry entry = GetCatalogEntry(tableName);
-        if (entry == null)
+        var resolved = ResolveTable(tableName);
+        if (resolved == null)
         {
             return null;
         }
 
-        TableDef? td = ReadTableDef(entry.TDefPage);
-        if (td == null || td.Columns.Count == 0)
-        {
-            return null;
-        }
-
+        var (entry, td) = resolved.Value;
         var dt = new DataTable(tableName);
         foreach (var col in td.Columns)
         {
             _ = dt.Columns.Add(col.Name, typeof(string));
         }
 
-        long total = _fs.Length / _pgSz;
-        for (long p = 3; p < total; p++)
+        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
         {
-            byte[] page = ReadPageCached(p);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            if ((long)Ri32(page, _dpTDefOff) != entry.TDefPage)
-            {
-                continue;
-            }
-
             foreach (List<string> row in EnumerateRows(page, td))
             {
                 _ = dt.Rows.Add(row.ToArray());
@@ -781,19 +674,13 @@ public sealed class AccessReader : IAccessReader
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
 
-        CatalogEntry entry = GetCatalogEntry(tableName);
-        if (entry == null)
+        var resolved = ResolveTable(tableName);
+        if (resolved == null)
         {
-            return new List<ColumnMetadata>();
+            return [];
         }
 
-        TableDef? td = ReadTableDef(entry.TDefPage);
-        if (td == null)
-        {
-            return new List<ColumnMetadata>();
-        }
-
-        return td.Columns.Select((col, index) => new ColumnMetadata
+        return resolved.Value.Td.Columns.Select((col, index) => new ColumnMetadata
         {
             Name = col.Name,
             TypeName = TypeCodeToName(col.Type),
@@ -838,7 +725,7 @@ public sealed class AccessReader : IAccessReader
         }
 
         long totalAccess = _cacheHits + _cacheMisses;
-        stats.PageCacheHitRate = totalAccess > 0 ? (int)((_cacheHits * 100) / totalAccess) : 0;
+        stats.PageCacheHitRate = totalAccess > 0 ? (int)(_cacheHits * 100 / totalAccess) : 0;
 
         return stats;
     }
@@ -923,51 +810,26 @@ public sealed class AccessReader : IAccessReader
             tableName = tables[0].Name;
         }
 
-        CatalogEntry entry = GetCatalogEntry(tableName);
-        if (entry == null)
+        var resolved = ResolveTable(tableName);
+        if (resolved == null)
         {
             return null;
         }
 
-        TableDef? td = ReadTableDef(entry.TDefPage);
-        if (td == null || td.Columns.Count == 0)
-        {
-            return null;
-        }
-
+        var (entry, td) = resolved.Value;
         var dt = new DataTable(tableName);
 
         // Create columns with proper CLR types
         foreach (var col in td.Columns)
         {
-            Type clrType = TypeCodeToClrType(col.Type);
-            _ = dt.Columns.Add(col.Name, clrType);
+            _ = dt.Columns.Add(col.Name, TypeCodeToClrType(col.Type));
         }
 
-        long total = _fs.Length / _pgSz;
-        for (long p = 3; p < total; p++)
+        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
         {
-            byte[] page = ReadPageCached(p);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            if ((long)Ri32(page, _dpTDefOff) != entry.TDefPage)
-            {
-                continue;
-            }
-
             foreach (List<string> row in EnumerateRows(page, td))
             {
-                var dataRow = dt.NewRow();
-                for (int i = 0; i < row.Count && i < td.Columns.Count; i++)
-                {
-                    Type colType = TypeCodeToClrType(td.Columns[i].Type);
-                    dataRow[i] = TypedValueParser.ParseValue(row[i], colType);
-                }
-
-                dt.Rows.Add(dataRow);
+                _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns));
             }
 
             progress?.Report(dt.Rows.Count);
@@ -1152,29 +1014,19 @@ public sealed class AccessReader : IAccessReader
     {
         try
         {
-            switch (col.Type)
+            return col.Type switch
             {
-                case T_BYTE:
-                    return row[start].ToString(System.Globalization.CultureInfo.InvariantCulture);
-                case T_INT:
-                    return ((short)Ru16(row, start)).ToString(System.Globalization.CultureInfo.InvariantCulture);
-                case T_LONG:
-                    return Ri32(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture);
-                case T_FLOAT:
-                    return BitConverter.ToSingle(row, start).ToString("G", System.Globalization.CultureInfo.InvariantCulture);
-                case T_DOUBLE:
-                    return BitConverter.ToDouble(row, start).ToString("G", System.Globalization.CultureInfo.InvariantCulture);
-                case T_DATETIME:
-                    return OaDateToString(BitConverter.ToDouble(row, start));
-                case T_MONEY:
-                    return (BitConverter.ToInt64(row, start) / 10000.0m).ToString("F4", System.Globalization.CultureInfo.InvariantCulture);
-                case T_NUMERIC:
-                    return ReadNumeric(row, start);
-                case T_GUID:
-                    return ReadGuid(row, start);
-                default:
-                    return BitConverter.ToString(row, start, Math.Min(sz, 8));
-            }
+                T_BYTE => row[start].ToString(System.Globalization.CultureInfo.InvariantCulture),
+                T_INT => ((short)Ru16(row, start)).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                T_LONG => Ri32(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                T_FLOAT => BitConverter.ToSingle(row, start).ToString("G", System.Globalization.CultureInfo.InvariantCulture),
+                T_DOUBLE => BitConverter.ToDouble(row, start).ToString("G", System.Globalization.CultureInfo.InvariantCulture),
+                T_DATETIME => OaDateToString(BitConverter.ToDouble(row, start)),
+                T_MONEY => (BitConverter.ToInt64(row, start) / 10000.0m).ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+                T_NUMERIC => ReadNumeric(row, start),
+                T_GUID => ReadGuid(row, start),
+                _ => BitConverter.ToString(row, start, Math.Min(sz, 8)),
+            };
         }
         catch (JetLimitationException)
         {
@@ -1421,6 +1273,27 @@ public sealed class AccessReader : IAccessReader
             b[start + 15]);
     }
 
+    private static List<TableColumn> BuildSchema(List<ColumnInfo> columns)
+    {
+        return columns.ConvertAll(c => new TableColumn
+        {
+            Name = c.Name,
+            Type = TypeCodeToClrType(c.Type),
+            Size = SizeForColumn(c),
+        });
+    }
+
+    private static object[] ConvertRowToTyped(List<string> row, List<ColumnInfo> columns)
+    {
+        var typedRow = new object[row.Count];
+        for (int i = 0; i < row.Count && i < columns.Count; i++)
+        {
+            typedRow[i] = TypedValueParser.ParseValue(row[i], TypeCodeToClrType(columns[i].Type));
+        }
+
+        return typedRow;
+    }
+
     private void ValidateDatabaseFormat()
     {
         if (_fs.Length < 128)
@@ -1575,7 +1448,7 @@ public sealed class AccessReader : IAccessReader
             numRealIdx = 0;
         }
 
-        if (numCols < 0 || numCols > 4096)
+        if (numCols > 4096)
         {
             return null;
         }
@@ -1613,39 +1486,13 @@ public sealed class AccessReader : IAccessReader
         // Names MUST be read before sorting so each name maps to the correct descriptor.
         for (int i = 0; i < cols.Count; i++)
         {
-            if (namePos >= td.Length)
+            int nameLen = ReadColumnName(td, ref namePos, out string name);
+            if (nameLen < 0)
             {
                 break;
             }
 
-            if (_jet4)
-            {
-                if (namePos + 2 > td.Length)
-                {
-                    break;
-                }
-
-                int len = Ru16(td, namePos);
-                namePos += 2;
-                if (namePos + len > td.Length)
-                {
-                    break;
-                }
-
-                cols[i].Name = Encoding.Unicode.GetString(td, namePos, len);
-                namePos += len;
-            }
-            else
-            {
-                int len = td[namePos++];
-                if (namePos + len > td.Length)
-                {
-                    break;
-                }
-
-                cols[i].Name = _ansiEncoding.GetString(td, namePos, len);
-                namePos += len;
-            }
+            cols[i].Name = name;
         }
 
         // Sort by col_num AFTER names are assigned.
@@ -1654,15 +1501,8 @@ public sealed class AccessReader : IAccessReader
         cols.Sort((a, b) => a.ColNum.CompareTo(b.ColNum));
 
         // Detect deleted-column gaps: if ColNum sequence has gaps, flag it
-        bool hasDeletedColumns = false;
-        for (int i = 1; i < cols.Count; i++)
-        {
-            if (cols[i].ColNum != cols[i - 1].ColNum + 1)
-            {
-                hasDeletedColumns = true;
-                break;
-            }
-        }
+        bool hasDeletedColumns = cols.Count >= 2
+            && cols[cols.Count - 1].ColNum - cols[0].ColNum != cols.Count - 1;
 
         return new TableDef
         {
@@ -1670,6 +1510,51 @@ public sealed class AccessReader : IAccessReader
             RowCount = td.Length > 20 ? (long)Ru32(td, 16) : 0,
             HasDeletedColumns = hasDeletedColumns,
         };
+    }
+
+    /// <summary>
+    /// Reads a single column name from the TDEF byte array at <paramref name="pos"/>,
+    /// advancing <paramref name="pos"/> past the name bytes.
+    /// Returns the byte length consumed, or -1 if the name extends beyond <paramref name="td"/>.
+    /// </summary>
+    private int ReadColumnName(byte[] td, ref int pos, out string name)
+    {
+        name = string.Empty;
+        if (pos >= td.Length)
+        {
+            return -1;
+        }
+
+        if (_jet4)
+        {
+            if (pos + 2 > td.Length)
+            {
+                return -1;
+            }
+
+            int len = Ru16(td, pos);
+            pos += 2;
+            if (pos + len > td.Length)
+            {
+                return -1;
+            }
+
+            name = Encoding.Unicode.GetString(td, pos, len);
+            pos += len;
+            return len + 2;
+        }
+        else
+        {
+            int len = td[pos++];
+            if (pos + len > td.Length)
+            {
+                return -1;
+            }
+
+            name = _ansiEncoding.GetString(td, pos, len);
+            pos += len;
+            return len + 1;
+        }
     }
 
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
@@ -1696,7 +1581,7 @@ public sealed class AccessReader : IAccessReader
             {
                 _ = diag.AppendLine("ERROR: Page 2 is not a valid TDEF page (null returned).");
                 LastDiagnostics = diag.ToString();
-                _catalogCache = new List<CatalogEntry>();
+                _catalogCache = [];
                 return _catalogCache;
             }
 
@@ -1713,7 +1598,7 @@ public sealed class AccessReader : IAccessReader
             {
                 _ = diag.AppendLine("ERROR: Required catalog columns not found. Column name mismatch?");
                 LastDiagnostics = diag.ToString();
-                _catalogCache = new List<CatalogEntry>();
+                _catalogCache = [];
                 return _catalogCache;
             }
 
@@ -1804,22 +1689,26 @@ public sealed class AccessReader : IAccessReader
             string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
     }
 
-    private IEnumerable<object[]> StreamRowsCore(string tableName, IProgress<int> progress)
+    private (CatalogEntry Entry, TableDef Td)? ResolveTable(string tableName)
     {
         CatalogEntry entry = GetCatalogEntry(tableName);
         if (entry == null)
         {
-            yield break;
+            return null;
         }
 
         TableDef? td = ReadTableDef(entry.TDefPage);
         if (td == null || td.Columns.Count == 0)
         {
-            yield break;
+            return null;
         }
 
+        return (entry, td);
+    }
+
+    private IEnumerable<byte[]> EnumerateTablePages(long tdefPage)
+    {
         long total = _fs.Length / _pgSz;
-        int rowCount = 0;
         for (long p = 3; p < total; p++)
         {
             byte[] page = ReadPageCached(p);
@@ -1828,21 +1717,31 @@ public sealed class AccessReader : IAccessReader
                 continue;
             }
 
-            if ((long)Ri32(page, _dpTDefOff) != entry.TDefPage)
+            if ((long)Ri32(page, _dpTDefOff) != tdefPage)
             {
                 continue;
             }
 
+            yield return page;
+        }
+    }
+
+    private IEnumerable<object[]> StreamRowsCore(string tableName, IProgress<int> progress)
+    {
+        var resolved = ResolveTable(tableName);
+        if (resolved == null)
+        {
+            yield break;
+        }
+
+        var (entry, td) = resolved.Value;
+        int rowCount = 0;
+
+        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
+        {
             foreach (List<string> row in EnumerateRows(page, td))
             {
-                var typedRow = new object[row.Count];
-                for (int i = 0; i < row.Count && i < td.Columns.Count; i++)
-                {
-                    Type colType = TypeCodeToClrType(td.Columns[i].Type);
-                    typedRow[i] = TypedValueParser.ParseValue(row[i], colType);
-                }
-
-                yield return typedRow;
+                yield return ConvertRowToTyped(row, td.Columns);
                 rowCount++;
             }
 
@@ -1852,33 +1751,17 @@ public sealed class AccessReader : IAccessReader
 
     private IEnumerable<string[]> StreamRowsAsStringsCore(string tableName, IProgress<int> progress)
     {
-        CatalogEntry entry = GetCatalogEntry(tableName);
-        if (entry == null)
+        var resolved = ResolveTable(tableName);
+        if (resolved == null)
         {
             yield break;
         }
 
-        TableDef? td = ReadTableDef(entry.TDefPage);
-        if (td == null || td.Columns.Count == 0)
-        {
-            yield break;
-        }
-
-        long total = _fs.Length / _pgSz;
+        var (entry, td) = resolved.Value;
         int rowCount = 0;
-        for (long p = 3; p < total; p++)
+
+        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
         {
-            byte[] page = ReadPageCached(p);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            if ((long)Ri32(page, _dpTDefOff) != entry.TDefPage)
-            {
-                continue;
-            }
-
             foreach (List<string> row in EnumerateRows(page, td))
             {
                 yield return row.ToArray();
@@ -1906,37 +1789,40 @@ public sealed class AccessReader : IAccessReader
             rawOffsets[r] = Ru16(page, _dpRowsStart + (r * 2));
         }
 
-        // Sort the physical positions (lower 13 bits) for boundary computation
-        int[] positions = rawOffsets
-            .Select(o => o & 0x1FFF)
-            .Where(o => o > 0 && o < _pgSz)
-            .OrderBy(o => o)
-            .ToArray();
+        // Extract and sort physical positions (lower 13 bits) for boundary computation
+        var positions = new int[numRows];
+        int posCount = 0;
+        for (int r = 0; r < numRows; r++)
+        {
+            int pos = rawOffsets[r] & 0x1FFF;
+            if (pos > 0 && pos < _pgSz)
+            {
+                positions[posCount++] = pos;
+            }
+        }
+
+        Array.Sort(positions, 0, posCount);
 
         for (int r = 0; r < numRows; r++)
         {
             int raw = rawOffsets[r];
-            if ((raw & 0x8000) != 0)
+            if ((raw & 0xC000) != 0)
             {
-                continue; // deleted
-            }
-
-            if ((raw & 0x4000) != 0)
-            {
-                continue; // overflow (LVAL pointer page)
+                continue; // deleted or overflow
             }
 
             int rowStart = raw & 0x1FFF;
 
             // Row ends just before the next higher row start, or at page end
             int rowEnd = _pgSz - 1;
-            foreach (int pos in positions)
+            int searchIdx = Array.BinarySearch(positions, 0, posCount, rowStart);
+
+            // searchIdx >= 0: exact match; next higher is at searchIdx + 1
+            // searchIdx < 0: ~searchIdx is the insertion point (first element > rowStart)
+            int nextIdx = searchIdx >= 0 ? searchIdx + 1 : ~searchIdx;
+            if (nextIdx < posCount)
             {
-                if (pos > rowStart)
-                {
-                    rowEnd = pos - 1;
-                    break;
-                }
+                rowEnd = positions[nextIdx] - 1;
             }
 
             int rowSize = rowEnd - rowStart + 1;
