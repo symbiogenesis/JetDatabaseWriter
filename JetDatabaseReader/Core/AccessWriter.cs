@@ -1217,22 +1217,27 @@ public sealed class AccessWriter : IAccessWriter
         bool negative = (flags & unchecked((int)0x80000000)) != 0;
         byte scale = (byte)((flags >> 16) & 0x7F);
 
-        decimal absolute = Math.Abs(value);
-        string digits = absolute.ToString(CultureInfo.InvariantCulture).Replace(".", string.Empty, StringComparison.Ordinal);
-        if (string.IsNullOrEmpty(digits))
+        byte precision = 1;
+        var mantissa = new decimal(bits[0], bits[1], bits[2], isNegative: false, scale: 0);
+        while (mantissa >= 10m)
         {
-            digits = "0";
+            mantissa = decimal.Truncate(mantissa / 10m);
+            precision++;
         }
 
-        byte precision = (byte)Math.Min(digits.TrimStart('0').Length == 0 ? 1 : digits.TrimStart('0').Length, 28);
+        if (precision > 28)
+        {
+            precision = 28;
+        }
+
         var buffer = new byte[17];
         buffer[0] = precision;
         buffer[1] = scale;
         buffer[2] = negative ? (byte)1 : (byte)0;
 
-        Buffer.BlockCopy(BitConverter.GetBytes(bits[0]), 0, buffer, 4, 4);
-        Buffer.BlockCopy(BitConverter.GetBytes(bits[1]), 0, buffer, 8, 4);
-        Buffer.BlockCopy(BitConverter.GetBytes(bits[2]), 0, buffer, 12, 4);
+        Wi32(buffer, 4, bits[0]);
+        Wi32(buffer, 8, bits[1]);
+        Wi32(buffer, 12, bits[2]);
         return buffer;
     }
 
@@ -1274,51 +1279,44 @@ public sealed class AccessWriter : IAccessWriter
 
     private byte[]? ReadTDefBytes(long startPage)
     {
-        var parts = new List<byte[]>();
         var seen = new HashSet<long>();
         long pageNumber = startPage;
+        byte[]? first = null;
+        MemoryStream? ms = null;
 
-        while (pageNumber != 0 && !seen.Contains(pageNumber))
+        while (pageNumber != 0 && seen.Add(pageNumber))
         {
-            seen.Add(pageNumber);
             byte[] page = ReadPage(pageNumber);
             if (page[0] != 0x02)
             {
                 break;
             }
 
-            parts.Add(page);
+            if (first == null)
+            {
+                first = page;
+            }
+            else
+            {
+                if (ms == null)
+                {
+                    ms = new MemoryStream(first.Length * 2);
+                    ms.Write(first, 0, first.Length);
+                }
+
+                ms.Write(page, 8, page.Length - 8);
+            }
+
             pageNumber = Ru32(page, 4);
         }
 
-        if (parts.Count == 0)
+        if (ms != null)
         {
-            return null;
+            ms.Dispose();
+            return ms.ToArray();
         }
 
-        if (parts.Count == 1)
-        {
-            return parts[0];
-        }
-
-        int total = parts[0].Length;
-        for (int i = 1; i < parts.Count; i++)
-        {
-            total += parts[i].Length - 8;
-        }
-
-        var result = new byte[total];
-        Buffer.BlockCopy(parts[0], 0, result, 0, parts[0].Length);
-        int pos = parts[0].Length;
-
-        for (int i = 1; i < parts.Count; i++)
-        {
-            int len = parts[i].Length - 8;
-            Buffer.BlockCopy(parts[i], 8, result, pos, len);
-            pos += len;
-        }
-
-        return result;
+        return first;
     }
 
     private TableDef? ReadTableDef(long tdefPage)
@@ -1330,13 +1328,9 @@ public sealed class AccessWriter : IAccessWriter
         }
 
         int numCols = Ru16(td, _tdNumCols);
-        int numRealIdx = Ri32(td, _tdNumRealIdx);
-        if (numRealIdx < 0 || numRealIdx > 1000)
-        {
-            numRealIdx = 0;
-        }
+        int numRealIdx = Math.Clamp(Ri32(td, _tdNumRealIdx), 0, 1000);
 
-        if (numCols < 0 || numCols > 4096)
+        if (numCols > 4096)
         {
             return null;
         }
@@ -1370,58 +1364,51 @@ public sealed class AccessWriter : IAccessWriter
 
         for (int i = 0; i < cols.Count; i++)
         {
-            if (namePos >= td.Length)
+            if (!TryReadColumnName(td, ref namePos, out string name))
             {
                 break;
             }
 
-            if (_jet4)
-            {
-                if (namePos + 2 > td.Length)
-                {
-                    break;
-                }
-
-                int len = Ru16(td, namePos);
-                namePos += 2;
-                if (namePos + len > td.Length)
-                {
-                    break;
-                }
-
-                cols[i].Name = Encoding.Unicode.GetString(td, namePos, len);
-                namePos += len;
-            }
-            else
-            {
-                int len = td[namePos++];
-                if (namePos + len > td.Length)
-                {
-                    break;
-                }
-
-                cols[i].Name = _ansiEncoding.GetString(td, namePos, len);
-                namePos += len;
-            }
+            cols[i].Name = name;
         }
 
         cols.Sort((a, b) => a.ColNum.CompareTo(b.ColNum));
-        bool hasDeletedColumns = false;
-        for (int i = 1; i < cols.Count; i++)
-        {
-            if (cols[i].ColNum != cols[i - 1].ColNum + 1)
-            {
-                hasDeletedColumns = true;
-                break;
-            }
-        }
 
         return new TableDef
         {
             Columns = cols,
             RowCount = td.Length > 20 ? (long)Ru32(td, 16) : 0,
-            HasDeletedColumns = hasDeletedColumns,
+            HasDeletedColumns = cols.Count >= 2 && cols[^1].ColNum - cols[0].ColNum + 1 != cols.Count,
         };
+    }
+
+    private bool TryReadColumnName(byte[] td, ref int namePos, out string name)
+    {
+        name = string.Empty;
+        if (namePos >= td.Length)
+        {
+            return false;
+        }
+
+        int lenSize = _jet4 ? 2 : 1;
+        if (namePos + lenSize > td.Length)
+        {
+            return false;
+        }
+
+        int len = _jet4 ? Ru16(td, namePos) : td[namePos];
+        namePos += lenSize;
+
+        if (namePos + len > td.Length)
+        {
+            return false;
+        }
+
+        name = _jet4
+            ? Encoding.Unicode.GetString(td, namePos, len)
+            : _ansiEncoding.GetString(td, namePos, len);
+        namePos += len;
+        return true;
     }
 
     private List<CatalogEntry> GetUserTables()
