@@ -6,6 +6,7 @@ using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 
 #pragma warning disable SA1204 // Static members should appear before non-static members
@@ -265,6 +266,49 @@ public sealed class AccessWriter : IAccessWriter
         {
             Guard.NotNull(row, nameof(rows));
             InsertRowInternal(entry.TDefPage, tableDef, row);
+            inserted++;
+        }
+
+        return inserted;
+    }
+
+    /// <inheritdoc/>
+    public void InsertRow<T>(string tableName, T item)
+        where T : class, new()
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(item, nameof(item));
+        Guard.NotDisposed(_disposed, nameof(AccessWriter));
+
+        EnsureJet4WriteSupported();
+
+        CatalogEntry entry = GetRequiredCatalogEntry(tableName);
+        TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
+        var headers = tableDef.Columns.ConvertAll(c => c.Name);
+        var index = RowMapper<T>.BuildIndex(headers);
+        InsertRowInternal(entry.TDefPage, tableDef, RowMapper<T>.ToRow(item, index));
+    }
+
+    /// <inheritdoc/>
+    public int InsertRows<T>(string tableName, IEnumerable<T> items)
+        where T : class, new()
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(items, nameof(items));
+        Guard.NotDisposed(_disposed, nameof(AccessWriter));
+
+        EnsureJet4WriteSupported();
+
+        CatalogEntry entry = GetRequiredCatalogEntry(tableName);
+        TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
+        var headers = tableDef.Columns.ConvertAll(c => c.Name);
+        var index = RowMapper<T>.BuildIndex(headers);
+        int inserted = 0;
+
+        foreach (T item in items)
+        {
+            Guard.NotNull(item, nameof(items));
+            InsertRowInternal(entry.TDefPage, tableDef, RowMapper<T>.ToRow(item, index));
             inserted++;
         }
 

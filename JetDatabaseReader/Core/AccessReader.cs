@@ -568,6 +568,22 @@ public sealed class AccessReader : IAccessReader
         return new TableResult { Headers = headers, Rows = typedRows, Schema = schema, TableName = tableName };
     }
 
+    /// <inheritdoc/>
+    public List<T> ReadTable<T>(string tableName, int maxRows)
+        where T : class, new()
+    {
+        TableResult result = ReadTable(tableName, maxRows);
+        var index = RowMapper<T>.BuildIndex(result.Headers);
+        var items = new List<T>(result.Rows.Count);
+
+        foreach (object[] row in result.Rows)
+        {
+            items.Add(RowMapper<T>.Map(row, index));
+        }
+
+        return items;
+    }
+
     /// <summary>
     /// Reads up to <paramref name="maxRows"/> rows from the table named
     /// <paramref name="tableName"/> (case-insensitive) with all values as strings.
@@ -654,6 +670,23 @@ public sealed class AccessReader : IAccessReader
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         return StreamRowsCore(tableName, progress!);
+    }
+
+    /// <inheritdoc/>
+    public IEnumerable<T> StreamRows<T>(string tableName, IProgress<int>? progress = null)
+        where T : class, new()
+    {
+        ThrowIfDisposed();
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+
+        List<ColumnMetadata> meta = GetColumnMetadata(tableName);
+        var headers = meta.ConvertAll(m => m.Name);
+        var index = RowMapper<T>.BuildIndex(headers);
+
+        foreach (object[] row in StreamRowsCore(tableName, progress!))
+        {
+            yield return RowMapper<T>.Map(row, index);
+        }
     }
 
     /// <summary>
@@ -972,6 +1005,13 @@ public sealed class AccessReader : IAccessReader
     public Task<TableResult> ReadTableAsync(string tableName, int maxRows)
     {
         return Task.Run(() => ReadTable(tableName, maxRows));
+    }
+
+    /// <inheritdoc/>
+    public Task<List<T>> ReadTableAsync<T>(string tableName, int maxRows)
+        where T : class, new()
+    {
+        return Task.Run(() => ReadTable<T>(tableName, maxRows));
     }
 
     /// <summary>

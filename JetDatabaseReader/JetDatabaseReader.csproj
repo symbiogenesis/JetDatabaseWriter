@@ -18,6 +18,9 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="JetDatabaseReader.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <None Include="..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
   <ItemGroup>

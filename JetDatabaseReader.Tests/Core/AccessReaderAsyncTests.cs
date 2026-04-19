@@ -6,6 +6,9 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using Xunit;
 
+#pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
+#pragma warning disable SA1201 // Nested test POCOs before test methods is standard xUnit convention
+
 /// <summary>
 /// Tests for all async methods:
 /// ListTablesAsync, ReadTableAsync, GetStatisticsAsync, ReadAllTablesAsync, ReadAllTablesAsStringsAsync.
@@ -165,5 +168,54 @@ public class AccessReaderAsyncTests
         {
             _ = strings[name].Rows.Count.Should().Be(typed[name].Rows.Count);
         }
+    }
+
+    // ── ReadTableAsync<T> (generic POCO) ──────────────────────────────
+
+    private sealed class AsyncGenericRow
+    {
+        public int Id { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task ReadTableAsyncGeneric_RowCount_MatchesSyncGeneric(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = (await reader.ListTablesAsync())[0];
+
+#pragma warning disable CA1849 // Intentional: comparing sync result against async result
+        List<AsyncGenericRow> sync = reader.ReadTable<AsyncGenericRow>(table, 100);
+#pragma warning restore CA1849
+        List<AsyncGenericRow> async_ = await reader.ReadTableAsync<AsyncGenericRow>(table, 100);
+
+        _ = async_.Should().HaveCount(sync.Count);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task ReadTableAsyncGeneric_ReturnsNonNullInstances(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = (await reader.ListTablesAsync())[0];
+
+        List<AsyncGenericRow> items = await reader.ReadTableAsync<AsyncGenericRow>(table, 10);
+
+        _ = items.Should().AllSatisfy(item => item.Should().NotBeNull());
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task ReadTableAsyncGeneric_RowCount_MatchesNonGenericAsync(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = (await reader.ListTablesAsync())[0];
+
+        TableResult nonGeneric = await reader.ReadTableAsync(table, 100);
+        List<AsyncGenericRow> generic = await reader.ReadTableAsync<AsyncGenericRow>(table, 100);
+
+        _ = generic.Should().HaveCount(nonGeneric.Rows.Count);
     }
 }

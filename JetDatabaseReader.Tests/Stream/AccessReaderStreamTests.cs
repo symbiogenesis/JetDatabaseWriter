@@ -6,6 +6,9 @@ using System.Linq;
 using FluentAssertions;
 using Xunit;
 
+#pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
+#pragma warning disable SA1201 // Nested test POCOs before test methods is standard xUnit convention
+
 /// <summary>
 /// Tests for: StreamRows (typed object[]) and StreamRowsAsStrings (string[]).
 /// Includes a memory-efficiency smoke test on the large Matrix database.
@@ -260,6 +263,81 @@ public class AccessReaderStreamTests
         string first = tables[0];
         int count = reader.StreamRows(first).Take(1000).Count();
         _ = count.Should().BeGreaterThanOrEqualTo(0);
+    }
+
+    // ── StreamRows<T> (generic POCO) ──────────────────────────────────
+
+    private sealed class StreamGenericRow
+    {
+        public int Id { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
+    public void StreamRowsGeneric_Count_MatchesStreamRows(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+
+        int typedCount = reader.StreamRows(table).Count();
+        int genericCount = reader.StreamRows<StreamGenericRow>(table).Count();
+
+        _ = genericCount.Should().Be(typedCount);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
+    public void StreamRowsGeneric_YieldsNonNullInstances(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+
+        foreach (StreamGenericRow item in reader.StreamRows<StreamGenericRow>(table).Take(50))
+        {
+            _ = item.Should().NotBeNull();
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void StreamRowsGeneric_WithProgress_ReportsNonNegativeValues(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+        var reported = new List<int>();
+
+        foreach (StreamGenericRow item in reader.StreamRows<StreamGenericRow>(table, new SyncProgress<int>(reported.Add)))
+        {
+            _ = item;
+        }
+
+        foreach (int v in reported)
+        {
+            _ = v.Should().BeGreaterThanOrEqualTo(0);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
+    public void StreamRowsGeneric_IsLazy_CanBreakEarly(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+        int count = 0;
+
+        foreach (StreamGenericRow item in reader.StreamRows<StreamGenericRow>(table))
+        {
+            _ = item;
+            count++;
+            if (count >= 3)
+            {
+                break;
+            }
+        }
+
+        _ = count.Should().BeLessThanOrEqualTo(3);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────

@@ -7,6 +7,9 @@ using System.Linq;
 using FluentAssertions;
 using Xunit;
 
+#pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
+#pragma warning disable SA1201 // Nested test POCOs before test methods is standard xUnit convention
+
 /// <summary>
 /// Tests for: ReadTable (typed), ReadTableAsStringDataTable,
 /// ReadAllTables, ReadAllTablesAsStrings.
@@ -203,6 +206,65 @@ public class AccessReaderReadTests
             _ = strings[name].Rows.Count.Should().Be(
                 typed[name].Rows.Count,
                 because: $"table '{name}' row count should match");
+        }
+    }
+
+    // ── ReadTable<T> (generic POCO) ─────────────────────────────────────
+
+    private sealed class GenericRow
+    {
+        public int Id { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void ReadTableGeneric_RowCount_MatchesReadTableTyped(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+
+        TableResult typed = reader.ReadTable(table, 100);
+        List<GenericRow> generic = reader.ReadTable<GenericRow>(table, 100);
+
+        _ = generic.Should().HaveCount(typed.Rows.Count);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void ReadTableGeneric_ReturnsNonNullInstances(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+
+        List<GenericRow> items = reader.ReadTable<GenericRow>(table, 10);
+
+        _ = items.Should().AllSatisfy(item => item.Should().NotBeNull());
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void ReadTableGeneric_WithMaxRows_LimitsResults(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+        string table = reader.ListTables()[0];
+
+        List<GenericRow> items = reader.ReadTable<GenericRow>(table, 2);
+
+        _ = items.Should().HaveCountLessThanOrEqualTo(2);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void ReadTableGeneric_ForAllTables_DoesNotThrow(string path)
+    {
+        using var reader = TestDatabases.Open(path);
+
+        foreach (string table in reader.ListTables())
+        {
+            List<GenericRow> items = reader.ReadTable<GenericRow>(table, 5);
+            _ = items.Should().NotBeNull(because: $"table '{table}' should be readable via generic overload");
         }
     }
 

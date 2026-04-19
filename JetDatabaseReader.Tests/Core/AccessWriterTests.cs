@@ -8,6 +8,9 @@ using System.Linq;
 using FluentAssertions;
 using Xunit;
 
+#pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
+#pragma warning disable SA1201 // Nested test POCOs before test methods is standard xUnit convention
+
 /// <summary>
 /// End-to-end tests for AccessWriter write operations.
 /// Each test copies a test database to a temp file, writes via AccessWriter,
@@ -754,6 +757,173 @@ public sealed class AccessWriterTests : IDisposable
             Convert.ToDateTime(row["DateCol"], System.Globalization.CultureInfo.InvariantCulture).Should().Be(date);
             Convert.ToDouble(row["DoubleCol"], System.Globalization.CultureInfo.InvariantCulture).Should().BeApproximately(3.14, 0.001);
             Convert.ToBoolean(row["BoolCol"], System.Globalization.CultureInfo.InvariantCulture).Should().BeTrue();
+        }
+    }
+
+    // ── InsertRow<T> (generic POCO) ────────────────────────────────────
+
+    private sealed class WriterPoco
+    {
+        public int Id { get; set; }
+
+        public string Label { get; set; } = string.Empty;
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRowGeneric_SingleRow_IncreasesRowCount(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"GenIns_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Label", typeof(string), maxLength: 100),
+        };
+
+        using (var writer = AccessWriter.Open(temp))
+        {
+            writer.CreateTable(tableName, columns);
+            writer.InsertRow(tableName, new WriterPoco { Id = 1, Label = "Hello" });
+        }
+
+        using (var reader = AccessReader.Open(temp))
+        {
+            long count = reader.GetRealRowCount(tableName);
+            count.Should().Be(1);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRowGeneric_DataIsReadableBack(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"GenRT_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Label", typeof(string), maxLength: 100),
+        };
+
+        using (var writer = AccessWriter.Open(temp))
+        {
+            writer.CreateTable(tableName, columns);
+            writer.InsertRow(tableName, new WriterPoco { Id = 42, Label = "Roundtrip" });
+        }
+
+        using (var reader = AccessReader.Open(temp))
+        {
+            List<WriterPoco> items = reader.ReadTable<WriterPoco>(tableName, 100);
+            items.Should().ContainSingle();
+            items[0].Id.Should().Be(42);
+            items[0].Label.Should().Be("Roundtrip");
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRowGeneric_NullItem_ThrowsArgumentNullException(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName;
+
+        using (var reader = AccessReader.Open(temp))
+        {
+            tableName = reader.ListTables()[0];
+        }
+
+        using var writer = AccessWriter.Open(temp);
+        Action act = () => writer.InsertRow<WriterPoco>(tableName, null!);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    // ── InsertRows<T> (generic bulk) ──────────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRowsGeneric_ReturnsCorrectInsertCount(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"GenBulk_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Label", typeof(string), maxLength: 100),
+        };
+
+        var items = Enumerable.Range(1, 5).Select(i => new WriterPoco { Id = i, Label = $"Item{i}" });
+
+        using var writer = AccessWriter.Open(temp);
+        writer.CreateTable(tableName, columns);
+        int inserted = writer.InsertRows(tableName, items);
+
+        inserted.Should().Be(5);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRowsGeneric_IncreasesRowCount(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"GenCnt_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Label", typeof(string), maxLength: 100),
+        };
+
+        var items = Enumerable.Range(1, 3).Select(i => new WriterPoco { Id = i, Label = $"Row{i}" }).ToList();
+
+        using (var writer = AccessWriter.Open(temp))
+        {
+            writer.CreateTable(tableName, columns);
+            writer.InsertRows(tableName, items);
+        }
+
+        using (var reader = AccessReader.Open(temp))
+        {
+            long count = reader.GetRealRowCount(tableName);
+            count.Should().Be(3);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRowsGeneric_DataIsReadableBack(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"GenRB_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Label", typeof(string), maxLength: 100),
+        };
+
+        var items = new List<WriterPoco>
+        {
+            new() { Id = 10, Label = "Alpha" },
+            new() { Id = 20, Label = "Beta" },
+        };
+
+        using (var writer = AccessWriter.Open(temp))
+        {
+            writer.CreateTable(tableName, columns);
+            writer.InsertRows(tableName, items);
+        }
+
+        using (var reader = AccessReader.Open(temp))
+        {
+            List<WriterPoco> readBack = reader.ReadTable<WriterPoco>(tableName, 100);
+            readBack.Should().HaveCount(2);
+            readBack.Should().Contain(p => p.Id == 10 && p.Label == "Alpha");
+            readBack.Should().Contain(p => p.Id == 20 && p.Label == "Beta");
         }
     }
 

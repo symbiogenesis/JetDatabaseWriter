@@ -3,6 +3,7 @@ namespace JetDatabaseReader;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 
 /// <summary>
 /// Provides a fluent API for querying table data with filtering and limiting.
@@ -104,6 +105,38 @@ public sealed class TableQuery
     public int Count()
     {
         return Execute().Count();
+    }
+
+    // ── Generic POCO execution ────────────────────────────────────────
+
+    /// <summary>
+    /// Executes the query and maps matching rows to instances of <typeparamref name="T"/>.
+    /// Property names are matched to column headers (case-insensitive).
+    /// </summary>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <returns></returns>
+    public IEnumerable<T> Execute<T>()
+        where T : class, new()
+    {
+        List<ColumnMetadata> meta = _reader.GetColumnMetadata(_tableName);
+        var headers = meta.ConvertAll(m => m.Name);
+        PropertyInfo?[] index = RowMapper<T>.BuildIndex(headers);
+
+        foreach (object[] row in Execute())
+        {
+            yield return RowMapper<T>.Map(row, index);
+        }
+    }
+
+    /// <summary>
+    /// Executes the query and returns the first matching row mapped to <typeparamref name="T"/>, or null if no matches.
+    /// </summary>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <returns></returns>
+    public T? FirstOrDefault<T>()
+        where T : class, new()
+    {
+        return Execute<T>().FirstOrDefault();
     }
 
     // ── String execution ──────────────────────────────────────────────
