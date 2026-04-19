@@ -218,37 +218,32 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             updateIndexes[columnIndex] = kvp.Value;
         }
 
-        using (DataTable snapshot = ReadTableSnapshot(tableName))
+        using DataTable snapshot = ReadTableSnapshot(tableName);
+
+        List<RowLocation> locations = GetLiveRowLocations(entry.TDefPage);
+        int total = Math.Min(snapshot.Rows.Count, locations.Count);
+        int updated = 0;
+
+        for (int i = 0; i < total; i++)
         {
-            List<RowLocation> locations = GetLiveRowLocations(entry.TDefPage);
-            int total = Math.Min(snapshot.Rows.Count, locations.Count);
-            var replacements = new List<object[]>();
-
-            for (int i = 0; i < total; i++)
+            object currentValue = snapshot.Rows[i][predicateIndex];
+            if (!ValuesEqual(currentValue, predicateValue))
             {
-                object currentValue = snapshot.Rows[i][predicateIndex];
-                if (!ValuesEqual(currentValue, predicateValue))
-                {
-                    continue;
-                }
-
-                object[] rowValues = (object[])snapshot.Rows[i].ItemArray.Clone();
-                foreach (KeyValuePair<int, object> update in updateIndexes)
-                {
-                    rowValues[update.Key] = update.Value ?? DBNull.Value;
-                }
-
-                replacements.Add(rowValues);
-                MarkRowDeleted(locations[i].PageNumber, locations[i].RowIndex);
+                continue;
             }
 
-            foreach (object[] replacement in replacements)
+            object[] rowValues = snapshot.Rows[i].ItemArray;
+            foreach (KeyValuePair<int, object> update in updateIndexes)
             {
-                InsertRowInternal(entry.TDefPage, tableDef, replacement);
+                rowValues[update.Key] = update.Value ?? DBNull.Value;
             }
 
-            return replacements.Count;
+            MarkRowDeleted(locations[i].PageNumber, locations[i].RowIndex);
+            InsertRowInternal(entry.TDefPage, tableDef, rowValues);
+            updated++;
         }
+
+        return updated;
     }
 
     /// <inheritdoc/>
@@ -266,26 +261,25 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return 0;
         }
 
-        using (DataTable snapshot = ReadTableSnapshot(tableName))
+        using DataTable snapshot = ReadTableSnapshot(tableName);
+
+        List<RowLocation> locations = GetLiveRowLocations(entry.TDefPage);
+        int total = Math.Min(snapshot.Rows.Count, locations.Count);
+        int deleted = 0;
+
+        for (int i = 0; i < total; i++)
         {
-            List<RowLocation> locations = GetLiveRowLocations(entry.TDefPage);
-            int total = Math.Min(snapshot.Rows.Count, locations.Count);
-            int deleted = 0;
-
-            for (int i = 0; i < total; i++)
+            object currentValue = snapshot.Rows[i][predicateIndex];
+            if (!ValuesEqual(currentValue, predicateValue))
             {
-                object currentValue = snapshot.Rows[i][predicateIndex];
-                if (!ValuesEqual(currentValue, predicateValue))
-                {
-                    continue;
-                }
-
-                MarkRowDeleted(locations[i].PageNumber, locations[i].RowIndex);
-                deleted++;
+                continue;
             }
 
-            return deleted;
+            MarkRowDeleted(locations[i].PageNumber, locations[i].RowIndex);
+            deleted++;
         }
+
+        return deleted;
     }
 
     /// <inheritdoc/>
@@ -309,7 +303,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         TableDef? msys = ReadTableDef(2);
         if (msys == null)
         {
-            _catalogCache = new List<CatalogEntry>();
+            _catalogCache = [];
             return _catalogCache;
         }
 
@@ -586,30 +580,29 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         byte[] page = new byte[_pgSz];
         int numCols = tableDef.Columns.Count;
-        int numVarCols = tableDef.Columns.Count(c => IsVariableType(c.Type));
         int colStart = _tdBlockEnd;
         int namePos = colStart + (numCols * _colDescSz);
+        int nameLenSize = _jet4 ? 2 : 1;
 
         page[0] = 0x02;
         page[1] = 0x01;
-        Wi32(page, 4, 0);
-        Wi32(page, 16, 0);
 
         // TDEF header fields: offsets are relative to _tdNumCols / _tdNumRealIdx
         // so both JET3 and JET4 layouts are covered.
         page[_tdNumCols - 5] = 0x4E;
         Wu16(page, _tdNumCols - 4, numCols);
-        Wu16(page, _tdNumCols - 2, numVarCols);
         Wu16(page, _tdNumCols, numCols);
-        Wi32(page, _tdNumRealIdx - 4, 0);
-        Wi32(page, _tdNumRealIdx, 0);
-        Wi32(page, _tdNumRealIdx + 4, 0);
-        Wi32(page, _tdNumRealIdx + 8, 0);
 
+        int numVarCols = 0;
         for (int i = 0; i < numCols; i++)
         {
             ColumnInfo col = tableDef.Columns[i];
             int o = colStart + (i * _colDescSz);
+
+            if (IsVariableType(col.Type))
+            {
+                numVarCols++;
+            }
 
             page[o + _colTypeOff] = col.Type;
             Wu16(page, o + _colNumOff, col.ColNum);
@@ -619,7 +612,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             Wu16(page, o + _colSzOff, col.Size);
 
             byte[] nameBytes = _jet4 ? Encoding.Unicode.GetBytes(col.Name) : _ansiEncoding.GetBytes(col.Name);
-            int nameLenSize = _jet4 ? 2 : 1;
             if (namePos + nameLenSize + nameBytes.Length > page.Length)
             {
                 throw new NotSupportedException("Table definition does not fit within a single TDEF page.");
@@ -639,6 +631,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             namePos += nameBytes.Length;
         }
 
+        Wu16(page, _tdNumCols - 2, numVarCols);
         Wi32(page, 8, Math.Max(0, namePos - 8));
         return page;
     }
@@ -748,26 +741,38 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private byte[] SerializeRow(TableDef tableDef, object[] values)
     {
-        int numCols = tableDef.Columns.Count == 0 ? 0 : tableDef.Columns.Max(c => c.ColNum) + 1;
-        int nullMaskSize = (numCols + 7) / 8;
-        var nullMask = new byte[nullMaskSize];
-        var fixedChunks = new List<FixedValueChunk>();
-        var variableDataByIndex = new Dictionary<int, byte[]>();
+        int numCols = 0;
+        int maxFixedEnd = 0;
+        int maxDefinedVarIdx = -1;
+        for (int i = 0; i < tableDef.Columns.Count; i++)
+        {
+            ColumnInfo col = tableDef.Columns[i];
+            numCols = Math.Max(numCols, col.ColNum + 1);
+            if (col.IsFixed && col.Type != T_BOOL)
+            {
+                maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + FixedSize(col.Type, col.Size));
+            }
+            else if (!col.IsFixed)
+            {
+                maxDefinedVarIdx = Math.Max(maxDefinedVarIdx, col.VarIdx);
+            }
+        }
+
+        var nullMask = new byte[(numCols + 7) / 8];
+        var fixedArea = new byte[maxFixedEnd];
         int fixedAreaSize = 0;
+        var varEntries = maxDefinedVarIdx >= 0 ? new byte[maxDefinedVarIdx + 1][] : Array.Empty<byte[]>();
         int maxVarIndex = -1;
+        int varPayloadSize = 0;
 
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
             ColumnInfo column = tableDef.Columns[i];
-            object value = values[i];
-            if (value == null)
-            {
-                value = DBNull.Value;
-            }
+            object value = values[i] ?? DBNull.Value;
 
             if (column.Type == T_BOOL)
             {
-                if (!(value is DBNull) && Convert.ToBoolean(value, CultureInfo.InvariantCulture))
+                if (value is not DBNull && Convert.ToBoolean(value, CultureInfo.InvariantCulture))
                 {
                     SetNullMaskBit(nullMask, column.ColNum, true);
                 }
@@ -793,7 +798,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                fixedChunks.Add(new FixedValueChunk { Offset = column.FixedOff, Bytes = fixedValue });
+                Buffer.BlockCopy(fixedValue, 0, fixedArea, column.FixedOff, fixedValue.Length);
                 fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + fixedValue.Length);
                 SetNullMaskBit(nullMask, column.ColNum, true);
             }
@@ -805,37 +810,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                variableDataByIndex[column.VarIdx] = variableValue;
+                varEntries[column.VarIdx] = variableValue;
                 maxVarIndex = Math.Max(maxVarIndex, column.VarIdx);
+                varPayloadSize += variableValue.Length;
                 SetNullMaskBit(nullMask, column.ColNum, true);
             }
         }
 
-        byte[] fixedArea = new byte[fixedAreaSize];
-        foreach (FixedValueChunk chunk in fixedChunks)
-        {
-            Buffer.BlockCopy(chunk.Bytes, 0, fixedArea, chunk.Offset, chunk.Bytes.Length);
-        }
-
         int varLen = maxVarIndex + 1;
-        var variableOffsets = new int[Math.Max(varLen, 0)];
-        var variablePayload = new List<byte[]>();
-        int currentOffset = _numColsFldSz + fixedArea.Length;
-
-        for (int varIndex = 0; varIndex < varLen; varIndex++)
-        {
-            variableOffsets[varIndex] = currentOffset;
-            byte[] payload;
-            if (variableDataByIndex.TryGetValue(varIndex, out payload))
-            {
-                variablePayload.Add(payload);
-                currentOffset += payload.Length;
-            }
-        }
-
-        int eod = currentOffset;
-        int varPayloadSize = variablePayload.Sum(bytes => bytes.Length);
-        int baseRowLength = _numColsFldSz + fixedArea.Length + varPayloadSize + _eodFldSz + (varLen * _varEntrySz) + _varLenFldSz + nullMask.Length;
+        int baseRowLength = _numColsFldSz + fixedAreaSize + varPayloadSize + _eodFldSz + (varLen * _varEntrySz) + _varLenFldSz + nullMask.Length;
 
         // Jet3 rows include a jump table whose size depends on total row length.
         int jumpSize = _jet4 ? 0 : baseRowLength / 256;
@@ -853,19 +836,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         WriteField(row, pos, _numColsFldSz, numCols);
         pos += _numColsFldSz;
 
-        if (fixedArea.Length > 0)
+        if (fixedAreaSize > 0)
         {
-            Buffer.BlockCopy(fixedArea, 0, row, pos, fixedArea.Length);
-            pos += fixedArea.Length;
+            Buffer.BlockCopy(fixedArea, 0, row, pos, fixedAreaSize);
+            pos += fixedAreaSize;
         }
 
-        foreach (byte[] payload in variablePayload)
+        int currentOffset = _numColsFldSz + fixedAreaSize;
+        var variableOffsets = varLen > 0 ? new int[varLen] : Array.Empty<int>();
+        for (int varIndex = 0; varIndex < varLen; varIndex++)
         {
-            Buffer.BlockCopy(payload, 0, row, pos, payload.Length);
-            pos += payload.Length;
+            variableOffsets[varIndex] = currentOffset;
+            byte[]? payload = varEntries[varIndex];
+            if (payload != null)
+            {
+                Buffer.BlockCopy(payload, 0, row, pos, payload.Length);
+                pos += payload.Length;
+                currentOffset += payload.Length;
+            }
         }
 
-        WriteField(row, pos, _eodFldSz, eod);
+        WriteField(row, pos, _eodFldSz, currentOffset);
         pos += _eodFldSz;
 
         for (int varIndex = varLen - 1; varIndex >= 0; varIndex--)
@@ -1256,12 +1247,5 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         public long PageNumber { get; set; }
 
         public byte[] Page { get; set; } = [];
-    }
-
-    private sealed class FixedValueChunk
-    {
-        public int Offset { get; set; }
-
-        public byte[] Bytes { get; set; } = [];
     }
 }
