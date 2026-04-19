@@ -1,26 +1,33 @@
 namespace JetDatabaseReader;
 
 using System.Collections.Generic;
-using System.Linq;
+using System.Runtime.CompilerServices;
 
 /// <summary>
 /// Thread-safe LRU (Least Recently Used) cache implementation.
-/// Evicts the oldest entry when capacity is reached.
+/// Uses an array-backed doubly-linked list with a sentinel node to eliminate
+/// per-entry heap allocations and improve CPU cache locality.
 /// </summary>
 /// <typeparam name="TKey">The type of keys in the cache.</typeparam>
 /// <typeparam name="TValue">The type of values in the cache.</typeparam>
 internal sealed class LruCache<TKey, TValue>
+    where TKey : notnull
 {
+    private const int Sentinel = 0;
+
     private readonly int _capacity;
-    private readonly Dictionary<TKey, LinkedListNode<CacheItem>> _cache;
-    private readonly LinkedList<CacheItem> _lruList;
+    private readonly Dictionary<TKey, int> _map;
+    private readonly Node[] _nodes;
     private readonly object _lock = new object();
+    private int _nextSlot = 1; // 0 is reserved for sentinel
 
     public LruCache(int capacity)
     {
         _capacity = capacity;
-        _cache = new Dictionary<TKey, LinkedListNode<CacheItem>>(capacity);
-        _lruList = new LinkedList<CacheItem>();
+        _map = new Dictionary<TKey, int>(capacity);
+        _nodes = new Node[capacity + 1]; // +1 for sentinel
+        _nodes[Sentinel].Next = Sentinel;
+        _nodes[Sentinel].Prev = Sentinel;
     }
 
     public int Count
@@ -29,7 +36,7 @@ internal sealed class LruCache<TKey, TValue>
         {
             lock (_lock)
             {
-                return _cache.Count;
+                return _map.Count;
             }
         }
     }
@@ -38,12 +45,10 @@ internal sealed class LruCache<TKey, TValue>
     {
         lock (_lock)
         {
-            if (_cache.TryGetValue(key, out var node))
+            if (_map.TryGetValue(key, out int idx))
             {
-                // Move to front (most recently used)
-                _lruList.Remove(node);
-                _lruList.AddFirst(node);
-                value = node.Value.Value;
+                MoveToFront(idx);
+                value = _nodes[idx].Value;
                 return true;
             }
 
@@ -56,59 +61,64 @@ internal sealed class LruCache<TKey, TValue>
     {
         lock (_lock)
         {
-            if (_cache.TryGetValue(key, out var existingNode))
+            if (_map.TryGetValue(key, out int existingIdx))
             {
-                // Update existing entry
-                _lruList.Remove(existingNode);
-                _lruList.AddFirst(existingNode);
-                existingNode.Value.Value = value;
+                MoveToFront(existingIdx);
+                _nodes[existingIdx].Value = value;
                 return;
             }
 
-            // Evict LRU item if at capacity
-            if (_cache.Count >= _capacity)
+            int nodeIdx;
+            if (_map.Count >= _capacity)
             {
-                var last = _lruList.Last;
-                _lruList.RemoveLast();
-                _ = _cache.Remove(last.Value.Key);
+                // Evict LRU entry and reuse its slot in-place (zero allocation).
+                nodeIdx = _nodes[Sentinel].Prev;
+                Detach(nodeIdx);
+                _map.Remove(_nodes[nodeIdx].Key);
+            }
+            else
+            {
+                nodeIdx = _nextSlot++;
             }
 
-            // Add new item
-            var cacheItem = new CacheItem { Key = key, Value = value };
-            var node = new LinkedListNode<CacheItem>(cacheItem);
-            _lruList.AddFirst(node);
-            _cache[key] = node;
+            _nodes[nodeIdx].Key = key;
+            _nodes[nodeIdx].Value = value;
+            Prepend(nodeIdx);
+            _map[key] = nodeIdx;
         }
     }
 
-    public void Clear()
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void Detach(int idx)
     {
-        lock (_lock)
-        {
-            _cache.Clear();
-            _lruList.Clear();
-        }
+        ref Node node = ref _nodes[idx];
+        _nodes[node.Prev].Next = node.Next;
+        _nodes[node.Next].Prev = node.Prev;
     }
 
-    public bool Remove(TKey key)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void MoveToFront(int idx)
     {
-        lock (_lock)
-        {
-            if (_cache.TryGetValue(key, out var node))
-            {
-                _lruList.Remove(node);
-                _ = _cache.Remove(key);
-                return true;
-            }
-
-            return false;
-        }
+        Detach(idx);
+        Prepend(idx);
     }
 
-    private sealed class CacheItem
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void Prepend(int idx)
     {
-        public TKey Key { get; set; } = default!;
+        ref Node node = ref _nodes[idx];
+        int oldHead = _nodes[Sentinel].Next;
+        node.Next = oldHead;
+        node.Prev = Sentinel;
+        _nodes[oldHead].Prev = idx;
+        _nodes[Sentinel].Next = idx;
+    }
 
-        public TValue Value { get; set; } = default!;
+    private struct Node
+    {
+        public TKey Key;
+        public TValue Value;
+        public int Prev;
+        public int Next;
     }
 }

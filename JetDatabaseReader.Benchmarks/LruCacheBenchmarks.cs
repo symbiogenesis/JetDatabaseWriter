@@ -43,11 +43,11 @@ public class LruCacheBenchmarks
     [Benchmark]
     public void Add_Evict()
     {
-        // Exceeds capacity, forcing eviction of the LRU entry
+        // Exceeds capacity, forcing eviction of the LRU entry (key 0 gets evicted).
         _cache.Add(Capacity + 1, "new");
 
-        // Re-add evicted key to keep steady state for next iteration
-        _cache.Remove(Capacity + 1);
+        // Restore steady state: evict the new key by re-adding the original.
+        _cache.Add(0, "value_0");
     }
 
     [Benchmark]
