@@ -7,7 +7,7 @@
 
 Pure-managed .NET library for reading Microsoft Access JET databases — no OleDB, ODBC, or ACE/Jet driver installation required.
 
-> **v2.0** introduced typed DataTables and typed streaming by default. **v2.1** adds structured schema types (`ColumnSize`, `TableStat`, `FirstTableResult`). **v2.2** cleans up the `TableResult` API (`ReadTableAsStrings`, `ToDataTable`, ACCDB encryption fix). See [CHANGELOG.md](CHANGELOG.md) and the [migration guide](#migration-from-v1) for breaking changes.
+> See [CHANGELOG.md](CHANGELOG.md) and the [migration guide](#migration-from-v1) for breaking changes from v1.
 
 ---
 
@@ -267,53 +267,41 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 ```csharp
 // Open
 var r = new JetDatabaseReader("db.mdb");              // v1 ❌
-var r = AccessReader.Open("db.mdb");                   // v2 ✅
+var r = AccessReader.Open("db.mdb");                   // ✅
 
 // Typed DataTable
-var dt = r.ReadTableAsDataTable("Orders");             // v1 — string columns
-var dt = r.ReadTable("Orders");                        // v2 ✅ typed
-var dt = r.ReadTableAsStringDataTable("Orders");       // v2 compat
+var dt = r.ReadTableAsDataTable("Orders");             // v1 ❌
+var dt = r.ReadTable("Orders");                        // ✅ typed columns
+var dt = r.ReadTableAsStringDataTable("Orders");       // ✅ string columns
 
-// Preview — typed rows (v2.2: Rows is now List<object[]>, was List<List<string>>)
-TablePreviewResult t = r.ReadTable("T", 10);           // v2.0.0 ❌
-TableResult        t = r.ReadTable("T", 10);           // v2.0.1–v2.1 ✅ (Rows was List<List<string>>)
-TableResult        t = r.ReadTable("T", 10);           // v2.2 ✅ Rows is now List<object[]>
+// Preview — typed rows
+TableResult t = r.ReadTable("T", 10);                  // ✅ Rows is List<object[]>
 
-// Preview — string rows (v2.2: new dedicated API)
-StringTableResult  s = r.ReadTableAsStrings("T", 10); // v2.2 ✅
+// Preview — string rows
+StringTableResult s = r.ReadTableAsStrings("T", 10);   // ✅
 string val = s.Rows[0][2];                             // always string
 
-// bool overload removed (v2.2)
-TableResult t = r.ReadTable("T", 10, typedValues: true);  // v2.1 ❌ removed
-TableResult t = r.ReadTable("T", 10);                     // v2.2 ✅
+// ToDataTable
+DataTable dtTyped = r.ReadTable("T", 100).ToDataTable();          // CLR-typed columns
+DataTable dtStr   = r.ReadTableAsStrings("T", 100).ToDataTable();  // string columns
 
-// ToDataTable (v2.2: new on both result types)
-DataTable dtTyped = r.ReadTable("T", 100).ToDataTable();         // CLR-typed columns
-DataTable dtStr   = r.ReadTableAsStrings("T", 100).ToDataTable(); // string columns
+// Schema properties
+col.Type      // System.Type e.g. typeof(int)
+col.Size      // ColumnSize struct (.Value, .Unit, .ToString())
 
-// Schema properties (v2.0.1 → v2.1.0)
-col.TypeName  // v2.0.1 ❌ — string e.g. "Long Integer"
-col.Type      // v2.1.0 ✅ — System.Type e.g. typeof(int)
-col.SizeDesc  // v2.0.1 ❌ — string e.g. "4 bytes"
-col.Size      // v2.1.0 ✅ — ColumnSize struct (.Value, .Unit, .ToString())
+// Table stats
+foreach (TableStat s in reader.GetTableStats()) { }
 
-// Table stats (v2.1.0)
-foreach (var (n, r, c) in reader.GetTableStats())       // v2.0 ❌ tuple
-foreach (TableStat s in reader.GetTableStats())         // v2.1 ✅ named type
-
-// First table (v2.1.0 → v2.2.0: base class changed)
-TableResult      r = reader.ReadFirstTable();           // v2.0 ❌
-FirstTableResult r = reader.ReadFirstTable();           // v2.1+ ✅ + r.TableCount
-// Note: FirstTableResult now extends StringTableResult (v2.2)
+// First table
+FirstTableResult r = reader.ReadFirstTable();           // + r.TableCount
 
 // Streaming
-foreach (string[] row in r.StreamRows("T"))            // v1
-foreach (object[] row in r.StreamRows("T"))            // v2 ✅ typed
-foreach (string[] row in r.StreamRowsAsStrings("T"))   // v2 compat
+foreach (object[] row in r.StreamRows("T")) { }        // ✅ typed
+foreach (string[] row in r.StreamRowsAsStrings("T")) { } // ✅ string compat
 
 // Bulk
-var all = r.ReadAllTables();                           // v1 — string cols / v2 ✅ typed
-var all = r.ReadAllTablesAsStrings();                  // v2 compat
+var all = r.ReadAllTables();                           // ✅ typed columns
+var all = r.ReadAllTablesAsStrings();                  // ✅ string columns
 ```
 
 Full details in [CHANGELOG.md](CHANGELOG.md).
