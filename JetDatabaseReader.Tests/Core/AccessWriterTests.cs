@@ -1090,6 +1090,405 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         }
     }
 
+    // ── CreateTable round-trip: GUID column ───────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void CreateTable_GuidColumn_RoundtripsCorrectly(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"Guid_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("UniqueKey", typeof(Guid)),
+        };
+
+        var guid = Guid.NewGuid();
+
+        using (var writer = OpenWriter(temp))
+        {
+            writer.CreateTable(tableName, columns);
+            writer.InsertRow(tableName, new object[] { 1, guid });
+        }
+
+        using (var reader = OpenReader(temp))
+        {
+            DataTable dt = reader.ReadTable(tableName)!;
+            Assert.Equal(1, dt.Rows.Count);
+            Assert.Equal(guid, (Guid)dt.Rows[0]["UniqueKey"]);
+        }
+    }
+
+    // ── CreateTable round-trip: byte[] (OLE) column ───────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void CreateTable_ByteArrayColumn_RoundtripsCorrectly(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"Blob_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Data", typeof(byte[])),
+        };
+
+        byte[] payload = [0xCA, 0xFE, 0xBA, 0xBE];
+
+        using (var writer = OpenWriter(temp))
+        {
+            writer.CreateTable(tableName, columns);
+            writer.InsertRow(tableName, new object[] { 1, payload });
+        }
+
+        using (var reader = OpenReader(temp))
+        {
+            DataTable dt = reader.ReadTable(tableName)!;
+            Assert.Equal(1, dt.Rows.Count);
+            Assert.NotNull(dt.Rows[0]["Data"]);
+        }
+    }
+
+    // ── CreateTable round-trip: multiple inserts then query ───────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void CreateTable_InsertMany_AllRowsReadable(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"Multi_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Name", typeof(string), maxLength: 50),
+        };
+
+        using (var writer = OpenWriter(temp))
+        {
+            writer.CreateTable(tableName, columns);
+            for (int i = 1; i <= 10; i++)
+            {
+                writer.InsertRow(tableName, new object[] { i, $"Row{i}" });
+            }
+        }
+
+        using (var reader = OpenReader(temp))
+        {
+            long count = reader.GetRealRowCount(tableName);
+            Assert.Equal(10, count);
+
+            DataTable dt = reader.ReadTable(tableName)!;
+            Assert.Equal(10, dt.Rows.Count);
+        }
+    }
+
+    // ── CreateTable: empty columns list ───────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void CreateTable_EmptyColumnsList_ThrowsArgumentException(string path)
+    {
+        string temp = CopyToTemp(path);
+
+        using var writer = OpenWriter(temp);
+
+        Assert.Throws<ArgumentException>(() =>
+            writer.CreateTable("EmptyCol", new List<ColumnDefinition>()));
+    }
+
+    // ── DropTable: null/empty name ────────────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void DropTable_NullTableName_ThrowsArgumentException(string path)
+    {
+        string temp = CopyToTemp(path);
+
+        using var writer = OpenWriter(temp);
+
+        Assert.Throws<ArgumentException>(() => writer.DropTable(null!));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void DropTable_EmptyTableName_ThrowsArgumentException(string path)
+    {
+        string temp = CopyToTemp(path);
+
+        using var writer = OpenWriter(temp);
+
+        Assert.Throws<ArgumentException>(() => writer.DropTable(string.Empty));
+    }
+
+    // ── DropTable: after dispose ──────────────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void DropTable_AfterDispose_ThrowsObjectDisposedException(string path)
+    {
+        string temp = CopyToTemp(path);
+        var writer = OpenWriter(temp);
+        writer.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => writer.DropTable("AnyTable"));
+    }
+
+    // ── DropTable: re-create same name ────────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void DropTable_ThenRecreate_Succeeds(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"Recr_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Value", typeof(string), maxLength: 50),
+        };
+
+        // Create
+        using (var writer = OpenWriter(temp))
+        {
+            writer.CreateTable(tableName, columns);
+        }
+
+        // Drop
+        using (var writer = OpenWriter(temp))
+        {
+            writer.DropTable(tableName);
+        }
+
+        // Re-create with different columns
+        var newColumns = new List<ColumnDefinition>
+        {
+            new("Key", typeof(int)),
+            new("Description", typeof(string), maxLength: 200),
+            new("Active", typeof(bool)),
+        };
+
+        using (var writer = OpenWriter(temp))
+        {
+            writer.CreateTable(tableName, newColumns);
+        }
+
+        using (var reader = OpenReader(temp))
+        {
+            var tables = reader.ListTables();
+            Assert.Contains(tableName, tables);
+
+            var meta = reader.GetColumnMetadata(tableName);
+            Assert.Equal(3, meta.Count);
+        }
+    }
+
+    // ── Writer negative: InsertRow to non-existent table ──────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRow_NonExistentTable_ThrowsInvalidOperationException(string path)
+    {
+        string temp = CopyToTemp(path);
+
+        using var writer = OpenWriter(temp);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            writer.InsertRow("NoSuchTable_XYZ_999", new object[] { 1 }));
+    }
+
+    // ── Writer negative: InsertRows null/empty args ───────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRows_NullTableName_ThrowsArgumentException(string path)
+    {
+        string temp = CopyToTemp(path);
+
+        using var writer = OpenWriter(temp);
+
+        Assert.Throws<ArgumentException>(() =>
+            writer.InsertRows(null!, new[] { new object[] { 1 } }));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRows_NullRows_ThrowsArgumentNullException(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = db.Get(path).ListTables()[0];
+
+        using var writer = OpenWriter(temp);
+
+        Assert.Throws<ArgumentNullException>(() =>
+            writer.InsertRows(tableName, (IEnumerable<object[]>)null!));
+    }
+
+    // ── Writer negative: InsertRows after dispose ─────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRows_AfterDispose_ThrowsObjectDisposedException(string path)
+    {
+        string temp = CopyToTemp(path);
+        var writer = OpenWriter(temp);
+        writer.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() =>
+            writer.InsertRows("AnyTable", new[] { new object[] { 1 } }));
+    }
+
+    // ── Writer negative: UpdateRows args ──────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void UpdateRows_NullTableName_ThrowsArgumentException(string path)
+    {
+        string temp = CopyToTemp(path);
+
+        using var writer = OpenWriter(temp);
+        var updates = new Dictionary<string, object> { ["Col"] = "val" };
+
+        Assert.Throws<ArgumentException>(() =>
+            writer.UpdateRows(null!, "Col", "val", updates));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void UpdateRows_AfterDispose_ThrowsObjectDisposedException(string path)
+    {
+        string temp = CopyToTemp(path);
+        var writer = OpenWriter(temp);
+        writer.Dispose();
+
+        var updates = new Dictionary<string, object> { ["Col"] = "val" };
+
+        Assert.Throws<ObjectDisposedException>(() =>
+            writer.UpdateRows("AnyTable", "Col", "val", updates));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void UpdateRows_NonExistentTable_ThrowsInvalidOperationException(string path)
+    {
+        string temp = CopyToTemp(path);
+
+        using var writer = OpenWriter(temp);
+        var updates = new Dictionary<string, object> { ["Col"] = "val" };
+
+        Assert.Throws<InvalidOperationException>(() =>
+            writer.UpdateRows("NoSuchTable_XYZ_999", "Col", "val", updates));
+    }
+
+    // ── Writer negative: DeleteRows after dispose ─────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void DeleteRows_AfterDispose_ThrowsObjectDisposedException(string path)
+    {
+        string temp = CopyToTemp(path);
+        var writer = OpenWriter(temp);
+        writer.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() =>
+            writer.DeleteRows("AnyTable", "Col", "val"));
+    }
+
+    // ── Writer negative: CreateTable after dispose ────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void CreateTable_AfterDispose_ThrowsObjectDisposedException(string path)
+    {
+        string temp = CopyToTemp(path);
+        var writer = OpenWriter(temp);
+        writer.Dispose();
+
+        var columns = new List<ColumnDefinition> { new("Id", typeof(int)) };
+
+        Assert.Throws<ObjectDisposedException>(() =>
+            writer.CreateTable("AnyTable", columns));
+    }
+
+    // ── Writer negative: InsertRow empty table name ───────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRow_EmptyTableName_ThrowsArgumentException(string path)
+    {
+        string temp = CopyToTemp(path);
+
+        using var writer = OpenWriter(temp);
+
+        Assert.Throws<ArgumentException>(() =>
+            writer.InsertRow(string.Empty, new object[] { 1 }));
+    }
+
+    // ── Writer negative: DeleteRows non-existent table ────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void DeleteRows_NonExistentTable_ThrowsInvalidOperationException(string path)
+    {
+        string temp = CopyToTemp(path);
+
+        using var writer = OpenWriter(temp);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            writer.DeleteRows("NoSuchTable_XYZ_999", "Col", "val"));
+    }
+
+    // ── Writer negative: InsertRowGeneric after dispose ───────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRowGeneric_AfterDispose_ThrowsObjectDisposedException(string path)
+    {
+        string temp = CopyToTemp(path);
+        var writer = OpenWriter(temp);
+        writer.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() =>
+            writer.InsertRow("AnyTable", new WriterPoco { Id = 1, Label = "X" }));
+    }
+
+    // ── Writer negative: InsertRowsGeneric after dispose ──────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRowsGeneric_AfterDispose_ThrowsObjectDisposedException(string path)
+    {
+        string temp = CopyToTemp(path);
+        var writer = OpenWriter(temp);
+        writer.Dispose();
+
+        var items = new[] { new WriterPoco { Id = 1, Label = "X" } };
+
+        Assert.Throws<ObjectDisposedException>(() =>
+            writer.InsertRows("AnyTable", items));
+    }
+
+    // ── UpdateRows: no matching value returns zero ────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void UpdateRows_NoMatchingValue_ReturnsZero(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = SeedUpdateTable(temp);
+
+        using var writer = OpenWriter(temp);
+        var updates = new Dictionary<string, object> { ["Label"] = "NOTHING" };
+
+        int updated = writer.UpdateRows(tableName, "Id", 999999, updates);
+
+        Assert.Equal(0, updated);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
 
     public void Dispose()
