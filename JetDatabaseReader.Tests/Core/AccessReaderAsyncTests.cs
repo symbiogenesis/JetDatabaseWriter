@@ -15,15 +15,13 @@ using Xunit;
 [Collection<ReadOnlyDatabaseFixture>]
 public class AccessReaderAsyncTests(DatabaseCache db)
 {
-    private readonly DatabaseCache _db = db;
-
     // ── ListTablesAsync ───────────────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ListTablesAsync_ReturnsNonEmptyList(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         List<string> tables = await reader.ListTablesAsync();
 
@@ -35,7 +33,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ListTablesAsync_MatchesSyncListTables(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
 #pragma warning disable CA1849 // Intentional: comparing sync result against async result
         List<string> sync = reader.ListTables();
@@ -51,7 +49,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadTableAsync_ReturnsNonNullDataTable(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = (await reader.ListTablesAsync())[0];
 
         DataTable dt = (await reader.ReadTableAsync(table))!;
@@ -63,7 +61,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadTableAsync_ColumnTypes_AreTyped(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = (await reader.ListTablesAsync())[0];
         var meta = reader.GetColumnMetadata(table);
 
@@ -79,7 +77,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadTableAsync_RowCount_MatchesSyncReadTable(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = (await reader.ListTablesAsync())[0];
 
 #pragma warning disable CA1849 // Intentional: comparing sync result against async result
@@ -96,7 +94,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task GetStatisticsAsync_MatchesSyncGetStatistics(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
 #pragma warning disable CA1849 // Intentional: comparing sync result against async result
         DatabaseStatistics sync = reader.GetStatistics();
@@ -114,7 +112,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadAllTablesAsync_ContainsAllTableNames(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         List<string> expected = await reader.ListTablesAsync();
 
         Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync();
@@ -126,7 +124,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadAllTablesAsync_RowCounts_MatchSyncReadAllTables(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
 #pragma warning disable CA1849 // Intentional: comparing sync result against async result
         Dictionary<string, DataTable> sync = reader.ReadAllTables();
@@ -145,7 +143,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadAllTablesAsStringsAsync_AllColumns_AreStringType(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         Dictionary<string, DataTable> all = await reader.ReadAllTablesAsStringsAsync();
 
@@ -160,7 +158,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadAllTablesAsStringsAsync_RowCounts_MatchReadAllTablesAsync(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         Dictionary<string, DataTable> typed = await reader.ReadAllTablesAsync();
         Dictionary<string, DataTable> strings = await reader.ReadAllTablesAsStringsAsync();
@@ -184,7 +182,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadTableAsyncGeneric_RowCount_MatchesSyncGeneric(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = (await reader.ListTablesAsync())[0];
 
 #pragma warning disable CA1849 // Intentional: comparing sync result against async result
@@ -199,7 +197,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadTableAsyncGeneric_ReturnsNonNullInstances(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = (await reader.ListTablesAsync())[0];
 
         List<AsyncGenericRow> items = await reader.ReadTableAsync<AsyncGenericRow>(table, 10);
@@ -211,7 +209,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadTableAsyncGeneric_RowCount_MatchesNonGenericAsync(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = (await reader.ListTablesAsync())[0];
 
         TableResult nonGeneric = await reader.ReadTableAsync(table, 100);
