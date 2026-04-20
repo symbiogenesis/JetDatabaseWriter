@@ -330,6 +330,8 @@ var options = new AccessReaderOptions
     FileShare                = FileShare.Read,    // default: others may read, writes blocked
     // FileShare             = FileShare.ReadWrite // use when Access has the file open
     UseLockFile              = true,   // create .ldb/.laccdb lockfile (default: true)
+    LinkedSourcePathAllowlist = new[] { @"C:\TrustedLinkedDatabases" },
+    LinkedSourcePathValidator = (link, fullPath) => !link.IsOdbc,
 };
 using var reader = AccessReader.Open("database.mdb", options);
 

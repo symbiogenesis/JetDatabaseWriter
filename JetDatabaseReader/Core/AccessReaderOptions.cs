@@ -1,5 +1,7 @@
 namespace JetDatabaseReader;
 
+using System;
+using System.Collections.Generic;
 using System.IO;
 
 /// <summary>
@@ -41,4 +43,18 @@ public sealed class AccessReaderOptions
     /// Default: true.
     /// </summary>
     public bool UseLockFile { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets an optional allowlist of directories that linked-table source paths must stay under.
+    /// Paths may be absolute or relative (relative entries are resolved from the opened database directory).
+    /// Leave empty to allow any directory.
+    /// </summary>
+    public IReadOnlyList<string> LinkedSourcePathAllowlist { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Gets or sets an optional callback to approve linked-table source paths.
+    /// The callback receives linked-table metadata and the resolved absolute source path.
+    /// Return true to allow opening the source; false to block it.
+    /// </summary>
+    public Func<LinkedTableInfo, string, bool>? LinkedSourcePathValidator { get; set; }
 }

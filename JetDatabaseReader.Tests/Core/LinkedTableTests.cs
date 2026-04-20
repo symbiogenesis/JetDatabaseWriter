@@ -18,6 +18,7 @@ using Xunit;
 public sealed class LinkedTableTests : IDisposable
 {
     private readonly List<string> _tempFiles = [];
+    private readonly List<string> _tempDirectories = [];
 
     // ═══════════════════════════════════════════════════════════════════
     // 1. API SHAPE — ListTables / ListLinkedTables
@@ -247,6 +248,95 @@ public sealed class LinkedTableTests : IDisposable
     }
 
     [Fact]
+    public void LinkedTable_ReadLinkedTable_RelativeTraversalPath_IsBlockedByDefault()
+    {
+        // A malicious relative path that escapes the host DB directory should be blocked.
+        string frontEndPath = CreateTempJet4Database("LinkTraversal");
+
+        InjectLinkedTableEntry(
+            frontEndPath,
+            "LinkedTraversal",
+            @"..\..\sensitive.accdb",
+            "SensitiveData");
+
+        using var reader = AccessReader.Open(frontEndPath);
+
+        _ = Assert.Throws<UnauthorizedAccessException>(() => reader.ReadTable("LinkedTraversal"));
+    }
+
+    [Fact]
+    public void LinkedTable_ReadLinkedTable_RelativeTraversalPath_CanBeAllowedByCallback()
+    {
+        // Trusted callers can explicitly allow an escaped relative path via callback.
+        string sourcePath = CreateTempJet4Database("LinkPolicySrc");
+
+        using (var writer = AccessWriter.Open(sourcePath))
+        {
+            writer.CreateTable("TrustedData", new List<ColumnDefinition>
+            {
+                new("Id", typeof(int)),
+                new("Value", typeof(string), maxLength: 100),
+            });
+            writer.InsertRow("TrustedData", new object[] { 7, "Allowed by callback" });
+        }
+
+        string nestedDir = Path.Combine(Path.GetTempPath(), $"LinkPolicy_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(nestedDir);
+        _tempDirectories.Add(nestedDir);
+
+        string frontEndPath = CreateTempJet4DatabaseInDirectory("LinkPolicyFE", nestedDir);
+        string relativePath = Path.Combine("..", Path.GetFileName(sourcePath));
+
+        InjectLinkedTableEntry(frontEndPath, "LinkedTrusted", relativePath, "TrustedData");
+
+        var options = new AccessReaderOptions
+        {
+            LinkedSourcePathValidator = (link, resolvedPath) =>
+                string.Equals(link.Name, "LinkedTrusted", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(resolvedPath, sourcePath, StringComparison.OrdinalIgnoreCase),
+        };
+
+        using var reader = AccessReader.Open(frontEndPath, options);
+        DataTable dt = reader.ReadTable("LinkedTrusted")!;
+
+        Assert.NotNull(dt);
+        Assert.Single(dt.Rows);
+        Assert.Equal(7, dt.Rows[0]["Id"]);
+    }
+
+    [Fact]
+    public void LinkedTable_ReadLinkedTable_PathOutsideAllowlist_ThrowsUnauthorizedAccess()
+    {
+        // Allowlist should block linked sources outside trusted directories.
+        string sourcePath = CreateTempJet4Database("LinkAllowSrc");
+        string frontEndPath = CreateTempJet4Database("LinkAllowFE");
+
+        using (var writer = AccessWriter.Open(sourcePath))
+        {
+            writer.CreateTable("Data", new List<ColumnDefinition>
+            {
+                new("Id", typeof(int)),
+            });
+            writer.InsertRow("Data", new object[] { 1 });
+        }
+
+        InjectLinkedTableEntry(frontEndPath, "LinkedBlocked", sourcePath, "Data");
+
+        string allowlistedDir = Path.Combine(Path.GetTempPath(), $"AllowOnly_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(allowlistedDir);
+        _tempDirectories.Add(allowlistedDir);
+
+        var options = new AccessReaderOptions
+        {
+            LinkedSourcePathAllowlist = new[] { allowlistedDir },
+        };
+
+        using var reader = AccessReader.Open(frontEndPath, options);
+
+        _ = Assert.Throws<UnauthorizedAccessException>(() => reader.ReadTable("LinkedBlocked"));
+    }
+
+    [Fact]
     public void LinkedTable_ListLinkedTables_ReturnsCorrectMetadata()
     {
         // Validate that the linked table metadata from the catalog is complete.
@@ -314,6 +404,22 @@ public sealed class LinkedTableTests : IDisposable
                 /* best-effort cleanup */
             }
         }
+
+        foreach (string dir in _tempDirectories.OrderByDescending(d => d.Length))
+        {
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+            catch (IOException)
+            {
+                /* best-effort cleanup */
+            }
+            catch (UnauthorizedAccessException)
+            {
+                /* best-effort cleanup */
+            }
+        }
     }
 
     /// <summary>
@@ -334,6 +440,14 @@ public sealed class LinkedTableTests : IDisposable
     private string CreateTempJet4Database(string prefix)
     {
         string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.accdb");
+        File.Copy(TestDatabases.NorthwindTraders, temp, overwrite: true);
+        _tempFiles.Add(temp);
+        return temp;
+    }
+
+    private string CreateTempJet4DatabaseInDirectory(string prefix, string directory)
+    {
+        string temp = Path.Combine(directory, $"{prefix}_{Guid.NewGuid():N}.accdb");
         File.Copy(TestDatabases.NorthwindTraders, temp, overwrite: true);
         _tempFiles.Add(temp);
         return temp;
