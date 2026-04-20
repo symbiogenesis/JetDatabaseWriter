@@ -88,8 +88,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             byte encFlag = hdr[0x62];
 
-            // bit 0x01 = Office97 password, bit 0x02 = RC4 password
-            if ((encFlag & 0x03) != 0)
+            // Jet4 encryption flag values (offset 0x62):
+            //   0x01 = Office97 password only (no page encryption)
+            //   0x02 = RC4 page encryption
+            //   0x03 = RC4 + password
+            // Other values at this offset (e.g. 0xC3 in Jackcess test databases)
+            // do NOT indicate encryption — they have different format-specific meaning.
+            if (encFlag >= 0x01 && encFlag <= 0x03)
             {
                 if (string.IsNullOrEmpty(options.Password))
                 {
@@ -1856,28 +1861,48 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return result;
             }
 
-            int idxTable = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "TableName", StringComparison.OrdinalIgnoreCase));
+            // ACCDB MSysComplexColumns columns:
+            //   ColumnName (text), ComplexID (long), ComplexTypeObjectID (long),
+            //   ConceptualTableID (long), FlatTableID (long).
+            // Note: there is no "TableName" text column — the table is identified
+            // by ConceptualTableID (the MSysObjects ID whose lower 24 bits = TDEF page).
             int idxCol = td.Columns.FindIndex(c =>
                 string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
-            int idxType = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "ComplexTypeObjectId", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(c.Name, "TypeObjectId", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(c.Name, "ComplexType", StringComparison.OrdinalIgnoreCase));
+            int idxConceptualTable = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "ConceptualTableID", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Name, "TableName", StringComparison.OrdinalIgnoreCase));
 
-            if (idxTable < 0 || idxCol < 0)
+            if (idxCol < 0)
             {
                 return result;
             }
+
+            // Resolve the target table's TDEF page for matching against ConceptualTableID.
+            CatalogEntry entry = GetCatalogEntry(tableName);
+            long targetTdefPage = entry?.TDefPage ?? 0;
 
             foreach (byte[] page in EnumerateTablePages(tdefPage))
             {
                 foreach (List<string> row in EnumerateRows(page, td))
                 {
-                    string rowTable = SafeGet(row, idxTable);
-                    if (!string.Equals(rowTable, tableName, StringComparison.OrdinalIgnoreCase))
+                    // Match by ConceptualTableID (lower 24 bits = TDEF page)
+                    if (idxConceptualTable >= 0 && targetTdefPage > 0)
                     {
-                        continue;
+                        string tableIdStr = SafeGet(row, idxConceptualTable);
+                        if (long.TryParse(tableIdStr, out long tableId))
+                        {
+                            long rowTdefPage = tableId & 0x00FFFFFFL;
+                            if (rowTdefPage != targetTdefPage)
+                            {
+                                continue;
+                            }
+                        }
+                        else if (!string.Equals(tableIdStr, tableName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Fallback: if the column is a text field (future-proofing),
+                            // compare as a table name string.
+                            continue;
+                        }
                     }
 
                     string colName = SafeGet(row, idxCol);
@@ -1939,7 +1964,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                if (!int.TryParse(SafeGet(row, idxType), out int objType) || objType != OBJ_TABLE)
+                // Accept user tables (type 1) and system/hidden tables (type 6).
+                if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != 6))
                 {
                     continue;
                 }
@@ -1976,7 +2002,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
+            System.Diagnostics.Trace.WriteLine($"[BuildComplexColumnData] table={tableName} col[{i}]={col.Name} type=0x{col.Type:X2}");
             Dictionary<int, byte[]>? colData = LoadAttachmentData(tableName, col.Name);
+            System.Diagnostics.Trace.WriteLine($"[BuildComplexColumnData] LoadAttachmentData result: {(colData == null ? "null" : $"{colData.Count} entries")}");
             if (colData != null && colData.Count > 0)
             {
                 result ??= new Dictionary<int, Dictionary<int, byte[]>>();
@@ -2135,9 +2163,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                // Accept any object type that includes the TABLE bit (0x01).
-                // Access system tables (hidden) use type 6 = OBJ_TABLE | SYSTABLE flags.
-                if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType & OBJ_TABLE) == 0)
+                // Accept user tables (type 1) and system/hidden tables (type 6).
+                if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != 6))
                 {
                     continue;
                 }
