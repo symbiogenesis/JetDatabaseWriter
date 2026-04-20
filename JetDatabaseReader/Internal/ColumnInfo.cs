@@ -18,9 +18,12 @@ internal sealed class ColumnInfo
 
     public string Name { get; set; } = string.Empty;
 
-    // Inherently fixed-length types are always fixed regardless of FLAG_FIXED.
+    // The FLAG_FIXED bit (0x01) in the TDEF column descriptor determines whether
+    // a column's data is stored in the fixed or variable area of the row.
+    // For most "inherently fixed" types (BOOL, LONG, DOUBLE, etc.) the bit is set,
+    // but Access system tables (e.g. complex-field flat tables) may store these
+    // types in the variable area with FLAG_FIXED cleared.
     // Variable-length types (TEXT, BINARY, MEMO, OLE) are always variable.
-    // For any other type, fall back to the FLAG_FIXED bit in the descriptor.
     public bool IsFixed
     {
         get
@@ -28,22 +31,12 @@ internal sealed class ColumnInfo
             switch (Type)
             {
                 case 0x01: // T_BOOL
-                case 0x02: // T_BYTE
-                case 0x03: // T_INT
-                case 0x04: // T_LONG
-                case 0x05: // T_MONEY
-                case 0x06: // T_FLOAT
-                case 0x07: // T_DOUBLE
-                case 0x08: // T_DATETIME
-                case 0x0F: // T_GUID
-                case 0x10: // T_NUMERIC
+                    // BOOL stores its value in the null mask, never in fixed area.
                     return true;
                 case 0x0A: // T_TEXT
                 case 0x09: // T_BINARY
                 case 0x0C: // T_MEMO
                 case 0x0B: // T_OLE
-                case 0x11: // T_ATTACHMENT
-                case 0x12: // T_COMPLEX
                     return false;
                 default:
                     return (Flags & 0x01) != 0; // FLAG_FIXED

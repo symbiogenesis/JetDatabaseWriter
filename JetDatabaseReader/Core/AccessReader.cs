@@ -1023,7 +1023,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            if ((long)Ri32(page, _dpTDefOff) != tdefPage)
+            long owner = (long)Ri32(page, _dpTDefOff);
+            if (owner != tdefPage)
             {
                 continue;
             }
@@ -1139,6 +1140,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 T_MONEY => (BitConverter.ToInt64(row, start) / 10000.0m).ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
                 T_NUMERIC => ReadNumeric(row, start),
                 T_GUID => ReadGuid(row, start),
+                T_COMPLEX or T_ATTACHMENT when sz >= 4 => $"__CX:{Ri32(row, start)}__",
                 _ => BitConverter.ToString(row, start, Math.Min(sz, 8)),
             };
         }
@@ -1354,14 +1356,21 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ColumnInfo col = columns[i];
 
             // Resolve complex-field attachments using preloaded complex data (keyed by col ordinal).
-            // The parent row ID is the first fixed LONG column's value.
+            // The variable slot holds a marker "__CX:<complex_id>__" encoding the FK
+            // that joins this row to the hidden flat data table.
             if ((col.Type == T_COMPLEX || col.Type == T_ATTACHMENT) &&
                 complexData != null &&
                 complexData.TryGetValue(i, out Dictionary<int, byte[]>? colData))
             {
-                // Find the parent row ID: use the first LONG fixed column value in this row.
-                int parentId = ExtractParentId(row, columns);
-                if (parentId > 0 && colData.TryGetValue(parentId, out byte[]? attachBytes) &&
+                // Extract complex_id from marker string (e.g. "__CX:1__" → 1).
+                int complexId = ExtractComplexId(raw);
+                if (complexId <= 0)
+                {
+                    // Fallback: use the parent row's AutoNumber ID.
+                    complexId = ExtractParentId(row, columns);
+                }
+
+                if (complexId > 0 && colData.TryGetValue(complexId, out byte[]? attachBytes) &&
                     attachBytes != null && attachBytes.Length > 0)
                 {
                     typedRow[i] = attachBytes;
@@ -1389,6 +1398,24 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 {
                     return id;
                 }
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>Extracts the complex_id from a marker string like "__CX:123__".</summary>
+    private static int ExtractComplexId(string raw)
+    {
+        if (raw != null &&
+            raw.StartsWith("__CX:", StringComparison.Ordinal) &&
+            raw.EndsWith("__", StringComparison.Ordinal) &&
+            raw.Length > 7)
+        {
+            string numStr = raw.Substring(5, raw.Length - 7);
+            if (int.TryParse(numStr, out int id))
+            {
+                return id;
             }
         }
 
@@ -1821,6 +1848,25 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                     return string.Empty;
 
+                // Fixed-size types that Access system tables may store in the variable area
+                // (FLAG_FIXED cleared). Read them the same way as ReadFixed.
+                case T_BYTE:
+                    return len >= 1 ? row[start].ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                case T_INT:
+                    return len >= 2 ? ((short)Ru16(row, start)).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                case T_LONG:
+                    return len >= 4 ? Ri32(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                case T_FLOAT:
+                    return len >= 4 ? BitConverter.ToSingle(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                case T_DOUBLE:
+                    return len >= 8 ? BitConverter.ToDouble(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                case T_DATETIME:
+                    return len >= 8 ? ReadFixed(row, start, col, 8) : string.Empty;
+                case T_MONEY:
+                    return len >= 8 ? ReadFixed(row, start, col, 8) : string.Empty;
+                case T_GUID:
+                    return len >= 16 ? ReadFixed(row, start, col, 16) : string.Empty;
+
                 default:
                     return string.Empty;
             }
@@ -2016,21 +2062,108 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
+    /// Reads MSysComplexColumns to find the FlatTableID for a given table + column.
+    /// Returns the TDEF page number (lower 24 bits of FlatTableID), or 0 if not found.
+    /// </summary>
+    private long GetComplexFlatTablePage(string tableName, string columnName)
+    {
+        try
+        {
+            long msysTdef = FindSystemTablePage("MSysComplexColumns");
+            if (msysTdef <= 0)
+            {
+                return 0;
+            }
+
+            TableDef? td = ReadTableDef(msysTdef);
+            if (td == null)
+            {
+                return 0;
+            }
+
+            int idxCol = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
+            int idxConceptualTable = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "ConceptualTableID", StringComparison.OrdinalIgnoreCase));
+            int idxFlatTable = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "FlatTableID", StringComparison.OrdinalIgnoreCase));
+
+            if (idxCol < 0 || idxFlatTable < 0)
+            {
+                return 0;
+            }
+
+            // Resolve the target table's TDEF page for matching against ConceptualTableID.
+            CatalogEntry entry = GetCatalogEntry(tableName);
+            long targetTdefPage = entry?.TDefPage ?? 0;
+
+            foreach (byte[] page in EnumerateTablePages(msysTdef))
+            {
+                foreach (List<string> row in EnumerateRows(page, td))
+                {
+                    // Match column name.
+                    string colName = SafeGet(row, idxCol);
+                    if (!string.Equals(colName, columnName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    // Match table by ConceptualTableID (lower 24 bits = TDEF page).
+                    if (idxConceptualTable >= 0 && targetTdefPage > 0)
+                    {
+                        string tableIdStr = SafeGet(row, idxConceptualTable);
+                        if (long.TryParse(tableIdStr, out long tableId))
+                        {
+                            long rowTdefPage = tableId & 0x00FFFFFFL;
+                            if (rowTdefPage != targetTdefPage)
+                            {
+                                continue;
+                            }
+                        }
+                    }
+
+                    // Get FlatTableID → TDEF page of the hidden data table.
+                    string flatIdStr = SafeGet(row, idxFlatTable);
+                    if (long.TryParse(flatIdStr, out long flatId))
+                    {
+                        long flatTdef = flatId & 0x00FFFFFFL;
+                        if (flatTdef > 0)
+                        {
+                            return flatTdef;
+                        }
+                    }
+                }
+            }
+        }
+        catch (InvalidDataException)
+        {
+            // Best-effort: fall back to suffix search.
+        }
+
+        return 0;
+    }
+
+    /// <summary>
     /// Loads attachment data from the hidden system table for a complex column.
-    /// Access ACCDB stores attachment data in a table named <c>f_&lt;GUID&gt;_&lt;columnName&gt;</c>.
-    /// The table's FK column is named <c>&lt;tableName&gt;_&lt;columnName&gt;</c> and holds the parent row ID.
-    /// Returns a dictionary mapping parent row ID → serialized attachment bytes
+    /// Access ACCDB stores attachment data in a hidden table found via MSysComplexColumns FlatTableID.
+    /// The table's FK column is named <c>&lt;tableName&gt;_&lt;columnName&gt;</c> and holds the complex_id.
+    /// Returns a dictionary mapping complex_id → serialized attachment bytes
     /// (2-byte FileName length LE, FileName UTF-16LE, FileData bytes).
     /// </summary>
     private Dictionary<int, byte[]>? LoadAttachmentData(string tableName, string columnName)
     {
         try
         {
-            // The hidden attachment table name is f_<GUID>_<columnName>.
-            // We find it by scanning MSysObjects for any Table entry whose name
-            // ends with _<columnName> and starts with f_.
-            string nameSuffix = $"_{columnName}";
-            long tdefPage = FindSystemTablePageBySuffix(nameSuffix);
+            // Primary approach: find the flat data table via MSysComplexColumns FlatTableID.
+            long tdefPage = GetComplexFlatTablePage(tableName, columnName);
+
+            // Fallback: try suffix-based name search for the hidden table.
+            if (tdefPage <= 0)
+            {
+                string nameSuffix = $"_{columnName}";
+                tdefPage = FindSystemTablePageBySuffix(nameSuffix);
+            }
+
             if (tdefPage <= 0)
             {
                 return null;
@@ -2090,7 +2223,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     if (idxFileData >= 0)
                     {
                         string fileDataStr = SafeGet(row, idxFileData);
-                        fileDataBytes = DecodeColumnBytes(fileDataStr, td.Columns[idxFileData].Type);
+                        fileDataBytes = DecodeColumnBytes(fileDataStr ?? string.Empty, td.Columns[idxFileData].Type);
+
+                        // Access attachment data: first byte indicates compression.
+                        // 0x01 = deflate-compressed (remaining bytes), 0x00 = uncompressed.
+                        if (fileDataBytes.Length > 1 && fileDataBytes[0] == 0x01)
+                        {
+                            fileDataBytes = DecompressAttachmentData(fileDataBytes, 1);
+                        }
+                        else if (fileDataBytes.Length > 1 && fileDataBytes[0] == 0x00)
+                        {
+                            fileDataBytes = fileDataBytes.AsSpan(1).ToArray();
+                        }
                     }
 
                     if (fileNameBytes.Length == 0 && fileDataBytes.Length == 0)
@@ -2181,6 +2325,50 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Decompresses Access attachment file data using raw Deflate.
+    /// Access stores attachment data with a 1-byte compression flag followed by
+    /// deflate-compressed content.
+    /// </summary>
+#pragma warning disable SA1204
+    private static byte[] DecompressAttachmentData(byte[] data, int offset)
+#pragma warning restore SA1204
+    {
+        try
+        {
+            // Scan for zlib header (0x78) after the compression flag byte.
+            // Access attachment data starts with a 1-byte compression flag,
+            // followed by implementation-dependent header bytes, then zlib-compressed data.
+            int zlibPos = -1;
+            for (int i = offset; i < data.Length - 1; i++)
+            {
+                if (data[i] == 0x78 && (data[i + 1] == 0x01 || data[i + 1] == 0x5E || data[i + 1] == 0x9C || data[i + 1] == 0xDA))
+                {
+                    zlibPos = i;
+                    break;
+                }
+            }
+
+            if (zlibPos < 0 || zlibPos + 2 >= data.Length)
+            {
+                return data.AsSpan(offset).ToArray();
+            }
+
+            // Skip the 2-byte zlib header for raw DeflateStream
+            int deflateStart = zlibPos + 2;
+            using var input = new MemoryStream(data, deflateStart, data.Length - deflateStart);
+            using var deflate = new System.IO.Compression.DeflateStream(input, System.IO.Compression.CompressionMode.Decompress);
+            using var output = new MemoryStream();
+            deflate.CopyTo(output);
+            return output.ToArray();
+        }
+        catch (InvalidDataException)
+        {
+            // Not valid deflate — return raw bytes without compression flag.
+            return data.AsSpan(offset).ToArray();
+        }
     }
 
     /// <summary>
@@ -2465,7 +2653,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             if (isOle)
             {
-                return TryDecodeOleObject(row, memoStart, memoLen) ?? "(OLE)";
+                return TryDecodeOleObject(row, memoStart, memoLen)
+                    ?? "data:application/octet-stream;base64," + Convert.ToBase64String(row, memoStart, memoLen);
             }
 
             return _jet4 ? DecodeJet4Text(row, memoStart, memoLen)
@@ -2482,7 +2671,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             {
                 if (isOle)
                 {
-                    return TryDecodeOleObject(lvalData, 0, lvalData.Length) ?? "(OLE)";
+                    return TryDecodeOleObject(lvalData, 0, lvalData.Length)
+                        ?? "data:application/octet-stream;base64," + Convert.ToBase64String(lvalData);
                 }
 
                 return _jet4 ? DecodeJet4Text(lvalData, 0, lvalData.Length)
@@ -2500,7 +2690,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             if (isOle)
             {
-                return TryDecodeOleObject(chain.Data, 0, chain.Data.Length) ?? "(OLE)";
+                return TryDecodeOleObject(chain.Data, 0, chain.Data.Length)
+                    ?? "data:application/octet-stream;base64," + Convert.ToBase64String(chain.Data);
             }
 
             return _jet4 ? DecodeJet4Text(chain.Data, 0, chain.Data.Length)
