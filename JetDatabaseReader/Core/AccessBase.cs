@@ -966,6 +966,23 @@ public abstract class AccessBase : IAccessBase
         }
     }
 
+    private protected async ValueTask WritePageAsync(long pageNumber, byte[] page, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
+            await _fs.WriteAsync(page.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
+            await _fs.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _ = _ioGate.Release();
+        }
+    }
+
     private protected long AppendPage(byte[] page)
     {
         _ioGate.Wait();
@@ -975,6 +992,25 @@ public abstract class AccessBase : IAccessBase
             _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
             _fs.Write(page, 0, _pgSz);
             _fs.Flush();
+            return pageNumber;
+        }
+        finally
+        {
+            _ = _ioGate.Release();
+        }
+    }
+
+    private protected async ValueTask<long> AppendPageAsync(byte[] page, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            long pageNumber = _fs.Length / _pgSz;
+            _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
+            await _fs.WriteAsync(page.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
+            await _fs.FlushAsync(cancellationToken).ConfigureAwait(false);
             return pageNumber;
         }
         finally

@@ -26,6 +26,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly SecureString? _password;
     private readonly bool _useLockFile;
     private readonly bool _respectExistingLockFile;
+    private readonly ReaderWriterLockSlim _stateLock = new ReaderWriterLockSlim(LockRecursionPolicy.NoRecursion);
 
     private List<CatalogEntry>? _catalogCache;
     private long _cachedInsertTDefPage = -1;
@@ -368,6 +369,262 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return deleted;
     }
 
+    /// <inheritdoc/>
+    public async ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(columns, nameof(columns));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (columns.Count == 0)
+        {
+            throw new ArgumentException("At least one column is required", nameof(columns));
+        }
+
+        if (await GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) != null)
+        {
+            throw new InvalidOperationException($"Table '{tableName}' already exists.");
+        }
+
+        TableDef tableDef = BuildTableDefinition(columns, _jet4);
+        byte[] tdefPage = BuildTDefPage(tableDef);
+        long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+
+        await InsertCatalogEntryAsync(tableName, tdefPageNumber, cancellationToken).ConfigureAwait(false);
+        InvalidateCatalogCache();
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (msys == null)
+        {
+            throw new InvalidOperationException($"Table '{tableName}' does not exist.");
+        }
+
+        int deleted = 0;
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in rows)
+        {
+            if (!string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (row.ObjectType != OBJ_TABLE)
+            {
+                continue;
+            }
+
+            if ((unchecked((uint)row.Flags) & SYSTABLE_MASK) != 0)
+            {
+                continue;
+            }
+
+            await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
+            deleted++;
+        }
+
+        if (deleted == 0)
+        {
+            throw new InvalidOperationException($"Table '{tableName}' does not exist.");
+        }
+
+        InvalidateCatalogCache();
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask InsertRowAsync(string tableName, object[] values, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(values, nameof(values));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        await InsertRowInternalAsync(entry.TDefPage, tableDef, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object[]> rows, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(rows, nameof(rows));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        int inserted = 0;
+
+        foreach (object[] row in rows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Guard.NotNull(row, nameof(rows));
+            await InsertRowInternalAsync(entry.TDefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
+            inserted++;
+        }
+
+        return inserted;
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask InsertRowAsync<T>(string tableName, T item, CancellationToken cancellationToken = default)
+        where T : class, new()
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(item, nameof(item));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        var headers = tableDef.Columns.ConvertAll(c => c.Name);
+        var index = RowMapper<T>.BuildIndex(headers);
+        await InsertRowInternalAsync(entry.TDefPage, tableDef, RowMapper<T>.ToRow(item, index), cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask<int> InsertRowsAsync<T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken = default)
+        where T : class, new()
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(items, nameof(items));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        var headers = tableDef.Columns.ConvertAll(c => c.Name);
+        var index = RowMapper<T>.BuildIndex(headers);
+        int inserted = 0;
+
+        foreach (T item in items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Guard.NotNull(item, nameof(items));
+            await InsertRowInternalAsync(entry.TDefPage, tableDef, RowMapper<T>.ToRow(item, index), cancellationToken: cancellationToken).ConfigureAwait(false);
+            inserted++;
+        }
+
+        return inserted;
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object predicateValue, IDictionary<string, object> updatedValues, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
+        Guard.NotNull(updatedValues, nameof(updatedValues));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (updatedValues.Count == 0)
+        {
+            return 0;
+        }
+
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        int predicateIndex = FindColumnIndex(tableDef, predicateColumn);
+        if (predicateIndex < 0)
+        {
+            throw new ArgumentException($"Column '{predicateColumn}' was not found in table '{tableName}'.", nameof(predicateColumn));
+        }
+
+        var updateIndexes = new Dictionary<int, object>();
+        foreach (KeyValuePair<string, object> kvp in updatedValues)
+        {
+            int columnIndex = FindColumnIndex(tableDef, kvp.Key);
+            if (columnIndex < 0)
+            {
+                throw new ArgumentException($"Column '{kvp.Key}' was not found in table '{tableName}'.", nameof(updatedValues));
+            }
+
+            updateIndexes[columnIndex] = kvp.Value;
+        }
+
+        using DataTable snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+
+        List<RowLocation> locations = await GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        int total = Math.Min(snapshot.Rows.Count, locations.Count);
+        int updated = 0;
+
+        for (int i = 0; i < total; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            object currentValue = snapshot.Rows[i][predicateIndex];
+            if (!ValuesEqual(currentValue, predicateValue))
+            {
+                continue;
+            }
+
+            object[] rowValues = snapshot.Rows[i].ItemArray;
+            foreach (KeyValuePair<int, object> update in updateIndexes)
+            {
+                rowValues[update.Key] = update.Value ?? DBNull.Value;
+            }
+
+            await MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, cancellationToken).ConfigureAwait(false);
+            await InsertRowInternalAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            updated++;
+        }
+
+        return updated;
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask<int> DeleteRowsAsync(string tableName, string predicateColumn, object predicateValue, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        int predicateIndex = FindColumnIndex(tableDef, predicateColumn);
+        if (predicateIndex < 0)
+        {
+            throw new ArgumentException($"Column '{predicateColumn}' was not found in table '{tableName}'.", nameof(predicateColumn));
+        }
+
+        using DataTable snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+
+        List<RowLocation> locations = await GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        int total = Math.Min(snapshot.Rows.Count, locations.Count);
+        int deleted = 0;
+
+        for (int i = 0; i < total; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            object currentValue = snapshot.Rows[i][predicateIndex];
+            if (!ValuesEqual(currentValue, predicateValue))
+            {
+                continue;
+            }
+
+            await MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, cancellationToken).ConfigureAwait(false);
+            deleted++;
+        }
+
+        if (deleted > 0)
+        {
+            await AdjustTDefRowCountAsync(entry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
+        }
+
+        return deleted;
+    }
+
     /// <summary>
     /// Inserts a linked table entry (type 4) into the MSysObjects catalog.
     /// This creates a reference to a table in an external database.
@@ -400,6 +657,41 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         InvalidateCatalogCache();
     }
 
+    /// <summary>
+    /// Asynchronously inserts a linked table entry (type 4) into the MSysObjects catalog.
+    /// </summary>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="sourceDatabasePath">The path to the source database file.</param>
+    /// <param name="foreignTableName">The name of the table in the source database.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    internal async ValueTask InsertLinkedTableEntryAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
+        var values = new object[msys.Columns.Count];
+        DateTime now = DateTime.UtcNow;
+
+        for (int i = 0; i < msys.Columns.Count; i++)
+        {
+            values[i] = DBNull.Value;
+        }
+
+        SetValue(msys, values, "Id", 0);
+        SetValue(msys, values, "ParentId", 0);
+        SetValue(msys, values, "Name", linkedTableName);
+        SetValue(msys, values, "Type", (short)OBJ_LINKED_TABLE);
+        SetValue(msys, values, "DateCreate", now);
+        SetValue(msys, values, "DateUpdate", now);
+        SetValue(msys, values, "Flags", 0);
+        SetValue(msys, values, "ForeignName", foreignTableName);
+        SetValue(msys, values, "Database", sourceDatabasePath);
+
+        await InsertRowInternalAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+        InvalidateCatalogCache();
+    }
+
     /// <inheritdoc/>
     protected override void Dispose(bool disposing)
     {
@@ -416,6 +708,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (disposing)
         {
             _password?.Dispose();
+            _stateLock.Dispose();
         }
 
         base.Dispose(disposing);
@@ -435,22 +728,25 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         _password?.Dispose();
+        _stateLock.Dispose();
 
         await base.DisposeAsyncCore().ConfigureAwait(false);
     }
 
     private protected override List<CatalogEntry> GetUserTables()
     {
-        if (_catalogCache != null)
+        List<CatalogEntry>? cached = GetCatalogCache();
+        if (cached != null)
         {
-            return _catalogCache;
+            return cached;
         }
 
         TableDef? msys = ReadTableDef(2);
         if (msys == null)
         {
-            _catalogCache = [];
-            return _catalogCache;
+            var empty = new List<CatalogEntry>();
+            SetCatalogCache(empty);
+            return empty;
         }
 
         var result = new List<CatalogEntry>();
@@ -474,8 +770,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             result.Add(new CatalogEntry(row.Name, row.TDefPage));
         }
 
-        _catalogCache = result;
-        return _catalogCache;
+        SetCatalogCache(result);
+        return result;
     }
 
     private static byte[]? EncodeOleValue(object value)
@@ -733,6 +1029,75 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
+    private async ValueTask<DataTable> ReadTableSnapshotAsync(string tableName, CancellationToken cancellationToken)
+    {
+        var options = new AccessReaderOptions
+        {
+            FileShare = FileShare.ReadWrite,
+            ValidateOnOpen = false,
+            Password = _password,
+        };
+
+        await using (var reader = await AccessReader.OpenAsync(_path, options, cancellationToken).ConfigureAwait(false))
+        {
+            DataTable? snapshot = await reader.ReadTableAsync(tableName, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (snapshot != null)
+            {
+                return snapshot;
+            }
+
+            return new DataTable(tableName);
+        }
+    }
+
+    private async ValueTask<CatalogEntry?> GetCatalogEntryAsync(string tableName, CancellationToken cancellationToken)
+    {
+        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        return tables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
+    {
+        List<CatalogEntry>? cached = GetCatalogCache();
+        if (cached != null)
+        {
+            return cached;
+        }
+
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (msys == null)
+        {
+            var empty = new List<CatalogEntry>();
+            SetCatalogCache(empty);
+            return empty;
+        }
+
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        var result = new List<CatalogEntry>();
+        foreach (CatalogRow row in rows)
+        {
+            if (row.ObjectType != OBJ_TABLE)
+            {
+                continue;
+            }
+
+            if ((unchecked((uint)row.Flags) & SYSTABLE_MASK) != 0)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrEmpty(row.Name) || row.TDefPage <= 0)
+            {
+                continue;
+            }
+
+            result.Add(new CatalogEntry(row.Name, row.TDefPage));
+        }
+
+        SetCatalogCache(result);
+        return result;
+    }
+
     private CatalogEntry GetRequiredCatalogEntry(string tableName)
     {
         CatalogEntry entry = GetCatalogEntry(tableName);
@@ -744,9 +1109,31 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return entry;
     }
 
+    private async ValueTask<CatalogEntry> GetRequiredCatalogEntryAsync(string tableName, CancellationToken cancellationToken)
+    {
+        CatalogEntry? entry = await GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (entry == null)
+        {
+            throw new InvalidOperationException($"Table '{tableName}' was not found.");
+        }
+
+        return entry;
+    }
+
     private TableDef ReadRequiredTableDef(long tdefPage, string tableName)
     {
         TableDef? tableDef = ReadTableDef(tdefPage);
+        if (tableDef == null)
+        {
+            throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
+        }
+
+        return tableDef;
+    }
+
+    private async ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken)
+    {
+        TableDef? tableDef = await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (tableDef == null)
         {
             throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
@@ -775,6 +1162,28 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         SetValue(msys, values, "Flags", 0);
 
         InsertRowInternal(2, msys, values);
+    }
+
+    private async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, CancellationToken cancellationToken)
+    {
+        TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
+        var values = new object[msys.Columns.Count];
+        DateTime now = DateTime.UtcNow;
+
+        for (int i = 0; i < msys.Columns.Count; i++)
+        {
+            values[i] = DBNull.Value;
+        }
+
+        SetValue(msys, values, "Id", (int)tdefPageNumber);
+        SetValue(msys, values, "ParentId", 0);
+        SetValue(msys, values, "Name", tableName);
+        SetValue(msys, values, "Type", (short)OBJ_TABLE);
+        SetValue(msys, values, "DateCreate", now);
+        SetValue(msys, values, "DateUpdate", now);
+        SetValue(msys, values, "Flags", 0);
+
+        await InsertRowInternalAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private byte[] BuildTDefPage(TableDef tableDef)
@@ -857,6 +1266,32 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
+    private async ValueTask InsertRowInternalAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default)
+    {
+        if (values.Length != tableDef.Columns.Count)
+        {
+            throw new ArgumentException(
+                $"Expected {tableDef.Columns.Count} values for table row but received {values.Length}.",
+                nameof(values));
+        }
+
+        byte[] rowBytes = SerializeRow(tableDef, values);
+        PageInsertTarget target = await FindInsertTargetAsync(tdefPage, rowBytes.Length, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await WriteRowToPageAsync(target.PageNumber, target.Page, rowBytes, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReturnPage(target.Page);
+        }
+
+        if (updateTDefRowCount)
+        {
+            await AdjustTDefRowCountAsync(tdefPage, 1, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private void AdjustTDefRowCount(long tdefPage, long delta)
     {
         if (delta == 0)
@@ -880,14 +1315,37 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
+    private async ValueTask AdjustTDefRowCountAsync(long tdefPage, long delta, CancellationToken cancellationToken)
+    {
+        if (delta == 0)
+        {
+            return;
+        }
+
+        byte[] page = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        long updated;
+
+        try
+        {
+            uint current = Ru32(page, TDefRowCountOffset);
+            updated = Math.Clamp((long)current + delta, 0L, uint.MaxValue);
+            Wi32(page, TDefRowCountOffset, unchecked((int)(uint)updated));
+            await WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReturnPage(page);
+        }
+    }
+
     private PageInsertTarget FindInsertTarget(long tdefPage, int rowLength)
     {
-        if (_cachedInsertTDefPage == tdefPage && _cachedInsertPageNumber >= 3)
+        if (TryGetCachedInsertPageNumber(tdefPage, out long cachedPageNumber))
         {
-            byte[] cached = ReadPage(_cachedInsertPageNumber);
+            byte[] cached = ReadPage(cachedPageNumber);
             if (cached[0] == 0x01 && (long)Ri32(cached, _dpTDefOff) == tdefPage && CanInsertRow(cached, rowLength))
             {
-                return new PageInsertTarget { PageNumber = _cachedInsertPageNumber, Page = cached };
+                return new PageInsertTarget { PageNumber = cachedPageNumber, Page = cached };
             }
 
             ReturnPage(cached);
@@ -928,15 +1386,76 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         if (candidate != null)
         {
-            _cachedInsertTDefPage = tdefPage;
-            _cachedInsertPageNumber = candidate.PageNumber;
+            SetCachedInsertPageNumber(tdefPage, candidate.PageNumber);
             return candidate;
         }
 
         long newPageNumber = AppendPage(CreateEmptyDataPage(tdefPage));
-        _cachedInsertTDefPage = tdefPage;
-        _cachedInsertPageNumber = newPageNumber;
+        SetCachedInsertPageNumber(tdefPage, newPageNumber);
         return new PageInsertTarget { PageNumber = newPageNumber, Page = ReadPage(newPageNumber) };
+    }
+
+    private async ValueTask<PageInsertTarget> FindInsertTargetAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
+    {
+        if (TryGetCachedInsertPageNumber(tdefPage, out long cachedPageNumber))
+        {
+            byte[] cached = await ReadPageAsync(cachedPageNumber, cancellationToken).ConfigureAwait(false);
+            if (cached[0] == 0x01 && (long)Ri32(cached, _dpTDefOff) == tdefPage && CanInsertRow(cached, rowLength))
+            {
+                return new PageInsertTarget { PageNumber = cachedPageNumber, Page = cached };
+            }
+
+            ReturnPage(cached);
+        }
+
+        long total = _fs.Length / _pgSz;
+        PageInsertTarget? candidate = null;
+
+        for (long pageNumber = 3; pageNumber < total; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01)
+            {
+                ReturnPage(page);
+                continue;
+            }
+
+            if ((long)Ri32(page, _dpTDefOff) != tdefPage)
+            {
+                ReturnPage(page);
+                continue;
+            }
+
+            if (CanInsertRow(page, rowLength))
+            {
+                if (candidate != null)
+                {
+                    ReturnPage(candidate.Page);
+                }
+
+                candidate = new PageInsertTarget { PageNumber = pageNumber, Page = page };
+            }
+            else
+            {
+                ReturnPage(page);
+            }
+        }
+
+        if (candidate != null)
+        {
+            SetCachedInsertPageNumber(tdefPage, candidate.PageNumber);
+            return candidate;
+        }
+
+        long newPageNumber = await AppendPageAsync(CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
+        SetCachedInsertPageNumber(tdefPage, newPageNumber);
+        return new PageInsertTarget
+        {
+            PageNumber = newPageNumber,
+            Page = await ReadPageAsync(newPageNumber, cancellationToken).ConfigureAwait(false),
+        };
     }
 
     private bool CanInsertRow(byte[] page, int rowLength)
@@ -993,6 +1512,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         Wu16(page, 2, freeSpace);
         WritePage(pageNumber, page);
+    }
+
+    private async ValueTask WriteRowToPageAsync(long pageNumber, byte[] page, byte[] rowBytes, CancellationToken cancellationToken)
+    {
+        int numRows = Ru16(page, _dpNumRows);
+        int firstRowStart = GetFirstRowStart(page, numRows);
+        int rowStart = firstRowStart - rowBytes.Length;
+        int rowOffsetPos = _dpRowsStart + (numRows * 2);
+
+        Buffer.BlockCopy(rowBytes, 0, page, rowStart, rowBytes.Length);
+        Wu16(page, rowOffsetPos, rowStart);
+        Wu16(page, _dpNumRows, numRows + 1);
+
+        int freeSpace = rowStart - (_dpRowsStart + ((numRows + 1) * 2));
+        if (freeSpace < 0)
+        {
+            throw new InvalidDataException("Insufficient free space remained on the target page.");
+        }
+
+        Wu16(page, 2, freeSpace);
+        await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
     }
 
     private byte[] SerializeRow(TableDef tableDef, object[] values)
@@ -1262,7 +1802,75 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private void InvalidateCatalogCache()
     {
-        _catalogCache = null;
+        _stateLock.EnterWriteLock();
+        try
+        {
+            _catalogCache = null;
+        }
+        finally
+        {
+            _stateLock.ExitWriteLock();
+        }
+    }
+
+    private List<CatalogEntry>? GetCatalogCache()
+    {
+        _stateLock.EnterReadLock();
+        try
+        {
+            return _catalogCache;
+        }
+        finally
+        {
+            _stateLock.ExitReadLock();
+        }
+    }
+
+    private void SetCatalogCache(List<CatalogEntry> cache)
+    {
+        _stateLock.EnterWriteLock();
+        try
+        {
+            _catalogCache = cache;
+        }
+        finally
+        {
+            _stateLock.ExitWriteLock();
+        }
+    }
+
+    private bool TryGetCachedInsertPageNumber(long tdefPage, out long pageNumber)
+    {
+        _stateLock.EnterReadLock();
+        try
+        {
+            if (_cachedInsertTDefPage == tdefPage && _cachedInsertPageNumber >= 3)
+            {
+                pageNumber = _cachedInsertPageNumber;
+                return true;
+            }
+
+            pageNumber = -1;
+            return false;
+        }
+        finally
+        {
+            _stateLock.ExitReadLock();
+        }
+    }
+
+    private void SetCachedInsertPageNumber(long tdefPage, long pageNumber)
+    {
+        _stateLock.EnterWriteLock();
+        try
+        {
+            _cachedInsertTDefPage = tdefPage;
+            _cachedInsertPageNumber = pageNumber;
+        }
+        finally
+        {
+            _stateLock.ExitWriteLock();
+        }
     }
 
     private IEnumerable<CatalogRow> EnumerateCatalogRows(TableDef msys)
@@ -1305,6 +1913,55 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 };
             }
         }
+    }
+
+    private async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
+    {
+        ColumnInfo idColumn = msys.Columns.Find(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo nameColumn = msys.Columns.Find(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo typeColumn = msys.Columns.Find(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo flagsColumn = msys.Columns.Find(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
+        if (nameColumn == null || typeColumn == null)
+        {
+            return [];
+        }
+
+        var result = new List<CatalogRow>();
+        long total = _fs.Length / _pgSz;
+        for (long pageNumber = 3; pageNumber < total; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01)
+            {
+                ReturnPage(page);
+                continue;
+            }
+
+            if (Ri32(page, _dpTDefOff) != 2)
+            {
+                ReturnPage(page);
+                continue;
+            }
+
+            foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
+            {
+                result.Add(new CatalogRow
+                {
+                    PageNumber = row.PageNumber,
+                    RowIndex = row.RowIndex,
+                    Name = ReadColumnValue(page, row.RowStart, row.RowSize, nameColumn),
+                    ObjectType = ParseInt32(ReadColumnValue(page, row.RowStart, row.RowSize, typeColumn)),
+                    Flags = ParseInt64(ReadColumnValue(page, row.RowStart, row.RowSize, flagsColumn)),
+                    TDefPage = ParseInt64(ReadColumnValue(page, row.RowStart, row.RowSize, idColumn)) & 0x00FFFFFFL,
+                });
+            }
+
+            ReturnPage(page);
+        }
+
+        return result;
     }
 
     private string ReadColumnValue(byte[] page, int rowStart, int rowSize, ColumnInfo column)
@@ -1455,6 +2112,34 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return result;
     }
 
+    private async ValueTask<List<RowLocation>> GetLiveRowLocationsAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        var result = new List<RowLocation>();
+        long total = _fs.Length / _pgSz;
+        for (long pageNumber = 3; pageNumber < total; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01)
+            {
+                ReturnPage(page);
+                continue;
+            }
+
+            if ((long)Ri32(page, _dpTDefOff) != tdefPage)
+            {
+                ReturnPage(page);
+                continue;
+            }
+
+            result.AddRange(EnumerateLiveRowLocations(pageNumber, page));
+            ReturnPage(page);
+        }
+
+        return result;
+    }
+
     private IEnumerable<RowLocation> EnumerateLiveRowLocations(long pageNumber, byte[] page)
     {
         foreach (RowBound rb in EnumerateLiveRowBounds(page))
@@ -1476,6 +2161,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         Wu16(page, offsetPos, raw | 0x8000);
         WritePage(pageNumber, page);
+        ReturnPage(page);
+    }
+
+    private async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
+    {
+        byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        int offsetPos = _dpRowsStart + (rowIndex * 2);
+        int raw = Ru16(page, offsetPos);
+        if ((raw & 0x8000) != 0)
+        {
+            ReturnPage(page);
+            return;
+        }
+
+        Wu16(page, offsetPos, raw | 0x8000);
+        await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         ReturnPage(page);
     }
 

@@ -31,6 +31,13 @@ public interface IAccessReader : IAccessBase
     /// <returns></returns>
     FirstTableResult ReadFirstTable(int maxRows = 100);
 
+    /// <summary>
+    /// Asynchronously returns the column headers and up to <paramref name="maxRows"/> rows
+    /// from the first user table, plus the table name and total table count.
+    /// </summary>
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<FirstTableResult> ReadFirstTableAsync(int maxRows = 100, CancellationToken cancellationToken = default);
+
     /// <summary>Returns the names of all user tables in the database.</summary>
     /// <returns></returns>
     List<string> ListTables();
@@ -43,11 +50,25 @@ public interface IAccessReader : IAccessBase
     List<LinkedTableInfo> ListLinkedTables();
 
     /// <summary>
+    /// Returns metadata about linked tables (Access-linked type 4 and ODBC-linked type 6)
+    /// found in the database catalog asynchronously.
+    /// </summary>
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Returns name, stored row-count, and column-count for every user table.
     /// Calling this instead of <see cref="ListTables"/> avoids a duplicate catalog scan.
     /// </summary>
     /// <returns></returns>
     List<TableStat> GetTableStats();
+
+    /// <summary>
+    /// Returns name, stored row-count, and column-count for every user table asynchronously.
+    /// Calling this instead of <see cref="ListTablesAsync"/> avoids a duplicate catalog scan.
+    /// </summary>
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<List<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns table metadata as a DataTable with columns: TableName, RowCount, ColumnCount.
@@ -57,12 +78,25 @@ public interface IAccessReader : IAccessBase
     DataTable GetTablesAsDataTable();
 
     /// <summary>
+    /// Returns table metadata as a DataTable with columns: TableName, RowCount, ColumnCount asynchronously.
+    /// Ideal for binding to data grids or exporting to CSV/Excel.
+    /// </summary>
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<DataTable> GetTablesAsDataTableAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Scans all data pages to count live (non-deleted, non-overflow) rows for the specified table.
     /// This is slower than reading the TDEF RowCount (which may be stale), but always accurate.
     /// Use this after many deletes/imports when Compact &amp; Repair hasn't been run.
     /// </summary>
     /// <returns></returns>
     long GetRealRowCount(string tableName);
+
+    /// <summary>
+    /// Scans all data pages to count live (non-deleted, non-overflow) rows for the specified table asynchronously.
+    /// </summary>
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<long> GetRealRowCountAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reads up to <paramref name="maxRows"/> rows from the table named
@@ -126,6 +160,16 @@ public interface IAccessReader : IAccessBase
     IEnumerable<object[]> StreamRows(string tableName, IProgress<int>? progress = null);
 
     /// <summary>
+    /// Asynchronously yields rows from <paramref name="tableName"/> as properly typed object arrays
+    /// without collecting them all in memory.
+    /// </summary>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
+    /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
+    /// <returns></returns>
+    IAsyncEnumerable<object[]> StreamRowsAsync(string tableName, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Yields rows from <paramref name="tableName"/> mapped to instances of <typeparamref name="T"/>.
     /// Property names are matched to column headers (case-insensitive). Unmatched properties keep their default value.
     /// </summary>
@@ -134,6 +178,17 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <returns></returns>
     IEnumerable<T> StreamRows<T>(string tableName, IProgress<int>? progress = null)
+        where T : class, new();
+
+    /// <summary>
+    /// Asynchronously yields rows from <paramref name="tableName"/> mapped to instances of <typeparamref name="T"/>.
+    /// </summary>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
+    /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
+    /// <returns></returns>
+    IAsyncEnumerable<T> StreamRowsAsync<T>(string tableName, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
@@ -147,6 +202,16 @@ public interface IAccessReader : IAccessBase
     IEnumerable<string[]> StreamRowsAsStrings(string tableName, IProgress<int>? progress = null);
 
     /// <summary>
+    /// Asynchronously yields rows from <paramref name="tableName"/> as string arrays
+    /// without collecting them all in memory.
+    /// </summary>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
+    /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
+    /// <returns></returns>
+    IAsyncEnumerable<string[]> StreamRowsAsStringsAsync(string tableName, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Reads the entire table into a DataTable with all columns typed as strings.
     /// Use this for compatibility scenarios or when you need raw string data.
     /// For most use cases, prefer <see cref="ReadTable(string, IProgress{int})"/> which returns properly typed columns.
@@ -157,10 +222,25 @@ public interface IAccessReader : IAccessBase
     DataTable? ReadTableAsStringDataTable(string? tableName = null, IProgress<int>? progress = null);
 
     /// <summary>
+    /// Reads the entire table into a DataTable with all columns typed as strings asynchronously.
+    /// </summary>
+    /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
+    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<DataTable?> ReadTableAsStringDataTableAsync(string? tableName = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Returns rich metadata for all columns in the specified table.
     /// </summary>
     /// <returns></returns>
     List<ColumnMetadata> GetColumnMetadata(string tableName);
+
+    /// <summary>
+    /// Returns rich metadata for all columns in the specified table asynchronously.
+    /// </summary>
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns statistical information about the database.
