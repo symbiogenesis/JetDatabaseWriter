@@ -12,15 +12,18 @@ using Xunit;
 /// Tests for: StreamRows (typed object[]) and StreamRowsAsStrings (string[]).
 /// Includes a memory-efficiency smoke test on the large Matrix database.
 /// </summary>
-public class AccessReaderStreamTests
+[Collection<ReadOnlyDatabaseFixture>]
+public class AccessReaderStreamTests(DatabaseCache db)
 {
+    private readonly DatabaseCache _db = db;
+
     // ── StreamRows (typed) ────────────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void StreamRows_YieldsAtLeastOneRow(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         TableStat? stat = reader.GetTableStats().FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -36,7 +39,7 @@ public class AccessReaderStreamTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void StreamRows_EachRow_HasSameColumnCountAsMetadata(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
         int colCount = reader.GetColumnMetadata(table).Count;
 
@@ -50,7 +53,7 @@ public class AccessReaderStreamTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void StreamRows_TotalCount_MatchesReadTableRowCount(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
 
         int streamCount = reader.StreamRows(table).Count();
@@ -63,7 +66,7 @@ public class AccessReaderStreamTests
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void StreamRows_NumericAndDateColumns_AreNotStrings(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
         var meta = reader.GetColumnMetadata(table);
 
@@ -87,7 +90,7 @@ public class AccessReaderStreamTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void StreamRows_WithProgress_ReportsNonNegativeValues(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
         var reported = new List<int>();
 
@@ -111,7 +114,7 @@ public class AccessReaderStreamTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void StreamRowsAsStrings_YieldsAtLeastOneRow(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         TableStat? stat = reader.GetTableStats().FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -125,7 +128,7 @@ public class AccessReaderStreamTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void StreamRowsAsStrings_AllCells_AreNullOrString(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
 
         foreach (string[] row in reader.StreamRowsAsStrings(table).Take(50))
@@ -141,7 +144,7 @@ public class AccessReaderStreamTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void StreamRowsAsStrings_TotalCount_MatchesStreamRowsCount(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
 
         int typedCount = reader.StreamRows(table).Count();
@@ -259,7 +262,7 @@ public class AccessReaderStreamTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void StreamRowsGeneric_Count_MatchesStreamRows(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
 
         int typedCount = reader.StreamRows(table).Count();
@@ -272,7 +275,7 @@ public class AccessReaderStreamTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void StreamRowsGeneric_YieldsNonNullInstances(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
 
         foreach (StreamGenericRow item in reader.StreamRows<StreamGenericRow>(table).Take(50))
@@ -285,7 +288,7 @@ public class AccessReaderStreamTests
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void StreamRowsGeneric_WithProgress_ReportsNonNegativeValues(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
         var reported = new List<int>();
 
@@ -304,7 +307,7 @@ public class AccessReaderStreamTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void StreamRowsGeneric_IsLazy_CanBreakEarly(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
         int count = 0;
 
@@ -328,11 +331,9 @@ public class AccessReaderStreamTests
     /// thread. Use in tests instead of Progress&lt;T&gt; to avoid thread-pool dispatch races
     /// when asserting the collected values immediately after iteration.
     /// </summary>
-    private sealed class SyncProgress<T> : IProgress<T>
+    private sealed class SyncProgress<T>(Action<T> action) : IProgress<T>
     {
-        private readonly Action<T> _action;
-
-        public SyncProgress(Action<T> action) => _action = action;
+        private readonly Action<T> _action = action;
 
         public void Report(T value) => _action(value);
     }

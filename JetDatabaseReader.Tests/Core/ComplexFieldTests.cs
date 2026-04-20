@@ -19,8 +19,11 @@ using Xunit;
 /// When fully implemented, the reader should follow the complexid FK to the
 /// hidden system table and return decoded values for each row.
 /// </summary>
-public sealed class ComplexFieldTests
+[Collection<ReadOnlyDatabaseFixture>]
+public sealed class ComplexFieldTests(DatabaseCache db)
 {
+    private readonly DatabaseCache _db = db;
+
     // ═══════════════════════════════════════════════════════════════════
     // 1. ATTACHMENT FIELDS (type 0x11)
     // ═══════════════════════════════════════════════════════════════════
@@ -34,7 +37,7 @@ public sealed class ComplexFieldTests
     public void Attachment_GetColumnMetadata_ReportsAttachmentType(string path)
     {
         // Columns with type 0x11 should report a friendly type name, not a raw hex code.
-        using var reader = AccessReader.Open(path);
+        var reader = _db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -50,7 +53,7 @@ public sealed class ComplexFieldTests
     public void Attachment_TypeCodeToName_ReturnsAttachment()
     {
         // All column type names should be friendly strings, not raw hex codes.
-        using var reader = AccessReader.Open(TestDatabases.NorthwindTraders);
+        var reader = _db.Get(TestDatabases.NorthwindTraders);
 
         foreach (string table in reader.ListTables())
         {
@@ -67,7 +70,7 @@ public sealed class ComplexFieldTests
     {
         // Attachment columns map to a CLR type that can represent
         // multiple files — not typeof(string).
-        using var reader = AccessReader.Open(TestDatabases.NorthwindTraders);
+        var reader = _db.Get(TestDatabases.NorthwindTraders);
 
         foreach (string table in reader.ListTables())
         {
@@ -86,7 +89,7 @@ public sealed class ComplexFieldTests
     public void Attachment_ReadAsDataTable_ColumnTypeIsNotString()
     {
         // When reading a DataTable, attachment columns should not be typed as string.
-        using var reader = AccessReader.Open(TestDatabases.NorthwindTraders);
+        var reader = _db.Get(TestDatabases.NorthwindTraders);
 
         foreach (string table in reader.ListTables())
         {
@@ -114,7 +117,7 @@ public sealed class ComplexFieldTests
     {
         // Reading a table with complex columns should not crash, even if
         // values are not fully decoded.
-        using var reader = AccessReader.Open(path);
+        var reader = _db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -135,7 +138,7 @@ public sealed class ComplexFieldTests
     public void Attachment_StreamRows_DoesNotThrowOnComplexColumns(string path)
     {
         // Streaming rows with complex columns should not crash.
-        using var reader = AccessReader.Open(path);
+        var reader = _db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -158,7 +161,7 @@ public sealed class ComplexFieldTests
     {
         // When attachment decoding is implemented, non-empty attachment cells
         // should return actual data (byte[] or a collection), not DBNull.
-        using var reader = AccessReader.Open(path);
+        var reader = _db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -197,7 +200,7 @@ public sealed class ComplexFieldTests
     public void ComplexField_Metadata_ReportsCorrectTypeName(string path)
     {
         // Complex columns must report "Attachment" or "Complex", not raw hex.
-        using var reader = AccessReader.Open(path);
+        var reader = _db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -218,7 +221,7 @@ public sealed class ComplexFieldTests
     {
         // When multi-value decoding is implemented, non-empty complex cells
         // should return a list of values, not DBNull.
-        using var reader = AccessReader.Open(path);
+        var reader = _db.Get(path);
 
         foreach (string table in reader.ListTables())
         {

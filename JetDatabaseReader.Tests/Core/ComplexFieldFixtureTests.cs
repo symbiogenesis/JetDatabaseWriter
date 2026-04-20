@@ -39,10 +39,15 @@ using Xunit;
 ///
 /// When the feature is implemented, all tests in this file should pass green.
 /// </summary>
+[Collection<ReadOnlyDatabaseFixture>]
 public sealed class ComplexFieldFixtureTests
 {
     private const string DocumentsTable = "Documents";
     private const string AttachmentsColumn = "Attachments";
+
+    private readonly DatabaseCache _db;
+
+    public ComplexFieldFixtureTests(DatabaseCache db) => _db = db;
 
     // ═══════════════════════════════════════════════════════════════════
     // 1. SCHEMA
@@ -57,7 +62,7 @@ public sealed class ComplexFieldFixtureTests
     public void ComplexFields_DocumentsTable_Exists()
     {
         // The fixture contains a "Documents" table.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         List<string> tables = reader.ListTables();
         Assert.Contains(DocumentsTable, tables, StringComparer.OrdinalIgnoreCase);
     }
@@ -69,7 +74,7 @@ public sealed class ComplexFieldFixtureTests
         // The specific subtype (attachment vs multi-value) is determined by MSysComplexColumns.
         // Until that lookup is implemented, the reader returns TypeName="Complex" (0x12),
         // not "Attachment".  This test will turn green when MSysComplexColumns is consulted.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         List<ColumnMetadata> meta = reader.GetColumnMetadata(DocumentsTable);
         ColumnMetadata? col = meta.Find(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
@@ -81,7 +86,7 @@ public sealed class ComplexFieldFixtureTests
     public void ComplexFields_AttachmentColumn_ClrTypeIsByteArray()
     {
         // Attachment columns must map to byte[], not string or object.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         List<ColumnMetadata> meta = reader.GetColumnMetadata(DocumentsTable);
         ColumnMetadata? col = meta.Find(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
@@ -93,7 +98,7 @@ public sealed class ComplexFieldFixtureTests
     public void ComplexFields_AttachmentColumn_SizeIsLval()
     {
         // Attachment (complex) columns have no fixed byte size — they report as LVAL.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         List<ColumnMetadata> meta = reader.GetColumnMetadata(DocumentsTable);
         ColumnMetadata? col = meta.Find(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
@@ -105,7 +110,7 @@ public sealed class ComplexFieldFixtureTests
     public void ComplexFields_ReadTable_DoesNotThrow()
     {
         // Reading a table with an Attachment column must not throw.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         var ex = Record.Exception(() => reader.ReadTable(DocumentsTable, maxRows: 10));
         Assert.Null(ex);
     }
@@ -114,7 +119,7 @@ public sealed class ComplexFieldFixtureTests
     public void ComplexFields_StreamRows_DoesNotThrow()
     {
         // Streaming rows from a table with Attachment columns must not throw.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         var ex = Record.Exception(() => reader.StreamRows(DocumentsTable).Take(5).ToList());
         Assert.Null(ex);
     }
@@ -123,7 +128,7 @@ public sealed class ComplexFieldFixtureTests
     public void ComplexFields_DocumentsTable_HasTwoRows()
     {
         // The fixture was created with exactly two rows.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         int count = reader.StreamRows(DocumentsTable).Count();
         Assert.Equal(2, count);
     }
@@ -151,7 +156,7 @@ public sealed class ComplexFieldFixtureTests
     public void ComplexFields_Attachment_Row1_CellValueIsNotDbNull()
     {
         // After decoding, row 1 has one attachment — its cell must not be DBNull.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         List<ColumnMetadata> meta = reader.GetColumnMetadata(DocumentsTable);
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
         Assert.True(attachIdx >= 0, $"Column '{AttachmentsColumn}' not found in {DocumentsTable}");
@@ -168,7 +173,7 @@ public sealed class ComplexFieldFixtureTests
     public void ComplexFields_Attachment_Row2_CellValueIsNotDbNull()
     {
         // Row 2 also has one attachment — the decoder must handle multiple rows.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         List<ColumnMetadata> meta = reader.GetColumnMetadata(DocumentsTable);
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
@@ -187,7 +192,7 @@ public sealed class ComplexFieldFixtureTests
     public void ComplexFields_Attachment_AllRows_NonNullCellValues()
     {
         // Every row in the Documents table has an attachment; all cells must be non-null.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         List<ColumnMetadata> meta = reader.GetColumnMetadata(DocumentsTable);
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
@@ -204,7 +209,7 @@ public sealed class ComplexFieldFixtureTests
     {
         // When decoded, the attachment value must be a non-empty byte[] (raw LVAL data
         // for the attachment sub-record), OR a richer type that is non-null and non-empty.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         List<ColumnMetadata> meta = reader.GetColumnMetadata(DocumentsTable);
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
@@ -228,7 +233,7 @@ public sealed class ComplexFieldFixtureTests
         //
         // For now the test asserts the raw decoded bytes contain the UTF-16 or UTF-8
         // bytes of "hello.txt", as a proxy for correct filename resolution.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         List<ColumnMetadata> meta = reader.GetColumnMetadata(DocumentsTable);
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
@@ -255,7 +260,7 @@ public sealed class ComplexFieldFixtureTests
         // The attached file "hello.txt" was written with content:
         //   "Hello from attachment fixture!"
         // Once decoded, the raw bytes of that file must be present in the cell value.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         List<ColumnMetadata> meta = reader.GetColumnMetadata(DocumentsTable);
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
@@ -276,7 +281,7 @@ public sealed class ComplexFieldFixtureTests
     public void ComplexFields_Attachment_DataTable_AttachmentColumnIsNotStringType()
     {
         // DataTable conversion must not coerce attachment columns to string.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         TableResult result = reader.ReadTable(DocumentsTable, maxRows: 5);
         DataTable dt = result.ToDataTable();
 
@@ -292,7 +297,7 @@ public sealed class ComplexFieldFixtureTests
     public void ComplexFields_Attachment_StreamRowsAsStrings_DoesNotThrow()
     {
         // String streaming on tables with attachment columns must not crash.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         var ex = Record.Exception(() => reader.StreamRowsAsStrings(DocumentsTable).Take(5).ToList());
         Assert.Null(ex);
     }
@@ -310,7 +315,7 @@ public sealed class ComplexFieldFixtureTests
     public void ComplexFields_TagsTable_Exists()
     {
         // The Tags table created in the fixture must be visible in ListTables.
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
         List<string> tables = reader.ListTables();
         Assert.Contains("Tags", tables, StringComparer.OrdinalIgnoreCase);
     }
@@ -320,7 +325,7 @@ public sealed class ComplexFieldFixtureTests
     {
         // All complex columns (0x11 / 0x12) across all tables in the fixture must
         // report a friendly TypeName ("Attachment" or "Complex"), not "0x11" / "0x12".
-        using var reader = AccessReader.Open(TestDatabases.ComplexFields);
+        var reader = _db.Get(TestDatabases.ComplexFields);
 
         foreach (string table in reader.ListTables())
         {

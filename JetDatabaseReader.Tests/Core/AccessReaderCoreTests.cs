@@ -9,10 +9,15 @@ using Xunit;
 /// Tests for: ListTables, GetTableStats, GetTablesAsDataTable, GetStatistics,
 /// GetColumnMetadata, GetRealRowCount, ReadFirstTable, ReadTablePreview, Dispose.
 /// </summary>
+[Collection<ReadOnlyDatabaseFixture>]
 public class AccessReaderCoreTests
 {
     private static readonly int[] ValidPageSizes = [2048, 4096];
     private static readonly string[] ValidVersions = ["Jet3", "Jet4/ACE"];
+
+    private readonly DatabaseCache _db;
+
+    public AccessReaderCoreTests(DatabaseCache db) => _db = db;
 
     // ── ListTables ────────────────────────────────────────────────────
 
@@ -20,7 +25,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ListTables_WhenDatabaseHasTables_ReturnsNonEmptyList(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         List<string> tables = reader.ListTables();
 
@@ -32,7 +37,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ListTables_ReturnedNames_AreNonEmptyStrings(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         List<string> tables = reader.ListTables();
 
@@ -43,7 +48,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ListTables_ReturnedNames_AreUnique(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         List<string> tables = reader.ListTables();
 
@@ -56,7 +61,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void GetTableStats_CountMatchesListTables(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         var stats = reader.GetTableStats();
         var tables = reader.ListTables();
@@ -68,7 +73,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void GetTableStats_RowCountAndColumnCount_ArePositive(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         var stats = reader.GetTableStats();
 
@@ -85,7 +90,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void GetTablesAsDataTable_HasExpectedColumns(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         var dt = reader.GetTablesAsDataTable();
 
@@ -98,7 +103,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void GetTablesAsDataTable_RowCountMatchesListTables(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         var dt = reader.GetTablesAsDataTable();
         var tables = reader.ListTables();
@@ -112,7 +117,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void GetStatistics_ReturnsConsistentPageAndSizeInfo(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         DatabaseStatistics stats = reader.GetStatistics();
 
@@ -125,7 +130,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void GetStatistics_Version_IsRecognisedJetVersion(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         DatabaseStatistics stats = reader.GetStatistics();
 
@@ -136,7 +141,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void GetStatistics_TableCount_MatchesListTables(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         DatabaseStatistics stats = reader.GetStatistics();
         int tableCount = reader.ListTables().Count;
@@ -148,7 +153,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void GetStatistics_TotalRows_IsNonNegative(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         DatabaseStatistics stats = reader.GetStatistics();
 
@@ -161,7 +166,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void GetColumnMetadata_ForEachTable_ReturnsNonEmptyList(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -174,7 +179,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void GetColumnMetadata_OrdinalIsSequential(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
 
         List<ColumnMetadata> meta = reader.GetColumnMetadata(table);
@@ -189,7 +194,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void GetColumnMetadata_ClrType_IsNeverNull(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
 
         List<ColumnMetadata> meta = reader.GetColumnMetadata(table);
@@ -203,7 +208,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void GetRealRowCount_IsNonNegative(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
 
         long count = reader.GetRealRowCount(table);
@@ -215,7 +220,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void GetRealRowCount_ConsistentWithStatsTdefRowCount(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
 
         long real = reader.GetRealRowCount(table);
@@ -232,7 +237,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ReadFirstTable_ReturnsNonEmptyHeadersAndTableName(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
 
         FirstTableResult result = reader.ReadFirstTable();
 
@@ -247,7 +252,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ReadTable_Preview_HeadersMatchSchemaColumnNames(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
 
         TableResult preview = reader.ReadTable(table, maxRows: 10);
@@ -263,7 +268,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ReadTable_Preview_RowCount_DoesNotExceedMaxRows(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
         const int max = 5;
 
@@ -276,7 +281,7 @@ public class AccessReaderCoreTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ReadTable_Preview_EachRow_HasSameColumnCountAsHeaders(string path)
     {
-        using var reader = TestDatabases.Open(path);
+        var reader = _db.Get(path);
         string table = reader.ListTables()[0];
 
         TableResult preview = reader.ReadTable(table, maxRows: 20);
