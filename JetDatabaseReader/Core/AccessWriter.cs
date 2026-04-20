@@ -7,6 +7,8 @@ using System.Globalization;
 using System.IO;
 using System.Security;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 #pragma warning disable CA1822 // Mark members as static
 
@@ -32,10 +34,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private AccessWriter(
         string path,
         FileStream fs,
+        byte[] hdr,
         SecureString? password,
         bool useLockFile,
         bool respectExistingLockFile)
-        : base(fs)
+        : base(fs, hdr)
     {
         _path = path;
         _password = SecureStringUtilities.CopyAsReadOnly(password);
@@ -66,13 +69,62 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         options ??= new AccessWriterOptions();
         VerifyPasswordOnOpen(path, options);
 
-        var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.Asynchronous | FileOptions.RandomAccess);
-        return new AccessWriter(
-            path,
-            fs,
-            options.Password,
-            options.UseLockFile,
-            options.RespectExistingLockFile);
+        FileStream fs = CreateStream(path);
+        try
+        {
+            byte[] hdr = ReadHeader(fs);
+            return new AccessWriter(
+                path,
+                fs,
+                hdr,
+                options.Password,
+                options.UseLockFile,
+                options.RespectExistingLockFile);
+        }
+        catch
+        {
+            fs.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously opens a JET database file for writing and returns a new <see cref="AccessWriter"/> instance.
+    /// </summary>
+    /// <param name="path">Path to the .mdb or .accdb file.</param>
+    /// <param name="options">Optional configuration options.</param>
+    /// <param name="cancellationToken">A token used to cancel the open operation.</param>
+    /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the specified database.</returns>
+    public static async ValueTask<AccessWriter> OpenAsync(string path, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(path, nameof(path));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"Database file not found: {path}", path);
+        }
+
+        options ??= new AccessWriterOptions();
+        await VerifyPasswordOnOpenAsync(path, options, cancellationToken).ConfigureAwait(false);
+
+        FileStream fs = CreateStream(path);
+        try
+        {
+            byte[] hdr = await ReadHeaderAsync(fs, cancellationToken).ConfigureAwait(false);
+            return new AccessWriter(
+                path,
+                fs,
+                hdr,
+                options.Password,
+                options.UseLockFile,
+                options.RespectExistingLockFile);
+        }
+        catch
+        {
+            await fs.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     /// <inheritdoc/>
@@ -369,6 +421,24 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         base.Dispose(disposing);
     }
 
+    /// <inheritdoc/>
+    protected override async ValueTask DisposeAsyncCore()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (_useLockFile)
+        {
+            DeleteLockFile();
+        }
+
+        _password?.Dispose();
+
+        await base.DisposeAsyncCore().ConfigureAwait(false);
+    }
+
     private protected override List<CatalogEntry> GetUserTables()
     {
         if (_catalogCache != null)
@@ -599,6 +669,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return buffer;
     }
 
+    private static FileStream CreateStream(string path)
+    {
+        return new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.Asynchronous | FileOptions.RandomAccess);
+    }
+
     private static void VerifyPasswordOnOpen(string path, AccessWriterOptions options)
     {
         var readerOptions = new AccessReaderOptions
@@ -612,6 +687,28 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         try
         {
             using var reader = AccessReader.Open(path, readerOptions);
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message.Contains("AccessReaderOptions.Password", StringComparison.Ordinal))
+        {
+            throw new UnauthorizedAccessException(
+                ex.Message.Replace("AccessReaderOptions.Password", "AccessWriterOptions.Password", StringComparison.Ordinal),
+                ex);
+        }
+    }
+
+    private static async ValueTask VerifyPasswordOnOpenAsync(string path, AccessWriterOptions options, CancellationToken cancellationToken)
+    {
+        var readerOptions = new AccessReaderOptions
+        {
+            FileShare = FileShare.ReadWrite,
+            ValidateOnOpen = false,
+            UseLockFile = false,
+            Password = options.Password,
+        };
+
+        try
+        {
+            using var reader = await AccessReader.OpenAsync(path, readerOptions, cancellationToken).ConfigureAwait(false);
         }
         catch (UnauthorizedAccessException ex) when (ex.Message.Contains("AccessReaderOptions.Password", StringComparison.Ordinal))
         {

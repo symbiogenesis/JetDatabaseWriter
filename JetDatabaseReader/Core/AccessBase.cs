@@ -105,21 +105,19 @@ public abstract class AccessBase : IAccessBase
     /// </summary>
     /// <param name="fs">An open <see cref="FileStream"/> for the database file.</param>
     private protected AccessBase(FileStream fs)
+        : this(fs, ReadHeader(fs))
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AccessBase"/> class
+    /// from a pre-read database file header.
+    /// </summary>
+    /// <param name="fs">An open <see cref="FileStream"/> for the database file.</param>
+    /// <param name="hdr">Header bytes read from page 0.</param>
+    private protected AccessBase(FileStream fs, byte[] hdr)
     {
         _fs = fs;
-
-        // Read enough of the database definition page (page 0)
-        var hdr = new byte[0x80];
-        _ioGate.Wait();
-        try
-        {
-            _ = _fs.Seek(0, SeekOrigin.Begin);
-            _ = _fs.Read(hdr, 0, hdr.Length);
-        }
-        finally
-        {
-            _ = _ioGate.Release();
-        }
 
         // Offset 0x14: 0 = Jet3, ≥ 1 = Jet4+
         byte ver = hdr[0x14];
@@ -240,6 +238,18 @@ public abstract class AccessBase : IAccessBase
         GC.SuppressFinalize(this);
     }
 
+    /// <inheritdoc/>
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        await DisposeAsyncCore().ConfigureAwait(false);
+        GC.SuppressFinalize(this);
+    }
+
     /// <summary>
     /// Releases resources used by this instance.
     /// </summary>
@@ -251,13 +261,82 @@ public abstract class AccessBase : IAccessBase
             return;
         }
 
+        _disposed = true;
+
         if (disposing)
         {
-            _fs?.Dispose();
+            _fs.Dispose();
             _ioGate.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously releases resources used by this instance.
+    /// </summary>
+    /// <returns>A task representing the asynchronous dispose operation.</returns>
+    protected virtual async ValueTask DisposeAsyncCore()
+    {
+        if (_disposed)
+        {
+            return;
         }
 
         _disposed = true;
+        await _fs.DisposeAsync().ConfigureAwait(false);
+        _ioGate.Dispose();
+    }
+
+    /// <summary>
+    /// Reads the fixed-size JET header (first 0x80 bytes) from page 0.
+    /// </summary>
+    /// <param name="fs">An open file stream positioned anywhere.</param>
+    /// <returns>A 0x80-byte header buffer.</returns>
+    private protected static byte[] ReadHeader(FileStream fs)
+    {
+        var hdr = new byte[0x80];
+        _ = fs.Seek(0, SeekOrigin.Begin);
+
+        int read = 0;
+        while (read < hdr.Length)
+        {
+            int got = fs.Read(hdr, read, hdr.Length - read);
+            if (got == 0)
+            {
+                break;
+            }
+
+            read += got;
+        }
+
+        return hdr;
+    }
+
+    /// <summary>
+    /// Asynchronously reads the fixed-size JET header (first 0x80 bytes) from page 0.
+    /// </summary>
+    /// <param name="fs">An open file stream positioned anywhere.</param>
+    /// <param name="cancellationToken">Token used to cancel the read operation.</param>
+    /// <returns>A 0x80-byte header buffer.</returns>
+    private protected static async ValueTask<byte[]> ReadHeaderAsync(FileStream fs, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var hdr = new byte[0x80];
+        _ = fs.Seek(0, SeekOrigin.Begin);
+
+        int read = 0;
+        while (read < hdr.Length)
+        {
+            int got = await fs.ReadAsync(hdr.AsMemory(read, hdr.Length - read), cancellationToken).ConfigureAwait(false);
+            if (got == 0)
+            {
+                break;
+            }
+
+            read += got;
+        }
+
+        return hdr;
     }
 
     // ── Static helpers ────────────────────────────────────────────────

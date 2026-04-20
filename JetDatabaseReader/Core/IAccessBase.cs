@@ -5,6 +5,6 @@ using System;
 /// <summary>
 /// Base interface for Access database readers and writers.
 /// </summary>
-public interface IAccessBase : IDisposable
+public interface IAccessBase : IDisposable, IAsyncDisposable
 {
 }

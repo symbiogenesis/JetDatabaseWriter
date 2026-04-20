@@ -81,8 +81,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// </summary>
     /// <param name="path">The path to the Access database file.</param>
     /// <param name="options">Options for configuring the AccessReader.</param>
-    private AccessReader(string path, AccessReaderOptions options)
-        : base(new FileStream(path, FileMode.Open, options.FileAccess, options.FileShare, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan))
+    /// <param name="fs">An open stream for the database file.</param>
+    /// <param name="hdr">Header bytes read from page 0.</param>
+    private AccessReader(string path, AccessReaderOptions options, FileStream fs, byte[] hdr)
+        : base(fs, hdr)
     {
         Guard.NotNullOrEmpty(path, nameof(path));
         Guard.NotNull(options, nameof(options));
@@ -102,9 +104,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // ACCDB format (ver >= 2, Access 2007+) has completely different header semantics
         // at this offset; applying the Jet4 check to ACCDB files produces false positives.
         // Truly encrypted ACCDB files are detected later when the catalog page is unreadable.
-        _ = _fs.Seek(0, SeekOrigin.Begin);
-        var hdr = new byte[0x80];
-        _ = _fs.Read(hdr, 0, hdr.Length);
         byte ver = hdr[0x14];
 
         if (_jet4 && ver == 1 && hdr.Length > 0x62)
@@ -239,8 +238,48 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         options ??= new AccessReaderOptions();
+        FileStream fs = CreateStream(path, options);
+        try
+        {
+            byte[] hdr = ReadHeader(fs);
+            return new AccessReader(path, options, fs, hdr);
+        }
+        catch
+        {
+            fs.Dispose();
+            throw;
+        }
+    }
 
-        return new AccessReader(path, options);
+    /// <summary>
+    /// Asynchronously opens a JET database file and returns a new <see cref="AccessReader"/> instance.
+    /// </summary>
+    /// <param name="path">Path to the .mdb or .accdb file.</param>
+    /// <param name="options">Optional configuration options.</param>
+    /// <param name="cancellationToken">A token used to cancel the open operation.</param>
+    /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessReader"/> for the specified database.</returns>
+    public static async ValueTask<AccessReader> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(path, nameof(path));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"Database file not found: {path}", path);
+        }
+
+        options ??= new AccessReaderOptions();
+        FileStream fs = CreateStream(path, options);
+        try
+        {
+            byte[] hdr = await ReadHeaderAsync(fs, cancellationToken).ConfigureAwait(false);
+            return new AccessReader(path, options, fs, hdr);
+        }
+        catch
+        {
+            await fs.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     /// <summary>
@@ -1191,6 +1230,40 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
+    /// <inheritdoc/>
+    protected override async ValueTask DisposeAsyncCore()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            _linkedSourceOpenOptions.Password?.Dispose();
+
+            if (_useLockFile)
+            {
+                DeleteLockFile();
+            }
+
+            lock (_cacheLock)
+            {
+                _pageCache?.Clear(ReturnPage);
+                _pageCache = null;
+            }
+
+            lock (_catalogLock)
+            {
+                _catalogCache?.Clear();
+            }
+        }
+        finally
+        {
+            await base.DisposeAsyncCore().ConfigureAwait(false);
+        }
+    }
+
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
     private protected override List<CatalogEntry> GetUserTables()
     {
@@ -1339,6 +1412,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private static string SafeGet(List<string> row, int idx) =>
         (idx >= 0 && idx < row.Count) ? row[idx] : string.Empty;
+
+    private static FileStream CreateStream(string path, AccessReaderOptions options)
+    {
+        return new FileStream(path, FileMode.Open, options.FileAccess, options.FileShare, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+    }
 
     /// <summary>
     /// Decodes the stored Jet4 password from the database header.

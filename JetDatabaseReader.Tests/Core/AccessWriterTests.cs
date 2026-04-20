@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
@@ -48,6 +50,52 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task OpenAsync_WithValidPath_ReturnsNonNullWriter(string path)
+    {
+        string temp = CopyToTemp(path);
+
+        using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(writer);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task OpenAsync_ReturnedWriter_ImplementsIAsyncDisposable(string path)
+    {
+        string temp = CopyToTemp(path);
+
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+
+        Assert.IsAssignableFrom<IAsyncDisposable>(writer);
+    }
+
+    [Fact]
+    public async Task OpenAsync_WithMissingFile_ThrowsFileNotFoundException()
+    {
+        await Assert.ThrowsAsync<FileNotFoundException>(() =>
+            AccessWriter.OpenAsync(@"C:\nonexistent\fake.mdb", cancellationToken: TestContext.Current.CancellationToken).AsTask());
+    }
+
+    [Fact]
+    public async Task OpenAsync_WithNullPath_ThrowsArgumentException()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            AccessWriter.OpenAsync(null!, cancellationToken: TestContext.Current.CancellationToken).AsTask());
+    }
+
+    [Fact]
+    public async Task OpenAsync_WhenCancelled_ThrowsOperationCanceledException()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            AccessWriter.OpenAsync(@"C:\cancel\me.mdb", cancellationToken: cts.Token).AsTask());
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void Dispose_CalledTwice_DoesNotThrow(string path)
     {
         string temp = CopyToTemp(path);
@@ -57,6 +105,31 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         var ex = Record.Exception(() => writer.Dispose());
 
         Assert.Null(ex);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task DisposeAsync_CalledTwice_DoesNotThrow(string path)
+    {
+        string temp = CopyToTemp(path);
+        var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+
+        await writer.DisposeAsync();
+        Exception? ex = await Record.ExceptionAsync(() => writer.DisposeAsync().AsTask());
+
+        Assert.Null(ex);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task InsertRow_AfterDisposeAsync_ThrowsObjectDisposedException(string path)
+    {
+        string temp = CopyToTemp(path);
+        var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+
+        await writer.DisposeAsync();
+
+        Assert.Throws<ObjectDisposedException>(() => writer.InsertRow("AnyTable", new object[] { 1 }));
     }
 
     // ── InsertRow ─────────────────────────────────────────────────────
@@ -1683,6 +1756,10 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     /// <summary>Opens a writer with lockfile disabled (lockfile creation is not yet implemented).</summary>
     private static AccessWriter OpenWriter(string path) =>
         AccessWriter.Open(path, new AccessWriterOptions { UseLockFile = false });
+
+    /// <summary>Opens a writer asynchronously with lockfile disabled (lockfile creation is not yet implemented).</summary>
+    private static ValueTask<AccessWriter> OpenWriterAsync(string path, CancellationToken cancellationToken = default) =>
+        AccessWriter.OpenAsync(path, new AccessWriterOptions { UseLockFile = false }, cancellationToken);
 
     /// <summary>Opens a reader with lockfile disabled (lockfile creation is not yet implemented).</summary>
     private static AccessReader OpenReader(string path) =>

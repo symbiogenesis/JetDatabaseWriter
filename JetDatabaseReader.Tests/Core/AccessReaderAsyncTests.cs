@@ -1,7 +1,10 @@
 namespace JetDatabaseReader.Tests;
 
+using System;
 using System.Collections.Generic;
 using System.Data;
+using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -15,6 +18,78 @@ using Xunit;
 [Collection<ReadOnlyDatabaseFixture>]
 public class AccessReaderAsyncTests(DatabaseCache db)
 {
+    // ── OpenAsync ─────────────────────────────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.AllExisting), MemberType = typeof(TestDatabases))]
+    public async Task OpenAsync_WhenFileExists_IsNotPasswordProtected(string path)
+    {
+        using var reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(reader);
+    }
+
+    [Fact]
+    public async Task OpenAsync_WhenFileNotFound_ThrowsFileNotFoundException()
+    {
+        await Assert.ThrowsAsync<FileNotFoundException>(() =>
+            AccessReader.OpenAsync(@"C:\no\such\file.mdb", cancellationToken: TestContext.Current.CancellationToken).AsTask());
+    }
+
+    [Fact]
+    public async Task OpenAsync_WhenCancelled_ThrowsOperationCanceledException()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            AccessReader.OpenAsync(@"C:\cancel\me.mdb", cancellationToken: cts.Token).AsTask());
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task OpenAsync_ReturnedReader_ImplementsIAsyncDisposable(string path)
+    {
+        await using var reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken);
+
+        Assert.IsAssignableFrom<IAsyncDisposable>(reader);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task DisposeAsync_CalledTwice_DoesNotThrow(string path)
+    {
+        var reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken);
+
+        await reader.DisposeAsync();
+        Exception? ex = await Record.ExceptionAsync(() => reader.DisposeAsync().AsTask());
+
+        Assert.Null(ex);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task ListTables_AfterDisposeAsync_ThrowsObjectDisposedException(string path)
+    {
+        var reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken);
+
+        await reader.DisposeAsync();
+
+        Assert.Throws<ObjectDisposedException>(() => reader.ListTables());
+    }
+
     // ── ListTablesAsync ───────────────────────────────────────────────
 
     [Theory]
