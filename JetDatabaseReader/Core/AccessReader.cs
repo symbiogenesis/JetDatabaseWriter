@@ -802,11 +802,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
             _ = dt.Columns.Add(col.Name, TypeCodeToClrType(col.Type));
         }
 
+        // Preload complex column data for tables that have complex (attachment) columns.
+        var complexData = BuildComplexColumnData(tableName, td.Columns);
+
         foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
         {
             foreach (List<string> row in EnumerateRows(page, td))
             {
-                _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns, tableName, BuildComplexColumnData(tableName, td.Columns)));
+                _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
             }
 
             progress?.Report(dt.Rows.Count);
