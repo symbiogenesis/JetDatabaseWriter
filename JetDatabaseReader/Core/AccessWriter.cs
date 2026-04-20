@@ -66,7 +66,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         options ??= new AccessWriterOptions();
         VerifyPasswordOnOpen(path, options);
 
-        var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+        var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.Asynchronous | FileOptions.RandomAccess);
         return new AccessWriter(
             path,
             fs,

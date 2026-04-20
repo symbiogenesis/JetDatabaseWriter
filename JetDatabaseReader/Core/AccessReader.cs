@@ -82,7 +82,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="path">The path to the Access database file.</param>
     /// <param name="options">Options for configuring the AccessReader.</param>
     private AccessReader(string path, AccessReaderOptions options)
-        : base(new FileStream(path, FileMode.Open, options.FileAccess, options.FileShare))
+        : base(new FileStream(path, FileMode.Open, options.FileAccess, options.FileShare, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan))
     {
         Guard.NotNullOrEmpty(path, nameof(path));
         Guard.NotNull(options, nameof(options));
@@ -827,9 +827,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
     /// <returns>A list of user table names.</returns>
-    public Task<List<string>> ListTablesAsync()
+    public async ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default)
     {
-        return Task.Run(() => ListTables());
+        ThrowIfDisposed();
+        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        return tables.ConvertAll(e => e.Name);
     }
 
     /// <summary>
@@ -838,10 +840,73 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
+    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
-    public Task<DataTable?> ReadTableAsync(string? tableName = null, IProgress<int>? progress = null)
+    public async ValueTask<DataTable?> ReadTableAsync(string? tableName = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
     {
-        return Task.Run(() => ReadTable(tableName, progress));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrEmpty(tableName))
+        {
+            List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+            if (tables.Count == 0)
+            {
+                return null;
+            }
+
+            tableName = tables[0].Name;
+        }
+
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            LinkedTableInfo? link = await FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            if (link != null)
+            {
+                using var source = OpenLinkedSource(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator);
+                return await source.ReadTableAsync(link.ForeignName, progress, cancellationToken).ConfigureAwait(false);
+            }
+
+            return null;
+        }
+
+        var (entry, td) = resolved.Value;
+        var dt = new DataTable(tableName);
+        foreach (ColumnInfo col in td.Columns)
+        {
+            _ = dt.Columns.Add(col.Name, TypeCodeToClrType(col.Type));
+        }
+
+        Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
+        long total = _fs.Length / _pgSz;
+
+        for (long p = 3; p < total; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01)
+            {
+                continue;
+            }
+
+            long owner = (long)Ri32(page, _dpTDefOff);
+            if (owner != entry.TDefPage)
+            {
+                continue;
+            }
+
+            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
+            foreach (List<string> row in rows)
+            {
+                _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
+            }
+
+            progress?.Report(dt.Rows.Count);
+        }
+
+        return dt;
     }
 
     /// <summary>
@@ -850,17 +915,83 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="maxRows">Maximum number of rows to read.</param>
+    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="TableResult"/> containing headers, typed rows, and schema.</returns>
-    public Task<TableResult> ReadTableAsync(string tableName, int maxRows)
+    public async ValueTask<TableResult> ReadTableAsync(string tableName, int maxRows, CancellationToken cancellationToken = default)
     {
-        return Task.Run(() => ReadTable(tableName, maxRows));
+        ThrowIfDisposed();
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            LinkedTableInfo? link = await FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            if (link != null)
+            {
+                using var source = OpenLinkedSource(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator);
+                return await source.ReadTableAsync(link.ForeignName, maxRows, cancellationToken).ConfigureAwait(false);
+            }
+
+            return new TableResult
+            {
+                Headers = new List<string>(),
+                Rows = new List<object[]>(),
+                Schema = new List<TableColumn>(),
+            };
+        }
+
+        var (entry, td) = resolved.Value;
+        var headers = td.Columns.ConvertAll(c => c.Name);
+        var schema = BuildSchema(td.Columns);
+        var typedRows = new List<object[]>();
+        Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
+        long total = _fs.Length / _pgSz;
+
+        for (long p = 3; p < total; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01)
+            {
+                continue;
+            }
+
+            long owner = (long)Ri32(page, _dpTDefOff);
+            if (owner != entry.TDefPage)
+            {
+                continue;
+            }
+
+            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
+            foreach (List<string> row in rows)
+            {
+                typedRows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
+                if (typedRows.Count >= maxRows)
+                {
+                    return new TableResult { Headers = headers, Rows = typedRows, Schema = schema, TableName = tableName };
+                }
+            }
+        }
+
+        return new TableResult { Headers = headers, Rows = typedRows, Schema = schema, TableName = tableName };
     }
 
     /// <inheritdoc/>
-    public Task<List<T>> ReadTableAsync<T>(string tableName, int maxRows)
+    public async ValueTask<List<T>> ReadTableAsync<T>(string tableName, int maxRows, CancellationToken cancellationToken = default)
         where T : class, new()
     {
-        return Task.Run(() => ReadTable<T>(tableName, maxRows));
+        TableResult result = await ReadTableAsync(tableName, maxRows, cancellationToken).ConfigureAwait(false);
+        var index = RowMapper<T>.BuildIndex(result.Headers);
+        var items = new List<T>(result.Rows.Count);
+
+        foreach (IReadOnlyList<object?> row in result.Rows)
+        {
+            items.Add(RowMapper<T>.Map(row, index));
+        }
+
+        return items;
     }
 
     /// <summary>
@@ -869,19 +1000,100 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="maxRows">Maximum number of rows to read.</param>
+    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="StringTableResult"/> containing headers, string rows, and schema.</returns>
-    public Task<StringTableResult> ReadTableAsStringsAsync(string tableName, int maxRows)
+    public async ValueTask<StringTableResult> ReadTableAsStringsAsync(string tableName, int maxRows, CancellationToken cancellationToken = default)
     {
-        return Task.Run(() => ReadTableAsStrings(tableName, maxRows));
+        ThrowIfDisposed();
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            return new StringTableResult
+            {
+                Headers = new List<string>(),
+                Rows = new List<List<string>>(),
+                Schema = new List<TableColumn>(),
+            };
+        }
+
+        var (entry, td) = resolved.Value;
+        var headers = td.Columns.ConvertAll(c => c.Name);
+        var schema = BuildSchema(td.Columns);
+        var rows = new List<List<string>>();
+        long total = _fs.Length / _pgSz;
+
+        for (long p = 3; p < total; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01)
+            {
+                continue;
+            }
+
+            long owner = (long)Ri32(page, _dpTDefOff);
+            if (owner != entry.TDefPage)
+            {
+                continue;
+            }
+
+            List<List<string>> pageRows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
+            foreach (List<string> row in pageRows)
+            {
+                rows.Add(row);
+                if (rows.Count >= maxRows)
+                {
+                    return new StringTableResult { Headers = headers, Rows = rows, Schema = schema, TableName = tableName };
+                }
+            }
+        }
+
+        return new StringTableResult { Headers = headers, Rows = rows, Schema = schema, TableName = tableName };
     }
 
     /// <summary>
     /// Returns statistical information about the database asynchronously.
     /// </summary>
     /// <returns>A <see cref="DatabaseStatistics"/> object containing various metrics about the database.</returns>
-    public Task<DatabaseStatistics> GetStatisticsAsync()
+    public async ValueTask<DatabaseStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
     {
-        return Task.Run(() => GetStatistics());
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        var tableRowCounts = new Dictionary<string, long>();
+        long totalRows = 0;
+
+        foreach (CatalogEntry table in tables)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TableDef? td = await ReadTableDefAsync(table.TDefPage, cancellationToken).ConfigureAwait(false);
+            if (td != null)
+            {
+                tableRowCounts[table.Name] = td.RowCount;
+                totalRows += td.RowCount;
+            }
+        }
+
+        long totalAccess = _cacheHits + _cacheMisses;
+        int pageCacheHitRate = totalAccess > 0 ? (int)(_cacheHits * 100 / totalAccess) : 0;
+
+        return new DatabaseStatistics
+        {
+            TotalPages = _fs.Length / _pgSz,
+            DatabaseSizeBytes = _fs.Length,
+            TableCount = tables.Count,
+            TotalRows = totalRows,
+            TableRowCounts = tableRowCounts,
+            PageCacheHitRate = pageCacheHitRate,
+            Version = _jet4 ? "Jet4/ACE" : "Jet3",
+            PageSize = _pgSz,
+            CodePage = _codePage,
+        };
     }
 
     /// <summary>
@@ -889,10 +1101,28 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Each table's columns use their native CLR types (int, DateTime, decimal, etc.).
     /// </summary>
     /// <param name="progress">Optional progress reporter for table names.</param>
+    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A dictionary mapping table names to their corresponding DataTables.</returns>
-    public Task<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<string>? progress = null)
+    public async ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
-        return Task.Run(() => ReadAllTables(progress));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
+        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+
+        foreach (CatalogEntry table in tables)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report($"Reading {table.Name}...");
+            DataTable? dt = await ReadTableAsync(table.Name, progress: null, cancellationToken).ConfigureAwait(false);
+            if (dt != null)
+            {
+                result[table.Name] = dt;
+            }
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -900,10 +1130,28 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Use this for compatibility scenarios.
     /// </summary>
     /// <param name="progress">Optional progress reporter for table names.</param>
+    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A dictionary mapping table names to their corresponding DataTables with all columns as strings.</returns>
-    public Task<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<string>? progress = null)
+    public async ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
-        return Task.Run(() => ReadAllTablesAsStrings(progress));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
+        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+
+        foreach (CatalogEntry table in tables)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report($"Reading {table.Name}...");
+            DataTable? dt = await ReadTableAsStringDataTableAsync(table.Name, null, cancellationToken).ConfigureAwait(false);
+            if (dt != null)
+            {
+                result[table.Name] = dt;
+            }
+        }
+
+        return result;
     }
 
     /// <inheritdoc/>
@@ -943,7 +1191,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-        /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
+    /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
     private protected override List<CatalogEntry> GetUserTables()
     {
         if (_catalogCache != null)
@@ -1630,6 +1878,193 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return 0;
     }
 
+    private async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
+    {
+        if (_catalogCache != null)
+        {
+            return _catalogCache;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var diag = new System.Text.StringBuilder();
+        _ = diag.AppendLine($"JET: {(_jet4 ? "Jet4/ACE" : "Jet3")}  PageSize: {_pgSz}  TotalPages: {_fs.Length / _pgSz}");
+
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (msys == null)
+        {
+            _ = diag.AppendLine("ERROR: Page 2 is not a valid TDEF page (null returned).");
+            LastDiagnostics = diag.ToString();
+            lock (_catalogLock)
+            {
+                _catalogCache ??= [];
+                return _catalogCache;
+            }
+        }
+
+        _ = diag.AppendLine($"MSysObjects cols ({msys.Columns.Count}): " +
+            string.Join(", ", msys.Columns.ConvertAll(c => $"{c.Name}[0x{c.Type:X2}]")));
+
+        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
+        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
+        int idxFlags = msys.Columns.FindIndex(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
+
+        if (idxName < 0 || idxType < 0)
+        {
+            _ = diag.AppendLine("ERROR: Required catalog columns not found. Column name mismatch?");
+            LastDiagnostics = diag.ToString();
+            lock (_catalogLock)
+            {
+                _catalogCache ??= [];
+                return _catalogCache;
+            }
+        }
+
+        var result = new List<CatalogEntry>();
+        long totPages = _fs.Length / _pgSz;
+        int catPages = 0;
+        int allRows = 0;
+
+        for (long p = 3; p < totPages; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01)
+            {
+                continue;
+            }
+
+            if (Ri32(page, _dpTDefOff) != 2)
+            {
+                continue;
+            }
+
+            catPages++;
+
+            List<List<string>> rows = await EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false);
+            foreach (List<string> row in rows)
+            {
+                allRows++;
+                string typeStr = SafeGet(row, idxType);
+                string nameStr = SafeGet(row, idxName);
+                string flagsStr = SafeGet(row, idxFlags);
+
+                if (!int.TryParse(typeStr, out int objType) || objType != OBJ_TABLE)
+                {
+                    continue;
+                }
+
+                if (!long.TryParse(flagsStr, out long flagsLong))
+                {
+                    flagsLong = 0;
+                }
+
+                if ((unchecked((uint)flagsLong) & SYSTABLE_MASK) != 0)
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrEmpty(nameStr))
+                {
+                    continue;
+                }
+
+                long tdefPage = 0;
+                if (idxId >= 0)
+                {
+                    if (!long.TryParse(SafeGet(row, idxId), out long id))
+                    {
+                        id = 0;
+                    }
+
+                    tdefPage = id & 0x00FFFFFFL;
+                }
+
+                if (tdefPage > 0)
+                {
+                    result.Add(new CatalogEntry(nameStr, tdefPage));
+                }
+            }
+        }
+
+        _ = diag.AppendLine($"Catalog pages: {catPages}  Total rows scanned: {allRows}  User tables: {result.Count}");
+        if (DiagnosticsEnabled)
+        {
+            foreach (CatalogEntry e in result)
+            {
+                _ = diag.AppendLine($"  [{e.Name}] TDEF page {e.TDefPage}");
+            }
+        }
+
+        LastDiagnostics = diag.ToString();
+
+        lock (_catalogLock)
+        {
+            _catalogCache ??= result;
+            return _catalogCache;
+        }
+    }
+
+    private async ValueTask<DataTable?> ReadTableAsStringDataTableAsync(string? tableName = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrEmpty(tableName))
+        {
+            List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+            if (tables.Count == 0)
+            {
+                return null;
+            }
+
+            tableName = tables[0].Name;
+        }
+
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            return null;
+        }
+
+        var (entry, td) = resolved.Value;
+        var dt = new DataTable(tableName);
+        foreach (ColumnInfo col in td.Columns)
+        {
+            _ = dt.Columns.Add(col.Name, typeof(string));
+        }
+
+        long total = _fs.Length / _pgSz;
+        for (long p = 3; p < total; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01)
+            {
+                continue;
+            }
+
+            long owner = (long)Ri32(page, _dpTDefOff);
+            if (owner != entry.TDefPage)
+            {
+                continue;
+            }
+
+            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
+            foreach (List<string> row in rows)
+            {
+                _ = dt.Rows.Add(row.ToArray());
+            }
+
+            progress?.Report(dt.Rows.Count);
+        }
+
+        return dt;
+    }
+
     /// <summary>Returns linked table entries from the MSysObjects catalog.</summary>
     private List<LinkedTableInfo> GetLinkedTables()
     {
@@ -1664,6 +2099,83 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
 
             foreach (List<string> row in EnumerateRows(page, msys))
+            {
+                string typeStr = SafeGet(row, idxType);
+                if (!int.TryParse(typeStr, out int objType))
+                {
+                    continue;
+                }
+
+                if (objType != OBJ_LINKED_TABLE && objType != OBJ_LINKED_ODBC)
+                {
+                    continue;
+                }
+
+                string nameStr = SafeGet(row, idxName);
+                if (string.IsNullOrEmpty(nameStr))
+                {
+                    continue;
+                }
+
+                string flagsStr = SafeGet(row, idxFlags);
+                if (long.TryParse(flagsStr, out long flagsLong) &&
+                    (unchecked((uint)flagsLong) & SYSTABLE_MASK) != 0)
+                {
+                    continue;
+                }
+
+                bool isOdbc = objType == OBJ_LINKED_ODBC;
+                result.Add(new LinkedTableInfo
+                {
+                    Name = nameStr,
+                    ForeignName = SafeGet(row, idxForeignName),
+                    SourceDatabasePath = isOdbc ? null : SafeGet(row, idxDatabase),
+                    ConnectionString = isOdbc ? SafeGet(row, idxConnect) : null,
+                    IsOdbc = isOdbc,
+                });
+            }
+        }
+
+        return result;
+    }
+
+    private async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (msys == null)
+        {
+            return [];
+        }
+
+        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
+        int idxFlags = msys.Columns.FindIndex(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
+        int idxDatabase = msys.Columns.FindIndex(c => string.Equals(c.Name, "Database", StringComparison.OrdinalIgnoreCase));
+        int idxForeignName = msys.Columns.FindIndex(c => string.Equals(c.Name, "ForeignName", StringComparison.OrdinalIgnoreCase));
+        int idxConnect = msys.Columns.FindIndex(c => string.Equals(c.Name, "Connect", StringComparison.OrdinalIgnoreCase));
+
+        if (idxName < 0 || idxType < 0)
+        {
+            return [];
+        }
+
+        var result = new List<LinkedTableInfo>();
+        long totPages = _fs.Length / _pgSz;
+
+        for (long p = 3; p < totPages; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != 2)
+            {
+                continue;
+            }
+
+            List<List<string>> rows = await EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false);
+            foreach (List<string> row in rows)
             {
                 string typeStr = SafeGet(row, idxType);
                 if (!int.TryParse(typeStr, out int objType))
@@ -1758,12 +2270,61 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return page;
     }
 
+    private async ValueTask<byte[]> ReadPageCachedAsync(long n, CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (PageCacheSize < 0)
+        {
+            return await ReadPageAsync(n, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (_pageCache == null && PageCacheSize > 0)
+        {
+            lock (_cacheLock)
+            {
+                if (_pageCache == null)
+                {
+                    _pageCache = new LruCache<long, byte[]>(PageCacheSize);
+                }
+            }
+        }
+
+        if (_pageCache != null && _pageCache.TryGetValue(n, out byte[] cached))
+        {
+            _ = Interlocked.Increment(ref _cacheHits);
+            return cached;
+        }
+
+        _ = Interlocked.Increment(ref _cacheMisses);
+        byte[] page = await ReadPageAsync(n, cancellationToken).ConfigureAwait(false);
+        _pageCache?.Add(n, page);
+        return page;
+    }
+
     private (CatalogEntry Entry, TableDef Td)? ResolveTable(string tableName)
     {
         CatalogEntry entry = GetCatalogEntry(tableName);
         if (entry != null)
         {
             TableDef? td = ReadTableDef(entry.TDefPage);
+            if (td != null && td.Columns.Count > 0)
+            {
+                return (entry, td);
+            }
+        }
+
+        return null;
+    }
+
+    private async ValueTask<(CatalogEntry Entry, TableDef Td)?> ResolveTableAsync(string tableName, CancellationToken cancellationToken)
+    {
+        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        CatalogEntry entry = tables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
+        if (entry != null)
+        {
+            TableDef? td = await ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
             if (td != null && td.Columns.Count > 0)
             {
                 return (entry, td);
@@ -1781,6 +2342,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         return GetLinkedTables().Find(l =>
             string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async ValueTask<LinkedTableInfo?> FindLinkedTableAsync(string tableName, CancellationToken cancellationToken)
+    {
+        List<LinkedTableInfo> links = await GetLinkedTablesAsync(cancellationToken).ConfigureAwait(false);
+        return links.Find(l => string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
     }
 
     private IEnumerable<object[]> StreamRowsCore(string tableName, IProgress<int> progress)
@@ -1861,6 +2428,28 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 yield return values;
             }
         }
+    }
+
+    private async ValueTask<List<List<string>>> EnumerateRowsAsync(byte[] page, TableDef td, CancellationToken cancellationToken)
+    {
+        var rows = new List<List<string>>();
+        foreach (RowBound rb in EnumerateLiveRowBounds(page))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (rb.RowSize < _numColsFldSz)
+            {
+                continue;
+            }
+
+            List<string>? values = await CrackRowAsync(page, rb.RowStart, rb.RowSize, td, cancellationToken).ConfigureAwait(false);
+            if (values != null)
+            {
+                rows.Add(values);
+            }
+        }
+
+        return rows;
     }
 
     /// <summary>Decodes a single row's bytes (within <paramref name="page"/>) into string values per column.</summary>
@@ -2021,6 +2610,139 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return result;
     }
 
+    private async ValueTask<List<string>?> CrackRowAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (rowSize < _numColsFldSz)
+        {
+            return null;
+        }
+
+        int numCols = _jet4 ? Ru16(page, rowStart) : page[rowStart];
+        if (numCols == 0)
+        {
+            return null;
+        }
+
+        if (td.HasDeletedColumns && numCols > td.Columns.Count)
+        {
+            throw new JetLimitationException(
+                $"Row has {numCols} columns but current schema has {td.Columns.Count} with deleted-column gaps. " +
+                "This row predates schema changes and data may be misaligned. " +
+                "Solution: Compact & Repair the database in Microsoft Access to rebuild all rows.");
+        }
+
+        int nullMaskSz = (numCols + 7) / 8;
+        int nullMaskPos = rowSize - nullMaskSz;
+        if (nullMaskPos < _numColsFldSz)
+        {
+            return null;
+        }
+
+        int varLenPos = nullMaskPos - _varLenFldSz;
+        if (varLenPos < _numColsFldSz)
+        {
+            return null;
+        }
+
+        int varLen = _jet4 ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
+        int jumpSz = _jet4 ? 0 : (rowSize / 256);
+
+        int varTableStart = varLenPos - jumpSz - (varLen * _varEntrySz);
+        int eodPos = varTableStart - _eodFldSz;
+        if (eodPos < _numColsFldSz)
+        {
+            return null;
+        }
+
+        int eod = _jet4 ? Ru16(page, rowStart + eodPos) : page[rowStart + eodPos];
+        var result = new List<string>(td.Columns.Count);
+
+        for (int i = 0; i < td.Columns.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            ColumnInfo col = td.Columns[i];
+            bool nullBit = false;
+            if (col.ColNum < numCols)
+            {
+                int mByte = nullMaskPos + (col.ColNum / 8);
+                int mBit = col.ColNum % 8;
+                if (mByte < rowSize)
+                {
+                    nullBit = (page[rowStart + mByte] & (1 << mBit)) != 0;
+                }
+            }
+
+            if (col.Type == T_BOOL)
+            {
+                result.Add(nullBit ? "True" : "False");
+                continue;
+            }
+
+            if (col.ColNum >= numCols || !nullBit)
+            {
+                result.Add(string.Empty);
+                continue;
+            }
+
+            if (col.IsFixed)
+            {
+                int start = _numColsFldSz + col.FixedOff;
+                int sz = FixedSize(col.Type, col.Size);
+                if (sz == 0 || start + sz > rowSize)
+                {
+                    result.Add(string.Empty);
+                    continue;
+                }
+
+                result.Add(ReadFixed(page, rowStart + start, col, sz));
+            }
+            else
+            {
+                if (col.VarIdx >= varLen)
+                {
+                    result.Add(string.Empty);
+                    continue;
+                }
+
+                int entryPos = varTableStart + ((varLen - 1 - col.VarIdx) * _varEntrySz);
+                if (entryPos < 0 || entryPos + _varEntrySz > rowSize)
+                {
+                    result.Add(string.Empty);
+                    continue;
+                }
+
+                int varOff = _jet4 ? Ru16(page, rowStart + entryPos) : page[rowStart + entryPos];
+
+                int varEnd;
+                if (col.VarIdx + 1 < varLen)
+                {
+                    int nextEntry = varTableStart + ((varLen - 2 - col.VarIdx) * _varEntrySz);
+                    varEnd = _jet4 ? Ru16(page, rowStart + nextEntry) : page[rowStart + nextEntry];
+                }
+                else
+                {
+                    varEnd = eod;
+                }
+
+                int dataStart = varOff;
+                int dataLen = varEnd - varOff;
+                if (dataLen < 0 || dataStart < 0 || dataStart + dataLen > rowSize)
+                {
+                    result.Add(string.Empty);
+                    continue;
+                }
+
+                string value = await ReadVarAsync(page, rowStart + dataStart, dataLen, col, cancellationToken).ConfigureAwait(false);
+                result.Add(value);
+            }
+        }
+
+        return result;
+    }
+
     private string ReadVar(byte[] row, int start, int len, ColumnInfo col)
     {
         if (len <= 0)
@@ -2058,6 +2780,73 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 // Fixed-size types that Access system tables may store in the variable area
                 // (FLAG_FIXED cleared). Read them the same way as ReadFixed.
+                case T_BYTE:
+                    return len >= 1 ? row[start].ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                case T_INT:
+                    return len >= 2 ? ((short)Ru16(row, start)).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                case T_LONG:
+                    return len >= 4 ? Ri32(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                case T_FLOAT:
+                    return len >= 4 ? BitConverter.ToSingle(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                case T_DOUBLE:
+                    return len >= 8 ? BitConverter.ToDouble(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                case T_DATETIME:
+                    return len >= 8 ? ReadFixed(row, start, col, 8) : string.Empty;
+                case T_MONEY:
+                    return len >= 8 ? ReadFixed(row, start, col, 8) : string.Empty;
+                case T_GUID:
+                    return len >= 16 ? ReadFixed(row, start, col, 16) : string.Empty;
+
+                default:
+                    return string.Empty;
+            }
+        }
+        catch (JetLimitationException)
+        {
+            throw;
+        }
+        catch (ArgumentException)
+        {
+            return string.Empty;
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private async ValueTask<string> ReadVarAsync(byte[] row, int start, int len, ColumnInfo col, CancellationToken cancellationToken)
+    {
+        if (len <= 0)
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            switch (col.Type)
+            {
+                case T_TEXT:
+                    return _jet4 ? DecodeJet4Text(row, start, len)
+                                 : _ansiEncoding.GetString(row, start, len);
+
+                case T_BINARY:
+                    return BitConverter.ToString(row, start, len);
+
+                case T_MEMO:
+                case T_OLE:
+                    return await ReadLongValueAsync(row, start, len, col.Type == T_OLE, cancellationToken).ConfigureAwait(false);
+
+                case T_COMPLEX:
+                case T_ATTACHMENT:
+                    if (len >= 4)
+                    {
+                        int complexId = Ri32(row, start);
+                        return $"__CX:{complexId}__";
+                    }
+
+                    return string.Empty;
+
                 case T_BYTE:
                     return len >= 1 ? row[start].ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
                 case T_INT:
@@ -2238,6 +3027,62 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return 0;
     }
 
+    private async ValueTask<long> FindSystemTablePageAsync(string name, CancellationToken cancellationToken)
+    {
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (msys == null)
+        {
+            return 0;
+        }
+
+        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
+        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
+
+        if (idxId < 0 || idxName < 0 || idxType < 0)
+        {
+            return 0;
+        }
+
+        long totPages = _fs.Length / _pgSz;
+        for (long p = 3; p < totPages; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != 2)
+            {
+                continue;
+            }
+
+            List<List<string>> rows = await EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false);
+            foreach (List<string> row in rows)
+            {
+                string nameStr = SafeGet(row, idxName);
+                if (!string.Equals(nameStr, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != 6))
+                {
+                    continue;
+                }
+
+                if (long.TryParse(SafeGet(row, idxId), out long id))
+                {
+                    long tdefPage = id & 0x00FFFFFFL;
+                    if (tdefPage > 0)
+                    {
+                        return tdefPage;
+                    }
+                }
+            }
+        }
+
+        return 0;
+    }
+
     /// <summary>
     /// Builds a preloaded map of complex column data for all complex columns in a table.
     /// Returns a dictionary: column ordinal → (parentId → attachment bytes).
@@ -2259,6 +3104,34 @@ public sealed class AccessReader : AccessBase, IAccessReader
             System.Diagnostics.Trace.WriteLine($"[BuildComplexColumnData] table={tableName} col[{i}]={col.Name} type=0x{col.Type:X2}");
             Dictionary<int, byte[]>? colData = LoadAttachmentData(tableName, col.Name);
             System.Diagnostics.Trace.WriteLine($"[BuildComplexColumnData] LoadAttachmentData result: {(colData == null ? "null" : $"{colData.Count} entries")}");
+            if (colData != null && colData.Count > 0)
+            {
+                result ??= new Dictionary<int, Dictionary<int, byte[]>>();
+                result[i] = colData;
+            }
+        }
+
+        return result;
+    }
+
+    private async ValueTask<Dictionary<int, Dictionary<int, byte[]>>?> BuildComplexColumnDataAsync(
+        string tableName,
+        List<ColumnInfo> columns,
+        CancellationToken cancellationToken)
+    {
+        Dictionary<int, Dictionary<int, byte[]>>? result = null;
+
+        for (int i = 0; i < columns.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            ColumnInfo col = columns[i];
+            if (col.Type != T_COMPLEX && col.Type != T_ATTACHMENT)
+            {
+                continue;
+            }
+
+            Dictionary<int, byte[]>? colData = await LoadAttachmentDataAsync(tableName, col.Name, cancellationToken).ConfigureAwait(false);
             if (colData != null && colData.Count > 0)
             {
                 result ??= new Dictionary<int, Dictionary<int, byte[]>>();
@@ -2346,6 +3219,96 @@ public sealed class AccessReader : AccessBase, IAccessReader
         catch (InvalidDataException)
         {
             // Best-effort: fall back to suffix search.
+        }
+
+        return 0;
+    }
+
+    private async ValueTask<long> GetComplexFlatTablePageAsync(string tableName, string columnName, CancellationToken cancellationToken)
+    {
+        try
+        {
+            long msysTdef = await FindSystemTablePageAsync("MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+            if (msysTdef <= 0)
+            {
+                return 0;
+            }
+
+            TableDef? td = await ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
+            if (td == null)
+            {
+                return 0;
+            }
+
+            int idxCol = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
+            int idxConceptualTable = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "ConceptualTableID", StringComparison.OrdinalIgnoreCase));
+            int idxFlatTable = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "FlatTableID", StringComparison.OrdinalIgnoreCase));
+
+            if (idxCol < 0 || idxFlatTable < 0)
+            {
+                return 0;
+            }
+
+            List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+            CatalogEntry entry = tables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
+            long targetTdefPage = entry?.TDefPage ?? 0;
+
+            long total = _fs.Length / _pgSz;
+            for (long p = 3; p < total; p++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+                if (page[0] != 0x01)
+                {
+                    continue;
+                }
+
+                if ((long)Ri32(page, _dpTDefOff) != msysTdef)
+                {
+                    continue;
+                }
+
+                List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
+                foreach (List<string> row in rows)
+                {
+                    string colName = SafeGet(row, idxCol);
+                    if (!string.Equals(colName, columnName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (idxConceptualTable >= 0 && targetTdefPage > 0)
+                    {
+                        string tableIdStr = SafeGet(row, idxConceptualTable);
+                        if (long.TryParse(tableIdStr, out long tableId))
+                        {
+                            long rowTdefPage = tableId & 0x00FFFFFFL;
+                            if (rowTdefPage != targetTdefPage)
+                            {
+                                continue;
+                            }
+                        }
+                    }
+
+                    string flatIdStr = SafeGet(row, idxFlatTable);
+                    if (long.TryParse(flatIdStr, out long flatId))
+                    {
+                        long flatTdef = flatId & 0x00FFFFFFL;
+                        if (flatTdef > 0)
+                        {
+                            return flatTdef;
+                        }
+                    }
+                }
+            }
+        }
+        catch (InvalidDataException)
+        {
+            return 0;
         }
 
         return 0;
@@ -2476,6 +3439,132 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
+    private async ValueTask<Dictionary<int, byte[]>?> LoadAttachmentDataAsync(string tableName, string columnName, CancellationToken cancellationToken)
+    {
+        try
+        {
+            long tdefPage = await GetComplexFlatTablePageAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
+
+            if (tdefPage <= 0)
+            {
+                string nameSuffix = $"_{columnName}";
+                tdefPage = await FindSystemTablePageBySuffixAsync(nameSuffix, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (tdefPage <= 0)
+            {
+                return null;
+            }
+
+            TableDef? td = await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+            if (td == null)
+            {
+                return null;
+            }
+
+            string fkColName = $"{tableName}_{columnName}";
+            int idxFk = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, fkColName, StringComparison.OrdinalIgnoreCase));
+
+            if (idxFk < 0)
+            {
+                idxFk = td.Columns.FindIndex(c =>
+                    c.Type == T_LONG && !c.Name.StartsWith("Idx", StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (idxFk < 0)
+            {
+                return null;
+            }
+
+            int idxFileName = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "FileName", StringComparison.OrdinalIgnoreCase));
+            int idxFileData = td.Columns.FindIndex(c =>
+                string.Equals(c.Name, "FileData", StringComparison.OrdinalIgnoreCase));
+
+            var result = new Dictionary<int, byte[]>();
+            long total = _fs.Length / _pgSz;
+
+            for (long p = 3; p < total; p++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+                if (page[0] != 0x01)
+                {
+                    continue;
+                }
+
+                if ((long)Ri32(page, _dpTDefOff) != tdefPage)
+                {
+                    continue;
+                }
+
+                List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
+                foreach (List<string> row in rows)
+                {
+                    string fkStr = SafeGet(row, idxFk);
+                    if (!int.TryParse(fkStr, out int parentId))
+                    {
+                        continue;
+                    }
+
+                    byte[] fileNameBytes = [];
+                    if (idxFileName >= 0)
+                    {
+                        string fileName = SafeGet(row, idxFileName);
+                        if (!string.IsNullOrEmpty(fileName))
+                        {
+                            fileNameBytes = Encoding.Unicode.GetBytes(fileName);
+                        }
+                    }
+
+                    byte[] fileDataBytes = [];
+                    if (idxFileData >= 0)
+                    {
+                        string fileDataStr = SafeGet(row, idxFileData);
+                        fileDataBytes = DecodeColumnBytes(fileDataStr ?? string.Empty, td.Columns[idxFileData].Type);
+
+                        if (fileDataBytes.Length > 1 && fileDataBytes[0] == 0x01)
+                        {
+                            fileDataBytes = DecompressAttachmentData(fileDataBytes, 1);
+                        }
+                        else if (fileDataBytes.Length > 1 && fileDataBytes[0] == 0x00)
+                        {
+                            fileDataBytes = fileDataBytes.AsSpan(1).ToArray();
+                        }
+                    }
+
+                    if (fileNameBytes.Length == 0 && fileDataBytes.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    var bytes = new byte[2 + fileNameBytes.Length + fileDataBytes.Length];
+                    bytes[0] = (byte)(fileNameBytes.Length & 0xFF);
+                    bytes[1] = (byte)((fileNameBytes.Length >> 8) & 0xFF);
+                    Buffer.BlockCopy(fileNameBytes, 0, bytes, 2, fileNameBytes.Length);
+                    Buffer.BlockCopy(fileDataBytes, 0, bytes, 2 + fileNameBytes.Length, fileDataBytes.Length);
+                    result[parentId] = bytes;
+                }
+            }
+
+            return result.Count > 0 ? result : null;
+        }
+        catch (InvalidDataException)
+        {
+            return null;
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     /// Finds the TDEF page for the first system table whose name ends with
     /// <paramref name="nameSuffix"/> (case-insensitive). Used to find
@@ -2516,6 +3605,62 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
 
                 // Accept user tables (type 1) and system/hidden tables (type 6).
+                if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != 6))
+                {
+                    continue;
+                }
+
+                if (long.TryParse(SafeGet(row, idxId), out long id))
+                {
+                    long tdefPage = id & 0x00FFFFFFL;
+                    if (tdefPage > 0)
+                    {
+                        return tdefPage;
+                    }
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    private async ValueTask<long> FindSystemTablePageBySuffixAsync(string nameSuffix, CancellationToken cancellationToken)
+    {
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (msys == null)
+        {
+            return 0;
+        }
+
+        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
+        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
+
+        if (idxId < 0 || idxName < 0 || idxType < 0)
+        {
+            return 0;
+        }
+
+        long totPages = _fs.Length / _pgSz;
+        for (long p = 3; p < totPages; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != 2)
+            {
+                continue;
+            }
+
+            List<List<string>> rows = await EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false);
+            foreach (List<string> row in rows)
+            {
+                string nameStr = SafeGet(row, idxName);
+                if (!nameStr.EndsWith(nameSuffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != 6))
                 {
                     continue;
@@ -2709,6 +3854,71 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
+    private async ValueTask<byte[]?> ReadLvalBytesAsync(uint lvalDp, int maxLen, CancellationToken cancellationToken)
+    {
+        try
+        {
+            int lvalPage = (int)(lvalDp >> 8);
+            int lvalRow = (int)(lvalDp & 0xFF);
+            if (lvalPage <= 0)
+            {
+                return null;
+            }
+
+            byte[] page = await ReadPageCachedAsync(lvalPage, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01)
+            {
+                return null;
+            }
+
+            int numRows = Ru16(page, _dpNumRows);
+            if (lvalRow >= numRows)
+            {
+                return null;
+            }
+
+            int rawOff = Ru16(page, _dpRowsStart + (lvalRow * 2));
+            if ((rawOff & 0xC000) != 0)
+            {
+                return null;
+            }
+
+            int rowStart = rawOff & 0x1FFF;
+            if (rowStart == 0 || rowStart >= _pgSz)
+            {
+                return null;
+            }
+
+            int rowEnd = _pgSz - 1;
+            for (int r = 0; r < numRows; r++)
+            {
+                int ofs = Ru16(page, _dpRowsStart + (r * 2)) & 0x1FFF;
+                if (ofs > rowStart && ofs < rowEnd)
+                {
+                    rowEnd = ofs - 1;
+                }
+            }
+
+            int rowSize = Math.Min(rowEnd - rowStart + 1, maxLen);
+            if (rowSize <= 0)
+            {
+                return null;
+            }
+
+            var data = new byte[rowSize];
+            Buffer.BlockCopy(page, rowStart, data, 0, rowSize);
+            return data;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     /// Reads multi-page LVAL chains (bitmask 0x00). Follows LVAL page links until
     /// the entire memo is reconstructed or maxLen is reached.
@@ -2835,6 +4045,125 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
+    private async ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var chunks = new List<byte[]>();
+            int totalLen = 0;
+            uint currentDp = firstLvalDp;
+            var seen = new HashSet<uint>();
+
+            while (currentDp != 0 && totalLen < maxLen && !seen.Contains(currentDp))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                _ = seen.Add(currentDp);
+
+                int lvalPage = (int)(currentDp >> 8);
+                int lvalRow = (int)(currentDp & 0xFF);
+                if (lvalPage <= 0)
+                {
+                    return LvalChainResult.Failure($"invalid page {lvalPage}");
+                }
+
+                byte[] page = await ReadPageCachedAsync(lvalPage, cancellationToken).ConfigureAwait(false);
+                if (page[0] != 0x01)
+                {
+                    return LvalChainResult.Failure($"page {lvalPage} not data page");
+                }
+
+                int numRows = Ru16(page, _dpNumRows);
+                if (lvalRow >= numRows)
+                {
+                    return LvalChainResult.Failure($"row {lvalRow} >= numRows {numRows}");
+                }
+
+                int rawOff = Ru16(page, _dpRowsStart + (lvalRow * 2));
+                if ((rawOff & 0xC000) != 0)
+                {
+                    return LvalChainResult.Failure("deleted/overflow row");
+                }
+
+                int rowStart = rawOff & 0x1FFF;
+                if (rowStart == 0 || rowStart >= _pgSz)
+                {
+                    return LvalChainResult.Failure($"invalid rowStart {rowStart}");
+                }
+
+                int rowEnd = _pgSz - 1;
+                for (int r = 0; r < numRows; r++)
+                {
+                    int ofs = Ru16(page, _dpRowsStart + (r * 2)) & 0x1FFF;
+                    if (ofs > rowStart && ofs < rowEnd)
+                    {
+                        rowEnd = ofs - 1;
+                    }
+                }
+
+                int rowSize = rowEnd - rowStart + 1;
+                if (rowSize < 8)
+                {
+                    return LvalChainResult.Failure($"rowSize {rowSize} < 8");
+                }
+
+                currentDp = Ru32(page, rowStart);
+                int dataLen = (int)Ru32(page, rowStart + 4);
+                int dataStart = rowStart + 8;
+                int availableData = Math.Min(dataLen, rowSize - 8);
+
+                if (availableData > 0 && dataStart + availableData <= _pgSz)
+                {
+                    var chunk = new byte[availableData];
+                    Buffer.BlockCopy(page, dataStart, chunk, 0, availableData);
+                    chunks.Add(chunk);
+                    totalLen += availableData;
+                }
+            }
+
+            if (chunks.Count == 0)
+            {
+                return LvalChainResult.Failure("no chunks read");
+            }
+
+            if (chunks.Count == 1)
+            {
+                return LvalChainResult.Success(chunks[0]);
+            }
+
+            int finalLen = Math.Min(totalLen, maxLen);
+            var result = new byte[finalLen];
+            int pos = 0;
+            foreach (byte[] chunk in chunks)
+            {
+                int copyLen = Math.Min(chunk.Length, finalLen - pos);
+                Buffer.BlockCopy(chunk, 0, result, pos, copyLen);
+                pos += copyLen;
+                if (pos >= finalLen)
+                {
+                    break;
+                }
+            }
+
+            return LvalChainResult.Success(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return LvalChainResult.Failure(ex.Message);
+        }
+        catch (IndexOutOfRangeException ex)
+        {
+            return LvalChainResult.Failure(ex.Message);
+        }
+        catch (OverflowException ex)
+        {
+            return LvalChainResult.Failure(ex.Message);
+        }
+        catch (IOException ex)
+        {
+            return LvalChainResult.Failure(ex.Message);
+        }
+    }
+
     private string ReadLongValue(byte[] row, int start, int len, bool isOle)
     {
         if (len < 12)
@@ -2893,6 +4222,77 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // Multi-page LVAL (0x00) — follow the chain
         uint chainDp = Ru32(row, start + 4);
         LvalChainResult chain = ReadLvalChain(chainDp, memoLen);
+
+        if (chain.Data != null)
+        {
+            if (isOle)
+            {
+                return TryDecodeOleObject(chain.Data, 0, chain.Data.Length)
+                    ?? "data:application/octet-stream;base64," + Convert.ToBase64String(chain.Data);
+            }
+
+            return _jet4 ? DecodeJet4Text(chain.Data, 0, chain.Data.Length)
+                         : _ansiEncoding.GetString(chain.Data);
+        }
+
+        return isOle ? $"(OLE chain error: {chain.Error})" : $"(memo chain error: {chain.Error})";
+    }
+
+    private async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
+    {
+        if (len < 12)
+        {
+            return isOle ? "(OLE)" : "(memo)";
+        }
+
+        byte bitmask = row[start + 3];
+        int memoLen = row[start] | (row[start + 1] << 8) | (row[start + 2] << 16);
+
+        if ((bitmask & 0x80) != 0)
+        {
+            int memoStart = start + 12;
+            if (memoStart + memoLen > row.Length)
+            {
+                memoLen = row.Length - memoStart;
+            }
+
+            if (memoLen <= 0)
+            {
+                return string.Empty;
+            }
+
+            if (isOle)
+            {
+                return TryDecodeOleObject(row, memoStart, memoLen)
+                    ?? "data:application/octet-stream;base64," + Convert.ToBase64String(row, memoStart, memoLen);
+            }
+
+            return _jet4 ? DecodeJet4Text(row, memoStart, memoLen)
+                         : _ansiEncoding.GetString(row, memoStart, memoLen);
+        }
+
+        if ((bitmask & 0x40) != 0)
+        {
+            uint lvalDp = Ru32(row, start + 4);
+            byte[]? lvalData = await ReadLvalBytesAsync(lvalDp, memoLen, cancellationToken).ConfigureAwait(false);
+
+            if (lvalData != null)
+            {
+                if (isOle)
+                {
+                    return TryDecodeOleObject(lvalData, 0, lvalData.Length)
+                        ?? "data:application/octet-stream;base64," + Convert.ToBase64String(lvalData);
+                }
+
+                return _jet4 ? DecodeJet4Text(lvalData, 0, lvalData.Length)
+                             : _ansiEncoding.GetString(lvalData);
+            }
+
+            return isOle ? "(OLE)" : "(memo on LVAL page)";
+        }
+
+        uint chainDp = Ru32(row, start + 4);
+        LvalChainResult chain = await ReadLvalChainAsync(chainDp, memoLen, cancellationToken).ConfigureAwait(false);
 
         if (chain.Data != null)
         {
