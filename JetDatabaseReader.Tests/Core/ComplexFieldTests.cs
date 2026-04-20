@@ -22,8 +22,6 @@ using Xunit;
 [Collection<ReadOnlyDatabaseFixture>]
 public sealed class ComplexFieldTests(DatabaseCache db)
 {
-    private readonly DatabaseCache _db = db;
-
     // ═══════════════════════════════════════════════════════════════════
     // 1. ATTACHMENT FIELDS (type 0x11)
     // ═══════════════════════════════════════════════════════════════════
@@ -37,7 +35,7 @@ public sealed class ComplexFieldTests(DatabaseCache db)
     public void Attachment_GetColumnMetadata_ReportsAttachmentType(string path)
     {
         // Columns with type 0x11 should report a friendly type name, not a raw hex code.
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -53,7 +51,7 @@ public sealed class ComplexFieldTests(DatabaseCache db)
     public void Attachment_TypeCodeToName_ReturnsAttachment()
     {
         // All column type names should be friendly strings, not raw hex codes.
-        var reader = _db.Get(TestDatabases.NorthwindTraders);
+        var reader = db.Get(TestDatabases.NorthwindTraders);
 
         foreach (string table in reader.ListTables())
         {
@@ -70,7 +68,7 @@ public sealed class ComplexFieldTests(DatabaseCache db)
     {
         // Attachment columns map to a CLR type that can represent
         // multiple files — not typeof(string).
-        var reader = _db.Get(TestDatabases.NorthwindTraders);
+        var reader = db.Get(TestDatabases.NorthwindTraders);
 
         foreach (string table in reader.ListTables())
         {
@@ -89,7 +87,7 @@ public sealed class ComplexFieldTests(DatabaseCache db)
     public void Attachment_ReadAsDataTable_ColumnTypeIsNotString()
     {
         // When reading a DataTable, attachment columns should not be typed as string.
-        var reader = _db.Get(TestDatabases.NorthwindTraders);
+        var reader = db.Get(TestDatabases.NorthwindTraders);
 
         foreach (string table in reader.ListTables())
         {
@@ -117,7 +115,7 @@ public sealed class ComplexFieldTests(DatabaseCache db)
     {
         // Reading a table with complex columns should not crash, even if
         // values are not fully decoded.
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -138,7 +136,7 @@ public sealed class ComplexFieldTests(DatabaseCache db)
     public void Attachment_StreamRows_DoesNotThrowOnComplexColumns(string path)
     {
         // Streaming rows with complex columns should not crash.
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -161,7 +159,7 @@ public sealed class ComplexFieldTests(DatabaseCache db)
     {
         // When attachment decoding is implemented, non-empty attachment cells
         // should return actual data (byte[] or a collection), not DBNull.
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -200,7 +198,7 @@ public sealed class ComplexFieldTests(DatabaseCache db)
     public void ComplexField_Metadata_ReportsCorrectTypeName(string path)
     {
         // Complex columns must report "Attachment" or "Complex", not raw hex.
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -221,7 +219,7 @@ public sealed class ComplexFieldTests(DatabaseCache db)
     {
         // When multi-value decoding is implemented, non-empty complex cells
         // should return a list of values, not DBNull.
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         foreach (string table in reader.ListTables())
         {

@@ -17,15 +17,13 @@ using Xunit;
 [Collection<ReadOnlyDatabaseFixture>]
 public class AccessReaderQueryTests(DatabaseCache db)
 {
-    private readonly DatabaseCache _db = db;
-
     // ── Typed chain: Execute ──────────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void Execute_WithoutFilter_ReturnsAllRows(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
         int expected = reader.StreamRows(table).Count();
 
@@ -38,7 +36,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void Execute_WithTake_LimitsResults(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         IEnumerable<object[]> result = reader.Query(table).Take(3).Execute();
@@ -50,7 +48,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void Execute_WithWhere_FiltersRows(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         // Always-false filter should return zero rows
@@ -65,7 +63,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void Execute_WithWhere_AlwaysTrue_ReturnsAllRows(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
         int expected = reader.StreamRows(table).Count();
 
@@ -82,7 +80,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void FirstOrDefault_WithoutFilter_ReturnsNonNull(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         TableStat? stat = reader.GetTableStats().FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -99,7 +97,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void FirstOrDefault_WhenNoRowMatches_ReturnsNull(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         object[]? result = reader.Query(table)
@@ -115,7 +113,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void Count_WithoutFilter_MatchesStreamRowsCount(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
         int expected = reader.StreamRows(table).Count();
 
@@ -128,7 +126,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void Count_WithAlwaysFalseFilter_ReturnsZero(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         int count = reader.Query(table).Where(_ => false).Count();
@@ -142,7 +140,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ExecuteAsStrings_WithoutFilter_ReturnsAllRows(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
         int expected = reader.StreamRowsAsStrings(table).Count();
 
@@ -155,7 +153,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ExecuteAsStrings_WithTake_LimitsResults(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         IEnumerable<string[]> result = reader.Query(table).Take(3).ExecuteAsStrings();
@@ -167,7 +165,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ExecuteAsStrings_WithWhereAsStrings_FiltersRows(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         // Always-false filter should return zero rows
@@ -182,7 +180,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ExecuteAsStrings_AllCells_AreStringOrNull(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         foreach (string[] row in reader.Query(table).Take(20).ExecuteAsStrings())
@@ -200,7 +198,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void FirstOrDefaultAsStrings_WithoutFilter_ReturnsNonNull(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         TableStat? stat = reader.GetTableStats().FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -217,7 +215,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void FirstOrDefaultAsStrings_WhenNoRowMatches_ReturnsNull(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         string[]? result = reader.Query(table)
@@ -233,7 +231,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void CountAsStrings_WithoutFilter_MatchesCount(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         int typed = reader.Query(table).Count();
@@ -248,7 +246,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void Take_AppliedOnce_AffectsBothExecuteAndExecuteAsStrings(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
         const int limit = 2;
 
@@ -271,7 +269,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ExecuteGeneric_WithoutFilter_RowCountMatchesExecute(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         int typedCount = reader.Query(table).Execute().Count();
@@ -284,7 +282,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ExecuteGeneric_WithTake_LimitsResults(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         IEnumerable<QueryRow> result = reader.Query(table).Take(3).Execute<QueryRow>();
@@ -296,7 +294,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ExecuteGeneric_WithWhere_FiltersRows(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         IEnumerable<QueryRow> none = reader.Query(table)
@@ -310,7 +308,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ExecuteGeneric_ReturnsNonNullInstances(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         foreach (QueryRow item in reader.Query(table).Take(20).Execute<QueryRow>())
@@ -325,7 +323,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void FirstOrDefaultGeneric_WithoutFilter_ReturnsNonNull(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         TableStat? stat = reader.GetTableStats().FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -342,7 +340,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void FirstOrDefaultGeneric_WhenNoRowMatches_ReturnsNull(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         QueryRow? result = reader.Query(table)
@@ -358,7 +356,7 @@ public class AccessReaderQueryTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void Take_AffectsExecuteGeneric(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
         const int limit = 2;
 
