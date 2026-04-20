@@ -1,7 +1,4 @@
 namespace JetDatabaseReader;
-
-using System;
-
 /// <summary>
 /// Structured column size: a numeric <see cref="Value"/> paired with a <see cref="ColumnSizeUnit"/>.
 /// Use <see cref="ToString"/> for a human-readable description.

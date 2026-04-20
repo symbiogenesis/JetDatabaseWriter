@@ -1,7 +1,5 @@
 namespace JetDatabaseReader;
 
-using System.Collections.Generic;
-
 internal sealed class ColumnInfo
 {
     public byte Type { get; set; }
