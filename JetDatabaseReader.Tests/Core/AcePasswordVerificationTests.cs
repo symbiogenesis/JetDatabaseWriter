@@ -71,7 +71,7 @@ public sealed class AcePasswordVerificationTests
         // Providing an incorrect password must produce a clear error, not silent data corruption.
         var options = new AccessReaderOptions
         {
-            Password = "definitely_wrong",
+            Password = SecureStringTestHelper.FromString("definitely_wrong"),
             UseLockFile = false,
         };
 
@@ -85,7 +85,7 @@ public sealed class AcePasswordVerificationTests
         // An empty-string password is not the same as no password — it should still fail.
         var options = new AccessReaderOptions
         {
-            Password = string.Empty,
+            Password = SecureStringTestHelper.FromString(string.Empty),
             UseLockFile = false,
         };
 
@@ -103,7 +103,7 @@ public sealed class AcePasswordVerificationTests
         // The correct password ("secret") should open the database without error.
         var options = new AccessReaderOptions
         {
-            Password = "secret",
+            Password = SecureStringTestHelper.FromString("secret"),
             UseLockFile = false,
         };
 
@@ -122,7 +122,7 @@ public sealed class AcePasswordVerificationTests
         // After authentication, ListTables should return the original database tables.
         var options = new AccessReaderOptions
         {
-            Password = "secret",
+            Password = SecureStringTestHelper.FromString("secret"),
             UseLockFile = false,
         };
 
@@ -138,7 +138,7 @@ public sealed class AcePasswordVerificationTests
         // Reading table data after password verification should return valid rows.
         var options = new AccessReaderOptions
         {
-            Password = "secret",
+            Password = SecureStringTestHelper.FromString("secret"),
             UseLockFile = false,
         };
 
@@ -157,7 +157,7 @@ public sealed class AcePasswordVerificationTests
         // Streaming rows should work normally after password verification.
         var options = new AccessReaderOptions
         {
-            Password = "secret",
+            Password = SecureStringTestHelper.FromString("secret"),
             UseLockFile = false,
         };
 
@@ -175,7 +175,7 @@ public sealed class AcePasswordVerificationTests
         // Statistics should be accessible after correct password authentication.
         var options = new AccessReaderOptions
         {
-            Password = "secret",
+            Password = SecureStringTestHelper.FromString("secret"),
             UseLockFile = false,
         };
 
@@ -192,7 +192,7 @@ public sealed class AcePasswordVerificationTests
         // Column metadata should be fully readable after password verification.
         var options = new AccessReaderOptions
         {
-            Password = "secret",
+            Password = SecureStringTestHelper.FromString("secret"),
             UseLockFile = false,
         };
 

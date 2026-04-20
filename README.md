@@ -320,7 +320,7 @@ Console.WriteLine($"Cache hit: {s.PageCacheHitRate}%");
 ## Configuration
 
 ```csharp
-var options = new AccessReaderOptions
+var options = new AccessReaderOptions("secretPassword")
 {
     PageCacheSize            = 512,    // pages in LRU cache (default: 256)
     ParallelPageReadsEnabled = true,   // parallel I/O (default: false)
@@ -335,7 +335,7 @@ var options = new AccessReaderOptions
 };
 using var reader = AccessReader.Open("database.mdb", options);
 
-var writerOptions = new AccessWriterOptions
+var writerOptions = new AccessWriterOptions("secretPassword")
 {
     UseLockFile = true,              // create .ldb/.laccdb lockfile (default: true)
     RespectExistingLockFile = true,  // throw IOException if lockfile already exists (default: true)

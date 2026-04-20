@@ -37,7 +37,7 @@ public sealed class EncryptionTests : IDisposable
         // Non-encrypted databases ignore the password and open normally.
         var options = new AccessReaderOptions
         {
-            Password = "test123",
+            Password = SecureStringTestHelper.FromString("test123"),
         };
 
         using var reader = AccessReader.Open(path, options);
@@ -80,7 +80,7 @@ public sealed class EncryptionTests : IDisposable
 
         var options = new AccessReaderOptions
         {
-            Password = "test",
+            Password = SecureStringTestHelper.FromString("test"),
         };
 
         using var reader = AccessReader.Open(temp, options);
@@ -111,7 +111,7 @@ public sealed class EncryptionTests : IDisposable
 
         var options = new AccessReaderOptions
         {
-            Password = "wrong_password",
+            Password = SecureStringTestHelper.FromString("wrong_password"),
         };
 
         var ex = Record.Exception(() =>
@@ -121,6 +121,50 @@ public sealed class EncryptionTests : IDisposable
         });
 
         Assert.NotNull(ex);
+    }
+
+    [Fact]
+    public void Encryption_Jet4Rc4_WriterWithoutPassword_ThrowsDescriptiveError()
+    {
+        string temp = CopyToTemp(TestDatabases.AdventureWorks);
+        SetJet4PasswordFlag(temp);
+
+        var ex = Assert.Throws<UnauthorizedAccessException>(() =>
+            AccessWriter.Open(temp, new AccessWriterOptions { UseLockFile = false }));
+
+        Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Encryption_Jet4Rc4_WriterWithWrongPassword_ThrowsMeaningfulError()
+    {
+        string temp = CopyToTemp(TestDatabases.AdventureWorks);
+        SetJet4PasswordFlag(temp);
+
+        var options = new AccessWriterOptions
+        {
+            UseLockFile = false,
+            Password = SecureStringTestHelper.FromString("wrong_password"),
+        };
+
+        var ex = Assert.Throws<UnauthorizedAccessException>(() => AccessWriter.Open(temp, options));
+        Assert.Contains("incorrect", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Encryption_Jet4Rc4_WriterWithCorrectPassword_Opens()
+    {
+        string temp = CopyToTemp(TestDatabases.AdventureWorks);
+        SetJet4PasswordFlag(temp);
+
+        var options = new AccessWriterOptions
+        {
+            UseLockFile = false,
+            Password = SecureStringTestHelper.FromString("test"),
+        };
+
+        using var writer = AccessWriter.Open(temp, options);
+        Assert.NotNull(writer);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -142,7 +186,7 @@ public sealed class EncryptionTests : IDisposable
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(temp, "test");
 
-        var options = new AccessReaderOptions { Password = "test" };
+        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
         using var reader = AccessReader.Open(temp, options);
         DataTable dt = reader.ReadTable("Product")!;
 
@@ -157,7 +201,7 @@ public sealed class EncryptionTests : IDisposable
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(temp, "test");
 
-        var options = new AccessReaderOptions { Password = "test" };
+        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
         using var reader = AccessReader.Open(temp, options);
 
         List<string> tables = reader.ListTables();
@@ -174,7 +218,7 @@ public sealed class EncryptionTests : IDisposable
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(temp, "test");
 
-        var options = new AccessReaderOptions { Password = "test" };
+        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
         using var reader = AccessReader.Open(temp, options);
         DatabaseStatistics stats = reader.GetStatistics();
 
@@ -189,7 +233,7 @@ public sealed class EncryptionTests : IDisposable
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(temp, "test");
 
-        var options = new AccessReaderOptions { Password = "test" };
+        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
         using var reader = AccessReader.Open(temp, options);
 
         List<string> tables = reader.ListTables();
@@ -211,7 +255,7 @@ public sealed class EncryptionTests : IDisposable
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(temp, "test");
 
-        var options = new AccessReaderOptions { Password = "test" };
+        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
         using var reader = AccessReader.Open(temp, options);
 
         Dictionary<string, DataTable> all = reader.ReadAllTables();
@@ -242,7 +286,7 @@ public sealed class EncryptionTests : IDisposable
         string temp = CopyToTemp(TestDatabases.NorthwindTraders);
         SetAccdbEncryptionHeader(temp);
 
-        var options = new AccessReaderOptions { Password = "secret" };
+        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
 
         // Once AES is implemented, this should succeed without throwing.
         var ex = Record.Exception(() =>
@@ -262,7 +306,7 @@ public sealed class EncryptionTests : IDisposable
         string temp = CopyToTemp(TestDatabases.NorthwindTraders);
         SetAccdbEncryptionHeader(temp);
 
-        var options = new AccessReaderOptions { Password = "secret" };
+        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
         using var reader = AccessReader.Open(temp, options);
 
         List<string> tables = reader.ListTables();
@@ -294,7 +338,7 @@ public sealed class EncryptionTests : IDisposable
         string temp = CopyToTemp(TestDatabases.NorthwindTraders);
         SetAccdbEncryptionHeader(temp);
 
-        var options = new AccessReaderOptions { Password = "wrong_password" };
+        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("wrong_password") };
 
         var ex = Record.Exception(() =>
         {
@@ -312,7 +356,7 @@ public sealed class EncryptionTests : IDisposable
         string temp = CopyToTemp(TestDatabases.NorthwindTraders);
         SetAccdbEncryptionHeader(temp);
 
-        var options = new AccessReaderOptions { Password = "secret" };
+        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
         using var reader = AccessReader.Open(temp, options);
 
         List<string> tables = reader.ListTables();
@@ -386,7 +430,7 @@ public sealed class EncryptionTests : IDisposable
         // With the correct password, ListTables returns the original database contents.
         using var reader = AccessReader.Open(
             TestDatabases.AesEncrypted,
-            new AccessReaderOptions { Password = "secret" });
+            new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") });
         List<string> tables = reader.ListTables();
         Assert.NotEmpty(tables);
     }
@@ -397,7 +441,7 @@ public sealed class EncryptionTests : IDisposable
         // Data pages are readable with the correct password.
         using var reader = AccessReader.Open(
             TestDatabases.AesEncrypted,
-            new AccessReaderOptions { Password = "secret" });
+            new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") });
         List<string> tables = reader.ListTables();
         Assert.NotEmpty(tables);
 
@@ -412,7 +456,7 @@ public sealed class EncryptionTests : IDisposable
         // StreamRows works with the correct password.
         using var reader = AccessReader.Open(
             TestDatabases.AesEncrypted,
-            new AccessReaderOptions { Password = "secret" });
+            new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") });
         List<string> tables = reader.ListTables();
         Assert.NotEmpty(tables);
 
@@ -426,7 +470,7 @@ public sealed class EncryptionTests : IDisposable
         // Statistics are available with the correct password.
         using var reader = AccessReader.Open(
             TestDatabases.AesEncrypted,
-            new AccessReaderOptions { Password = "secret" });
+            new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") });
         DatabaseStatistics stats = reader.GetStatistics();
 
         Assert.True(stats.TableCount > 0, "Should report tables.");
@@ -447,7 +491,7 @@ public sealed class EncryptionTests : IDisposable
     public void AesEncryption_GenuineAccdb_WithWrongPassword_DoesNotThrow_TDD()
     {
         // Wrong password should throw UnauthorizedAccessException.
-        var options = new AccessReaderOptions { Password = "definitely_wrong_password" };
+        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("definitely_wrong_password") };
 
         Assert.Throws<UnauthorizedAccessException>(() =>
             AccessReader.Open(TestDatabases.AesEncrypted, options));
