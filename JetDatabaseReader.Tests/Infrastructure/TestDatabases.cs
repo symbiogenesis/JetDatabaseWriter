@@ -1,6 +1,7 @@
 namespace JetDatabaseReader.Tests;
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -71,6 +72,8 @@ internal static class TestDatabases
     private static readonly string[] InRepoDatabases =
         [NorthwindTraders, AdventureWorks, Jet3Test, TestV1997, TestV2000, TestV2003, TestV2007, TestV2010, ExtDateTestV2019];
 
+    private static readonly ConcurrentDictionary<string, bool> _readableCache = new(StringComparer.OrdinalIgnoreCase);
+
     // ── MemberData sets (properties) ──────────────────────────────────
 
     /// <summary>Gets all databases (skips any that don't exist or can't be opened).</summary>
@@ -110,23 +113,24 @@ internal static class TestDatabases
 
     /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
     /// <returns></returns>
-    internal static bool IsReadable(string path)
-    {
-        if (!File.Exists(path))
+    internal static bool IsReadable(string path) =>
+        _readableCache.GetOrAdd(path, static p =>
         {
-            return false;
-        }
+            if (!File.Exists(p))
+            {
+                return false;
+            }
 
-        try
-        {
-            using var r = AccessReader.Open(path);
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JetLimitationException)
-        {
-            return false;
-        }
-    }
+            try
+            {
+                using var r = AccessReader.Open(p);
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JetLimitationException)
+            {
+                return false;
+            }
+        });
 
     private static TheoryData<string> ToTheoryData(IEnumerable<string> paths)
     {
