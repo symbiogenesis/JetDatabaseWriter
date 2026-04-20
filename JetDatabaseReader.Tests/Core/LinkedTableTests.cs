@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention
@@ -82,6 +84,56 @@ public sealed class LinkedTableTests : IDisposable
 
         // Currently no linked tables in the fixture — validates the API shape.
         Assert.NotNull(linked);
+    }
+
+    [Fact]
+    public async Task LinkedTables_ListLinkedTables_WithAsyncLinkedEntry_ReturnsSourceInfo()
+    {
+        string sourcePath = CreateTempJet4Database("LinkedSrcAsync");
+        string frontEndPath = CreateTempJet4Database("LinkedFEAsync");
+
+        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "RemoteData",
+                new List<ColumnDefinition>
+                {
+                    new("Id", typeof(int)),
+                    new("Value", typeof(string), maxLength: 100),
+                },
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(
+                "RemoteData",
+                new object[] { 1, "Hello from source" },
+                TestContext.Current.CancellationToken);
+        }
+
+        await InjectLinkedTableEntryAsync(
+            frontEndPath,
+            "LinkedRemoteData",
+            sourcePath,
+            "RemoteData",
+            TestContext.Current.CancellationToken);
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+
+        var entry = linked.FirstOrDefault(l =>
+            string.Equals(l.Name, "LinkedRemoteData", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(entry);
+        Assert.Equal("RemoteData", entry.ForeignName);
+        Assert.Equal(sourcePath, entry.SourceDatabasePath);
+    }
+
+    [Fact]
+    public async Task LinkedTables_InsertLinkedTableEntryAsync_WhenCancelled_ThrowsOperationCanceledException()
+    {
+        string frontEndPath = CreateTempJet4Database("LinkedCancel");
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            InjectLinkedTableEntryAsync(frontEndPath, "LinkedCanceled", frontEndPath, "AnyTable", cts.Token).AsTask());
     }
 
     [Fact]
@@ -434,6 +486,20 @@ public sealed class LinkedTableTests : IDisposable
     {
         using var writer = AccessWriter.Open(dbPath);
         writer.InsertLinkedTableEntry(linkedTableName, sourceDbPath, foreignTableName);
+    }
+
+    /// <summary>
+    /// Asynchronously injects a linked table entry (MSysObjects type 4) into a database's catalog.
+    /// </summary>
+    private static async ValueTask InjectLinkedTableEntryAsync(
+        string dbPath,
+        string linkedTableName,
+        string sourceDbPath,
+        string foreignTableName,
+        CancellationToken cancellationToken = default)
+    {
+        await using var writer = await AccessWriter.OpenAsync(dbPath, cancellationToken: cancellationToken);
+        await writer.InsertLinkedTableEntryAsync(linkedTableName, sourceDbPath, foreignTableName, cancellationToken);
     }
 
     /// <summary>Creates a minimal Jet4 database by copying NorthwindTraders.accdb.</summary>

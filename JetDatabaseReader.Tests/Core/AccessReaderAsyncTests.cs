@@ -138,7 +138,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     {
         var reader = db.Get(path);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        var meta = reader.GetColumnMetadata(table);
+        var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         DataTable dt = (await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 

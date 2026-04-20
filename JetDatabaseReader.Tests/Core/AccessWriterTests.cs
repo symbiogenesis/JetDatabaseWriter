@@ -197,6 +197,31 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         }
     }
 
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task InsertRowAsync_SingleRow_IncreasesRowCount(string path)
+    {
+        string temp = CopyToTemp(path);
+        var cachedReader = db.Get(path);
+        var tableNames = await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken);
+        string tableName = tableNames[0];
+        long originalCount = await cachedReader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
+
+        var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        object[] newRow = BuildDummyRow(columns);
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.InsertRowAsync(tableName, newRow, TestContext.Current.CancellationToken);
+        }
+
+        using (var reader = OpenReader(temp))
+        {
+            long newCount = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
+            Assert.Equal(originalCount + 1, newCount);
+        }
+    }
+
     // ── InsertRows (bulk) ─────────────────────────────────────────────
 
     [Theory]
@@ -238,6 +263,23 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             long newCount = reader.GetRealRowCount(tableName);
             Assert.Equal(originalCount + 3, newCount);
         }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task InsertRowsAsync_MultipleRows_ReturnsCorrectInsertCount(string path)
+    {
+        string temp = CopyToTemp(path);
+        var cachedReader = db.Get(path);
+        string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+
+        var rows = Enumerable.Range(0, 4).Select(_ => BuildDummyRow(columns));
+
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        int inserted = await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
+
+        Assert.Equal(4, inserted);
     }
 
     [Theory]
@@ -318,6 +360,30 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         {
             long newCount = reader.GetRealRowCount(tableName);
             Assert.Equal(3, newCount);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task UpdateRowsAsync_MatchingRows_ChangesAreReadableBack(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = SeedUpdateTable(temp);
+        const string sentinel = "ASYNC_UPDATED_VALUE";
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            var updates = new Dictionary<string, object> { ["Label"] = sentinel };
+            int updated = await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
+            Assert.True(updated > 0);
+        }
+
+        using (var reader = OpenReader(temp))
+        {
+            DataTable dt = (await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+            bool found = dt.AsEnumerable().Any(row =>
+                row["Label"] is string s && s == sentinel);
+            Assert.True(found);
         }
     }
 
@@ -456,6 +522,26 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         }
     }
 
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task DeleteRowsAsync_MatchingRows_DecreasesRowCount(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = SeedUpdateTable(temp);
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            int deleted = await writer.DeleteRowsAsync(tableName, "Id", 2, TestContext.Current.CancellationToken);
+            Assert.Equal(1, deleted);
+        }
+
+        using (var reader = OpenReader(temp))
+        {
+            long count = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
+            Assert.Equal(2, count);
+        }
+    }
+
     // ── CreateTable ───────────────────────────────────────────────────
 
     [Theory]
@@ -562,6 +648,31 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
             DataTable dt = reader.ReadTable(newTableName)!;
             Assert.Equal(2, dt.Rows.Count);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task CreateTableAsync_NewTable_AppearsInListTables(string path)
+    {
+        string temp = CopyToTemp(path);
+        string newTableName = $"AsyncTable_{Guid.NewGuid():N}".Substring(0, 20);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Name", typeof(string), maxLength: 100),
+        };
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
+        }
+
+        using (var reader = OpenReader(temp))
+        {
+            var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+            Assert.Contains(newTableName, tables);
         }
     }
 
