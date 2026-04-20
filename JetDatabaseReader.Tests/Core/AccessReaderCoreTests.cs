@@ -284,7 +284,7 @@ public class AccessReaderCoreTests(DatabaseCache db)
 
         foreach (var row in preview.Rows)
         {
-            Assert.Equal(preview.Headers.Count, row.Length);
+            Assert.Equal(preview.Headers.Count, row.Count);
         }
     }
 

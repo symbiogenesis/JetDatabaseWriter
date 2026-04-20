@@ -1,36 +1,67 @@
 namespace JetDatabaseReader;
 
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 
 /// <summary>
 /// Statistical information about the database including size, table counts, and cache performance.
 /// </summary>
 public sealed class DatabaseStatistics
 {
-    /// <summary>Gets or sets the total number of pages in the database.</summary>
-    public long TotalPages { get; set; }
+    private static readonly IReadOnlyDictionary<string, long> EmptyTableRowCounts =
+        new ReadOnlyDictionary<string, long>(new Dictionary<string, long>());
 
-    /// <summary>Gets or sets the database file size in bytes.</summary>
-    public long DatabaseSizeBytes { get; set; }
+    private IReadOnlyDictionary<string, long> _tableRowCounts = EmptyTableRowCounts;
 
-    /// <summary>Gets or sets the number of user tables in the database.</summary>
-    public int TableCount { get; set; }
+    /// <summary>Gets or initializes the total number of pages in the database.</summary>
+    public long TotalPages { get; init; }
 
-    /// <summary>Gets or sets the total number of rows across all tables (from TDEF, may be stale).</summary>
-    public long TotalRows { get; set; }
+    /// <summary>Gets or initializes the database file size in bytes.</summary>
+    public long DatabaseSizeBytes { get; init; }
 
-    /// <summary>Gets or sets the row count for each table.</summary>
-    public Dictionary<string, long> TableRowCounts { get; set; } = new Dictionary<string, long>();
+    /// <summary>Gets or initializes the number of user tables in the database.</summary>
+    public int TableCount { get; init; }
 
-    /// <summary>Gets or sets the page cache hit rate percentage (0-100).</summary>
-    public int PageCacheHitRate { get; set; }
+    /// <summary>Gets or initializes the total number of rows across all tables (from TDEF, may be stale).</summary>
+    public long TotalRows { get; init; }
 
-    /// <summary>Gets or sets the JET version string (e.g., "Jet4/ACE", "Jet3").</summary>
-    public string Version { get; set; } = string.Empty;
+    /// <summary>Gets the row count for each table.</summary>
+    public IReadOnlyDictionary<string, long> TableRowCounts
+    {
+        get => _tableRowCounts;
+        init => _tableRowCounts = FreezeTableRowCounts(value);
+    }
 
-    /// <summary>Gets or sets the page size in bytes (2048 for Jet3, 4096 for Jet4).</summary>
-    public int PageSize { get; set; }
+    /// <summary>Gets or initializes the page cache hit rate percentage (0-100).</summary>
+    public int PageCacheHitRate { get; init; }
 
-    /// <summary>Gets or sets the code page identifier used for text encoding.</summary>
-    public int CodePage { get; set; }
+    /// <summary>Gets or initializes the JET version string (e.g., "Jet4/ACE", "Jet3").</summary>
+    public string Version { get; init; } = string.Empty;
+
+    /// <summary>Gets or initializes the page size in bytes (2048 for Jet3, 4096 for Jet4).</summary>
+    public int PageSize { get; init; }
+
+    /// <summary>Gets or initializes the code page identifier used for text encoding.</summary>
+    public int CodePage { get; init; }
+
+    private static IReadOnlyDictionary<string, long> FreezeTableRowCounts(IEnumerable<KeyValuePair<string, long>>? tableRowCounts)
+    {
+        if (tableRowCounts == null)
+        {
+            return EmptyTableRowCounts;
+        }
+
+        var copy = new Dictionary<string, long>();
+        foreach ((string key, long value) in tableRowCounts)
+        {
+            if (string.IsNullOrEmpty(key))
+            {
+                continue;
+            }
+
+            copy[key] = value;
+        }
+
+        return copy.Count == 0 ? EmptyTableRowCounts : new ReadOnlyDictionary<string, long>(copy);
+    }
 }

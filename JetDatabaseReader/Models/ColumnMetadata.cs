@@ -7,27 +7,27 @@ using System;
 /// </summary>
 public sealed record ColumnMetadata
 {
-    /// <summary>Gets or sets the column name.</summary>
-    public string Name { get; set; } = string.Empty;
+    /// <summary>Gets or initializes the column name.</summary>
+    public string Name { get; init; } = string.Empty;
 
-    /// <summary>Gets or sets the Access-friendly type name (e.g., "Text", "Long Integer", "Date/Time").</summary>
-    public string TypeName { get; set; } = string.Empty;
+    /// <summary>Gets or initializes the Access-friendly type name (e.g., "Text", "Long Integer", "Date/Time").</summary>
+    public string TypeName { get; init; } = string.Empty;
 
-    /// <summary>Gets or sets the CLR type that best represents this column.</summary>
-    public Type ClrType { get; set; } = typeof(object);
+    /// <summary>Gets or initializes the CLR type that best represents this column.</summary>
+    public Type ClrType { get; init; } = typeof(object);
 
-    /// <summary>Gets or sets the maximum length for variable-length columns, or null for fixed-length.</summary>
-    public int? MaxLength { get; set; }
+    /// <summary>Gets or initializes the maximum length for variable-length columns, or null for fixed-length.</summary>
+    public int? MaxLength { get; init; }
 
-    /// <summary>Gets or sets a value indicating whether the column allows null values (always true for JET databases).</summary>
-    public bool IsNullable { get; set; }
+    /// <summary>Gets a value indicating whether the column allows null values (always true for JET databases).</summary>
+    public bool IsNullable { get; init; }
 
-    /// <summary>Gets or sets a value indicating whether the column is fixed-length.</summary>
-    public bool IsFixedLength { get; set; }
+    /// <summary>Gets a value indicating whether the column is fixed-length.</summary>
+    public bool IsFixedLength { get; init; }
 
-    /// <summary>Gets or sets the zero-based ordinal position in the table.</summary>
-    public int Ordinal { get; set; }
+    /// <summary>Gets or initializes the zero-based ordinal position in the table.</summary>
+    public int Ordinal { get; init; }
 
-    /// <summary>Gets or sets the structured size — use <see cref="ColumnSize.ToString"/> for a human-readable description.</summary>
-    public ColumnSize Size { get; set; }
+    /// <summary>Gets or initializes the structured size — use <see cref="ColumnSize.ToString"/> for a human-readable description.</summary>
+    public ColumnSize Size { get; init; }
 }

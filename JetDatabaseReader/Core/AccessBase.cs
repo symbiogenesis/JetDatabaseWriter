@@ -872,10 +872,5 @@ public abstract class AccessBase : IAccessBase
         public int RowSize { get; }
     }
 
-    private protected sealed record CatalogEntry
-    {
-        public string Name { get; set; } = string.Empty;
-
-        public long TDefPage { get; set; }
-    }
+    private protected sealed record CatalogEntry(string Name, long TDefPage);
 }

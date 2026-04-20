@@ -462,7 +462,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var index = RowMapper<T>.BuildIndex(result.Headers);
         var items = new List<T>(result.Rows.Count);
 
-        foreach (object[] row in result.Rows)
+        foreach (IReadOnlyList<object?> row in result.Rows)
         {
             items.Add(RowMapper<T>.Map(row, index));
         }
@@ -668,34 +668,35 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public DatabaseStatistics GetStatistics()
     {
         ThrowIfDisposed();
-
-        var stats = new DatabaseStatistics
-        {
-            TotalPages = _fs.Length / _pgSz,
-            DatabaseSizeBytes = _fs.Length,
-            PageSize = _pgSz,
-            Version = _jet4 ? "Jet4/ACE" : "Jet3",
-            CodePage = _codePage,
-        };
-
         var tables = GetUserTables();
-        stats.TableCount = tables.Count;
-        stats.TableRowCounts = new Dictionary<string, long>();
+        var tableRowCounts = new Dictionary<string, long>();
+        long totalRows = 0;
 
         foreach (var table in tables)
         {
             var td = ReadTableDef(table.TDefPage);
             if (td != null)
             {
-                stats.TableRowCounts[table.Name] = td.RowCount;
-                stats.TotalRows += td.RowCount;
+                tableRowCounts[table.Name] = td.RowCount;
+                totalRows += td.RowCount;
             }
         }
 
         long totalAccess = _cacheHits + _cacheMisses;
-        stats.PageCacheHitRate = totalAccess > 0 ? (int)(_cacheHits * 100 / totalAccess) : 0;
+        int pageCacheHitRate = totalAccess > 0 ? (int)(_cacheHits * 100 / totalAccess) : 0;
 
-        return stats;
+        return new DatabaseStatistics
+        {
+            TotalPages = _fs.Length / _pgSz,
+            DatabaseSizeBytes = _fs.Length,
+            TableCount = tables.Count,
+            TotalRows = totalRows,
+            TableRowCounts = tableRowCounts,
+            PageCacheHitRate = pageCacheHitRate,
+            Version = _jet4 ? "Jet4/ACE" : "Jet3",
+            PageSize = _pgSz,
+            CodePage = _codePage,
+        };
     }
 
     /// <summary>
@@ -1035,7 +1036,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                     if (tdefPage > 0)
                     {
-                        result.Add(new CatalogEntry { Name = nameStr, TDefPage = tdefPage });
+                        result.Add(new CatalogEntry(nameStr, tdefPage));
                     }
                 }
             }

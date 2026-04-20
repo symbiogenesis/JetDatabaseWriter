@@ -376,7 +376,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            result.Add(new CatalogEntry { Name = row.Name, TDefPage = row.TDefPage });
+            result.Add(new CatalogEntry(row.Name, row.TDefPage));
         }
 
         _catalogCache = result;

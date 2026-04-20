@@ -35,13 +35,13 @@ internal static class RowMapper<T>
     }
 
     /// <summary>
-    /// Maps a single <c>object[]</c> row to a new instance of <typeparamref name="T"/>
+    /// Maps a single row to a new instance of <typeparamref name="T"/>
     /// using the pre-built <paramref name="index"/>.
     /// </summary>
-    public static T Map(object[] row, Accessor?[] index)
+    public static T Map(IReadOnlyList<object?> row, Accessor?[] index)
     {
         T item = Factory();
-        int len = Math.Min(row.Length, index.Length);
+        int len = Math.Min(row.Count, index.Length);
 
         for (int i = 0; i < len; i++)
         {
@@ -51,7 +51,7 @@ internal static class RowMapper<T>
                 continue;
             }
 
-            object value = row[i];
+            object? value = row[i];
             if (value == null || value is DBNull)
             {
                 continue;
