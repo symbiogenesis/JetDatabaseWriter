@@ -167,6 +167,28 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         }
     }
 
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRow_UpdatesTDefRowCountMetadata(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = SeedUpdateTable(temp);
+
+        using (var writer = OpenWriter(temp))
+        {
+            writer.InsertRow(tableName, new object[] { 4, "Delta" });
+        }
+
+        using (var reader = OpenReader(temp))
+        {
+            long real = reader.GetRealRowCount(tableName);
+            long tdef = GetStatsRowCount(reader, tableName);
+
+            Assert.Equal(4, real);
+            Assert.Equal(real, tdef);
+        }
+    }
+
     // ── UpdateRows ────────────────────────────────────────────────────
 
     [Theory]
@@ -223,6 +245,30 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         {
             long newCount = reader.GetRealRowCount(tableName);
             Assert.Equal(3, newCount);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void UpdateRows_PreservesTDefRowCountMetadata(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = SeedUpdateTable(temp);
+
+        using (var writer = OpenWriter(temp))
+        {
+            var updates = new Dictionary<string, object> { ["Label"] = "UPDATED" };
+            int updated = writer.UpdateRows(tableName, "Id", 1, updates);
+            Assert.Equal(1, updated);
+        }
+
+        using (var reader = OpenReader(temp))
+        {
+            long real = reader.GetRealRowCount(tableName);
+            long tdef = GetStatsRowCount(reader, tableName);
+
+            Assert.Equal(3, real);
+            Assert.Equal(real, tdef);
         }
     }
 
@@ -311,6 +357,29 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
                 return val.Equals(predicateVal);
             });
             Assert.False(stillPresent);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void DeleteRows_UpdatesTDefRowCountMetadata(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = SeedUpdateTable(temp);
+
+        using (var writer = OpenWriter(temp))
+        {
+            int deleted = writer.DeleteRows(tableName, "Id", 2);
+            Assert.Equal(1, deleted);
+        }
+
+        using (var reader = OpenReader(temp))
+        {
+            long real = reader.GetRealRowCount(tableName);
+            long tdef = GetStatsRowCount(reader, tableName);
+
+            Assert.Equal(2, real);
+            Assert.Equal(real, tdef);
         }
     }
 
@@ -1583,6 +1652,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         }
 
         return DBNull.Value;
+    }
+
+    private static long GetStatsRowCount(AccessReader reader, string tableName)
+    {
+        TableStat stat = reader.GetTableStats()
+            .Single(s => string.Equals(s.Name, tableName, StringComparison.OrdinalIgnoreCase));
+        return stat.RowCount;
     }
 
     /// <summary>Creates a table with known text data for UpdateRows tests and returns the table name.</summary>
