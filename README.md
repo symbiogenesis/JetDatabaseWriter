@@ -20,7 +20,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Typed by default** | `int`, `DateTime`, `decimal`, `Guid` — not just strings |
 | ✅ **All column types** | Text, Integer, Currency, Date/Time, GUID, MEMO, OLE Object, Decimal |
 | ✅ **Streaming API** | Process millions of rows without loading the whole file |
-| ✅ **Async support** | Full `Task<T>`-based async for all major operations |
+| ✅ **Async support** | Async-first `ValueTask<T>` API for all major operations |
 | ✅ **Page cache** | 256-page LRU cache (~1 MB, configurable) |
 | ✅ **Generic POCO mapping** | `ReadTable<T>()`, `StreamRows<T>()`, `InsertRow<T>()` — no manual casting |
 | ✅ **Fluent query** | `Query().Where().Take().Execute()` — typed and string chains |
@@ -64,6 +64,7 @@ Install-Package JetDatabaseReader
 
 ```csharp
 using JetDatabaseReader;
+using System.Threading;
 
 public class Order
 {
@@ -72,15 +73,18 @@ public class Order
     public decimal Freight { get; set; }
 }
 
+using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 using var reader = AccessReader.Open("database.mdb");
 
-List<string> tables = reader.ListTables();
+List<string> tables = await reader.ListTablesAsync(cts.Token);
 Console.WriteLine($"Found {tables.Count} tables: {string.Join(", ", tables)}");
 
-List<Order> orders = reader.ReadTable<Order>("Orders", maxRows: 100);
+List<Order> orders = await reader.ReadTableAsync<Order>("Orders", maxRows: 100, cts.Token);
 foreach (Order o in orders)
     Console.WriteLine($"#{o.OrderID}  {o.OrderDate:yyyy-MM-dd}  {o.Freight:C}");
 ```
+
+Synchronous methods are still available, but async methods are the recommended default for new code.
 
 ---
 
@@ -97,7 +101,7 @@ public class Product
     public bool Discontinued { get; set; }
 }
 
-List<Product> products = reader.ReadTable<Product>("Products", maxRows: 100);
+List<Product> products = await reader.ReadTableAsync<Product>("Products", maxRows: 100, cancellationToken);
 decimal total = products.Where(p => !p.Discontinued).Sum(p => p.UnitPrice);
 ```
 
@@ -106,7 +110,7 @@ Property names are matched to column headers **case-insensitively**. Unmatched p
 ### Typed DataTable
 
 ```csharp
-DataTable dt = reader.ReadTable("Products");
+DataTable dt = await reader.ReadTableAsync("Products", cancellationToken: cancellationToken);
 // dt.Columns["ProductID"].DataType    == typeof(int)
 // dt.Columns["UnitPrice"].DataType    == typeof(decimal)
 // dt.Columns["Discontinued"].DataType == typeof(bool)
@@ -115,7 +119,7 @@ DataTable dt = reader.ReadTable("Products");
 ### Table preview with schema
 
 ```csharp
-TableResult preview = reader.ReadTable("Products", maxRows: 20);
+TableResult preview = await reader.ReadTableAsync("Products", maxRows: 20, cancellationToken);
 foreach (TableColumn col in preview.Schema)
 {
     Type   clrType = col.Type;            // e.g. typeof(int), typeof(string)
@@ -132,10 +136,9 @@ DataTable dt = preview.ToDataTable();
 
 ```csharp
 // All values as strings
-DataTable dt = reader.ReadTableAsStringDataTable("Products");
+StringTableResult preview = await reader.ReadTableAsStringsAsync("Products", maxRows: 20, cancellationToken);
 
 // String preview with row access
-StringTableResult preview = reader.ReadTableAsStrings("Products", maxRows: 20);
 string firstCell = preview.Rows[0][0];  // always a string
 ```
 
@@ -204,15 +207,19 @@ IEnumerable<string[]> rows = reader.Query("Orders")
 ## Async Operations
 
 ```csharp
-List<Order>                   orders = await reader.ReadTableAsync<Order>("Orders", 50);
-List<string>                  tables = await reader.ListTablesAsync();
-DataTable                     dt     = await reader.ReadTableAsync("Orders");
-TableResult                   typed  = await reader.ReadTableAsync("Orders", 50);
-StringTableResult             str    = await reader.ReadTableAsStringsAsync("Orders", 50);
-DatabaseStatistics            stats  = await reader.GetStatisticsAsync();
-Dictionary<string, DataTable> all    = await reader.ReadAllTablesAsync();
-Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync();
+using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+List<Order>                   orders = await reader.ReadTableAsync<Order>("Orders", 50, cts.Token);
+List<string>                  tables = await reader.ListTablesAsync(cts.Token);
+DataTable                     dt     = await reader.ReadTableAsync("Orders", cancellationToken: cts.Token);
+TableResult                   typed  = await reader.ReadTableAsync("Orders", 50, cts.Token);
+StringTableResult             str    = await reader.ReadTableAsStringsAsync("Orders", 50, cts.Token);
+DatabaseStatistics            stats  = await reader.GetStatisticsAsync(cts.Token);
+Dictionary<string, DataTable> all    = await reader.ReadAllTablesAsync(cancellationToken: cts.Token);
+Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync(cancellationToken: cts.Token);
 ```
+
+All async APIs return `ValueTask<T>` and can be awaited directly.
 
 ---
 
@@ -220,11 +227,13 @@ Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync(
 
 ```csharp
 // Typed columns
-Dictionary<string, DataTable> all = reader.ReadAllTables(
-    new Progress<string>(t => Console.WriteLine($"Reading {t}...")));
+Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(
+    new Progress<string>(t => Console.WriteLine($"Reading {t}...")),
+    cancellationToken);
 
 // String columns (compatibility)
-Dictionary<string, DataTable> allStr = reader.ReadAllTablesAsStrings();
+Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync(
+    cancellationToken: cancellationToken);
 ```
 
 ---
@@ -308,7 +317,7 @@ foreach (TableStat s in reader.GetTableStats())
 FirstTableResult first = reader.ReadFirstTable();
 Console.WriteLine($"First: {first.TableName} ({first.TableCount} tables total)");
 
-DatabaseStatistics s = reader.GetStatistics();
+DatabaseStatistics s = await reader.GetStatisticsAsync(cancellationToken);
 Console.WriteLine($"Version:   {s.Version}");
 Console.WriteLine($"Size:      {s.DatabaseSizeBytes / 1024 / 1024} MB");
 Console.WriteLine($"Tables:    {s.TableCount}  Rows: {s.TotalRows:N0}");

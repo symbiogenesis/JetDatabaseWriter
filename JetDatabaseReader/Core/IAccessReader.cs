@@ -3,6 +3,7 @@ namespace JetDatabaseReader;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>
@@ -94,24 +95,24 @@ public interface IAccessReader : IAccessBase
     /// Async overload of <see cref="ReadTable(string, int)"/>.
     /// Reads up to <paramref name="maxRows"/> rows with native CLR types asynchronously.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    Task<TableResult> ReadTableAsync(string tableName, int maxRows);
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<TableResult> ReadTableAsync(string tableName, int maxRows, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Async overload of <see cref="ReadTable{T}(string, int)"/>.
     /// Reads up to <paramref name="maxRows"/> rows mapped to <typeparamref name="T"/> asynchronously.
     /// </summary>
     /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    Task<List<T>> ReadTableAsync<T>(string tableName, int maxRows)
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<List<T>> ReadTableAsync<T>(string tableName, int maxRows, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
     /// Async overload of <see cref="ReadTableAsStrings(string, int)"/>.
     /// Reads up to <paramref name="maxRows"/> rows as strings asynchronously.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    Task<StringTableResult> ReadTableAsStringsAsync(string tableName, int maxRows);
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<StringTableResult> ReadTableAsStringsAsync(string tableName, int maxRows, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Yields rows from <paramref name="tableName"/> as properly typed object arrays without collecting them all in memory.
@@ -195,35 +196,35 @@ public interface IAccessReader : IAccessBase
     // ── Async Methods ──────────────────────────────────────────────────
 
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    Task<List<string>> ListTablesAsync();
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reads the entire table into a DataTable with properly typed columns asynchronously.
     /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    Task<DataTable?> ReadTableAsync(string? tableName = null, IProgress<int>? progress = null);
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<DataTable?> ReadTableAsync(string? tableName = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns statistical information about the database asynchronously.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    Task<DatabaseStatistics> GetStatisticsAsync();
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<DatabaseStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reads all tables into a dictionary of DataTables with properly typed columns asynchronously.
     /// Each table's columns use their native CLR types (int, DateTime, decimal, etc.).
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    Task<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<string>? progress = null);
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<string>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reads all tables into a dictionary of DataTables with all columns typed as strings asynchronously.
     /// Use this for compatibility scenarios.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    Task<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<string>? progress = null);
+    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
+    ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<string>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Creates a fluent query interface for the specified table.

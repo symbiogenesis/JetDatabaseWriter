@@ -5,6 +5,8 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 #pragma warning disable SA1401 // Field should be private — fields are private protected (assembly-only)
 
@@ -87,6 +89,7 @@ public abstract class AccessBase : IAccessBase
     private protected uint? _rc4DbKey;
 
     private protected bool _disposed;
+    private readonly SemaphoreSlim _ioGate = new SemaphoreSlim(1, 1);
 
     static AccessBase()
     {
@@ -107,8 +110,16 @@ public abstract class AccessBase : IAccessBase
 
         // Read enough of the database definition page (page 0)
         var hdr = new byte[0x80];
-        _ = _fs.Seek(0, SeekOrigin.Begin);
-        _ = _fs.Read(hdr, 0, hdr.Length);
+        _ioGate.Wait();
+        try
+        {
+            _ = _fs.Seek(0, SeekOrigin.Begin);
+            _ = _fs.Read(hdr, 0, hdr.Length);
+        }
+        finally
+        {
+            _ = _ioGate.Release();
+        }
 
         // Offset 0x14: 0 = Jet3, ≥ 1 = Jet4+
         byte ver = hdr[0x14];
@@ -243,6 +254,7 @@ public abstract class AccessBase : IAccessBase
         if (disposing)
         {
             _fs?.Dispose();
+            _ioGate.Dispose();
         }
 
         _disposed = true;
@@ -510,19 +522,27 @@ public abstract class AccessBase : IAccessBase
     private protected byte[] ReadPage(long n)
     {
         var buf = ArrayPool<byte>.Shared.Rent(_pgSz);
-        _ = _fs.Seek(n * _pgSz, SeekOrigin.Begin);
-
-        // FileStream.Read is not guaranteed to return all bytes in one call
-        int read = 0;
-        while (read < _pgSz)
+        _ioGate.Wait();
+        try
         {
-            int got = _fs.Read(buf, read, _pgSz - read);
-            if (got == 0)
-            {
-                break;
-            }
+            _ = _fs.Seek(n * _pgSz, SeekOrigin.Begin);
 
-            read += got;
+            // FileStream.Read is not guaranteed to return all bytes in one call
+            int read = 0;
+            while (read < _pgSz)
+            {
+                int got = _fs.Read(buf, read, _pgSz - read);
+                if (got == 0)
+                {
+                    break;
+                }
+
+                read += got;
+            }
+        }
+        finally
+        {
+            _ = _ioGate.Release();
         }
 
         // Jet3 XOR decryption: pages 1+ are masked with a fixed 128-byte key
@@ -536,6 +556,51 @@ public abstract class AccessBase : IAccessBase
         }
 
         // Jet4 RC4 decryption: pages 1+ are decrypted with a per-page key
+        if (_rc4DbKey.HasValue && n >= 1)
+        {
+            byte[] rc4Key = DeriveRc4PageKey(_rc4DbKey.Value, (uint)n);
+            Rc4Transform(buf, 0, _pgSz, rc4Key);
+        }
+
+        return buf;
+    }
+
+    private protected async ValueTask<byte[]> ReadPageAsync(long n, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var buf = ArrayPool<byte>.Shared.Rent(_pgSz);
+        await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _ = _fs.Seek(n * _pgSz, SeekOrigin.Begin);
+
+            int read = 0;
+            while (read < _pgSz)
+            {
+                int got = await _fs.ReadAsync(buf.AsMemory(read, _pgSz - read), cancellationToken).ConfigureAwait(false);
+                if (got == 0)
+                {
+                    break;
+                }
+
+                read += got;
+            }
+        }
+        finally
+        {
+            _ = _ioGate.Release();
+        }
+
+        if (_jet3XorMask != null && n >= 1)
+        {
+            long fileOffset = n * _pgSz;
+            for (int b = 0; b < _pgSz; b++)
+            {
+                buf[b] ^= _jet3XorMask[(int)((fileOffset + b - _pgSz) % _jet3XorMask.Length)];
+            }
+        }
+
         if (_rc4DbKey.HasValue && n >= 1)
         {
             byte[] rc4Key = DeriveRc4PageKey(_rc4DbKey.Value, (uint)n);
@@ -610,9 +675,80 @@ public abstract class AccessBase : IAccessBase
         return result;
     }
 
+    private protected async ValueTask<byte[]?> ReadTDefBytesAsync(long startPage, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var parts = new List<byte[]>();
+        var seen = new HashSet<long>();
+        long pg = startPage;
+
+        while (pg != 0 && !seen.Contains(pg))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _ = seen.Add(pg);
+            byte[] p = await ReadPageAsync(pg, cancellationToken).ConfigureAwait(false);
+            if (p[0] != 0x02)
+            {
+                ReturnPage(p);
+                break;
+            }
+
+            parts.Add(p);
+            pg = Ru32(p, 4);
+        }
+
+        if (parts.Count == 0)
+        {
+            return null;
+        }
+
+        if (parts.Count == 1)
+        {
+            var single = new byte[_pgSz];
+            Buffer.BlockCopy(parts[0], 0, single, 0, _pgSz);
+            ReturnPage(parts[0]);
+            return single;
+        }
+
+        int total = _pgSz;
+        for (int i = 1; i < parts.Count; i++)
+        {
+            total += _pgSz - 8;
+        }
+
+        var result = new byte[total];
+        Buffer.BlockCopy(parts[0], 0, result, 0, _pgSz);
+        int pos = _pgSz;
+        for (int i = 1; i < parts.Count; i++)
+        {
+            int len = _pgSz - 8;
+            Buffer.BlockCopy(parts[i], 8, result, pos, len);
+            pos += len;
+        }
+
+        for (int i = 0; i < parts.Count; i++)
+        {
+            ReturnPage(parts[i]);
+        }
+
+        return result;
+    }
+
     private protected TableDef? ReadTableDef(long tdefPage)
     {
         byte[]? td = ReadTDefBytes(tdefPage);
+        return ParseTableDef(td);
+    }
+
+    private protected async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
+    {
+        byte[]? td = await ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        return ParseTableDef(td);
+    }
+
+    private protected TableDef? ParseTableDef(byte[]? td)
+    {
         if (td == null || td.Length < _tdBlockEnd)
         {
             return null;
@@ -738,18 +874,34 @@ public abstract class AccessBase : IAccessBase
 
     private protected void WritePage(long pageNumber, byte[] page)
     {
-        _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-        _fs.Write(page, 0, _pgSz);
-        _fs.Flush();
+        _ioGate.Wait();
+        try
+        {
+            _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
+            _fs.Write(page, 0, _pgSz);
+            _fs.Flush();
+        }
+        finally
+        {
+            _ = _ioGate.Release();
+        }
     }
 
     private protected long AppendPage(byte[] page)
     {
-        long pageNumber = _fs.Length / _pgSz;
-        _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-        _fs.Write(page, 0, _pgSz);
-        _fs.Flush();
-        return pageNumber;
+        _ioGate.Wait();
+        try
+        {
+            long pageNumber = _fs.Length / _pgSz;
+            _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
+            _fs.Write(page, 0, _pgSz);
+            _fs.Flush();
+            return pageNumber;
+        }
+        finally
+        {
+            _ = _ioGate.Release();
+        }
     }
 
     // ── Disposed check ───────────────────────────────────────────────

@@ -23,7 +23,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     {
         var reader = db.Get(path);
 
-        List<string> tables = await reader.ListTablesAsync();
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(tables);
         Assert.NotEmpty(tables);
@@ -38,7 +38,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
 #pragma warning disable CA1849 // Intentional: comparing sync result against async result
         List<string> sync = reader.ListTables();
 #pragma warning restore CA1849
-        List<string> async_ = await reader.ListTablesAsync();
+        List<string> async_ = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equivalent(sync, async_);
     }
@@ -50,9 +50,9 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     public async Task ReadTableAsync_ReturnsNonNullDataTable(string path)
     {
         var reader = db.Get(path);
-        string table = (await reader.ListTablesAsync())[0];
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        DataTable dt = (await reader.ReadTableAsync(table))!;
+        DataTable dt = (await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.NotNull(dt);
     }
@@ -62,10 +62,10 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     public async Task ReadTableAsync_ColumnTypes_AreTyped(string path)
     {
         var reader = db.Get(path);
-        string table = (await reader.ListTablesAsync())[0];
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         var meta = reader.GetColumnMetadata(table);
 
-        DataTable dt = (await reader.ReadTableAsync(table))!;
+        DataTable dt = (await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 
         for (int i = 0; i < meta.Count; i++)
         {
@@ -78,12 +78,12 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     public async Task ReadTableAsync_RowCount_MatchesSyncReadTable(string path)
     {
         var reader = db.Get(path);
-        string table = (await reader.ListTablesAsync())[0];
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
 #pragma warning disable CA1849 // Intentional: comparing sync result against async result
         DataTable syncDt = reader.ReadTable(table)!;
 #pragma warning restore CA1849
-        DataTable asyncDt = (await reader.ReadTableAsync(table))!;
+        DataTable asyncDt = (await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Equal(syncDt.Rows.Count, asyncDt.Rows.Count);
     }
@@ -99,7 +99,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
 #pragma warning disable CA1849 // Intentional: comparing sync result against async result
         DatabaseStatistics sync = reader.GetStatistics();
 #pragma warning restore CA1849
-        DatabaseStatistics async_ = await reader.GetStatisticsAsync();
+        DatabaseStatistics async_ = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(sync.TotalPages, async_.TotalPages);
         Assert.Equal(sync.TableCount, async_.TableCount);
@@ -113,9 +113,9 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     public async Task ReadAllTablesAsync_ContainsAllTableNames(string path)
     {
         var reader = db.Get(path);
-        List<string> expected = await reader.ListTablesAsync();
+        List<string> expected = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
-        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync();
+        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equivalent(expected, all.Keys);
     }
@@ -129,7 +129,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
 #pragma warning disable CA1849 // Intentional: comparing sync result against async result
         Dictionary<string, DataTable> sync = reader.ReadAllTables();
 #pragma warning restore CA1849
-        Dictionary<string, DataTable> async_ = await reader.ReadAllTablesAsync();
+        Dictionary<string, DataTable> async_ = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         foreach (string name in sync.Keys)
         {
@@ -145,7 +145,7 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     {
         var reader = db.Get(path);
 
-        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsStringsAsync();
+        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsStringsAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         foreach (var (_, dt) in all)
             foreach (DataColumn col in dt.Columns)
@@ -160,8 +160,8 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     {
         var reader = db.Get(path);
 
-        Dictionary<string, DataTable> typed = await reader.ReadAllTablesAsync();
-        Dictionary<string, DataTable> strings = await reader.ReadAllTablesAsStringsAsync();
+        Dictionary<string, DataTable> typed = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
+        Dictionary<string, DataTable> strings = await reader.ReadAllTablesAsStringsAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         foreach (string name in typed.Keys)
         {
@@ -183,12 +183,12 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     public async Task ReadTableAsyncGeneric_RowCount_MatchesSyncGeneric(string path)
     {
         var reader = db.Get(path);
-        string table = (await reader.ListTablesAsync())[0];
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
 #pragma warning disable CA1849 // Intentional: comparing sync result against async result
         List<AsyncGenericRow> sync = reader.ReadTable<AsyncGenericRow>(table, 100);
 #pragma warning restore CA1849
-        List<AsyncGenericRow> async_ = await reader.ReadTableAsync<AsyncGenericRow>(table, 100);
+        List<AsyncGenericRow> async_ = await reader.ReadTableAsync<AsyncGenericRow>(table, 100, TestContext.Current.CancellationToken);
 
         Assert.Equal(sync.Count, async_.Count);
     }
@@ -198,9 +198,9 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     public async Task ReadTableAsyncGeneric_ReturnsNonNullInstances(string path)
     {
         var reader = db.Get(path);
-        string table = (await reader.ListTablesAsync())[0];
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        List<AsyncGenericRow> items = await reader.ReadTableAsync<AsyncGenericRow>(table, 10);
+        List<AsyncGenericRow> items = await reader.ReadTableAsync<AsyncGenericRow>(table, 10, TestContext.Current.CancellationToken);
 
         Assert.All(items, item => Assert.NotNull(item));
     }
@@ -210,10 +210,10 @@ public class AccessReaderAsyncTests(DatabaseCache db)
     public async Task ReadTableAsyncGeneric_RowCount_MatchesNonGenericAsync(string path)
     {
         var reader = db.Get(path);
-        string table = (await reader.ListTablesAsync())[0];
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        TableResult nonGeneric = await reader.ReadTableAsync(table, 100);
-        List<AsyncGenericRow> generic = await reader.ReadTableAsync<AsyncGenericRow>(table, 100);
+        TableResult nonGeneric = await reader.ReadTableAsync(table, 100, TestContext.Current.CancellationToken);
+        List<AsyncGenericRow> generic = await reader.ReadTableAsync<AsyncGenericRow>(table, 100, TestContext.Current.CancellationToken);
 
         Assert.Equal(nonGeneric.Rows.Count, generic.Count);
     }
