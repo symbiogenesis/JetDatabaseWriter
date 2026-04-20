@@ -155,8 +155,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     "(File > Info > Decrypt Database) and try again.");
             }
 
-            // Password provided: skip format validation (the JET magic at offset 0 was
-            // replaced by the CFB magic, but data pages remain valid ACCDB format).
+            // Verify the provided password against the stored password at 0x42.
+            // ACCDB uses the same XOR scheme as Jet4 for the header password area.
+            string storedPassword = DecodeJet4Password(hdr);
+            if (!string.Equals(options.Password, storedPassword, StringComparison.Ordinal))
+            {
+                throw new UnauthorizedAccessException(
+                    "The provided password is incorrect for this database.");
+            }
+
             return;
         }
 

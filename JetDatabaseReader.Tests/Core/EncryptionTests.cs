@@ -707,9 +707,38 @@ public sealed class EncryptionTests : IDisposable
         // Access 2007+ AES-encrypts the .accdb by wrapping it in a CFB document.
         byte[] cfbMagic = { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 };
 
+        // Jet4/ACCDB password XOR mask (same scheme at offset 0x42 for all Jet4+ versions)
+        byte[] jet4PwdMask =
+        {
+            0x86, 0xFB, 0xEC, 0x37, 0x5D, 0x44, 0x9C, 0xFA,
+            0xC6, 0x5E, 0x28, 0xE6, 0x13, 0xB6, 0x8A, 0x60,
+            0x54, 0x94, 0x7B, 0x36, 0xD1, 0xEC, 0xDF, 0xB1,
+            0x31, 0x6A, 0x13, 0x43, 0xEF, 0x31, 0xB1, 0x33,
+            0xA1, 0xFE, 0x6A, 0x7A, 0x42, 0x62, 0x04, 0xFE,
+        };
+
         using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
+
+        // Read header for creation date at 0x72 (needed for password XOR)
+        var hdr = new byte[0x80];
+        fs.Seek(0, SeekOrigin.Begin);
+        _ = fs.Read(hdr, 0, hdr.Length);
+
+        // Write CFB magic
         fs.Seek(0, SeekOrigin.Begin);
         fs.Write(cfbMagic, 0, cfbMagic.Length);
+
+        // Encode password "secret" at offset 0x42 using the Jet4/ACCDB XOR scheme
+        byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes("secret");
+        var encoded = new byte[40];
+        for (int i = 0; i < 40; i++)
+        {
+            byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
+            encoded[i] = (byte)(pwdByte ^ jet4PwdMask[i] ^ hdr[0x72 + (i % 4)]);
+        }
+
+        fs.Seek(0x42, SeekOrigin.Begin);
+        fs.Write(encoded, 0, 40);
     }
 
     private string CopyToTemp(string sourcePath)
