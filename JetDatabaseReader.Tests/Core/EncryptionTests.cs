@@ -374,23 +374,19 @@ public sealed class EncryptionTests : IDisposable
     [Fact]
     public void AesEncryption_GenuineAccdb_OpensWithoutPassword_BecauseNoPageEncryption()
     {
-        // AesEncrypted.accdb uses an old-style ACE password (hash in header only).
-        // Data pages are NOT encrypted, so the reader opens the file without a password.
-        // Old-style ACE password verification is not yet implemented (known limitation).
-        var ex = Record.Exception(() =>
-        {
-            using var reader = AccessReader.Open(TestDatabases.AesEncrypted);
-            reader.ListTables();
-        });
-
-        Assert.Null(ex);
+        // Legacy ACCDB password verification is now implemented.
+        // Opening without a password should fail.
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            AccessReader.Open(TestDatabases.AesEncrypted));
     }
 
     [Fact]
     public void AesEncryption_GenuineAccdb_ListTables_ReturnsNonEmpty()
     {
-        // Since pages are not encrypted, ListTables returns the original database contents.
-        using var reader = AccessReader.Open(TestDatabases.AesEncrypted);
+        // With the correct password, ListTables returns the original database contents.
+        using var reader = AccessReader.Open(
+            TestDatabases.AesEncrypted,
+            new AccessReaderOptions { Password = "secret" });
         List<string> tables = reader.ListTables();
         Assert.NotEmpty(tables);
     }
@@ -398,8 +394,10 @@ public sealed class EncryptionTests : IDisposable
     [Fact]
     public void AesEncryption_GenuineAccdb_ReadTable_ReturnsRows()
     {
-        // Data pages are readable; ReadTable returns original NorthwindTraders rows.
-        using var reader = AccessReader.Open(TestDatabases.AesEncrypted);
+        // Data pages are readable with the correct password.
+        using var reader = AccessReader.Open(
+            TestDatabases.AesEncrypted,
+            new AccessReaderOptions { Password = "secret" });
         List<string> tables = reader.ListTables();
         Assert.NotEmpty(tables);
 
@@ -411,8 +409,10 @@ public sealed class EncryptionTests : IDisposable
     [Fact]
     public void AesEncryption_GenuineAccdb_StreamRows_ReturnsRows()
     {
-        // StreamRows also works because data pages are unencrypted.
-        using var reader = AccessReader.Open(TestDatabases.AesEncrypted);
+        // StreamRows works with the correct password.
+        using var reader = AccessReader.Open(
+            TestDatabases.AesEncrypted,
+            new AccessReaderOptions { Password = "secret" });
         List<string> tables = reader.ListTables();
         Assert.NotEmpty(tables);
 
@@ -423,50 +423,34 @@ public sealed class EncryptionTests : IDisposable
     [Fact]
     public void AesEncryption_GenuineAccdb_GetStatistics_ReturnsValidStats()
     {
-        // Statistics work because catalog pages are readable.
-        using var reader = AccessReader.Open(TestDatabases.AesEncrypted);
+        // Statistics are available with the correct password.
+        using var reader = AccessReader.Open(
+            TestDatabases.AesEncrypted,
+            new AccessReaderOptions { Password = "secret" });
         DatabaseStatistics stats = reader.GetStatistics();
 
         Assert.True(stats.TableCount > 0, "Should report tables.");
         Assert.True(stats.TotalRows > 0, "Should report rows.");
     }
 
-    // ── TDD red: ACE old-style password verification (not yet implemented) ──
+    // ── Legacy ACCDB password verification behavior ──
 
     [Fact]
     public void AesEncryption_GenuineAccdb_OldStylePassword_IsNotDetected_TDD()
     {
-        // TDD: The reader currently does NOT detect old-style ACE passwords.
-        // When ACE password verification is implemented, opening without a password
-        // should throw UnauthorizedAccessException.
-        var ex = Record.Exception(() =>
-        {
-            using var reader = AccessReader.Open(TestDatabases.AesEncrypted);
-            reader.ListTables();
-        });
-
-        // TDD: currently null (opens without error).
-        // When implemented, this should be Assert.NotNull(ex) instead.
-        Assert.Null(ex); // known limitation — will flip to NotNull when implemented
+        // Legacy ACCDB passwords are detected; missing password should throw.
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            AccessReader.Open(TestDatabases.AesEncrypted));
     }
 
     [Fact]
     public void AesEncryption_GenuineAccdb_WithWrongPassword_DoesNotThrow_TDD()
     {
-        // TDD: Because old-style ACE password verification is not implemented,
-        // a wrong password is silently ignored and the file opens normally.
-        // When verification is implemented, this should throw UnauthorizedAccessException.
+        // Wrong password should throw UnauthorizedAccessException.
         var options = new AccessReaderOptions { Password = "definitely_wrong_password" };
 
-        var ex = Record.Exception(() =>
-        {
-            using var reader = AccessReader.Open(TestDatabases.AesEncrypted, options);
-            reader.ListTables();
-        });
-
-        // TDD: currently null.  When implemented, Assert.NotNull(ex) and
-        // Assert.IsAssignableFrom<UnauthorizedAccessException>(ex).
-        Assert.Null(ex);
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            AccessReader.Open(TestDatabases.AesEncrypted, options));
     }
 
     // ═══════════════════════════════════════════════════════════════════

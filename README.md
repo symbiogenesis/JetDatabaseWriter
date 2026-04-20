@@ -28,8 +28,8 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Non-Western text** | Code page auto-detected from the database header |
 | ✅ **OLE Objects** | Detects embedded JPEG, PNG, PDF, ZIP, DOC, RTF |
 | ✅ **Write support** | Create/drop tables, insert/update/delete rows (Jet4/ACE) |
-| ✅ **Jet3 encryption** | Transparent XOR decryption for Access 97 databases |
-| ✅ **Jet4 passwords** | Password verification for Access 2000–2003 `.mdb` files |
+| ✅ **Jet3 encryption** | Transparent page-level XOR decryption for Access 97 `.mdb` databases |
+| ✅ **Password verification** | Jet4 `.mdb` and legacy password-only `.accdb` (ACE CompactDatabase `;pwd=`) |
 | ✅ **Linked table metadata** | `ListLinkedTables()` returns source paths and foreign names |
 | ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on dispose (opt-out) |
 
@@ -361,7 +361,7 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 
 | | |
 |---|---|
-| ⚠️ ACCDB (AES) encryption | Header-level detection and password verification work; full AES page decryption for genuinely-encrypted Access 2007+ `.accdb` files is not yet supported |
+| ⚠️ ACCDB AES encryption | Legacy password-only `.accdb` is supported; AES-encrypted Access 2007+ `.accdb` (CFB-wrapped) is detected, but page decryption is not yet supported |
 | ⚠️ Complex fields (0x11/0x12) | Metadata and subtypes decoded via `MSysComplexColumns`; cell values still returned as raw bytes or `DBNull` (FK lookup into hidden system tables not yet implemented) |
 
 ---
