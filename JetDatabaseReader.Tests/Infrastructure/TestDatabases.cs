@@ -127,7 +127,7 @@ internal static class TestDatabases
 
             try
             {
-                using var r = AccessReader.Open(p);
+                using var r = AccessReader.Open(p, new AccessReaderOptions { UseLockFile = false });
                 return true;
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JetLimitationException)

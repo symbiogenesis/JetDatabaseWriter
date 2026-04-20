@@ -31,6 +31,7 @@ Pure-managed .NET library for reading Microsoft Access JET databases — no OleD
 | ✅ **Jet3 encryption** | Transparent XOR decryption for Access 97 databases |
 | ✅ **Jet4 passwords** | Password verification for Access 2000–2003 `.mdb` files |
 | ✅ **Linked table metadata** | `ListLinkedTables()` returns source paths and foreign names |
+| ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on dispose (opt-out) |
 
 ---
 
@@ -328,8 +329,16 @@ var options = new AccessReaderOptions
     FileAccess               = FileAccess.Read,   // default
     FileShare                = FileShare.Read,    // default: others may read, writes blocked
     // FileShare             = FileShare.ReadWrite // use when Access has the file open
+    UseLockFile              = true,   // create .ldb/.laccdb lockfile (default: true)
 };
 using var reader = AccessReader.Open("database.mdb", options);
+
+var writerOptions = new AccessWriterOptions
+{
+    UseLockFile = true,              // create .ldb/.laccdb lockfile (default: true)
+    RespectExistingLockFile = true,  // throw IOException if lockfile already exists (default: true)
+};
+using var writer = AccessWriter.Open("database.mdb", writerOptions);
 ```
 
 ---
@@ -353,8 +362,7 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 | | |
 |---|---|
 | ⚠️ ACCDB (AES) encryption | Header-level detection and password verification work; full AES page decryption for genuinely-encrypted Access 2007+ `.accdb` files is not yet supported |
-| ⚠️ Complex fields (0x11/0x12) | Metadata reported correctly; cell values not yet decoded |
-| ⚠️ Lockfile (`.laccdb` / `.ldb`) | The library does not create a lockfile when opening a database, nor does it check for or respect an existing one — concurrent access control is left to the caller |
+| ⚠️ Complex fields (0x11/0x12) | Metadata and subtypes decoded via `MSysComplexColumns`; cell values still returned as raw bytes or `DBNull` (FK lookup into hidden system tables not yet implemented) |
 
 ---
 

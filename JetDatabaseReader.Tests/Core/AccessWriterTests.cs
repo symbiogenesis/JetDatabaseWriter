@@ -29,7 +29,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     {
         string temp = CopyToTemp(path);
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
 
         Assert.NotNull(writer);
     }
@@ -51,7 +51,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     public void Dispose_CalledTwice_DoesNotThrow(string path)
     {
         string temp = CopyToTemp(path);
-        var writer = AccessWriter.Open(temp);
+        var writer = OpenWriter(temp);
 
         writer.Dispose();
         var ex = Record.Exception(() => writer.Dispose());
@@ -66,24 +66,19 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     public void InsertRow_SingleRow_IncreasesRowCount(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName;
-        long originalCount;
+        var cachedReader = db.Get(path);
+        string tableName = cachedReader.ListTables()[0];
+        long originalCount = cachedReader.GetRealRowCount(tableName);
 
-        using (var reader = AccessReader.Open(temp))
-        {
-            tableName = reader.ListTables()[0];
-            originalCount = reader.GetRealRowCount(tableName);
-        }
-
-        var columns = GetColumnMetadataForTable(temp, tableName);
+        var columns = cachedReader.GetColumnMetadata(tableName);
         object[] newRow = BuildDummyRow(columns);
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.InsertRow(tableName, newRow);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             long newCount = reader.GetRealRowCount(tableName);
             Assert.Equal(originalCount + 1, newCount);
@@ -95,14 +90,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     public void InsertRow_NullValues_ThrowsArgumentNullException(string path)
     {
         string temp = CopyToTemp(path);
+        string tableName = db.Get(path).ListTables()[0];
 
-        using var writer = AccessWriter.Open(temp);
-        string tableName;
-
-        using (var reader = AccessReader.Open(temp, new AccessReaderOptions { FileShare = FileShare.ReadWrite }))
-        {
-            tableName = reader.ListTables()[0];
-        }
+        using var writer = OpenWriter(temp);
 
         Assert.Throws<ArgumentNullException>(() => writer.InsertRow(tableName, null!));
     }
@@ -112,23 +102,18 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     public void InsertRow_InsertedData_IsReadableBack(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName;
-        List<ColumnMetadata> columns;
-
-        using (var reader = AccessReader.Open(temp))
-        {
-            tableName = reader.ListTables()[0];
-            columns = reader.GetColumnMetadata(tableName);
-        }
+        var cachedReader = db.Get(path);
+        string tableName = cachedReader.ListTables()[0];
+        var columns = cachedReader.GetColumnMetadata(tableName);
 
         object[] newRow = BuildDummyRow(columns);
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.InsertRow(tableName, newRow);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             DataTable dt = reader.ReadTable(tableName)!;
             Assert.True(dt.Rows.Count > 0);
@@ -146,18 +131,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     public void InsertRows_MultiplRows_ReturnsCorrectInsertCount(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName;
-        List<ColumnMetadata> columns;
-
-        using (var reader = AccessReader.Open(temp))
-        {
-            tableName = reader.ListTables()[0];
-            columns = reader.GetColumnMetadata(tableName);
-        }
+        var cachedReader = db.Get(path);
+        string tableName = cachedReader.ListTables()[0];
+        var columns = cachedReader.GetColumnMetadata(tableName);
 
         var rows = Enumerable.Range(0, 5).Select(_ => BuildDummyRow(columns));
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
         int inserted = writer.InsertRows(tableName, rows);
 
         Assert.Equal(5, inserted);
@@ -168,25 +148,19 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     public void InsertRows_MultipleRows_IncreasesRowCount(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName;
-        long originalCount;
-        List<ColumnMetadata> columns;
-
-        using (var reader = AccessReader.Open(temp))
-        {
-            tableName = reader.ListTables()[0];
-            originalCount = reader.GetRealRowCount(tableName);
-            columns = reader.GetColumnMetadata(tableName);
-        }
+        var cachedReader = db.Get(path);
+        string tableName = cachedReader.ListTables()[0];
+        long originalCount = cachedReader.GetRealRowCount(tableName);
+        var columns = cachedReader.GetColumnMetadata(tableName);
 
         var rows = Enumerable.Range(0, 3).Select(_ => BuildDummyRow(columns)).ToList();
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.InsertRows(tableName, rows);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             long newCount = reader.GetRealRowCount(tableName);
             Assert.Equal(originalCount + 3, newCount);
@@ -202,7 +176,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         string temp = CopyToTemp(path);
         string tableName = SeedUpdateTable(temp);
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
         var updates = new Dictionary<string, object> { ["Label"] = "UPDATED_VALUE" };
 
         int updated = writer.UpdateRows(tableName, "Id", 1, updates);
@@ -217,13 +191,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         string tableName = SeedUpdateTable(temp);
         const string sentinel = "WRITE_TEST_SENTINEL";
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             var updates = new Dictionary<string, object> { ["Label"] = sentinel };
             writer.UpdateRows(tableName, "Id", 1, updates);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             DataTable dt = reader.ReadTable(tableName)!;
             bool found = dt.AsEnumerable().Any(row =>
@@ -239,13 +213,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         string temp = CopyToTemp(path);
         string tableName = SeedUpdateTable(temp);
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             var updates = new Dictionary<string, object> { ["Label"] = "NO_COUNT_CHANGE" };
             writer.UpdateRows(tableName, "Id", 1, updates);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             long newCount = reader.GetRealRowCount(tableName);
             Assert.Equal(3, newCount);
@@ -259,36 +233,29 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     public void DeleteRows_MatchingRows_DecreasesRowCount(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName;
-        long originalCount;
-        string predicateCol;
-        object predicateVal;
+        var cachedReader = db.Get(path);
+        string tableName = cachedReader.ListTables()[0];
+        long originalCount = cachedReader.GetRealRowCount(tableName);
+        var columns = cachedReader.GetColumnMetadata(tableName);
 
-        using (var reader = AccessReader.Open(temp))
+        DataTable dt = cachedReader.ReadTable(tableName)!;
+        if (dt.Rows.Count == 0)
         {
-            tableName = reader.ListTables()[0];
-            originalCount = reader.GetRealRowCount(tableName);
-            var columns = reader.GetColumnMetadata(tableName);
-
-            DataTable dt = reader.ReadTable(tableName)!;
-            if (dt.Rows.Count == 0)
-            {
-                return;
-            }
-
-            predicateCol = columns[0].Name;
-            predicateVal = dt.Rows[0][0];
+            return;
         }
 
+        string predicateCol = columns[0].Name;
+        object predicateVal = dt.Rows[0][0];
+
         int deleted;
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             deleted = writer.DeleteRows(tableName, predicateCol, predicateVal);
         }
 
         Assert.True(deleted > 0);
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             long newCount = reader.GetRealRowCount(tableName);
             Assert.Equal(originalCount - deleted, newCount);
@@ -302,7 +269,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         string temp = CopyToTemp(path);
         string tableName = db.Get(path).ListTables()[0];
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
 
         Assert.Throws<ArgumentException>(() => writer.DeleteRows(tableName, "NONEXISTENT_COLUMN_XYZ", "IMPOSSIBLE_VALUE_12345"));
     }
@@ -312,31 +279,25 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     public void DeleteRows_DeletedRows_AreNotReadableBack(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName;
-        string predicateCol;
-        object predicateVal;
+        var cachedReader = db.Get(path);
+        string tableName = cachedReader.ListTables()[0];
+        var columns = cachedReader.GetColumnMetadata(tableName);
 
-        using (var reader = AccessReader.Open(temp))
+        DataTable originalDt = cachedReader.ReadTable(tableName)!;
+        if (originalDt.Rows.Count == 0)
         {
-            tableName = reader.ListTables()[0];
-            var columns = reader.GetColumnMetadata(tableName);
-
-            DataTable dt = reader.ReadTable(tableName)!;
-            if (dt.Rows.Count == 0)
-            {
-                return;
-            }
-
-            predicateCol = columns[0].Name;
-            predicateVal = dt.Rows[0][0];
+            return;
         }
 
-        using (var writer = AccessWriter.Open(temp))
+        string predicateCol = columns[0].Name;
+        object predicateVal = originalDt.Rows[0][0];
+
+        using (var writer = OpenWriter(temp))
         {
             writer.DeleteRows(tableName, predicateCol, predicateVal);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             DataTable dt = reader.ReadTable(tableName)!;
             bool stillPresent = dt.AsEnumerable().Any(row =>
@@ -369,12 +330,12 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Created", typeof(DateTime)),
         };
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(newTableName, columns);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             var tables = reader.ListTables();
             Assert.Contains(newTableName, tables);
@@ -395,12 +356,12 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Amount", typeof(decimal)),
         };
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(newTableName, columns);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             var meta = reader.GetColumnMetadata(newTableName);
             Assert.Equal(3, meta.Count);
@@ -420,12 +381,12 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Value", typeof(string), maxLength: 255),
         };
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(newTableName, columns);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             long count = reader.GetRealRowCount(newTableName);
             Assert.Equal(0, count);
@@ -445,14 +406,14 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Label", typeof(string), maxLength: 100),
         };
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(newTableName, columns);
             writer.InsertRow(newTableName, new object[] { 1, "Hello" });
             writer.InsertRow(newTableName, new object[] { 2, "World" });
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             long count = reader.GetRealRowCount(newTableName);
             Assert.Equal(2, count);
@@ -477,25 +438,25 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Id", typeof(int)),
         };
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(newTableName, columns);
         }
 
         // Verify it exists
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             Assert.Contains(newTableName, reader.ListTables());
         }
 
         // Drop it
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.DropTable(newTableName);
         }
 
         // Verify it's gone
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             Assert.DoesNotContain(newTableName, reader.ListTables());
         }
@@ -506,12 +467,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     public void DropTable_DoesNotAffectOtherTables(string path)
     {
         string temp = CopyToTemp(path);
-        List<string> originalTables;
-
-        using (var reader = AccessReader.Open(temp))
-        {
-            originalTables = reader.ListTables();
-        }
+        List<string> originalTables = db.Get(path).ListTables();
 
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
         var columns = new List<ColumnDefinition>
@@ -519,17 +475,17 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Id", typeof(int)),
         };
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(newTableName, columns);
         }
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.DropTable(newTableName);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             var tables = reader.ListTables();
             Assert.Equivalent(originalTables, tables);
@@ -543,7 +499,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     public void InsertRow_AfterDispose_ThrowsObjectDisposedException(string path)
     {
         string temp = CopyToTemp(path);
-        var writer = AccessWriter.Open(temp);
+        var writer = OpenWriter(temp);
         writer.Dispose();
 
         Assert.Throws<ObjectDisposedException>(() => writer.InsertRow("AnyTable", new object[] { 1 }));
@@ -555,7 +511,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     {
         string temp = CopyToTemp(path);
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
 
         Assert.Throws<ArgumentException>(() => writer.CreateTable(null!, new List<ColumnDefinition>()));
     }
@@ -566,7 +522,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     {
         string temp = CopyToTemp(path);
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
 
         Assert.Throws<ArgumentNullException>(() => writer.CreateTable("Test", null!));
     }
@@ -577,7 +533,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     {
         string temp = CopyToTemp(path);
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
 
         Assert.Throws<ArgumentException>(() => writer.DeleteRows(null!, "Col", "Val"));
     }
@@ -601,12 +557,12 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("DecimalCol", typeof(decimal)),
         };
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(newTableName, columns);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             var meta = reader.GetColumnMetadata(newTableName);
             Assert.Equal(6, meta.Count);
@@ -637,13 +593,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
         var date = new DateTime(2025, 6, 15, 10, 30, 0);
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(newTableName, columns);
             writer.InsertRow(newTableName, new object[] { 42, "Test Value", date, 3.14, true });
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             DataTable dt = reader.ReadTable(newTableName)!;
             Assert.Equal(1, dt.Rows.Count);
@@ -679,13 +635,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Label", typeof(string), maxLength: 100),
         };
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(tableName, columns);
             writer.InsertRow(tableName, new WriterPoco { Id = 1, Label = "Hello" });
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             long count = reader.GetRealRowCount(tableName);
             Assert.Equal(1, count);
@@ -705,13 +661,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Label", typeof(string), maxLength: 100),
         };
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(tableName, columns);
             writer.InsertRow(tableName, new WriterPoco { Id = 42, Label = "Roundtrip" });
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             List<WriterPoco> items = reader.ReadTable<WriterPoco>(tableName, 100);
             Assert.Single(items);
@@ -725,14 +681,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     public void InsertRowGeneric_NullItem_ThrowsArgumentNullException(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName;
+        string tableName = db.Get(path).ListTables()[0];
 
-        using (var reader = AccessReader.Open(temp))
-        {
-            tableName = reader.ListTables()[0];
-        }
-
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
 
         Assert.Throws<ArgumentNullException>(() => writer.InsertRow<WriterPoco>(tableName, null!));
     }
@@ -754,7 +705,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
         var items = Enumerable.Range(1, 5).Select(i => new WriterPoco { Id = i, Label = $"Item{i}" });
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
         writer.CreateTable(tableName, columns);
         int inserted = writer.InsertRows(tableName, items);
 
@@ -776,13 +727,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
         var items = Enumerable.Range(1, 3).Select(i => new WriterPoco { Id = i, Label = $"Row{i}" }).ToList();
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(tableName, columns);
             writer.InsertRows(tableName, items);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             long count = reader.GetRealRowCount(tableName);
             Assert.Equal(3, count);
@@ -808,13 +759,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new() { Id = 20, Label = "Beta" },
         };
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(tableName, columns);
             writer.InsertRows(tableName, items);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             List<WriterPoco> readBack = reader.ReadTable<WriterPoco>(tableName, 100);
             Assert.Equal(2, readBack.Count);
@@ -831,7 +782,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     {
         string temp = CopyToTemp(path);
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
 
         Assert.Throws<InvalidOperationException>(() => writer.DropTable("NoSuchTable_XYZ_999"));
     }
@@ -843,7 +794,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         string temp = CopyToTemp(path);
         string tableName = db.Get(path).ListTables()[0];
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
         var updates = new Dictionary<string, object> { ["SomeCol"] = "value" };
 
         Assert.Throws<ArgumentException>(() =>
@@ -867,7 +818,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         string predicateCol = columns[0].Name;
         object predicateVal = dt.Rows[0][0];
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
         var updates = new Dictionary<string, object> { ["NONEXISTENT_COL_XYZ"] = "value" };
 
         Assert.Throws<ArgumentException>(() =>
@@ -883,7 +834,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         string tableName = cachedReader.ListTables()[0];
         string firstCol = cachedReader.GetColumnMetadata(tableName)[0].Name;
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
         int deleted = writer.DeleteRows(tableName, firstCol, "IMPOSSIBLE_VALUE_THAT_WONT_MATCH_12345");
 
         Assert.Equal(0, deleted);
@@ -902,7 +853,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Name", typeof(string), maxLength: 50),
         };
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
         writer.CreateTable(tableName, columns);
 
         // Provide 3 values for a 2-column table
@@ -931,13 +882,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         // 512 Unicode chars = 1024 bytes = MaxInlineMemoBytes exactly
         string memoValue = new string('A', 512);
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(tableName, columns);
             writer.InsertRow(tableName, new object[] { 1, memoValue });
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             DataTable dt = reader.ReadTable(tableName)!;
             Assert.Equal(1, dt.Rows.Count);
@@ -966,7 +917,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         // 513 Unicode chars = 1026 bytes > MaxInlineMemoBytes
         string memoValue = new string('B', 513);
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
         writer.CreateTable(tableName, columns);
 
         Assert.Throws<JetLimitationException>(() =>
@@ -993,7 +944,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
         byte[] oversized = new byte[257]; // > MaxInlineOleBytes (256)
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
         writer.CreateTable(tableName, columns);
 
         Assert.Throws<JetLimitationException>(() =>
@@ -1024,13 +975,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             data[i] = (byte)(i % 256);
         }
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(tableName, columns);
             writer.InsertRow(tableName, new object[] { 1, data });
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             DataTable dt = reader.ReadTable(tableName)!;
             Assert.Equal(1, dt.Rows.Count);
@@ -1050,7 +1001,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Id", typeof(int)),
         };
 
-        using var writer = AccessWriter.Open(temp);
+        using var writer = OpenWriter(temp);
         writer.CreateTable(tableName, columns);
 
         Assert.Throws<InvalidOperationException>(() =>
@@ -1070,7 +1021,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Name", typeof(string), maxLength: 50),
         };
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(tableName, columns);
             writer.InsertRow(tableName, new object[] { 1, "Keep" });
@@ -1078,13 +1029,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             writer.InsertRow(tableName, new object[] { 3, "Keep" });
         }
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             int deleted = writer.DeleteRows(tableName, "Name", "Delete");
             Assert.Equal(1, deleted);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             DataTable dt = reader.ReadTable(tableName)!;
             Assert.Equal(2, dt.Rows.Count);
@@ -1112,21 +1063,21 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Score", typeof(int)),
         };
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             writer.CreateTable(tableName, columns);
             writer.InsertRow(tableName, new object[] { 1, "Alice", 100 });
             writer.InsertRow(tableName, new object[] { 2, "Bob", 200 });
         }
 
-        using (var writer = AccessWriter.Open(temp))
+        using (var writer = OpenWriter(temp))
         {
             var updates = new Dictionary<string, object> { ["Score"] = 999 };
             int updated = writer.UpdateRows(tableName, "Id", 1, updates);
             Assert.Equal(1, updated);
         }
 
-        using (var reader = AccessReader.Open(temp))
+        using (var reader = OpenReader(temp))
         {
             DataTable dt = reader.ReadTable(tableName)!;
             DataRow aliceRow = dt.AsEnumerable()
@@ -1154,12 +1105,6 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
                 /* best-effort cleanup */
             }
         }
-    }
-
-    private static List<ColumnMetadata> GetColumnMetadataForTable(string path, string tableName)
-    {
-        using var reader = AccessReader.Open(path);
-        return reader.GetColumnMetadata(tableName);
     }
 
     /// <summary>
@@ -1251,7 +1196,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Label", typeof(string), maxLength: 100),
         };
 
-        using var writer = AccessWriter.Open(dbPath);
+        using var writer = OpenWriter(dbPath);
         writer.CreateTable(tableName, columns);
         writer.InsertRow(tableName, new object[] { 1, "Alpha" });
         writer.InsertRow(tableName, new object[] { 2, "Beta" });
@@ -1259,6 +1204,14 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
         return tableName;
     }
+
+    /// <summary>Opens a writer with lockfile disabled (lockfile creation is not yet implemented).</summary>
+    private static AccessWriter OpenWriter(string path) =>
+        AccessWriter.Open(path, new AccessWriterOptions { UseLockFile = false });
+
+    /// <summary>Opens a reader with lockfile disabled (lockfile creation is not yet implemented).</summary>
+    private static AccessReader OpenReader(string path) =>
+        AccessReader.Open(path, new AccessReaderOptions { UseLockFile = false });
 
     /// <summary>Creates a writable temp copy of the given database and tracks it for cleanup.</summary>
     private string CopyToTemp(string sourcePath)

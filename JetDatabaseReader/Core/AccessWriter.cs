@@ -21,23 +21,33 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private const int MaxInlineOleBytes = 256;
 
     private readonly string _path;
+    private readonly bool _useLockFile;
+    private readonly bool _respectExistingLockFile;
 
     private List<CatalogEntry>? _catalogCache;
     private long _cachedInsertTDefPage = -1;
     private long _cachedInsertPageNumber = -1;
 
-    private AccessWriter(string path, FileStream fs)
+    private AccessWriter(string path, FileStream fs, bool useLockFile, bool respectExistingLockFile)
         : base(fs)
     {
         _path = path;
+        _useLockFile = useLockFile;
+        _respectExistingLockFile = respectExistingLockFile;
+
+        if (_useLockFile)
+        {
+            CreateLockFile();
+        }
     }
 
     /// <summary>
     /// Opens a JET database file for writing and returns a new AccessWriter instance.
     /// </summary>
     /// <param name="path">Path to the .mdb or .accdb file.</param>
+    /// <param name="options">Optional configuration options.</param>
     /// <returns>An AccessWriter instance for the specified database.</returns>
-    public static AccessWriter Open(string path)
+    public static AccessWriter Open(string path, AccessWriterOptions? options = null)
     {
         Guard.NotNullOrEmpty(path, nameof(path));
 
@@ -46,8 +56,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new FileNotFoundException($"Database file not found: {path}", path);
         }
 
+        options ??= new AccessWriterOptions();
+
         var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
-        return new AccessWriter(path, fs);
+        return new AccessWriter(path, fs, options.UseLockFile, options.RespectExistingLockFile);
     }
 
     /// <inheritdoc/>
@@ -324,6 +336,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (_disposed)
         {
             return;
+        }
+
+        if (disposing && _useLockFile)
+        {
+            DeleteLockFile();
         }
 
         base.Dispose(disposing);
@@ -1284,6 +1301,52 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Wu16(page, offsetPos, raw | 0x8000);
         WritePage(pageNumber, page);
         ReturnPage(page);
+    }
+
+    private string GetLockFilePath()
+    {
+        string ext = Path.GetExtension(_path);
+        string lockExt = ext.Equals(".accdb", StringComparison.OrdinalIgnoreCase) ? ".laccdb" : ".ldb";
+        return Path.ChangeExtension(_path, lockExt);
+    }
+
+    private void CreateLockFile()
+    {
+        string lockPath = GetLockFilePath();
+        try
+        {
+            if (_respectExistingLockFile && File.Exists(lockPath))
+            {
+                throw new IOException($"Database is already in use. A lockfile exists at: {lockPath}");
+            }
+
+            using var fs = new FileStream(lockPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+        }
+        catch (IOException) when (!_respectExistingLockFile)
+        {
+            // Best-effort: if another process holds the lock, continue without it.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Best-effort: if we lack permission, continue without it.
+        }
+    }
+
+    private void DeleteLockFile()
+    {
+        string lockPath = GetLockFilePath();
+        try
+        {
+            File.Delete(lockPath);
+        }
+        catch (IOException)
+        {
+            // Best-effort: file may be held by another process.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Best-effort: we may lack permission.
+        }
     }
 
     private readonly record struct RowLocation(long PageNumber, int RowIndex, int RowStart, int RowSize)

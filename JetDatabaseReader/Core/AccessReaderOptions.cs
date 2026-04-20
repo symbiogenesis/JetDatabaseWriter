@@ -34,4 +34,11 @@ public sealed class AccessReaderOptions
     /// Supports Jet3 (XOR), Jet4 (RC4), and ACCDB (AES) encryption.
     /// </summary>
     public string? Password { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a lockfile (.ldb / .laccdb) is created
+    /// alongside the database while it is open, and deleted on dispose.
+    /// Default: true.
+    /// </summary>
+    public bool UseLockFile { get; set; } = true;
 }

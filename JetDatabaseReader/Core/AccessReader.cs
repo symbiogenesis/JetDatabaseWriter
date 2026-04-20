@@ -54,6 +54,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private readonly object _cacheLock = new object();
     private readonly object _catalogLock = new object();
+    private readonly string _path;
+    private readonly bool _useLockFile;
     private volatile List<CatalogEntry>? _catalogCache;
     private volatile LruCache<long, byte[]>? _pageCache;
     private long _cacheHits;
@@ -70,6 +72,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         Guard.NotNullOrEmpty(path, nameof(path));
         Guard.NotNull(options, nameof(options));
+
+        _path = path;
+        _useLockFile = options.UseLockFile;
 
         DiagnosticsEnabled = options.DiagnosticsEnabled;
         PageCacheSize = options.PageCacheSize;
@@ -170,6 +175,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
         if (options.ValidateOnOpen)
         {
             ValidateDatabaseFormat();
+        }
+
+        if (_useLockFile)
+        {
+            CreateLockFile();
         }
     }
 
@@ -876,6 +886,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             if (disposing)
             {
+                if (_useLockFile)
+                {
+                    DeleteLockFile();
+                }
+
                 lock (_cacheLock)
                 {
                     _pageCache?.Clear(ReturnPage);
@@ -2706,5 +2721,46 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return isOle ? $"(OLE chain error: {chain.Error})" : $"(memo chain error: {chain.Error})";
+    }
+
+    private string GetLockFilePath()
+    {
+        string ext = Path.GetExtension(_path);
+        string lockExt = ext.Equals(".accdb", StringComparison.OrdinalIgnoreCase) ? ".laccdb" : ".ldb";
+        return Path.ChangeExtension(_path, lockExt);
+    }
+
+    private void CreateLockFile()
+    {
+        string lockPath = GetLockFilePath();
+        try
+        {
+            using var fs = new FileStream(lockPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+        }
+        catch (IOException)
+        {
+            // Best-effort: if another process holds the lock, continue without it.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Best-effort: if we lack permission, continue without it.
+        }
+    }
+
+    private void DeleteLockFile()
+    {
+        string lockPath = GetLockFilePath();
+        try
+        {
+            File.Delete(lockPath);
+        }
+        catch (IOException)
+        {
+            // Best-effort: file may be held by another process.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Best-effort: we may lack permission.
+        }
     }
 }
