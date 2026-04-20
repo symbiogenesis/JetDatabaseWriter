@@ -27,7 +27,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private long _cachedInsertTDefPage = -1;
     private long _cachedInsertPageNumber = -1;
 
-    private AccessWriter(string path, FileStream fs, bool useLockFile, bool respectExistingLockFile)
+    private AccessWriter(
+        string path,
+        FileStream fs,
+        bool useLockFile,
+        bool respectExistingLockFile)
         : base(fs)
     {
         _path = path;
@@ -58,7 +62,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         options ??= new AccessWriterOptions();
 
         var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
-        return new AccessWriter(path, fs, options.UseLockFile, options.RespectExistingLockFile);
+        return new AccessWriter(
+            path,
+            fs,
+            options.UseLockFile,
+            options.RespectExistingLockFile);
     }
 
     /// <inheritdoc/>
@@ -1358,7 +1366,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             // Best-effort: if another process holds the lock, continue without it.
         }
-        catch (UnauthorizedAccessException)
+        catch (UnauthorizedAccessException) when (!_respectExistingLockFile)
         {
             // Best-effort: if we lack permission, continue without it.
         }
