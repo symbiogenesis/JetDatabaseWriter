@@ -21,6 +21,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **All column types** | Text, Integer, Currency, Date/Time, GUID, MEMO, OLE Object, Decimal |
 | ✅ **Streaming API** | Process millions of rows without loading the whole file |
 | ✅ **Async support** | Async-first `ValueTask<T>` API for all major operations |
+| ✅ **Async lifetime** | `OpenAsync(...)` + `await using` (`IAsyncDisposable`) for reader/writer |
 | ✅ **Page cache** | 256-page LRU cache (~1 MB, configurable) |
 | ✅ **Generic POCO mapping** | `ReadTable<T>()`, `StreamRows<T>()`, `InsertRow<T>()` — no manual casting |
 | ✅ **Fluent query** | `Query().Where().Take().Execute()` — typed and string chains |
@@ -31,7 +32,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Jet3 encryption** | Transparent page-level XOR decryption for Access 97 `.mdb` databases |
 | ✅ **Password verification** | Jet4 `.mdb` and legacy password-only `.accdb` (ACE CompactDatabase `;pwd=`) |
 | ✅ **Linked table metadata** | `ListLinkedTables()` returns source paths and foreign names |
-| ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on dispose (opt-out) |
+| ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on disposal (opt-out) |
 
 ---
 
@@ -74,7 +75,7 @@ public class Order
 }
 
 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-using var reader = AccessReader.Open("database.mdb");
+await using var reader = await AccessReader.OpenAsync("database.mdb", cancellationToken: cts.Token);
 
 List<string> tables = await reader.ListTablesAsync(cts.Token);
 Console.WriteLine($"Found {tables.Count} tables: {string.Join(", ", tables)}");
@@ -84,7 +85,7 @@ foreach (Order o in orders)
     Console.WriteLine($"#{o.OrderID}  {o.OrderDate:yyyy-MM-dd}  {o.Freight:C}");
 ```
 
-Synchronous methods are still available, but async methods are the recommended default for new code.
+Synchronous methods are still available, but `OpenAsync(...)` + `await using` is the recommended default for new code.
 
 ---
 
@@ -208,6 +209,7 @@ IEnumerable<string[]> rows = reader.Query("Orders")
 
 ```csharp
 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+await using var reader = await AccessReader.OpenAsync("database.mdb", cancellationToken: cts.Token);
 
 List<Order>                   orders = await reader.ReadTableAsync<Order>("Orders", 50, cts.Token);
 List<string>                  tables = await reader.ListTablesAsync(cts.Token);
@@ -219,7 +221,7 @@ Dictionary<string, DataTable> all    = await reader.ReadAllTablesAsync(cancellat
 Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync(cancellationToken: cts.Token);
 ```
 
-All async APIs return `ValueTask<T>` and can be awaited directly.
+All async APIs return `ValueTask<T>` and can be awaited directly. Reader/writer instances also implement `IAsyncDisposable`, so prefer `await using`.
 
 ---
 
@@ -243,8 +245,10 @@ Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync(
 > Requires Jet4/ACE format — `.mdb` (Access 2000+) or `.accdb`.
 
 ```csharp
-using var writer = AccessWriter.Open("database.mdb");
+await using var writer = await AccessWriter.OpenAsync("database.mdb");
 ```
+
+`AccessWriter.Open(...)` is still available for synchronous workflows.
 
 ### Create & drop tables
 
@@ -342,14 +346,14 @@ var options = new AccessReaderOptions("secretPassword")
     LinkedSourcePathAllowlist = new[] { @"C:\TrustedLinkedDatabases" },
     LinkedSourcePathValidator = (link, fullPath) => !link.IsOdbc,
 };
-using var reader = AccessReader.Open("database.mdb", options);
+await using var reader = await AccessReader.OpenAsync("database.mdb", options);
 
 var writerOptions = new AccessWriterOptions("secretPassword")
 {
     UseLockFile = true,              // create .ldb/.laccdb lockfile (default: true)
     RespectExistingLockFile = true,  // throw IOException if lockfile already exists (default: true)
 };
-using var writer = AccessWriter.Open("database.mdb", writerOptions);
+await using var writer = await AccessWriter.OpenAsync("database.mdb", writerOptions);
 ```
 
 ---
