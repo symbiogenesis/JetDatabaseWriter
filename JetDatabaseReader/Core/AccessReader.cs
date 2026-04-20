@@ -3038,10 +3038,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
         catch (InvalidDataException)
         {
             // Best-effort: if we can't read MSysComplexColumns, fall back to "Complex".
+            if (DiagnosticsEnabled)
+            {
+                System.Diagnostics.Trace.WriteLine("[AccessReader] Best-effort fallback in ReadComplexColumnSubtypes: suppressed InvalidDataException while reading MSysComplexColumns.");
+            }
         }
         catch (IndexOutOfRangeException)
         {
             // Best-effort fallback.
+            if (DiagnosticsEnabled)
+            {
+                System.Diagnostics.Trace.WriteLine("[AccessReader] Best-effort fallback in ReadComplexColumnSubtypes: suppressed IndexOutOfRangeException while reading MSysComplexColumns.");
+            }
         }
 
         return result;
@@ -3297,6 +3305,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         catch (InvalidDataException)
         {
             // Best-effort: fall back to suffix search.
+            if (DiagnosticsEnabled)
+            {
+                System.Diagnostics.Trace.WriteLine($"[AccessReader] Best-effort fallback in GetComplexFlatTablePage: suppressed InvalidDataException for table '{tableName}', column '{columnName}'.");
+            }
         }
 
         return 0;
@@ -4401,13 +4413,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             using var fs = new FileStream(lockPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
         }
-        catch (IOException)
+        catch (IOException ex)
         {
             // Best-effort: if another process holds the lock, continue without it.
+            System.Diagnostics.Trace.WriteLine($"[AccessReader] Best-effort lock-file suppression in CreateLockFile: '{lockPath}' ({ex.GetType().Name}: {ex.Message})");
         }
-        catch (UnauthorizedAccessException)
+        catch (UnauthorizedAccessException ex)
         {
             // Best-effort: if we lack permission, continue without it.
+            System.Diagnostics.Trace.WriteLine($"[AccessReader] Best-effort lock-file suppression in CreateLockFile: '{lockPath}' ({ex.GetType().Name}: {ex.Message})");
         }
     }
 
@@ -4418,13 +4432,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             File.Delete(lockPath);
         }
-        catch (IOException)
+        catch (IOException ex)
         {
             // Best-effort: file may be held by another process.
+            System.Diagnostics.Trace.WriteLine($"[AccessReader] Best-effort lock-file suppression in DeleteLockFile: '{lockPath}' ({ex.GetType().Name}: {ex.Message})");
         }
-        catch (UnauthorizedAccessException)
+        catch (UnauthorizedAccessException ex)
         {
             // Best-effort: we may lack permission.
+            System.Diagnostics.Trace.WriteLine($"[AccessReader] Best-effort lock-file suppression in DeleteLockFile: '{lockPath}' ({ex.GetType().Name}: {ex.Message})");
         }
     }
 }
