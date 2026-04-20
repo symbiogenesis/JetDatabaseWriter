@@ -17,6 +17,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 {
     private const int MaxInlineMemoBytes = 1024;
     private const int MaxInlineOleBytes = 256;
+    private const int TDefRowCountOffset = 16;
 
     private readonly string _path;
     private readonly bool _useLockFile;
@@ -253,7 +254,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             MarkRowDeleted(locations[i].PageNumber, locations[i].RowIndex);
-            InsertRowInternal(entry.TDefPage, tableDef, rowValues);
+            InsertRowInternal(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false);
             updated++;
         }
 
@@ -291,6 +292,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             MarkRowDeleted(locations[i].PageNumber, locations[i].RowIndex);
             deleted++;
+        }
+
+        if (deleted > 0)
+        {
+            AdjustTDefRowCount(entry.TDefPage, -deleted);
         }
 
         return deleted;
@@ -687,7 +693,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return page;
     }
 
-    private void InsertRowInternal(long tdefPage, TableDef tableDef, object[] values)
+    private void InsertRowInternal(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true)
     {
         if (values.Length != tableDef.Columns.Count)
         {
@@ -700,6 +706,34 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         PageInsertTarget target = FindInsertTarget(tdefPage, rowBytes.Length);
         WriteRowToPage(target.PageNumber, target.Page, rowBytes);
         ReturnPage(target.Page);
+
+        if (updateTDefRowCount)
+        {
+            AdjustTDefRowCount(tdefPage, 1);
+        }
+    }
+
+    private void AdjustTDefRowCount(long tdefPage, long delta)
+    {
+        if (delta == 0)
+        {
+            return;
+        }
+
+        byte[] page = ReadPage(tdefPage);
+        long updated;
+
+        try
+        {
+            uint current = Ru32(page, TDefRowCountOffset);
+            updated = Math.Clamp((long)current + delta, 0L, uint.MaxValue);
+            Wi32(page, TDefRowCountOffset, unchecked((int)(uint)updated));
+            WritePage(tdefPage, page);
+        }
+        finally
+        {
+            ReturnPage(page);
+        }
     }
 
     private PageInsertTarget FindInsertTarget(long tdefPage, int rowLength)
