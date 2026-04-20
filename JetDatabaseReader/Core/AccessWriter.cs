@@ -23,6 +23,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly string _path;
 
     private List<CatalogEntry>? _catalogCache;
+    private long _cachedInsertTDefPage = -1;
+    private long _cachedInsertPageNumber = -1;
 
     private AccessWriter(string path, FileStream fs)
         : base(fs)
@@ -684,6 +686,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private PageInsertTarget FindInsertTarget(long tdefPage, int rowLength)
     {
+        if (_cachedInsertTDefPage == tdefPage && _cachedInsertPageNumber >= 3)
+        {
+            byte[] cached = ReadPage(_cachedInsertPageNumber);
+            if (cached[0] == 0x01 && (long)Ri32(cached, _dpTDefOff) == tdefPage && CanInsertRow(cached, rowLength))
+            {
+                return new PageInsertTarget { PageNumber = _cachedInsertPageNumber, Page = cached };
+            }
+        }
+
         long total = _fs.Length / _pgSz;
         PageInsertTarget? candidate = null;
 
@@ -708,10 +719,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         if (candidate != null)
         {
+            _cachedInsertTDefPage = tdefPage;
+            _cachedInsertPageNumber = candidate.PageNumber;
             return candidate;
         }
 
         long newPageNumber = AppendPage(CreateEmptyDataPage(tdefPage));
+        _cachedInsertTDefPage = tdefPage;
+        _cachedInsertPageNumber = newPageNumber;
         return new PageInsertTarget { PageNumber = newPageNumber, Page = ReadPage(newPageNumber) };
     }
 
