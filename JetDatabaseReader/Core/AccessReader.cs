@@ -183,14 +183,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    /// <summary>Gets or sets a value indicating whether <see cref="GetUserTables"/> logs verbose hex dumps for debugging. Default: false.</summary>
-    public bool DiagnosticsEnabled { get; set; }
+    /// <summary>Gets a value indicating whether <see cref="GetUserTables"/> logs verbose hex dumps for debugging. Default: false.</summary>
+    public bool DiagnosticsEnabled { get; }
 
-    /// <summary>Gets or sets the maximum number of pages to keep in cache. 0 = unlimited, -1 = disabled. Default: 256 (1 MB for 4K pages).</summary>
-    public int PageCacheSize { get; set; } = 256;
+    /// <summary>Gets the maximum number of pages to keep in cache. 0 = unlimited, -1 = disabled. Default: 256 (1 MB for 4K pages).</summary>
+    public int PageCacheSize { get; } = 256;
 
-    /// <summary>Gets or sets a value indicating whether <see cref="ReadTable(string, IProgress{int})"/> uses parallel processing for reading multiple pages. Can improve performance for large tables. Default: false.</summary>
-    public bool ParallelPageReadsEnabled { get; set; }
+    /// <summary>Gets a value indicating whether <see cref="ReadTable(string, IProgress{int})"/> uses parallel processing for reading multiple pages. Can improve performance for large tables. Default: false.</summary>
+    public bool ParallelPageReadsEnabled { get; }
 
     /// <summary>Gets diagnostic output populated after each call to <see cref="ListTables"/>.</summary>
     public string LastDiagnostics { get; private set; } = string.Empty;

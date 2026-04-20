@@ -11,14 +11,14 @@ using System.Threading.Tasks;
 /// </summary>
 public interface IAccessReader : IAccessBase
 {
-    /// <summary>Gets or sets a value indicating whether GetUserTables logs verbose hex dumps for debugging. Default: false.</summary>
-    bool DiagnosticsEnabled { get; set; }
+    /// <summary>Gets a value indicating whether GetUserTables logs verbose hex dumps for debugging. Default: false.</summary>
+    bool DiagnosticsEnabled { get; }
 
-    /// <summary>Gets or sets the maximum number of pages to keep in cache. 0 = unlimited, -1 = disabled. Default: 256 (1 MB for 4K pages).</summary>
-    int PageCacheSize { get; set; }
+    /// <summary>Gets the maximum number of pages to keep in cache. 0 = unlimited, -1 = disabled. Default: 256 (1 MB for 4K pages).</summary>
+    int PageCacheSize { get; }
 
-    /// <summary>Gets or sets a value indicating whether parallel processing is used for reading multiple pages. Can improve performance for large tables. Default: false.</summary>
-    bool ParallelPageReadsEnabled { get; set; }
+    /// <summary>Gets a value indicating whether parallel processing is used for reading multiple pages. Can improve performance for large tables. Default: false.</summary>
+    bool ParallelPageReadsEnabled { get; }
 
     /// <summary>Gets the diagnostic output populated after each call to <see cref="ListTables"/>.</summary>
     string LastDiagnostics { get; }
