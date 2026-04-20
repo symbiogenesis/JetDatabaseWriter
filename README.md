@@ -65,35 +65,28 @@ Install-Package JetDatabaseReader
 ```csharp
 using JetDatabaseReader;
 
+public class Order
+{
+    public int OrderID { get; set; }
+    public DateTime OrderDate { get; set; }
+    public decimal Freight { get; set; }
+}
+
 using var reader = AccessReader.Open("database.mdb");
 
 List<string> tables = reader.ListTables();
 Console.WriteLine($"Found {tables.Count} tables: {string.Join(", ", tables)}");
 
-DataTable dt = reader.ReadTable("Orders");
-foreach (DataRow row in dt.Rows)
-{
-    int     id   = (int)row["OrderID"];
-    var     date = (DateTime)row["OrderDate"];
-    decimal amt  = (decimal)row["Freight"];
-    Console.WriteLine($"#{id}  {date:yyyy-MM-dd}  {amt:C}");
-}
+List<Order> orders = reader.ReadTable<Order>("Orders", maxRows: 100);
+foreach (Order o in orders)
+    Console.WriteLine($"#{o.OrderID}  {o.OrderDate:yyyy-MM-dd}  {o.Freight:C}");
 ```
 
 ---
 
 ## Reading Data
 
-### Typed DataTable — recommended
-
-```csharp
-DataTable dt = reader.ReadTable("Products");
-// dt.Columns["ProductID"].DataType    == typeof(int)
-// dt.Columns["UnitPrice"].DataType    == typeof(decimal)
-// dt.Columns["Discontinued"].DataType == typeof(bool)
-```
-
-### Generic POCO mapping — strongly typed
+### Generic POCO mapping — recommended
 
 ```csharp
 public class Product
@@ -110,14 +103,16 @@ decimal total = products.Where(p => !p.Discontinued).Sum(p => p.UnitPrice);
 
 Property names are matched to column headers **case-insensitively**. Unmatched properties keep their default value. The type `T` must be a class with a parameterless constructor.
 
-### String DataTable — compatibility
+### Typed DataTable
 
 ```csharp
-DataTable dt = reader.ReadTableAsStringDataTable("Products");
-// every column is typeof(string)
+DataTable dt = reader.ReadTable("Products");
+// dt.Columns["ProductID"].DataType    == typeof(int)
+// dt.Columns["UnitPrice"].DataType    == typeof(decimal)
+// dt.Columns["Discontinued"].DataType == typeof(bool)
 ```
 
-### Table preview with schema — typed
+### Table preview with schema
 
 ```csharp
 TableResult preview = reader.ReadTable("Products", maxRows: 20);
@@ -133,37 +128,38 @@ DataTable dt = preview.ToDataTable();
 // dt.Columns["UnitPrice"].DataType == typeof(decimal)
 ```
 
-### Table preview with schema — strings
+### String variants — compatibility
 
 ```csharp
+// All values as strings
+DataTable dt = reader.ReadTableAsStringDataTable("Products");
+
+// String preview with row access
 StringTableResult preview = reader.ReadTableAsStrings("Products", maxRows: 20);
 string firstCell = preview.Rows[0][0];  // always a string
-
-// Convert to DataTable — all columns typeof(string)
-DataTable dt = preview.ToDataTable();
 ```
 
 ---
 
 ## Streaming Large Tables
 
-### Typed streaming — recommended
+### Generic streaming — recommended
 
 ```csharp
 var progress = new Progress<int>(n => Console.Write($"\r{n:N0} rows"));
 
-foreach (object[] row in reader.StreamRows("BigTable", progress))
+foreach (Product p in reader.StreamRows<Product>("Products", progress))
+    Console.WriteLine($"{p.ProductName}: {p.UnitPrice:C}");
+```
+
+### Typed object array streaming
+
+```csharp
+foreach (object[] row in reader.StreamRows("BigTable"))
 {
     int     id  = (int)row[0];
     decimal val = row[2] == DBNull.Value ? 0m : (decimal)row[2];
 }
-```
-
-### Generic streaming — strongly typed
-
-```csharp
-foreach (Product p in reader.StreamRows<Product>("Products"))
-    Console.WriteLine($"{p.ProductName}: {p.UnitPrice:C}");
 ```
 
 ### String streaming — compatibility
@@ -173,25 +169,31 @@ foreach (string[] row in reader.StreamRowsAsStrings("BigTable"))
     Console.WriteLine(string.Join(", ", row));
 ```
 
-Null values in typed rows surface as `DBNull.Value`.
+Null values in typed `object[]` rows surface as `DBNull.Value`.
 
 ---
 
 ## Fluent Query API
 
 ```csharp
-// Typed chain
-object[] order = reader.Query("Orders")
+// Generic POCO result
+Order? first = reader.Query("Orders")
     .Where(row => row[2] is DateTime d && d.Year == 2024)
     .Take(10)
-    .FirstOrDefault();
+    .FirstOrDefault<Order>();
 
+List<Order> recent = reader.Query("Orders")
+    .Where(row => row[2] is DateTime d && d.Year == 2024)
+    .Execute<Order>()
+    .ToList();
+
+// Object array chain
 int count = reader.Query("OrderDetails")
     .Where(row => row[3] is decimal p && p > 100m)
     .Count();
 
 // String chain
-IEnumerable<string[]> recent = reader.Query("Orders")
+IEnumerable<string[]> rows = reader.Query("Orders")
     .WhereAsStrings(row => row[2].StartsWith("2024"))
     .Take(50)
     .ExecuteAsStrings();
@@ -202,10 +204,10 @@ IEnumerable<string[]> recent = reader.Query("Orders")
 ## Async Operations
 
 ```csharp
+List<Order>                   orders = await reader.ReadTableAsync<Order>("Orders", 50);
 List<string>                  tables = await reader.ListTablesAsync();
 DataTable                     dt     = await reader.ReadTableAsync("Orders");
 TableResult                   typed  = await reader.ReadTableAsync("Orders", 50);
-List<Order>                   orders = await reader.ReadTableAsync<Order>("Orders", 50);
 StringTableResult             str    = await reader.ReadTableAsStringsAsync("Orders", 50);
 DatabaseStatistics            stats  = await reader.GetStatisticsAsync();
 Dictionary<string, DataTable> all    = await reader.ReadAllTablesAsync();
@@ -249,21 +251,7 @@ writer.CreateTable("Contacts", new[]
 writer.DropTable("Contacts");
 ```
 
-### Insert rows
-
-```csharp
-// Single row — object array
-writer.InsertRow("Contacts", new object[] { 1, "Alice", "alice@example.com", 95.5m });
-
-// Multiple rows — object arrays
-writer.InsertRows("Contacts", new[]
-{
-    new object[] { 2, "Bob",   "bob@example.com",   88.0m },
-    new object[] { 3, "Carol", "carol@example.com", 92.3m },
-});
-```
-
-### Generic insert — POCO
+### Insert rows — generic POCO
 
 ```csharp
 public class Contact
@@ -274,12 +262,24 @@ public class Contact
     public decimal Score { get; set; }
 }
 
-writer.InsertRow("Contacts", new Contact { ContactID = 4, Name = "Dave", Email = "dave@example.com", Score = 77.1m });
+writer.InsertRow("Contacts", new Contact { ContactID = 1, Name = "Alice", Email = "alice@example.com", Score = 95.5m });
 
 writer.InsertRows("Contacts", new[]
 {
-    new Contact { ContactID = 5, Name = "Eve",   Email = "eve@example.com",   Score = 91.0m },
-    new Contact { ContactID = 6, Name = "Frank", Email = "frank@example.com", Score = 85.4m },
+    new Contact { ContactID = 2, Name = "Bob",   Email = "bob@example.com",   Score = 88.0m },
+    new Contact { ContactID = 3, Name = "Carol", Email = "carol@example.com", Score = 92.3m },
+});
+```
+
+### Insert rows — object array
+
+```csharp
+writer.InsertRow("Contacts", new object[] { 4, "Dave", "dave@example.com", 77.1m });
+
+writer.InsertRows("Contacts", new[]
+{
+    new object[] { 5, "Eve",   "eve@example.com",   91.0m },
+    new object[] { 6, "Frank", "frank@example.com", 85.4m },
 });
 ```
 
