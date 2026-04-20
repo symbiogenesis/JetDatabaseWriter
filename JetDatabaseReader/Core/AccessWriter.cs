@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
 using System.IO;
+using System.Security;
 using System.Text;
 
 #pragma warning disable CA1822 // Mark members as static
@@ -20,6 +21,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private const int TDefRowCountOffset = 16;
 
     private readonly string _path;
+    private readonly SecureString? _password;
     private readonly bool _useLockFile;
     private readonly bool _respectExistingLockFile;
 
@@ -30,11 +32,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private AccessWriter(
         string path,
         FileStream fs,
+        SecureString? password,
         bool useLockFile,
         bool respectExistingLockFile)
         : base(fs)
     {
         _path = path;
+        _password = SecureStringUtilities.CopyAsReadOnly(password);
         _useLockFile = useLockFile;
         _respectExistingLockFile = respectExistingLockFile;
 
@@ -60,11 +64,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         options ??= new AccessWriterOptions();
+        VerifyPasswordOnOpen(path, options);
 
         var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
         return new AccessWriter(
             path,
             fs,
+            options.Password,
             options.UseLockFile,
             options.RespectExistingLockFile);
     }
@@ -355,6 +361,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             DeleteLockFile();
         }
 
+        if (disposing)
+        {
+            _password?.Dispose();
+        }
+
         base.Dispose(disposing);
     }
 
@@ -588,9 +599,37 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return buffer;
     }
 
+    private static void VerifyPasswordOnOpen(string path, AccessWriterOptions options)
+    {
+        var readerOptions = new AccessReaderOptions
+        {
+            FileShare = FileShare.ReadWrite,
+            ValidateOnOpen = false,
+            UseLockFile = false,
+            Password = options.Password,
+        };
+
+        try
+        {
+            using var reader = AccessReader.Open(path, readerOptions);
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message.Contains("AccessReaderOptions.Password", StringComparison.Ordinal))
+        {
+            throw new UnauthorizedAccessException(
+                ex.Message.Replace("AccessReaderOptions.Password", "AccessWriterOptions.Password", StringComparison.Ordinal),
+                ex);
+        }
+    }
+
     private DataTable ReadTableSnapshot(string tableName)
     {
-        var options = new AccessReaderOptions { FileShare = FileShare.ReadWrite, ValidateOnOpen = false };
+        var options = new AccessReaderOptions
+        {
+            FileShare = FileShare.ReadWrite,
+            ValidateOnOpen = false,
+            Password = _password,
+        };
+
         using (var reader = AccessReader.Open(_path, options))
         {
             return reader.ReadTable(tableName) ?? new DataTable(tableName);

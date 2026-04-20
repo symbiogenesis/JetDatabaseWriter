@@ -92,6 +92,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         _linkedSourcePathValidator = options.LinkedSourcePathValidator;
         _linkedSourcePathAllowlist = NormalizeLinkedSourcePathAllowlist(options.LinkedSourcePathAllowlist, path);
         _linkedSourceOpenOptions = CreateLinkedSourceOpenOptions(options, _linkedSourcePathAllowlist, _linkedSourcePathValidator);
+        var password = _linkedSourceOpenOptions.Password;
 
         DiagnosticsEnabled = options.DiagnosticsEnabled;
         PageCacheSize = options.PageCacheSize;
@@ -118,7 +119,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // do NOT indicate encryption — they have different format-specific meaning.
             if (encFlag >= 0x01 && encFlag <= 0x03)
             {
-                if (string.IsNullOrEmpty(options.Password))
+                if (SecureStringUtilities.IsNullOrEmpty(password))
                 {
                     throw new UnauthorizedAccessException(
                         "This database is encrypted or password-protected. " +
@@ -129,7 +130,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 // Verify the provided password against the stored password at 0x42.
                 // The stored password is XOR'd with a fixed mask + creation date bytes.
                 string storedPassword = DecodeJet4Password(hdr);
-                if (!string.Equals(options.Password, storedPassword, StringComparison.Ordinal))
+                if (!SecureStringUtilities.EqualsPlainText(password, storedPassword))
                 {
                     throw new UnauthorizedAccessException(
                         "The provided password is incorrect for this database.");
@@ -155,7 +156,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             byte encFlag = hdr[0x62];
             if (encFlag == 0x07)
             {
-                if (string.IsNullOrEmpty(options.Password))
+                if (SecureStringUtilities.IsNullOrEmpty(password))
                 {
                     throw new UnauthorizedAccessException(
                         "This database is password-protected. " +
@@ -163,7 +164,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
 
                 string storedPassword = DecodeAccdbPassword(hdr);
-                if (!string.Equals(options.Password, storedPassword, StringComparison.Ordinal))
+                if (!SecureStringUtilities.EqualsPlainText(password, storedPassword))
                 {
                     throw new UnauthorizedAccessException(
                         "The provided password is incorrect for this database.");
@@ -178,7 +179,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // When a password is supplied, attempt to read anyway — the caller has
             // acknowledged the encrypted format and provided credentials.
             // Without a password, throw immediately with a clear message.
-            if (string.IsNullOrEmpty(options.Password))
+            if (SecureStringUtilities.IsNullOrEmpty(password))
             {
                 throw new UnauthorizedAccessException(
                     "This .accdb file is encrypted with Access 2007+ AES encryption (Office Crypto API). " +
@@ -190,7 +191,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // Verify the provided password against the stored password at 0x42.
             // ACCDB uses the same XOR scheme as Jet4 for the header password area.
             string storedPassword = DecodeJet4Password(hdr);
-            if (!string.Equals(options.Password, storedPassword, StringComparison.Ordinal))
+            if (!SecureStringUtilities.EqualsPlainText(password, storedPassword))
             {
                 throw new UnauthorizedAccessException(
                     "The provided password is incorrect for this database.");
@@ -917,6 +918,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             if (disposing)
             {
+                _linkedSourceOpenOptions.Password?.Dispose();
+
                 if (_useLockFile)
                 {
                     DeleteLockFile();
@@ -1479,7 +1482,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ValidateOnOpen = options.ValidateOnOpen,
             FileAccess = options.FileAccess,
             FileShare = options.FileShare,
-            Password = options.Password,
+            Password = SecureStringUtilities.CopyAsReadOnly(options.Password),
             UseLockFile = options.UseLockFile,
             LinkedSourcePathAllowlist = normalizedAllowlist,
             LinkedSourcePathValidator = linkedSourcePathValidator,
