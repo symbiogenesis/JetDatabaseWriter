@@ -16,15 +16,13 @@ using Xunit;
 [Collection<ReadOnlyDatabaseFixture>]
 public class AccessReaderReadTests(DatabaseCache db)
 {
-    private readonly DatabaseCache _db = db;
-
     // ── ReadTable (typed) ─────────────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ReadTable_ReturnsNonNullDataTable(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         DataTable dt = reader.ReadTable(table)!;
@@ -36,7 +34,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ReadTable_TableNameMatchesRequest(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         DataTable dt = reader.ReadTable(table)!;
@@ -48,7 +46,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ReadTable_ColumnCount_MatchesGetColumnMetadata(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         DataTable dt = reader.ReadTable(table)!;
@@ -61,7 +59,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ReadTable_ColumnTypes_MatchGetColumnMetadataClrTypes(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         DataTable dt = reader.ReadTable(table)!;
@@ -77,7 +75,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void ReadTable_WithNullTableName_ReadsFirstTable(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string first = reader.ListTables()[0];
 
         DataTable dt = reader.ReadTable(tableName: null)!;
@@ -90,7 +88,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void ReadTable_ForAllTables_ReturnsNonNullDataTables(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -105,7 +103,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ReadTableAsStringDataTable_AllColumnsAreStringType(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         DataTable dt = reader.ReadTableAsStringDataTable(table)!;
@@ -120,7 +118,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ReadTableAsStringDataTable_RowCount_MatchesReadTable(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         DataTable typed = reader.ReadTable(table)!;
@@ -133,7 +131,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public void ReadTableAsStringDataTable_ColumnCount_MatchesReadTable(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         DataTable typed = reader.ReadTable(table)!;
@@ -148,7 +146,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void ReadAllTables_ContainsAllTableNames(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         List<string> expected = reader.ListTables();
 
         Dictionary<string, DataTable> all = reader.ReadAllTables();
@@ -160,7 +158,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void ReadAllTables_EachDataTable_HasTypedColumns(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         Dictionary<string, DataTable> all = reader.ReadAllTables();
 
@@ -178,7 +176,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void ReadAllTablesAsStrings_AllColumns_AreStringType(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         Dictionary<string, DataTable> all = reader.ReadAllTablesAsStrings();
 
@@ -195,7 +193,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void ReadAllTablesAsStrings_RowCounts_MatchReadAllTables(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         Dictionary<string, DataTable> typed = reader.ReadAllTables();
         Dictionary<string, DataTable> strings = reader.ReadAllTablesAsStrings();
@@ -219,7 +217,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void ReadTableGeneric_RowCount_MatchesReadTableTyped(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         TableResult typed = reader.ReadTable(table, 100);
@@ -232,7 +230,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void ReadTableGeneric_ReturnsNonNullInstances(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         List<GenericRow> items = reader.ReadTable<GenericRow>(table, 10);
@@ -244,7 +242,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void ReadTableGeneric_WithMaxRows_LimitsResults(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
 
         List<GenericRow> items = reader.ReadTable<GenericRow>(table, 2);
@@ -256,7 +254,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void ReadTableGeneric_ForAllTables_DoesNotThrow(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
 
         foreach (string table in reader.ListTables())
         {
@@ -271,7 +269,7 @@ public class AccessReaderReadTests(DatabaseCache db)
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public void ReadTable_WithProgress_ReportsIncreasingRowCounts(string path)
     {
-        var reader = _db.Get(path);
+        var reader = db.Get(path);
         string table = reader.ListTables()[0];
         var reported = new List<int>();
 

@@ -2,7 +2,8 @@ The following test database files were obtained from the Jackcess project
 (https://github.com/jahlborn/jackcess), licensed under the Apache License 2.0:
 
   testV1997.mdb, testV2000.mdb, testV2003.mdb,
-  testV2007.accdb, testV2010.accdb, extDateTestV2019.accdb
+  testV2007.accdb, testV2010.accdb, extDateTestV2019.accdb,
+  fixedTextTestV2007.accdb
 
 Copyright James Ahlborn and contributors.
 Licensed under the Apache License, Version 2.0.

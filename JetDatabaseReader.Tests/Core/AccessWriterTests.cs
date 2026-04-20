@@ -16,7 +16,8 @@ using Xunit;
 /// then reads back via AccessReader to verify correctness.
 /// All stubs currently throw <see cref="NotImplementedException"/>.
 /// </summary>
-public sealed class AccessWriterTests : IDisposable
+[Collection<ReadOnlyDatabaseFixture>]
+public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 {
     private readonly List<string> _tempFiles = [];
 
@@ -199,41 +200,12 @@ public sealed class AccessWriterTests : IDisposable
     public void UpdateRows_MatchingRows_ReturnsNonZeroCount(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName;
-        string predicateCol;
-        object predicateVal;
-        string targetCol;
-
-        using (var reader = AccessReader.Open(temp))
-        {
-            tableName = reader.ListTables()[0];
-            var columns = reader.GetColumnMetadata(tableName);
-
-            // Find a text column to update and a column with a known value to filter on
-            var textCol = columns.FirstOrDefault(c => c.ClrType == typeof(string));
-            if (textCol == null)
-            {
-                return; // skip databases with no text columns
-            }
-
-            targetCol = textCol.Name;
-
-            // Read first row to get a real predicate value
-            DataTable dt = reader.ReadTable(tableName)!;
-            if (dt.Rows.Count == 0)
-            {
-                return; // skip empty tables
-            }
-
-            predicateCol = columns[0].Name;
-            predicateVal = dt.Rows[0][0];
-        }
+        string tableName = SeedUpdateTable(temp);
 
         using var writer = AccessWriter.Open(temp);
-        var updates = new Dictionary<string, object> { [targetCol] = "UPDATED_VALUE" };
+        var updates = new Dictionary<string, object> { ["Label"] = "UPDATED_VALUE" };
 
-        int updated = writer.UpdateRows(tableName, predicateCol, predicateVal, updates);
-
+        int updated = writer.UpdateRows(tableName, "Id", 1, updates);
         Assert.True(updated > 0);
     }
 
@@ -242,47 +214,20 @@ public sealed class AccessWriterTests : IDisposable
     public void UpdateRows_MatchingRows_ChangesAreReadableBack(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName;
-        string predicateCol;
-        object predicateVal;
-        string targetCol;
-
-        using (var reader = AccessReader.Open(temp))
-        {
-            tableName = reader.ListTables()[0];
-            var columns = reader.GetColumnMetadata(tableName);
-
-            var textCol = columns.FirstOrDefault(c => c.ClrType == typeof(string));
-            if (textCol == null)
-            {
-                return;
-            }
-
-            targetCol = textCol.Name;
-
-            DataTable dt = reader.ReadTable(tableName)!;
-            if (dt.Rows.Count == 0)
-            {
-                return;
-            }
-
-            predicateCol = columns[0].Name;
-            predicateVal = dt.Rows[0][0];
-        }
-
+        string tableName = SeedUpdateTable(temp);
         const string sentinel = "WRITE_TEST_SENTINEL";
 
         using (var writer = AccessWriter.Open(temp))
         {
-            var updates = new Dictionary<string, object> { [targetCol] = sentinel };
-            writer.UpdateRows(tableName, predicateCol, predicateVal, updates);
+            var updates = new Dictionary<string, object> { ["Label"] = sentinel };
+            writer.UpdateRows(tableName, "Id", 1, updates);
         }
 
         using (var reader = AccessReader.Open(temp))
         {
             DataTable dt = reader.ReadTable(tableName)!;
             bool found = dt.AsEnumerable().Any(row =>
-                row[targetCol] is string s && s == sentinel);
+                row["Label"] is string s && s == sentinel);
             Assert.True(found);
         }
     }
@@ -292,46 +237,18 @@ public sealed class AccessWriterTests : IDisposable
     public void UpdateRows_DoesNotChangeRowCount(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName;
-        long originalCount;
-        string predicateCol;
-        object predicateVal;
-        string targetCol;
-
-        using (var reader = AccessReader.Open(temp))
-        {
-            tableName = reader.ListTables()[0];
-            originalCount = reader.GetRealRowCount(tableName);
-            var columns = reader.GetColumnMetadata(tableName);
-
-            var textCol = columns.FirstOrDefault(c => c.ClrType == typeof(string));
-            if (textCol == null)
-            {
-                return;
-            }
-
-            targetCol = textCol.Name;
-
-            DataTable dt = reader.ReadTable(tableName)!;
-            if (dt.Rows.Count == 0)
-            {
-                return;
-            }
-
-            predicateCol = columns[0].Name;
-            predicateVal = dt.Rows[0][0];
-        }
+        string tableName = SeedUpdateTable(temp);
 
         using (var writer = AccessWriter.Open(temp))
         {
-            var updates = new Dictionary<string, object> { [targetCol] = "NO_COUNT_CHANGE" };
-            writer.UpdateRows(tableName, predicateCol, predicateVal, updates);
+            var updates = new Dictionary<string, object> { ["Label"] = "NO_COUNT_CHANGE" };
+            writer.UpdateRows(tableName, "Id", 1, updates);
         }
 
         using (var reader = AccessReader.Open(temp))
         {
             long newCount = reader.GetRealRowCount(tableName);
-            Assert.Equal(originalCount, newCount);
+            Assert.Equal(3, newCount);
         }
     }
 
@@ -380,22 +297,14 @@ public sealed class AccessWriterTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DeleteRows_NoMatchingRows_ReturnsZero(string path)
+    public void DeleteRows_NonExistentColumn_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName;
-
-        using (var reader = AccessReader.Open(temp))
-        {
-            tableName = reader.ListTables()[0];
-        }
+        string tableName = db.Get(path).ListTables()[0];
 
         using var writer = AccessWriter.Open(temp);
 
-        // Use a value that won't exist in any table
-        int deleted = writer.DeleteRows(tableName, "NONEXISTENT_COLUMN_XYZ", "IMPOSSIBLE_VALUE_12345");
-
-        Assert.Equal(0, deleted);
+        Assert.Throws<ArgumentException>(() => writer.DeleteRows(tableName, "NONEXISTENT_COLUMN_XYZ", "IMPOSSIBLE_VALUE_12345"));
     }
 
     [Theory]
@@ -914,6 +823,322 @@ public sealed class AccessWriterTests : IDisposable
         }
     }
 
+    // ── Silent data corruption guards ─────────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void DropTable_NonExistentTable_ThrowsInvalidOperationException(string path)
+    {
+        string temp = CopyToTemp(path);
+
+        using var writer = AccessWriter.Open(temp);
+
+        Assert.Throws<InvalidOperationException>(() => writer.DropTable("NoSuchTable_XYZ_999"));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void UpdateRows_NonExistentPredicateColumn_ThrowsArgumentException(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = db.Get(path).ListTables()[0];
+
+        using var writer = AccessWriter.Open(temp);
+        var updates = new Dictionary<string, object> { ["SomeCol"] = "value" };
+
+        Assert.Throws<ArgumentException>(() =>
+            writer.UpdateRows(tableName, "NONEXISTENT_COL_XYZ", "anything", updates));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void UpdateRows_NonExistentTargetColumn_ThrowsArgumentException(string path)
+    {
+        string temp = CopyToTemp(path);
+        var cachedReader = db.Get(path);
+        string tableName = cachedReader.ListTables()[0];
+        var columns = cachedReader.GetColumnMetadata(tableName);
+        DataTable dt = cachedReader.ReadTable(tableName)!;
+        if (dt.Rows.Count == 0)
+        {
+            return;
+        }
+
+        string predicateCol = columns[0].Name;
+        object predicateVal = dt.Rows[0][0];
+
+        using var writer = AccessWriter.Open(temp);
+        var updates = new Dictionary<string, object> { ["NONEXISTENT_COL_XYZ"] = "value" };
+
+        Assert.Throws<ArgumentException>(() =>
+            writer.UpdateRows(tableName, predicateCol, predicateVal, updates));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void DeleteRows_ValidColumn_NoMatchingValue_ReturnsZero(string path)
+    {
+        string temp = CopyToTemp(path);
+        var cachedReader = db.Get(path);
+        string tableName = cachedReader.ListTables()[0];
+        string firstCol = cachedReader.GetColumnMetadata(tableName)[0].Name;
+
+        using var writer = AccessWriter.Open(temp);
+        int deleted = writer.DeleteRows(tableName, firstCol, "IMPOSSIBLE_VALUE_THAT_WONT_MATCH_12345");
+
+        Assert.Equal(0, deleted);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void InsertRow_WrongColumnCount_ThrowsArgumentException(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"ColCnt_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Name", typeof(string), maxLength: 50),
+        };
+
+        using var writer = AccessWriter.Open(temp);
+        writer.CreateTable(tableName, columns);
+
+        // Provide 3 values for a 2-column table
+        Assert.Throws<ArgumentException>(() =>
+            writer.InsertRow(tableName, new object[] { 1, "Hello", "Extra" }));
+    }
+
+    [Fact]
+    public void InsertRow_MemoAtLimit_RoundtripsCorrectly()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        string temp = CopyToTemp(path);
+        string tableName = $"Memo_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Content", typeof(string)), // no maxLength → MEMO
+        };
+
+        // 512 Unicode chars = 1024 bytes = MaxInlineMemoBytes exactly
+        string memoValue = new string('A', 512);
+
+        using (var writer = AccessWriter.Open(temp))
+        {
+            writer.CreateTable(tableName, columns);
+            writer.InsertRow(tableName, new object[] { 1, memoValue });
+        }
+
+        using (var reader = AccessReader.Open(temp))
+        {
+            DataTable dt = reader.ReadTable(tableName)!;
+            Assert.Equal(1, dt.Rows.Count);
+            Assert.Equal(memoValue, dt.Rows[0]["Content"]);
+        }
+    }
+
+    [Fact]
+    public void InsertRow_MemoOverLimit_ThrowsJetLimitationException()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        string temp = CopyToTemp(path);
+        string tableName = $"MemoOv_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Content", typeof(string)), // MEMO
+        };
+
+        // 513 Unicode chars = 1026 bytes > MaxInlineMemoBytes
+        string memoValue = new string('B', 513);
+
+        using var writer = AccessWriter.Open(temp);
+        writer.CreateTable(tableName, columns);
+
+        Assert.Throws<JetLimitationException>(() =>
+            writer.InsertRow(tableName, new object[] { 1, memoValue }));
+    }
+
+    [Fact]
+    public void InsertRow_OleBytesOverLimit_ThrowsJetLimitationException()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        string temp = CopyToTemp(path);
+        string tableName = $"OleOv_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Blob", typeof(byte[])), // OLE
+        };
+
+        byte[] oversized = new byte[257]; // > MaxInlineOleBytes (256)
+
+        using var writer = AccessWriter.Open(temp);
+        writer.CreateTable(tableName, columns);
+
+        Assert.Throws<JetLimitationException>(() =>
+            writer.InsertRow(tableName, new object[] { 1, oversized }));
+    }
+
+    [Fact]
+    public void InsertRow_OleBytesAtLimit_RoundtripsCorrectly()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        string temp = CopyToTemp(path);
+        string tableName = $"OleLim_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Blob", typeof(byte[])), // OLE
+        };
+
+        byte[] data = new byte[256]; // exactly MaxInlineOleBytes
+        for (int i = 0; i < data.Length; i++)
+        {
+            data[i] = (byte)(i % 256);
+        }
+
+        using (var writer = AccessWriter.Open(temp))
+        {
+            writer.CreateTable(tableName, columns);
+            writer.InsertRow(tableName, new object[] { 1, data });
+        }
+
+        using (var reader = AccessReader.Open(temp))
+        {
+            DataTable dt = reader.ReadTable(tableName)!;
+            Assert.Equal(1, dt.Rows.Count);
+            Assert.NotNull(dt.Rows[0]["Blob"]);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void CreateTable_DuplicateName_ThrowsInvalidOperationException(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"Dup_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+        };
+
+        using var writer = AccessWriter.Open(temp);
+        writer.CreateTable(tableName, columns);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            writer.CreateTable(tableName, columns));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void DeleteRows_DoesNotCorruptRemainingRows(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"DelChk_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Name", typeof(string), maxLength: 50),
+        };
+
+        using (var writer = AccessWriter.Open(temp))
+        {
+            writer.CreateTable(tableName, columns);
+            writer.InsertRow(tableName, new object[] { 1, "Keep" });
+            writer.InsertRow(tableName, new object[] { 2, "Delete" });
+            writer.InsertRow(tableName, new object[] { 3, "Keep" });
+        }
+
+        using (var writer = AccessWriter.Open(temp))
+        {
+            int deleted = writer.DeleteRows(tableName, "Name", "Delete");
+            Assert.Equal(1, deleted);
+        }
+
+        using (var reader = AccessReader.Open(temp))
+        {
+            DataTable dt = reader.ReadTable(tableName)!;
+            Assert.Equal(2, dt.Rows.Count);
+
+            var ids = dt.AsEnumerable()
+                .Select(r => Convert.ToInt32(r["Id"], System.Globalization.CultureInfo.InvariantCulture))
+                .OrderBy(x => x)
+                .ToList();
+            int[] expected = [1, 3];
+            Assert.Equal(expected, ids);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void UpdateRows_PreservesNonUpdatedColumns(string path)
+    {
+        string temp = CopyToTemp(path);
+        string tableName = $"UpdPrv_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Name", typeof(string), maxLength: 50),
+            new("Score", typeof(int)),
+        };
+
+        using (var writer = AccessWriter.Open(temp))
+        {
+            writer.CreateTable(tableName, columns);
+            writer.InsertRow(tableName, new object[] { 1, "Alice", 100 });
+            writer.InsertRow(tableName, new object[] { 2, "Bob", 200 });
+        }
+
+        using (var writer = AccessWriter.Open(temp))
+        {
+            var updates = new Dictionary<string, object> { ["Score"] = 999 };
+            int updated = writer.UpdateRows(tableName, "Id", 1, updates);
+            Assert.Equal(1, updated);
+        }
+
+        using (var reader = AccessReader.Open(temp))
+        {
+            DataTable dt = reader.ReadTable(tableName)!;
+            DataRow aliceRow = dt.AsEnumerable()
+                .First(r => Convert.ToInt32(r["Id"], System.Globalization.CultureInfo.InvariantCulture) == 1);
+
+            Assert.Equal(999, Convert.ToInt32(aliceRow["Score"], System.Globalization.CultureInfo.InvariantCulture));
+
+            // Name was NOT updated — must be preserved
+            Assert.Equal("Alice", aliceRow["Name"]);
+        }
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
 
     public void Dispose()
@@ -1014,6 +1239,25 @@ public sealed class AccessWriterTests : IDisposable
         }
 
         return DBNull.Value;
+    }
+
+    /// <summary>Creates a table with known text data for UpdateRows tests and returns the table name.</summary>
+    private static string SeedUpdateTable(string dbPath)
+    {
+        string tableName = $"UpdTest_{Guid.NewGuid():N}"[..20];
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Label", typeof(string), maxLength: 100),
+        };
+
+        using var writer = AccessWriter.Open(dbPath);
+        writer.CreateTable(tableName, columns);
+        writer.InsertRow(tableName, new object[] { 1, "Alpha" });
+        writer.InsertRow(tableName, new object[] { 2, "Beta" });
+        writer.InsertRow(tableName, new object[] { 3, "Gamma" });
+
+        return tableName;
     }
 
     /// <summary>Creates a writable temp copy of the given database and tracks it for cleanup.</summary>
