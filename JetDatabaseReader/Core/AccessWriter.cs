@@ -682,6 +682,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         byte[] rowBytes = SerializeRow(tableDef, values);
         PageInsertTarget target = FindInsertTarget(tdefPage, rowBytes.Length);
         WriteRowToPage(target.PageNumber, target.Page, rowBytes);
+        ReturnPage(target.Page);
     }
 
     private PageInsertTarget FindInsertTarget(long tdefPage, int rowLength)
@@ -693,6 +694,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             {
                 return new PageInsertTarget { PageNumber = _cachedInsertPageNumber, Page = cached };
             }
+
+            ReturnPage(cached);
         }
 
         long total = _fs.Length / _pgSz;
@@ -703,17 +706,28 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             byte[] page = ReadPage(pageNumber);
             if (page[0] != 0x01)
             {
+                ReturnPage(page);
                 continue;
             }
 
             if ((long)Ri32(page, _dpTDefOff) != tdefPage)
             {
+                ReturnPage(page);
                 continue;
             }
 
             if (CanInsertRow(page, rowLength))
             {
+                if (candidate != null)
+                {
+                    ReturnPage(candidate.Page);
+                }
+
                 candidate = new PageInsertTarget { PageNumber = pageNumber, Page = page };
+            }
+            else
+            {
+                ReturnPage(page);
             }
         }
 
@@ -1073,11 +1087,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             byte[] page = ReadPage(pageNumber);
             if (page[0] != 0x01)
             {
+                ReturnPage(page);
                 continue;
             }
 
             if (Ri32(page, _dpTDefOff) != 2)
             {
+                ReturnPage(page);
                 continue;
             }
 
@@ -1227,15 +1243,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             byte[] page = ReadPage(pageNumber);
             if (page[0] != 0x01)
             {
+                ReturnPage(page);
                 continue;
             }
 
             if ((long)Ri32(page, _dpTDefOff) != tdefPage)
             {
+                ReturnPage(page);
                 continue;
             }
 
             result.AddRange(EnumerateLiveRowLocations(pageNumber, page));
+            ReturnPage(page);
         }
 
         return result;
@@ -1256,11 +1275,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int raw = Ru16(page, offsetPos);
         if ((raw & 0x8000) != 0)
         {
+            ReturnPage(page);
             return;
         }
 
         Wu16(page, offsetPos, raw | 0x8000);
         WritePage(pageNumber, page);
+        ReturnPage(page);
     }
 
     private readonly record struct RowLocation(long PageNumber, int RowIndex, int RowStart, int RowSize)

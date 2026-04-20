@@ -866,6 +866,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             {
                 lock (_cacheLock)
                 {
+                    _pageCache?.Clear(ReturnPage);
                     _pageCache = null;
                 }
 
@@ -2357,7 +2358,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 int dataStart = rowStart + 8;
                 int availableData = Math.Min(dataLen, rowSize - 8);
 
-                if (availableData > 0 && dataStart + availableData <= page.Length)
+                if (availableData > 0 && dataStart + availableData <= _pgSz)
                 {
                     var chunk = new byte[availableData];
                     Buffer.BlockCopy(page, dataStart, chunk, 0, availableData);

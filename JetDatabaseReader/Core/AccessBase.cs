@@ -1,6 +1,7 @@
 namespace JetDatabaseReader;
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -248,6 +249,10 @@ public abstract class AccessBase : IAccessBase
     }
 
     // ── Static helpers ────────────────────────────────────────────────
+    private protected static void ReturnPage(byte[] page)
+    {
+        ArrayPool<byte>.Shared.Return(page);
+    }
 
 #pragma warning disable CA5351 // MD5 is required by the Jet4 RC4 key derivation spec
     /// <summary>
@@ -504,7 +509,7 @@ public abstract class AccessBase : IAccessBase
 
     private protected byte[] ReadPage(long n)
     {
-        var buf = new byte[_pgSz];
+        var buf = ArrayPool<byte>.Shared.Rent(_pgSz);
         _ = _fs.Seek(n * _pgSz, SeekOrigin.Begin);
 
         // FileStream.Read is not guaranteed to return all bytes in one call
@@ -534,7 +539,7 @@ public abstract class AccessBase : IAccessBase
         if (_rc4DbKey.HasValue && n >= 1)
         {
             byte[] rc4Key = DeriveRc4PageKey(_rc4DbKey.Value, (uint)n);
-            Rc4Transform(buf, 0, buf.Length, rc4Key);
+            Rc4Transform(buf, 0, _pgSz, rc4Key);
         }
 
         return buf;
@@ -559,6 +564,7 @@ public abstract class AccessBase : IAccessBase
             byte[] p = ReadPage(pg);
             if (p[0] != 0x02)
             {
+                ReturnPage(p);
                 break;   // not a TDEF page
             }
 
@@ -573,24 +579,32 @@ public abstract class AccessBase : IAccessBase
 
         if (parts.Count == 1)
         {
-            return parts[0];
+            var single = new byte[_pgSz];
+            Buffer.BlockCopy(parts[0], 0, single, 0, _pgSz);
+            ReturnPage(parts[0]);
+            return single;
         }
 
         // Concatenate: full first page, then continuation pages minus 8-byte TDEF header
-        int total = parts[0].Length;
+        int total = _pgSz;
         for (int i = 1; i < parts.Count; i++)
         {
-            total += parts[i].Length - 8;
+            total += _pgSz - 8;
         }
 
         var result = new byte[total];
-        Buffer.BlockCopy(parts[0], 0, result, 0, parts[0].Length);
-        int pos = parts[0].Length;
+        Buffer.BlockCopy(parts[0], 0, result, 0, _pgSz);
+        int pos = _pgSz;
         for (int i = 1; i < parts.Count; i++)
         {
-            int len = parts[i].Length - 8;
+            int len = _pgSz - 8;
             Buffer.BlockCopy(parts[i], 8, result, pos, len);
             pos += len;
+        }
+
+        for (int i = 0; i < parts.Count; i++)
+        {
+            ReturnPage(parts[i]);
         }
 
         return result;
@@ -725,7 +739,7 @@ public abstract class AccessBase : IAccessBase
     private protected void WritePage(long pageNumber, byte[] page)
     {
         _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-        _fs.Write(page, 0, page.Length);
+        _fs.Write(page, 0, _pgSz);
         _fs.Flush();
     }
 
@@ -733,7 +747,7 @@ public abstract class AccessBase : IAccessBase
     {
         long pageNumber = _fs.Length / _pgSz;
         _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-        _fs.Write(page, 0, page.Length);
+        _fs.Write(page, 0, _pgSz);
         _fs.Flush();
         return pageNumber;
     }
@@ -774,11 +788,13 @@ public abstract class AccessBase : IAccessBase
             byte[] page = ReadPage(p);
             if (page[0] != 0x01)
             {
+                ReturnPage(page);
                 continue;
             }
 
             if ((long)Ri32(page, _dpTDefOff) != tdefPage)
             {
+                ReturnPage(page);
                 continue;
             }
 
