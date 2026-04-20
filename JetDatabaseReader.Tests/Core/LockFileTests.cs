@@ -313,6 +313,58 @@ public sealed class LockFileTests : IDisposable
         Assert.True(File.Exists(lockPath), "Lockfile should still exist after overwrite");
     }
 
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void Writer_RespectExistingLockFileTrue_ThrowsWhenLockPathIsDirectory(string path)
+    {
+        string temp = CopyToTemp(path);
+        string lockPath = GetExpectedLockPath(temp);
+        Directory.CreateDirectory(lockPath);
+
+        try
+        {
+            var options = new AccessWriterOptions
+            {
+                UseLockFile = true,
+                RespectExistingLockFile = true,
+            };
+
+            Exception ex = Assert.ThrowsAny<Exception>(() => AccessWriter.Open(temp, options));
+            Assert.True(
+                ex is IOException || ex is UnauthorizedAccessException,
+                $"Expected IOException or UnauthorizedAccessException, got {ex.GetType().Name}");
+        }
+        finally
+        {
+            Directory.Delete(lockPath, recursive: true);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public void Writer_RespectExistingLockFileFalse_ContinuesWhenLockPathIsDirectory(string path)
+    {
+        string temp = CopyToTemp(path);
+        string lockPath = GetExpectedLockPath(temp);
+        Directory.CreateDirectory(lockPath);
+
+        try
+        {
+            var options = new AccessWriterOptions
+            {
+                UseLockFile = true,
+                RespectExistingLockFile = false,
+            };
+
+            using var writer = AccessWriter.Open(temp, options);
+            Assert.True(Directory.Exists(lockPath));
+        }
+        finally
+        {
+            Directory.Delete(lockPath, recursive: true);
+        }
+    }
+
     [Fact]
     public void AccessWriterOptions_RespectExistingLockFile_DefaultsToTrue()
     {
