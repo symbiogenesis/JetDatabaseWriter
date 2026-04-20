@@ -84,7 +84,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         TableDef? msys = ReadTableDef(2);
         if (msys == null)
         {
-            return;
+            throw new InvalidOperationException($"Table '{tableName}' does not exist.");
         }
 
         int deleted = 0;
@@ -109,10 +109,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             deleted++;
         }
 
-        if (deleted > 0)
+        if (deleted == 0)
         {
-            InvalidateCatalogCache();
+            throw new InvalidOperationException($"Table '{tableName}' does not exist.");
         }
+
+        InvalidateCatalogCache();
     }
 
     /// <inheritdoc/>
@@ -205,7 +207,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int predicateIndex = FindColumnIndex(tableDef, predicateColumn);
         if (predicateIndex < 0)
         {
-            return 0;
+            throw new ArgumentException($"Column '{predicateColumn}' was not found in table '{tableName}'.", nameof(predicateColumn));
         }
 
         var updateIndexes = new Dictionary<int, object>();
@@ -260,7 +262,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int predicateIndex = FindColumnIndex(tableDef, predicateColumn);
         if (predicateIndex < 0)
         {
-            return 0;
+            throw new ArgumentException($"Column '{predicateColumn}' was not found in table '{tableName}'.", nameof(predicateColumn));
         }
 
         using DataTable snapshot = ReadTableSnapshot(tableName);
@@ -372,7 +374,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (data == null)
         {
             string? stringValue = value as string;
-            if (string.IsNullOrEmpty(stringValue) || stringValue.Length > 128)
+            if (string.IsNullOrEmpty(stringValue))
             {
                 return null;
             }
@@ -382,7 +384,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         if (data.Length > MaxInlineOleBytes)
         {
-            return null;
+            throw new JetLimitationException($"OLE value is {data.Length} bytes, which exceeds the inline limit of {MaxInlineOleBytes} bytes.");
         }
 
         return WrapInlineLongValue(data);
@@ -1028,7 +1030,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         byte[] data = _jet4 ? Encoding.Unicode.GetBytes(value) : _ansiEncoding.GetBytes(value);
         if (data.Length > MaxInlineMemoBytes)
         {
-            return null;
+            throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {MaxInlineMemoBytes} bytes.");
         }
 
         return WrapInlineLongValue(data);

@@ -69,8 +69,12 @@ internal static class TestDatabases
     public static readonly string ExtDateTestV2019 =
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "extDateTestV2019.accdb");
 
+    /// <summary>Jackcess V2007 (ACE) fixed-length text test database – tables with text columns only (no OLE/MEMO).</summary>
+    public static readonly string FixedTextTestV2007 =
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "fixedTextTestV2007.accdb");
+
     private static readonly string[] InRepoDatabases =
-        [NorthwindTraders, AdventureWorks, Jet3Test, TestV1997, TestV2000, TestV2003, TestV2007, TestV2010, ExtDateTestV2019];
+        [NorthwindTraders, AdventureWorks, Jet3Test, TestV1997, TestV2000, TestV2003, TestV2007, TestV2010, ExtDateTestV2019, FixedTextTestV2007];
 
     private static readonly ConcurrentDictionary<string, bool> _readableCache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -82,7 +86,7 @@ internal static class TestDatabases
 
     /// <summary>Gets the smaller in-repo databases (skips any that can't be opened).</summary>
     public static TheoryData<string> Small => ToTheoryData(
-        new[] { NorthwindTraders, AdventureWorks, Jet3Test }
+        new[] { NorthwindTraders, AdventureWorks, Jet3Test, FixedTextTestV2007 }
             .Where(IsReadable));
 
     /// <summary>Gets the Jackcess test databases across multiple Access versions.</summary>
