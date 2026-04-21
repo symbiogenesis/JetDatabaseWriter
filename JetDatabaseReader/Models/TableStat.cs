@@ -2,7 +2,7 @@ namespace JetDatabaseReader;
 
 /// <summary>
 /// Name, stored row-count, and column-count for a single user table.
-/// Returned as an element of the list from <see cref="IAccessReader.GetTableStats"/>.
+/// Returned as an element of the list from <see cref="IAccessReader.GetTableStatsAsync"/>.
 /// </summary>
 public sealed record TableStat
 {
@@ -12,7 +12,7 @@ public sealed record TableStat
     /// <summary>
     /// Gets or sets the row count stored in the TDEF page.
     /// May be stale after bulk deletes or imports without a Compact &amp; Repair.
-    /// Use <see cref="IAccessReader.GetRealRowCount"/> for an accurate count.
+    /// Use <see cref="IAccessReader.GetRealRowCountAsync"/> for an accurate count.
     /// </summary>
     public long RowCount { get; set; }
 

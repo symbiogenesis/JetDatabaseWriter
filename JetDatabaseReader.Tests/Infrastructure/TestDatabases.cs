@@ -5,6 +5,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Xunit;
 
 /// <summary>
@@ -112,8 +114,8 @@ internal static class TestDatabases
     public static string? SkipIfMissing(string path) =>
         File.Exists(path) ? null : $"Test database not found: {path}";
 
-    public static AccessReader Open(string path, AccessReaderOptions? options = null) =>
-        AccessReader.Open(path, options);
+    public static ValueTask<AccessReader> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default) =>
+        AccessReader.OpenAsync(path, options, cancellationToken);
 
     /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
     /// <returns></returns>
@@ -127,7 +129,7 @@ internal static class TestDatabases
 
             try
             {
-                using var r = AccessReader.Open(p, new AccessReaderOptions { UseLockFile = false });
+                using var r = AccessReader.OpenAsync(p, new AccessReaderOptions { UseLockFile = false }).AsTask().GetAwaiter().GetResult();
                 return true;
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JetLimitationException)

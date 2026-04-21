@@ -10,6 +10,9 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
+#pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
+#pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API
+
 /// <summary>
 /// Pure-managed reader for Microsoft Access JET databases (.mdb / .accdb).
 /// No OleDB, ODBC, or ACE/Jet driver installation required.
@@ -211,16 +214,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    /// <summary>Gets a value indicating whether <see cref="GetUserTables"/> logs verbose hex dumps for debugging. Default: false.</summary>
+    /// <summary>Gets a value indicating whether to print console logs with verbose hex dumps for debugging. Default: false.</summary>
     public bool DiagnosticsEnabled { get; }
 
     /// <summary>Gets the maximum number of pages to keep in cache. 0 = unlimited, -1 = disabled. Default: 256 (1 MB for 4K pages).</summary>
     public int PageCacheSize { get; } = 256;
 
-    /// <summary>Gets a value indicating whether <see cref="ReadTable(string, IProgress{int})"/> uses parallel processing for reading multiple pages. Can improve performance for large tables. Default: false.</summary>
+    /// <summary>Gets a value indicating whether asynchronous full-table reads use parallel processing for reading multiple pages. Can improve performance for large tables. Default: false.</summary>
     public bool ParallelPageReadsEnabled { get; }
 
-    /// <summary>Gets diagnostic output populated after each call to <see cref="ListTables"/>.</summary>
+    /// <summary>Gets diagnostic output populated after each call to <see cref="ListTablesAsync"/>.</summary>
     public string LastDiagnostics { get; private set; } = string.Empty;
 
     /// <summary>
@@ -229,7 +232,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="path">Path to the .mdb or .accdb file.</param>
     /// <param name="options">Optional configuration options.</param>
     /// <returns>An AccessReader instance for the specified database.</returns>
-    public static AccessReader Open(string path, AccessReaderOptions? options = null)
+    private static AccessReader Open(string path, AccessReaderOptions? options = null)
     {
         Guard.NotNullOrEmpty(path, nameof(path));
 
@@ -281,70 +284,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             await fs.DisposeAsync().ConfigureAwait(false);
             throw;
         }
-    }
-
-    /// <summary>
-    /// Returns the column headers and up to <paramref name="maxRows"/> rows
-    /// from the first user table, plus the table name and total table count.
-    /// </summary>
-    /// <param name="maxRows">Maximum number of rows to read. Use with large tables to avoid long reads or out-of-memory errors.</param>
-    /// <returns>A <see cref="FirstTableResult"/> containing headers, string rows, and schema information.</returns>
-    public FirstTableResult ReadFirstTable(int maxRows = 100)
-    {
-        ThrowIfDisposed();
-
-        var empty = new FirstTableResult
-        {
-            Headers = new List<string> { "Info" },
-            Rows = new List<List<string>> { new List<string> { "No user tables found" } },
-            Schema = new List<TableColumn>(),
-            TableName = string.Empty,
-            TableCount = 0,
-        };
-
-        List<CatalogEntry> tables = GetUserTables();
-        if (tables.Count == 0)
-        {
-            return empty;
-        }
-
-        CatalogEntry entry = tables[0];
-        TableDef? td = ReadTableDef(entry.TDefPage);
-        if (td == null || td.Columns.Count == 0)
-        {
-            return new FirstTableResult
-            {
-                Headers = new List<string> { "Info" },
-                Rows = new List<List<string>> { new List<string> { $"Cannot read TDEF for '{entry.Name}'" } },
-                Schema = new List<TableColumn>(),
-                TableName = entry.Name,
-                TableCount = tables.Count,
-            };
-        }
-
-        var headers = td.Columns.ConvertAll(c => c.Name);
-        var rows = new List<List<string>>();
-
-        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
-        {
-            foreach (List<string> row in EnumerateRows(page, td))
-            {
-                rows.Add(row);
-                if (rows.Count >= maxRows)
-                {
-                    return new FirstTableResult { Headers = headers, Rows = rows, Schema = new List<TableColumn>(), TableName = entry.Name, TableCount = tables.Count };
-                }
-            }
-        }
-
-        return new FirstTableResult
-        {
-            Headers = headers,
-            Rows = rows,
-            Schema = new List<TableColumn>(),
-            TableName = entry.Name,
-            TableCount = tables.Count,
-        };
     }
 
     /// <inheritdoc/>
@@ -417,50 +356,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
         };
     }
 
-    /// <summary>Returns the names of all user tables in the database.</summary>
-    /// <returns>A list of table names.</returns>
-    public List<string> ListTables()
-    {
-        ThrowIfDisposed();
-        return GetUserTables().ConvertAll(e => e.Name);
-    }
-
-    /// <inheritdoc/>
-    public List<LinkedTableInfo> ListLinkedTables()
-    {
-        ThrowIfDisposed();
-        return GetLinkedTables();
-    }
-
     /// <inheritdoc/>
     public async ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         return await GetLinkedTablesAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Returns name, stored row-count, and column-count for every user table.
-    /// Calling this instead of <see cref="ListTables"/> avoids a duplicate catalog scan.
-    /// </summary>
-    /// <returns>A list of <see cref="TableStat"/> with metadata for each user table.</returns>
-    public List<TableStat> GetTableStats()
-    {
-        ThrowIfDisposed();
-        var entries = GetUserTables();
-        var result = new List<TableStat>(entries.Count);
-        foreach (var e in entries)
-        {
-            TableDef? td = ReadTableDef(e.TDefPage);
-            result.Add(new TableStat
-            {
-                Name = e.Name,
-                RowCount = td?.RowCount ?? 0L,
-                ColumnCount = td?.Columns.Count ?? 0,
-            });
-        }
-
-        return result;
     }
 
     /// <inheritdoc/>
@@ -487,28 +387,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return result;
     }
 
-    /// <summary>
-    /// Returns table metadata as a DataTable with columns: TableName, RowCount, ColumnCount.
-    /// Ideal for binding to data grids or exporting to CSV/Excel.
-    /// </summary>
-    /// <returns>A <see cref="DataTable"/> containing table metadata.</returns>
-    public DataTable GetTablesAsDataTable()
-    {
-        ThrowIfDisposed();
-        var dt = new DataTable("Tables");
-        _ = dt.Columns.Add("TableName", typeof(string));
-        _ = dt.Columns.Add("RowCount", typeof(long));
-        _ = dt.Columns.Add("ColumnCount", typeof(int));
-
-        var stats = GetTableStats();
-        foreach (TableStat s in stats)
-        {
-            _ = dt.Rows.Add(s.Name, s.RowCount, s.ColumnCount);
-        }
-
-        return dt;
-    }
-
     /// <inheritdoc/>
     public async ValueTask<DataTable> GetTablesAsDataTableAsync(CancellationToken cancellationToken = default)
     {
@@ -525,43 +403,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return dt;
-    }
-
-    /// <summary>
-    /// Scans all data pages to count live (non-deleted, non-overflow) rows for the specified table.
-    /// This is slower than reading the TDEF RowCount (which may be stale), but always accurate.
-    /// Use this after many deletes/imports when `Compact and Repair` hasn't been run.
-    /// </summary>
-    /// <param name="tableName">Name of the table to count rows for (case-insensitive).</param>
-    /// <returns>Number of live rows in the specified table.</returns>
-    public long GetRealRowCount(string tableName)
-    {
-        ThrowIfDisposed();
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        CatalogEntry entry = GetCatalogEntry(tableName);
-        if (entry == null)
-        {
-            return 0;
-        }
-
-        long count = 0;
-
-        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
-        {
-            int numRows = Ru16(page, _dpNumRows);
-            for (int r = 0; r < numRows; r++)
-            {
-                int raw = Ru16(page, _dpRowsStart + (r * 2));
-                if ((raw & 0xC000) != 0)
-                {
-                    continue; // deleted or overflow
-                }
-
-                count++;
-            }
-        }
-
-        return count;
     }
 
     /// <inheritdoc/>
@@ -607,139 +448,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return count;
     }
 
-    /// <summary>
-    /// Reads up to <paramref name="maxRows"/> rows from the table named
-    /// <paramref name="tableName"/> (case-insensitive).
-    /// Returns column headers, rows with native CLR types (int, DateTime, decimal, etc.) in <see cref="TableResult.Rows"/>, and per-column schema.
-    /// Use <see cref="ReadTableAsStrings"/> when raw string values are needed instead.
-    /// </summary>
-    /// <param name="tableName">Name of the table to read (case-insensitive).</param>
-    /// <param name="maxRows">Maximum number of rows to read. Use with large tables to avoid long reads or out-of-memory errors.</param>
-    /// <returns>A <see cref="TableResult"/> containing headers, typed rows, and schema information.</returns>
-    public TableResult ReadTable(string tableName, int maxRows)
-    {
-        ThrowIfDisposed();
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        var resolved = ResolveTable(tableName);
-
-        if (resolved == null)
-        {
-            // Check if this is a linked table
-            LinkedTableInfo? link = FindLinkedTable(tableName);
-            if (link != null)
-            {
-                using var source = OpenLinkedSource(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator);
-                return source.ReadTable(link.ForeignName, maxRows);
-            }
-
-            return new TableResult
-            {
-                Headers = new List<string>(),
-                Rows = new List<object[]>(),
-                Schema = new List<TableColumn>(),
-            };
-        }
-
-        var (entry, td) = resolved.Value;
-        var headers = td.Columns.ConvertAll(c => c.Name);
-        var schema = BuildSchema(td.Columns);
-        var typedRows = new List<object[]>();
-
-        // Preload complex column data for tables that have complex (attachment) columns.
-        var complexData = BuildComplexColumnData(tableName, td.Columns);
-
-        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
-        {
-            foreach (List<string> row in EnumerateRows(page, td))
-            {
-                typedRows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
-                if (typedRows.Count >= maxRows)
-                {
-                    return new TableResult { Headers = headers, Rows = typedRows, Schema = schema, TableName = tableName };
-                }
-            }
-        }
-
-        return new TableResult { Headers = headers, Rows = typedRows, Schema = schema, TableName = tableName };
-    }
-
-    /// <inheritdoc/>
-    public List<T> ReadTable<T>(string tableName, int maxRows)
-        where T : class, new()
-    {
-        TableResult result = ReadTable(tableName, maxRows);
-        var index = RowMapper<T>.BuildIndex(result.Headers);
-        var items = new List<T>(result.Rows.Count);
-
-        foreach (IReadOnlyList<object?> row in result.Rows)
-        {
-            items.Add(RowMapper<T>.Map(row, index));
-        }
-
-        return items;
-    }
-
-    /// <summary>
-    /// Reads up to <paramref name="maxRows"/> rows from the table named
-    /// <paramref name="tableName"/> (case-insensitive) with all values as strings.
-    /// Returns column headers, string rows in <see cref="StringTableResult.Rows"/>, and per-column schema.
-    /// Use <see cref="ReadTable(string, int)"/> when native CLR types are preferred.
-    /// </summary>
-    /// <param name="tableName">Name of the table to read (case-insensitive).</param>
-    /// <param name="maxRows">Maximum number of rows to read. Use with large tables to avoid long reads or out-of-memory errors.</param>
-    /// <returns>A <see cref="StringTableResult"/> containing headers, string rows, and schema information.</returns>
-    public StringTableResult ReadTableAsStrings(string tableName, int maxRows)
-    {
-        ThrowIfDisposed();
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        var resolved = ResolveTable(tableName);
-
-        if (resolved == null)
-        {
-            return new StringTableResult
-            {
-                Headers = new List<string>(),
-                Rows = new List<List<string>>(),
-                Schema = new List<TableColumn>(),
-            };
-        }
-
-        var (entry, td) = resolved.Value;
-        var headers = td.Columns.ConvertAll(c => c.Name);
-        var schema = BuildSchema(td.Columns);
-        var rows = new List<List<string>>();
-
-        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
-        {
-            foreach (List<string> row in EnumerateRows(page, td))
-            {
-                rows.Add(row);
-                if (rows.Count >= maxRows)
-                {
-                    return new StringTableResult { Headers = headers, Rows = rows, Schema = schema, TableName = tableName };
-                }
-            }
-        }
-
-        return new StringTableResult { Headers = headers, Rows = rows, Schema = schema, TableName = tableName };
-    }
-
-    /// <summary>
-    /// Yields rows from <paramref name="tableName"/> as properly typed object arrays without collecting them all in memory.
-    /// Each element in the array is the native CLR type (int, DateTime, decimal, etc.).
-    /// Ideal for large tables — use foreach to process one row at a time.
-    /// This is the recommended method for streaming data.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive).</param>
-    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
-    /// <returns>An enumerable of object arrays, each representing a row with typed values.</returns>
-    public IEnumerable<object[]> StreamRows(string tableName, IProgress<int>? progress = null)
-    {
-        ThrowIfDisposed();
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        return StreamRowsCore(tableName, progress);
-    }
-
     /// <inheritdoc/>
     public async IAsyncEnumerable<object[]> StreamRowsAsync(
         string tableName,
@@ -748,27 +456,47 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
 
-        await foreach (object[] row in StreamRowsCoreAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
         {
-            yield return row;
+            LinkedTableInfo? link = await FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            if (link != null)
+            {
+                await using AccessReader source = await OpenLinkedSourceAsync(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator, cancellationToken).ConfigureAwait(false);
+                await foreach (object[] row in source.StreamRowsAsync(link.ForeignName, progress, cancellationToken).ConfigureAwait(false))
+                {
+                    yield return row;
+                }
+            }
+
+            yield break;
         }
-    }
 
-    /// <inheritdoc/>
-    public IEnumerable<T> StreamRows<T>(string tableName, IProgress<int>? progress = null)
-        where T : class, new()
-    {
-        ThrowIfDisposed();
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        var (entry, td) = resolved.Value;
+        int rowCount = 0;
+        Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
+        long total = _fs.Length / _pgSz;
 
-        List<ColumnMetadata> meta = GetColumnMetadata(tableName);
-        var headers = meta.ConvertAll(m => m.Name);
-        var index = RowMapper<T>.BuildIndex(headers);
-
-        foreach (object[] row in StreamRowsCore(tableName, progress))
+        for (long p = 3; p < total; p++)
         {
-            yield return RowMapper<T>.Map(row, index);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01 || (long)Ri32(page, _dpTDefOff) != entry.TDefPage)
+            {
+                continue;
+            }
+
+            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
+            foreach (List<string> row in rows)
+            {
+                yield return ConvertRowToTyped(row, td.Columns, tableName, complexData);
+                rowCount++;
+            }
+
+            progress?.Report(rowCount);
         }
     }
 
@@ -787,25 +515,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var headers = meta.ConvertAll(m => m.Name);
         var index = RowMapper<T>.BuildIndex(headers);
 
-        await foreach (object[] row in StreamRowsCoreAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
+        await foreach (object[] row in StreamRowsAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
         {
             yield return RowMapper<T>.Map(row, index);
         }
-    }
-
-    /// <summary>
-    /// Yields rows from <paramref name="tableName"/> as string arrays without collecting them all in memory.
-    /// Use this for compatibility scenarios or when you need raw string data.
-    /// For most use cases, prefer <see cref="StreamRows"/> which returns properly typed data.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive).</param>
-    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
-    /// <returns>An enumerable of string arrays, each representing a row with string values.</returns>
-    public IEnumerable<string[]> StreamRowsAsStrings(string tableName, IProgress<int>? progress = null)
-    {
-        ThrowIfDisposed();
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        return StreamRowsAsStringsCore(tableName, progress);
     }
 
     /// <inheritdoc/>
@@ -816,109 +529,47 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
 
-        await foreach (string[] row in StreamRowsAsStringsCoreAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
-        {
-            yield return row;
-        }
-    }
-
-    /// <summary>
-    /// Reads the entire table into a DataTable with all columns typed as strings.
-    /// Use this for compatibility scenarios or when you need raw string data.
-    /// For most use cases, prefer <see cref="ReadTable(string, IProgress{int})"/> which returns properly typed columns.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
-    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
-    /// <returns>A <see cref="DataTable"/> containing all rows with columns typed as strings, or null if the table doesn't exist or has no columns.</returns>
-    public DataTable? ReadTableAsStringDataTable(string? tableName = null, IProgress<int>? progress = null)
-    {
-        ThrowIfDisposed();
-
-        // If no table name specified, use the first table
-        if (string.IsNullOrEmpty(tableName))
-        {
-            var tables = GetUserTables();
-            if (tables.Count == 0)
-            {
-                return null;
-            }
-
-            tableName = tables[0].Name;
-        }
-
-        var resolved = ResolveTable(tableName);
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            return null;
+            LinkedTableInfo? link = await FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            if (link != null)
+            {
+                await using AccessReader source = await OpenLinkedSourceAsync(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator, cancellationToken).ConfigureAwait(false);
+                await foreach (string[] row in source.StreamRowsAsStringsAsync(link.ForeignName, progress, cancellationToken).ConfigureAwait(false))
+                {
+                    yield return row;
+                }
+            }
+
+            yield break;
         }
 
         var (entry, td) = resolved.Value;
-        var dt = new DataTable(tableName);
-        foreach (var col in td.Columns)
-        {
-            _ = dt.Columns.Add(col.Name, typeof(string));
-        }
+        int rowCount = 0;
+        long total = _fs.Length / _pgSz;
 
-        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
+        for (long p = 3; p < total; p++)
         {
-            foreach (List<string> row in EnumerateRows(page, td))
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01 || (long)Ri32(page, _dpTDefOff) != entry.TDefPage)
             {
-                _ = dt.Rows.Add(row.ToArray());
+                continue;
             }
 
-            progress?.Report(dt.Rows.Count);
-        }
-
-        return dt;
-    }
-
-    /// <summary>
-    /// Returns rich metadata for all columns in the specified table.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive).</param>
-    /// <returns>A list of <see cref="ColumnMetadata"/> objects describing each column in the table.</returns>
-    public List<ColumnMetadata> GetColumnMetadata(string tableName)
-    {
-        ThrowIfDisposed();
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-
-        var resolved = ResolveTable(tableName);
-        if (resolved == null)
-        {
-            // Check if this is a linked table
-            LinkedTableInfo? link = FindLinkedTable(tableName);
-            if (link != null)
+            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
+            foreach (List<string> row in rows)
             {
-                using var source = OpenLinkedSource(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator);
-                return source.GetColumnMetadata(link.ForeignName);
+                yield return row.ToArray();
+                rowCount++;
             }
 
-            return [];
+            progress?.Report(rowCount);
         }
-
-        // For complex columns (T_COMPLEX = 0x12), consult MSysComplexColumns to
-        // determine the actual subtype (Attachment vs. multi-value, etc.).
-        var complexSubtypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        bool hasComplex = resolved.Value.Td.Columns.Any(c => c.Type == T_COMPLEX || c.Type == T_ATTACHMENT);
-        if (hasComplex)
-        {
-            complexSubtypes = ReadComplexColumnSubtypes(tableName);
-        }
-
-        return resolved.Value.Td.Columns.Select((col, index) => new ColumnMetadata
-        {
-            Name = col.Name,
-            TypeName = (col.Type == T_COMPLEX && complexSubtypes.TryGetValue(col.Name, out string? subtype))
-                ? subtype
-                : TypeCodeToName(col.Type),
-            ClrType = TypeCodeToClrType(col.Type),
-            MaxLength = col.Size > 0 ? (int?)col.Size : null,
-            IsNullable = true,
-            IsFixedLength = col.IsFixed,
-            Ordinal = index,
-            Size = SizeForColumn(col),
-        }).ToList();
     }
 
     /// <inheritdoc/>
@@ -964,89 +615,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
-    /// Returns statistical information about the database.
-    /// </summary>
-    /// <returns>A <see cref="DatabaseStatistics"/> object containing various statistics about the database.</returns>
-    public DatabaseStatistics GetStatistics()
-    {
-        ThrowIfDisposed();
-        var tables = GetUserTables();
-        var tableRowCounts = new Dictionary<string, long>();
-        long totalRows = 0;
-
-        foreach (var table in tables)
-        {
-            var td = ReadTableDef(table.TDefPage);
-            if (td != null)
-            {
-                tableRowCounts[table.Name] = td.RowCount;
-                totalRows += td.RowCount;
-            }
-        }
-
-        long totalAccess = _cacheHits + _cacheMisses;
-        int pageCacheHitRate = totalAccess > 0 ? (int)(_cacheHits * 100 / totalAccess) : 0;
-
-        return new DatabaseStatistics
-        {
-            TotalPages = _fs.Length / _pgSz,
-            DatabaseSizeBytes = _fs.Length,
-            TableCount = tables.Count,
-            TotalRows = totalRows,
-            TableRowCounts = tableRowCounts,
-            PageCacheHitRate = pageCacheHitRate,
-            Version = _jet4 ? "Jet4/ACE" : "Jet3",
-            PageSize = _pgSz,
-            CodePage = _codePage,
-        };
-    }
-
-    /// <summary>
-    /// Reads all tables into a dictionary of DataTables with properly typed columns.
-    /// Each table's columns use their native CLR types (int, DateTime, decimal, etc.).
-    /// This is the recommended method for bulk reading.
-    /// </summary>
-    /// <param name="progress">Optional progress reporter — receives table name as each table is read.</param>
-    /// <returns>A <see cref="Dictionary{TKey, TValue}"/> mapping table names to their corresponding <see cref="DataTable"/> with properly typed columns.</returns>
-    public Dictionary<string, DataTable> ReadAllTables(IProgress<string>? progress = null)
-    {
-        ThrowIfDisposed();
-
-        var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
-        var tables = GetUserTables();
-
-        foreach (var table in tables)
-        {
-            progress?.Report($"Reading {table.Name}...");
-            result[table.Name] = ReadTable(table.Name)!;
-        }
-
-        return result;
-    }
-
-    /// <summary>
-    /// Reads all tables into a dictionary of DataTables with all columns typed as strings.
-    /// Use this for compatibility scenarios.
-    /// </summary>
-    /// <param name="progress">Optional progress reporter — receives table name after each table is read.</param>
-    /// <returns>A dictionary of DataTables with all columns typed as strings.</returns>
-    public Dictionary<string, DataTable> ReadAllTablesAsStrings(IProgress<string>? progress = null)
-    {
-        ThrowIfDisposed();
-
-        var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
-        var tables = GetUserTables();
-
-        foreach (var table in tables)
-        {
-            progress?.Report($"Reading {table.Name}...");
-            result[table.Name] = ReadTableAsStringDataTable(table.Name)!;
-        }
-
-        return result;
-    }
-
-    /// <summary>
     /// Creates a fluent query interface for the specified table.
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
@@ -1056,68 +624,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         return new TableQuery(this, tableName);
-    }
-
-    /// <summary>
-    /// Reads the entire table into a DataTable with properly typed columns.
-    /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
-    /// This is the recommended method for reading table data.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
-    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
-    /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
-    public DataTable? ReadTable(string? tableName = null, IProgress<int>? progress = null)
-    {
-        ThrowIfDisposed();
-
-        if (string.IsNullOrEmpty(tableName))
-        {
-            var tables = GetUserTables();
-            if (tables.Count == 0)
-            {
-                return null;
-            }
-
-            tableName = tables[0].Name;
-        }
-
-        var resolved = ResolveTable(tableName);
-        if (resolved == null)
-        {
-            // Check if this is a linked table
-            LinkedTableInfo? link = FindLinkedTable(tableName);
-            if (link != null)
-            {
-                using var source = OpenLinkedSource(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator);
-                return source.ReadTable(link.ForeignName, progress);
-            }
-
-            return null;
-        }
-
-        var (entry, td) = resolved.Value;
-        var dt = new DataTable(tableName);
-
-        // Create columns with proper CLR types
-        foreach (var col in td.Columns)
-        {
-            _ = dt.Columns.Add(col.Name, TypeCodeToClrType(col.Type));
-        }
-
-        // Preload complex column data for tables that have complex (attachment) columns.
-        var complexData = BuildComplexColumnData(tableName, td.Columns);
-
-        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
-        {
-            foreach (List<string> row in EnumerateRows(page, td))
-            {
-                _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
-            }
-
-            progress?.Report(dt.Rows.Count);
-        }
-
-        return dt;
     }
 
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
@@ -1205,7 +711,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
-    /// Async overload of <see cref="ReadTable(string, int)"/>.
     /// Reads up to <paramref name="maxRows"/> rows with native CLR types asynchronously.
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
@@ -1290,7 +795,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
-    /// Async overload of <see cref="ReadTableAsStrings(string, int)"/>.
     /// Reads up to <paramref name="maxRows"/> rows as strings asynchronously.
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
@@ -1351,9 +855,62 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
-    public ValueTask<DataTable?> ReadTableAsStringDataTableAsync(string? tableName = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
+    public async ValueTask<DataTable?> ReadTableAsStringDataTableAsync(string? tableName = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
     {
-        return ReadTableAsStringDataTableCoreAsync(tableName, progress, cancellationToken);
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrEmpty(tableName))
+        {
+            List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+            if (tables.Count == 0)
+            {
+                return null;
+            }
+
+            tableName = tables[0].Name;
+        }
+
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            return null;
+        }
+
+        var (entry, td) = resolved.Value;
+        var dt = new DataTable(tableName);
+        foreach (ColumnInfo col in td.Columns)
+        {
+            _ = dt.Columns.Add(col.Name, typeof(string));
+        }
+
+        long total = _fs.Length / _pgSz;
+        for (long p = 3; p < total; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01)
+            {
+                continue;
+            }
+
+            long owner = (long)Ri32(page, _dpTDefOff);
+            if (owner != entry.TDefPage)
+            {
+                continue;
+            }
+
+            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
+            foreach (List<string> row in rows)
+            {
+                _ = dt.Rows.Add(row.ToArray());
+            }
+
+            progress?.Report(dt.Rows.Count);
+        }
+
+        return dt;
     }
 
     /// <summary>
@@ -1445,7 +1002,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report($"Reading {table.Name}...");
-            DataTable? dt = await ReadTableAsStringDataTableCoreAsync(table.Name, null, cancellationToken).ConfigureAwait(false);
+            DataTable? dt = await ReadTableAsStringDataTableAsync(table.Name, null, cancellationToken).ConfigureAwait(false);
             if (dt != null)
             {
                 result[table.Name] = dt;
@@ -1493,7 +1050,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
-    protected override async ValueTask DisposeAsyncCore()
+    public override async ValueTask DisposeAsync()
     {
         if (_disposed)
         {
@@ -1522,132 +1079,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
         finally
         {
-            await base.DisposeAsyncCore().ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
-    private protected override List<CatalogEntry> GetUserTables()
-    {
-        if (_catalogCache != null)
-        {
-            return _catalogCache;
-        }
-
-        lock (_catalogLock)
-        {
-            if (_catalogCache != null)
-            {
-                return _catalogCache;
-            }
-
-            var diag = new System.Text.StringBuilder();
-            _ = diag.AppendLine($"JET: {(_jet4 ? "Jet4/ACE" : "Jet3")}  PageSize: {_pgSz}  TotalPages: {_fs.Length / _pgSz}");
-
-            // MSysObjects TDEF is hard-coded at page 2 by the Jet engine
-            TableDef? msys = ReadTableDef(2);
-            if (msys == null)
-            {
-                _ = diag.AppendLine("ERROR: Page 2 is not a valid TDEF page (null returned).");
-                LastDiagnostics = diag.ToString();
-                _catalogCache = [];
-                return _catalogCache;
-            }
-
-            _ = diag.AppendLine($"MSysObjects cols ({msys.Columns.Count}): " +
-                string.Join(", ", msys.Columns.ConvertAll(c => $"{c.Name}[0x{c.Type:X2}]")));
-
-            // Case-insensitive column lookup — column names vary slightly across Access versions
-            int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
-            int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
-            int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
-            int idxFlags = msys.Columns.FindIndex(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
-
-            if (idxName < 0 || idxType < 0)
-            {
-                _ = diag.AppendLine("ERROR: Required catalog columns not found. Column name mismatch?");
-                LastDiagnostics = diag.ToString();
-                _catalogCache = [];
-                return _catalogCache;
-            }
-
-            var result = new List<CatalogEntry>();
-            long totPages = _fs.Length / _pgSz;
-            int catPages = 0;
-            int allRows = 0;
-
-            for (long p = 3; p < totPages; p++)
-            {
-                byte[] page = ReadPageCached(p);
-                if (page[0] != 0x01)
-                {
-                    continue;             // data pages only
-                }
-
-                if (Ri32(page, _dpTDefOff) != 2)
-                {
-                    continue; // must belong to MSysObjects
-                }
-
-                catPages++;
-
-                foreach (List<string> row in EnumerateRows(page, msys))
-                {
-                    allRows++;
-                    string typeStr = SafeGet(row, idxType);
-                    string nameStr = SafeGet(row, idxName);
-                    string flagsStr = SafeGet(row, idxFlags);
-
-                    if (!int.TryParse(typeStr, out int objType) || objType != OBJ_TABLE)
-                    {
-                        continue;
-                    }
-
-                    if (!long.TryParse(flagsStr, out long flagsLong))
-                    {
-                        flagsLong = 0;
-                    }
-
-                    if ((unchecked((uint)flagsLong) & SYSTABLE_MASK) != 0)
-                    {
-                        continue;
-                    }
-
-                    if (string.IsNullOrEmpty(nameStr))
-                    {
-                        continue;
-                    }
-
-                    long tdefPage = 0;
-                    if (idxId >= 0)
-                    {
-                        if (!long.TryParse(SafeGet(row, idxId), out long id))
-                        {
-                            id = 0;
-                        }
-
-                        tdefPage = id & 0x00FFFFFFL;
-                    }
-
-                    if (tdefPage > 0)
-                    {
-                        result.Add(new CatalogEntry(nameStr, tdefPage));
-                    }
-                }
-            }
-
-            _ = diag.AppendLine($"Catalog pages: {catPages}  Total rows scanned: {allRows}  User tables: {result.Count}");
-            if (DiagnosticsEnabled)
-            {
-                foreach (var e in result)
-                {
-                    _ = diag.AppendLine($"  [{e.Name}] TDEF page {e.TDefPage}");
-                }
-            }
-
-            LastDiagnostics = diag.ToString();
-            _catalogCache = result;
-            return _catalogCache;
+            await base.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -2237,7 +1669,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return 0;
     }
 
-    private async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
+    /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
+    private protected override async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
     {
         if (_catalogCache != null)
         {
@@ -2364,138 +1797,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             _catalogCache ??= result;
             return _catalogCache;
         }
-    }
-
-    private async ValueTask<DataTable?> ReadTableAsStringDataTableCoreAsync(string? tableName = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (string.IsNullOrEmpty(tableName))
-        {
-            List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
-            if (tables.Count == 0)
-            {
-                return null;
-            }
-
-            tableName = tables[0].Name;
-        }
-
-        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        if (resolved == null)
-        {
-            return null;
-        }
-
-        var (entry, td) = resolved.Value;
-        var dt = new DataTable(tableName);
-        foreach (ColumnInfo col in td.Columns)
-        {
-            _ = dt.Columns.Add(col.Name, typeof(string));
-        }
-
-        long total = _fs.Length / _pgSz;
-        for (long p = 3; p < total; p++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            long owner = (long)Ri32(page, _dpTDefOff);
-            if (owner != entry.TDefPage)
-            {
-                continue;
-            }
-
-            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in rows)
-            {
-                _ = dt.Rows.Add(row.ToArray());
-            }
-
-            progress?.Report(dt.Rows.Count);
-        }
-
-        return dt;
-    }
-
-    /// <summary>Returns linked table entries from the MSysObjects catalog.</summary>
-    private List<LinkedTableInfo> GetLinkedTables()
-    {
-        // MSysObjects TDEF is hard-coded at page 2
-        TableDef? msys = ReadTableDef(2);
-        if (msys == null)
-        {
-            return [];
-        }
-
-        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
-        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
-        int idxFlags = msys.Columns.FindIndex(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
-        int idxDatabase = msys.Columns.FindIndex(c => string.Equals(c.Name, "Database", StringComparison.OrdinalIgnoreCase));
-        int idxForeignName = msys.Columns.FindIndex(c => string.Equals(c.Name, "ForeignName", StringComparison.OrdinalIgnoreCase));
-        int idxConnect = msys.Columns.FindIndex(c => string.Equals(c.Name, "Connect", StringComparison.OrdinalIgnoreCase));
-
-        if (idxName < 0 || idxType < 0)
-        {
-            return [];
-        }
-
-        var result = new List<LinkedTableInfo>();
-        long totPages = _fs.Length / _pgSz;
-
-        for (long p = 3; p < totPages; p++)
-        {
-            byte[] page = ReadPageCached(p);
-            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != 2)
-            {
-                continue;
-            }
-
-            foreach (List<string> row in EnumerateRows(page, msys))
-            {
-                string typeStr = SafeGet(row, idxType);
-                if (!int.TryParse(typeStr, out int objType))
-                {
-                    continue;
-                }
-
-                if (objType != OBJ_LINKED_TABLE && objType != OBJ_LINKED_ODBC)
-                {
-                    continue;
-                }
-
-                string nameStr = SafeGet(row, idxName);
-                if (string.IsNullOrEmpty(nameStr))
-                {
-                    continue;
-                }
-
-                string flagsStr = SafeGet(row, idxFlags);
-                if (long.TryParse(flagsStr, out long flagsLong) &&
-                    (unchecked((uint)flagsLong) & SYSTABLE_MASK) != 0)
-                {
-                    continue;
-                }
-
-                bool isOdbc = objType == OBJ_LINKED_ODBC;
-                result.Add(new LinkedTableInfo
-                {
-                    Name = nameStr,
-                    ForeignName = SafeGet(row, idxForeignName),
-                    SourceDatabasePath = isOdbc ? null : SafeGet(row, idxDatabase),
-                    ConnectionString = isOdbc ? SafeGet(row, idxConnect) : null,
-                    IsOdbc = isOdbc,
-                });
-            }
-        }
-
-        return result;
     }
 
     private async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(CancellationToken cancellationToken)
@@ -2662,21 +1963,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return page;
     }
 
-    private (CatalogEntry Entry, TableDef Td)? ResolveTable(string tableName)
-    {
-        CatalogEntry entry = GetCatalogEntry(tableName);
-        if (entry != null)
-        {
-            TableDef? td = ReadTableDef(entry.TDefPage);
-            if (td != null && td.Columns.Count > 0)
-            {
-                return (entry, td);
-            }
-        }
-
-        return null;
-    }
-
     private async ValueTask<(CatalogEntry Entry, TableDef Td)?> ResolveTableAsync(string tableName, CancellationToken cancellationToken)
     {
         List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
@@ -2697,195 +1983,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Finds a linked table entry by name (case-insensitive).
     /// Returns null if the table is not a linked table.
     /// </summary>
-    private LinkedTableInfo? FindLinkedTable(string tableName)
-    {
-        return GetLinkedTables().Find(l =>
-            string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
-    }
-
     private async ValueTask<LinkedTableInfo?> FindLinkedTableAsync(string tableName, CancellationToken cancellationToken)
     {
         List<LinkedTableInfo> links = await GetLinkedTablesAsync(cancellationToken).ConfigureAwait(false);
         return links.Find(l => string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
     }
 
-    private IEnumerable<object[]> StreamRowsCore(string tableName, IProgress<int>? progress)
-    {
-        var resolved = ResolveTable(tableName);
-        if (resolved == null)
-        {
-            // Check if this is a linked table
-            LinkedTableInfo? link = FindLinkedTable(tableName);
-            if (link != null)
-            {
-                using var source = OpenLinkedSource(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator);
-                foreach (object[] row in source.StreamRows(link.ForeignName))
-                {
-                    yield return row;
-                }
-
-                yield break;
-            }
-
-            yield break;
-        }
-
-        var (entry, td) = resolved.Value;
-        int rowCount = 0;
-
-        // Preload complex column data for tables that have complex (attachment) columns.
-        var complexData = BuildComplexColumnData(tableName, td.Columns);
-
-        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
-        {
-            foreach (List<string> row in EnumerateRows(page, td))
-            {
-                yield return ConvertRowToTyped(row, td.Columns, tableName, complexData);
-                rowCount++;
-            }
-
-            progress?.Report(rowCount);
-        }
-    }
-
-    private async IAsyncEnumerable<object[]> StreamRowsCoreAsync(
-        string tableName,
-        IProgress<int>? progress,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        if (resolved == null)
-        {
-            LinkedTableInfo? link = await FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-            if (link != null)
-            {
-                await using AccessReader source = await OpenLinkedSourceAsync(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator, cancellationToken).ConfigureAwait(false);
-                await foreach (object[] row in source.StreamRowsAsync(link.ForeignName, progress, cancellationToken).ConfigureAwait(false))
-                {
-                    yield return row;
-                }
-            }
-
-            yield break;
-        }
-
-        var (entry, td) = resolved.Value;
-        int rowCount = 0;
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
-        long total = _fs.Length / _pgSz;
-
-        for (long p = 3; p < total; p++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || (long)Ri32(page, _dpTDefOff) != entry.TDefPage)
-            {
-                continue;
-            }
-
-            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in rows)
-            {
-                yield return ConvertRowToTyped(row, td.Columns, tableName, complexData);
-                rowCount++;
-            }
-
-            progress?.Report(rowCount);
-        }
-    }
-
-    private IEnumerable<string[]> StreamRowsAsStringsCore(string tableName, IProgress<int>? progress)
-    {
-        var resolved = ResolveTable(tableName);
-        if (resolved == null)
-        {
-            yield break;
-        }
-
-        var (entry, td) = resolved.Value;
-        int rowCount = 0;
-
-        foreach (byte[] page in EnumerateTablePages(entry.TDefPage))
-        {
-            foreach (List<string> row in EnumerateRows(page, td))
-            {
-                yield return row.ToArray();
-                rowCount++;
-            }
-
-            progress?.Report(rowCount);
-        }
-    }
-
-    private async IAsyncEnumerable<string[]> StreamRowsAsStringsCoreAsync(
-        string tableName,
-        IProgress<int>? progress,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        if (resolved == null)
-        {
-            LinkedTableInfo? link = await FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-            if (link != null)
-            {
-                await using AccessReader source = await OpenLinkedSourceAsync(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator, cancellationToken).ConfigureAwait(false);
-                await foreach (string[] row in source.StreamRowsAsStringsAsync(link.ForeignName, progress, cancellationToken).ConfigureAwait(false))
-                {
-                    yield return row;
-                }
-            }
-
-            yield break;
-        }
-
-        var (entry, td) = resolved.Value;
-        int rowCount = 0;
-        long total = _fs.Length / _pgSz;
-
-        for (long p = 3; p < total; p++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || (long)Ri32(page, _dpTDefOff) != entry.TDefPage)
-            {
-                continue;
-            }
-
-            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in rows)
-            {
-                yield return row.ToArray();
-                rowCount++;
-            }
-
-            progress?.Report(rowCount);
-        }
-    }
-
     /// <summary>Yields decoded rows from a single data page.</summary>
-    private IEnumerable<List<string>> EnumerateRows(byte[] page, TableDef td)
-    {
-        foreach (RowBound rb in EnumerateLiveRowBounds(page))
-        {
-            if (rb.RowSize < _numColsFldSz)
-            {
-                continue;
-            }
-
-            List<string>? values = CrackRow(page, rb.RowStart, rb.RowSize, td);
-            if (values != null)
-            {
-                yield return values;
-            }
-        }
-    }
-
     private async ValueTask<List<List<string>>> EnumerateRowsAsync(byte[] page, TableDef td, CancellationToken cancellationToken)
     {
         var rows = new List<List<string>>();
@@ -2906,164 +2010,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return rows;
-    }
-
-    /// <summary>Decodes a single row's bytes (within <paramref name="page"/>) into string values per column.</summary>
-    private List<string>? CrackRow(byte[] page, int rowStart, int rowSize, TableDef td)
-    {
-        if (rowSize < _numColsFldSz)
-        {
-            return null;
-        }
-
-        // Number of columns stored in THIS row (may be less than td.Columns.Count
-        // if columns were added after this row was written)
-        int numCols = _jet4 ? Ru16(page, rowStart) : page[rowStart];
-        if (numCols == 0)
-        {
-            return null;
-        }
-
-        // Check for deleted-column schema mismatch
-        // If the table has deleted columns AND this row has MORE columns than current schema,
-        // it was written before the deletion and data alignment is ambiguous
-        if (td.HasDeletedColumns && numCols > td.Columns.Count)
-        {
-            throw new JetLimitationException(
-                $"Row has {numCols} columns but current schema has {td.Columns.Count} with deleted-column gaps. " +
-                $"This row predates schema changes and data may be misaligned. " +
-                $"Solution: Compact & Repair the database in Microsoft Access to rebuild all rows.");
-        }
-
-        int nullMaskSz = (numCols + 7) / 8;
-        int nullMaskPos = rowSize - nullMaskSz;  // relative to rowStart
-        if (nullMaskPos < _numColsFldSz)
-        {
-            return null;
-        }
-
-        // ── Tail section layout (high→low addresses, reading from end) ──
-        //  Jet4: [null_mask][var_len(2)][var_table(varLen*2)][eod(2)]
-        //  Jet3: [null_mask][var_len(1)][jump_table(n*1)][var_table(varLen*1)][eod(1)]
-
-        int varLenPos = nullMaskPos - _varLenFldSz;  // relative
-        if (varLenPos < _numColsFldSz)
-        {
-            return null;
-        }
-
-        int varLen = _jet4 ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
-
-        // Jet3 jump table: floor(rowSize / 256) entries of 1 byte each
-        int jumpSz = _jet4 ? 0 : (rowSize / 256);
-
-        int varTableStart = varLenPos - jumpSz - (varLen * _varEntrySz);  // relative
-        int eodPos = varTableStart - _eodFldSz;                  // relative
-        if (eodPos < _numColsFldSz)
-        {
-            return null;
-        }
-
-        int eod = _jet4 ? Ru16(page, rowStart + eodPos) : page[rowStart + eodPos];
-
-        // ── Decode each column ────────────────────────────────────────
-        var result = new List<string>(td.Columns.Count);
-
-        for (int i = 0; i < td.Columns.Count; i++)
-        {
-            ColumnInfo col = td.Columns[i];
-
-            // null_mask bit index = col.ColNum (the descriptor's col_num field),
-            // NOT the loop index i.  JET rows index the mask by col_num,
-            // while the TDEF may store columns in a different order (e.g. alphabetically).
-            bool nullBit = false;
-            if (col.ColNum < numCols)
-            {
-                int mByte = nullMaskPos + (col.ColNum / 8);  // relative
-                int mBit = col.ColNum % 8;
-                if (mByte < rowSize)
-                {
-                    nullBit = (page[rowStart + mByte] & (1 << mBit)) != 0;
-                }
-            }
-
-            // BOOL: null_mask bit IS the value; no bytes stored in the row.
-            // In JET: bit SET (1) = TRUE for BOOL.
-            if (col.Type == T_BOOL)
-            {
-                result.Add(nullBit ? "True" : "False");
-                continue;
-            }
-
-            // For all other types: bit SET (1) = column HAS a value (not null).
-            // bit CLEAR (0) = column IS null.
-            // Column also has no value when it was added after this row was written.
-            if (col.ColNum >= numCols || !nullBit)
-            {
-                result.Add(string.Empty);
-                continue;
-            }
-
-            if (col.IsFixed)
-            {
-                int start = _numColsFldSz + col.FixedOff;  // relative
-                int sz = FixedSize(col.Type, col.Size);
-                if (sz == 0 || start + sz > rowSize)
-                {
-                    result.Add(string.Empty);
-                    continue;
-                }
-
-                result.Add(ReadFixed(page, rowStart + start, col, sz));
-            }
-            else
-            {
-                // Variable column — look up its offset in the reversed var_table.
-                // var_table is stored in reverse column order:
-                //   entry for VarIdx=k  →  varTableStart + (varLen-1-k)*varEntrySz
-                if (col.VarIdx >= varLen)
-                {
-                    result.Add(string.Empty);
-                    continue;
-                }
-
-                int entryPos = varTableStart + ((varLen - 1 - col.VarIdx) * _varEntrySz);  // relative
-                if (entryPos < 0 || entryPos + _varEntrySz > rowSize)
-                {
-                    result.Add(string.Empty);
-                    continue;
-                }
-
-                int varOff = _jet4 ? Ru16(page, rowStart + entryPos) : page[rowStart + entryPos];
-
-                // End of this variable column's data
-                int varEnd;
-                if (col.VarIdx + 1 < varLen)
-                {
-                    int nextEntry = varTableStart + ((varLen - 2 - col.VarIdx) * _varEntrySz);  // relative
-                    varEnd = _jet4 ? Ru16(page, rowStart + nextEntry) : page[rowStart + nextEntry];
-                }
-                else
-                {
-                    varEnd = eod;
-                }
-
-                // var_table entries are ROW offsets (from row[0]), not data-area offsets.
-                // FixedOff is a data-area offset (requires + _numColsFldSz), but var_table
-                // entries already include the num_cols header bytes.
-                int dataStart = varOff;          // relative to rowStart
-                int dataLen = varEnd - varOff;
-                if (dataLen < 0 || dataStart < 0 || dataStart + dataLen > rowSize)
-                {
-                    result.Add(string.Empty);
-                    continue;
-                }
-
-                result.Add(ReadVar(page, rowStart + dataStart, dataLen, col));
-            }
-        }
-
-        return result;
     }
 
     private async ValueTask<List<string>?> CrackRowAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
@@ -3199,78 +2145,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return result;
     }
 
-    private string ReadVar(byte[] row, int start, int len, ColumnInfo col)
-    {
-        if (len <= 0)
-        {
-            return string.Empty;
-        }
-
-        try
-        {
-            switch (col.Type)
-            {
-                case T_TEXT:
-                    return _jet4 ? DecodeJet4Text(row, start, len)
-                                 : _ansiEncoding.GetString(row, start, len);
-
-                case T_BINARY:
-                    return BitConverter.ToString(row, start, len);
-
-                case T_MEMO:
-                case T_OLE:
-                    return ReadLongValue(row, start, len, col.Type == T_OLE);
-
-                case T_COMPLEX:
-                case T_ATTACHMENT:
-                    // Variable slot holds a 4-byte complex_id pointing to rows in
-                    // the MSysCM_<table>_<column> system table.  Encode as a marker
-                    // so ConvertRowToTyped can resolve it to the actual attachment bytes.
-                    if (len >= 4)
-                    {
-                        int complexId = Ri32(row, start);
-                        return $"__CX:{complexId}__";
-                    }
-
-                    return string.Empty;
-
-                // Fixed-size types that Access system tables may store in the variable area
-                // (FLAG_FIXED cleared). Read them the same way as ReadFixed.
-                case T_BYTE:
-                    return len >= 1 ? row[start].ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
-                case T_INT:
-                    return len >= 2 ? ((short)Ru16(row, start)).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
-                case T_LONG:
-                    return len >= 4 ? Ri32(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
-                case T_FLOAT:
-                    return len >= 4 ? BitConverter.ToSingle(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
-                case T_DOUBLE:
-                    return len >= 8 ? BitConverter.ToDouble(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
-                case T_DATETIME:
-                    return len >= 8 ? ReadFixed(row, start, col, 8) : string.Empty;
-                case T_MONEY:
-                    return len >= 8 ? ReadFixed(row, start, col, 8) : string.Empty;
-                case T_GUID:
-                    return len >= 16 ? ReadFixed(row, start, col, 16) : string.Empty;
-
-                default:
-                    return string.Empty;
-            }
-        }
-        catch (JetLimitationException)
-        {
-            throw;
-        }
-        catch (ArgumentException)
-        {
-            return string.Empty;
-        }
-        catch (IndexOutOfRangeException)
-        {
-            return string.Empty;
-        }
-    }
-
     private async ValueTask<string> ReadVarAsync(byte[] row, int start, int len, ColumnInfo col, CancellationToken cancellationToken)
     {
         if (len <= 0)
@@ -3336,101 +2210,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             return string.Empty;
         }
-    }
-
-    /// <summary>
-    /// Looks up MSysComplexColumns to determine the subtype name for complex (0x12) columns
-    /// in the specified table. Returns a dictionary of column name → TypeName ("Attachment", etc.).
-    /// </summary>
-    private Dictionary<string, string> ReadComplexColumnSubtypes(string tableName)
-    {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            // Find MSysComplexColumns in the catalog (it's a system table, SYSTABLE_MASK set)
-            long tdefPage = FindSystemTablePage("MSysComplexColumns");
-            if (tdefPage <= 0)
-            {
-                return result;
-            }
-
-            TableDef? td = ReadTableDef(tdefPage);
-            if (td == null)
-            {
-                return result;
-            }
-
-            // ACCDB MSysComplexColumns columns:
-            //   ColumnName (text), ComplexID (long), ComplexTypeObjectID (long),
-            //   ConceptualTableID (long), FlatTableID (long).
-            // Note: there is no "TableName" text column — the table is identified
-            // by ConceptualTableID (the MSysObjects ID whose lower 24 bits = TDEF page).
-            int idxCol = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
-            int idxConceptualTable = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "ConceptualTableID", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(c.Name, "TableName", StringComparison.OrdinalIgnoreCase));
-
-            if (idxCol < 0)
-            {
-                return result;
-            }
-
-            // Resolve the target table's TDEF page for matching against ConceptualTableID.
-            CatalogEntry entry = GetCatalogEntry(tableName);
-            long targetTdefPage = entry?.TDefPage ?? 0;
-
-            foreach (byte[] page in EnumerateTablePages(tdefPage))
-            {
-                foreach (List<string> row in EnumerateRows(page, td))
-                {
-                    // Match by ConceptualTableID (lower 24 bits = TDEF page)
-                    if (idxConceptualTable >= 0 && targetTdefPage > 0)
-                    {
-                        string tableIdStr = SafeGet(row, idxConceptualTable);
-                        if (long.TryParse(tableIdStr, out long tableId))
-                        {
-                            long rowTdefPage = tableId & 0x00FFFFFFL;
-                            if (rowTdefPage != targetTdefPage)
-                            {
-                                continue;
-                            }
-                        }
-                        else if (!string.Equals(tableIdStr, tableName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            // Fallback: if the column is a text field (future-proofing),
-                            // compare as a table name string.
-                            continue;
-                        }
-                    }
-
-                    string colName = SafeGet(row, idxCol);
-
-                    // If we find a match, the column is an Attachment type when stored
-                    // via the MSysCM_ table mechanism (Access Attachment field).
-                    // Without a deeper ComplexType lookup, default to "Attachment" for 0x12.
-                    result[colName] = "Attachment";
-                }
-            }
-        }
-        catch (InvalidDataException)
-        {
-            // Best-effort: if we can't read MSysComplexColumns, fall back to "Complex".
-            if (DiagnosticsEnabled)
-            {
-                System.Diagnostics.Trace.WriteLine("[AccessReader] Best-effort fallback in ReadComplexColumnSubtypes: suppressed InvalidDataException while reading MSysComplexColumns.");
-            }
-        }
-        catch (IndexOutOfRangeException)
-        {
-            // Best-effort fallback.
-            if (DiagnosticsEnabled)
-            {
-                System.Diagnostics.Trace.WriteLine("[AccessReader] Best-effort fallback in ReadComplexColumnSubtypes: suppressed IndexOutOfRangeException while reading MSysComplexColumns.");
-            }
-        }
-
-        return result;
     }
 
     private async ValueTask<Dictionary<string, string>> ReadComplexColumnSubtypesAsync(string tableName, CancellationToken cancellationToken)
@@ -3524,60 +2303,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Finds the TDEF page number for a system table by name (case-insensitive).
     /// Unlike GetUserTables, this includes system tables (SYSTABLE_MASK set).
     /// </summary>
-    private long FindSystemTablePage(string name)
-    {
-        TableDef? msys = ReadTableDef(2);
-        if (msys == null)
-        {
-            return 0;
-        }
-
-        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
-        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
-        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
-
-        if (idxId < 0 || idxName < 0 || idxType < 0)
-        {
-            return 0;
-        }
-
-        long totPages = _fs.Length / _pgSz;
-        for (long p = 3; p < totPages; p++)
-        {
-            byte[] page = ReadPageCached(p);
-            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != 2)
-            {
-                continue;
-            }
-
-            foreach (List<string> row in EnumerateRows(page, msys))
-            {
-                string nameStr = SafeGet(row, idxName);
-                if (!string.Equals(nameStr, name, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                // Accept user tables (type 1) and system/hidden tables (type 6).
-                if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != 6))
-                {
-                    continue;
-                }
-
-                if (long.TryParse(SafeGet(row, idxId), out long id))
-                {
-                    long tdefPage = id & 0x00FFFFFFL;
-                    if (tdefPage > 0)
-                    {
-                        return tdefPage;
-                    }
-                }
-            }
-        }
-
-        return 0;
-    }
-
     private async ValueTask<long> FindSystemTablePageAsync(string name, CancellationToken cancellationToken)
     {
         TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
@@ -3639,32 +2364,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Returns a dictionary: column ordinal → (parentId → attachment bytes).
     /// Returns null if the table has no complex columns.
     /// </summary>
-    private Dictionary<int, Dictionary<int, byte[]>>? BuildComplexColumnData(
-        string tableName, List<ColumnInfo> columns)
-    {
-        Dictionary<int, Dictionary<int, byte[]>>? result = null;
-
-        for (int i = 0; i < columns.Count; i++)
-        {
-            ColumnInfo col = columns[i];
-            if (col.Type != T_COMPLEX && col.Type != T_ATTACHMENT)
-            {
-                continue;
-            }
-
-            System.Diagnostics.Trace.WriteLine($"[BuildComplexColumnData] table={tableName} col[{i}]={col.Name} type=0x{col.Type:X2}");
-            Dictionary<int, byte[]>? colData = LoadAttachmentData(tableName, col.Name);
-            System.Diagnostics.Trace.WriteLine($"[BuildComplexColumnData] LoadAttachmentData result: {(colData == null ? "null" : $"{colData.Count} entries")}");
-            if (colData != null && colData.Count > 0)
-            {
-                result ??= new Dictionary<int, Dictionary<int, byte[]>>();
-                result[i] = colData;
-            }
-        }
-
-        return result;
-    }
-
     private async ValueTask<Dictionary<int, Dictionary<int, byte[]>>?> BuildComplexColumnDataAsync(
         string tableName,
         List<ColumnInfo> columns,
@@ -3697,88 +2396,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Reads MSysComplexColumns to find the FlatTableID for a given table + column.
     /// Returns the TDEF page number (lower 24 bits of FlatTableID), or 0 if not found.
     /// </summary>
-    private long GetComplexFlatTablePage(string tableName, string columnName)
-    {
-        try
-        {
-            long msysTdef = FindSystemTablePage("MSysComplexColumns");
-            if (msysTdef <= 0)
-            {
-                return 0;
-            }
-
-            TableDef? td = ReadTableDef(msysTdef);
-            if (td == null)
-            {
-                return 0;
-            }
-
-            int idxCol = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
-            int idxConceptualTable = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "ConceptualTableID", StringComparison.OrdinalIgnoreCase));
-            int idxFlatTable = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "FlatTableID", StringComparison.OrdinalIgnoreCase));
-
-            if (idxCol < 0 || idxFlatTable < 0)
-            {
-                return 0;
-            }
-
-            // Resolve the target table's TDEF page for matching against ConceptualTableID.
-            CatalogEntry entry = GetCatalogEntry(tableName);
-            long targetTdefPage = entry?.TDefPage ?? 0;
-
-            foreach (byte[] page in EnumerateTablePages(msysTdef))
-            {
-                foreach (List<string> row in EnumerateRows(page, td))
-                {
-                    // Match column name.
-                    string colName = SafeGet(row, idxCol);
-                    if (!string.Equals(colName, columnName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    // Match table by ConceptualTableID (lower 24 bits = TDEF page).
-                    if (idxConceptualTable >= 0 && targetTdefPage > 0)
-                    {
-                        string tableIdStr = SafeGet(row, idxConceptualTable);
-                        if (long.TryParse(tableIdStr, out long tableId))
-                        {
-                            long rowTdefPage = tableId & 0x00FFFFFFL;
-                            if (rowTdefPage != targetTdefPage)
-                            {
-                                continue;
-                            }
-                        }
-                    }
-
-                    // Get FlatTableID → TDEF page of the hidden data table.
-                    string flatIdStr = SafeGet(row, idxFlatTable);
-                    if (long.TryParse(flatIdStr, out long flatId))
-                    {
-                        long flatTdef = flatId & 0x00FFFFFFL;
-                        if (flatTdef > 0)
-                        {
-                            return flatTdef;
-                        }
-                    }
-                }
-            }
-        }
-        catch (InvalidDataException)
-        {
-            // Best-effort: fall back to suffix search.
-            if (DiagnosticsEnabled)
-            {
-                System.Diagnostics.Trace.WriteLine($"[AccessReader] Best-effort fallback in GetComplexFlatTablePage: suppressed InvalidDataException for table '{tableName}', column '{columnName}'.");
-            }
-        }
-
-        return 0;
-    }
-
     private async ValueTask<long> GetComplexFlatTablePageAsync(string tableName, string columnName, CancellationToken cancellationToken)
     {
         try
@@ -3876,124 +2493,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Returns a dictionary mapping complex_id → serialized attachment bytes
     /// (2-byte FileName length LE, FileName UTF-16LE, FileData bytes).
     /// </summary>
-    private Dictionary<int, byte[]>? LoadAttachmentData(string tableName, string columnName)
-    {
-        try
-        {
-            // Primary approach: find the flat data table via MSysComplexColumns FlatTableID.
-            long tdefPage = GetComplexFlatTablePage(tableName, columnName);
-
-            // Fallback: try suffix-based name search for the hidden table.
-            if (tdefPage <= 0)
-            {
-                string nameSuffix = $"_{columnName}";
-                tdefPage = FindSystemTablePageBySuffix(nameSuffix);
-            }
-
-            if (tdefPage <= 0)
-            {
-                return null;
-            }
-
-            TableDef? td = ReadTableDef(tdefPage);
-            if (td == null)
-            {
-                return null;
-            }
-
-            // FK column name = "<tableName>_<columnName>" (e.g. "Documents_Attachments")
-            string fkColName = $"{tableName}_{columnName}";
-            int idxFk = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, fkColName, StringComparison.OrdinalIgnoreCase));
-
-            if (idxFk < 0)
-            {
-                // Fallback: any LONG column that looks like a FK
-                idxFk = td.Columns.FindIndex(c =>
-                    c.Type == T_LONG && !c.Name.StartsWith("Idx", StringComparison.OrdinalIgnoreCase));
-            }
-
-            if (idxFk < 0)
-            {
-                return null;
-            }
-
-            int idxFileName = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "FileName", StringComparison.OrdinalIgnoreCase));
-            int idxFileData = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "FileData", StringComparison.OrdinalIgnoreCase));
-
-            var result = new Dictionary<int, byte[]>();
-
-            foreach (byte[] page in EnumerateTablePages(tdefPage))
-            {
-                foreach (List<string> row in EnumerateRows(page, td))
-                {
-                    string fkStr = SafeGet(row, idxFk);
-                    if (!int.TryParse(fkStr, out int parentId))
-                    {
-                        continue;
-                    }
-
-                    byte[] fileNameBytes = [];
-                    if (idxFileName >= 0)
-                    {
-                        string fileName = SafeGet(row, idxFileName);
-                        if (!string.IsNullOrEmpty(fileName))
-                        {
-                            fileNameBytes = Encoding.Unicode.GetBytes(fileName);
-                        }
-                    }
-
-                    byte[] fileDataBytes = [];
-                    if (idxFileData >= 0)
-                    {
-                        string fileDataStr = SafeGet(row, idxFileData);
-                        fileDataBytes = DecodeColumnBytes(fileDataStr ?? string.Empty, td.Columns[idxFileData].Type);
-
-                        // Access attachment data: first byte indicates compression.
-                        // 0x01 = deflate-compressed (remaining bytes), 0x00 = uncompressed.
-                        if (fileDataBytes.Length > 1 && fileDataBytes[0] == 0x01)
-                        {
-                            fileDataBytes = DecompressAttachmentData(fileDataBytes, 1);
-                        }
-                        else if (fileDataBytes.Length > 1 && fileDataBytes[0] == 0x00)
-                        {
-                            fileDataBytes = fileDataBytes.AsSpan(1).ToArray();
-                        }
-                    }
-
-                    if (fileNameBytes.Length == 0 && fileDataBytes.Length == 0)
-                    {
-                        continue;
-                    }
-
-                    // Encode as: [2-byte nameLen LE][nameBytes][fileDataBytes]
-                    var bytes = new byte[2 + fileNameBytes.Length + fileDataBytes.Length];
-                    bytes[0] = (byte)(fileNameBytes.Length & 0xFF);
-                    bytes[1] = (byte)((fileNameBytes.Length >> 8) & 0xFF);
-                    Buffer.BlockCopy(fileNameBytes, 0, bytes, 2, fileNameBytes.Length);
-                    Buffer.BlockCopy(fileDataBytes, 0, bytes, 2 + fileNameBytes.Length, fileDataBytes.Length);
-                    result[parentId] = bytes;
-                }
-            }
-
-            return result.Count > 0 ? result : null;
-        }
-        catch (InvalidDataException)
-        {
-            return null;
-        }
-        catch (IndexOutOfRangeException)
-        {
-            return null;
-        }
-        catch (IOException)
-        {
-            return null;
-        }
-    }
-
+    /// <param name="tableName">Name of the table containing the complex column.</param>
+    /// <param name="columnName">Name of the complex column.</param>
+    /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
+    /// <returns>A dictionary mapping complex_id to serialized attachment bytes.</returns>
     private async ValueTask<Dictionary<int, byte[]>?> LoadAttachmentDataAsync(string tableName, string columnName, CancellationToken cancellationToken)
     {
         try
@@ -4125,60 +2628,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <paramref name="nameSuffix"/> (case-insensitive). Used to find
     /// <c>f_&lt;GUID&gt;_&lt;columnName&gt;</c> attachment tables.
     /// </summary>
-    private long FindSystemTablePageBySuffix(string nameSuffix)
-    {
-        TableDef? msys = ReadTableDef(2);
-        if (msys == null)
-        {
-            return 0;
-        }
-
-        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
-        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
-        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
-
-        if (idxId < 0 || idxName < 0 || idxType < 0)
-        {
-            return 0;
-        }
-
-        long totPages = _fs.Length / _pgSz;
-        for (long p = 3; p < totPages; p++)
-        {
-            byte[] page = ReadPageCached(p);
-            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != 2)
-            {
-                continue;
-            }
-
-            foreach (List<string> row in EnumerateRows(page, msys))
-            {
-                string nameStr = SafeGet(row, idxName);
-                if (!nameStr.EndsWith(nameSuffix, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                // Accept user tables (type 1) and system/hidden tables (type 6).
-                if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != 6))
-                {
-                    continue;
-                }
-
-                if (long.TryParse(SafeGet(row, idxId), out long id))
-                {
-                    long tdefPage = id & 0x00FFFFFFL;
-                    if (tdefPage > 0)
-                    {
-                        return tdefPage;
-                    }
-                }
-            }
-        }
-
-        return 0;
-    }
-
     private async ValueTask<long> FindSystemTablePageBySuffixAsync(string nameSuffix, CancellationToken cancellationToken)
     {
         TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);

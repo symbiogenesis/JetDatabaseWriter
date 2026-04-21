@@ -6,7 +6,7 @@ using System.Collections.ObjectModel;
 using System.Data;
 
 /// <summary>
-/// Result of a typed table read (<see cref="IAccessReader.ReadTable(string, int)"/>).
+/// Result of a typed table read (<see cref="IAccessReader.ReadTableAsync(string, int, System.Threading.CancellationToken)"/>).
 /// Column values are returned as native CLR types (int, DateTime, decimal, etc.) in <see cref="Rows"/>.
 /// Use <see cref="StringTableResult"/> when raw string values are needed.
 /// </summary>

@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Data;
 
 /// <summary>
-/// Result of a string-mode table read (<see cref="IAccessReader.ReadTableAsStrings"/>).
+/// Result of a string-mode table read (<see cref="IAccessReader.ReadTableAsStringsAsync"/>).
 /// All column values are returned as strings in <see cref="Rows"/>.
 /// Use <see cref="TableResult"/> when native CLR types are preferred.
 /// </summary>

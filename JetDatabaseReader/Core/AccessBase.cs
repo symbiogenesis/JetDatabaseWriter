@@ -232,49 +232,7 @@ public abstract class AccessBase : IAccessBase
     }
 
     /// <inheritdoc/>
-    public void Dispose()
-    {
-        Dispose(true);
-        GC.SuppressFinalize(this);
-    }
-
-    /// <inheritdoc/>
-    public async ValueTask DisposeAsync()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        await DisposeAsyncCore().ConfigureAwait(false);
-        GC.SuppressFinalize(this);
-    }
-
-    /// <summary>
-    /// Releases resources used by this instance.
-    /// </summary>
-    /// <param name="disposing">True if called from <see cref="Dispose()"/>; false if called from a finalizer.</param>
-    protected virtual void Dispose(bool disposing)
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-
-        if (disposing)
-        {
-            _fs.Dispose();
-            _ioGate.Dispose();
-        }
-    }
-
-    /// <summary>
-    /// Asynchronously releases resources used by this instance.
-    /// </summary>
-    /// <returns>A task representing the asynchronous dispose operation.</returns>
-    protected virtual async ValueTask DisposeAsyncCore()
+    public virtual async ValueTask DisposeAsync()
     {
         if (_disposed)
         {
@@ -284,6 +242,7 @@ public abstract class AccessBase : IAccessBase
         _disposed = true;
         await _fs.DisposeAsync().ConfigureAwait(false);
         _ioGate.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     /// <summary>
@@ -1032,14 +991,14 @@ public abstract class AccessBase : IAccessBase
     // ── Catalog access ───────────────────────────────────────────────
 
     /// <summary>Finds a catalog entry by name (case-insensitive).</summary>
-    private protected CatalogEntry GetCatalogEntry(string tableName)
+    private protected async ValueTask<CatalogEntry?> GetCatalogEntryAsync(string tableName, CancellationToken cancellationToken = default)
     {
-        return GetUserTables().Find(e =>
-            string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
+        var userTables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
+        return userTables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
-    private protected abstract List<CatalogEntry> GetUserTables();
+    private protected abstract ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken = default);
 
     // ── Table page enumeration ───────────────────────────────────────
 

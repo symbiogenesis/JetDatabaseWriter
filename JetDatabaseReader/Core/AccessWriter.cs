@@ -11,6 +11,8 @@ using System.Threading;
 using System.Threading.Tasks;
 
 #pragma warning disable CA1822 // Mark members as static
+#pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
+#pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API
 
 /// <summary>
 /// Pure-managed writer for Microsoft Access JET databases (.mdb / .accdb).
@@ -53,43 +55,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Opens a JET database file for writing and returns a new AccessWriter instance.
-    /// </summary>
-    /// <param name="path">Path to the .mdb or .accdb file.</param>
-    /// <param name="options">Optional configuration options.</param>
-    /// <returns>An AccessWriter instance for the specified database.</returns>
-    public static AccessWriter Open(string path, AccessWriterOptions? options = null)
-    {
-        Guard.NotNullOrEmpty(path, nameof(path));
-
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException($"Database file not found: {path}", path);
-        }
-
-        options ??= new AccessWriterOptions();
-        VerifyPasswordOnOpen(path, options);
-
-        FileStream fs = CreateStream(path);
-        try
-        {
-            byte[] hdr = ReadHeader(fs);
-            return new AccessWriter(
-                path,
-                fs,
-                hdr,
-                options.Password,
-                options.UseLockFile,
-                options.RespectExistingLockFile);
-        }
-        catch
-        {
-            fs.Dispose();
-            throw;
-        }
-    }
-
-    /// <summary>
     /// Asynchronously opens a JET database file for writing and returns a new <see cref="AccessWriter"/> instance.
     /// </summary>
     /// <param name="path">Path to the .mdb or .accdb file.</param>
@@ -126,247 +91,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             await fs.DisposeAsync().ConfigureAwait(false);
             throw;
         }
-    }
-
-    /// <inheritdoc/>
-    public void CreateTable(string tableName, IReadOnlyList<ColumnDefinition> columns)
-    {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotNull(columns, nameof(columns));
-        ThrowIfDisposed();
-
-        if (columns.Count == 0)
-        {
-            throw new ArgumentException("At least one column is required", nameof(columns));
-        }
-
-        if (GetCatalogEntry(tableName) != null)
-        {
-            throw new InvalidOperationException($"Table '{tableName}' already exists.");
-        }
-
-        TableDef tableDef = BuildTableDefinition(columns, _jet4);
-        byte[] tdefPage = BuildTDefPage(tableDef);
-        long tdefPageNumber = AppendPage(tdefPage);
-
-        InsertCatalogEntry(tableName, tdefPageNumber);
-        InvalidateCatalogCache();
-    }
-
-    /// <inheritdoc/>
-    public void DropTable(string tableName)
-    {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        ThrowIfDisposed();
-
-        TableDef? msys = ReadTableDef(2);
-        if (msys == null)
-        {
-            throw new InvalidOperationException($"Table '{tableName}' does not exist.");
-        }
-
-        int deleted = 0;
-        foreach (CatalogRow row in EnumerateCatalogRows(msys))
-        {
-            if (!string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (row.ObjectType != OBJ_TABLE)
-            {
-                continue;
-            }
-
-            if ((unchecked((uint)row.Flags) & SYSTABLE_MASK) != 0)
-            {
-                continue;
-            }
-
-            MarkRowDeleted(row.PageNumber, row.RowIndex);
-            deleted++;
-        }
-
-        if (deleted == 0)
-        {
-            throw new InvalidOperationException($"Table '{tableName}' does not exist.");
-        }
-
-        InvalidateCatalogCache();
-    }
-
-    /// <inheritdoc/>
-    public void InsertRow(string tableName, object[] values)
-    {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotNull(values, nameof(values));
-        ThrowIfDisposed();
-
-        CatalogEntry entry = GetRequiredCatalogEntry(tableName);
-        TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
-        InsertRowInternal(entry.TDefPage, tableDef, values);
-    }
-
-    /// <inheritdoc/>
-    public int InsertRows(string tableName, IEnumerable<object[]> rows)
-    {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotNull(rows, nameof(rows));
-        ThrowIfDisposed();
-
-        CatalogEntry entry = GetRequiredCatalogEntry(tableName);
-        TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
-        int inserted = 0;
-
-        foreach (object[] row in rows)
-        {
-            Guard.NotNull(row, nameof(rows));
-            InsertRowInternal(entry.TDefPage, tableDef, row);
-            inserted++;
-        }
-
-        return inserted;
-    }
-
-    /// <inheritdoc/>
-    public void InsertRow<T>(string tableName, T item)
-        where T : class, new()
-    {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotNull(item, nameof(item));
-        ThrowIfDisposed();
-
-        CatalogEntry entry = GetRequiredCatalogEntry(tableName);
-        TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
-        var headers = tableDef.Columns.ConvertAll(c => c.Name);
-        var index = RowMapper<T>.BuildIndex(headers);
-        InsertRowInternal(entry.TDefPage, tableDef, RowMapper<T>.ToRow(item, index));
-    }
-
-    /// <inheritdoc/>
-    public int InsertRows<T>(string tableName, IEnumerable<T> items)
-        where T : class, new()
-    {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotNull(items, nameof(items));
-        ThrowIfDisposed();
-
-        CatalogEntry entry = GetRequiredCatalogEntry(tableName);
-        TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
-        var headers = tableDef.Columns.ConvertAll(c => c.Name);
-        var index = RowMapper<T>.BuildIndex(headers);
-        int inserted = 0;
-
-        foreach (T item in items)
-        {
-            Guard.NotNull(item, nameof(items));
-            InsertRowInternal(entry.TDefPage, tableDef, RowMapper<T>.ToRow(item, index));
-            inserted++;
-        }
-
-        return inserted;
-    }
-
-    /// <inheritdoc/>
-    public int UpdateRows(string tableName, string predicateColumn, object predicateValue, IDictionary<string, object> updatedValues)
-    {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
-        Guard.NotNull(updatedValues, nameof(updatedValues));
-        ThrowIfDisposed();
-
-        if (updatedValues.Count == 0)
-        {
-            return 0;
-        }
-
-        CatalogEntry entry = GetRequiredCatalogEntry(tableName);
-        TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
-        int predicateIndex = FindColumnIndex(tableDef, predicateColumn);
-        if (predicateIndex < 0)
-        {
-            throw new ArgumentException($"Column '{predicateColumn}' was not found in table '{tableName}'.", nameof(predicateColumn));
-        }
-
-        var updateIndexes = new Dictionary<int, object>();
-        foreach (KeyValuePair<string, object> kvp in updatedValues)
-        {
-            int columnIndex = FindColumnIndex(tableDef, kvp.Key);
-            if (columnIndex < 0)
-            {
-                throw new ArgumentException($"Column '{kvp.Key}' was not found in table '{tableName}'.", nameof(updatedValues));
-            }
-
-            updateIndexes[columnIndex] = kvp.Value;
-        }
-
-        using DataTable snapshot = ReadTableSnapshot(tableName);
-
-        List<RowLocation> locations = GetLiveRowLocations(entry.TDefPage);
-        int total = Math.Min(snapshot.Rows.Count, locations.Count);
-        int updated = 0;
-
-        for (int i = 0; i < total; i++)
-        {
-            object currentValue = snapshot.Rows[i][predicateIndex];
-            if (!ValuesEqual(currentValue, predicateValue))
-            {
-                continue;
-            }
-
-            object[] rowValues = snapshot.Rows[i].ItemArray;
-            foreach (KeyValuePair<int, object> update in updateIndexes)
-            {
-                rowValues[update.Key] = update.Value ?? DBNull.Value;
-            }
-
-            MarkRowDeleted(locations[i].PageNumber, locations[i].RowIndex);
-            InsertRowInternal(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false);
-            updated++;
-        }
-
-        return updated;
-    }
-
-    /// <inheritdoc/>
-    public int DeleteRows(string tableName, string predicateColumn, object predicateValue)
-    {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
-        ThrowIfDisposed();
-
-        CatalogEntry entry = GetRequiredCatalogEntry(tableName);
-        TableDef tableDef = ReadRequiredTableDef(entry.TDefPage, tableName);
-        int predicateIndex = FindColumnIndex(tableDef, predicateColumn);
-        if (predicateIndex < 0)
-        {
-            throw new ArgumentException($"Column '{predicateColumn}' was not found in table '{tableName}'.", nameof(predicateColumn));
-        }
-
-        using DataTable snapshot = ReadTableSnapshot(tableName);
-
-        List<RowLocation> locations = GetLiveRowLocations(entry.TDefPage);
-        int total = Math.Min(snapshot.Rows.Count, locations.Count);
-        int deleted = 0;
-
-        for (int i = 0; i < total; i++)
-        {
-            object currentValue = snapshot.Rows[i][predicateIndex];
-            if (!ValuesEqual(currentValue, predicateValue))
-            {
-                continue;
-            }
-
-            MarkRowDeleted(locations[i].PageNumber, locations[i].RowIndex);
-            deleted++;
-        }
-
-        if (deleted > 0)
-        {
-            AdjustTDefRowCount(entry.TDefPage, -deleted);
-        }
-
-        return deleted;
     }
 
     /// <inheritdoc/>
@@ -449,7 +173,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        await InsertRowInternalAsync(entry.TDefPage, tableDef, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await InsertRowDataAsync(entry.TDefPage, tableDef, values, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -468,7 +192,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             cancellationToken.ThrowIfCancellationRequested();
             Guard.NotNull(row, nameof(rows));
-            await InsertRowInternalAsync(entry.TDefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await InsertRowDataAsync(entry.TDefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
             inserted++;
         }
 
@@ -488,7 +212,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
         var headers = tableDef.Columns.ConvertAll(c => c.Name);
         var index = RowMapper<T>.BuildIndex(headers);
-        await InsertRowInternalAsync(entry.TDefPage, tableDef, RowMapper<T>.ToRow(item, index), cancellationToken: cancellationToken).ConfigureAwait(false);
+        await InsertRowDataAsync(entry.TDefPage, tableDef, RowMapper<T>.ToRow(item, index), cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -510,7 +234,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             cancellationToken.ThrowIfCancellationRequested();
             Guard.NotNull(item, nameof(items));
-            await InsertRowInternalAsync(entry.TDefPage, tableDef, RowMapper<T>.ToRow(item, index), cancellationToken: cancellationToken).ConfigureAwait(false);
+            await InsertRowDataAsync(entry.TDefPage, tableDef, RowMapper<T>.ToRow(item, index), cancellationToken: cancellationToken).ConfigureAwait(false);
             inserted++;
         }
 
@@ -574,7 +298,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             await MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, cancellationToken).ConfigureAwait(false);
-            await InsertRowInternalAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await InsertRowDataAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
             updated++;
         }
 
@@ -653,7 +377,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         SetValue(msys, values, "ForeignName", foreignTableName);
         SetValue(msys, values, "Database", sourceDatabasePath);
 
-        InsertRowInternal(2, msys, values);
+        InsertRowData(2, msys, values);
         InvalidateCatalogCache();
     }
 
@@ -688,34 +412,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         SetValue(msys, values, "ForeignName", foreignTableName);
         SetValue(msys, values, "Database", sourceDatabasePath);
 
-        await InsertRowInternalAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
         InvalidateCatalogCache();
     }
 
     /// <inheritdoc/>
-    protected override void Dispose(bool disposing)
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        if (disposing && _useLockFile)
-        {
-            DeleteLockFile();
-        }
-
-        if (disposing)
-        {
-            _password?.Dispose();
-            _stateLock.Dispose();
-        }
-
-        base.Dispose(disposing);
-    }
-
-    /// <inheritdoc/>
-    protected override async ValueTask DisposeAsyncCore()
+    public override async ValueTask DisposeAsync()
     {
         if (_disposed)
         {
@@ -730,48 +432,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         _password?.Dispose();
         _stateLock.Dispose();
 
-        await base.DisposeAsyncCore().ConfigureAwait(false);
-    }
-
-    private protected override List<CatalogEntry> GetUserTables()
-    {
-        List<CatalogEntry>? cached = GetCatalogCache();
-        if (cached != null)
-        {
-            return cached;
-        }
-
-        TableDef? msys = ReadTableDef(2);
-        if (msys == null)
-        {
-            var empty = new List<CatalogEntry>();
-            SetCatalogCache(empty);
-            return empty;
-        }
-
-        var result = new List<CatalogEntry>();
-        foreach (CatalogRow row in EnumerateCatalogRows(msys))
-        {
-            if (row.ObjectType != OBJ_TABLE)
-            {
-                continue;
-            }
-
-            if ((unchecked((uint)row.Flags) & SYSTABLE_MASK) != 0)
-            {
-                continue;
-            }
-
-            if (string.IsNullOrEmpty(row.Name) || row.TDefPage <= 0)
-            {
-                continue;
-            }
-
-            result.Add(new CatalogEntry(row.Name, row.TDefPage));
-        }
-
-        SetCatalogCache(result);
-        return result;
+        await base.DisposeAsync().ConfigureAwait(false);
     }
 
     private static byte[]? EncodeOleValue(object value)
@@ -970,28 +631,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.Asynchronous | FileOptions.RandomAccess);
     }
 
-    private static void VerifyPasswordOnOpen(string path, AccessWriterOptions options)
-    {
-        var readerOptions = new AccessReaderOptions
-        {
-            FileShare = FileShare.ReadWrite,
-            ValidateOnOpen = false,
-            UseLockFile = false,
-            Password = options.Password,
-        };
-
-        try
-        {
-            using var reader = AccessReader.Open(path, readerOptions);
-        }
-        catch (UnauthorizedAccessException ex) when (ex.Message.Contains("AccessReaderOptions.Password", StringComparison.Ordinal))
-        {
-            throw new UnauthorizedAccessException(
-                ex.Message.Replace("AccessReaderOptions.Password", "AccessWriterOptions.Password", StringComparison.Ordinal),
-                ex);
-        }
-    }
-
     private static async ValueTask VerifyPasswordOnOpenAsync(string path, AccessWriterOptions options, CancellationToken cancellationToken)
     {
         var readerOptions = new AccessReaderOptions
@@ -1004,28 +643,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         try
         {
-            using var reader = await AccessReader.OpenAsync(path, readerOptions, cancellationToken).ConfigureAwait(false);
+            await using var reader = await AccessReader.OpenAsync(path, readerOptions, cancellationToken).ConfigureAwait(false);
         }
         catch (UnauthorizedAccessException ex) when (ex.Message.Contains("AccessReaderOptions.Password", StringComparison.Ordinal))
         {
             throw new UnauthorizedAccessException(
                 ex.Message.Replace("AccessReaderOptions.Password", "AccessWriterOptions.Password", StringComparison.Ordinal),
                 ex);
-        }
-    }
-
-    private DataTable ReadTableSnapshot(string tableName)
-    {
-        var options = new AccessReaderOptions
-        {
-            FileShare = FileShare.ReadWrite,
-            ValidateOnOpen = false,
-            Password = _password,
-        };
-
-        using (var reader = AccessReader.Open(_path, options))
-        {
-            return reader.ReadTable(tableName) ?? new DataTable(tableName);
         }
     }
 
@@ -1050,13 +674,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    private async ValueTask<CatalogEntry?> GetCatalogEntryAsync(string tableName, CancellationToken cancellationToken)
-    {
-        List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
-        return tables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
+    private protected override async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
     {
         List<CatalogEntry>? cached = GetCatalogCache();
         if (cached != null)
@@ -1096,17 +714,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         SetCatalogCache(result);
         return result;
-    }
-
-    private CatalogEntry GetRequiredCatalogEntry(string tableName)
-    {
-        CatalogEntry entry = GetCatalogEntry(tableName);
-        if (entry == null)
-        {
-            throw new InvalidOperationException($"Table '{tableName}' was not found.");
-        }
-
-        return entry;
     }
 
     private async ValueTask<CatalogEntry> GetRequiredCatalogEntryAsync(string tableName, CancellationToken cancellationToken)
@@ -1161,7 +768,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         SetValue(msys, values, "DateUpdate", now);
         SetValue(msys, values, "Flags", 0);
 
-        InsertRowInternal(2, msys, values);
+        InsertRowData(2, msys, values);
     }
 
     private async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, CancellationToken cancellationToken)
@@ -1183,7 +790,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         SetValue(msys, values, "DateUpdate", now);
         SetValue(msys, values, "Flags", 0);
 
-        await InsertRowInternalAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private byte[] BuildTDefPage(TableDef tableDef)
@@ -1246,7 +853,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return page;
     }
 
-    private void InsertRowInternal(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true)
+    private void InsertRowData(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true)
     {
         if (values.Length != tableDef.Columns.Count)
         {
@@ -1266,7 +873,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    private async ValueTask InsertRowInternalAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default)
+    private async ValueTask InsertRowDataAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default)
     {
         if (values.Length != tableDef.Columns.Count)
         {
@@ -2086,32 +1693,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed) ? parsed : 0L;
     }
 
-    private List<RowLocation> GetLiveRowLocations(long tdefPage)
-    {
-        var result = new List<RowLocation>();
-        long total = _fs.Length / _pgSz;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            byte[] page = ReadPage(pageNumber);
-            if (page[0] != 0x01)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            if ((long)Ri32(page, _dpTDefOff) != tdefPage)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            result.AddRange(EnumerateLiveRowLocations(pageNumber, page));
-            ReturnPage(page);
-        }
-
-        return result;
-    }
-
     private async ValueTask<List<RowLocation>> GetLiveRowLocationsAsync(long tdefPage, CancellationToken cancellationToken)
     {
         var result = new List<RowLocation>();
@@ -2146,22 +1727,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             yield return new RowLocation(pageNumber, rb.RowIndex, rb.RowStart, rb.RowSize);
         }
-    }
-
-    private void MarkRowDeleted(long pageNumber, int rowIndex)
-    {
-        byte[] page = ReadPage(pageNumber);
-        int offsetPos = _dpRowsStart + (rowIndex * 2);
-        int raw = Ru16(page, offsetPos);
-        if ((raw & 0x8000) != 0)
-        {
-            ReturnPage(page);
-            return;
-        }
-
-        Wu16(page, offsetPos, raw | 0x8000);
-        WritePage(pageNumber, page);
-        ReturnPage(page);
     }
 
     private async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)

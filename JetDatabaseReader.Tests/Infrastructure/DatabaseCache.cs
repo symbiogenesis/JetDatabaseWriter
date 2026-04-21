@@ -14,7 +14,7 @@ public sealed class DatabaseCache : IDisposable
     private readonly ConcurrentDictionary<string, AccessReader> _readers = new(StringComparer.OrdinalIgnoreCase);
 
     public AccessReader Get(string path) =>
-        _readers.GetOrAdd(path, static p => AccessReader.Open(p, new AccessReaderOptions { UseLockFile = false }));
+        _readers.GetOrAdd(path, static p => AccessReader.OpenAsync(p, new AccessReaderOptions { UseLockFile = false }).AsTask().GetAwaiter().GetResult());
 
     public void Dispose()
     {

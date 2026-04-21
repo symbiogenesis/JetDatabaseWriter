@@ -1,7 +1,7 @@
 namespace JetDatabaseReader;
 
 /// <summary>
-/// Result returned by <see cref="IAccessReader.ReadFirstTable"/>.
+/// Result returned by <see cref="IAccessReader.ReadFirstTableAsync"/>.
 /// Extends <see cref="StringTableResult"/> with the total number of user tables
 /// found in the database.
 /// </summary>
