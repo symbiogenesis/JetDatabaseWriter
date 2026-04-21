@@ -22,6 +22,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Streaming API** | Process millions of rows without loading the whole file |
 | ✅ **Async support** | Async-first `ValueTask<T>` API for all major operations |
 | ✅ **Async lifetime** | `OpenAsync(...)` + `await using` (`IAsyncDisposable`) for reader/writer |
+| ✅ **Stream support** | Open from any seekable `Stream` (byte arrays, blobs, embedded resources) |
 | ✅ **Page cache** | 256-page LRU cache (~1 MB, configurable) |
 | ✅ **Generic POCO mapping** | `ReadTable<T>()`, `StreamRows<T>()`, `InsertRow<T>()` — no manual casting |
 | ✅ **Fluent query** | `Query().Where().Take().Execute()` — typed and string chains |
@@ -86,6 +87,41 @@ foreach (Order o in orders)
 ```
 
 Synchronous methods are still available, but `OpenAsync(...)` + `await using` is the recommended default for new code.
+
+---
+
+## Opening a Reader or Writer
+
+### From a file path
+
+```csharp
+await using var reader = await AccessReader.OpenAsync("database.mdb", cancellationToken: cts.Token);
+await using var writer = await AccessWriter.OpenAsync("database.mdb");
+```
+
+### From a Stream
+
+Both `AccessReader` and `AccessWriter` accept any seekable `Stream` — useful for byte arrays, Azure Blob Storage, embedded resources, or HTTP downloads.
+
+```csharp
+byte[] bytes = await File.ReadAllBytesAsync("database.mdb");
+var ms = new MemoryStream(bytes);
+await using var reader = await AccessReader.OpenAsync(ms);
+```
+
+By default the stream is disposed with the reader/writer. Pass `leaveOpen: true` to retain ownership:
+
+```csharp
+var ms = new MemoryStream(File.ReadAllBytes("template.mdb"));
+await using (var writer = await AccessWriter.OpenAsync(ms, leaveOpen: true))
+{
+    await writer.InsertRowAsync("Orders", new object[] { 1, "Widget", 9.99m });
+}
+
+byte[] modified = ms.ToArray();
+```
+
+> The stream must be readable and seekable. For `AccessWriter`, it must also be writable.
 
 ---
 

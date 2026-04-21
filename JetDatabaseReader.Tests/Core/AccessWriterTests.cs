@@ -1,6 +1,7 @@
 namespace JetDatabaseReader.Tests;
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -20,6 +21,7 @@ using Xunit;
 /// </summary>
 public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable
 {
+    private static readonly ConcurrentDictionary<string, byte[]> _sourceCache = new();
     private readonly List<string> _tempFiles = [];
 
     // ── Open / Dispose ────────────────────────────────────────────────
@@ -44,7 +46,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [Fact]
     public async Task Open_WithNullPath_ThrowsArgumentException()
     {
-        await Assert.ThrowsAsync<ArgumentException>(async () => await AccessWriter.OpenAsync(null!, cancellationToken: TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ArgumentException>(async () => await AccessWriter.OpenAsync((string)null!, cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -1722,7 +1724,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     {
         string ext = Path.GetExtension(sourcePath);
         string temp = Path.Combine(Path.GetTempPath(), $"JetWriteTest_{Guid.NewGuid():N}{ext}");
-        File.Copy(sourcePath, temp, overwrite: true);
+        byte[] bytes = _sourceCache.GetOrAdd(Path.GetFullPath(sourcePath), static p => File.ReadAllBytes(p));
+        File.WriteAllBytes(temp, bytes);
         _tempFiles.Add(temp);
         return temp;
     }

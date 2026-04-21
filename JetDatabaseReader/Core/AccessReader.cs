@@ -83,14 +83,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Initializes a new instance of the <see cref="AccessReader"/> class.
     /// Opens <paramref name="path"/> and detects the JET version.
     /// </summary>
-    /// <param name="path">The path to the Access database file.</param>
+    /// <param name="path">The path to the Access database file. May be empty when opened from a stream.</param>
     /// <param name="options">Options for configuring the AccessReader.</param>
-    /// <param name="fs">An open stream for the database file.</param>
+    /// <param name="stream">An open, seekable stream for the database file.</param>
     /// <param name="hdr">Header bytes read from page 0.</param>
-    private AccessReader(string path, AccessReaderOptions options, FileStream fs, byte[] hdr)
-        : base(fs, hdr)
+    private AccessReader(string path, AccessReaderOptions options, Stream stream, byte[] hdr)
+        : base(stream, hdr)
     {
-        Guard.NotNullOrEmpty(path, nameof(path));
         Guard.NotNull(options, nameof(options));
 
         _path = path;
@@ -227,35 +226,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public string LastDiagnostics { get; private set; } = string.Empty;
 
     /// <summary>
-    /// Opens a JET database file and returns a new AccessReader instance.
-    /// </summary>
-    /// <param name="path">Path to the .mdb or .accdb file.</param>
-    /// <param name="options">Optional configuration options.</param>
-    /// <returns>An AccessReader instance for the specified database.</returns>
-    private static AccessReader Open(string path, AccessReaderOptions? options = null)
-    {
-        Guard.NotNullOrEmpty(path, nameof(path));
-
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException($"Database file not found: {path}", path);
-        }
-
-        options ??= new AccessReaderOptions();
-        FileStream fs = CreateStream(path, options);
-        try
-        {
-            byte[] hdr = ReadHeader(fs);
-            return new AccessReader(path, options, fs, hdr);
-        }
-        catch
-        {
-            fs.Dispose();
-            throw;
-        }
-    }
-
-    /// <summary>
     /// Asynchronously opens a JET database file and returns a new <see cref="AccessReader"/> instance.
     /// </summary>
     /// <param name="path">Path to the .mdb or .accdb file.</param>
@@ -274,14 +244,49 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         options ??= new AccessReaderOptions();
         FileStream fs = CreateStream(path, options);
+        return await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Asynchronously opens a JET database from a caller-supplied <see cref="Stream"/> and returns a new <see cref="AccessReader"/> instance.
+    /// The stream must be readable and seekable. The caller retains ownership unless <paramref name="leaveOpen"/> is false (the default),
+    /// in which case the stream will be disposed when the reader is disposed.
+    /// </summary>
+    /// <param name="stream">A readable, seekable stream containing the database bytes.</param>
+    /// <param name="options">Optional configuration options.</param>
+    /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the reader is disposed. Default is <c>false</c>.</param>
+    /// <param name="cancellationToken">A token used to cancel the open operation.</param>
+    /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessReader"/> for the database.</returns>
+    public static async ValueTask<AccessReader> OpenAsync(Stream stream, AccessReaderOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(stream, nameof(stream));
+        if (!stream.CanRead)
+        {
+            throw new ArgumentException("Stream must be readable.", nameof(stream));
+        }
+
+        if (!stream.CanSeek)
+        {
+            throw new ArgumentException("Stream must be seekable.", nameof(stream));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        options ??= new AccessReaderOptions();
+        Stream wrapped = leaveOpen ? new NonClosingStreamWrapper(stream) : stream;
         try
         {
-            byte[] hdr = await ReadHeaderAsync(fs, cancellationToken).ConfigureAwait(false);
-            return new AccessReader(path, options, fs, hdr);
+            string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
+            byte[] header = await ReadHeaderAsync(wrapped, cancellationToken).ConfigureAwait(false);
+            return new AccessReader(path, options, wrapped, header);
         }
         catch
         {
-            await fs.DisposeAsync().ConfigureAwait(false);
+            if (!leaveOpen)
+            {
+                await wrapped.DisposeAsync().ConfigureAwait(false);
+            }
+
             throw;
         }
     }
@@ -323,7 +328,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         var headers = td.Columns.ConvertAll(c => c.Name);
         var rows = new List<List<string>>();
-        long totalPages = _fs.Length / _pgSz;
+        long totalPages = _stream.Length / _pgSz;
 
         for (long p = 3; p < totalPages; p++)
         {
@@ -420,7 +425,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         long count = 0;
         long tdefPage = resolved.Value.Entry.TDefPage;
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
 
         for (long p = 3; p < total; p++)
         {
@@ -477,7 +482,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var (entry, td) = resolved.Value;
         int rowCount = 0;
         Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
 
         for (long p = 3; p < total; p++)
         {
@@ -549,7 +554,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         var (entry, td) = resolved.Value;
         int rowCount = 0;
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
 
         for (long p = 3; p < total; p++)
         {
@@ -684,7 +689,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
 
             Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
-            long total = _fs.Length / _pgSz;
+            long total = _stream.Length / _pgSz;
 
             for (long p = 3; p < total; p++)
             {
@@ -764,7 +769,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var schema = BuildSchema(td.Columns);
         var typedRows = new List<object[]>();
         Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
 
         for (long p = 3; p < total; p++)
         {
@@ -840,7 +845,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var headers = td.Columns.ConvertAll(c => c.Name);
         var schema = BuildSchema(td.Columns);
         var rows = new List<List<string>>();
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
 
         for (long p = 3; p < total; p++)
         {
@@ -902,7 +907,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             _ = dt.Columns.Add(col.Name, typeof(string));
         }
 
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
         for (long p = 3; p < total; p++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -960,8 +965,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         return new DatabaseStatistics
         {
-            TotalPages = _fs.Length / _pgSz,
-            DatabaseSizeBytes = _fs.Length,
+            TotalPages = _stream.Length / _pgSz,
+            DatabaseSizeBytes = _stream.Length,
             TableCount = tables.Count,
             TotalRows = totalRows,
             TableRowCounts = tableRowCounts,
@@ -1066,7 +1071,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private protected override IEnumerable<byte[]> EnumerateTablePages(long tdefPage)
     {
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
         for (long p = 3; p < total; p++)
         {
             byte[] page = ReadPageCached(p);
@@ -1403,28 +1408,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         });
     }
 
-    /// <summary>
-    /// Opens the source database for a linked table entry.
-    /// Throws FileNotFoundException if the source database does not exist.
-    /// </summary>
-    private static AccessReader OpenLinkedSource(
-        LinkedTableInfo link,
-        string hostDatabasePath,
-        AccessReaderOptions linkedSourceOpenOptions,
-        string[] linkedSourcePathAllowlist,
-        Func<LinkedTableInfo, string, bool>? linkedSourcePathValidator)
-    {
-        string resolvedPath = ResolveLinkedSourcePath(link, hostDatabasePath, linkedSourcePathAllowlist, linkedSourcePathValidator);
-        if (!File.Exists(resolvedPath))
-        {
-            throw new FileNotFoundException(
-                $"Source database for linked table '{link.Name}' not found: {resolvedPath}",
-                resolvedPath);
-        }
-
-        return Open(resolvedPath, linkedSourceOpenOptions);
-    }
-
     private static async ValueTask<AccessReader> OpenLinkedSourceAsync(
         LinkedTableInfo link,
         string hostDatabasePath,
@@ -1661,7 +1644,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         cancellationToken.ThrowIfCancellationRequested();
 
         var diag = new System.Text.StringBuilder();
-        _ = diag.AppendLine($"JET: {(_jet4 ? "Jet4/ACE" : "Jet3")}  PageSize: {_pgSz}  TotalPages: {_fs.Length / _pgSz}");
+        _ = diag.AppendLine($"JET: {(_jet4 ? "Jet4/ACE" : "Jet3")}  PageSize: {_pgSz}  TotalPages: {_stream.Length / _pgSz}");
 
         TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
@@ -1695,7 +1678,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         var result = new List<CatalogEntry>();
-        long totPages = _fs.Length / _pgSz;
+        long totPages = _stream.Length / _pgSz;
         int catPages = 0;
         int allRows = 0;
 
@@ -1803,7 +1786,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         var result = new List<LinkedTableInfo>();
-        long totPages = _fs.Length / _pgSz;
+        long totPages = _stream.Length / _pgSz;
 
         for (long p = 3; p < totPages; p++)
         {
@@ -1859,15 +1842,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private void ValidateDatabaseFormat()
     {
-        if (_fs.Length < 128)
+        if (_stream.Length < 128)
         {
             throw new InvalidDataException("File too small to be a valid JET database");
         }
 
         // Verify the JET magic signature at offset 0: 00 01 00 00
-        _ = _fs.Seek(0, SeekOrigin.Begin);
+        _ = _stream.Seek(0, SeekOrigin.Begin);
         var magic = new byte[4];
-        int read = _fs.Read(magic, 0, 4);
+        int read = _stream.Read(magic, 0, 4);
         if (read < 4 || magic[0] != 0x00 || magic[1] != 0x01 || magic[2] != 0x00 || magic[3] != 0x00)
         {
             throw new InvalidDataException(
@@ -2225,7 +2208,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             long targetTdefPage = resolved is { } resolvedValue ? resolvedValue.Entry.TDefPage : 0;
-            long total = _fs.Length / _pgSz;
+            long total = _stream.Length / _pgSz;
 
             for (long p = 3; p < total; p++)
             {
@@ -2301,7 +2284,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return 0;
         }
 
-        long totPages = _fs.Length / _pgSz;
+        long totPages = _stream.Length / _pgSz;
         for (long p = 3; p < totPages; p++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -2409,7 +2392,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             CatalogEntry entry = tables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
             long targetTdefPage = entry?.TDefPage ?? 0;
 
-            long total = _fs.Length / _pgSz;
+            long total = _stream.Length / _pgSz;
             for (long p = 3; p < total; p++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -2522,7 +2505,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 string.Equals(c.Name, "FileData", StringComparison.OrdinalIgnoreCase));
 
             var result = new Dictionary<int, byte[]>();
-            long total = _fs.Length / _pgSz;
+            long total = _stream.Length / _pgSz;
 
             for (long p = 3; p < total; p++)
             {
@@ -2626,7 +2609,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return 0;
         }
 
-        long totPages = _fs.Length / _pgSz;
+        long totPages = _stream.Length / _pgSz;
         for (long p = 3; p < totPages; p++)
         {
             cancellationToken.ThrowIfCancellationRequested();

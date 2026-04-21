@@ -36,12 +36,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private AccessWriter(
         string path,
-        FileStream fs,
-        byte[] hdr,
+        Stream stream,
+        byte[] header,
         SecureString? password,
         bool useLockFile,
         bool respectExistingLockFile)
-        : base(fs, hdr)
+        : base(stream, header)
     {
         _path = path;
         _password = SecureStringUtilities.CopyAsReadOnly(password);
@@ -75,20 +75,60 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         await VerifyPasswordOnOpenAsync(path, options, cancellationToken).ConfigureAwait(false);
 
         FileStream fs = CreateStream(path);
+        return await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Asynchronously opens a JET database from a caller-supplied <see cref="Stream"/> and returns a new <see cref="AccessWriter"/> instance.
+    /// The stream must be readable, writable, and seekable. The caller retains ownership unless <paramref name="leaveOpen"/> is false (the default),
+    /// in which case the stream will be disposed when the writer is disposed.
+    /// </summary>
+    /// <param name="stream">A readable, writable, seekable stream containing the database bytes.</param>
+    /// <param name="options">Optional configuration options.</param>
+    /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the writer is disposed. Default is <c>false</c>.</param>
+    /// <param name="cancellationToken">A token used to cancel the open operation.</param>
+    /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the database.</returns>
+    public static async ValueTask<AccessWriter> OpenAsync(Stream stream, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(stream, nameof(stream));
+        if (!stream.CanRead)
+        {
+            throw new ArgumentException("Stream must be readable.", nameof(stream));
+        }
+
+        if (!stream.CanWrite)
+        {
+            throw new ArgumentException("Stream must be writable.", nameof(stream));
+        }
+
+        if (!stream.CanSeek)
+        {
+            throw new ArgumentException("Stream must be seekable.", nameof(stream));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        options ??= new AccessWriterOptions();
+        Stream wrapped = leaveOpen ? new NonClosingStreamWrapper(stream) : stream;
         try
         {
-            byte[] hdr = await ReadHeaderAsync(fs, cancellationToken).ConfigureAwait(false);
+            string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
+            byte[] header = await ReadHeaderAsync(wrapped, cancellationToken).ConfigureAwait(false);
             return new AccessWriter(
                 path,
-                fs,
-                hdr,
+                wrapped,
+                header,
                 options.Password,
                 options.UseLockFile,
                 options.RespectExistingLockFile);
         }
         catch
         {
-            await fs.DisposeAsync().ConfigureAwait(false);
+            if (!leaveOpen)
+            {
+                await wrapped.DisposeAsync().ConfigureAwait(false);
+            }
+
             throw;
         }
     }
@@ -958,7 +998,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ReturnPage(cached);
         }
 
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
         PageInsertTarget? candidate = null;
 
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
@@ -1015,7 +1055,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ReturnPage(cached);
         }
 
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
         PageInsertTarget? candidate = null;
 
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
@@ -1491,7 +1531,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             yield break;
         }
 
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             byte[] page = ReadPage(pageNumber);
@@ -1534,7 +1574,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         var result = new List<CatalogRow>();
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1696,7 +1736,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private async ValueTask<List<RowLocation>> GetLiveRowLocationsAsync(long tdefPage, CancellationToken cancellationToken)
     {
         var result = new List<RowLocation>();
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();

@@ -72,7 +72,7 @@ public abstract class AccessBase : IAccessBase
 
     private protected readonly int _pgSz;
     private protected readonly bool _jet4;
-    private protected readonly FileStream _fs;
+    private protected readonly Stream _stream;
     private protected readonly Encoding _ansiEncoding;
     private protected readonly int _codePage;
 
@@ -103,9 +103,9 @@ public abstract class AccessBase : IAccessBase
     /// Initializes a new instance of the <see cref="AccessBase"/> class
     /// from the database file header.
     /// </summary>
-    /// <param name="fs">An open <see cref="FileStream"/> for the database file.</param>
-    private protected AccessBase(FileStream fs)
-        : this(fs, ReadHeader(fs))
+    /// <param name="stream">An open, seekable <see cref="Stream"/> for the database file.</param>
+    private protected AccessBase(Stream stream)
+        : this(stream, ReadHeader(stream))
     {
     }
 
@@ -113,11 +113,11 @@ public abstract class AccessBase : IAccessBase
     /// Initializes a new instance of the <see cref="AccessBase"/> class
     /// from a pre-read database file header.
     /// </summary>
-    /// <param name="fs">An open <see cref="FileStream"/> for the database file.</param>
+    /// <param name="stream">An open, seekable <see cref="Stream"/> for the database file.</param>
     /// <param name="hdr">Header bytes read from page 0.</param>
-    private protected AccessBase(FileStream fs, byte[] hdr)
+    private protected AccessBase(Stream stream, byte[] hdr)
     {
-        _fs = fs;
+        _stream = stream;
 
         // Offset 0x14: 0 = Jet3, ≥ 1 = Jet4+
         byte ver = hdr[0x14];
@@ -240,7 +240,7 @@ public abstract class AccessBase : IAccessBase
         }
 
         _disposed = true;
-        await _fs.DisposeAsync().ConfigureAwait(false);
+        await _stream.DisposeAsync().ConfigureAwait(false);
         _ioGate.Dispose();
         GC.SuppressFinalize(this);
     }
@@ -248,9 +248,9 @@ public abstract class AccessBase : IAccessBase
     /// <summary>
     /// Reads the fixed-size JET header (first 0x80 bytes) from page 0.
     /// </summary>
-    /// <param name="fs">An open file stream positioned anywhere.</param>
+    /// <param name="fs">An open, seekable stream positioned anywhere.</param>
     /// <returns>A 0x80-byte header buffer.</returns>
-    private protected static byte[] ReadHeader(FileStream fs)
+    private protected static byte[] ReadHeader(Stream fs)
     {
         var hdr = new byte[0x80];
         _ = fs.Seek(0, SeekOrigin.Begin);
@@ -273,10 +273,10 @@ public abstract class AccessBase : IAccessBase
     /// <summary>
     /// Asynchronously reads the fixed-size JET header (first 0x80 bytes) from page 0.
     /// </summary>
-    /// <param name="fs">An open file stream positioned anywhere.</param>
+    /// <param name="fs">An open, seekable stream positioned anywhere.</param>
     /// <param name="cancellationToken">Token used to cancel the read operation.</param>
     /// <returns>A 0x80-byte header buffer.</returns>
-    private protected static async ValueTask<byte[]> ReadHeaderAsync(FileStream fs, CancellationToken cancellationToken = default)
+    private protected static async ValueTask<byte[]> ReadHeaderAsync(Stream fs, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -563,13 +563,13 @@ public abstract class AccessBase : IAccessBase
         _ioGate.Wait();
         try
         {
-            _ = _fs.Seek(n * _pgSz, SeekOrigin.Begin);
+            _ = _stream.Seek(n * _pgSz, SeekOrigin.Begin);
 
             // FileStream.Read is not guaranteed to return all bytes in one call
             int read = 0;
             while (read < _pgSz)
             {
-                int got = _fs.Read(buf, read, _pgSz - read);
+                int got = _stream.Read(buf, read, _pgSz - read);
                 if (got == 0)
                 {
                     break;
@@ -611,12 +611,12 @@ public abstract class AccessBase : IAccessBase
         await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            _ = _fs.Seek(n * _pgSz, SeekOrigin.Begin);
+            _ = _stream.Seek(n * _pgSz, SeekOrigin.Begin);
 
             int read = 0;
             while (read < _pgSz)
             {
-                int got = await _fs.ReadAsync(buf.AsMemory(read, _pgSz - read), cancellationToken).ConfigureAwait(false);
+                int got = await _stream.ReadAsync(buf.AsMemory(read, _pgSz - read), cancellationToken).ConfigureAwait(false);
                 if (got == 0)
                 {
                     break;
@@ -915,9 +915,9 @@ public abstract class AccessBase : IAccessBase
         _ioGate.Wait();
         try
         {
-            _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-            _fs.Write(page, 0, _pgSz);
-            _fs.Flush();
+            _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
+            _stream.Write(page, 0, _pgSz);
+            _stream.Flush();
         }
         finally
         {
@@ -932,9 +932,9 @@ public abstract class AccessBase : IAccessBase
         await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-            await _fs.WriteAsync(page.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
-            await _fs.FlushAsync(cancellationToken).ConfigureAwait(false);
+            _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
+            await _stream.WriteAsync(page.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
+            await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -947,10 +947,10 @@ public abstract class AccessBase : IAccessBase
         _ioGate.Wait();
         try
         {
-            long pageNumber = _fs.Length / _pgSz;
-            _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-            _fs.Write(page, 0, _pgSz);
-            _fs.Flush();
+            long pageNumber = _stream.Length / _pgSz;
+            _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
+            _stream.Write(page, 0, _pgSz);
+            _stream.Flush();
             return pageNumber;
         }
         finally
@@ -966,10 +966,10 @@ public abstract class AccessBase : IAccessBase
         await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            long pageNumber = _fs.Length / _pgSz;
-            _ = _fs.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-            await _fs.WriteAsync(page.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
-            await _fs.FlushAsync(cancellationToken).ConfigureAwait(false);
+            long pageNumber = _stream.Length / _pgSz;
+            _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
+            await _stream.WriteAsync(page.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
+            await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             return pageNumber;
         }
         finally
@@ -1008,7 +1008,7 @@ public abstract class AccessBase : IAccessBase
     /// </summary>
     private protected virtual IEnumerable<byte[]> EnumerateTablePages(long tdefPage)
     {
-        long total = _fs.Length / _pgSz;
+        long total = _stream.Length / _pgSz;
         for (long p = 3; p < total; p++)
         {
             byte[] page = ReadPage(p);
