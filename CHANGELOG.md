@@ -11,7 +11,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 | Area | Before | After |
 |------|--------|-------|
-| **Target framework** | `net8.0` | `netstandard2.1` — broader compatibility (any .NET Standard 2.1+ runtime) |
+| **Target framework** | `netstandard2.1` | `netstandard2.1` — more performance features |
 
 ### ✨ Write Support — `AccessWriter` / `IAccessWriter`
 
