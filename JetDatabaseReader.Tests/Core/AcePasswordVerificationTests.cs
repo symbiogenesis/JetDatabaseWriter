@@ -3,7 +3,6 @@ namespace JetDatabaseReader.Tests;
 using System;
 using System.Collections.Generic;
 using System.Data;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Xunit;
@@ -11,7 +10,7 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// TDD tests for ACCDB (ACE) legacy password verification.
+/// Tests for ACCDB (ACE) legacy password verification.
 ///
 /// README limitation addressed:
 ///   "ACCDB (AES) encryption — Header-level detection and password verification work;
@@ -49,8 +48,14 @@ using Xunit;
 ///     2. Implement DecodeAccdbPassword() with the ACE-specific XOR mask.
 ///     3. Throw UnauthorizedAccessException on missing/wrong password.
 /// </summary>
-public sealed class AcePasswordVerificationTests
+public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
+    private static readonly AccessReaderOptions CorrectPasswordOptions = new()
+    {
+        Password = SecureStringTestHelper.FromString("secret"),
+        UseLockFile = false,
+    };
+
     // ═══════════════════════════════════════════════════════════════════
     // 1. PASSWORD DETECTION — reader must detect that a password is required
     // ═══════════════════════════════════════════════════════════════════
@@ -102,32 +107,15 @@ public sealed class AcePasswordVerificationTests
     public async Task AccdbPassword_OpenWithCorrectPassword_Succeeds()
     {
         // The correct password ("secret") should open the database without error.
-        var options = new AccessReaderOptions
-        {
-            Password = SecureStringTestHelper.FromString("secret"),
-            UseLockFile = false,
-        };
-
-        var ex = await Record.ExceptionAsync(async () =>
-        {
-            await using var reader = await AccessReader.OpenAsync(TestDatabases.AesEncrypted, options, TestContext.Current.CancellationToken);
-            await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        });
-
-        Assert.Null(ex);
+        var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
+        await reader.ListTablesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
     public async Task AccdbPassword_ListTables_WithCorrectPassword_ReturnsNonEmpty()
     {
         // After authentication, ListTables should return the original database tables.
-        var options = new AccessReaderOptions
-        {
-            Password = SecureStringTestHelper.FromString("secret"),
-            UseLockFile = false,
-        };
-
-        await using var reader = await AccessReader.OpenAsync(TestDatabases.AesEncrypted, options, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
@@ -137,13 +125,7 @@ public sealed class AcePasswordVerificationTests
     public async Task AccdbPassword_ReadTable_WithCorrectPassword_ReturnsRows()
     {
         // Reading table data after password verification should return valid rows.
-        var options = new AccessReaderOptions
-        {
-            Password = SecureStringTestHelper.FromString("secret"),
-            UseLockFile = false,
-        };
-
-        await using var reader = await AccessReader.OpenAsync(TestDatabases.AesEncrypted, options, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
@@ -156,13 +138,7 @@ public sealed class AcePasswordVerificationTests
     public async Task AccdbPassword_StreamRows_WithCorrectPassword_ReturnsRows()
     {
         // Streaming rows should work normally after password verification.
-        var options = new AccessReaderOptions
-        {
-            Password = SecureStringTestHelper.FromString("secret"),
-            UseLockFile = false,
-        };
-
-        await using var reader = await AccessReader.OpenAsync(TestDatabases.AesEncrypted, options, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
@@ -174,13 +150,7 @@ public sealed class AcePasswordVerificationTests
     public async Task AccdbPassword_GetStatistics_WithCorrectPassword_ReturnsValidStats()
     {
         // Statistics should be accessible after correct password authentication.
-        var options = new AccessReaderOptions
-        {
-            Password = SecureStringTestHelper.FromString("secret"),
-            UseLockFile = false,
-        };
-
-        await using var reader = await AccessReader.OpenAsync(TestDatabases.AesEncrypted, options, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
         DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
 
         Assert.True(stats.TableCount > 0, "Should report tables after authentication.");
@@ -191,13 +161,7 @@ public sealed class AcePasswordVerificationTests
     public async Task AccdbPassword_GetColumnMetadata_WithCorrectPassword_ReturnsColumns()
     {
         // Column metadata should be fully readable after password verification.
-        var options = new AccessReaderOptions
-        {
-            Password = SecureStringTestHelper.FromString("secret"),
-            UseLockFile = false,
-        };
-
-        await using var reader = await AccessReader.OpenAsync(TestDatabases.AesEncrypted, options, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
@@ -215,11 +179,11 @@ public sealed class AcePasswordVerificationTests
     // ═══════════════════════════════════════════════════════════════════
 
     [Fact]
-    public void AccdbPassword_Fixture_IsNotCfbWrapped()
+    public async Task AccdbPassword_Fixture_IsNotCfbWrapped()
     {
         // The fixture must NOT have CFB magic — it uses ACE internal password, not AES page encryption.
         // This confirms the gap: the CFB-based detection path does NOT fire for this file.
-        byte[] bytes = File.ReadAllBytes(TestDatabases.AesEncrypted);
+        byte[] bytes = await db.GetFileAsync(TestDatabases.AesEncrypted, TestContext.Current.CancellationToken);
 
         Assert.NotEqual(0xD0, bytes[0]);
         Assert.Equal(0x00, bytes[0]);
@@ -227,19 +191,19 @@ public sealed class AcePasswordVerificationTests
     }
 
     [Fact]
-    public void AccdbPassword_Fixture_HasAccdbVersion()
+    public async Task AccdbPassword_Fixture_HasAccdbVersion()
     {
         // Version byte at 0x14 must be >= 2 (ACCDB format).
-        byte[] bytes = File.ReadAllBytes(TestDatabases.AesEncrypted);
+        byte[] bytes = await db.GetFileAsync(TestDatabases.AesEncrypted, TestContext.Current.CancellationToken);
         Assert.True(bytes[0x14] >= 2, $"Expected ACCDB version >= 2, got 0x{bytes[0x14]:X2}");
     }
 
     [Fact]
-    public void AccdbPassword_Fixture_HasPasswordBitsSet()
+    public async Task AccdbPassword_Fixture_HasPasswordBitsSet()
     {
         // Byte 0x62 should have password-related bits set.
         // Access 16 CompactDatabase with ";pwd=secret" sets byte 0x62 = 0x07.
-        byte[] bytes = File.ReadAllBytes(TestDatabases.AesEncrypted);
+        byte[] bytes = await db.GetFileAsync(TestDatabases.AesEncrypted, TestContext.Current.CancellationToken);
         byte encFlag = bytes[0x62];
 
         Assert.True(
@@ -252,14 +216,12 @@ public sealed class AcePasswordVerificationTests
     // ═══════════════════════════════════════════════════════════════════
 
     [Fact]
-    public void AccdbPassword_Jet4XorDecode_DoesNotReturnSecret()
+    public async Task AccdbPassword_Jet4XorDecode_DoesNotReturnSecret()
     {
         // The existing DecodeJet4Password logic uses the Jet4 XOR mask.
         // For ACCDB files, the ACE internal password scheme is different.
         // Decoding with the Jet4 mask should NOT produce "secret".
-        byte[] hdr = new byte[0x80];
-        using var fs = File.OpenRead(TestDatabases.AesEncrypted);
-        _ = fs.Read(hdr, 0, hdr.Length);
+        byte[] hdr = await db.GetFileAsync(TestDatabases.AesEncrypted, TestContext.Current.CancellationToken);
 
         // Replicate the Jet4 XOR decode logic
         byte[] jet4PwdMask =

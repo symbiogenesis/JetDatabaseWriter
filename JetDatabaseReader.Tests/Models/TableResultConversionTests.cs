@@ -8,7 +8,7 @@ using Xunit;
 /// <summary>
 /// Tests for <see cref="TableResult.ToDataTable"/> and <see cref="StringTableResult.ToDataTable"/>.
 /// </summary>
-public class TableResultConversionTests
+public class TableResultConversionTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ── TableResult.ToDataTable — null / empty guards ─────────────────
 
@@ -166,7 +166,7 @@ public class TableResultConversionTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task TableResult_ToDataTable_ColumnCount_MatchesHeaders(string path)
     {
-        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         TableResult result = await reader.ReadTableAsync((await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0], 50, TestContext.Current.CancellationToken);
 
         DataTable dt = result.ToDataTable();
@@ -178,7 +178,7 @@ public class TableResultConversionTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task TableResult_ToDataTable_RowCount_MatchesResultRowCount(string path)
     {
-        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         TableResult result = await reader.ReadTableAsync((await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0], 50, TestContext.Current.CancellationToken);
 
         DataTable dt = result.ToDataTable();
@@ -190,7 +190,7 @@ public class TableResultConversionTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task TableResult_ToDataTable_ColumnTypes_MatchSchemaTypes(string path)
     {
-        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         TableResult result = await reader.ReadTableAsync((await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0], 1, TestContext.Current.CancellationToken);
 
         DataTable dt = result.ToDataTable();
@@ -205,7 +205,7 @@ public class TableResultConversionTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task TableResult_ToDataTable_ColumnLayout_MatchesDirectReadTable(string path)
     {
-        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         DataTable direct = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
@@ -327,7 +327,7 @@ public class TableResultConversionTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task StringTableResult_ToDataTable_ColumnCount_MatchesHeaders(string path)
     {
-        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         StringTableResult result = await reader.ReadTableAsStringsAsync((await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0], 50, TestContext.Current.CancellationToken);
 
         DataTable dt = result.ToDataTable();
@@ -339,7 +339,7 @@ public class TableResultConversionTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task StringTableResult_ToDataTable_RowCount_MatchesResultRowCount(string path)
     {
-        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         StringTableResult result = await reader.ReadTableAsStringsAsync((await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0], 50, TestContext.Current.CancellationToken);
 
         DataTable dt = result.ToDataTable();
@@ -351,7 +351,7 @@ public class TableResultConversionTests
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task StringTableResult_ToDataTable_ColumnLayout_MatchesReadTableAsStringDataTable(string path)
     {
-        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         DataTable direct = (await reader.ReadTableAsStringDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
