@@ -11,8 +11,7 @@ using Xunit;
 /// Tests for async-specific behaviour (cancellation, IAsyncDisposable, idempotency).
 /// Core read operations are covered in AccessReaderCoreTests and AccessReaderReadTests.
 /// </summary>
-[Collection<ReadOnlyDatabaseFixture>]
-public class AccessReaderAsyncTests(DatabaseCache db)
+public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ── OpenAsync ─────────────────────────────────────────────────────
 

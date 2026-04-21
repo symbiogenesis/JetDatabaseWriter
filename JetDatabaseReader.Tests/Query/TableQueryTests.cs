@@ -13,8 +13,7 @@ using Xunit;
 /// Where + Take chains, string chain combinations, and generic POCO queries.
 /// Complements <see cref="AccessReaderQueryTests"/> which covers the basic per-method paths.
 /// </summary>
-[Collection<ReadOnlyDatabaseFixture>]
-public sealed class TableQueryTests(DatabaseCache db)
+public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ── Guard clauses ─────────────────────────────────────────────────
 

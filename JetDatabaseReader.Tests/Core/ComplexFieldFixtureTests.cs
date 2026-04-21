@@ -40,8 +40,7 @@ using Xunit;
 ///
 /// When the feature is implemented, all tests in this file should pass green.
 /// </summary>
-[Collection<ReadOnlyDatabaseFixture>]
-public sealed class ComplexFieldFixtureTests(DatabaseCache db)
+public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     private const string DocumentsTable = "Documents";
     private const string AttachmentsColumn = "Attachments";

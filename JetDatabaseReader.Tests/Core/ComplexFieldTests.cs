@@ -19,8 +19,7 @@ using Xunit;
 /// When fully implemented, the reader should follow the complexid FK to the
 /// hidden system table and return decoded values for each row.
 /// </summary>
-[Collection<ReadOnlyDatabaseFixture>]
-public sealed class ComplexFieldTests(DatabaseCache db)
+public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ═══════════════════════════════════════════════════════════════════
     // 1. ATTACHMENT FIELDS (type 0x11)
