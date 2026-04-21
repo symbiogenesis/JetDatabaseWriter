@@ -14,9 +14,9 @@ using Xunit;
 /// Tests for database encryption across all Jet/ACE versions:
 ///   1. Jet3 XOR mask  — fixed XOR pattern applied to all pages after page 0
 ///   2. Jet4 RC4 flag  — password verified against the XOR-encoded header hash (0x42)
-///   3. Jet4 RC4 pages — TDD: RC4 page decryption not yet implemented
-///   4. ACCDB AES      — detection works (OLE2 CFB magic); page decryption still TDD red
-///   5. ACCDB AES      — TDD: genuine AesEncrypted.accdb fixture from Access 16 CompactDatabase.
+///   3. Jet4 RC4 pages — RC4 page decryption
+///   4. ACCDB AES      — detection and page decryption (OLE2 CFB magic)
+///   5. ACCDB AES      — genuine AesEncrypted.accdb fixture from Access 16 CompactDatabase.
 /// </summary>
 public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable
 {
@@ -287,7 +287,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
     // Current state:
     //   ✓ Detection  — CFB magic check fires; UnauthorizedAccessException thrown.
     //   ✗ Decryption — AES page decryption not yet implemented; even a correct
-    //                  password cannot open the file (TDD red tests below).
+    //                  password cannot open the file.
     //
     // SetAccdbEncryptionHeader writes the CFB magic to simulate a genuinely
     // AES-encrypted file without needing Access installed.

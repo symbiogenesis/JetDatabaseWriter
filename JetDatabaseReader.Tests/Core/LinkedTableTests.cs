@@ -15,7 +15,7 @@ using Xunit;
 /// Tests for linked tables — tables in a front-end database that reference
 /// data stored in a separate source database:
 ///   1. API shape — ListTables exclusion and ListLinkedTables metadata
-///   2. Read-through — TDD: reading/streaming data via the linked reference.
+///   2. Read-through — reading/streaming data via the linked reference.
 /// </summary>
 public sealed class LinkedTableTests : IDisposable
 {

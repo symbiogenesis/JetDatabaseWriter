@@ -12,7 +12,7 @@ using Xunit;
 /// Tests for complex-type columns — attachment fields (type 0x11) and
 /// multi-value fields (type 0x12):
 ///   1. Attachment fields  — type name, CLR type, and cell-value decoding
-///   2. Multi-value fields — metadata and cell-value decoding (TDD)
+///   2. Multi-value fields — metadata and cell-value decoding
 ///
 /// Current state: metadata (TypeName, ClrType) is reported correctly,
 /// but cell values are not decoded — they appear as raw bytes or DBNull.

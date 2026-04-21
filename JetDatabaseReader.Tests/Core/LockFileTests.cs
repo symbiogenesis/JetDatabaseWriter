@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using Xunit;
 
 /// <summary>
-/// TDD tests for optional lockfile handling (.ldb / .laccdb).
+/// Tests for optional lockfile handling (.ldb / .laccdb).
 /// Lockfile creation is enabled by default. When enabled, a lockfile is created
 /// alongside the database on open and deleted on dispose. When disabled, no
 /// lockfile is created or deleted.

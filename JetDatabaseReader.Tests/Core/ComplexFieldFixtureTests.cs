@@ -10,7 +10,7 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// TDD tests targeting <c>ComplexFields.accdb</c> — an ACCDB fixture created by
+/// Tests targeting <c>ComplexFields.accdb</c> — an ACCDB fixture created by
 /// Access 16 COM automation. It contains:
 ///   • Table <c>Documents</c> — columns ID (LONG), Title (TEXT), Attachments (ATTACHMENT / 0x12).
 ///     Two rows inserted, each with one attached .txt file.
@@ -32,13 +32,10 @@ using Xunit;
 ///   • ClrType = byte[] and Size = LVAL are correctly inferred from type 0x12.
 ///   • Tags table exists and is readable.
 ///
-/// ── What fails today (TDD red) ──────────────────────────────────────────────
-///   • TypeName — reader returns "Complex" (needs MSysComplexColumns lookup).
-///   • Cell-value tests — attachment cells return DBNull because the library reads
-///     the raw variable-length slot but does not yet resolve the complex_id
+/// ── Complex-field decoding ───────────────────────────────────────────────────
+///   • TypeName — resolved via MSysComplexColumns lookup.
+///   • Cell values — attachment cells are decoded by resolving the complex_id
 ///     against the hidden MSysComplexType_Attachment system table.
-///
-/// When the feature is implemented, all tests in this file should pass green.
 /// </summary>
 public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
@@ -66,16 +63,14 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
     [Fact]
     public async Task ComplexFields_AttachmentColumn_TypeNameIsAttachment()
     {
-        // TDD: Access stores Attachment columns as type 0x12 (T_COMPLEX) in the TDEF.
+        // Access stores Attachment columns as type 0x12 (T_COMPLEX) in the TDEF.
         // The specific subtype (attachment vs multi-value) is determined by MSysComplexColumns.
-        // Until that lookup is implemented, the reader returns TypeName="Complex" (0x12),
-        // not "Attachment".  This test will turn green when MSysComplexColumns is consulted.
         var reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
         List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
         ColumnMetadata? col = meta.Find(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
         Assert.NotNull(col);
-        Assert.Equal("Attachment", col!.TypeName); // TDD red: currently returns "Complex"
+        Assert.Equal("Attachment", col!.TypeName);
     }
 
     [Fact]
@@ -112,7 +107,7 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 2. CELL-VALUE DECODING — TDD red until complex-field support is implemented
+    // 2. CELL-VALUE DECODING
     // ═══════════════════════════════════════════════════════════════════
     //
     // How attachment storage works (mdbtools HACKING.md, Jackcess docs):
@@ -125,10 +120,6 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
     //   1. Read the 4-byte complex_id from the variable slot.
     //   2. Scan the relevant MSysCM_ table for matching rows.
     //   3. Return a non-null, non-empty value per attachment (byte[], struct, or IList<>).
-    //
-    // Current behaviour: ReadVar falls through to default (returns ""), which
-    // ConvertRowToTyped converts to DBNull.Value. All assertions below therefore
-    // currently FAIL (expected TDD red).
 
     [Fact]
     public async Task ComplexFields_Attachment_Row1_CellValueIsNotDbNull()
@@ -141,7 +132,6 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
 
         object[] row1 = await reader.StreamRowsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
 
-        // TDD: currently DBNull; should be decoded attachment data once implemented.
         Assert.True(
             row1[attachIdx] is not DBNull,
             $"Row 1 attachment cell should not be DBNull (complex_id decoding not yet implemented). Got: {row1[attachIdx]}");
@@ -160,7 +150,6 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
 
         object[] row2 = rows[1];
 
-        // TDD: currently DBNull.
         Assert.True(
             row2[attachIdx] is not DBNull,
             $"Row 2 attachment cell should not be DBNull (complex_id decoding not yet implemented). Got: {row2[attachIdx]}");
@@ -177,7 +166,6 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
         List<object[]> rows = await reader.StreamRowsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(rows);
 
-        // TDD: currently all cells are DBNull.
         var nullRows = rows.Where(r => r[attachIdx] is DBNull).ToList();
         Assert.Empty(nullRows);
     }
@@ -194,7 +182,6 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
         object[] row1 = await reader.StreamRowsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
         object cell = row1[attachIdx];
 
-        // TDD: currently DBNull.
         Assert.NotEqual(DBNull.Value, cell);
         Assert.True(
             cell is byte[] data && data.Length > 0,
@@ -218,7 +205,6 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
         object[] row1 = await reader.StreamRowsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
         object cell = row1[attachIdx];
 
-        // TDD: currently DBNull — will assert filename encoding when byte[] is returned.
         Assert.True(cell is byte[], $"Expected byte[], got {cell?.GetType()?.Name ?? "DBNull"}");
         byte[] decoded = (byte[])cell!;
 
@@ -245,7 +231,6 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
         object[] row1 = await reader.StreamRowsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
         object cell = row1[attachIdx];
 
-        // TDD: currently DBNull.
         Assert.True(cell is byte[], $"Expected byte[], got {cell?.GetType()?.Name ?? "DBNull"}");
         byte[] decoded = (byte[])cell!;
 
