@@ -24,9 +24,12 @@ public sealed class DatabaseCache : IAsyncDisposable
         _fileCache.GetOrAdd(path, (p) => new Lazy<Task<byte[]>>(
             () => File.ReadAllBytesAsync(p, cancellationToken))).Value;
 
-    public ValueTask<AccessReader> GetReaderAsync(string path, CancellationToken cancellationToken = default) =>
+    public ValueTask<AccessReader> GetReaderAsync(string path, AccessReaderOptions options, CancellationToken cancellationToken = default) =>
         _readers.GetOrAdd(path, (p) => new Lazy<ValueTask<AccessReader>>(
-            () => AccessReader.OpenAsync(p, DefaultOptions, cancellationToken))).Value;
+            () => AccessReader.OpenAsync(p, options, cancellationToken))).Value;
+
+    public ValueTask<AccessReader> GetReaderAsync(string path, CancellationToken cancellationToken = default) =>
+        GetReaderAsync(path, DefaultOptions, cancellationToken);
 
     public async ValueTask DisposeAsync()
     {
