@@ -93,7 +93,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNull(options, nameof(options));
 
         _path = path;
-        _useLockFile = options.UseLockFile;
+        _useLockFile = options.UseLockFile && !string.IsNullOrEmpty(path);
         _linkedSourcePathValidator = options.LinkedSourcePathValidator;
         _linkedSourcePathAllowlist = NormalizeLinkedSourcePathAllowlist(options.LinkedSourcePathAllowlist, path);
         _linkedSourceOpenOptions = CreateLinkedSourceOpenOptions(options, _linkedSourcePathAllowlist, _linkedSourcePathValidator);

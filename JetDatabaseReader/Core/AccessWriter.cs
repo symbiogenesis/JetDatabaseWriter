@@ -45,7 +45,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         _path = path;
         _password = SecureStringUtilities.CopyAsReadOnly(password);
-        _useLockFile = useLockFile;
+        _useLockFile = useLockFile && !string.IsNullOrEmpty(path);
         _respectExistingLockFile = respectExistingLockFile;
 
         if (_useLockFile)
@@ -702,7 +702,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             Password = _password,
         };
 
-        await using (var reader = await AccessReader.OpenAsync(_path, options, cancellationToken).ConfigureAwait(false))
+        AccessReader reader;
+        if (!string.IsNullOrEmpty(_path))
+        {
+            reader = await AccessReader.OpenAsync(_path, options, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            _stream.Position = 0;
+            reader = await AccessReader.OpenAsync(_stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
+        }
+
+        await using (reader)
         {
             DataTable? snapshot = await reader.ReadDataTableAsync(tableName, cancellationToken: cancellationToken).ConfigureAwait(false);
             if (snapshot != null)
