@@ -1,10 +1,12 @@
 namespace JetDatabaseReader.Tests;
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -19,10 +21,8 @@ using Xunit;
 /// deleted rows (0x8000). A Jet4 data page is 4096 bytes; rows larger than
 /// ~3800 bytes will trigger overflow or LVAL usage.
 /// </summary>
-public sealed class OverflowRowTests : IDisposable
+public sealed class OverflowRowTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
-    private readonly List<string> _tempFiles = [];
-
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task OverflowRows_LargeRowData_IsReadableBack(string path)
@@ -31,8 +31,8 @@ public sealed class OverflowRowTests : IDisposable
         // engine may need to overflow them across pages.
         // A Jet4 data page is 4096 bytes.  With overhead, a row payload > ~3800 bytes
         // should force overflow or LVAL usage.
-        string temp = CopyToTemp(path);
-        if (!IsJet4(temp))
+        await using var ms = await CopyToStreamAsync(path);
+        if (!IsJet4(ms))
         {
             return; // overflow handling only applies to Jet4/ACE
         }
@@ -59,14 +59,14 @@ public sealed class OverflowRowTests : IDisposable
             new string('D', 255),
         });
 
-        await using (var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken))
+        await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
         // Act — read back all rows
-        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
         DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
         // Assert — every inserted row should be returned, including any that overflow
@@ -77,8 +77,8 @@ public sealed class OverflowRowTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task OverflowRows_GetRealRowCount_IncludesOverflowRows(string path)
     {
-        string temp = CopyToTemp(path);
-        if (!IsJet4(temp))
+        using var ms = await CopyToStreamAsync(path);
+        if (!IsJet4(ms))
         {
             return;
         }
@@ -97,13 +97,13 @@ public sealed class OverflowRowTests : IDisposable
             new string('X', 255),
         });
 
-        await using (var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken))
+        await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
         long count = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(rowCount, count);
@@ -113,8 +113,8 @@ public sealed class OverflowRowTests : IDisposable
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task OverflowRows_StreamRows_YieldsAllRows(string path)
     {
-        string temp = CopyToTemp(path);
-        if (!IsJet4(temp))
+        using var ms = await CopyToStreamAsync(path);
+        if (!IsJet4(ms))
         {
             return;
         }
@@ -135,13 +135,13 @@ public sealed class OverflowRowTests : IDisposable
             new string((char)('a' + (i % 26)), 255),
         });
 
-        await using (var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken))
+        await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
         int streamed = await reader.StreamRowsAsync(tableName, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(rowCount, streamed);
@@ -152,8 +152,8 @@ public sealed class OverflowRowTests : IDisposable
     public async Task OverflowRows_LargeRowContent_IsPreserved(string path)
     {
         // Verify that the actual cell values survive an overflow round-trip
-        string temp = CopyToTemp(path);
-        if (!IsJet4(temp))
+        using var ms = await CopyToStreamAsync(path);
+        if (!IsJet4(ms))
         {
             return;
         }
@@ -169,13 +169,13 @@ public sealed class OverflowRowTests : IDisposable
         string expectedText1 = new('Z', 200);
         string expectedText2 = new('Q', 200);
 
-        await using (var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken))
+        await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(tableName, new object[] { 1, expectedText1, expectedText2 }, TestContext.Current.CancellationToken);
         }
 
-        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
         DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Single(dt.Rows);
@@ -188,35 +188,35 @@ public sealed class OverflowRowTests : IDisposable
     // Helpers
     // ═══════════════════════════════════════════════════════════════════
 
-    public void Dispose()
+    private static bool IsJet4(MemoryStream stream)
     {
-        foreach (string path in _tempFiles)
+        if (stream.Length < 0x20)
         {
-            try
-            {
-                File.Delete(path);
-            }
-            catch (IOException)
-            {
-                /* best-effort cleanup */
-            }
+            return false;
         }
+
+        stream.Position = 0x14;
+        return stream.ReadByte() >= 1;
     }
 
-    private static bool IsJet4(string path)
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken cancellationToken)
     {
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        var hdr = new byte[0x20];
-        _ = fs.Read(hdr, 0, hdr.Length);
-        return hdr[0x14] >= 1;
+        stream.Position = 0;
+        return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken);
     }
 
-    private string CopyToTemp(string sourcePath)
+    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken cancellationToken)
     {
-        string ext = Path.GetExtension(sourcePath);
-        string temp = Path.Combine(Path.GetTempPath(), $"JetOvfTest_{Guid.NewGuid():N}{ext}");
-        _tempFiles.Add(temp);
-        File.Copy(sourcePath, temp, overwrite: true);
-        return temp;
+        stream.Position = 0;
+        return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken);
+    }
+
+    private async ValueTask<MemoryStream> CopyToStreamAsync(string sourcePath)
+    {
+        byte[] bytes = await db.GetFileAsync(sourcePath, TestContext.Current.CancellationToken);
+        var ms = new MemoryStream();
+        await ms.WriteAsync(bytes, TestContext.Current.CancellationToken);
+        ms.Position = 0;
+        return ms;
     }
 }

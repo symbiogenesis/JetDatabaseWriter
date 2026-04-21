@@ -18,7 +18,7 @@ using Xunit;
 ///   4. ACCDB AES      — detection works (OLE2 CFB magic); page decryption still TDD red
 ///   5. ACCDB AES      — TDD: genuine AesEncrypted.accdb fixture from Access 16 CompactDatabase.
 /// </summary>
-public sealed class EncryptionTests : IDisposable
+public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable
 {
     private readonly List<string> _tempFiles = [];
 
@@ -52,12 +52,13 @@ public sealed class EncryptionTests : IDisposable
     {
         // Jet3 encryption uses a simple XOR mask applied to every page.
         // Verify the reader detects and transparently decrypts XOR-masked databases.
-        string temp = CopyToTemp(TestDatabases.Jet3Test);
+        byte[] data = await CloneFileAsync(TestDatabases.Jet3Test);
         byte[] xorMask = BuildJet3XorMask();
-        ApplyXorMask(temp, xorMask);
-        SetJet3EncryptionFlag(temp);
+        ApplyXorMask(data, xorMask);
+        SetJet3EncryptionFlag(data);
 
-        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        using var ms = ToStream(data);
+        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
@@ -76,15 +77,16 @@ public sealed class EncryptionTests : IDisposable
     {
         // Verify that a Jet4 database with the password flag set is readable
         // when the correct password is provided.
-        string temp = CopyToTemp(TestDatabases.AdventureWorks);
-        SetJet4PasswordFlag(temp);
+        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        SetJet4PasswordFlag(data);
 
         var options = new AccessReaderOptions
         {
             Password = SecureStringTestHelper.FromString("test"),
         };
 
-        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        using var ms = ToStream(data);
+        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
         var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
@@ -95,10 +97,11 @@ public sealed class EncryptionTests : IDisposable
     {
         // Opening an encrypted database without a password throws with a
         // message that hints at providing a password.
-        string temp = CopyToTemp(TestDatabases.AdventureWorks);
-        SetJet4PasswordFlag(temp);
+        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        SetJet4PasswordFlag(data);
 
-        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken));
+        using var ms = ToStream(data);
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -107,17 +110,18 @@ public sealed class EncryptionTests : IDisposable
     public async Task Encryption_Jet4Rc4_WithWrongPassword_ThrowsMeaningfulError()
     {
         // An incorrect password produces a clear error rather than corrupt data.
-        string temp = CopyToTemp(TestDatabases.AdventureWorks);
-        SetJet4PasswordFlag(temp);
+        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        SetJet4PasswordFlag(data);
 
         var options = new AccessReaderOptions
         {
             Password = SecureStringTestHelper.FromString("wrong_password"),
         };
 
+        using var ms = ToStream(data);
         var ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+            await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
             await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         });
 
@@ -127,8 +131,9 @@ public sealed class EncryptionTests : IDisposable
     [Fact]
     public async Task Encryption_Jet4Rc4_WriterWithoutPassword_ThrowsDescriptiveError()
     {
-        string temp = CopyToTemp(TestDatabases.AdventureWorks);
-        SetJet4PasswordFlag(temp);
+        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        SetJet4PasswordFlag(data);
+        string temp = WriteTempBytes(data, ".mdb");
 
         var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             await AccessWriter.OpenAsync(temp, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken));
@@ -139,8 +144,9 @@ public sealed class EncryptionTests : IDisposable
     [Fact]
     public async Task Encryption_Jet4Rc4_WriterWithWrongPassword_ThrowsMeaningfulError()
     {
-        string temp = CopyToTemp(TestDatabases.AdventureWorks);
-        SetJet4PasswordFlag(temp);
+        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        SetJet4PasswordFlag(data);
+        string temp = WriteTempBytes(data, ".mdb");
 
         var options = new AccessWriterOptions
         {
@@ -155,8 +161,9 @@ public sealed class EncryptionTests : IDisposable
     [Fact]
     public async Task Encryption_Jet4Rc4_WriterWithCorrectPassword_Opens()
     {
-        string temp = CopyToTemp(TestDatabases.AdventureWorks);
-        SetJet4PasswordFlag(temp);
+        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        SetJet4PasswordFlag(data);
+        string temp = WriteTempBytes(data, ".mdb");
 
         var options = new AccessWriterOptions
         {
@@ -184,11 +191,12 @@ public sealed class EncryptionTests : IDisposable
     {
         // A Jet4 database with RC4 encryption set and password provided
         // should return actual row data, not garbled bytes.
-        string temp = CopyToTemp(TestDatabases.AdventureWorks);
-        Rc4EncryptDataPages(temp, "test");
+        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        using var ms = ToStream(data);
+        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
         DataTable dt = (await reader.ReadDataTableAsync("Product", cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.NotNull(dt);
@@ -199,11 +207,12 @@ public sealed class EncryptionTests : IDisposable
     public async Task Rc4Decryption_EncryptedJet4_StreamRows_ReturnsDecryptedRows()
     {
         // Streaming should also work through RC4-encrypted pages.
-        string temp = CopyToTemp(TestDatabases.AdventureWorks);
-        Rc4EncryptDataPages(temp, "test");
+        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        using var ms = ToStream(data);
+        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
@@ -216,11 +225,12 @@ public sealed class EncryptionTests : IDisposable
     public async Task Rc4Decryption_EncryptedJet4_GetStatistics_ReturnsValidStats()
     {
         // Statistics (catalog scan, row counts) should work on encrypted databases.
-        string temp = CopyToTemp(TestDatabases.AdventureWorks);
-        Rc4EncryptDataPages(temp, "test");
+        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        using var ms = ToStream(data);
+        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
         DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
 
         Assert.True(stats.TableCount > 0, "Should report tables in encrypted database");
@@ -231,11 +241,12 @@ public sealed class EncryptionTests : IDisposable
     public async Task Rc4Decryption_EncryptedJet4_ColumnMetadata_IsCorrect()
     {
         // Column metadata from TDEF pages must be decrypted correctly.
-        string temp = CopyToTemp(TestDatabases.AdventureWorks);
-        Rc4EncryptDataPages(temp, "test");
+        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        using var ms = ToStream(data);
+        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
@@ -253,11 +264,12 @@ public sealed class EncryptionTests : IDisposable
     public async Task Rc4Decryption_EncryptedJet4_ReadAllTables_Succeeds()
     {
         // Bulk read of all tables should succeed on an RC4-encrypted database.
-        string temp = CopyToTemp(TestDatabases.AdventureWorks);
-        Rc4EncryptDataPages(temp, "test");
+        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        using var ms = ToStream(data);
+        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
         Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotEmpty(all);
@@ -284,15 +296,16 @@ public sealed class EncryptionTests : IDisposable
     public async Task AesEncryption_AccdbWithPassword_Open_Succeeds()
     {
         // An .accdb file encrypted with AES should open when the correct password is provided.
-        string temp = CopyToTemp(TestDatabases.NorthwindTraders);
-        SetAccdbEncryptionHeader(temp);
+        byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
+        SetAccdbEncryptionHeader(data);
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
 
         // Once AES is implemented, this should succeed without throwing.
+        using var ms = ToStream(data);
         var ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+            await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
             await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         });
 
@@ -304,11 +317,12 @@ public sealed class EncryptionTests : IDisposable
     public async Task AesEncryption_AccdbWithPassword_ReadTable_ReturnsRows()
     {
         // Reading table data through AES decryption should return valid rows.
-        string temp = CopyToTemp(TestDatabases.NorthwindTraders);
-        SetAccdbEncryptionHeader(temp);
+        byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
+        SetAccdbEncryptionHeader(data);
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
-        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        using var ms = ToStream(data);
+        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
@@ -324,10 +338,11 @@ public sealed class EncryptionTests : IDisposable
         // A genuine AES-encrypted .accdb (CFB magic in header) must throw
         // UnauthorizedAccessException whether or not a password is supplied,
         // because full AES page decryption is not yet implemented.
-        string temp = CopyToTemp(TestDatabases.NorthwindTraders);
-        SetAccdbEncryptionHeader(temp);
+        byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
+        SetAccdbEncryptionHeader(data);
 
-        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken));
+        using var ms = ToStream(data);
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -336,14 +351,15 @@ public sealed class EncryptionTests : IDisposable
     {
         // Any password for a CFB-encrypted .accdb must throw, because decryption
         // is not implemented — the error should be clear rather than silent corruption.
-        string temp = CopyToTemp(TestDatabases.NorthwindTraders);
-        SetAccdbEncryptionHeader(temp);
+        byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
+        SetAccdbEncryptionHeader(data);
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("wrong_password") };
 
+        using var ms = ToStream(data);
         var ex = await Record.ExceptionAsync(async () =>
         {
-            await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+            await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
             await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         });
 
@@ -354,11 +370,12 @@ public sealed class EncryptionTests : IDisposable
     public async Task AesEncryption_AccdbStreamRows_ReturnsDecryptedData()
     {
         // Streaming through AES-encrypted pages should yield readable data.
-        string temp = CopyToTemp(TestDatabases.NorthwindTraders);
-        SetAccdbEncryptionHeader(temp);
+        byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
+        SetAccdbEncryptionHeader(data);
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
-        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        using var ms = ToStream(data);
+        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
@@ -415,27 +432,22 @@ public sealed class EncryptionTests : IDisposable
         };
     }
 
-    /// <summary>XOR-masks a database file starting at page 1 (page 0 is the header).</summary>
-    private static void ApplyXorMask(string path, byte[] mask)
+    /// <summary>XOR-masks a database byte array starting at page 1 (page 0 is the header).</summary>
+    private static void ApplyXorMask(byte[] data, byte[] mask)
     {
         const int jet3PageSize = 2048;
-        byte[] data = File.ReadAllBytes(path);
 
-        // Apply mask starting from page 1 (offset 2048) through the file
+        // Apply mask starting from page 1 (offset 2048) through the data
         for (int offset = jet3PageSize; offset < data.Length; offset++)
         {
             data[offset] ^= mask[(offset - jet3PageSize) % mask.Length];
         }
-
-        File.WriteAllBytes(path, data);
     }
 
     /// <summary>Sets the Office97 password flag (0x01) in a Jet3 database header.</summary>
-    private static void SetJet3EncryptionFlag(string path)
+    private static void SetJet3EncryptionFlag(byte[] data)
     {
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
-        fs.Seek(0x62, SeekOrigin.Begin);
-        fs.WriteByte(0x01); // Office97 password flag
+        data[0x62] = 0x01; // Office97 password flag
     }
 
     /// <summary>
@@ -443,7 +455,7 @@ public sealed class EncryptionTests : IDisposable
     /// in a Jet4 database header. Data pages are <em>not</em> RC4-encrypted —
     /// use <see cref="Rc4EncryptDataPages"/> to also encrypt the page data.
     /// </summary>
-    private static void SetJet4PasswordFlag(string path)
+    private static void SetJet4PasswordFlag(byte[] data)
     {
         // Jet4 password XOR mask (from mdbtools / jackcess specification)
         byte[] jet4PwdMask =
@@ -455,30 +467,21 @@ public sealed class EncryptionTests : IDisposable
             0xA1, 0xFE, 0x6A, 0x7A, 0x42, 0x62, 0x04, 0xFE,
         };
 
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
-
-        // Read full header (need creation date at 0x72 for password mask)
-        var hdr = new byte[0x80];
-        fs.Seek(0, SeekOrigin.Begin);
-        _ = fs.Read(hdr, 0, hdr.Length);
-
         // Encode password "test" as UTF-16LE, XOR with masks, write to 0x42
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes("test");
         var encoded = new byte[40];
         for (int i = 0; i < 40; i++)
         {
             byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
-            encoded[i] = (byte)(pwdByte ^ jet4PwdMask[i] ^ hdr[0x72 + (i % 4)]);
+            encoded[i] = (byte)(pwdByte ^ jet4PwdMask[i] ^ data[0x72 + (i % 4)]);
         }
 
-        fs.Seek(0x42, SeekOrigin.Begin);
-        fs.Write(encoded, 0, 40);
+        Buffer.BlockCopy(encoded, 0, data, 0x42, 40);
 
         // Set Office97 password flag (0x01): password required but pages are NOT RC4-encrypted.
         // Flag 0x02 would mean RC4 page encryption, which requires also encrypting the page
         // data — this helper only sets the header flag for password-verification tests.
-        fs.Seek(0x62, SeekOrigin.Begin);
-        fs.WriteByte(0x01);
+        data[0x62] = 0x01;
     }
 
     /// <summary>
@@ -486,16 +489,15 @@ public sealed class EncryptionTests : IDisposable
     /// Sets the encryption flag (0x02), encodes the password, and applies RC4
     /// to pages 1+ using the standard Jet4 page-key derivation.
     /// </summary>
-    private static void Rc4EncryptDataPages(string path, string password)
+    private static void Rc4EncryptDataPages(byte[] data, string password)
     {
         // Step 1: Write the RC4 encryption flag (0x02) and encode the password in the header
-        SetJet4Rc4EncryptionFlag(path, password);
+        SetJet4Rc4EncryptionFlag(data, password);
 
         // Step 2: Derive RC4 key from the database key at offset 0x3E and
         // encrypt each data page (pages 1+). The key for each page is:
         //   RC4Key = MD5(DatabaseKey + PageNumber)
         // where PageNumber is a 4-byte little-endian integer.
-        byte[] data = File.ReadAllBytes(path);
         uint dbKey = BitConverter.ToUInt32(data, 0x3E);
 
         int pageSize = 4096; // Jet4
@@ -507,15 +509,13 @@ public sealed class EncryptionTests : IDisposable
             byte[] rc4Key = DeriveJet4PageKey(dbKey, (uint)pageNum);
             Rc4Transform(data, offset, length, rc4Key);
         }
-
-        File.WriteAllBytes(path, data);
     }
 
     /// <summary>
     /// Sets the RC4 page-encryption flag (0x02) and encodes a password
     /// in a Jet4 database header.
     /// </summary>
-    private static void SetJet4Rc4EncryptionFlag(string path, string password)
+    private static void SetJet4Rc4EncryptionFlag(byte[] data, string password)
     {
         byte[] jet4PwdMask =
         {
@@ -526,25 +526,18 @@ public sealed class EncryptionTests : IDisposable
             0xA1, 0xFE, 0x6A, 0x7A, 0x42, 0x62, 0x04, 0xFE,
         };
 
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
-        var hdr = new byte[0x80];
-        fs.Seek(0, SeekOrigin.Begin);
-        _ = fs.Read(hdr, 0, hdr.Length);
-
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(password);
         var encoded = new byte[40];
         for (int i = 0; i < 40; i++)
         {
             byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
-            encoded[i] = (byte)(pwdByte ^ jet4PwdMask[i] ^ hdr[0x72 + (i % 4)]);
+            encoded[i] = (byte)(pwdByte ^ jet4PwdMask[i] ^ data[0x72 + (i % 4)]);
         }
 
-        fs.Seek(0x42, SeekOrigin.Begin);
-        fs.Write(encoded, 0, 40);
+        Buffer.BlockCopy(encoded, 0, data, 0x42, 40);
 
         // Set RC4 page-encryption flag
-        fs.Seek(0x62, SeekOrigin.Begin);
-        fs.WriteByte(0x02);
+        data[0x62] = 0x02;
     }
 
 #pragma warning disable CA5351 // MD5 is required by the Jet4 RC4 key derivation spec
@@ -599,7 +592,7 @@ public sealed class EncryptionTests : IDisposable
     /// The reader detects the CFB magic (D0 CF 11 E0) and throws
     /// <see cref="UnauthorizedAccessException"/> regardless of password.
     /// </summary>
-    private static void SetAccdbEncryptionHeader(string path)
+    private static void SetAccdbEncryptionHeader(byte[] data)
     {
         // OLE2 CFB magic: first 8 bytes of any Compound File Binary container.
         // Access 2007+ AES-encrypts the .accdb by wrapping it in a CFB document.
@@ -615,16 +608,8 @@ public sealed class EncryptionTests : IDisposable
             0xA1, 0xFE, 0x6A, 0x7A, 0x42, 0x62, 0x04, 0xFE,
         };
 
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
-
-        // Read header for creation date at 0x72 (needed for password XOR)
-        var hdr = new byte[0x80];
-        fs.Seek(0, SeekOrigin.Begin);
-        _ = fs.Read(hdr, 0, hdr.Length);
-
         // Write CFB magic
-        fs.Seek(0, SeekOrigin.Begin);
-        fs.Write(cfbMagic, 0, cfbMagic.Length);
+        Buffer.BlockCopy(cfbMagic, 0, data, 0, cfbMagic.Length);
 
         // Encode password "secret" at offset 0x42 using the Jet4/ACCDB XOR scheme
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes("secret");
@@ -632,19 +617,31 @@ public sealed class EncryptionTests : IDisposable
         for (int i = 0; i < 40; i++)
         {
             byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
-            encoded[i] = (byte)(pwdByte ^ jet4PwdMask[i] ^ hdr[0x72 + (i % 4)]);
+            encoded[i] = (byte)(pwdByte ^ jet4PwdMask[i] ^ data[0x72 + (i % 4)]);
         }
 
-        fs.Seek(0x42, SeekOrigin.Begin);
-        fs.Write(encoded, 0, 40);
+        Buffer.BlockCopy(encoded, 0, data, 0x42, 40);
     }
 
-    private string CopyToTemp(string sourcePath)
+    private static MemoryStream ToStream(byte[] data)
     {
-        string ext = Path.GetExtension(sourcePath);
-        string temp = Path.Combine(Path.GetTempPath(), $"JetEncTest_{Guid.NewGuid():N}{ext}");
+        var ms = new MemoryStream();
+        ms.Write(data, 0, data.Length);
+        ms.Position = 0;
+        return ms;
+    }
+
+    private async Task<byte[]> CloneFileAsync(string sourcePath)
+    {
+        byte[] cached = await db.GetFileAsync(sourcePath, TestContext.Current.CancellationToken);
+        return (byte[])cached.Clone();
+    }
+
+    private string WriteTempBytes(byte[] data, string extension)
+    {
+        string temp = Path.Combine(Path.GetTempPath(), $"JetEncTest_{Guid.NewGuid():N}{extension}");
+        File.WriteAllBytes(temp, data);
         _tempFiles.Add(temp);
-        File.Copy(sourcePath, temp, overwrite: true);
         return temp;
     }
 }

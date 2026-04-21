@@ -22,7 +22,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task Execute_WithoutFilter_ReturnsAllRows(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         int expected = await reader.StreamRowsAsync(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
@@ -35,7 +35,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task Execute_WithTake_LimitsResults(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         IAsyncEnumerable<object[]> result = reader.Query(table).Take(3).ExecuteAsync(TestContext.Current.CancellationToken);
@@ -47,7 +47,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task Execute_WithWhere_FiltersRows(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         // Always-false filter should return zero rows
@@ -63,7 +63,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task Execute_WithWhere_AlwaysTrue_ReturnsAllRows(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         int expected = await reader.StreamRowsAsync(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
@@ -80,7 +80,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task FirstOrDefault_WithoutFilter_ReturnsNonNull(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -97,7 +97,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task FirstOrDefault_WhenNoRowMatches_ReturnsNull(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         object[]? result = await reader.Query(table)
@@ -113,7 +113,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task Count_WithoutFilter_MatchesStreamRowsCount(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         int expected = await reader.StreamRowsAsync(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
@@ -126,7 +126,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task Count_WithAlwaysFalseFilter_ReturnsZero(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         int count = await reader.Query(table).Where(_ => false).CountAsync(TestContext.Current.CancellationToken);
@@ -140,7 +140,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ExecuteAsStrings_WithoutFilter_ReturnsAllRows(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         int expected = await reader.StreamRowsAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
@@ -153,7 +153,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ExecuteAsStrings_WithTake_LimitsResults(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         IAsyncEnumerable<string[]> result = reader.Query(table).Take(3).ExecuteAsStringsAsync(TestContext.Current.CancellationToken);
@@ -165,7 +165,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ExecuteAsStrings_WithWhereAsStrings_FiltersRows(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         // Always-false filter should return zero rows
@@ -181,7 +181,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ExecuteAsStrings_AllCells_AreStringOrNull(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         await foreach (string[] row in reader.Query(table).Take(20).ExecuteAsStringsAsync(TestContext.Current.CancellationToken))
@@ -199,7 +199,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task FirstOrDefaultAsStrings_WithoutFilter_ReturnsNonNull(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -216,7 +216,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task FirstOrDefaultAsStrings_WhenNoRowMatches_ReturnsNull(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         string[]? result = await reader.Query(table)
@@ -232,7 +232,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task CountAsStrings_WithoutFilter_MatchesCount(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         int typed = await reader.Query(table).CountAsync(TestContext.Current.CancellationToken);
@@ -247,7 +247,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task Take_AppliedOnce_AffectsBothExecuteAndExecuteAsStrings(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         const int limit = 2;
 
@@ -270,7 +270,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ExecuteGeneric_WithoutFilter_RowCountMatchesExecute(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         int typedCount = await reader.Query(table).ExecuteAsync(TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
@@ -283,7 +283,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ExecuteGeneric_WithTake_LimitsResults(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         IAsyncEnumerable<QueryRow> result = reader.Query(table).Take(3).ExecuteAsync<QueryRow>(TestContext.Current.CancellationToken);
@@ -295,7 +295,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ExecuteGeneric_WithWhere_FiltersRows(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         var none = await reader.Query(table)
@@ -310,7 +310,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ExecuteGeneric_ReturnsNonNullInstances(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         await foreach (QueryRow item in reader.Query(table).Take(20).ExecuteAsync<QueryRow>(TestContext.Current.CancellationToken))
@@ -325,7 +325,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task FirstOrDefaultGeneric_WithoutFilter_ReturnsNonNull(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -342,7 +342,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task FirstOrDefaultGeneric_WhenNoRowMatches_ReturnsNull(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         QueryRow? result = await reader.Query(table)
@@ -358,7 +358,7 @@ public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task Take_AffectsExecuteGeneric(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         const int limit = 2;
 

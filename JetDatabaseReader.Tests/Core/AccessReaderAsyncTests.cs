@@ -43,7 +43,7 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ListTablesAsync_IsIdempotent(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
         List<string> first = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         List<string> second = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
@@ -57,7 +57,7 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadTableAsync_RowCount_IsIdempotent(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         DataTable firstDt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
@@ -72,7 +72,7 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task GetStatisticsAsync_ReturnsValidStatistics(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
         DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
 

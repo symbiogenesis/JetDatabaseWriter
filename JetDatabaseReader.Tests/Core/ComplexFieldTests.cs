@@ -34,7 +34,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
     public async Task Attachment_GetColumnMetadata_ReportsAttachmentType(string path)
     {
         // Columns with type 0x11 should report a friendly type name, not a raw hex code.
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
         foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
@@ -50,7 +50,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
     public async Task Attachment_TypeCodeToName_ReturnsAttachment()
     {
         // All column type names should be friendly strings, not raw hex codes.
-        var reader = await db.GetAsync(TestDatabases.NorthwindTraders);
+        var reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
@@ -67,7 +67,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
     {
         // Attachment columns map to a CLR type that can represent
         // multiple files — not typeof(string).
-        var reader = await db.GetAsync(TestDatabases.NorthwindTraders);
+        var reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
@@ -86,7 +86,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
     public async Task Attachment_ReadAsDataTable_ColumnTypeIsNotString()
     {
         // When reading a DataTable, attachment columns should not be typed as string.
-        var reader = await db.GetAsync(TestDatabases.NorthwindTraders);
+        var reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
@@ -114,7 +114,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
     {
         // Reading a table with complex columns should not crash, even if
         // values are not fully decoded.
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
         foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
@@ -135,7 +135,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
     public async Task Attachment_StreamRows_DoesNotThrowOnComplexColumns(string path)
     {
         // Streaming rows with complex columns should not crash.
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
         foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
@@ -158,7 +158,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
     {
         // When attachment decoding is implemented, non-empty attachment cells
         // should return actual data (byte[] or a collection), not DBNull.
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
         foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
@@ -197,7 +197,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
     public async Task ComplexField_Metadata_ReportsCorrectTypeName(string path)
     {
         // Complex columns must report "Attachment" or "Complex", not raw hex.
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
         foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
@@ -218,7 +218,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
     {
         // When multi-value decoding is implemented, non-empty complex cells
         // should return a list of values, not DBNull.
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
         foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {

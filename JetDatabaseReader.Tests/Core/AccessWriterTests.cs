@@ -19,18 +19,15 @@ using Xunit;
 /// then reads back via AccessReader to verify correctness.
 /// All stubs currently throw <see cref="NotImplementedException"/>.
 /// </summary>
-public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable
+public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
-    private static readonly ConcurrentDictionary<string, byte[]> _sourceCache = new();
-    private readonly List<string> _tempFiles = [];
-
     // ── Open / Dispose ────────────────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Open_WithValidPath_ReturnsNonNullWriter(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -53,7 +50,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task OpenAsync_ReturnedWriter_ImplementsIAsyncDisposable(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -74,7 +71,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Dispose_CalledTwice_DoesNotThrow(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
         await writer.DisposeAsync();
@@ -87,7 +84,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRow_AfterDisposeAsync_ThrowsObjectDisposedException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
         await writer.DisposeAsync();
@@ -101,8 +98,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRow_SingleRow_IncreasesRowCount(string path)
     {
-        string temp = CopyToTemp(path);
-        var cachedReader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         long originalCount = await cachedReader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
 
@@ -125,8 +122,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRow_NullValues_ThrowsArgumentNullException(string path)
     {
-        string temp = CopyToTemp(path);
-        var reader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
@@ -138,8 +135,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRow_InsertedData_IsReadableBack(string path)
     {
-        string temp = CopyToTemp(path);
-        var cachedReader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
@@ -167,8 +164,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRows_MultiplRows_ReturnsCorrectInsertCount(string path)
     {
-        string temp = CopyToTemp(path);
-        var cachedReader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
@@ -184,8 +181,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRows_MultipleRows_IncreasesRowCount(string path)
     {
-        string temp = CopyToTemp(path);
-        var cachedReader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         long originalCount = await cachedReader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
         var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
@@ -208,7 +205,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRow_UpdatesTDefRowCountMetadata(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = await SeedUpdateTableAsync(temp);
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
@@ -232,7 +229,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task UpdateRows_MatchingRows_ReturnsNonZeroCount(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = await SeedUpdateTableAsync(temp);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
@@ -246,7 +243,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task UpdateRows_MatchingRows_ChangesAreReadableBack(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = await SeedUpdateTableAsync(temp);
         const string sentinel = "WRITE_TEST_SENTINEL";
 
@@ -269,7 +266,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task UpdateRows_DoesNotChangeRowCount(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = await SeedUpdateTableAsync(temp);
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
@@ -289,7 +286,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task UpdateRows_PreservesTDefRowCountMetadata(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = await SeedUpdateTableAsync(temp);
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
@@ -315,8 +312,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DeleteRows_MatchingRows_DecreasesRowCount(string path)
     {
-        string temp = CopyToTemp(path);
-        var cachedReader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         long originalCount = await cachedReader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
         var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
@@ -349,8 +346,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DeleteRows_NonExistentColumn_ThrowsArgumentException(string path)
     {
-        string temp = CopyToTemp(path);
-        var reader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
@@ -362,8 +359,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DeleteRows_DeletedRows_AreNotReadableBack(string path)
     {
-        string temp = CopyToTemp(path);
-        var cachedReader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
@@ -402,7 +399,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DeleteRows_UpdatesTDefRowCountMetadata(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = await SeedUpdateTableAsync(temp);
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
@@ -427,7 +424,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_NewTable_AppearsInListTables(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
 
         var columns = new List<ColumnDefinition>
@@ -453,7 +450,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_NewTable_HasCorrectColumnCount(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
 
         var columns = new List<ColumnDefinition>
@@ -479,7 +476,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_NewTable_StartsEmpty(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
 
         var columns = new List<ColumnDefinition>
@@ -504,7 +501,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_ThenInsert_DataIsReadable(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
 
         var columns = new List<ColumnDefinition>
@@ -536,7 +533,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DropTable_ExistingTable_RemovesFromListTables(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
 
         // Create then drop
@@ -573,9 +570,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DropTable_DoesNotAffectOtherTables(string path)
     {
-        string temp = CopyToTemp(path);
-        var dbReader = await db.GetAsync(path);
-        List<string> originalTables = await dbReader.ListTablesAsync(TestContext.Current.CancellationToken);
+        var temp = await CopyToStreamAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        List<string> originalTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
         var columns = new List<ColumnDefinition>
@@ -606,7 +603,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_NullTableName_ThrowsArgumentException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -617,7 +614,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_NullColumns_ThrowsArgumentNullException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -628,7 +625,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DeleteRows_NullTableName_ThrowsArgumentException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -641,7 +638,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_WithVariousTypes_ColumnsHaveCorrectClrTypes(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string newTableName = $"TypeTest_{Guid.NewGuid():N}".Substring(0, 20);
 
         var columns = new List<ColumnDefinition>
@@ -676,7 +673,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRow_WithVariousTypes_ValuesRoundtrip(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string newTableName = $"TypeRT_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -723,7 +720,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRowGeneric_SingleRow_IncreasesRowCount(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"GenIns_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -749,7 +746,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRowGeneric_DataIsReadableBack(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"GenRT_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -777,8 +774,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRowGeneric_NullItem_ThrowsArgumentNullException(string path)
     {
-        string temp = CopyToTemp(path);
-        var reader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
@@ -792,7 +789,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRowsGeneric_ReturnsCorrectInsertCount(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"GenBulk_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -814,7 +811,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRowsGeneric_IncreasesRowCount(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"GenCnt_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -842,7 +839,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRowsGeneric_DataIsReadableBack(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"GenRB_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -878,7 +875,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DropTable_NonExistentTable_ThrowsInvalidOperationException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -889,8 +886,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task UpdateRows_NonExistentPredicateColumn_ThrowsArgumentException(string path)
     {
-        string temp = CopyToTemp(path);
-        var reader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
@@ -904,8 +901,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task UpdateRows_NonExistentTargetColumn_ThrowsArgumentException(string path)
     {
-        string temp = CopyToTemp(path);
-        var cachedReader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         DataTable dt = (await cachedReader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
@@ -928,8 +925,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DeleteRows_ValidColumn_NoMatchingValue_ReturnsZero(string path)
     {
-        string temp = CopyToTemp(path);
-        var cachedReader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         string firstCol = (await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken))[0].Name;
 
@@ -943,7 +940,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRow_WrongColumnCount_ThrowsArgumentException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"ColCnt_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -969,7 +966,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             return;
         }
 
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"Memo_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -1004,7 +1001,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             return;
         }
 
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"MemoOv_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -1032,7 +1029,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             return;
         }
 
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"OleOv_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -1059,7 +1056,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             return;
         }
 
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"OleLim_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -1092,7 +1089,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_DuplicateName_ThrowsInvalidOperationException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"Dup_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -1111,7 +1108,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DeleteRows_DoesNotCorruptRemainingRows(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"DelChk_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -1152,7 +1149,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task UpdateRows_PreservesNonUpdatedColumns(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"UpdPrv_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -1195,7 +1192,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_GuidColumn_RoundtripsCorrectly(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"Guid_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -1226,7 +1223,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_ByteArrayColumn_RoundtripsCorrectly(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"Blob_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -1257,7 +1254,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_InsertMany_AllRowsReadable(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"Multi_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -1291,7 +1288,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_EmptyColumnsList_ThrowsArgumentException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -1305,7 +1302,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DropTable_NullTableName_ThrowsArgumentException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -1316,7 +1313,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DropTable_EmptyTableName_ThrowsArgumentException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -1329,7 +1326,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DropTable_AfterDispose_ThrowsObjectDisposedException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.DisposeAsync();
 
@@ -1342,7 +1339,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DropTable_ThenRecreate_Succeeds(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = $"Recr_{Guid.NewGuid():N}".Substring(0, 18);
 
         var columns = new List<ColumnDefinition>
@@ -1392,7 +1389,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRow_NonExistentTable_ThrowsInvalidOperationException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -1406,7 +1403,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRows_NullTableName_ThrowsArgumentException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -1418,8 +1415,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRows_NullRows_ThrowsArgumentNullException(string path)
     {
-        string temp = CopyToTemp(path);
-        var reader = await db.GetAsync(path);
+        var temp = await CopyToStreamAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string tableName = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
@@ -1434,7 +1431,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRows_AfterDispose_ThrowsObjectDisposedException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.DisposeAsync();
 
@@ -1448,7 +1445,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task UpdateRows_NullTableName_ThrowsArgumentException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         var updates = new Dictionary<string, object> { ["Col"] = "val" };
@@ -1461,7 +1458,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task UpdateRows_AfterDispose_ThrowsObjectDisposedException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.DisposeAsync();
 
@@ -1475,7 +1472,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task UpdateRows_NonExistentTable_ThrowsInvalidOperationException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         var updates = new Dictionary<string, object> { ["Col"] = "val" };
@@ -1490,7 +1487,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DeleteRows_AfterDispose_ThrowsObjectDisposedException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.DisposeAsync();
 
@@ -1504,7 +1501,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_AfterDispose_ThrowsObjectDisposedException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.DisposeAsync();
 
@@ -1520,7 +1517,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRow_EmptyTableName_ThrowsArgumentException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -1534,7 +1531,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DeleteRows_NonExistentTable_ThrowsInvalidOperationException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -1548,7 +1545,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRowGeneric_AfterDispose_ThrowsObjectDisposedException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.DisposeAsync();
 
@@ -1562,7 +1559,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRowsGeneric_AfterDispose_ThrowsObjectDisposedException(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.DisposeAsync();
 
@@ -1578,7 +1575,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task UpdateRows_NoMatchingValue_ReturnsZero(string path)
     {
-        string temp = CopyToTemp(path);
+        var temp = await CopyToStreamAsync(path);
         string tableName = await SeedUpdateTableAsync(temp);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
@@ -1590,21 +1587,6 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     }
 
     // ── Helpers ────────────────────────────────────────────────────────
-
-    public void Dispose()
-    {
-        foreach (string path in _tempFiles)
-        {
-            try
-            {
-                File.Delete(path);
-            }
-            catch (IOException)
-            {
-                /* best-effort cleanup */
-            }
-        }
-    }
 
     /// <summary>
     /// Builds a dummy row with plausible values for each column type.
@@ -1693,7 +1675,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     }
 
     /// <summary>Creates a table with known text data for UpdateRows tests and returns the table name.</summary>
-    private static async Task<string> SeedUpdateTableAsync(string dbPath)
+    private static async Task<string> SeedUpdateTableAsync(MemoryStream stream)
     {
         string tableName = $"UpdTest_{Guid.NewGuid():N}"[..20];
         var columns = new List<ColumnDefinition>
@@ -1702,7 +1684,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             new("Label", typeof(string), maxLength: 100),
         };
 
-        await using var writer = await OpenWriterAsync(dbPath, TestContext.Current.CancellationToken);
+        await using var writer = await OpenWriterAsync(stream, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(tableName, new object[] { 1, "Alpha" }, TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(tableName, new object[] { 2, "Beta" }, TestContext.Current.CancellationToken);
@@ -1711,22 +1693,27 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         return tableName;
     }
 
-    /// <summary>Opens a writer asynchronously with lockfile disabled (lockfile creation is not yet implemented).</summary>
-    private static ValueTask<AccessWriter> OpenWriterAsync(string path, CancellationToken cancellationToken = default) =>
-        AccessWriter.OpenAsync(path, new AccessWriterOptions { UseLockFile = false }, cancellationToken);
-
-    /// <summary>Opens a reader asynchronously with lockfile disabled (lockfile creation is not yet implemented).</summary>
-    private static ValueTask<AccessReader> OpenReaderAsync(string path, CancellationToken cancellationToken = default) =>
-        AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, cancellationToken);
-
-    /// <summary>Creates a writable temp copy of the given database and tracks it for cleanup.</summary>
-    private string CopyToTemp(string sourcePath)
+    /// <summary>Opens a writer asynchronously with lockfile disabled.</summary>
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken cancellationToken = default)
     {
-        string ext = Path.GetExtension(sourcePath);
-        string temp = Path.Combine(Path.GetTempPath(), $"JetWriteTest_{Guid.NewGuid():N}{ext}");
-        byte[] bytes = _sourceCache.GetOrAdd(Path.GetFullPath(sourcePath), static p => File.ReadAllBytes(p));
-        File.WriteAllBytes(temp, bytes);
-        _tempFiles.Add(temp);
-        return temp;
+        stream.Position = 0;
+        return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken);
+    }
+
+    /// <summary>Opens a reader asynchronously with lockfile disabled.</summary>
+    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream, CancellationToken cancellationToken = default)
+    {
+        stream.Position = 0;
+        return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken);
+    }
+
+    /// <summary>Creates a writable in-memory copy of the given database from the source cache.</summary>
+    private async ValueTask<MemoryStream> CopyToStreamAsync(string sourcePath)
+    {
+        byte[] bytes = await db.GetFileAsync(sourcePath, TestContext.Current.CancellationToken);
+        var ms = new MemoryStream();
+        await ms.WriteAsync(bytes, TestContext.Current.CancellationToken);
+        ms.Position = 0;
+        return ms;
     }
 }

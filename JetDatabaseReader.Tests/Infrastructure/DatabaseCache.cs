@@ -3,6 +3,8 @@ namespace JetDatabaseReader.Tests;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>
@@ -15,11 +17,16 @@ public sealed class DatabaseCache : IAsyncDisposable
 {
     private static readonly AccessReaderOptions DefaultOptions = new() { UseLockFile = false };
 
+    private readonly ConcurrentDictionary<string, Lazy<Task<byte[]>>> _fileCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, Lazy<ValueTask<AccessReader>>> _readers = new(StringComparer.OrdinalIgnoreCase);
 
-    public ValueTask<AccessReader> GetAsync(string path) =>
-        _readers.GetOrAdd(path, static p => new Lazy<ValueTask<AccessReader>>(
-            () => AccessReader.OpenAsync(p, DefaultOptions))).Value;
+    public Task<byte[]> GetFileAsync(string path, CancellationToken cancellationToken = default) =>
+        _fileCache.GetOrAdd(path, (p) => new Lazy<Task<byte[]>>(
+            () => File.ReadAllBytesAsync(p, cancellationToken))).Value;
+
+    public ValueTask<AccessReader> GetReaderAsync(string path, CancellationToken cancellationToken = default) =>
+        _readers.GetOrAdd(path, (p) => new Lazy<ValueTask<AccessReader>>(
+            () => AccessReader.OpenAsync(p, DefaultOptions, cancellationToken))).Value;
 
     public async ValueTask DisposeAsync()
     {

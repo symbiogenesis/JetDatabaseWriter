@@ -21,7 +21,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Where_NullPredicate_ThrowsArgumentNullException(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         Assert.Throws<ArgumentNullException>(() => reader.Query(table).Where(null!));
@@ -31,7 +31,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task WhereAsStrings_NullPredicate_ThrowsArgumentNullException(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         Assert.Throws<ArgumentNullException>(() => reader.Query(table).WhereAsStrings(null!));
@@ -41,7 +41,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Take_Zero_ThrowsArgumentOutOfRangeException(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         Assert.Throws<ArgumentOutOfRangeException>(() => reader.Query(table).Take(0));
@@ -51,7 +51,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Take_Negative_ThrowsArgumentOutOfRangeException(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         Assert.Throws<ArgumentOutOfRangeException>(() => reader.Query(table).Take(-5));
@@ -63,7 +63,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Execute_WhereAndTake_FiltersBeforeLimiting(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         // Where(true) + Take(2) should return at most 2 rows
@@ -80,7 +80,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Execute_WhereFalseAndTake_ReturnsEmpty(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         var result = await reader.Query(table)
@@ -96,7 +96,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task FirstOrDefault_WithWhereTrue_ReturnsSameAsDirectStream(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -113,7 +113,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Count_WithTake_RespectsLimit(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 2);
         if (stat == null)
         {
@@ -131,7 +131,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Count_WhereFalse_ReturnsZero(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         int count = await reader.Query(table).Where(_ => false).Take(100).CountAsync(TestContext.Current.CancellationToken);
@@ -145,7 +145,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ExecuteAsStrings_WhereAsStringsAndTake_FiltersBeforeLimiting(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         var result = await reader.Query(table)
@@ -161,7 +161,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ExecuteAsStrings_WhereAsStringsFalse_ReturnsEmpty(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         var result = await reader.Query(table)
@@ -177,7 +177,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task FirstOrDefaultAsStrings_WithTake_ReturnsNonNull(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -194,7 +194,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CountAsStrings_WithTake_RespectsLimit(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 2);
         if (stat == null)
         {
@@ -212,7 +212,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CountAsStrings_WhereFalseAndTake_ReturnsZero(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         int count = await reader.Query(table).WhereAsStrings(_ => false).Take(50).CountAsStringsAsync(TestContext.Current.CancellationToken);
@@ -233,7 +233,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ExecuteGeneric_WhereAndTake_FiltersAndLimits(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         var result = await reader.Query(table)
@@ -250,7 +250,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task FirstOrDefaultGeneric_WithTake_ReturnsNonNull(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -269,7 +269,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Take_One_ReturnsExactlyOneRowWhenTableHasData(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
@@ -288,7 +288,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task FluentChain_ReturnsThisForChaining(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         TableQuery query = reader.Query(table);
@@ -305,7 +305,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task Where_CalledTwice_SecondPredicateWins(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         // First set always-true, then replace with always-false
@@ -322,7 +322,7 @@ public sealed class TableQueryTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task WhereAsStrings_CalledTwice_SecondPredicateWins(string path)
     {
-        var reader = await db.GetAsync(path);
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         var result = await reader.Query(table)
