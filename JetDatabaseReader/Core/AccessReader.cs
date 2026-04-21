@@ -640,10 +640,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
+    /// <param name="maxRows">Maximum number of rows to read. 0 = unlimited.</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
-    public async ValueTask<DataTable?> ReadTableAsync(string? tableName = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
+    public async ValueTask<DataTable?> ReadDataTableAsync(string? tableName = null, int maxRows = 0, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
@@ -666,48 +667,65 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (link != null)
             {
                 await using AccessReader source = await OpenLinkedSourceAsync(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator, cancellationToken).ConfigureAwait(false);
-                return await source.ReadTableAsync(link.ForeignName, progress, cancellationToken).ConfigureAwait(false);
+                return await source.ReadDataTableAsync(link.ForeignName, maxRows, progress, cancellationToken).ConfigureAwait(false);
             }
 
             return null;
         }
 
         var (entry, td) = resolved.Value;
-        var dt = new DataTable(tableName);
-        foreach (ColumnInfo col in td.Columns)
+        DataTable? dt = null;
+        try
         {
-            _ = dt.Columns.Add(col.Name, TypeCodeToClrType(col.Type));
+            dt = new DataTable(tableName);
+            foreach (ColumnInfo col in td.Columns)
+            {
+                _ = dt.Columns.Add(col.Name, TypeCodeToClrType(col.Type));
+            }
+
+            Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
+            long total = _fs.Length / _pgSz;
+
+            for (long p = 3; p < total; p++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+                if (page[0] != 0x01)
+                {
+                    continue;
+                }
+
+                long owner = (long)Ri32(page, _dpTDefOff);
+                if (owner != entry.TDefPage)
+                {
+                    continue;
+                }
+
+                List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
+                foreach (List<string> row in rows)
+                {
+                    _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
+                    if (maxRows > 0 && dt.Rows.Count >= maxRows)
+                    {
+                        progress?.Report(dt.Rows.Count);
+                        var result = dt;
+                        dt = null;
+                        return result;
+                    }
+                }
+
+                progress?.Report(dt.Rows.Count);
+            }
+
+            var final = dt;
+            dt = null;
+            return final;
         }
-
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
-        long total = _fs.Length / _pgSz;
-
-        for (long p = 3; p < total; p++)
+        finally
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            long owner = (long)Ri32(page, _dpTDefOff);
-            if (owner != entry.TDefPage)
-            {
-                continue;
-            }
-
-            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in rows)
-            {
-                _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
-            }
-
-            progress?.Report(dt.Rows.Count);
+            dt?.Dispose();
         }
-
-        return dt;
     }
 
     /// <summary>
@@ -973,7 +991,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report($"Reading {table.Name}...");
-            DataTable? dt = await ReadTableAsync(table.Name, progress: null, cancellationToken).ConfigureAwait(false);
+            DataTable? dt = await ReadDataTableAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
             if (dt != null)
             {
                 result[table.Name] = dt;
@@ -1010,43 +1028,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return result;
-    }
-
-    /// <inheritdoc/>
-    protected override void Dispose(bool disposing)
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        try
-        {
-            if (disposing)
-            {
-                _linkedSourceOpenOptions.Password?.Dispose();
-
-                if (_useLockFile)
-                {
-                    DeleteLockFile();
-                }
-
-                lock (_cacheLock)
-                {
-                    _pageCache?.Clear(ReturnPage);
-                    _pageCache = null;
-                }
-
-                lock (_catalogLock)
-                {
-                    _catalogCache?.Clear();
-                }
-            }
-        }
-        finally
-        {
-            base.Dispose(disposing);
-        }
     }
 
     /// <inheritdoc/>

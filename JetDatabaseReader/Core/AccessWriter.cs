@@ -664,7 +664,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         await using (var reader = await AccessReader.OpenAsync(_path, options, cancellationToken).ConfigureAwait(false))
         {
-            DataTable? snapshot = await reader.ReadTableAsync(tableName, cancellationToken: cancellationToken).ConfigureAwait(false);
+            DataTable? snapshot = await reader.ReadDataTableAsync(tableName, cancellationToken: cancellationToken).ConfigureAwait(false);
             if (snapshot != null)
             {
                 return snapshot;
