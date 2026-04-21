@@ -13,8 +13,7 @@ using Xunit;
 /// Tests for: StreamRows (typed object[]) and StreamRowsAsStrings (string[]).
 /// Includes a memory-efficiency smoke test on the large Matrix database.
 /// </summary>
-[Collection<ReadOnlyDatabaseFixture>]
-public class AccessReaderStreamTests(DatabaseCache db)
+public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ── StreamRows (typed) ────────────────────────────────────────────
 

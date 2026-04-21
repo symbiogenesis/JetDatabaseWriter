@@ -14,8 +14,7 @@ using Xunit;
 /// Tests for: ReadTable (typed), ReadTableAsStringDataTable,
 /// ReadAllTables, ReadAllTablesAsStrings.
 /// </summary>
-[Collection<ReadOnlyDatabaseFixture>]
-public class AccessReaderReadTests(DatabaseCache db)
+public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ── ReadTable (typed) ─────────────────────────────────────────────
 

@@ -18,8 +18,7 @@ using Xunit;
 /// then reads back via AccessReader to verify correctness.
 /// All stubs currently throw <see cref="NotImplementedException"/>.
 /// </summary>
-[Collection<ReadOnlyDatabaseFixture>]
-public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
+public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable
 {
     private readonly List<string> _tempFiles = [];
 

@@ -14,8 +14,7 @@ using Xunit;
 /// Typed chain:  Where → Execute / FirstOrDefault / Count
 /// String chain: WhereAsStrings → ExecuteAsStrings / FirstOrDefaultAsStrings / CountAsStrings.
 /// </summary>
-[Collection<ReadOnlyDatabaseFixture>]
-public class AccessReaderQueryTests(DatabaseCache db)
+public class AccessReaderQueryTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // ── Typed chain: Execute ──────────────────────────────────────────
 
