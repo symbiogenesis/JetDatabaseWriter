@@ -143,7 +143,7 @@ public interface IAccessReader : IAccessBase
     /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
     /// </summary>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<DataTable?> ReadTableAsync(string? tableName = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
+    ValueTask<DataTable?> ReadDataTableAsync(string? tableName = null, int maxRows = 0, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns statistical information about the database asynchronously.
