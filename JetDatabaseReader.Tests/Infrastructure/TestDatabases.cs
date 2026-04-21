@@ -83,8 +83,8 @@ internal static class TestDatabases
     // ── MemberData sets (properties) ──────────────────────────────────
 
     /// <summary>Gets all databases (skips any that don't exist or can't be opened).</summary>
-    public static TheoryData<string> All => ToTheoryData(
-        InRepoDatabases.Where(IsReadable));
+    public static TheoryData<string> All =>
+        ToTheoryData(InRepoDatabases.Where(IsReadable));
 
     /// <summary>Gets the smaller in-repo databases (skips any that can't be opened).</summary>
     public static TheoryData<string> Small => ToTheoryData(
@@ -118,7 +118,6 @@ internal static class TestDatabases
         AccessReader.OpenAsync(path, options, cancellationToken);
 
     /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
-    /// <returns></returns>
     internal static bool IsReadable(string path) =>
         _readableCache.GetOrAdd(path, static p =>
         {
@@ -129,14 +128,45 @@ internal static class TestDatabases
 
             try
             {
-                using var r = AccessReader.OpenAsync(p, new AccessReaderOptions { UseLockFile = false }).AsTask().GetAwaiter().GetResult();
-                return true;
+                return Task.Run(async () =>
+                {
+                    await using var r = await AccessReader.OpenAsync(p, new AccessReaderOptions { UseLockFile = false });
+                    return true;
+                }).GetAwaiter().GetResult();
             }
-            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JetLimitationException)
+            catch (Exception ex)
+                when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JetLimitationException)
             {
                 return false;
             }
         });
+
+    /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
+    internal static async ValueTask<bool> IsReadableAsync(string path)
+    {
+        if (_readableCache.TryGetValue(path, out bool cached))
+        {
+            return cached;
+        }
+
+        if (!File.Exists(path))
+        {
+            _readableCache.TryAdd(path, false);
+            return false;
+        }
+
+        try
+        {
+            await using var r = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false });
+            _readableCache.TryAdd(path, true);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JetLimitationException)
+        {
+            _readableCache.TryAdd(path, false);
+            return false;
+        }
+    }
 
     private static TheoryData<string> ToTheoryData(IEnumerable<string> paths)
     {

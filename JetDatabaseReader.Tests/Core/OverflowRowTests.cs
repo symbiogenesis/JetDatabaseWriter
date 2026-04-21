@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention
@@ -24,7 +25,7 @@ public sealed class OverflowRowTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void OverflowRows_LargeRowData_IsReadableBack(string path)
+    public async Task OverflowRows_LargeRowData_IsReadableBack(string path)
     {
         // Arrange — create a table whose rows are large enough that the JET
         // engine may need to overflow them across pages.
@@ -58,15 +59,15 @@ public sealed class OverflowRowTests : IDisposable
             new string('D', 255),
         });
 
-        using (var writer = AccessWriter.Open(temp))
+        await using (var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRows(tableName, rows);
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
         // Act — read back all rows
-        using var reader = AccessReader.Open(temp);
-        DataTable dt = reader.ReadTable(tableName)!;
+        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
         // Assert — every inserted row should be returned, including any that overflow
         Assert.Equal(rowCount, dt.Rows.Count);
@@ -74,7 +75,7 @@ public sealed class OverflowRowTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void OverflowRows_GetRealRowCount_IncludesOverflowRows(string path)
+    public async Task OverflowRows_GetRealRowCount_IncludesOverflowRows(string path)
     {
         string temp = CopyToTemp(path);
         if (!IsJet4(temp))
@@ -96,21 +97,21 @@ public sealed class OverflowRowTests : IDisposable
             new string('X', 255),
         });
 
-        using (var writer = AccessWriter.Open(temp))
+        await using (var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRows(tableName, rows);
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
-        using var reader = AccessReader.Open(temp);
-        long count = reader.GetRealRowCount(tableName);
+        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        long count = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(rowCount, count);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void OverflowRows_StreamRows_YieldsAllRows(string path)
+    public async Task OverflowRows_StreamRows_YieldsAllRows(string path)
     {
         string temp = CopyToTemp(path);
         if (!IsJet4(temp))
@@ -134,21 +135,21 @@ public sealed class OverflowRowTests : IDisposable
             new string((char)('a' + (i % 26)), 255),
         });
 
-        using (var writer = AccessWriter.Open(temp))
+        await using (var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRows(tableName, rows);
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
-        using var reader = AccessReader.Open(temp);
-        int streamed = reader.StreamRows(tableName).Count();
+        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        int streamed = await reader.StreamRowsAsync(tableName, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(rowCount, streamed);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void OverflowRows_LargeRowContent_IsPreserved(string path)
+    public async Task OverflowRows_LargeRowContent_IsPreserved(string path)
     {
         // Verify that the actual cell values survive an overflow round-trip
         string temp = CopyToTemp(path);
@@ -168,14 +169,14 @@ public sealed class OverflowRowTests : IDisposable
         string expectedText1 = new('Z', 200);
         string expectedText2 = new('Q', 200);
 
-        using (var writer = AccessWriter.Open(temp))
+        await using (var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRow(tableName, new object[] { 1, expectedText1, expectedText2 });
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, new object[] { 1, expectedText1, expectedText2 }, TestContext.Current.CancellationToken);
         }
 
-        using var reader = AccessReader.Open(temp);
-        DataTable dt = reader.ReadTable(tableName)!;
+        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.Single(dt.Rows);
         Assert.Equal(1, dt.Rows[0]["Id"]);

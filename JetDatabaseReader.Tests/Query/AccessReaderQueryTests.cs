@@ -2,6 +2,7 @@ namespace JetDatabaseReader.Tests;
 
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
@@ -20,88 +21,89 @@ public class AccessReaderQueryTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void Execute_WithoutFilter_ReturnsAllRows(string path)
+    public async Task Execute_WithoutFilter_ReturnsAllRows(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
-        int expected = reader.StreamRows(table).Count();
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        int expected = await reader.StreamRowsAsync(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
-        IEnumerable<object[]> result = reader.Query(table).Execute();
+        IAsyncEnumerable<object[]> result = reader.Query(table).ExecuteAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(expected, result.Count());
+        Assert.Equal(expected, await result.CountAsync(TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void Execute_WithTake_LimitsResults(string path)
+    public async Task Execute_WithTake_LimitsResults(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        IEnumerable<object[]> result = reader.Query(table).Take(3).Execute();
+        IAsyncEnumerable<object[]> result = reader.Query(table).Take(3).ExecuteAsync(TestContext.Current.CancellationToken);
 
-        Assert.True(result.Count() <= 3);
+        Assert.True(await result.CountAsync(TestContext.Current.CancellationToken) <= 3);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void Execute_WithWhere_FiltersRows(string path)
+    public async Task Execute_WithWhere_FiltersRows(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         // Always-false filter should return zero rows
-        IEnumerable<object[]> none = reader.Query(table)
+        var none = await reader.Query(table)
             .Where(_ => false)
-            .Execute();
+            .ExecuteAsync(TestContext.Current.CancellationToken)
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(none);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void Execute_WithWhere_AlwaysTrue_ReturnsAllRows(string path)
+    public async Task Execute_WithWhere_AlwaysTrue_ReturnsAllRows(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
-        int expected = reader.StreamRows(table).Count();
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        int expected = await reader.StreamRowsAsync(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
-        IEnumerable<object[]> all = reader.Query(table)
+        IAsyncEnumerable<object[]> all = reader.Query(table)
             .Where(_ => true)
-            .Execute();
+            .ExecuteAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(expected, all.Count());
+        Assert.Equal(expected, await all.CountAsync(TestContext.Current.CancellationToken));
     }
 
     // ── Typed chain: FirstOrDefault ───────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void FirstOrDefault_WithoutFilter_ReturnsNonNull(string path)
+    public async Task FirstOrDefault_WithoutFilter_ReturnsNonNull(string path)
     {
-        var reader = db.Get(path);
-        TableStat? stat = reader.GetTableStats().FirstOrDefault(s => s.RowCount > 0);
+        var reader = await db.GetAsync(path);
+        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
             return; // all tables are empty — nothing to assert
         }
 
         string table = stat.Name;
-        object[]? first = reader.Query(table).FirstOrDefault();
+        object[]? first = await reader.Query(table).FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(first);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void FirstOrDefault_WhenNoRowMatches_ReturnsNull(string path)
+    public async Task FirstOrDefault_WhenNoRowMatches_ReturnsNull(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        object[]? result = reader.Query(table)
+        object[]? result = await reader.Query(table)
             .Where(_ => false)
-            .FirstOrDefault();
+            .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
         Assert.Null(result);
     }
@@ -110,25 +112,25 @@ public class AccessReaderQueryTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void Count_WithoutFilter_MatchesStreamRowsCount(string path)
+    public async Task Count_WithoutFilter_MatchesStreamRowsCount(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
-        int expected = reader.StreamRows(table).Count();
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        int expected = await reader.StreamRowsAsync(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
-        int count = reader.Query(table).Count();
+        int count = await reader.Query(table).CountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(expected, count);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void Count_WithAlwaysFalseFilter_ReturnsZero(string path)
+    public async Task Count_WithAlwaysFalseFilter_ReturnsZero(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        int count = reader.Query(table).Where(_ => false).Count();
+        int count = await reader.Query(table).Where(_ => false).CountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(0, count);
     }
@@ -137,52 +139,53 @@ public class AccessReaderQueryTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void ExecuteAsStrings_WithoutFilter_ReturnsAllRows(string path)
+    public async Task ExecuteAsStrings_WithoutFilter_ReturnsAllRows(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
-        int expected = reader.StreamRowsAsStrings(table).Count();
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        int expected = await reader.StreamRowsAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
-        IEnumerable<string[]> result = reader.Query(table).ExecuteAsStrings();
+        IAsyncEnumerable<string[]> result = reader.Query(table).ExecuteAsStringsAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(expected, result.Count());
+        Assert.Equal(expected, await result.CountAsync(TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void ExecuteAsStrings_WithTake_LimitsResults(string path)
+    public async Task ExecuteAsStrings_WithTake_LimitsResults(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        IEnumerable<string[]> result = reader.Query(table).Take(3).ExecuteAsStrings();
+        IAsyncEnumerable<string[]> result = reader.Query(table).Take(3).ExecuteAsStringsAsync(TestContext.Current.CancellationToken);
 
-        Assert.True(result.Count() <= 3);
+        Assert.True(await result.CountAsync(TestContext.Current.CancellationToken) <= 3);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void ExecuteAsStrings_WithWhereAsStrings_FiltersRows(string path)
+    public async Task ExecuteAsStrings_WithWhereAsStrings_FiltersRows(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         // Always-false filter should return zero rows
-        IEnumerable<string[]> none = reader.Query(table)
+        var none = await reader.Query(table)
             .WhereAsStrings(_ => false)
-            .ExecuteAsStrings();
+            .ExecuteAsStringsAsync(TestContext.Current.CancellationToken)
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(none);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void ExecuteAsStrings_AllCells_AreStringOrNull(string path)
+    public async Task ExecuteAsStrings_AllCells_AreStringOrNull(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        foreach (string[] row in reader.Query(table).Take(20).ExecuteAsStrings())
+        await foreach (string[] row in reader.Query(table).Take(20).ExecuteAsStringsAsync(TestContext.Current.CancellationToken))
         {
             foreach (string cell in row)
             {
@@ -195,31 +198,31 @@ public class AccessReaderQueryTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void FirstOrDefaultAsStrings_WithoutFilter_ReturnsNonNull(string path)
+    public async Task FirstOrDefaultAsStrings_WithoutFilter_ReturnsNonNull(string path)
     {
-        var reader = db.Get(path);
-        TableStat? stat = reader.GetTableStats().FirstOrDefault(s => s.RowCount > 0);
+        var reader = await db.GetAsync(path);
+        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
             return; // all tables are empty — nothing to assert
         }
 
         string table = stat.Name;
-        string[]? first = reader.Query(table).FirstOrDefaultAsStrings();
+        string[]? first = await reader.Query(table).FirstOrDefaultAsStringsAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(first);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void FirstOrDefaultAsStrings_WhenNoRowMatches_ReturnsNull(string path)
+    public async Task FirstOrDefaultAsStrings_WhenNoRowMatches_ReturnsNull(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        string[]? result = reader.Query(table)
+        string[]? result = await reader.Query(table)
             .WhereAsStrings(_ => false)
-            .FirstOrDefaultAsStrings();
+            .FirstOrDefaultAsStringsAsync(TestContext.Current.CancellationToken);
 
         Assert.Null(result);
     }
@@ -228,13 +231,13 @@ public class AccessReaderQueryTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void CountAsStrings_WithoutFilter_MatchesCount(string path)
+    public async Task CountAsStrings_WithoutFilter_MatchesCount(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        int typed = reader.Query(table).Count();
-        int string_ = reader.Query(table).CountAsStrings();
+        int typed = await reader.Query(table).CountAsync(TestContext.Current.CancellationToken);
+        int string_ = await reader.Query(table).CountAsStringsAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(typed, string_);
     }
@@ -243,16 +246,16 @@ public class AccessReaderQueryTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void Take_AppliedOnce_AffectsBothExecuteAndExecuteAsStrings(string path)
+    public async Task Take_AppliedOnce_AffectsBothExecuteAndExecuteAsStrings(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         const int limit = 2;
 
         TableQuery query = reader.Query(table).Take(limit);
 
-        Assert.True(query.Execute().Count() <= limit);
-        Assert.True(query.ExecuteAsStrings().Count() <= limit);
+        Assert.True(await query.ExecuteAsync(TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken) <= limit);
+        Assert.True(await query.ExecuteAsStringsAsync(TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken) <= limit);
     }
 
     // ── Generic chain: Execute<T> ─────────────────────────────────────
@@ -266,51 +269,52 @@ public class AccessReaderQueryTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void ExecuteGeneric_WithoutFilter_RowCountMatchesExecute(string path)
+    public async Task ExecuteGeneric_WithoutFilter_RowCountMatchesExecute(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        int typedCount = reader.Query(table).Execute().Count();
-        int genericCount = reader.Query(table).Execute<QueryRow>().Count();
+        int typedCount = await reader.Query(table).ExecuteAsync(TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
+        int genericCount = await reader.Query(table).ExecuteAsync<QueryRow>(TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(typedCount, genericCount);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void ExecuteGeneric_WithTake_LimitsResults(string path)
+    public async Task ExecuteGeneric_WithTake_LimitsResults(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        IEnumerable<QueryRow> result = reader.Query(table).Take(3).Execute<QueryRow>();
+        IAsyncEnumerable<QueryRow> result = reader.Query(table).Take(3).ExecuteAsync<QueryRow>(TestContext.Current.CancellationToken);
 
-        Assert.True(result.Count() <= 3);
+        Assert.True(await result.CountAsync(TestContext.Current.CancellationToken) <= 3);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void ExecuteGeneric_WithWhere_FiltersRows(string path)
+    public async Task ExecuteGeneric_WithWhere_FiltersRows(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        IEnumerable<QueryRow> none = reader.Query(table)
+        var none = await reader.Query(table)
             .Where(_ => false)
-            .Execute<QueryRow>();
+            .ExecuteAsync<QueryRow>(TestContext.Current.CancellationToken)
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(none);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void ExecuteGeneric_ReturnsNonNullInstances(string path)
+    public async Task ExecuteGeneric_ReturnsNonNullInstances(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        foreach (QueryRow item in reader.Query(table).Take(20).Execute<QueryRow>())
+        await foreach (QueryRow item in reader.Query(table).Take(20).ExecuteAsync<QueryRow>(TestContext.Current.CancellationToken))
         {
             Assert.NotNull(item);
         }
@@ -320,31 +324,31 @@ public class AccessReaderQueryTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void FirstOrDefaultGeneric_WithoutFilter_ReturnsNonNull(string path)
+    public async Task FirstOrDefaultGeneric_WithoutFilter_ReturnsNonNull(string path)
     {
-        var reader = db.Get(path);
-        TableStat? stat = reader.GetTableStats().FirstOrDefault(s => s.RowCount > 0);
+        var reader = await db.GetAsync(path);
+        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
         if (stat == null)
         {
             return;
         }
 
         string table = stat.Name;
-        QueryRow? first = reader.Query(table).FirstOrDefault<QueryRow>();
+        QueryRow? first = await reader.Query(table).FirstOrDefaultAsync<QueryRow>(TestContext.Current.CancellationToken);
 
         Assert.NotNull(first);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void FirstOrDefaultGeneric_WhenNoRowMatches_ReturnsNull(string path)
+    public async Task FirstOrDefaultGeneric_WhenNoRowMatches_ReturnsNull(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        QueryRow? result = reader.Query(table)
+        QueryRow? result = await reader.Query(table)
             .Where(_ => false)
-            .FirstOrDefault<QueryRow>();
+            .FirstOrDefaultAsync<QueryRow>(TestContext.Current.CancellationToken);
 
         Assert.Null(result);
     }
@@ -353,12 +357,12 @@ public class AccessReaderQueryTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void Take_AffectsExecuteGeneric(string path)
+    public async Task Take_AffectsExecuteGeneric(string path)
     {
-        var reader = db.Get(path);
-        string table = reader.ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         const int limit = 2;
 
-        Assert.True(reader.Query(table).Take(limit).Execute<QueryRow>().Count() <= limit);
+        Assert.True(await reader.Query(table).Take(limit).ExecuteAsync<QueryRow>(TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken) <= limit);
     }
 }

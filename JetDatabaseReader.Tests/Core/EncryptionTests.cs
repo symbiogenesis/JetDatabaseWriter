@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention
@@ -31,7 +32,7 @@ public sealed class EncryptionTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Encryption_OptionsAcceptPassword(string path)
+    public async Task Encryption_OptionsAcceptPassword(string path)
     {
         // AccessReaderOptions accepts a Password property for encrypted databases.
         // Non-encrypted databases ignore the password and open normally.
@@ -40,14 +41,14 @@ public sealed class EncryptionTests : IDisposable
             Password = SecureStringTestHelper.FromString("test123"),
         };
 
-        using var reader = AccessReader.Open(path, options);
-        var tables = reader.ListTables();
+        await using var reader = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(tables);
     }
 
     [Fact]
-    public void Encryption_Jet3Xor_DatabaseIsReadable()
+    public async Task Encryption_Jet3Xor_DatabaseIsReadable()
     {
         // Jet3 encryption uses a simple XOR mask applied to every page.
         // Verify the reader detects and transparently decrypts XOR-masked databases.
@@ -56,8 +57,8 @@ public sealed class EncryptionTests : IDisposable
         ApplyXorMask(temp, xorMask);
         SetJet3EncryptionFlag(temp);
 
-        using var reader = AccessReader.Open(temp);
-        var tables = reader.ListTables();
+        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
@@ -71,7 +72,7 @@ public sealed class EncryptionTests : IDisposable
     // flag 0x02 means full RC4 page encryption (covered in section 3).
 
     [Fact]
-    public void Encryption_Jet4Rc4_WithCorrectPassword_DatabaseIsReadable()
+    public async Task Encryption_Jet4Rc4_WithCorrectPassword_DatabaseIsReadable()
     {
         // Verify that a Jet4 database with the password flag set is readable
         // when the correct password is provided.
@@ -83,27 +84,27 @@ public sealed class EncryptionTests : IDisposable
             Password = SecureStringTestHelper.FromString("test"),
         };
 
-        using var reader = AccessReader.Open(temp, options);
-        var tables = reader.ListTables();
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
     }
 
     [Fact]
-    public void Encryption_Jet4Rc4_WithoutPassword_ThrowsDescriptiveError()
+    public async Task Encryption_Jet4Rc4_WithoutPassword_ThrowsDescriptiveError()
     {
         // Opening an encrypted database without a password throws with a
         // message that hints at providing a password.
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         SetJet4PasswordFlag(temp);
 
-        var ex = Assert.Throws<UnauthorizedAccessException>(() => AccessReader.Open(temp));
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Encryption_Jet4Rc4_WithWrongPassword_ThrowsMeaningfulError()
+    public async Task Encryption_Jet4Rc4_WithWrongPassword_ThrowsMeaningfulError()
     {
         // An incorrect password produces a clear error rather than corrupt data.
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
@@ -114,29 +115,29 @@ public sealed class EncryptionTests : IDisposable
             Password = SecureStringTestHelper.FromString("wrong_password"),
         };
 
-        var ex = Record.Exception(() =>
+        var ex = await Record.ExceptionAsync(async () =>
         {
-            using var reader = AccessReader.Open(temp, options);
-            reader.ListTables();
+            await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+            await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         });
 
         Assert.NotNull(ex);
     }
 
     [Fact]
-    public void Encryption_Jet4Rc4_WriterWithoutPassword_ThrowsDescriptiveError()
+    public async Task Encryption_Jet4Rc4_WriterWithoutPassword_ThrowsDescriptiveError()
     {
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         SetJet4PasswordFlag(temp);
 
-        var ex = Assert.Throws<UnauthorizedAccessException>(() =>
-            AccessWriter.Open(temp, new AccessWriterOptions { UseLockFile = false }));
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+            await AccessWriter.OpenAsync(temp, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken));
 
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Encryption_Jet4Rc4_WriterWithWrongPassword_ThrowsMeaningfulError()
+    public async Task Encryption_Jet4Rc4_WriterWithWrongPassword_ThrowsMeaningfulError()
     {
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         SetJet4PasswordFlag(temp);
@@ -147,12 +148,12 @@ public sealed class EncryptionTests : IDisposable
             Password = SecureStringTestHelper.FromString("wrong_password"),
         };
 
-        var ex = Assert.Throws<UnauthorizedAccessException>(() => AccessWriter.Open(temp, options));
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken));
         Assert.Contains("incorrect", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Encryption_Jet4Rc4_WriterWithCorrectPassword_Opens()
+    public async Task Encryption_Jet4Rc4_WriterWithCorrectPassword_Opens()
     {
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         SetJet4PasswordFlag(temp);
@@ -163,7 +164,7 @@ public sealed class EncryptionTests : IDisposable
             Password = SecureStringTestHelper.FromString("test"),
         };
 
-        using var writer = AccessWriter.Open(temp, options);
+        await using var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
         Assert.NotNull(writer);
     }
 
@@ -179,7 +180,7 @@ public sealed class EncryptionTests : IDisposable
     //   - Return correct, readable data from encrypted databases
 
     [Fact]
-    public void Rc4Decryption_EncryptedJet4_ReadTable_ReturnsDecryptedRows()
+    public async Task Rc4Decryption_EncryptedJet4_ReadTable_ReturnsDecryptedRows()
     {
         // A Jet4 database with RC4 encryption set and password provided
         // should return actual row data, not garbled bytes.
@@ -187,59 +188,59 @@ public sealed class EncryptionTests : IDisposable
         Rc4EncryptDataPages(temp, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        using var reader = AccessReader.Open(temp, options);
-        DataTable dt = reader.ReadTable("Product")!;
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync("Product", cancellationToken: TestContext.Current.CancellationToken))!;
 
         Assert.NotNull(dt);
         Assert.True(dt.Rows.Count > 0, "RC4-decrypted table should contain rows");
     }
 
     [Fact]
-    public void Rc4Decryption_EncryptedJet4_StreamRows_ReturnsDecryptedRows()
+    public async Task Rc4Decryption_EncryptedJet4_StreamRows_ReturnsDecryptedRows()
     {
         // Streaming should also work through RC4-encrypted pages.
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(temp, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        using var reader = AccessReader.Open(temp, options);
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
 
-        List<string> tables = reader.ListTables();
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        int rowCount = reader.StreamRows(tables[0]).Count();
+        int rowCount = await reader.StreamRowsAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
         Assert.True(rowCount > 0, "RC4-decrypted stream should yield rows");
     }
 
     [Fact]
-    public void Rc4Decryption_EncryptedJet4_GetStatistics_ReturnsValidStats()
+    public async Task Rc4Decryption_EncryptedJet4_GetStatistics_ReturnsValidStats()
     {
         // Statistics (catalog scan, row counts) should work on encrypted databases.
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(temp, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        using var reader = AccessReader.Open(temp, options);
-        DatabaseStatistics stats = reader.GetStatistics();
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
 
         Assert.True(stats.TableCount > 0, "Should report tables in encrypted database");
         Assert.True(stats.TotalRows > 0, "Should report rows in encrypted database");
     }
 
     [Fact]
-    public void Rc4Decryption_EncryptedJet4_ColumnMetadata_IsCorrect()
+    public async Task Rc4Decryption_EncryptedJet4_ColumnMetadata_IsCorrect()
     {
         // Column metadata from TDEF pages must be decrypted correctly.
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(temp, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        using var reader = AccessReader.Open(temp, options);
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
 
-        List<string> tables = reader.ListTables();
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        List<ColumnMetadata> meta = reader.GetColumnMetadata(tables[0]);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tables[0], TestContext.Current.CancellationToken);
         Assert.NotEmpty(meta);
         Assert.All(meta, col =>
         {
@@ -249,16 +250,16 @@ public sealed class EncryptionTests : IDisposable
     }
 
     [Fact]
-    public void Rc4Decryption_EncryptedJet4_ReadAllTables_Succeeds()
+    public async Task Rc4Decryption_EncryptedJet4_ReadAllTables_Succeeds()
     {
         // Bulk read of all tables should succeed on an RC4-encrypted database.
         string temp = CopyToTemp(TestDatabases.AdventureWorks);
         Rc4EncryptDataPages(temp, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        using var reader = AccessReader.Open(temp, options);
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
 
-        Dictionary<string, DataTable> all = reader.ReadAllTables();
+        Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotEmpty(all);
         Assert.All(all.Values, dt => Assert.NotNull(dt));
     }
@@ -280,7 +281,7 @@ public sealed class EncryptionTests : IDisposable
     // AES-encrypted file without needing Access installed.
 
     [Fact]
-    public void AesEncryption_AccdbWithPassword_Open_Succeeds()
+    public async Task AesEncryption_AccdbWithPassword_Open_Succeeds()
     {
         // An .accdb file encrypted with AES should open when the correct password is provided.
         string temp = CopyToTemp(TestDatabases.NorthwindTraders);
@@ -289,10 +290,10 @@ public sealed class EncryptionTests : IDisposable
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
 
         // Once AES is implemented, this should succeed without throwing.
-        var ex = Record.Exception(() =>
+        var ex = await Record.ExceptionAsync(async () =>
         {
-            using var reader = AccessReader.Open(temp, options);
-            reader.ListTables();
+            await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+            await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         });
 
         // Currently expected to fail; when implemented, ex should be null.
@@ -300,25 +301,25 @@ public sealed class EncryptionTests : IDisposable
     }
 
     [Fact]
-    public void AesEncryption_AccdbWithPassword_ReadTable_ReturnsRows()
+    public async Task AesEncryption_AccdbWithPassword_ReadTable_ReturnsRows()
     {
         // Reading table data through AES decryption should return valid rows.
         string temp = CopyToTemp(TestDatabases.NorthwindTraders);
         SetAccdbEncryptionHeader(temp);
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
-        using var reader = AccessReader.Open(temp, options);
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
 
-        List<string> tables = reader.ListTables();
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        DataTable dt = reader.ReadTable(tables[0])!;
+        DataTable dt = (await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.NotNull(dt);
         Assert.True(dt.Rows.Count > 0, "AES-decrypted table should contain rows");
     }
 
     [Fact]
-    public void AesEncryption_AccdbWithoutPassword_ThrowsUnauthorized()
+    public async Task AesEncryption_AccdbWithoutPassword_ThrowsUnauthorized()
     {
         // A genuine AES-encrypted .accdb (CFB magic in header) must throw
         // UnauthorizedAccessException whether or not a password is supplied,
@@ -326,12 +327,12 @@ public sealed class EncryptionTests : IDisposable
         string temp = CopyToTemp(TestDatabases.NorthwindTraders);
         SetAccdbEncryptionHeader(temp);
 
-        var ex = Assert.Throws<UnauthorizedAccessException>(() => AccessReader.Open(temp));
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void AesEncryption_AccdbWithWrongPassword_Throws()
+    public async Task AesEncryption_AccdbWithWrongPassword_Throws()
     {
         // Any password for a CFB-encrypted .accdb must throw, because decryption
         // is not implemented — the error should be clear rather than silent corruption.
@@ -340,161 +341,30 @@ public sealed class EncryptionTests : IDisposable
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("wrong_password") };
 
-        var ex = Record.Exception(() =>
+        var ex = await Record.ExceptionAsync(async () =>
         {
-            using var reader = AccessReader.Open(temp, options);
-            reader.ListTables();
+            await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+            await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         });
 
         Assert.NotNull(ex);
     }
 
     [Fact]
-    public void AesEncryption_AccdbStreamRows_ReturnsDecryptedData()
+    public async Task AesEncryption_AccdbStreamRows_ReturnsDecryptedData()
     {
         // Streaming through AES-encrypted pages should yield readable data.
         string temp = CopyToTemp(TestDatabases.NorthwindTraders);
         SetAccdbEncryptionHeader(temp);
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
-        using var reader = AccessReader.Open(temp, options);
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
 
-        List<string> tables = reader.ListTables();
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        int count = reader.StreamRows(tables[0]).Count();
+        int count = await reader.StreamRowsAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
         Assert.True(count > 0, "AES-decrypted stream should yield rows");
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // 5. GENUINE ACCDB AES FIXTURE — AesEncrypted.accdb
-    // ═══════════════════════════════════════════════════════════════════
-    //
-    // AesEncrypted.accdb was produced by:
-    //   $access.DBEngine.CompactDatabase(plain, dest, ";;", 4, ";pwd=secret")
-    // using Access 16 (16.0) COM automation with password "secret".
-    //
-    // Header characteristics:
-    //   • Version (0x14) = 0x03  →  Access 2010 / ACE 14 format
-    //   • First 4 bytes: 00 01 00 00  →  standard ACCDB header (NOT CFB magic)
-    //     Data pages are NOT AES-encrypted; the password is stored in the header
-    //     using an ACE-internal scheme the reader does not yet implement.
-    //   • The reader's ACCDB check is CFB-magic-based: this file has no CFB magic,
-    //     so it opens without password verification — the old-style ACE password
-    //     is silently bypassed.  This is a known limitation documented in the README.
-    //
-    // What passes now:
-    //   • The file opens without a password (pages are not encrypted).
-    //   • ListTables / ReadTable return the original NorthwindTraders data.
-    //
-    // What is still TDD red (pending ACE password verification):
-    //   • The reader does not detect that a password is required.
-    //   • A wrong password does not produce an error.
-
-    [Fact]
-    public void AesEncryption_GenuineAccdb_HasStandardAccdbHeader_NotCfbMagic()
-    {
-        // AesEncrypted.accdb starts with the standard ACCDB header (00 01 00 00),
-        // NOT the OLE2 CFB magic (D0 CF 11 E0).  This confirms the reader's
-        // CFB-based AES detection does NOT fire for this file — it is a
-        // "password-only" ACCDB, not a genuinely AES-page-encrypted file.
-        byte[] bytes = File.ReadAllBytes(TestDatabases.AesEncrypted);
-        Assert.Equal(0x00, bytes[0]);
-        Assert.Equal(0x01, bytes[1]);
-        Assert.Equal(0x00, bytes[2]);
-        Assert.Equal(0x00, bytes[3]);
-    }
-
-    [Fact]
-    public void AesEncryption_GenuineAccdb_Version_IsAccdbFormat()
-    {
-        // Sanity-check the fixture: version byte 0x14 must be >= 2 (ACCDB format).
-        byte[] bytes = File.ReadAllBytes(TestDatabases.AesEncrypted);
-        Assert.True(
-            bytes[0x14] >= 2,
-            $"Expected ACCDB version >= 2 at offset 0x14, got 0x{bytes[0x14]:X2}");
-    }
-
-    [Fact]
-    public void AesEncryption_GenuineAccdb_OpensWithoutPassword_BecauseNoPageEncryption()
-    {
-        // Legacy ACCDB password verification is now implemented.
-        // Opening without a password should fail.
-        Assert.Throws<UnauthorizedAccessException>(() =>
-            AccessReader.Open(TestDatabases.AesEncrypted));
-    }
-
-    [Fact]
-    public void AesEncryption_GenuineAccdb_ListTables_ReturnsNonEmpty()
-    {
-        // With the correct password, ListTables returns the original database contents.
-        using var reader = AccessReader.Open(
-            TestDatabases.AesEncrypted,
-            new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") });
-        List<string> tables = reader.ListTables();
-        Assert.NotEmpty(tables);
-    }
-
-    [Fact]
-    public void AesEncryption_GenuineAccdb_ReadTable_ReturnsRows()
-    {
-        // Data pages are readable with the correct password.
-        using var reader = AccessReader.Open(
-            TestDatabases.AesEncrypted,
-            new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") });
-        List<string> tables = reader.ListTables();
-        Assert.NotEmpty(tables);
-
-        DataTable dt = reader.ReadTable(tables[0])!;
-        Assert.NotNull(dt);
-        Assert.True(dt.Rows.Count > 0, "Table should contain rows from the source database.");
-    }
-
-    [Fact]
-    public void AesEncryption_GenuineAccdb_StreamRows_ReturnsRows()
-    {
-        // StreamRows works with the correct password.
-        using var reader = AccessReader.Open(
-            TestDatabases.AesEncrypted,
-            new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") });
-        List<string> tables = reader.ListTables();
-        Assert.NotEmpty(tables);
-
-        int rowCount = reader.StreamRows(tables[0]).Count();
-        Assert.True(rowCount > 0, "StreamRows should yield rows from the source database.");
-    }
-
-    [Fact]
-    public void AesEncryption_GenuineAccdb_GetStatistics_ReturnsValidStats()
-    {
-        // Statistics are available with the correct password.
-        using var reader = AccessReader.Open(
-            TestDatabases.AesEncrypted,
-            new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") });
-        DatabaseStatistics stats = reader.GetStatistics();
-
-        Assert.True(stats.TableCount > 0, "Should report tables.");
-        Assert.True(stats.TotalRows > 0, "Should report rows.");
-    }
-
-    // ── Legacy ACCDB password verification behavior ──
-
-    [Fact]
-    public void AesEncryption_GenuineAccdb_OldStylePassword_IsNotDetected_TDD()
-    {
-        // Legacy ACCDB passwords are detected; missing password should throw.
-        Assert.Throws<UnauthorizedAccessException>(() =>
-            AccessReader.Open(TestDatabases.AesEncrypted));
-    }
-
-    [Fact]
-    public void AesEncryption_GenuineAccdb_WithWrongPassword_DoesNotThrow_TDD()
-    {
-        // Wrong password should throw UnauthorizedAccessException.
-        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("definitely_wrong_password") };
-
-        Assert.Throws<UnauthorizedAccessException>(() =>
-            AccessReader.Open(TestDatabases.AesEncrypted, options));
     }
 
     // ═══════════════════════════════════════════════════════════════════

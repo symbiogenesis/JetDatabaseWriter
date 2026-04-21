@@ -2,6 +2,7 @@ namespace JetDatabaseReader.Tests;
 
 using System;
 using System.Data;
+using System.Threading.Tasks;
 using Xunit;
 
 /// <summary>
@@ -163,10 +164,10 @@ public class TableResultConversionTests
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void TableResult_ToDataTable_ColumnCount_MatchesHeaders(string path)
+    public async Task TableResult_ToDataTable_ColumnCount_MatchesHeaders(string path)
     {
-        using var reader = TestDatabases.Open(path);
-        TableResult result = reader.ReadTable(reader.ListTables()[0], maxRows: 50);
+        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        TableResult result = await reader.ReadTableAsync((await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0], 50, TestContext.Current.CancellationToken);
 
         DataTable dt = result.ToDataTable();
 
@@ -175,10 +176,10 @@ public class TableResultConversionTests
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void TableResult_ToDataTable_RowCount_MatchesResultRowCount(string path)
+    public async Task TableResult_ToDataTable_RowCount_MatchesResultRowCount(string path)
     {
-        using var reader = TestDatabases.Open(path);
-        TableResult result = reader.ReadTable(reader.ListTables()[0], maxRows: 50);
+        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        TableResult result = await reader.ReadTableAsync((await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0], 50, TestContext.Current.CancellationToken);
 
         DataTable dt = result.ToDataTable();
 
@@ -187,10 +188,10 @@ public class TableResultConversionTests
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void TableResult_ToDataTable_ColumnTypes_MatchSchemaTypes(string path)
+    public async Task TableResult_ToDataTable_ColumnTypes_MatchSchemaTypes(string path)
     {
-        using var reader = TestDatabases.Open(path);
-        TableResult result = reader.ReadTable(reader.ListTables()[0], maxRows: 1);
+        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        TableResult result = await reader.ReadTableAsync((await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0], 1, TestContext.Current.CancellationToken);
 
         DataTable dt = result.ToDataTable();
 
@@ -202,13 +203,13 @@ public class TableResultConversionTests
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void TableResult_ToDataTable_ColumnLayout_MatchesDirectReadTable(string path)
+    public async Task TableResult_ToDataTable_ColumnLayout_MatchesDirectReadTable(string path)
     {
-        using var reader = TestDatabases.Open(path);
-        string table = reader.ListTables()[0];
+        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        DataTable direct = reader.ReadTable(table)!;
-        DataTable converted = reader.ReadTable(table, maxRows: int.MaxValue).ToDataTable();
+        DataTable direct = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable converted = (await reader.ReadTableAsync(table, int.MaxValue, TestContext.Current.CancellationToken)).ToDataTable();
 
         Assert.Equal(direct.Columns.Count, converted.Columns.Count);
         for (int i = 0; i < direct.Columns.Count; i++)
@@ -324,10 +325,10 @@ public class TableResultConversionTests
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void StringTableResult_ToDataTable_ColumnCount_MatchesHeaders(string path)
+    public async Task StringTableResult_ToDataTable_ColumnCount_MatchesHeaders(string path)
     {
-        using var reader = TestDatabases.Open(path);
-        StringTableResult result = reader.ReadTableAsStrings(reader.ListTables()[0], maxRows: 50);
+        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        StringTableResult result = await reader.ReadTableAsStringsAsync((await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0], 50, TestContext.Current.CancellationToken);
 
         DataTable dt = result.ToDataTable();
 
@@ -336,10 +337,10 @@ public class TableResultConversionTests
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void StringTableResult_ToDataTable_RowCount_MatchesResultRowCount(string path)
+    public async Task StringTableResult_ToDataTable_RowCount_MatchesResultRowCount(string path)
     {
-        using var reader = TestDatabases.Open(path);
-        StringTableResult result = reader.ReadTableAsStrings(reader.ListTables()[0], maxRows: 50);
+        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        StringTableResult result = await reader.ReadTableAsStringsAsync((await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0], 50, TestContext.Current.CancellationToken);
 
         DataTable dt = result.ToDataTable();
 
@@ -348,13 +349,13 @@ public class TableResultConversionTests
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public void StringTableResult_ToDataTable_ColumnLayout_MatchesReadTableAsStringDataTable(string path)
+    public async Task StringTableResult_ToDataTable_ColumnLayout_MatchesReadTableAsStringDataTable(string path)
     {
-        using var reader = TestDatabases.Open(path);
-        string table = reader.ListTables()[0];
+        await using var reader = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        DataTable direct = reader.ReadTableAsStringDataTable(table)!;
-        DataTable converted = reader.ReadTableAsStrings(table, maxRows: int.MaxValue).ToDataTable();
+        DataTable direct = (await reader.ReadTableAsStringDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable converted = (await reader.ReadTableAsStringsAsync(table, int.MaxValue, TestContext.Current.CancellationToken)).ToDataTable();
 
         Assert.Equal(direct.Columns.Count, converted.Columns.Count);
         for (int i = 0; i < direct.Columns.Count; i++)

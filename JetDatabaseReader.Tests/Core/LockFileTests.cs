@@ -3,6 +3,7 @@ namespace JetDatabaseReader.Tests;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using Xunit;
 
 /// <summary>
@@ -19,52 +20,52 @@ public sealed class LockFileTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Reader_DefaultOptions_CreatesLockFile(string path)
+    public async Task Reader_DefaultOptions_CreatesLockFile(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
-        using var reader = AccessReader.Open(temp);
+        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(File.Exists(lockPath), $"Expected lockfile at {lockPath}");
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Reader_DefaultOptions_DeletesLockFileOnDispose(string path)
+    public async Task Reader_DefaultOptions_DeletesLockFileOnDispose(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
-        var reader = AccessReader.Open(temp);
-        reader.Dispose();
+        var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        await reader.DisposeAsync();
 
         Assert.False(File.Exists(lockPath), $"Lockfile should be deleted after dispose: {lockPath}");
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Reader_UseLockFileTrue_CreatesLockFile(string path)
+    public async Task Reader_UseLockFileTrue_CreatesLockFile(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         var options = new AccessReaderOptions { UseLockFile = true };
 
-        using var reader = AccessReader.Open(temp, options);
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
 
         Assert.True(File.Exists(lockPath), $"Expected lockfile at {lockPath}");
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Reader_UseLockFileTrue_DeletesLockFileOnDispose(string path)
+    public async Task Reader_UseLockFileTrue_DeletesLockFileOnDispose(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         var options = new AccessReaderOptions { UseLockFile = true };
 
-        var reader = AccessReader.Open(temp, options);
-        reader.Dispose();
+        var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        await reader.DisposeAsync();
 
         Assert.False(File.Exists(lockPath), $"Lockfile should be deleted after dispose: {lockPath}");
     }
@@ -73,31 +74,31 @@ public sealed class LockFileTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Reader_UseLockFileFalse_DoesNotCreateLockFile(string path)
+    public async Task Reader_UseLockFileFalse_DoesNotCreateLockFile(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         var options = new AccessReaderOptions { UseLockFile = false };
 
-        using var reader = AccessReader.Open(temp, options);
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
 
         Assert.False(File.Exists(lockPath), $"No lockfile should exist when UseLockFile=false: {lockPath}");
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Reader_UseLockFileFalse_DoesNotDeletePreExistingLockFile(string path)
+    public async Task Reader_UseLockFileFalse_DoesNotDeletePreExistingLockFile(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         // Pre-create a lockfile to ensure it is NOT deleted when UseLockFile=false
-        File.WriteAllText(lockPath, "pre-existing");
+        await File.WriteAllTextAsync(lockPath, "pre-existing", TestContext.Current.CancellationToken);
         _tempFiles.Add(lockPath);
 
         var options = new AccessReaderOptions { UseLockFile = false };
-        var reader = AccessReader.Open(temp, options);
-        reader.Dispose();
+        var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        await reader.DisposeAsync();
 
         Assert.True(File.Exists(lockPath), "Pre-existing lockfile should not be deleted when UseLockFile=false");
     }
@@ -105,9 +106,9 @@ public sealed class LockFileTests : IDisposable
     // ── Reader: lockfile extension ────────────────────────────────────
 
     [Fact]
-    public void Reader_MdbFile_CreatesLdbLockFile()
+    public async Task Reader_MdbFile_CreatesLdbLockFile()
     {
-        string? mdbPath = FindFirstExisting(".mdb");
+        string? mdbPath = await FindFirstExistingAsync(".mdb");
         if (mdbPath == null)
         {
             return; // skip if no .mdb test database
@@ -116,15 +117,15 @@ public sealed class LockFileTests : IDisposable
         string temp = CopyToTemp(mdbPath);
         string lockPath = Path.ChangeExtension(temp, ".ldb");
 
-        using var reader = AccessReader.Open(temp);
+        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(File.Exists(lockPath), "Expected .ldb lockfile for .mdb database");
     }
 
     [Fact]
-    public void Reader_AccdbFile_CreatesLaccdbLockFile()
+    public async Task Reader_AccdbFile_CreatesLaccdbLockFile()
     {
-        string? accdbPath = FindFirstExisting(".accdb");
+        string? accdbPath = await FindFirstExistingAsync(".accdb");
         if (accdbPath == null)
         {
             return; // skip if no .accdb test database
@@ -133,7 +134,7 @@ public sealed class LockFileTests : IDisposable
         string temp = CopyToTemp(accdbPath);
         string lockPath = Path.ChangeExtension(temp, ".laccdb");
 
-        using var reader = AccessReader.Open(temp);
+        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(File.Exists(lockPath), "Expected .laccdb lockfile for .accdb database");
     }
@@ -142,52 +143,52 @@ public sealed class LockFileTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Writer_DefaultOptions_CreatesLockFile(string path)
+    public async Task Writer_DefaultOptions_CreatesLockFile(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
-        using var writer = AccessWriter.Open(temp);
+        await using var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(File.Exists(lockPath), $"Expected lockfile at {lockPath}");
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Writer_DefaultOptions_DeletesLockFileOnDispose(string path)
+    public async Task Writer_DefaultOptions_DeletesLockFileOnDispose(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
-        var writer = AccessWriter.Open(temp);
-        writer.Dispose();
+        var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        await writer.DisposeAsync();
 
         Assert.False(File.Exists(lockPath), $"Lockfile should be deleted after dispose: {lockPath}");
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Writer_UseLockFileTrue_CreatesLockFile(string path)
+    public async Task Writer_UseLockFileTrue_CreatesLockFile(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         var options = new AccessWriterOptions { UseLockFile = true };
 
-        using var writer = AccessWriter.Open(temp, options);
+        await using var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
 
         Assert.True(File.Exists(lockPath), $"Expected lockfile at {lockPath}");
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Writer_UseLockFileTrue_DeletesLockFileOnDispose(string path)
+    public async Task Writer_UseLockFileTrue_DeletesLockFileOnDispose(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         var options = new AccessWriterOptions { UseLockFile = true };
 
-        var writer = AccessWriter.Open(temp, options);
-        writer.Dispose();
+        var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        await writer.DisposeAsync();
 
         Assert.False(File.Exists(lockPath), $"Lockfile should be deleted after dispose: {lockPath}");
     }
@@ -196,31 +197,31 @@ public sealed class LockFileTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Writer_UseLockFileFalse_DoesNotCreateLockFile(string path)
+    public async Task Writer_UseLockFileFalse_DoesNotCreateLockFile(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
         var options = new AccessWriterOptions { UseLockFile = false };
 
-        using var writer = AccessWriter.Open(temp, options);
+        await using var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
 
         Assert.False(File.Exists(lockPath), $"No lockfile should exist when UseLockFile=false: {lockPath}");
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Writer_UseLockFileFalse_DoesNotDeletePreExistingLockFile(string path)
+    public async Task Writer_UseLockFileFalse_DoesNotDeletePreExistingLockFile(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         // Pre-create a lockfile to ensure it is NOT deleted when UseLockFile=false
-        File.WriteAllText(lockPath, "pre-existing");
+        await File.WriteAllTextAsync(lockPath, "pre-existing", TestContext.Current.CancellationToken);
         _tempFiles.Add(lockPath);
 
         var options = new AccessWriterOptions { UseLockFile = false };
-        var writer = AccessWriter.Open(temp, options);
-        writer.Dispose();
+        var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+        await writer.DisposeAsync();
 
         Assert.True(File.Exists(lockPath), "Pre-existing lockfile should not be deleted when UseLockFile=false");
     }
@@ -228,9 +229,9 @@ public sealed class LockFileTests : IDisposable
     // ── Writer: lockfile extension ────────────────────────────────────
 
     [Fact]
-    public void Writer_MdbFile_CreatesLdbLockFile()
+    public async Task Writer_MdbFile_CreatesLdbLockFile()
     {
-        string? mdbPath = FindFirstExisting(".mdb");
+        string? mdbPath = await FindFirstExistingAsync(".mdb");
         if (mdbPath == null)
         {
             return; // skip if no .mdb test database
@@ -239,15 +240,15 @@ public sealed class LockFileTests : IDisposable
         string temp = CopyToTemp(mdbPath);
         string lockPath = Path.ChangeExtension(temp, ".ldb");
 
-        using var writer = AccessWriter.Open(temp);
+        await using var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(File.Exists(lockPath), "Expected .ldb lockfile for .mdb database");
     }
 
     [Fact]
-    public void Writer_AccdbFile_CreatesLaccdbLockFile()
+    public async Task Writer_AccdbFile_CreatesLaccdbLockFile()
     {
-        string? accdbPath = FindFirstExisting(".accdb");
+        string? accdbPath = await FindFirstExistingAsync(".accdb");
         if (accdbPath == null)
         {
             return; // skip if no .accdb test database
@@ -256,7 +257,7 @@ public sealed class LockFileTests : IDisposable
         string temp = CopyToTemp(accdbPath);
         string lockPath = Path.ChangeExtension(temp, ".laccdb");
 
-        using var writer = AccessWriter.Open(temp);
+        await using var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(File.Exists(lockPath), "Expected .laccdb lockfile for .accdb database");
     }
@@ -265,14 +266,14 @@ public sealed class LockFileTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Writer_DisposeTwice_WithLockFile_DoesNotThrow(string path)
+    public async Task Writer_DisposeTwice_WithLockFile_DoesNotThrow(string path)
     {
         string temp = CopyToTemp(path);
         var options = new AccessWriterOptions { UseLockFile = false };
-        var writer = AccessWriter.Open(temp, options);
+        var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
 
-        writer.Dispose();
-        var ex = Record.Exception(() => writer.Dispose());
+        await writer.DisposeAsync();
+        var ex = await Record.ExceptionAsync(async () => await writer.DisposeAsync());
 
         Assert.Null(ex);
     }
@@ -281,41 +282,41 @@ public sealed class LockFileTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Writer_RespectExistingLockFileTrue_ThrowsWhenLockFileExists(string path)
+    public async Task Writer_RespectExistingLockFileTrue_ThrowsWhenLockFileExists(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         // Pre-create a lockfile to simulate another process
-        File.WriteAllText(lockPath, "in-use");
+        await File.WriteAllTextAsync(lockPath, "in-use", TestContext.Current.CancellationToken);
         _tempFiles.Add(lockPath);
 
         var options = new AccessWriterOptions { UseLockFile = true, RespectExistingLockFile = true };
 
-        Assert.Throws<IOException>(() => AccessWriter.Open(temp, options));
+        await Assert.ThrowsAsync<IOException>(async () => await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Writer_RespectExistingLockFileFalse_OverwritesExistingLockFile(string path)
+    public async Task Writer_RespectExistingLockFileFalse_OverwritesExistingLockFile(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
 
         // Pre-create a lockfile to simulate another process
-        File.WriteAllText(lockPath, "in-use");
+        await File.WriteAllTextAsync(lockPath, "in-use", TestContext.Current.CancellationToken);
         _tempFiles.Add(lockPath);
 
         var options = new AccessWriterOptions { UseLockFile = true, RespectExistingLockFile = false };
 
-        using var writer = AccessWriter.Open(temp, options);
+        await using var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
 
         Assert.True(File.Exists(lockPath), "Lockfile should still exist after overwrite");
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Writer_RespectExistingLockFileTrue_ThrowsWhenLockPathIsDirectory(string path)
+    public async Task Writer_RespectExistingLockFileTrue_ThrowsWhenLockPathIsDirectory(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
@@ -329,7 +330,7 @@ public sealed class LockFileTests : IDisposable
                 RespectExistingLockFile = true,
             };
 
-            Exception ex = Assert.ThrowsAny<Exception>(() => AccessWriter.Open(temp, options));
+            Exception ex = await Assert.ThrowsAnyAsync<Exception>(async () => await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken));
             Assert.True(
                 ex is IOException || ex is UnauthorizedAccessException,
                 $"Expected IOException or UnauthorizedAccessException, got {ex.GetType().Name}");
@@ -342,7 +343,7 @@ public sealed class LockFileTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Writer_RespectExistingLockFileFalse_ContinuesWhenLockPathIsDirectory(string path)
+    public async Task Writer_RespectExistingLockFileFalse_ContinuesWhenLockPathIsDirectory(string path)
     {
         string temp = CopyToTemp(path);
         string lockPath = GetExpectedLockPath(temp);
@@ -356,7 +357,7 @@ public sealed class LockFileTests : IDisposable
                 RespectExistingLockFile = false,
             };
 
-            using var writer = AccessWriter.Open(temp, options);
+            await using var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
             Assert.True(Directory.Exists(lockPath));
         }
         finally
@@ -412,7 +413,7 @@ public sealed class LockFileTests : IDisposable
         return Path.ChangeExtension(dbPath, lockExt);
     }
 
-    private static string? FindFirstExisting(string extension)
+    private static async ValueTask<string?> FindFirstExistingAsync(string extension)
     {
         string dbDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases");
         if (!Directory.Exists(dbDir))
@@ -423,7 +424,7 @@ public sealed class LockFileTests : IDisposable
         string[] files = Directory.GetFiles(dbDir, $"*{extension}");
         foreach (string f in files)
         {
-            if (TestDatabases.IsReadable(f))
+            if (await TestDatabases.IsReadableAsync(f))
             {
                 return f;
             }

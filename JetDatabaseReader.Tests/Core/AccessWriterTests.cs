@@ -27,36 +27,25 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Open_WithValidPath_ReturnsNonNullWriter(string path)
+    public async Task Open_WithValidPath_ReturnsNonNullWriter(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
         Assert.NotNull(writer);
     }
 
     [Fact]
-    public void Open_WithMissingFile_ThrowsFileNotFoundException()
+    public async Task Open_WithMissingFile_ThrowsFileNotFoundException()
     {
-        Assert.Throws<FileNotFoundException>(() => AccessWriter.Open(@"C:\nonexistent\fake.mdb"));
+        await Assert.ThrowsAsync<FileNotFoundException>(async () => await AccessWriter.OpenAsync(@"C:\nonexistent\fake.mdb", cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
-    public void Open_WithNullPath_ThrowsArgumentException()
+    public async Task Open_WithNullPath_ThrowsArgumentException()
     {
-        Assert.Throws<ArgumentException>(() => AccessWriter.Open(null!));
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task OpenAsync_WithValidPath_ReturnsNonNullWriter(string path)
-    {
-        string temp = CopyToTemp(path);
-
-        using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-
-        Assert.NotNull(writer);
+        await Assert.ThrowsAsync<ArgumentException>(async () => await AccessWriter.OpenAsync(null!, cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -71,20 +60,6 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
     }
 
     [Fact]
-    public async Task OpenAsync_WithMissingFile_ThrowsFileNotFoundException()
-    {
-        await Assert.ThrowsAsync<FileNotFoundException>(() =>
-            AccessWriter.OpenAsync(@"C:\nonexistent\fake.mdb", cancellationToken: TestContext.Current.CancellationToken).AsTask());
-    }
-
-    [Fact]
-    public async Task OpenAsync_WithNullPath_ThrowsArgumentException()
-    {
-        await Assert.ThrowsAsync<ArgumentException>(() =>
-            AccessWriter.OpenAsync(null!, cancellationToken: TestContext.Current.CancellationToken).AsTask());
-    }
-
-    [Fact]
     public async Task OpenAsync_WhenCancelled_ThrowsOperationCanceledException()
     {
         using var cts = new CancellationTokenSource();
@@ -96,26 +71,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Dispose_CalledTwice_DoesNotThrow(string path)
-    {
-        string temp = CopyToTemp(path);
-        var writer = OpenWriter(temp);
-
-        writer.Dispose();
-        var ex = Record.Exception(() => writer.Dispose());
-
-        Assert.Null(ex);
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task DisposeAsync_CalledTwice_DoesNotThrow(string path)
+    public async Task Dispose_CalledTwice_DoesNotThrow(string path)
     {
         string temp = CopyToTemp(path);
         var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
         await writer.DisposeAsync();
-        Exception? ex = await Record.ExceptionAsync(() => writer.DisposeAsync().AsTask());
+        var ex = await Record.ExceptionAsync(() => writer.DisposeAsync().AsTask());
 
         Assert.Null(ex);
     }
@@ -129,82 +91,18 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
         await writer.DisposeAsync();
 
-        Assert.Throws<ObjectDisposedException>(() => writer.InsertRow("AnyTable", new object[] { 1 }));
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () => await writer.InsertRowAsync("AnyTable", new object[] { 1 }, TestContext.Current.CancellationToken));
     }
 
     // ── InsertRow ─────────────────────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRow_SingleRow_IncreasesRowCount(string path)
+    public async Task InsertRow_SingleRow_IncreasesRowCount(string path)
     {
         string temp = CopyToTemp(path);
-        var cachedReader = db.Get(path);
-        string tableName = cachedReader.ListTables()[0];
-        long originalCount = cachedReader.GetRealRowCount(tableName);
-
-        var columns = cachedReader.GetColumnMetadata(tableName);
-        object[] newRow = BuildDummyRow(columns);
-
-        using (var writer = OpenWriter(temp))
-        {
-            writer.InsertRow(tableName, newRow);
-        }
-
-        using (var reader = OpenReader(temp))
-        {
-            long newCount = reader.GetRealRowCount(tableName);
-            Assert.Equal(originalCount + 1, newCount);
-        }
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRow_NullValues_ThrowsArgumentNullException(string path)
-    {
-        string temp = CopyToTemp(path);
-        string tableName = db.Get(path).ListTables()[0];
-
-        using var writer = OpenWriter(temp);
-
-        Assert.Throws<ArgumentNullException>(() => writer.InsertRow(tableName, null!));
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRow_InsertedData_IsReadableBack(string path)
-    {
-        string temp = CopyToTemp(path);
-        var cachedReader = db.Get(path);
-        string tableName = cachedReader.ListTables()[0];
-        var columns = cachedReader.GetColumnMetadata(tableName);
-
-        object[] newRow = BuildDummyRow(columns);
-
-        using (var writer = OpenWriter(temp))
-        {
-            writer.InsertRow(tableName, newRow);
-        }
-
-        using (var reader = OpenReader(temp))
-        {
-            DataTable dt = reader.ReadTable(tableName)!;
-            Assert.True(dt.Rows.Count > 0);
-
-            // The last row should contain our inserted data
-            DataRow lastRow = dt.Rows[dt.Rows.Count - 1];
-            Assert.NotNull(lastRow);
-        }
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task InsertRowAsync_SingleRow_IncreasesRowCount(string path)
-    {
-        string temp = CopyToTemp(path);
-        var cachedReader = db.Get(path);
-        var tableNames = await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken);
-        string tableName = tableNames[0];
+        var cachedReader = await db.GetAsync(path);
+        string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         long originalCount = await cachedReader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
 
         var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
@@ -215,10 +113,50 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             await writer.InsertRowAsync(tableName, newRow, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
             long newCount = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(originalCount + 1, newCount);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task InsertRow_NullValues_ThrowsArgumentNullException(string path)
+    {
+        string temp = CopyToTemp(path);
+        var reader = await db.GetAsync(path);
+        string tableName = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<ArgumentNullException>(async () => await writer.InsertRowAsync(tableName, null!, TestContext.Current.CancellationToken));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task InsertRow_InsertedData_IsReadableBack(string path)
+    {
+        string temp = CopyToTemp(path);
+        var cachedReader = await db.GetAsync(path);
+        string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+
+        object[] newRow = BuildDummyRow(columns);
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.InsertRowAsync(tableName, newRow, TestContext.Current.CancellationToken);
+        }
+
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
+        {
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+            Assert.True(dt.Rows.Count > 0);
+
+            // The last row should contain our inserted data
+            DataRow lastRow = dt.Rows[dt.Rows.Count - 1];
+            Assert.NotNull(lastRow);
         }
     }
 
@@ -226,78 +164,61 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRows_MultiplRows_ReturnsCorrectInsertCount(string path)
+    public async Task InsertRows_MultiplRows_ReturnsCorrectInsertCount(string path)
     {
         string temp = CopyToTemp(path);
-        var cachedReader = db.Get(path);
-        string tableName = cachedReader.ListTables()[0];
-        var columns = cachedReader.GetColumnMetadata(tableName);
+        var cachedReader = await db.GetAsync(path);
+        string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
         var rows = Enumerable.Range(0, 5).Select(_ => BuildDummyRow(columns));
 
-        using var writer = OpenWriter(temp);
-        int inserted = writer.InsertRows(tableName, rows);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        int inserted = await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
 
         Assert.Equal(5, inserted);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRows_MultipleRows_IncreasesRowCount(string path)
+    public async Task InsertRows_MultipleRows_IncreasesRowCount(string path)
     {
         string temp = CopyToTemp(path);
-        var cachedReader = db.Get(path);
-        string tableName = cachedReader.ListTables()[0];
-        long originalCount = cachedReader.GetRealRowCount(tableName);
-        var columns = cachedReader.GetColumnMetadata(tableName);
+        var cachedReader = await db.GetAsync(path);
+        string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        long originalCount = await cachedReader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
+        var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
         var rows = Enumerable.Range(0, 3).Select(_ => BuildDummyRow(columns)).ToList();
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.InsertRows(tableName, rows);
+            await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            long newCount = reader.GetRealRowCount(tableName);
+            long newCount = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(originalCount + 3, newCount);
         }
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task InsertRowsAsync_MultipleRows_ReturnsCorrectInsertCount(string path)
+    public async Task InsertRow_UpdatesTDefRowCountMetadata(string path)
     {
         string temp = CopyToTemp(path);
-        var cachedReader = db.Get(path);
-        string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        string tableName = await SeedUpdateTableAsync(temp);
 
-        var rows = Enumerable.Range(0, 4).Select(_ => BuildDummyRow(columns));
-
-        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        int inserted = await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
-
-        Assert.Equal(4, inserted);
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRow_UpdatesTDefRowCountMetadata(string path)
-    {
-        string temp = CopyToTemp(path);
-        string tableName = SeedUpdateTable(temp);
-
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.InsertRow(tableName, new object[] { 4, "Delta" });
+            await writer.InsertRowAsync(tableName, new object[] { 4, "Delta" }, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            long real = reader.GetRealRowCount(tableName);
-            long tdef = GetStatsRowCount(reader, tableName);
+            long real = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
+            long tdef = await GetStatsRowCountAsync(reader, tableName);
 
             Assert.Equal(4, real);
             Assert.Equal(real, tdef);
@@ -308,35 +229,35 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void UpdateRows_MatchingRows_ReturnsNonZeroCount(string path)
+    public async Task UpdateRows_MatchingRows_ReturnsNonZeroCount(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName = SeedUpdateTable(temp);
+        string tableName = await SeedUpdateTableAsync(temp);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         var updates = new Dictionary<string, object> { ["Label"] = "UPDATED_VALUE" };
 
-        int updated = writer.UpdateRows(tableName, "Id", 1, updates);
+        int updated = await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
         Assert.True(updated > 0);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void UpdateRows_MatchingRows_ChangesAreReadableBack(string path)
+    public async Task UpdateRows_MatchingRows_ChangesAreReadableBack(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName = SeedUpdateTable(temp);
+        string tableName = await SeedUpdateTableAsync(temp);
         const string sentinel = "WRITE_TEST_SENTINEL";
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             var updates = new Dictionary<string, object> { ["Label"] = sentinel };
-            writer.UpdateRows(tableName, "Id", 1, updates);
+            await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            DataTable dt = reader.ReadTable(tableName)!;
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
             bool found = dt.AsEnumerable().Any(row =>
                 row["Label"] is string s && s == sentinel);
             Assert.True(found);
@@ -345,66 +266,42 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void UpdateRows_DoesNotChangeRowCount(string path)
+    public async Task UpdateRows_DoesNotChangeRowCount(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName = SeedUpdateTable(temp);
+        string tableName = await SeedUpdateTableAsync(temp);
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             var updates = new Dictionary<string, object> { ["Label"] = "NO_COUNT_CHANGE" };
-            writer.UpdateRows(tableName, "Id", 1, updates);
+            await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            long newCount = reader.GetRealRowCount(tableName);
+            long newCount = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(3, newCount);
         }
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task UpdateRowsAsync_MatchingRows_ChangesAreReadableBack(string path)
+    public async Task UpdateRows_PreservesTDefRowCountMetadata(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName = SeedUpdateTable(temp);
-        const string sentinel = "ASYNC_UPDATED_VALUE";
+        string tableName = await SeedUpdateTableAsync(temp);
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            var updates = new Dictionary<string, object> { ["Label"] = sentinel };
-            int updated = await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
-            Assert.True(updated > 0);
-        }
-
-        using (var reader = OpenReader(temp))
-        {
-            DataTable dt = (await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
-            bool found = dt.AsEnumerable().Any(row =>
-                row["Label"] is string s && s == sentinel);
-            Assert.True(found);
-        }
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void UpdateRows_PreservesTDefRowCountMetadata(string path)
-    {
-        string temp = CopyToTemp(path);
-        string tableName = SeedUpdateTable(temp);
-
-        using (var writer = OpenWriter(temp))
-        {
             var updates = new Dictionary<string, object> { ["Label"] = "UPDATED" };
-            int updated = writer.UpdateRows(tableName, "Id", 1, updates);
+            int updated = await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            long real = reader.GetRealRowCount(tableName);
-            long tdef = GetStatsRowCount(reader, tableName);
+            long real = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
+            long tdef = await GetStatsRowCountAsync(reader, tableName);
 
             Assert.Equal(3, real);
             Assert.Equal(real, tdef);
@@ -415,15 +312,15 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DeleteRows_MatchingRows_DecreasesRowCount(string path)
+    public async Task DeleteRows_MatchingRows_DecreasesRowCount(string path)
     {
         string temp = CopyToTemp(path);
-        var cachedReader = db.Get(path);
-        string tableName = cachedReader.ListTables()[0];
-        long originalCount = cachedReader.GetRealRowCount(tableName);
-        var columns = cachedReader.GetColumnMetadata(tableName);
+        var cachedReader = await db.GetAsync(path);
+        string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        long originalCount = await cachedReader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
+        var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
-        DataTable dt = cachedReader.ReadTable(tableName)!;
+        DataTable dt = (await cachedReader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
         if (dt.Rows.Count == 0)
         {
             return;
@@ -433,42 +330,43 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         object predicateVal = dt.Rows[0][0];
 
         int deleted;
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            deleted = writer.DeleteRows(tableName, predicateCol, predicateVal);
+            deleted = await writer.DeleteRowsAsync(tableName, predicateCol, predicateVal, TestContext.Current.CancellationToken);
         }
 
         Assert.True(deleted > 0);
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            long newCount = reader.GetRealRowCount(tableName);
+            long newCount = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(originalCount - deleted, newCount);
         }
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DeleteRows_NonExistentColumn_ThrowsArgumentException(string path)
+    public async Task DeleteRows_NonExistentColumn_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName = db.Get(path).ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string tableName = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<ArgumentException>(() => writer.DeleteRows(tableName, "NONEXISTENT_COLUMN_XYZ", "IMPOSSIBLE_VALUE_12345"));
+        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.DeleteRowsAsync(tableName, "NONEXISTENT_COLUMN_XYZ", "IMPOSSIBLE_VALUE_12345", TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DeleteRows_DeletedRows_AreNotReadableBack(string path)
+    public async Task DeleteRows_DeletedRows_AreNotReadableBack(string path)
     {
         string temp = CopyToTemp(path);
-        var cachedReader = db.Get(path);
-        string tableName = cachedReader.ListTables()[0];
-        var columns = cachedReader.GetColumnMetadata(tableName);
+        var cachedReader = await db.GetAsync(path);
+        string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
-        DataTable originalDt = cachedReader.ReadTable(tableName)!;
+        DataTable originalDt = (await cachedReader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
         if (originalDt.Rows.Count == 0)
         {
             return;
@@ -477,14 +375,14 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         string predicateCol = columns[0].Name;
         object predicateVal = originalDt.Rows[0][0];
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.DeleteRows(tableName, predicateCol, predicateVal);
+            await writer.DeleteRowsAsync(tableName, predicateCol, predicateVal, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            DataTable dt = reader.ReadTable(tableName)!;
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
             bool stillPresent = dt.AsEnumerable().Any(row =>
             {
                 object val = row[predicateCol];
@@ -501,33 +399,10 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DeleteRows_UpdatesTDefRowCountMetadata(string path)
+    public async Task DeleteRows_UpdatesTDefRowCountMetadata(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName = SeedUpdateTable(temp);
-
-        using (var writer = OpenWriter(temp))
-        {
-            int deleted = writer.DeleteRows(tableName, "Id", 2);
-            Assert.Equal(1, deleted);
-        }
-
-        using (var reader = OpenReader(temp))
-        {
-            long real = reader.GetRealRowCount(tableName);
-            long tdef = GetStatsRowCount(reader, tableName);
-
-            Assert.Equal(2, real);
-            Assert.Equal(real, tdef);
-        }
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task DeleteRowsAsync_MatchingRows_DecreasesRowCount(string path)
-    {
-        string temp = CopyToTemp(path);
-        string tableName = SeedUpdateTable(temp);
+        string tableName = await SeedUpdateTableAsync(temp);
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
@@ -535,10 +410,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             Assert.Equal(1, deleted);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            long count = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
-            Assert.Equal(2, count);
+            long real = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
+            long tdef = await GetStatsRowCountAsync(reader, tableName);
+
+            Assert.Equal(2, real);
+            Assert.Equal(real, tdef);
         }
     }
 
@@ -546,7 +424,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_NewTable_AppearsInListTables(string path)
+    public async Task CreateTable_NewTable_AppearsInListTables(string path)
     {
         string temp = CopyToTemp(path);
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
@@ -558,21 +436,21 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Created", typeof(DateTime)),
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(newTableName, columns);
+            await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            var tables = reader.ListTables();
+            var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.Contains(newTableName, tables);
         }
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_NewTable_HasCorrectColumnCount(string path)
+    public async Task CreateTable_NewTable_HasCorrectColumnCount(string path)
     {
         string temp = CopyToTemp(path);
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
@@ -584,21 +462,21 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Amount", typeof(decimal)),
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(newTableName, columns);
+            await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            var meta = reader.GetColumnMetadata(newTableName);
+            var meta = await reader.GetColumnMetadataAsync(newTableName, TestContext.Current.CancellationToken);
             Assert.Equal(3, meta.Count);
         }
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_NewTable_StartsEmpty(string path)
+    public async Task CreateTable_NewTable_StartsEmpty(string path)
     {
         string temp = CopyToTemp(path);
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
@@ -609,21 +487,21 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Value", typeof(string), maxLength: 255),
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(newTableName, columns);
+            await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            long count = reader.GetRealRowCount(newTableName);
+            long count = await reader.GetRealRowCountAsync(newTableName, TestContext.Current.CancellationToken);
             Assert.Equal(0, count);
         }
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_ThenInsert_DataIsReadable(string path)
+    public async Task CreateTable_ThenInsert_DataIsReadable(string path)
     {
         string temp = CopyToTemp(path);
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
@@ -634,45 +512,20 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Label", typeof(string), maxLength: 100),
         };
 
-        using (var writer = OpenWriter(temp))
-        {
-            writer.CreateTable(newTableName, columns);
-            writer.InsertRow(newTableName, new object[] { 1, "Hello" });
-            writer.InsertRow(newTableName, new object[] { 2, "World" });
-        }
-
-        using (var reader = OpenReader(temp))
-        {
-            long count = reader.GetRealRowCount(newTableName);
-            Assert.Equal(2, count);
-
-            DataTable dt = reader.ReadTable(newTableName)!;
-            Assert.Equal(2, dt.Rows.Count);
-        }
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task CreateTableAsync_NewTable_AppearsInListTables(string path)
-    {
-        string temp = CopyToTemp(path);
-        string newTableName = $"AsyncTable_{Guid.NewGuid():N}".Substring(0, 20);
-
-        var columns = new List<ColumnDefinition>
-        {
-            new("Id", typeof(int)),
-            new("Name", typeof(string), maxLength: 100),
-        };
-
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(newTableName, new object[] { 1, "Hello" }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(newTableName, new object[] { 2, "World" }, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-            Assert.Contains(newTableName, tables);
+            long count = await reader.GetRealRowCountAsync(newTableName, TestContext.Current.CancellationToken);
+            Assert.Equal(2, count);
+
+            DataTable dt = (await reader.ReadDataTableAsync(newTableName, cancellationToken: TestContext.Current.CancellationToken))!;
+            Assert.Equal(2, dt.Rows.Count);
         }
     }
 
@@ -680,7 +533,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DropTable_ExistingTable_RemovesFromListTables(string path)
+    public async Task DropTable_ExistingTable_RemovesFromListTables(string path)
     {
         string temp = CopyToTemp(path);
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
@@ -691,36 +544,37 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Id", typeof(int)),
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(newTableName, columns);
+            await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
         }
 
         // Verify it exists
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            Assert.Contains(newTableName, reader.ListTables());
+            Assert.Contains(newTableName, await reader.ListTablesAsync(TestContext.Current.CancellationToken));
         }
 
         // Drop it
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.DropTable(newTableName);
+            await writer.DropTableAsync(newTableName, TestContext.Current.CancellationToken);
         }
 
         // Verify it's gone
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            Assert.DoesNotContain(newTableName, reader.ListTables());
+            Assert.DoesNotContain(newTableName, await reader.ListTablesAsync(TestContext.Current.CancellationToken));
         }
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DropTable_DoesNotAffectOtherTables(string path)
+    public async Task DropTable_DoesNotAffectOtherTables(string path)
     {
         string temp = CopyToTemp(path);
-        List<string> originalTables = db.Get(path).ListTables();
+        var dbReader = await db.GetAsync(path);
+        List<string> originalTables = await dbReader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
         var columns = new List<ColumnDefinition>
@@ -728,19 +582,19 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Id", typeof(int)),
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(newTableName, columns);
+            await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
         }
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.DropTable(newTableName);
+            await writer.DropTableAsync(newTableName, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var tempReader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            var tables = reader.ListTables();
+            var tables = await tempReader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.Equivalent(originalTables, tables);
         }
     }
@@ -749,53 +603,42 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRow_AfterDispose_ThrowsObjectDisposedException(string path)
+    public async Task CreateTable_NullTableName_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
-        var writer = OpenWriter(temp);
-        writer.Dispose();
 
-        Assert.Throws<ObjectDisposedException>(() => writer.InsertRow("AnyTable", new object[] { 1 }));
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.CreateTableAsync(null!, new List<ColumnDefinition>(), TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_NullTableName_ThrowsArgumentException(string path)
+    public async Task CreateTable_NullColumns_ThrowsArgumentNullException(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<ArgumentException>(() => writer.CreateTable(null!, new List<ColumnDefinition>()));
+        await Assert.ThrowsAsync<ArgumentNullException>(async () => await writer.CreateTableAsync("Test", null!, TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_NullColumns_ThrowsArgumentNullException(string path)
+    public async Task DeleteRows_NullTableName_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<ArgumentNullException>(() => writer.CreateTable("Test", null!));
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DeleteRows_NullTableName_ThrowsArgumentException(string path)
-    {
-        string temp = CopyToTemp(path);
-
-        using var writer = OpenWriter(temp);
-
-        Assert.Throws<ArgumentException>(() => writer.DeleteRows(null!, "Col", "Val"));
+        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.DeleteRowsAsync(null!, "Col", "Val", TestContext.Current.CancellationToken));
     }
 
     // ── Roundtrip: multiple data types ────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_WithVariousTypes_ColumnsHaveCorrectClrTypes(string path)
+    public async Task CreateTable_WithVariousTypes_ColumnsHaveCorrectClrTypes(string path)
     {
         string temp = CopyToTemp(path);
         string newTableName = $"TypeTest_{Guid.NewGuid():N}".Substring(0, 20);
@@ -810,14 +653,14 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("DecimalCol", typeof(decimal)),
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(newTableName, columns);
+            await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            var meta = reader.GetColumnMetadata(newTableName);
+            var meta = await reader.GetColumnMetadataAsync(newTableName, TestContext.Current.CancellationToken);
             Assert.Equal(6, meta.Count);
             Assert.Equal(typeof(int), meta[0].ClrType);
             Assert.Equal(typeof(string), meta[1].ClrType);
@@ -830,7 +673,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRow_WithVariousTypes_ValuesRoundtrip(string path)
+    public async Task InsertRow_WithVariousTypes_ValuesRoundtrip(string path)
     {
         string temp = CopyToTemp(path);
         string newTableName = $"TypeRT_{Guid.NewGuid():N}".Substring(0, 18);
@@ -846,15 +689,15 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
         var date = new DateTime(2025, 6, 15, 10, 30, 0);
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(newTableName, columns);
-            writer.InsertRow(newTableName, new object[] { 42, "Test Value", date, 3.14, true });
+            await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(newTableName, new object[] { 42, "Test Value", date, 3.14, true }, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            DataTable dt = reader.ReadTable(newTableName)!;
+            DataTable dt = (await reader.ReadDataTableAsync(newTableName, cancellationToken: TestContext.Current.CancellationToken))!;
             Assert.Equal(1, dt.Rows.Count);
 
             DataRow row = dt.Rows[0];
@@ -877,7 +720,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRowGeneric_SingleRow_IncreasesRowCount(string path)
+    public async Task InsertRowGeneric_SingleRow_IncreasesRowCount(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"GenIns_{Guid.NewGuid():N}".Substring(0, 18);
@@ -888,22 +731,22 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Label", typeof(string), maxLength: 100),
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRow(tableName, new WriterPoco { Id = 1, Label = "Hello" });
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, new WriterPoco { Id = 1, Label = "Hello" }, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            long count = reader.GetRealRowCount(tableName);
+            long count = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(1, count);
         }
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRowGeneric_DataIsReadableBack(string path)
+    public async Task InsertRowGeneric_DataIsReadableBack(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"GenRT_{Guid.NewGuid():N}".Substring(0, 18);
@@ -914,15 +757,15 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Label", typeof(string), maxLength: 100),
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRow(tableName, new WriterPoco { Id = 42, Label = "Roundtrip" });
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, new WriterPoco { Id = 42, Label = "Roundtrip" }, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            List<WriterPoco> items = reader.ReadTable<WriterPoco>(tableName, 100);
+            List<WriterPoco> items = await reader.ReadTableAsync<WriterPoco>(tableName, 100, TestContext.Current.CancellationToken);
             Assert.Single(items);
             Assert.Equal(42, items[0].Id);
             Assert.Equal("Roundtrip", items[0].Label);
@@ -931,21 +774,22 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRowGeneric_NullItem_ThrowsArgumentNullException(string path)
+    public async Task InsertRowGeneric_NullItem_ThrowsArgumentNullException(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName = db.Get(path).ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string tableName = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<ArgumentNullException>(() => writer.InsertRow<WriterPoco>(tableName, null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(async () => await writer.InsertRowAsync<WriterPoco>(tableName, null!, TestContext.Current.CancellationToken));
     }
 
     // ── InsertRows<T> (generic bulk) ──────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRowsGeneric_ReturnsCorrectInsertCount(string path)
+    public async Task InsertRowsGeneric_ReturnsCorrectInsertCount(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"GenBulk_{Guid.NewGuid():N}".Substring(0, 18);
@@ -958,16 +802,16 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
         var items = Enumerable.Range(1, 5).Select(i => new WriterPoco { Id = i, Label = $"Item{i}" });
 
-        using var writer = OpenWriter(temp);
-        writer.CreateTable(tableName, columns);
-        int inserted = writer.InsertRows(tableName, items);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+        int inserted = await writer.InsertRowsAsync(tableName, items, TestContext.Current.CancellationToken);
 
         Assert.Equal(5, inserted);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRowsGeneric_IncreasesRowCount(string path)
+    public async Task InsertRowsGeneric_IncreasesRowCount(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"GenCnt_{Guid.NewGuid():N}".Substring(0, 18);
@@ -980,22 +824,22 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
         var items = Enumerable.Range(1, 3).Select(i => new WriterPoco { Id = i, Label = $"Row{i}" }).ToList();
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRows(tableName, items);
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(tableName, items, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            long count = reader.GetRealRowCount(tableName);
+            long count = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(3, count);
         }
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRowsGeneric_DataIsReadableBack(string path)
+    public async Task InsertRowsGeneric_DataIsReadableBack(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"GenRB_{Guid.NewGuid():N}".Substring(0, 18);
@@ -1012,15 +856,15 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new() { Id = 20, Label = "Beta" },
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRows(tableName, items);
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(tableName, items, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            List<WriterPoco> readBack = reader.ReadTable<WriterPoco>(tableName, 100);
+            List<WriterPoco> readBack = await reader.ReadTableAsync<WriterPoco>(tableName, 100, TestContext.Current.CancellationToken);
             Assert.Equal(2, readBack.Count);
             Assert.Contains(readBack, p => p.Id == 10 && p.Label == "Alpha");
             Assert.Contains(readBack, p => p.Id == 20 && p.Label == "Beta");
@@ -1031,38 +875,39 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DropTable_NonExistentTable_ThrowsInvalidOperationException(string path)
+    public async Task DropTable_NonExistentTable_ThrowsInvalidOperationException(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<InvalidOperationException>(() => writer.DropTable("NoSuchTable_XYZ_999"));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.DropTableAsync("NoSuchTable_XYZ_999", TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void UpdateRows_NonExistentPredicateColumn_ThrowsArgumentException(string path)
+    public async Task UpdateRows_NonExistentPredicateColumn_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName = db.Get(path).ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string tableName = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         var updates = new Dictionary<string, object> { ["SomeCol"] = "value" };
 
-        Assert.Throws<ArgumentException>(() =>
-            writer.UpdateRows(tableName, "NONEXISTENT_COL_XYZ", "anything", updates));
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.UpdateRowsAsync(tableName, "NONEXISTENT_COL_XYZ", "anything", updates, TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void UpdateRows_NonExistentTargetColumn_ThrowsArgumentException(string path)
+    public async Task UpdateRows_NonExistentTargetColumn_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
-        var cachedReader = db.Get(path);
-        string tableName = cachedReader.ListTables()[0];
-        var columns = cachedReader.GetColumnMetadata(tableName);
-        DataTable dt = cachedReader.ReadTable(tableName)!;
+        var cachedReader = await db.GetAsync(path);
+        string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        DataTable dt = (await cachedReader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
         if (dt.Rows.Count == 0)
         {
             return;
@@ -1071,31 +916,31 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         string predicateCol = columns[0].Name;
         object predicateVal = dt.Rows[0][0];
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         var updates = new Dictionary<string, object> { ["NONEXISTENT_COL_XYZ"] = "value" };
 
-        Assert.Throws<ArgumentException>(() =>
-            writer.UpdateRows(tableName, predicateCol, predicateVal, updates));
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.UpdateRowsAsync(tableName, predicateCol, predicateVal, updates, TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DeleteRows_ValidColumn_NoMatchingValue_ReturnsZero(string path)
+    public async Task DeleteRows_ValidColumn_NoMatchingValue_ReturnsZero(string path)
     {
         string temp = CopyToTemp(path);
-        var cachedReader = db.Get(path);
-        string tableName = cachedReader.ListTables()[0];
-        string firstCol = cachedReader.GetColumnMetadata(tableName)[0].Name;
+        var cachedReader = await db.GetAsync(path);
+        string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string firstCol = (await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken))[0].Name;
 
-        using var writer = OpenWriter(temp);
-        int deleted = writer.DeleteRows(tableName, firstCol, "IMPOSSIBLE_VALUE_THAT_WONT_MATCH_12345");
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        int deleted = await writer.DeleteRowsAsync(tableName, firstCol, "IMPOSSIBLE_VALUE_THAT_WONT_MATCH_12345", TestContext.Current.CancellationToken);
 
         Assert.Equal(0, deleted);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRow_WrongColumnCount_ThrowsArgumentException(string path)
+    public async Task InsertRow_WrongColumnCount_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"ColCnt_{Guid.NewGuid():N}".Substring(0, 18);
@@ -1106,16 +951,16 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Name", typeof(string), maxLength: 50),
         };
 
-        using var writer = OpenWriter(temp);
-        writer.CreateTable(tableName, columns);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
 
         // Provide 3 values for a 2-column table
-        Assert.Throws<ArgumentException>(() =>
-            writer.InsertRow(tableName, new object[] { 1, "Hello", "Extra" }));
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.InsertRowAsync(tableName, new object[] { 1, "Hello", "Extra" }, TestContext.Current.CancellationToken));
     }
 
     [Fact]
-    public void InsertRow_MemoAtLimit_RoundtripsCorrectly()
+    public async Task InsertRow_MemoAtLimit_RoundtripsCorrectly()
     {
         string path = TestDatabases.NorthwindTraders;
         if (!File.Exists(path))
@@ -1135,22 +980,22 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         // 512 Unicode chars = 1024 bytes = MaxInlineMemoBytes exactly
         string memoValue = new string('A', 512);
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRow(tableName, new object[] { 1, memoValue });
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, new object[] { 1, memoValue }, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            DataTable dt = reader.ReadTable(tableName)!;
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
             Assert.Equal(1, dt.Rows.Count);
             Assert.Equal(memoValue, dt.Rows[0]["Content"]);
         }
     }
 
     [Fact]
-    public void InsertRow_MemoOverLimit_ThrowsJetLimitationException()
+    public async Task InsertRow_MemoOverLimit_ThrowsJetLimitationException()
     {
         string path = TestDatabases.NorthwindTraders;
         if (!File.Exists(path))
@@ -1170,15 +1015,15 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         // 513 Unicode chars = 1026 bytes > MaxInlineMemoBytes
         string memoValue = new string('B', 513);
 
-        using var writer = OpenWriter(temp);
-        writer.CreateTable(tableName, columns);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
 
-        Assert.Throws<JetLimitationException>(() =>
-            writer.InsertRow(tableName, new object[] { 1, memoValue }));
+        await Assert.ThrowsAsync<JetLimitationException>(async () =>
+            await writer.InsertRowAsync(tableName, new object[] { 1, memoValue }, TestContext.Current.CancellationToken));
     }
 
     [Fact]
-    public void InsertRow_OleBytesOverLimit_ThrowsJetLimitationException()
+    public async Task InsertRow_OleBytesOverLimit_ThrowsJetLimitationException()
     {
         string path = TestDatabases.NorthwindTraders;
         if (!File.Exists(path))
@@ -1197,15 +1042,15 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
         byte[] oversized = new byte[257]; // > MaxInlineOleBytes (256)
 
-        using var writer = OpenWriter(temp);
-        writer.CreateTable(tableName, columns);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
 
-        Assert.Throws<JetLimitationException>(() =>
-            writer.InsertRow(tableName, new object[] { 1, oversized }));
+        await Assert.ThrowsAsync<JetLimitationException>(async () =>
+            await writer.InsertRowAsync(tableName, new object[] { 1, oversized }, TestContext.Current.CancellationToken));
     }
 
     [Fact]
-    public void InsertRow_OleBytesAtLimit_RoundtripsCorrectly()
+    public async Task InsertRow_OleBytesAtLimit_RoundtripsCorrectly()
     {
         string path = TestDatabases.NorthwindTraders;
         if (!File.Exists(path))
@@ -1228,15 +1073,15 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             data[i] = (byte)(i % 256);
         }
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRow(tableName, new object[] { 1, data });
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, new object[] { 1, data }, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            DataTable dt = reader.ReadTable(tableName)!;
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
             Assert.Equal(1, dt.Rows.Count);
             Assert.NotNull(dt.Rows[0]["Blob"]);
         }
@@ -1244,7 +1089,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_DuplicateName_ThrowsInvalidOperationException(string path)
+    public async Task CreateTable_DuplicateName_ThrowsInvalidOperationException(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"Dup_{Guid.NewGuid():N}".Substring(0, 18);
@@ -1254,16 +1099,16 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Id", typeof(int)),
         };
 
-        using var writer = OpenWriter(temp);
-        writer.CreateTable(tableName, columns);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
 
-        Assert.Throws<InvalidOperationException>(() =>
-            writer.CreateTable(tableName, columns));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DeleteRows_DoesNotCorruptRemainingRows(string path)
+    public async Task DeleteRows_DoesNotCorruptRemainingRows(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"DelChk_{Guid.NewGuid():N}".Substring(0, 18);
@@ -1274,23 +1119,23 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Name", typeof(string), maxLength: 50),
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRow(tableName, new object[] { 1, "Keep" });
-            writer.InsertRow(tableName, new object[] { 2, "Delete" });
-            writer.InsertRow(tableName, new object[] { 3, "Keep" });
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, new object[] { 1, "Keep" }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, new object[] { 2, "Delete" }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, new object[] { 3, "Keep" }, TestContext.Current.CancellationToken);
         }
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            int deleted = writer.DeleteRows(tableName, "Name", "Delete");
+            int deleted = await writer.DeleteRowsAsync(tableName, "Name", "Delete", TestContext.Current.CancellationToken);
             Assert.Equal(1, deleted);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            DataTable dt = reader.ReadTable(tableName)!;
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
             Assert.Equal(2, dt.Rows.Count);
 
             var ids = dt.AsEnumerable()
@@ -1304,7 +1149,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void UpdateRows_PreservesNonUpdatedColumns(string path)
+    public async Task UpdateRows_PreservesNonUpdatedColumns(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"UpdPrv_{Guid.NewGuid():N}".Substring(0, 18);
@@ -1316,23 +1161,23 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Score", typeof(int)),
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRow(tableName, new object[] { 1, "Alice", 100 });
-            writer.InsertRow(tableName, new object[] { 2, "Bob", 200 });
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, new object[] { 1, "Alice", 100 }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, new object[] { 2, "Bob", 200 }, TestContext.Current.CancellationToken);
         }
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             var updates = new Dictionary<string, object> { ["Score"] = 999 };
-            int updated = writer.UpdateRows(tableName, "Id", 1, updates);
+            int updated = await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            DataTable dt = reader.ReadTable(tableName)!;
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
             DataRow aliceRow = dt.AsEnumerable()
                 .First(r => Convert.ToInt32(r["Id"], System.Globalization.CultureInfo.InvariantCulture) == 1);
 
@@ -1347,7 +1192,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_GuidColumn_RoundtripsCorrectly(string path)
+    public async Task CreateTable_GuidColumn_RoundtripsCorrectly(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"Guid_{Guid.NewGuid():N}".Substring(0, 18);
@@ -1360,15 +1205,15 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
         var guid = Guid.NewGuid();
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRow(tableName, new object[] { 1, guid });
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, new object[] { 1, guid }, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            DataTable dt = reader.ReadTable(tableName)!;
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
             Assert.Equal(1, dt.Rows.Count);
             Assert.Equal(guid, (Guid)dt.Rows[0]["UniqueKey"]);
         }
@@ -1378,7 +1223,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_ByteArrayColumn_RoundtripsCorrectly(string path)
+    public async Task CreateTable_ByteArrayColumn_RoundtripsCorrectly(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"Blob_{Guid.NewGuid():N}".Substring(0, 18);
@@ -1391,15 +1236,15 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
         byte[] payload = [0xCA, 0xFE, 0xBA, 0xBE];
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
-            writer.InsertRow(tableName, new object[] { 1, payload });
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, new object[] { 1, payload }, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            DataTable dt = reader.ReadTable(tableName)!;
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
             Assert.Equal(1, dt.Rows.Count);
             Assert.NotNull(dt.Rows[0]["Data"]);
         }
@@ -1409,7 +1254,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_InsertMany_AllRowsReadable(string path)
+    public async Task CreateTable_InsertMany_AllRowsReadable(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"Multi_{Guid.NewGuid():N}".Substring(0, 18);
@@ -1420,21 +1265,21 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Name", typeof(string), maxLength: 50),
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             for (int i = 1; i <= 10; i++)
             {
-                writer.InsertRow(tableName, new object[] { i, $"Row{i}" });
+                await writer.InsertRowAsync(tableName, new object[] { i, $"Row{i}" }, TestContext.Current.CancellationToken);
             }
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            long count = reader.GetRealRowCount(tableName);
+            long count = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(10, count);
 
-            DataTable dt = reader.ReadTable(tableName)!;
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
             Assert.Equal(10, dt.Rows.Count);
         }
     }
@@ -1443,58 +1288,58 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_EmptyColumnsList_ThrowsArgumentException(string path)
+    public async Task CreateTable_EmptyColumnsList_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<ArgumentException>(() =>
-            writer.CreateTable("EmptyCol", new List<ColumnDefinition>()));
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.CreateTableAsync("EmptyCol", new List<ColumnDefinition>(), TestContext.Current.CancellationToken));
     }
 
     // ── DropTable: null/empty name ────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DropTable_NullTableName_ThrowsArgumentException(string path)
+    public async Task DropTable_NullTableName_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<ArgumentException>(() => writer.DropTable(null!));
+        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.DropTableAsync(null!, TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DropTable_EmptyTableName_ThrowsArgumentException(string path)
+    public async Task DropTable_EmptyTableName_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<ArgumentException>(() => writer.DropTable(string.Empty));
+        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.DropTableAsync(string.Empty, TestContext.Current.CancellationToken));
     }
 
     // ── DropTable: after dispose ──────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DropTable_AfterDispose_ThrowsObjectDisposedException(string path)
+    public async Task DropTable_AfterDispose_ThrowsObjectDisposedException(string path)
     {
         string temp = CopyToTemp(path);
-        var writer = OpenWriter(temp);
-        writer.Dispose();
+        var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await writer.DisposeAsync();
 
-        Assert.Throws<ObjectDisposedException>(() => writer.DropTable("AnyTable"));
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () => await writer.DropTableAsync("AnyTable", TestContext.Current.CancellationToken));
     }
 
     // ── DropTable: re-create same name ────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DropTable_ThenRecreate_Succeeds(string path)
+    public async Task DropTable_ThenRecreate_Succeeds(string path)
     {
         string temp = CopyToTemp(path);
         string tableName = $"Recr_{Guid.NewGuid():N}".Substring(0, 18);
@@ -1506,15 +1351,15 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         };
 
         // Create
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, columns);
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
         }
 
         // Drop
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.DropTable(tableName);
+            await writer.DropTableAsync(tableName, TestContext.Current.CancellationToken);
         }
 
         // Re-create with different columns
@@ -1525,17 +1370,17 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Active", typeof(bool)),
         };
 
-        using (var writer = OpenWriter(temp))
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            writer.CreateTable(tableName, newColumns);
+            await writer.CreateTableAsync(tableName, newColumns, TestContext.Current.CancellationToken);
         }
 
-        using (var reader = OpenReader(temp))
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
-            var tables = reader.ListTables();
+            var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
             Assert.Contains(tableName, tables);
 
-            var meta = reader.GetColumnMetadata(tableName);
+            var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
             Assert.Equal(3, meta.Count);
         }
     }
@@ -1544,200 +1389,201 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRow_NonExistentTable_ThrowsInvalidOperationException(string path)
+    public async Task InsertRow_NonExistentTable_ThrowsInvalidOperationException(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<InvalidOperationException>(() =>
-            writer.InsertRow("NoSuchTable_XYZ_999", new object[] { 1 }));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await writer.InsertRowAsync("NoSuchTable_XYZ_999", new object[] { 1 }, TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: InsertRows null/empty args ───────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRows_NullTableName_ThrowsArgumentException(string path)
+    public async Task InsertRows_NullTableName_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<ArgumentException>(() =>
-            writer.InsertRows(null!, new[] { new object[] { 1 } }));
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.InsertRowsAsync(null!, new[] { new object[] { 1 } }, TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRows_NullRows_ThrowsArgumentNullException(string path)
+    public async Task InsertRows_NullRows_ThrowsArgumentNullException(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName = db.Get(path).ListTables()[0];
+        var reader = await db.GetAsync(path);
+        string tableName = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<ArgumentNullException>(() =>
-            writer.InsertRows(tableName, (IEnumerable<object[]>)null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(async () =>
+            await writer.InsertRowsAsync(tableName, (IEnumerable<object[]>)null!, TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: InsertRows after dispose ─────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRows_AfterDispose_ThrowsObjectDisposedException(string path)
+    public async Task InsertRows_AfterDispose_ThrowsObjectDisposedException(string path)
     {
         string temp = CopyToTemp(path);
-        var writer = OpenWriter(temp);
-        writer.Dispose();
+        var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await writer.DisposeAsync();
 
-        Assert.Throws<ObjectDisposedException>(() =>
-            writer.InsertRows("AnyTable", new[] { new object[] { 1 } }));
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await writer.InsertRowsAsync("AnyTable", new[] { new object[] { 1 } }, TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: UpdateRows args ──────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void UpdateRows_NullTableName_ThrowsArgumentException(string path)
+    public async Task UpdateRows_NullTableName_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         var updates = new Dictionary<string, object> { ["Col"] = "val" };
 
-        Assert.Throws<ArgumentException>(() =>
-            writer.UpdateRows(null!, "Col", "val", updates));
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.UpdateRowsAsync(null!, "Col", "val", updates, TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void UpdateRows_AfterDispose_ThrowsObjectDisposedException(string path)
+    public async Task UpdateRows_AfterDispose_ThrowsObjectDisposedException(string path)
     {
         string temp = CopyToTemp(path);
-        var writer = OpenWriter(temp);
-        writer.Dispose();
+        var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await writer.DisposeAsync();
 
         var updates = new Dictionary<string, object> { ["Col"] = "val" };
 
-        Assert.Throws<ObjectDisposedException>(() =>
-            writer.UpdateRows("AnyTable", "Col", "val", updates));
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await writer.UpdateRowsAsync("AnyTable", "Col", "val", updates, TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void UpdateRows_NonExistentTable_ThrowsInvalidOperationException(string path)
+    public async Task UpdateRows_NonExistentTable_ThrowsInvalidOperationException(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         var updates = new Dictionary<string, object> { ["Col"] = "val" };
 
-        Assert.Throws<InvalidOperationException>(() =>
-            writer.UpdateRows("NoSuchTable_XYZ_999", "Col", "val", updates));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await writer.UpdateRowsAsync("NoSuchTable_XYZ_999", "Col", "val", updates, TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: DeleteRows after dispose ─────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DeleteRows_AfterDispose_ThrowsObjectDisposedException(string path)
+    public async Task DeleteRows_AfterDispose_ThrowsObjectDisposedException(string path)
     {
         string temp = CopyToTemp(path);
-        var writer = OpenWriter(temp);
-        writer.Dispose();
+        var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await writer.DisposeAsync();
 
-        Assert.Throws<ObjectDisposedException>(() =>
-            writer.DeleteRows("AnyTable", "Col", "val"));
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await writer.DeleteRowsAsync("AnyTable", "Col", "val", TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: CreateTable after dispose ────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void CreateTable_AfterDispose_ThrowsObjectDisposedException(string path)
+    public async Task CreateTable_AfterDispose_ThrowsObjectDisposedException(string path)
     {
         string temp = CopyToTemp(path);
-        var writer = OpenWriter(temp);
-        writer.Dispose();
+        var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await writer.DisposeAsync();
 
         var columns = new List<ColumnDefinition> { new("Id", typeof(int)) };
 
-        Assert.Throws<ObjectDisposedException>(() =>
-            writer.CreateTable("AnyTable", columns));
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await writer.CreateTableAsync("AnyTable", columns, TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: InsertRow empty table name ───────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRow_EmptyTableName_ThrowsArgumentException(string path)
+    public async Task InsertRow_EmptyTableName_ThrowsArgumentException(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<ArgumentException>(() =>
-            writer.InsertRow(string.Empty, new object[] { 1 }));
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.InsertRowAsync(string.Empty, new object[] { 1 }, TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: DeleteRows non-existent table ────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void DeleteRows_NonExistentTable_ThrowsInvalidOperationException(string path)
+    public async Task DeleteRows_NonExistentTable_ThrowsInvalidOperationException(string path)
     {
         string temp = CopyToTemp(path);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        Assert.Throws<InvalidOperationException>(() =>
-            writer.DeleteRows("NoSuchTable_XYZ_999", "Col", "val"));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await writer.DeleteRowsAsync("NoSuchTable_XYZ_999", "Col", "val", TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: InsertRowGeneric after dispose ───────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRowGeneric_AfterDispose_ThrowsObjectDisposedException(string path)
+    public async Task InsertRowGeneric_AfterDispose_ThrowsObjectDisposedException(string path)
     {
         string temp = CopyToTemp(path);
-        var writer = OpenWriter(temp);
-        writer.Dispose();
+        var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await writer.DisposeAsync();
 
-        Assert.Throws<ObjectDisposedException>(() =>
-            writer.InsertRow("AnyTable", new WriterPoco { Id = 1, Label = "X" }));
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await writer.InsertRowAsync("AnyTable", new WriterPoco { Id = 1, Label = "X" }, TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: InsertRowsGeneric after dispose ──────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void InsertRowsGeneric_AfterDispose_ThrowsObjectDisposedException(string path)
+    public async Task InsertRowsGeneric_AfterDispose_ThrowsObjectDisposedException(string path)
     {
         string temp = CopyToTemp(path);
-        var writer = OpenWriter(temp);
-        writer.Dispose();
+        var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        await writer.DisposeAsync();
 
         var items = new[] { new WriterPoco { Id = 1, Label = "X" } };
 
-        Assert.Throws<ObjectDisposedException>(() =>
-            writer.InsertRows("AnyTable", items));
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await writer.InsertRowsAsync("AnyTable", items, TestContext.Current.CancellationToken));
     }
 
     // ── UpdateRows: no matching value returns zero ────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void UpdateRows_NoMatchingValue_ReturnsZero(string path)
+    public async Task UpdateRows_NoMatchingValue_ReturnsZero(string path)
     {
         string temp = CopyToTemp(path);
-        string tableName = SeedUpdateTable(temp);
+        string tableName = await SeedUpdateTableAsync(temp);
 
-        using var writer = OpenWriter(temp);
+        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         var updates = new Dictionary<string, object> { ["Label"] = "NOTHING" };
 
-        int updated = writer.UpdateRows(tableName, "Id", 999999, updates);
+        int updated = await writer.UpdateRowsAsync(tableName, "Id", 999999, updates, TestContext.Current.CancellationToken);
 
         Assert.Equal(0, updated);
     }
@@ -1838,15 +1684,15 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
         return DBNull.Value;
     }
 
-    private static long GetStatsRowCount(AccessReader reader, string tableName)
+    private static async ValueTask<long> GetStatsRowCountAsync(AccessReader reader, string tableName)
     {
-        TableStat stat = reader.GetTableStats()
-            .Single(s => string.Equals(s.Name, tableName, StringComparison.OrdinalIgnoreCase));
+        var stats = await reader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+        TableStat stat = stats.Single(s => string.Equals(s.Name, tableName, StringComparison.OrdinalIgnoreCase));
         return stat.RowCount;
     }
 
     /// <summary>Creates a table with known text data for UpdateRows tests and returns the table name.</summary>
-    private static string SeedUpdateTable(string dbPath)
+    private static async Task<string> SeedUpdateTableAsync(string dbPath)
     {
         string tableName = $"UpdTest_{Guid.NewGuid():N}"[..20];
         var columns = new List<ColumnDefinition>
@@ -1855,26 +1701,22 @@ public sealed class AccessWriterTests(DatabaseCache db) : IDisposable
             new("Label", typeof(string), maxLength: 100),
         };
 
-        using var writer = OpenWriter(dbPath);
-        writer.CreateTable(tableName, columns);
-        writer.InsertRow(tableName, new object[] { 1, "Alpha" });
-        writer.InsertRow(tableName, new object[] { 2, "Beta" });
-        writer.InsertRow(tableName, new object[] { 3, "Gamma" });
+        await using var writer = await OpenWriterAsync(dbPath, TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(tableName, new object[] { 1, "Alpha" }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(tableName, new object[] { 2, "Beta" }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(tableName, new object[] { 3, "Gamma" }, TestContext.Current.CancellationToken);
 
         return tableName;
     }
-
-    /// <summary>Opens a writer with lockfile disabled (lockfile creation is not yet implemented).</summary>
-    private static AccessWriter OpenWriter(string path) =>
-        AccessWriter.Open(path, new AccessWriterOptions { UseLockFile = false });
 
     /// <summary>Opens a writer asynchronously with lockfile disabled (lockfile creation is not yet implemented).</summary>
     private static ValueTask<AccessWriter> OpenWriterAsync(string path, CancellationToken cancellationToken = default) =>
         AccessWriter.OpenAsync(path, new AccessWriterOptions { UseLockFile = false }, cancellationToken);
 
-    /// <summary>Opens a reader with lockfile disabled (lockfile creation is not yet implemented).</summary>
-    private static AccessReader OpenReader(string path) =>
-        AccessReader.Open(path, new AccessReaderOptions { UseLockFile = false });
+    /// <summary>Opens a reader asynchronously with lockfile disabled (lockfile creation is not yet implemented).</summary>
+    private static ValueTask<AccessReader> OpenReaderAsync(string path, CancellationToken cancellationToken = default) =>
+        AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, cancellationToken);
 
     /// <summary>Creates a writable temp copy of the given database and tracks it for cleanup.</summary>
     private string CopyToTemp(string sourcePath)

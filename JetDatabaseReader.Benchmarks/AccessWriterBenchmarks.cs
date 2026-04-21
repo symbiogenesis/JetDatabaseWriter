@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 
 /// <summary>
@@ -22,7 +23,7 @@ public class AccessWriterBenchmarks
     private object[] _dummyRow = null!;
 
     [GlobalSetup]
-    public void GlobalSetup()
+    public async Task GlobalSetup()
     {
         if (!File.Exists(SourceDbPath))
         {
@@ -32,9 +33,9 @@ public class AccessWriterBenchmarks
         }
 
         // Determine table name and column metadata once.
-        using var reader = AccessReader.Open(SourceDbPath);
-        _tableName = reader.ListTables().First();
-        _columns = reader.GetColumnMetadata(_tableName);
+        await using var reader = await AccessReader.OpenAsync(SourceDbPath);
+        _tableName = (await reader.ListTablesAsync()).First();
+        _columns = await reader.GetColumnMetadataAsync(_tableName);
         _dummyRow = BuildDummyRow(_columns);
     }
 
@@ -58,27 +59,27 @@ public class AccessWriterBenchmarks
     // ── Insert ────────────────────────────────────────────────────────
 
     [Benchmark]
-    public void InsertRow_Single()
+    public async Task InsertRow_Single()
     {
-        using var writer = AccessWriter.Open(_tempPath);
-        writer.InsertRow(_tableName, _dummyRow);
+        await using var writer = await AccessWriter.OpenAsync(_tempPath);
+        await writer.InsertRowAsync(_tableName, _dummyRow);
     }
 
     [Benchmark]
     [Arguments(10)]
     [Arguments(100)]
-    public int InsertRows_Batch(int count)
+    public async Task<int> InsertRows_Batch(int count)
     {
         IEnumerable<object[]> rows = Enumerable.Range(0, count).Select(_ => (object[])_dummyRow.Clone());
-        using var writer = AccessWriter.Open(_tempPath);
-        return writer.InsertRows(_tableName, rows);
+        await using var writer = await AccessWriter.OpenAsync(_tempPath);
+        return await writer.InsertRowsAsync(_tableName, rows);
     }
 
     [Benchmark]
-    public void InsertRow_Typed()
+    public async Task InsertRow_Typed()
     {
-        using var writer = AccessWriter.Open(_tempPath);
-        writer.InsertRow(_tableName, new SimpleEntity
+        await using var writer = await AccessWriter.OpenAsync(_tempPath);
+        await writer.InsertRowAsync(_tableName, new SimpleEntity
         {
             Id = 999,
             Name = "BenchTyped",
@@ -88,10 +89,10 @@ public class AccessWriterBenchmarks
     // ── CreateTable + DropTable ───────────────────────────────────────
 
     [Benchmark]
-    public void CreateTable()
+    public async Task CreateTable()
     {
-        using var writer = AccessWriter.Open(_tempPath);
-        writer.CreateTable("BenchTable", new List<ColumnDefinition>
+        await using var writer = await AccessWriter.OpenAsync(_tempPath);
+        await writer.CreateTableAsync("BenchTable", new List<ColumnDefinition>
         {
             new("Id", typeof(int)),
             new("Name", typeof(string), 255),
@@ -102,25 +103,25 @@ public class AccessWriterBenchmarks
     }
 
     [Benchmark]
-    public void CreateAndDropTable()
+    public async Task CreateAndDropTable()
     {
-        using var writer = AccessWriter.Open(_tempPath);
-        writer.CreateTable("BenchDrop", new List<ColumnDefinition>
+        await using var writer = await AccessWriter.OpenAsync(_tempPath);
+        await writer.CreateTableAsync("BenchDrop", new List<ColumnDefinition>
         {
             new("Id", typeof(int)),
             new("Name", typeof(string), 255),
         });
-        writer.DropTable("BenchDrop");
+        await writer.DropTableAsync("BenchDrop");
     }
 
     // ── Update / Delete ───────────────────────────────────────────────
 
     [Benchmark]
-    public int UpdateRows()
+    public async Task<int> UpdateRows()
     {
         // Insert a known row, then update it.
-        using var writer = AccessWriter.Open(_tempPath);
-        writer.InsertRow(_tableName, _dummyRow);
+        await using var writer = await AccessWriter.OpenAsync(_tempPath);
+        await writer.InsertRowAsync(_tableName, _dummyRow);
 
         string predicateCol = _columns[0].Name;
         object predicateVal = _dummyRow[0];
@@ -128,18 +129,18 @@ public class AccessWriterBenchmarks
         {
             [_columns.Count > 1 ? _columns[1].Name : _columns[0].Name] = "UpdatedBench",
         };
-        return writer.UpdateRows(_tableName, predicateCol, predicateVal, updates);
+        return await writer.UpdateRowsAsync(_tableName, predicateCol, predicateVal, updates);
     }
 
     [Benchmark]
-    public int DeleteRows()
+    public async Task<int> DeleteRows()
     {
-        using var writer = AccessWriter.Open(_tempPath);
-        writer.InsertRow(_tableName, _dummyRow);
+        await using var writer = await AccessWriter.OpenAsync(_tempPath);
+        await writer.InsertRowAsync(_tableName, _dummyRow);
 
         string predicateCol = _columns[0].Name;
         object predicateVal = _dummyRow[0];
-        return writer.DeleteRows(_tableName, predicateCol, predicateVal);
+        return await writer.DeleteRowsAsync(_tableName, predicateCol, predicateVal);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────

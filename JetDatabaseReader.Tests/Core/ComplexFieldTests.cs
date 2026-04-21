@@ -3,6 +3,7 @@ namespace JetDatabaseReader.Tests;
 using System;
 using System.Data;
 using System.Linq;
+using System.Threading.Tasks;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention
@@ -31,14 +32,14 @@ public sealed class ComplexFieldTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Attachment_GetColumnMetadata_ReportsAttachmentType(string path)
+    public async Task Attachment_GetColumnMetadata_ReportsAttachmentType(string path)
     {
         // Columns with type 0x11 should report a friendly type name, not a raw hex code.
-        var reader = db.Get(path);
+        var reader = await db.GetAsync(path);
 
-        foreach (string table in reader.ListTables())
+        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
-            var meta = reader.GetColumnMetadata(table);
+            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             foreach (var col in meta)
             {
                 Assert.DoesNotMatch(@"^0x[0-9A-Fa-f]{2}$", col.TypeName);
@@ -47,14 +48,14 @@ public sealed class ComplexFieldTests(DatabaseCache db)
     }
 
     [Fact]
-    public void Attachment_TypeCodeToName_ReturnsAttachment()
+    public async Task Attachment_TypeCodeToName_ReturnsAttachment()
     {
         // All column type names should be friendly strings, not raw hex codes.
-        var reader = db.Get(TestDatabases.NorthwindTraders);
+        var reader = await db.GetAsync(TestDatabases.NorthwindTraders);
 
-        foreach (string table in reader.ListTables())
+        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
-            var meta = reader.GetColumnMetadata(table);
+            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             Assert.All(meta, col =>
                 Assert.False(
                     col.TypeName.StartsWith("0x", StringComparison.Ordinal),
@@ -63,15 +64,15 @@ public sealed class ComplexFieldTests(DatabaseCache db)
     }
 
     [Fact]
-    public void Attachment_ClrType_IsByteArrayOrCollection()
+    public async Task Attachment_ClrType_IsByteArrayOrCollection()
     {
         // Attachment columns map to a CLR type that can represent
         // multiple files — not typeof(string).
-        var reader = db.Get(TestDatabases.NorthwindTraders);
+        var reader = await db.GetAsync(TestDatabases.NorthwindTraders);
 
-        foreach (string table in reader.ListTables())
+        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
-            var meta = reader.GetColumnMetadata(table);
+            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             foreach (var col in meta)
             {
                 if (col.TypeName == "Attachment")
@@ -83,21 +84,21 @@ public sealed class ComplexFieldTests(DatabaseCache db)
     }
 
     [Fact]
-    public void Attachment_ReadAsDataTable_ColumnTypeIsNotString()
+    public async Task Attachment_ReadAsDataTable_ColumnTypeIsNotString()
     {
         // When reading a DataTable, attachment columns should not be typed as string.
-        var reader = db.Get(TestDatabases.NorthwindTraders);
+        var reader = await db.GetAsync(TestDatabases.NorthwindTraders);
 
-        foreach (string table in reader.ListTables())
+        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
-            var meta = reader.GetColumnMetadata(table);
+            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             var attachCols = meta.Where(c => c.TypeName == "Attachment").ToList();
             if (attachCols.Count == 0)
             {
                 continue;
             }
 
-            TableResult result = reader.ReadTable(table, maxRows: 1);
+            TableResult result = await reader.ReadTableAsync(table, 1, TestContext.Current.CancellationToken);
             DataTable dt = result.ToDataTable();
             foreach (var col in attachCols)
             {
@@ -110,21 +111,21 @@ public sealed class ComplexFieldTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Attachment_ReadTable_DoesNotThrowOnComplexColumns(string path)
+    public async Task Attachment_ReadTable_DoesNotThrowOnComplexColumns(string path)
     {
         // Reading a table with complex columns should not crash, even if
         // values are not fully decoded.
-        var reader = db.Get(path);
+        var reader = await db.GetAsync(path);
 
-        foreach (string table in reader.ListTables())
+        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
-            var meta = reader.GetColumnMetadata(table);
+            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             bool hasComplex = meta.Any(c =>
                 c.TypeName == "Attachment" || c.TypeName == "Complex");
 
             if (hasComplex)
             {
-                var ex = Record.Exception(() => reader.ReadTable(table, maxRows: 5));
+                var ex = await Record.ExceptionAsync(async () => await reader.ReadTableAsync(table, 5, TestContext.Current.CancellationToken));
                 Assert.Null(ex);
             }
         }
@@ -132,21 +133,21 @@ public sealed class ComplexFieldTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Attachment_StreamRows_DoesNotThrowOnComplexColumns(string path)
+    public async Task Attachment_StreamRows_DoesNotThrowOnComplexColumns(string path)
     {
         // Streaming rows with complex columns should not crash.
-        var reader = db.Get(path);
+        var reader = await db.GetAsync(path);
 
-        foreach (string table in reader.ListTables())
+        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
-            var meta = reader.GetColumnMetadata(table);
+            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             bool hasComplex = meta.Any(c =>
                 c.TypeName == "Attachment" || c.TypeName == "Complex");
 
             if (hasComplex)
             {
-                var ex = Record.Exception(() =>
-                    reader.StreamRows(table).Take(5).ToList());
+                var ex = await Record.ExceptionAsync(async () =>
+                    await reader.StreamRowsAsync(table, cancellationToken: TestContext.Current.CancellationToken).Take(5).ToListAsync(TestContext.Current.CancellationToken));
                 Assert.Null(ex);
             }
         }
@@ -154,22 +155,22 @@ public sealed class ComplexFieldTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void Attachment_CellValue_IsNotDbNull(string path)
+    public async Task Attachment_CellValue_IsNotDbNull(string path)
     {
         // When attachment decoding is implemented, non-empty attachment cells
         // should return actual data (byte[] or a collection), not DBNull.
-        var reader = db.Get(path);
+        var reader = await db.GetAsync(path);
 
-        foreach (string table in reader.ListTables())
+        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
-            var meta = reader.GetColumnMetadata(table);
+            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             int attachIdx = meta.FindIndex(c => c.TypeName == "Attachment");
             if (attachIdx < 0)
             {
                 continue;
             }
 
-            foreach (object[] row in reader.StreamRows(table).Take(10))
+            await foreach (object[] row in reader.StreamRowsAsync(table, cancellationToken: TestContext.Current.CancellationToken).Take(10))
             {
                 if (row[attachIdx] is not DBNull)
                 {
@@ -194,14 +195,14 @@ public sealed class ComplexFieldTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void ComplexField_Metadata_ReportsCorrectTypeName(string path)
+    public async Task ComplexField_Metadata_ReportsCorrectTypeName(string path)
     {
         // Complex columns must report "Attachment" or "Complex", not raw hex.
-        var reader = db.Get(path);
+        var reader = await db.GetAsync(path);
 
-        foreach (string table in reader.ListTables())
+        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
-            var meta = reader.GetColumnMetadata(table);
+            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             foreach (var col in meta.Where(c => c.TypeName is "Attachment" or "Complex"))
             {
                 Assert.True(
@@ -214,22 +215,22 @@ public sealed class ComplexFieldTests(DatabaseCache db)
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public void ComplexField_MultiValue_CellValue_IsNotDbNull(string path)
+    public async Task ComplexField_MultiValue_CellValue_IsNotDbNull(string path)
     {
         // When multi-value decoding is implemented, non-empty complex cells
         // should return a list of values, not DBNull.
-        var reader = db.Get(path);
+        var reader = await db.GetAsync(path);
 
-        foreach (string table in reader.ListTables())
+        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
         {
-            var meta = reader.GetColumnMetadata(table);
+            var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
             int complexIdx = meta.FindIndex(c => c.TypeName == "Complex");
             if (complexIdx < 0)
             {
                 continue;
             }
 
-            foreach (object[] row in reader.StreamRows(table).Take(10))
+            await foreach (object[] row in reader.StreamRowsAsync(table, cancellationToken: TestContext.Current.CancellationToken).Take(10))
             {
                 if (row[complexIdx] is not DBNull)
                 {
