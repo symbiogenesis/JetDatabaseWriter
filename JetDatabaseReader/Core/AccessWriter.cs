@@ -910,7 +910,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         try
         {
             uint current = Ru32(page, TDefRowCountOffset);
-            updated = Math.Clamp((long)current + delta, 0L, uint.MaxValue);
+            updated = Math.Clamp(current + delta, 0L, uint.MaxValue);
             Wi32(page, TDefRowCountOffset, unchecked((int)(uint)updated));
             await WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
         }
@@ -925,7 +925,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (TryGetCachedInsertPageNumber(tdefPage, out long cachedPageNumber))
         {
             byte[] cached = await ReadPageAsync(cachedPageNumber, cancellationToken).ConfigureAwait(false);
-            if (cached[0] == 0x01 && (long)Ri32(cached, _dpTDefOff) == tdefPage && CanInsertRow(cached, rowLength))
+            if (cached[0] == 0x01 && Ri32(cached, _dpTDefOff) == tdefPage && CanInsertRow(cached, rowLength))
             {
                 return new PageInsertTarget { PageNumber = cachedPageNumber, Page = cached };
             }
@@ -947,7 +947,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            if ((long)Ri32(page, _dpTDefOff) != tdefPage)
+            if (Ri32(page, _dpTDefOff) != tdefPage)
             {
                 ReturnPage(page);
                 continue;
@@ -1584,7 +1584,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            if ((long)Ri32(page, _dpTDefOff) != tdefPage)
+            if (Ri32(page, _dpTDefOff) != tdefPage)
             {
                 ReturnPage(page);
                 continue;

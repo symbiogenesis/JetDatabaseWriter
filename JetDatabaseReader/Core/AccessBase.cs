@@ -709,7 +709,7 @@ public abstract class AccessBase : IAccessBase
         return new TableDef
         {
             Columns = cols,
-            RowCount = td.Length > 20 ? (long)Ru32(td, 16) : 0,
+            RowCount = td.Length > 20 ? Ru32(td, 16) : 0,
             HasDeletedColumns = hasDeletedColumns,
         };
     }
