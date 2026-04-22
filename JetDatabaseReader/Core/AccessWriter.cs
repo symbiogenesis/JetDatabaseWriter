@@ -927,12 +927,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     /// <summary>
     /// Builds a minimal, empty JET database as a byte array.
-    /// The database contains three 4096-byte pages:
+    /// The database contains three pages (page size varies by format):
     /// page 0 (header), page 1 (unused placeholder), and page 2 (MSysObjects TDEF).
     /// </summary>
     private static byte[] BuildEmptyDatabase(DatabaseFormat format)
     {
-        const int pgSz = 4096;
+        int pgSz = format != DatabaseFormat.Jet3Mdb ? 4096 : 2048;
         byte[] db = new byte[pgSz * 3];
 
         // ── Page 0: JET header ─────────────────────────────────────
@@ -946,15 +946,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             : Encoding.ASCII.GetBytes("Standard Jet DB\0");
         Buffer.BlockCopy(magic, 0, db, 4, magic.Length);
 
-        db[0x14] = format == DatabaseFormat.AceAccdb ? (byte)0x02 : (byte)0x01;
+        // Offset 0x14: 0 = Jet3, 1 = Jet4, 2 = ACE
+        db[0x14] = format switch
+        {
+            DatabaseFormat.Jet3Mdb => 0x00,
+            DatabaseFormat.AceAccdb => 0x02,
+            _ => 0x01,
+        };
 
-        // Sort order / code page at 0x3C-0x3D left as 0x0000 → defaults to 1252.
+        // Sort order / code page left as 0x0000 → defaults to 1252.
+        // Jet4/ACE at 0x3C, Jet3 at 0x3A — both are already zero.
 
         // ── Page 1: placeholder (left as zeros / unused page type) ──
         // Must exist so that page 2 sits at the correct file offset.
 
         // ── Page 2: TDEF for MSysObjects ───────────────────────────
-        BuildMSysObjectsTDef(db, pgSz * 2);
+        BuildMSysObjectsTDef(db, pgSz * 2, format);
 
         return db;
     }
@@ -963,20 +970,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Writes a minimal MSysObjects TDEF page into <paramref name="db"/> at the given
     /// <paramref name="offset"/>. The TDEF defines nine columns: Id, ParentId, Name,
     /// Type, DateCreate, DateUpdate, Flags, ForeignName, and Database.
-    /// Uses Jet4 format constants (both Jet4 .mdb and ACE .accdb share the same layout).
     /// </summary>
-    private static void BuildMSysObjectsTDef(byte[] db, int offset)
+    private static void BuildMSysObjectsTDef(byte[] db, int offset, DatabaseFormat format)
     {
-        // Jet4 TDEF format constants (must match the values in AccessBase)
-        const int tdNumCols = 45;
-        const int tdBlockEnd = 63;
-        const int colDescSz = 25;
-        const int colTypeOff = 0;
-        const int colNumOff = 5;
-        const int colVarOff = 7;
-        const int colFlagsOff = 15;
-        const int colFixedOff = 21;
-        const int colSzOff = 23;
+        bool isJet3 = format == DatabaseFormat.Jet3Mdb;
+
+        // TDEF format constants (must match the values in AccessBase)
+        int tdNumCols = isJet3 ? 25 : 45;
+        int tdBlockEnd = isJet3 ? 43 : 63;
+        int colDescSz = isJet3 ? 18 : 25;
+        int colTypeOff = 0;
+        int colNumOff = isJet3 ? 1 : 5;
+        int colVarOff = isJet3 ? 3 : 7;
+        int colFlagsOff = isJet3 ? 13 : 15;
+        int colFixedOff = isJet3 ? 14 : 21;
+        int colSzOff = isJet3 ? 16 : 23;
+        int textColSize = isJet3 ? 255 : 510;
 
         // MSysObjects columns.
         // Fixed: Id(T_LONG,4), ParentId(T_LONG,4), Type(T_INT,2),
@@ -984,15 +993,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // Variable: Name(T_TEXT), ForeignName(T_TEXT), Database(T_TEXT).
         var columns = new (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[]
         {
-            ("Id",          T_LONG,     0, 0, 0,  4,   0x03),
-            ("ParentId",    T_LONG,     1, 0, 4,  4,   0x03),
-            ("Name",        T_TEXT,     2, 0, 0,  510, 0x02),
-            ("Type",        T_INT,      3, 0, 8,  2,   0x03),
-            ("DateCreate",  T_DATETIME, 4, 0, 10, 8,   0x03),
-            ("DateUpdate",  T_DATETIME, 5, 0, 18, 8,   0x03),
-            ("Flags",       T_LONG,     6, 0, 26, 4,   0x03),
-            ("ForeignName", T_TEXT,     7, 1, 0,  510, 0x02),
-            ("Database",    T_TEXT,     8, 2, 0,  510, 0x02),
+            ("Id",          T_LONG,     0, 0, 0,  4,            0x03),
+            ("ParentId",    T_LONG,     1, 0, 4,  4,            0x03),
+            ("Name",        T_TEXT,     2, 0, 0,  textColSize,  0x02),
+            ("Type",        T_INT,      3, 0, 8,  2,            0x03),
+            ("DateCreate",  T_DATETIME, 4, 0, 10, 8,            0x03),
+            ("DateUpdate",  T_DATETIME, 5, 0, 18, 8,            0x03),
+            ("Flags",       T_LONG,     6, 0, 26, 4,            0x03),
+            ("ForeignName", T_TEXT,     7, 1, 0,  textColSize,  0x02),
+            ("Database",    T_TEXT,     8, 2, 0,  textColSize,  0x02),
         };
 
         int numCols = columns.Length;
@@ -1026,9 +1035,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             Wu16(db, o + colFixedOff, col.FixedOff);
             Wu16(db, o + colSzOff, col.Size);
 
-            byte[] nameBytes = Encoding.Unicode.GetBytes(col.Name);
-            Wu16(db, namePos, nameBytes.Length);
-            namePos += 2;
+            byte[] nameBytes = isJet3
+                ? Encoding.ASCII.GetBytes(col.Name)
+                : Encoding.Unicode.GetBytes(col.Name);
+
+            if (isJet3)
+            {
+                db[namePos] = (byte)nameBytes.Length;
+                namePos += 1;
+            }
+            else
+            {
+                Wu16(db, namePos, nameBytes.Length);
+                namePos += 2;
+            }
+
             Buffer.BlockCopy(nameBytes, 0, db, namePos, nameBytes.Length);
             namePos += nameBytes.Length;
         }
