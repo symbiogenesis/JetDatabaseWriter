@@ -21,7 +21,7 @@ internal static class TypedValueParser
             return Type.GetTypeCode(targetType) switch
             {
                 TypeCode.String => value,
-                TypeCode.Boolean => ParseBoolean(value),
+                TypeCode.Boolean => Convert.ToBoolean(value, CultureInfo.InvariantCulture),
                 TypeCode.Byte => byte.Parse(value, CultureInfo.InvariantCulture),
                 TypeCode.Int16 => short.Parse(value, CultureInfo.InvariantCulture),
                 TypeCode.Int32 => int.Parse(value, CultureInfo.InvariantCulture),
@@ -42,22 +42,7 @@ internal static class TypedValueParser
     }
 #pragma warning restore CA1031
 
-    private static bool ParseBoolean(string value)
-    {
-        if (string.Equals(value, "True", StringComparison.OrdinalIgnoreCase) ||
-            value == "1" || value == "-1")
-        {
-            return true;
-        }
-
-        if (string.Equals(value, "False", StringComparison.OrdinalIgnoreCase) ||
-            value == "0")
-        {
-            return false;
-        }
-
-        return bool.Parse(value);
-    }
+    // No longer needed: replaced by Convert.ToBoolean in ParseValue
 
     private static byte[] ParseByteArray(string hexString)
     {
@@ -67,18 +52,22 @@ internal static class TypedValueParser
             return [];
         }
 
-        int count = (hexString.Length + 1) / 3;
-        byte[] result = new byte[count];
-
-        for (int i = 0; i < count; i++)
+        // Try to use Convert.FromHexString if input is a plain hex string (no dashes)
+#if NET5_0_OR_GREATER
+        if (!hexString.Contains('-'))
         {
-            int offset = i * 3;
-            result[i] = (byte)((HexCharToNibble(hexString[offset]) << 4) | HexCharToNibble(hexString[offset + 1]));
+            return Convert.FromHexString(hexString);
+        }
+#endif
+
+        // Fallback: dash-separated format ("XX-XX-XX-XX")
+        string[] hexValues = hexString.Split('-', StringSplitOptions.RemoveEmptyEntries);
+        byte[] bytes = new byte[hexValues.Length];
+        for (int i = 0; i < hexValues.Length; i++)
+        {
+            bytes[i] = Convert.ToByte(hexValues[i], 16);
         }
 
-        return result;
+        return bytes;
     }
-
-    private static int HexCharToNibble(char c) =>
-        c <= '9' ? c - '0' : (c & ~0x20) - 'A' + 10;
 }
