@@ -1007,15 +1007,67 @@ public sealed class AccessReader : AccessBase, IAccessReader
         try
         {
             ptr = Marshal.SecureStringToGlobalAllocUnicode(password);
-            string plain = Marshal.PtrToStringUni(ptr, password.Length) ?? string.Empty;
-#if NET5_0_OR_GREATER
-            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(plain));
-#else
+            int charCount = password.Length;
+
+            // Single-pass: read chars from unmanaged memory and encode to UTF-8
+            // directly, eliminating the intermediate char buffer and a separate
+            // Encoding.UTF8.GetBytes pass.
+            Span<byte> utf8 = stackalloc byte[charCount * 3];
+            int utf8Len = 0;
+
+            // Batch-read 4 chars (8 bytes) per Marshal call to reduce P/Invoke overhead.
+            int i = 0;
+            for (; i + 3 < charCount; i += 4)
+            {
+                long val = Marshal.ReadInt64(ptr, i * 2);
+                char c0 = (char)(val & 0xFFFF);
+                char c1 = (char)((val >> 16) & 0xFFFF);
+                char c2 = (char)((val >> 32) & 0xFFFF);
+                char c3 = (char)((val >> 48) & 0xFFFF);
+
+                // Fast path: all 4 chars are ASCII — skip per-char branching.
+                if ((c0 | c1 | c2 | c3) < 0x80)
+                {
+                    utf8[utf8Len] = (byte)c0;
+                    utf8[utf8Len + 1] = (byte)c1;
+                    utf8[utf8Len + 2] = (byte)c2;
+                    utf8[utf8Len + 3] = (byte)c3;
+                    utf8Len += 4;
+                }
+                else
+                {
+                    Utf8EncodeChar(c0, utf8, ref utf8Len);
+                    Utf8EncodeChar(c1, utf8, ref utf8Len);
+                    Utf8EncodeChar(c2, utf8, ref utf8Len);
+                    Utf8EncodeChar(c3, utf8, ref utf8Len);
+                }
+            }
+
+            for (; i < charCount; i++)
+            {
+                char c = (char)Marshal.ReadInt16(ptr, i * 2);
+                if (c < 0x80)
+                {
+                    utf8[utf8Len++] = (byte)c;
+                }
+                else
+                {
+                    Utf8EncodeChar(c, utf8, ref utf8Len);
+                }
+            }
+
+            Span<byte> hash = stackalloc byte[32];
             using var sha = SHA256.Create();
-            byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(plain));
-#endif
+            if (!sha.TryComputeHash(utf8.Slice(0, utf8Len), hash, out _))
+            {
+                throw new CryptographicException("SHA-256 hash computation failed.");
+            }
+
+            utf8[..utf8Len].Clear();
+
             byte[] key = new byte[16];
-            Buffer.BlockCopy(hash, 0, key, 0, 16);
+            hash[..16].CopyTo(key);
+            hash.Clear();
             return key; // AES-128
         }
         finally
@@ -1024,6 +1076,27 @@ public sealed class AccessReader : AccessBase, IAccessReader
             {
                 Marshal.ZeroFreeGlobalAllocUnicode(ptr);
             }
+        }
+    }
+
+    /// <summary>Encodes a single BMP character as UTF-8 into the destination span.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Utf8EncodeChar(char c, Span<byte> buf, ref int pos)
+    {
+        if (c < 0x80)
+        {
+            buf[pos++] = (byte)c;
+        }
+        else if (c < 0x800)
+        {
+            buf[pos++] = (byte)(0xC0 | (c >> 6));
+            buf[pos++] = (byte)(0x80 | (c & 0x3F));
+        }
+        else
+        {
+            buf[pos++] = (byte)(0xE0 | (c >> 12));
+            buf[pos++] = (byte)(0x80 | ((c >> 6) & 0x3F));
+            buf[pos++] = (byte)(0x80 | (c & 0x3F));
         }
     }
 
