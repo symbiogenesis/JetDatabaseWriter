@@ -262,7 +262,7 @@ All async APIs return `ValueTask<T>` and can be awaited directly. Reader/writer 
 ```csharp
 // Typed columns
 Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(
-    new Progress<string>(t => Console.WriteLine($"Reading {t}...")),
+    new Progress<TableProgress>(p => Console.WriteLine($"Reading {p.TableName} ({p.TableIndex + 1}/{p.TableCount})...")),
     cancellationToken);
 
 // String columns (compatibility)

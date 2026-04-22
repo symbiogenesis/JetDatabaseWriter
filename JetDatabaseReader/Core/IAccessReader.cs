@@ -145,14 +145,14 @@ public interface IAccessReader : IAccessBase
     /// Each table's columns use their native CLR types (int, DateTime, decimal, etc.).
     /// </summary>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<string>? progress = null, CancellationToken cancellationToken = default);
+    ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reads all tables into a dictionary of DataTables with all columns typed as strings asynchronously.
     /// Use this for compatibility scenarios.
     /// </summary>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<string>? progress = null, CancellationToken cancellationToken = default);
+    ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Creates a fluent query interface for the specified table.

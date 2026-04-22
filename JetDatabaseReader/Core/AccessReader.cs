@@ -871,10 +871,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Reads all tables into a dictionary of DataTables with properly typed columns asynchronously.
     /// Each table's columns use their native CLR types (int, DateTime, decimal, etc.).
     /// </summary>
-    /// <param name="progress">Optional progress reporter for table names.</param>
+    /// <param name="progress">Optional progress reporter for table read operations.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A dictionary mapping table names to their corresponding DataTables.</returns>
-    public async ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<string>? progress = null, CancellationToken cancellationToken = default)
+    public async ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
@@ -882,12 +882,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
         List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
 
-        foreach (CatalogEntry table in tables)
+        for (int i = 0; i < tables.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            progress?.Report($"Reading {table.Name}...");
-            DataTable dt = await ReadDataTableAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
-            result[table.Name] = dt;
+            CatalogEntry table = tables[i];
+            progress?.Report(new TableProgress { TableName = table.Name, TableIndex = i, TableCount = tables.Count });
+            result[table.Name] = await ReadDataTableAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
         return result;
@@ -897,10 +897,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Reads all tables into a dictionary of DataTables with all columns typed as strings asynchronously.
     /// Use this for compatibility scenarios.
     /// </summary>
-    /// <param name="progress">Optional progress reporter for table names.</param>
+    /// <param name="progress">Optional progress reporter for table read operations.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A dictionary mapping table names to their corresponding DataTables with all columns as strings.</returns>
-    public async ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<string>? progress = null, CancellationToken cancellationToken = default)
+    public async ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
@@ -908,12 +908,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
         List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
 
-        foreach (CatalogEntry table in tables)
+        for (int i = 0; i < tables.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            progress?.Report($"Reading {table.Name}...");
-            DataTable dt = await ReadTableAsStringsAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
-            result[table.Name] = dt;
+            CatalogEntry table = tables[i];
+            progress?.Report(new TableProgress { TableName = table.Name, TableIndex = i, TableCount = tables.Count });
+            result[table.Name] = await ReadTableAsStringsAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
         return result;
