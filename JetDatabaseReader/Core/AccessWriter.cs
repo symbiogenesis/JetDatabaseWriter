@@ -807,13 +807,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         await using (reader)
         {
-            DataTable? snapshot = await reader.ReadDataTableAsync(tableName, cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (snapshot != null)
-            {
-                return snapshot;
-            }
-
-            return new DataTable(tableName);
+            return await reader.ReadDataTableAsync(tableName, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
 

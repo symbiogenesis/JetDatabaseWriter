@@ -78,7 +78,7 @@ public sealed class AccessReaderOptions : IAccessOptions
     /// Paths may be absolute or relative (relative entries are resolved from the opened database directory).
     /// Leave empty to allow any directory.
     /// </summary>
-    public IReadOnlyList<string> LinkedSourcePathAllowlist { get; set; } = Array.Empty<string>();
+    public IReadOnlyList<string> LinkedSourcePathAllowlist { get; set; } = [];
 
     /// <summary>
     /// Gets or sets an optional callback to approve linked-table source paths.

@@ -61,18 +61,17 @@ public class DataTableIntegrationTests(DatabaseCache db) : IClassFixture<Databas
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadTableAsStrings_ColumnCount_MatchesReadTableAsStringDataTable(string path)
+    public async Task ReadTableAsStrings_AllColumnsAreStringType(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        DataTable direct = (await reader.ReadTableAsStringDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
-        DataTable fromStrings = await reader.ReadTableAsStringsAsync(table, int.MaxValue, TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
-        Assert.Equal(direct.Columns.Count, fromStrings.Columns.Count);
-        for (int i = 0; i < direct.Columns.Count; i++)
+        Assert.True(dt.Columns.Count > 0);
+        foreach (DataColumn col in dt.Columns)
         {
-            Assert.Equal(direct.Columns[i].ColumnName, fromStrings.Columns[i].ColumnName);
+            Assert.Equal(typeof(string), col.DataType);
         }
     }
 }

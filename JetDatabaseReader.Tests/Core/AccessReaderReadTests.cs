@@ -97,16 +97,16 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
         }
     }
 
-    // ── ReadTableAsStringDataTable ────────────────────────────────────
+    // ── ReadTableAsStringsAsync ────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadTableAsStringDataTable_AllColumnsAreStringType(string path)
+    public async Task ReadTableAsStringsAsync_AllColumnsAreStringType(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        DataTable dt = (await reader.ReadTableAsStringDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable dt = await reader.ReadTableAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         foreach (DataColumn col in dt.Columns)
         {
@@ -116,26 +116,26 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadTableAsStringDataTable_RowCount_MatchesReadTable(string path)
+    public async Task ReadTableAsStringsAsync_RowCount_MatchesReadTable(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         DataTable typed = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
-        DataTable string_ = (await reader.ReadTableAsStringDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable string_ = await reader.ReadTableAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(typed.Rows.Count, string_.Rows.Count);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadTableAsStringDataTable_ColumnCount_MatchesReadTable(string path)
+    public async Task ReadTableAsStringsAsync_ColumnCount_MatchesReadTable(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         DataTable typed = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
-        DataTable string_ = (await reader.ReadTableAsStringDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataTable string_ = await reader.ReadTableAsStringsAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(typed.Columns.Count, string_.Columns.Count);
     }
