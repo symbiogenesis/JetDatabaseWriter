@@ -12,9 +12,9 @@ using System.Data;
 /// </summary>
 public class TableResult
 {
-    private static readonly IReadOnlyList<string> EmptyHeaders = new ReadOnlyCollection<string>(new List<string>());
-    private static readonly IReadOnlyList<IReadOnlyList<object?>> EmptyRows = new ReadOnlyCollection<IReadOnlyList<object?>>(new List<IReadOnlyList<object?>>());
-    private static readonly IReadOnlyList<TableColumn> EmptySchema = new ReadOnlyCollection<TableColumn>(new List<TableColumn>());
+    private static readonly IReadOnlyList<string> EmptyHeaders = new ReadOnlyCollection<string>([]);
+    private static readonly IReadOnlyList<IReadOnlyList<object?>> EmptyRows = new ReadOnlyCollection<IReadOnlyList<object?>>([]);
+    private static readonly IReadOnlyList<TableColumn> EmptySchema = new ReadOnlyCollection<TableColumn>([]);
 
     private IReadOnlyList<string> _headers = EmptyHeaders;
     private IReadOnlyList<IReadOnlyList<object?>> _rows = EmptyRows;

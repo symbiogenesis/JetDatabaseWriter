@@ -11,13 +11,13 @@ using System.Data;
 public class StringTableResult
 {
     /// <summary>Gets or sets the ordered list of column names.</summary>
-    public List<string> Headers { get; set; } = new List<string>();
+    public List<string> Headers { get; set; } = [];
 
     /// <summary>Gets or sets up to <c>maxRows</c> rows, each row a list of string values (one per column).</summary>
-    public List<List<string>> Rows { get; set; } = new List<List<string>>();
+    public List<List<string>> Rows { get; set; } = [];
 
     /// <summary>Gets or sets the per-column schema information in the same order as <see cref="Headers"/>.</summary>
-    public List<TableColumn> Schema { get; set; } = new List<TableColumn>();
+    public List<TableColumn> Schema { get; set; } = [];
 
     /// <summary>Gets or sets the name of the table this result was read from.</summary>
     public string TableName { get; set; } = string.Empty;

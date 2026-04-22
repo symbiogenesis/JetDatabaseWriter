@@ -172,7 +172,7 @@ public sealed class OverflowRowTests(DatabaseCache db) : IClassFixture<DatabaseC
         await using (var writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 1, expectedText1, expectedText2 }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, expectedText1, expectedText2], TestContext.Current.CancellationToken);
         }
 
         await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
