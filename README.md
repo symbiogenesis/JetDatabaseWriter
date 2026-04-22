@@ -20,8 +20,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Typed by default** | `int`, `DateTime`, `decimal`, `Guid` — not just strings |
 | ✅ **All column types** | Text, Integer, Currency, Date/Time, GUID, MEMO, OLE Object, Decimal |
 | ✅ **Streaming API** | Process millions of rows without loading the whole file |
-| ✅ **Async support** | Async-first `ValueTask<T>` API for all major operations |
-| ✅ **Async lifetime** | `OpenAsync(...)` + `await using` (`IAsyncDisposable`) for reader/writer |
+| ✅ **Async support** | Async-first `ValueTask<T>` API, `OpenAsync(...)` + `await using` (`IAsyncDisposable`) |
 | ✅ **Stream support** | Open from any seekable `Stream` (byte arrays, blobs, embedded resources) |
 | ✅ **Page cache** | 256-page LRU cache (~1 MB, configurable) |
 | ✅ **Generic POCO mapping** | `ReadTable<T>()`, `StreamRows<T>()`, `InsertRow<T>()` — no manual casting |
