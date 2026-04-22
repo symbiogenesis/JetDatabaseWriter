@@ -49,16 +49,16 @@ Install-Package JetDatabaseReader
 
 ### NuGet target compatibility
 
-`JetDatabaseReader` targets **`netstandard2.0`**, which is consumed by every current .NET surface:
+`JetDatabaseReader` targets **`netstandard2.1`**, which is consumed by the following .NET surfaces:
 
 | Consumer | Minimum version |
 |----------|----------------|
-| .NET Framework | 4.6.1 |
-| .NET Core | 2.0 |
+| .NET Core | 3.0 |
 | .NET | 5 / 6 / 7 / 8 / 9 |
-| Mono / Xamarin | All |
-| Unity | 2018.1+ |
-| UWP | 10.0.16299+ |
+| Mono | 6.4 |
+| Xamarin.iOS | 12.16 |
+| Xamarin.Android | 10.0 |
+| Unity | 2021.2+ |
 
 ---
 
