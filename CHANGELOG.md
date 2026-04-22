@@ -5,6 +5,140 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.0.0] — 2026-04-22
+
+### ⚠️ Breaking Changes
+
+| Area | Before | After |
+|------|--------|-------|
+| **All public APIs** | Mix of sync and async methods | **Async-only** — all public methods return `ValueTask`, `Task`, or `IAsyncEnumerable`; sync overloads removed |
+| **`IDisposable`** | Implemented on reader/writer | **Removed** — only `IAsyncDisposable` remains; use `await using` |
+| **`AccessReader.Open(path)`** | Sync factory method | **Removed** — use `await AccessReader.OpenAsync(path)` |
+| **`AccessWriter.Open(path)`** | Sync factory method | **Removed** — use `await AccessWriter.OpenAsync(path)` |
+| **`ReadTable()`** | Sync typed `DataTable` | **Removed** — use `ReadDataTableAsync()` |
+| **`ReadTableAsStrings()`** | Sync string `DataTable` | **Removed** — use `ReadTableAsStringsAsync()` |
+| **`StreamRows()`** | `IEnumerable<object[]>` | **Removed** — use `StreamRowsAsync()` (`IAsyncEnumerable<object[]>`) |
+| **`StreamRowsAsStrings()`** | `IEnumerable<string[]>` | **Removed** — use `StreamRowsAsStringsAsync()` (`IAsyncEnumerable<string[]>`) |
+| **`InsertRow` / `InsertRows`** | Sync CRUD methods on writer | **Removed** — use `InsertRowAsync` / `InsertRowsAsync` |
+| **`CreateTable` / `DropTable`** | Sync DDL methods on writer | **Removed** — use `CreateTableAsync` / `DropTableAsync` |
+| **`UpdateRows` / `DeleteRows`** | Sync DML methods on writer | **Removed** — use `UpdateRowsAsync` / `DeleteRowsAsync` |
+| **`TableQuery` execution** | `Execute()`, `FirstOrDefault()`, `Count()` | **Removed** — use `ExecuteAsync()`, `FirstOrDefaultAsync()`, `CountAsync()` |
+| **`ReadTableAsStringDataTableAsync()`** | Separate method for string DataTable with `IProgress` | **Removed** — merged into `ReadTableAsStringsAsync()` which now accepts optional `IProgress<int>? progress` |
+
+### ✨ Async-Only API
+
+The entire public surface is now async. All reader, writer, and query-builder methods use `ValueTask`, `Task`, or `IAsyncEnumerable` with full `CancellationToken` propagation. Synchronous helpers have been moved to `private` internals.
+
+| Interface | Factory | Disposal |
+|-----------|---------|----------|
+| `IAccessReader` | `AccessReader.OpenAsync(path, options?, ct)` | `await using` (`IAsyncDisposable`) |
+| `IAccessWriter` | `AccessWriter.OpenAsync(path, options?, ct)` | `await using` (`IAsyncDisposable`) |
+
+`TableQuery` (returned by the sync `Query(tableName)` builder) now exposes only async execution: `ExecuteAsync()`, `ExecuteAsync<T>()`, `ExecuteAsStringsAsync()`, `FirstOrDefaultAsync()`, `CountAsync()`, `CountAsStringsAsync()`.
+
+### ✨ Full Encryption & Password Support
+
+All Jet encryption formats are now supported for both reading and writing. No external drivers required.
+
+| Format | Encryption | Support |
+|--------|-----------|---------|
+| Access 97 `.mdb` | Jet3 XOR (128-byte cyclic mask) | Read + Write |
+| Access 2000–2003 `.mdb` | Jet4 RC4 (per-page MD5-derived key) | Read + Write |
+| Access 2000–2003 `.mdb` | Jet4 password-only (no page encryption) | Read + Write |
+| Access 2007+ `.accdb` | Legacy password (XOR-masked header) | Read + Write |
+| Access 2007+ `.accdb` | AES-128-ECB (SHA-256-derived page key) | Read + Write |
+
+```csharp
+// Open an encrypted database
+await using var reader = await AccessReader.OpenAsync("secure.accdb",
+    new AccessReaderOptions("MyPassword"));
+
+await using var writer = await AccessWriter.OpenAsync("secure.mdb",
+    new AccessWriterOptions("MyPassword"));
+
+// Or use SecureString directly
+var opts = new AccessReaderOptions { Password = mySecureString };
+await using var reader = await AccessReader.OpenAsync("secure.accdb", opts);
+```
+
+Password is accepted via `AccessReaderOptions` / `AccessWriterOptions` — either as a plain-text constructor argument or as a `SecureString? Password` property.
+
+### ✨ Lockfile Handling
+
+Automatic `.ldb` / `.laccdb` lockfile management mirrors Microsoft Access behaviour.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `UseLockFile` | `true` | Create a lockfile on open, delete on dispose |
+| `RespectExistingLockFile` | `true` | *(Writer only)* Throw `IOException` if a lockfile already exists |
+
+```csharp
+// Writer respects existing lockfiles by default
+await using var writer = await AccessWriter.OpenAsync("db.accdb",
+    new AccessWriterOptions { RespectExistingLockFile = true });
+
+// Opt out of lockfile creation
+await using var reader = await AccessReader.OpenAsync("db.mdb",
+    new AccessReaderOptions { UseLockFile = false });
+```
+
+- `.accdb` → `.laccdb`, `.mdb` → `.ldb`
+- Reader lockfile creation is best-effort (swallows I/O errors for read-only scenarios)
+- Writer lockfile creation is strict when `RespectExistingLockFile = true`
+- Lockfiles are deleted automatically via `IAsyncDisposable`
+
+### ✨ Scaffolding Tool — `JetDatabaseReader.Scaffold`
+
+New CLI tool that generates C# entity classes from any `.mdb` / `.accdb` schema. Powered by Roslyn.
+
+```
+dotnet run --project JetDatabaseReader.Scaffold -- mydb.accdb -o ./Models -n MyApp.Entities
+```
+
+| Option | Alias | Default | Description |
+|--------|-------|---------|-------------|
+| `database` | `-d` | *(required)* | Path to `.mdb` / `.accdb` |
+| `--output` | `-o` | `./Models` | Output directory for generated files |
+| `--namespace` | `-n` | `GeneratedModels` | Namespace for generated classes |
+| `--password` | `-p` | `null` | Database password (for encrypted files) |
+| `--records` | | `false` | Emit C# `record` instead of `class` |
+| `--nullable` | | `true` | Add `#nullable enable` and nullable reference types |
+
+- One `.cs` file per table with property-per-column mapping
+- `ColumnMetadata.ClrType` → idiomatic C# type names
+- PascalCase name cleaning for tables and columns
+- XML doc comments per property with column name, Jet type, and size
+- Default initialisers for non-nullable reference types (`string.Empty`, `Array.Empty<byte>()`)
+- Property-name deduplication and class-name collision avoidance
+
+### ✨ Writer: Create New Database Files
+
+`AccessWriter` can now create blank `.mdb` and `.accdb` databases from scratch — no template files or drivers needed.
+
+| Method | Description |
+|--------|-------------|
+| `AccessWriter.CreateDatabaseAsync(path, options?, ct)` | Create a new empty database at the given path |
+| `AccessWriter.CreateDatabaseAsync(stream, options?, ct)` | Create a new empty database in a writable stream |
+
+```csharp
+await using var writer = await AccessWriter.CreateDatabaseAsync("new.accdb");
+await writer.CreateTableAsync("Users", new List<ColumnDefinition>
+{
+    new("Id", typeof(int)),
+    new("Name", typeof(string), maxLength: 100),
+    new("Email", typeof(string), maxLength: 255),
+});
+await writer.InsertRowAsync("Users", new object[] { 1, "Alice", "alice@example.com" });
+```
+
+### 🔧 Improvements
+
+- **True async I/O throughout** — `FileStream` async reads/writes with no `Task.Run` wrappers
+- **`ReaderWriterLockSlim`** for in-memory shared state in `AccessWriter` (catalog and insert-target caches); file I/O serialised via `SemaphoreSlim`
+- **`AccessBase` async page primitives** — `WritePageAsync` and `AppendPageAsync` for writer internals
+- **Linked table async support** — `OpenLinkedSourceAsync` and `InsertLinkedTableEntryAsync` with cancellation
+- **`IAsyncEnumerable` streaming** — async iterator core pipelines (`StreamRowsCoreAsync`, `StreamRowsAsStringsCoreAsync`)
+
 ## [3.0.0] — 2026-04-19
 
 ### ⚠️ Breaking Changes
@@ -95,36 +229,6 @@ Dedicated result class for string-mode reads, returned by `ReadTableAsStrings`. 
 - **ACCDB encryption false positive fixed** — The Jet4 encryption flag at offset `0x62` is now only checked for `ver == 1` (Access 2000–2003 `.mdb`). Access 2007+ format databases (`ver >= 2`) set unrelated bits at that offset and were incorrectly rejected with `NotSupportedException`. All `.accdb` files and `.mdb` files saved in Access 2007–2019 format are now readable.
 - **Model files split** — `ColumnSizeUnit`, `ColumnSize`, and `TableColumn` each have their own `.cs` file.
 
-### 📦 Migration Guide
-
-```csharp
-// ── ReadTable — Rows is now typed ─────────────────────────────────────
-// Before (v2.1): string rows in Rows
-TableResult r = reader.ReadTable("Orders", 10);
-string val = r.Rows[0][2];                 // List<List<string>>
-
-// After (v2.2): typed rows in Rows
-TableResult r = reader.ReadTable("Orders", 10);
-object val = r.Rows[0][2];                 // List<object[]>
-
-// ── ReadTableAsStrings — dedicated string API ─────────────────────────
-StringTableResult sr = reader.ReadTableAsStrings("Orders", 10);
-string val = sr.Rows[0][2];                // List<List<string>>
-
-// ── bool overload removed ─────────────────────────────────────────────
-// Before ❌
-TableResult r = reader.ReadTable("Orders", 10, typedValues: true);
-// After ✅
-TableResult        r  = reader.ReadTable("Orders", 10);
-StringTableResult  sr = reader.ReadTableAsStrings("Orders", 10);
-
-// ── ToDataTable ───────────────────────────────────────────────────────
-DataTable typed   = reader.ReadTable("Orders", 100).ToDataTable();
-DataTable strings = reader.ReadTableAsStrings("Orders", 100).ToDataTable();
-```
-
----
-
 ## [2.1.0] — 2026-03-30
 
 ### ⚠️ Breaking Changes
@@ -150,36 +254,6 @@ DataTable strings = reader.ReadTableAsStrings("Orders", 100).ToDataTable();
 - **`TableResult`** gains `TableName` (`string`) — the table this result was read from — and `RowCount` (`int`) computed property.
 - **`TableColumn.Type`** (`System.Type`) — exact CLR type, consistent with `ColumnMetadata.ClrType`.
 - **`TableColumn.Size`** (`ColumnSize`) — structured size with programmatic access to numeric value and unit; `ToString()` preserves the previous human-readable output.
-
-### 📦 Migration Guide
-
-```csharp
-// ── TableColumn schema properties ────────────────────────────────────
-// Before
-string typeName = col.TypeName;   // "Long Integer"
-string sizeDesc = col.SizeDesc;   // "4 bytes"
-// After
-Type   clrType  = col.Type;                    // typeof(int)
-int?   bytes    = col.Size.Value;              // 4
-string display  = col.Size.ToString();         // "4 bytes"
-bool   isVar    = col.Size.Unit == ColumnSizeUnit.Variable;
-
-// ── ReadFirstTable ────────────────────────────────────────────────────
-// Before
-TableResult      r = reader.ReadFirstTable();
-// After
-FirstTableResult r = reader.ReadFirstTable();
-int total = r.TableCount;   // new property on FirstTableResult
-
-// ── GetTableStats ─────────────────────────────────────────────────────
-// Before — tuple list
-foreach (var (name, rows, cols) in reader.GetTableStats()) { ... }
-// After — named class
-foreach (TableStat s in reader.GetTableStats())
-    Console.WriteLine($"{s.Name}: {s.RowCount} rows, {s.ColumnCount} cols");
-```
-
----
 
 ## [2.0.1] — 2026-03-29
 
@@ -251,53 +325,6 @@ foreach (TableColumn col in p.Schema)
 - `DatabaseStatistics` and `ColumnMetadata` types
 - `IAccessReader` interface — fully testable and mockable
 - Full XML documentation on all public members
-
-### 📦 Migration Guide
-
-```csharp
-// ── Open ────────────────────────────────────────────────────────────
-// v1
-using var r = new JetDatabaseReader("db.mdb");
-// v2
-using var r = AccessReader.Open("db.mdb");
-
-// ── Read typed DataTable ─────────────────────────────────────────────
-// v1 — no equivalent (all columns were strings)
-// v2
-DataTable dt = r.ReadTable("Orders");
-int id = (int)dt.Rows[0]["OrderID"];
-
-// ── Read string DataTable (compatibility) ────────────────────────────
-// v1
-DataTable dt = r.ReadTableAsDataTable("Orders");
-// v2
-DataTable dt = r.ReadTableAsStringDataTable("Orders");
-
-// ── Sample with schema ──────────────────────────────────────────────
-// v1
-var (h, rows, schema) = r.ReadTable("Orders", maxRows: 10);
-// v2
-TablePreviewResult p = r.ReadTable("Orders", 10);
-// p.Headers / p.Rows / p.Schema[i].Name, .TypeName, .SizeDesc
-
-// ── Stream rows (typed) ──────────────────────────────────────────────
-// v1
-foreach (string[] row in r.StreamRows("Orders")) { ... }
-// v2 — typed
-foreach (object[] row in r.StreamRows("Orders")) { int id = (int)row[0]; }
-// v2 — compat
-foreach (string[] row in r.StreamRowsAsStrings("Orders")) { ... }
-
-// ── Bulk read ────────────────────────────────────────────────────────
-// v1 — returned string columns
-var tables = r.ReadAllTables();
-// v2 — returns typed columns
-var tables = r.ReadAllTables();
-// v2 — compat strings
-var tables = r.ReadAllTablesAsStrings();
-```
-
----
 
 ## [1.0.0] — 2026-03-27
 
