@@ -11,7 +11,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 | Area | Before | After |
 |------|--------|-------|
-| **Target framework** | `netstandard2.1` | `netstandard2.1` — more performance features |
+| **Target framework** | `netstandard2.0` | `netstandard2.1` — more performance features |
 
 ### ✨ Write Support — `AccessWriter` / `IAccessWriter`
 
