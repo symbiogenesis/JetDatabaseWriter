@@ -28,7 +28,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Progress reporting** | `IProgress<int>` callbacks on all long operations |
 | ✅ **Non-Western text** | Code page auto-detected from the database header |
 | ✅ **OLE Objects** | Detects embedded JPEG, PNG, PDF, ZIP, DOC, RTF |
-| ✅ **Write support** | Create/drop tables, insert/update/delete rows (Jet4/ACE) |
+| ✅ **Write support** | Create/drop tables, insert/update/delete rows (Jet3/Jet4/ACE) |
 | ✅ **Encryption & passwords** | Jet3 page-level XOR decryption, Jet4 `.mdb` and legacy password-only `.accdb` (`;pwd=`) |
 | ✅ **Linked table metadata** | `ListLinkedTables()` returns source paths and foreign names |
 | ✅ **Complex fields** | Attachment and multi-value columns resolved via `MSysComplexColumns` FK lookup |
