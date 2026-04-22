@@ -13,7 +13,7 @@ internal sealed record LvalChainResult
 
     public string? Error { get; }
 
-    public static LvalChainResult Success(byte[] data) => new LvalChainResult(data, null);
+    public static LvalChainResult Success(byte[] data) => new(data, null);
 
-    public static LvalChainResult Failure(string error) => new LvalChainResult(null, error);
+    public static LvalChainResult Failure(string error) => new(null, error);
 }

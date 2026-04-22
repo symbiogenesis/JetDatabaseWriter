@@ -6,10 +6,10 @@ namespace JetDatabaseReader;
 public readonly record struct ColumnSize
 {
     /// <summary>Variable-length with no declared maximum.</summary>
-    public static readonly ColumnSize Variable = new ColumnSize(null, ColumnSizeUnit.Variable);
+    public static readonly ColumnSize Variable = new(null, ColumnSizeUnit.Variable);
 
     /// <summary>Large-value data stored on LVAL pages (MEMO / OLE).</summary>
-    public static readonly ColumnSize Lval = new ColumnSize(null, ColumnSizeUnit.Lval);
+    public static readonly ColumnSize Lval = new(null, ColumnSizeUnit.Lval);
 
     private ColumnSize(int? value, ColumnSizeUnit unit)
     {
@@ -25,15 +25,15 @@ public readonly record struct ColumnSize
 
     /// <summary>Creates a fixed size expressed in bits.</summary>
     /// <returns></returns>
-    public static ColumnSize FromBits(int count) => new ColumnSize(count, ColumnSizeUnit.Bits);
+    public static ColumnSize FromBits(int count) => new(count, ColumnSizeUnit.Bits);
 
     /// <summary>Creates a fixed size expressed in bytes.</summary>
     /// <returns></returns>
-    public static ColumnSize FromBytes(int count) => new ColumnSize(count, ColumnSizeUnit.Bytes);
+    public static ColumnSize FromBytes(int count) => new(count, ColumnSizeUnit.Bytes);
 
     /// <summary>Creates a maximum character count for a text column.</summary>
     /// <returns></returns>
-    public static ColumnSize FromChars(int count) => new ColumnSize(count, ColumnSizeUnit.Chars);
+    public static ColumnSize FromChars(int count) => new(count, ColumnSizeUnit.Chars);
 
     /// <inheritdoc/>
     public override string ToString()

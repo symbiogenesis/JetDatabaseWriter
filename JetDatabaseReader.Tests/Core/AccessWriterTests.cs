@@ -976,7 +976,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         };
 
         // 512 Unicode chars = 1024 bytes = MaxInlineMemoBytes exactly
-        string memoValue = new string('A', 512);
+        string memoValue = new('A', 512);
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
@@ -1011,7 +1011,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         };
 
         // 513 Unicode chars = 1026 bytes > MaxInlineMemoBytes
-        string memoValue = new string('B', 513);
+        string memoValue = new('B', 513);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);

@@ -20,7 +20,7 @@ internal sealed class LruCache<TKey, TValue>
     private readonly Dictionary<TKey, int> _map;
     private readonly Node[] _nodes;
     private readonly Action<TValue>? _onEvict;
-    private readonly object _lock = new object();
+    private readonly object _lock = new();
     private int _nextSlot = 1; // 0 is reserved for sentinel
 
     public LruCache(int capacity, Action<TValue>? onEvict = null)

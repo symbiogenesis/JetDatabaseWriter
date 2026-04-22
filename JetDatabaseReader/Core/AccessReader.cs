@@ -69,8 +69,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         0xDE, 0x01, 0x47, 0xA6, 0x78, 0xD5, 0x42, 0xD7,
     ];
 
-    private readonly object _cacheLock = new object();
-    private readonly object _catalogLock = new object();
+    private readonly object _cacheLock = new();
+    private readonly object _catalogLock = new();
     private readonly string _path;
     private readonly bool _useLockFile;
     private readonly Func<LinkedTableInfo, string, bool>? _linkedSourcePathValidator;
@@ -592,7 +592,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return [];
         }
 
-        Dictionary<string, string> complexSubtypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, string> complexSubtypes = new(StringComparer.OrdinalIgnoreCase);
         bool hasComplex = resolved.Value.Td.Columns.Any(c => c.Type == T_COMPLEX || c.Type == T_ATTACHMENT);
         if (hasComplex)
         {

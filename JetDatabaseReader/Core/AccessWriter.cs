@@ -28,7 +28,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly SecureString? _password;
     private readonly bool _useLockFile;
     private readonly bool _respectExistingLockFile;
-    private readonly ReaderWriterLockSlim _stateLock = new ReaderWriterLockSlim(LockRecursionPolicy.NoRecursion);
+    private readonly ReaderWriterLockSlim _stateLock = new(LockRecursionPolicy.NoRecursion);
 
     private List<CatalogEntry>? _catalogCache;
     private long _cachedInsertTDefPage = -1;

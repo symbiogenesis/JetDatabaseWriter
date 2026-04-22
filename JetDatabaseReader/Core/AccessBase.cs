@@ -95,7 +95,7 @@ public abstract class AccessBase : IAccessBase
     private protected byte[]? _aesPageKey;
 
     private protected bool _disposed;
-    private readonly SemaphoreSlim _ioGate = new SemaphoreSlim(1, 1);
+    private readonly SemaphoreSlim _ioGate = new(1, 1);
 
     static AccessBase()
     {
