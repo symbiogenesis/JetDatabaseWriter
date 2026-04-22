@@ -1141,73 +1141,57 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    private static string TypeCodeToName(byte t)
+    private static string TypeCodeToName(byte t) => t switch
     {
-        switch (t)
-        {
-            case T_BOOL: return "Yes/No";
-            case T_BYTE: return "Byte";
-            case T_INT: return "Integer";
-            case T_LONG: return "Long Integer";
-            case T_MONEY: return "Currency";
-            case T_FLOAT: return "Single";
-            case T_DOUBLE: return "Double";
-            case T_DATETIME: return "Date/Time";
-            case T_BINARY: return "Binary";
-            case T_TEXT: return "Text";
-            case T_OLE: return "OLE Object";
-            case T_MEMO: return "Memo";
-            case T_GUID: return "GUID";
-            case T_NUMERIC: return "Decimal";
-            case T_ATTACHMENT: return "Attachment";
-            case T_COMPLEX: return "Complex";
-            default: return $"0x{t:X2}";
-        }
-    }
+        T_BOOL => "Yes/No",
+        T_BYTE => "Byte",
+        T_INT => "Integer",
+        T_LONG => "Long Integer",
+        T_MONEY => "Currency",
+        T_FLOAT => "Single",
+        T_DOUBLE => "Double",
+        T_DATETIME => "Date/Time",
+        T_BINARY => "Binary",
+        T_TEXT => "Text",
+        T_OLE => "OLE Object",
+        T_MEMO => "Memo",
+        T_GUID => "GUID",
+        T_NUMERIC => "Decimal",
+        T_ATTACHMENT => "Attachment",
+        T_COMPLEX => "Complex",
+        _ => $"0x{t:X2}",
+    };
 
-    private static ColumnSize SizeForColumn(ColumnInfo col)
+    private static ColumnSize SizeForColumn(ColumnInfo col) => col.Type switch
     {
-        switch (col.Type)
-        {
-            case T_BOOL: return ColumnSize.FromBits(1);
-            case T_BYTE: return ColumnSize.FromBytes(1);
-            case T_INT: return ColumnSize.FromBytes(2);
-            case T_LONG: return ColumnSize.FromBytes(4);
-            case T_MONEY: return ColumnSize.FromBytes(8);
-            case T_FLOAT: return ColumnSize.FromBytes(4);
-            case T_DOUBLE: return ColumnSize.FromBytes(8);
-            case T_DATETIME: return ColumnSize.FromBytes(8);
-            case T_GUID: return ColumnSize.FromBytes(16);
-            case T_NUMERIC: return ColumnSize.FromBytes(17);
-            case T_TEXT: return ColumnSize.FromChars(col.Size > 0 ? col.Size / 2 : 255);
-            case T_BINARY: return col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable;
-            case T_MEMO:
-            case T_OLE: return ColumnSize.Lval;
-            case T_ATTACHMENT:
-            case T_COMPLEX: return ColumnSize.Lval;
-            default: return col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable;
-        }
-    }
+        T_BOOL => ColumnSize.FromBits(1),
+        T_BYTE => ColumnSize.FromBytes(1),
+        T_INT => ColumnSize.FromBytes(2),
+        T_LONG or T_FLOAT => ColumnSize.FromBytes(4),
+        T_MONEY or T_DOUBLE or T_DATETIME => ColumnSize.FromBytes(8),
+        T_GUID => ColumnSize.FromBytes(16),
+        T_NUMERIC => ColumnSize.FromBytes(17),
+        T_TEXT => ColumnSize.FromChars(col.Size > 0 ? col.Size / 2 : 255),
+        T_MEMO or T_OLE or T_ATTACHMENT or T_COMPLEX => ColumnSize.Lval,
+        _ => col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable, // such as T_BINARY
+    };
 
-    private static Type TypeCodeToClrType(byte typeCode)
+    private static Type TypeCodeToClrType(byte typeCode) => typeCode switch
     {
-        switch (typeCode)
-        {
-            case T_BOOL: return typeof(bool);
-            case T_BYTE: return typeof(byte);
-            case T_INT: return typeof(short);
-            case T_LONG: return typeof(int);
-            case T_MONEY: return typeof(decimal);
-            case T_FLOAT: return typeof(float);
-            case T_DOUBLE: return typeof(double);
-            case T_DATETIME: return typeof(DateTime);
-            case T_GUID: return typeof(Guid);
-            case T_NUMERIC: return typeof(decimal);
-            case T_ATTACHMENT: return typeof(byte[]);
-            case T_COMPLEX: return typeof(byte[]);
-            default: return typeof(string);
-        }
-    }
+        T_BOOL => typeof(bool),
+        T_BYTE => typeof(byte),
+        T_INT => typeof(short),
+        T_LONG => typeof(int),
+        T_MONEY => typeof(decimal),
+        T_FLOAT => typeof(float),
+        T_DOUBLE => typeof(double),
+        T_DATETIME => typeof(DateTime),
+        T_GUID => typeof(Guid),
+        T_NUMERIC => typeof(decimal),
+        T_ATTACHMENT => typeof(byte[]),
+        T_COMPLEX => typeof(byte[]),
+        _ => typeof(string),
+    };
 
     private static string ReadFixed(byte[] row, int start, ColumnInfo col, int sz)
     {
