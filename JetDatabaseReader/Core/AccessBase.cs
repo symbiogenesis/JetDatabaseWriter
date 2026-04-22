@@ -71,7 +71,7 @@ public abstract class AccessBase : IAccessBase
     private protected readonly int _varLenFldSz;   // 1 or 2
 
     private protected readonly int _pgSz;
-    private protected readonly bool _jet4;
+    private protected readonly DatabaseFormat _format;
     private protected readonly Stream _stream;
     private protected readonly Encoding _ansiEncoding;
     private protected readonly int _codePage;
@@ -115,13 +115,15 @@ public abstract class AccessBase : IAccessBase
     {
         _stream = stream;
 
-        // Offset 0x14: 0 = Jet3, ≥ 1 = Jet4+
+        // Offset 0x14: 0 = Jet3, 1 = Jet4, ≥ 2 = ACE/ACCDB
         byte ver = hdr[0x14];
-        _jet4 = ver >= 1;
-        _pgSz = _jet4 ? 4096 : 2048;
+        _format = ver >= 2 ? DatabaseFormat.AceAccdb
+                : ver >= 1 ? DatabaseFormat.Jet4Mdb
+                : DatabaseFormat.Jet3Mdb;
+        _pgSz = _format != DatabaseFormat.Jet3Mdb ? 4096 : 2048;
 
         // Jet3 XOR encryption: byte 0x62 bit 0x01 means pages 1+ are XOR-masked
-        if (!_jet4 && hdr.Length > 0x62 && (hdr[0x62] & 0x01) != 0)
+        if (_format == DatabaseFormat.Jet3Mdb && hdr.Length > 0x62 && (hdr[0x62] & 0x01) != 0)
         {
             _jet3XorMask =
             [
@@ -146,7 +148,7 @@ public abstract class AccessBase : IAccessBase
 
         // Offset 0x3C (Jet4) or 0x3A (Jet3): sort order / code page ID
         // Common: 1033=en-US(1252), 1049=ru(1251), 1041=ja(932)
-        int cpOffset = _jet4 ? 0x3C : 0x3A;
+        int cpOffset = _format != DatabaseFormat.Jet3Mdb ? 0x3C : 0x3A;
         int sortOrder = (hdr.Length > cpOffset + 1) ? Ru16(hdr, cpOffset) : 0;
         _codePage = (sortOrder >> 8) & 0xFF;
         if (_codePage == 0)
@@ -169,7 +171,7 @@ public abstract class AccessBase : IAccessBase
             _codePage = 65001;
         }
 
-        if (_jet4)
+        if (_format != DatabaseFormat.Jet3Mdb)
         {
             // ── Jet4 / ACE (Access 2000 – 2019, .mdb + .accdb) ──────
             // Data page
@@ -226,6 +228,18 @@ public abstract class AccessBase : IAccessBase
             _varLenFldSz = 1;
         }
     }
+
+    /// <inheritdoc/>
+    public bool IsJet4 => _format != DatabaseFormat.Jet3Mdb;
+
+    /// <inheritdoc/>
+    public DatabaseFormat DatabaseFormat => _format;
+
+    /// <inheritdoc/>
+    public int PageSize => _pgSz;
+
+    /// <inheritdoc/>
+    public int CodePage => _codePage;
 
     /// <inheritdoc/>
     public virtual async ValueTask DisposeAsync()
@@ -756,7 +770,7 @@ public abstract class AccessBase : IAccessBase
             return -1;
         }
 
-        if (_jet4)
+        if (_format != DatabaseFormat.Jet3Mdb)
         {
             if (pos + 2 > td.Length)
             {

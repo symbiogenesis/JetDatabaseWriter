@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 using Xunit;
 
 /// <summary>
-/// Tests for <see cref="AccessWriter.CreateDatabaseAsync(Stream, JetDatabaseFormat, AccessWriterOptions, bool, CancellationToken)"/> that verify the creation of new,
+/// Tests for <see cref="AccessWriter.CreateDatabaseAsync(Stream, DatabaseFormat, AccessWriterOptions, bool, CancellationToken)"/> that verify the creation of new,
 /// empty JET databases from scratch — both file-path and stream-based overloads.
 /// </summary>
 public sealed class CreateDatabaseTests
@@ -20,7 +20,7 @@ public sealed class CreateDatabaseTests
     {
         var ms = new MemoryStream();
 
-        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, JetDatabaseFormat.Jet4Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet4Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(writer);
     }
@@ -30,7 +30,7 @@ public sealed class CreateDatabaseTests
     {
         var ms = new MemoryStream();
 
-        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, JetDatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(writer);
     }
@@ -38,9 +38,9 @@ public sealed class CreateDatabaseTests
     // ── Round-trip: create → list tables (empty) ──────────────────────
 
     [Theory]
-    [InlineData(JetDatabaseFormat.Jet4Mdb)]
-    [InlineData(JetDatabaseFormat.AceAccdb)]
-    public async Task CreateDatabaseAsync_Stream_EmptyDatabase_ListTablesReturnsEmpty(JetDatabaseFormat format)
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateDatabaseAsync_Stream_EmptyDatabase_ListTablesReturnsEmpty(DatabaseFormat format)
     {
         var ms = new MemoryStream();
 
@@ -59,9 +59,9 @@ public sealed class CreateDatabaseTests
     // ── Round-trip: create → create table → verify columns ────────────
 
     [Theory]
-    [InlineData(JetDatabaseFormat.Jet4Mdb)]
-    [InlineData(JetDatabaseFormat.AceAccdb)]
-    public async Task CreateDatabaseAsync_Stream_CreateTable_TableIsReadable(JetDatabaseFormat format)
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateDatabaseAsync_Stream_CreateTable_TableIsReadable(DatabaseFormat format)
     {
         var ms = new MemoryStream();
         string tableName = "People";
@@ -91,9 +91,9 @@ public sealed class CreateDatabaseTests
     // ── Round-trip: create → insert → read back ───────────────────────
 
     [Theory]
-    [InlineData(JetDatabaseFormat.Jet4Mdb)]
-    [InlineData(JetDatabaseFormat.AceAccdb)]
-    public async Task CreateDatabaseAsync_Stream_InsertAndReadBack_DataSurvives(JetDatabaseFormat format)
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateDatabaseAsync_Stream_InsertAndReadBack_DataSurvives(DatabaseFormat format)
     {
         var ms = new MemoryStream();
         string tableName = "Items";
@@ -120,9 +120,9 @@ public sealed class CreateDatabaseTests
     // ── Round-trip: create → multiple tables ──────────────────────────
 
     [Theory]
-    [InlineData(JetDatabaseFormat.Jet4Mdb)]
-    [InlineData(JetDatabaseFormat.AceAccdb)]
-    public async Task CreateDatabaseAsync_Stream_MultipleTables_AllVisible(JetDatabaseFormat format)
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateDatabaseAsync_Stream_MultipleTables_AllVisible(DatabaseFormat format)
     {
         var ms = new MemoryStream();
 
@@ -144,9 +144,9 @@ public sealed class CreateDatabaseTests
     // ── CreateDatabaseAsync (file path) ───────────────────────────────────────
 
     [Theory]
-    [InlineData(JetDatabaseFormat.Jet4Mdb, ".mdb")]
-    [InlineData(JetDatabaseFormat.AceAccdb, ".accdb")]
-    public async Task CreateDatabaseAsync_Path_CreatesFileOnDisk(JetDatabaseFormat format, string ext)
+    [InlineData(DatabaseFormat.Jet4Mdb, ".mdb")]
+    [InlineData(DatabaseFormat.AceAccdb, ".accdb")]
+    public async Task CreateDatabaseAsync_Path_CreatesFileOnDisk(DatabaseFormat format, string ext)
     {
         string path = Path.Combine(Path.GetTempPath(), $"CreateTest_{Guid.NewGuid():N}{ext}");
 
@@ -167,9 +167,9 @@ public sealed class CreateDatabaseTests
     }
 
     [Theory]
-    [InlineData(JetDatabaseFormat.Jet4Mdb, ".mdb")]
-    [InlineData(JetDatabaseFormat.AceAccdb, ".accdb")]
-    public async Task CreateDatabaseAsync_Path_FileIsReadableAfterDispose(JetDatabaseFormat format, string ext)
+    [InlineData(DatabaseFormat.Jet4Mdb, ".mdb")]
+    [InlineData(DatabaseFormat.AceAccdb, ".accdb")]
+    public async Task CreateDatabaseAsync_Path_FileIsReadableAfterDispose(DatabaseFormat format, string ext)
     {
         string path = Path.Combine(Path.GetTempPath(), $"CreateRead_{Guid.NewGuid():N}{ext}");
 
@@ -203,7 +203,7 @@ public sealed class CreateDatabaseTests
         try
         {
             await Assert.ThrowsAsync<IOException>(() =>
-                AccessWriter.CreateDatabaseAsync(path, JetDatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
+                AccessWriter.CreateDatabaseAsync(path, DatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
         }
         finally
         {
@@ -215,14 +215,14 @@ public sealed class CreateDatabaseTests
     public async Task CreateDatabaseAsync_Path_NullPath_ThrowsArgumentException()
     {
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            AccessWriter.CreateDatabaseAsync((string)null!, JetDatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
+            AccessWriter.CreateDatabaseAsync((string)null!, DatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
     }
 
     [Fact]
     public async Task CreateDatabaseAsync_Stream_NullStream_ThrowsArgumentNullException()
     {
         await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            AccessWriter.CreateDatabaseAsync((Stream)null!, JetDatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
+            AccessWriter.CreateDatabaseAsync((Stream)null!, DatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
     }
 
     [Fact]
@@ -233,15 +233,15 @@ public sealed class CreateDatabaseTests
         var ms = new MemoryStream();
 
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            AccessWriter.CreateDatabaseAsync(ms, JetDatabaseFormat.Jet4Mdb, cancellationToken: cts.Token).AsTask());
+            AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet4Mdb, cancellationToken: cts.Token).AsTask());
     }
 
     // ── Column type round-trip ────────────────────────────────────────
 
     [Theory]
-    [InlineData(JetDatabaseFormat.Jet4Mdb)]
-    [InlineData(JetDatabaseFormat.AceAccdb)]
-    public async Task CreateDatabaseAsync_VariousColumnTypes_SurviveRoundTrip(JetDatabaseFormat format)
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateDatabaseAsync_VariousColumnTypes_SurviveRoundTrip(DatabaseFormat format)
     {
         var ms = new MemoryStream();
         string tableName = "TypeTest";
@@ -274,9 +274,9 @@ public sealed class CreateDatabaseTests
     // ── Drop table on newly created database ──────────────────────────
 
     [Theory]
-    [InlineData(JetDatabaseFormat.Jet4Mdb)]
-    [InlineData(JetDatabaseFormat.AceAccdb)]
-    public async Task CreateDatabaseAsync_DropTable_RemovesTable(JetDatabaseFormat format)
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateDatabaseAsync_DropTable_RemovesTable(DatabaseFormat format)
     {
         var ms = new MemoryStream();
 
