@@ -335,7 +335,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || (long)Ri32(page, _dpTDefOff) != entry.TDefPage)
+            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != entry.TDefPage)
             {
                 continue;
             }
@@ -432,7 +432,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || (long)Ri32(page, _dpTDefOff) != tdefPage)
+            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != tdefPage)
             {
                 continue;
             }
@@ -489,7 +489,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || (long)Ri32(page, _dpTDefOff) != entry.TDefPage)
+            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != entry.TDefPage)
             {
                 continue;
             }
@@ -561,7 +561,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || (long)Ri32(page, _dpTDefOff) != entry.TDefPage)
+            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != entry.TDefPage)
             {
                 continue;
             }
@@ -611,7 +611,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 ? subtype
                 : TypeCodeToName(col.Type),
             ClrType = TypeCodeToClrType(col.Type),
-            MaxLength = col.Size > 0 ? (int?)col.Size : null,
+            MaxLength = col.Size > 0 ? col.Size : null,
             IsNullable = true,
             IsFixedLength = col.IsFixed,
             Ordinal = index,
@@ -701,7 +701,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                long owner = (long)Ri32(page, _dpTDefOff);
+                long owner = Ri32(page, _dpTDefOff);
                 if (owner != entry.TDefPage)
                 {
                     continue;
@@ -781,7 +781,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            long owner = (long)Ri32(page, _dpTDefOff);
+            long owner = Ri32(page, _dpTDefOff);
             if (owner != entry.TDefPage)
             {
                 continue;
@@ -857,7 +857,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            long owner = (long)Ri32(page, _dpTDefOff);
+            long owner = Ri32(page, _dpTDefOff);
             if (owner != entry.TDefPage)
             {
                 continue;
@@ -918,7 +918,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            long owner = (long)Ri32(page, _dpTDefOff);
+            long owner = Ri32(page, _dpTDefOff);
             if (owner != entry.TDefPage)
             {
                 continue;
@@ -2348,7 +2348,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                if ((long)Ri32(page, _dpTDefOff) != msysTdef)
+                if (Ri32(page, _dpTDefOff) != msysTdef)
                 {
                     continue;
                 }
@@ -2462,7 +2462,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                if ((long)Ri32(page, _dpTDefOff) != tdefPage)
+                if (Ri32(page, _dpTDefOff) != tdefPage)
                 {
                     continue;
                 }
