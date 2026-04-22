@@ -374,7 +374,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <inheritdoc/>
-    public async ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object predicateValue, IDictionary<string, object> updatedValues, CancellationToken cancellationToken = default)
+    public async ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IDictionary<string, object> updatedValues, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
@@ -438,7 +438,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <inheritdoc/>
-    public async ValueTask<int> DeleteRowsAsync(string tableName, string predicateColumn, object predicateValue, CancellationToken cancellationToken = default)
+    public async ValueTask<int> DeleteRowsAsync(string tableName, string predicateColumn, object? predicateValue, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
@@ -589,7 +589,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return WrapInlineLongValue(data);
     }
 
-    private static bool ValuesEqual(object left, object right)
+    private static bool ValuesEqual(object? left, object? right)
     {
         bool leftDbNull = left == null || left is DBNull;
         bool rightDbNull = right == null || right is DBNull;

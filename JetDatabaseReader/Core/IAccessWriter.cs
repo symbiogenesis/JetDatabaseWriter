@@ -75,19 +75,19 @@ public interface IAccessWriter : IAccessBase
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="predicateColumn">Column name to filter on.</param>
-    /// <param name="predicateValue">Value to match in the predicate column.</param>
+    /// <param name="predicateValue">Value to match in the predicate column, or <see langword="null"/> for IS NULL matching.</param>
     /// <param name="updatedValues">Dictionary of column-name -> new-value pairs to apply.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows updated.</returns>
-    ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object predicateValue, IDictionary<string, object> updatedValues, CancellationToken cancellationToken = default);
+    ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IDictionary<string, object> updatedValues, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously deletes rows from the specified table where the predicate column matches the given value.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="predicateColumn">Column name to filter on.</param>
-    /// <param name="predicateValue">Value to match in the predicate column.</param>
+    /// <param name="predicateValue">Value to match in the predicate column, or <see langword="null"/> for IS NULL matching.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows deleted.</returns>
-    ValueTask<int> DeleteRowsAsync(string tableName, string predicateColumn, object predicateValue, CancellationToken cancellationToken = default);
+    ValueTask<int> DeleteRowsAsync(string tableName, string predicateColumn, object? predicateValue, CancellationToken cancellationToken = default);
 }
