@@ -557,52 +557,6 @@ public abstract class AccessBase : IAccessBase
 
     // ── Page I/O ─────────────────────────────────────────────────────
 
-    private protected byte[] ReadPage(long n)
-    {
-        var buf = ArrayPool<byte>.Shared.Rent(_pgSz);
-        _ioGate.Wait();
-        try
-        {
-            _ = _stream.Seek(n * _pgSz, SeekOrigin.Begin);
-
-            // FileStream.Read is not guaranteed to return all bytes in one call
-            int read = 0;
-            while (read < _pgSz)
-            {
-                int got = _stream.Read(buf, read, _pgSz - read);
-                if (got == 0)
-                {
-                    break;
-                }
-
-                read += got;
-            }
-        }
-        finally
-        {
-            _ = _ioGate.Release();
-        }
-
-        // Jet3 XOR decryption: pages 1+ are masked with a fixed 128-byte key
-        if (_jet3XorMask != null && n >= 1)
-        {
-            long fileOffset = n * _pgSz;
-            for (int b = 0; b < _pgSz; b++)
-            {
-                buf[b] ^= _jet3XorMask[(int)((fileOffset + b - _pgSz) % _jet3XorMask.Length)];
-            }
-        }
-
-        // Jet4 RC4 decryption: pages 1+ are decrypted with a per-page key
-        if (_rc4DbKey.HasValue && n >= 1)
-        {
-            byte[] rc4Key = DeriveRc4PageKey(_rc4DbKey.Value, (uint)n);
-            Rc4Transform(buf, 0, _pgSz, rc4Key);
-        }
-
-        return buf;
-    }
-
     private protected async ValueTask<byte[]> ReadPageAsync(long n, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -655,64 +609,6 @@ public abstract class AccessBase : IAccessBase
     /// into a single byte array. Pages after the first have their 8-byte
     /// TDEF header stripped before appending.
     /// </summary>
-    private protected byte[]? ReadTDefBytes(long startPage)
-    {
-        var parts = new List<byte[]>();
-        var seen = new HashSet<long>();
-        long pg = startPage;
-
-        while (pg != 0 && !seen.Contains(pg))
-        {
-            _ = seen.Add(pg);
-            byte[] p = ReadPage(pg);
-            if (p[0] != 0x02)
-            {
-                ReturnPage(p);
-                break;   // not a TDEF page
-            }
-
-            parts.Add(p);
-            pg = Ru32(p, 4);           // next_pg (0 = end of chain)
-        }
-
-        if (parts.Count == 0)
-        {
-            return null;
-        }
-
-        if (parts.Count == 1)
-        {
-            var single = new byte[_pgSz];
-            Buffer.BlockCopy(parts[0], 0, single, 0, _pgSz);
-            ReturnPage(parts[0]);
-            return single;
-        }
-
-        // Concatenate: full first page, then continuation pages minus 8-byte TDEF header
-        int total = _pgSz;
-        for (int i = 1; i < parts.Count; i++)
-        {
-            total += _pgSz - 8;
-        }
-
-        var result = new byte[total];
-        Buffer.BlockCopy(parts[0], 0, result, 0, _pgSz);
-        int pos = _pgSz;
-        for (int i = 1; i < parts.Count; i++)
-        {
-            int len = _pgSz - 8;
-            Buffer.BlockCopy(parts[i], 8, result, pos, len);
-            pos += len;
-        }
-
-        for (int i = 0; i < parts.Count; i++)
-        {
-            ReturnPage(parts[i]);
-        }
-
-        return result;
-    }
-
     private protected async ValueTask<byte[]?> ReadTDefBytesAsync(long startPage, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -773,20 +669,10 @@ public abstract class AccessBase : IAccessBase
         return result;
     }
 
-    private protected TableDef? ReadTableDef(long tdefPage)
-    {
-        byte[]? td = ReadTDefBytes(tdefPage);
-        return ParseTableDef(td);
-    }
-
     private protected async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
     {
         byte[]? td = await ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        return ParseTableDef(td);
-    }
 
-    private protected TableDef? ParseTableDef(byte[]? td)
-    {
         if (td == null || td.Length < _tdBlockEnd)
         {
             return null;
@@ -1001,32 +887,6 @@ public abstract class AccessBase : IAccessBase
     private protected abstract ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken = default);
 
     // ── Table page enumeration ───────────────────────────────────────
-
-    /// <summary>
-    /// Yields data pages belonging to the table whose TDEF starts at <paramref name="tdefPage"/>.
-    /// Override in derived classes to use cached page reads.
-    /// </summary>
-    private protected virtual IEnumerable<byte[]> EnumerateTablePages(long tdefPage)
-    {
-        long total = _stream.Length / _pgSz;
-        for (long p = 3; p < total; p++)
-        {
-            byte[] page = ReadPage(p);
-            if (page[0] != 0x01)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            if ((long)Ri32(page, _dpTDefOff) != tdefPage)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            yield return page;
-        }
-    }
 
     /// <summary>
     /// Yields the bounds (row index, start offset, size) of every live (non-deleted, non-overflow)

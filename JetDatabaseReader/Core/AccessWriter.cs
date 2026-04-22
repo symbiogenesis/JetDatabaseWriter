@@ -396,9 +396,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="sourceDatabasePath">The path to the source database file.</param>
     /// <param name="foreignTableName">The name of the table in the source database.</param>
-    internal void InsertLinkedTableEntry(string linkedTableName, string sourceDatabasePath, string foreignTableName)
+    internal async ValueTask InsertLinkedTableEntry(string linkedTableName, string sourceDatabasePath, string foreignTableName)
     {
-        TableDef msys = ReadRequiredTableDef(2, "MSysObjects");
+        TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects").ConfigureAwait(false);
         var values = new object[msys.Columns.Count];
         DateTime now = DateTime.UtcNow;
 
@@ -417,7 +417,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         SetValue(msys, values, "ForeignName", foreignTableName);
         SetValue(msys, values, "Database", sourceDatabasePath);
 
-        InsertRowData(2, msys, values);
+        await InsertRowDataAsync(2, msys, values).ConfigureAwait(false);
         InvalidateCatalogCache();
     }
 
@@ -671,7 +671,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.Asynchronous | FileOptions.RandomAccess);
     }
 
-    private static async ValueTask VerifyPasswordOnOpenAsync(string path, AccessWriterOptions options, CancellationToken cancellationToken)
+    private static async ValueTask VerifyPasswordOnOpenAsync(string path, AccessWriterOptions options, CancellationToken cancellationToken = default)
     {
         var readerOptions = new AccessReaderOptions
         {
@@ -693,7 +693,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    private async ValueTask<DataTable> ReadTableSnapshotAsync(string tableName, CancellationToken cancellationToken)
+    private async ValueTask<DataTable> ReadTableSnapshotAsync(string tableName, CancellationToken cancellationToken = default)
     {
         var options = new AccessReaderOptions
         {
@@ -725,7 +725,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    private protected override async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
+    private protected override async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken = default)
     {
         List<CatalogEntry>? cached = GetCatalogCache();
         if (cached != null)
@@ -767,7 +767,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return result;
     }
 
-    private async ValueTask<CatalogEntry> GetRequiredCatalogEntryAsync(string tableName, CancellationToken cancellationToken)
+    private async ValueTask<CatalogEntry> GetRequiredCatalogEntryAsync(string tableName, CancellationToken cancellationToken = default)
     {
         CatalogEntry? entry = await GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (entry == null)
@@ -778,18 +778,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return entry;
     }
 
-    private TableDef ReadRequiredTableDef(long tdefPage, string tableName)
-    {
-        TableDef? tableDef = ReadTableDef(tdefPage);
-        if (tableDef == null)
-        {
-            throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
-        }
-
-        return tableDef;
-    }
-
-    private async ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken)
+    private async ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken = default)
     {
         TableDef? tableDef = await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (tableDef == null)
@@ -800,29 +789,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return tableDef;
     }
 
-    private void InsertCatalogEntry(string tableName, long tdefPageNumber)
-    {
-        TableDef msys = ReadRequiredTableDef(2, "MSysObjects");
-        var values = new object[msys.Columns.Count];
-        DateTime now = DateTime.UtcNow;
-
-        for (int i = 0; i < msys.Columns.Count; i++)
-        {
-            values[i] = DBNull.Value;
-        }
-
-        SetValue(msys, values, "Id", (int)tdefPageNumber);
-        SetValue(msys, values, "ParentId", 0);
-        SetValue(msys, values, "Name", tableName);
-        SetValue(msys, values, "Type", (short)OBJ_TABLE);
-        SetValue(msys, values, "DateCreate", now);
-        SetValue(msys, values, "DateUpdate", now);
-        SetValue(msys, values, "Flags", 0);
-
-        InsertRowData(2, msys, values);
-    }
-
-    private async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, CancellationToken cancellationToken)
+    private async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, CancellationToken cancellationToken = default)
     {
         TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
         var values = new object[msys.Columns.Count];
@@ -904,26 +871,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return page;
     }
 
-    private void InsertRowData(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true)
-    {
-        if (values.Length != tableDef.Columns.Count)
-        {
-            throw new ArgumentException(
-                $"Expected {tableDef.Columns.Count} values for table row but received {values.Length}.",
-                nameof(values));
-        }
-
-        byte[] rowBytes = SerializeRow(tableDef, values);
-        PageInsertTarget target = FindInsertTarget(tdefPage, rowBytes.Length);
-        WriteRowToPage(target.PageNumber, target.Page, rowBytes);
-        ReturnPage(target.Page);
-
-        if (updateTDefRowCount)
-        {
-            AdjustTDefRowCount(tdefPage, 1);
-        }
-    }
-
     private async ValueTask InsertRowDataAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default)
     {
         if (values.Length != tableDef.Columns.Count)
@@ -950,29 +897,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    private void AdjustTDefRowCount(long tdefPage, long delta)
-    {
-        if (delta == 0)
-        {
-            return;
-        }
-
-        byte[] page = ReadPage(tdefPage);
-        long updated;
-
-        try
-        {
-            uint current = Ru32(page, TDefRowCountOffset);
-            updated = Math.Clamp((long)current + delta, 0L, uint.MaxValue);
-            Wi32(page, TDefRowCountOffset, unchecked((int)(uint)updated));
-            WritePage(tdefPage, page);
-        }
-        finally
-        {
-            ReturnPage(page);
-        }
-    }
-
     private async ValueTask AdjustTDefRowCountAsync(long tdefPage, long delta, CancellationToken cancellationToken)
     {
         if (delta == 0)
@@ -994,63 +918,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             ReturnPage(page);
         }
-    }
-
-    private PageInsertTarget FindInsertTarget(long tdefPage, int rowLength)
-    {
-        if (TryGetCachedInsertPageNumber(tdefPage, out long cachedPageNumber))
-        {
-            byte[] cached = ReadPage(cachedPageNumber);
-            if (cached[0] == 0x01 && (long)Ri32(cached, _dpTDefOff) == tdefPage && CanInsertRow(cached, rowLength))
-            {
-                return new PageInsertTarget { PageNumber = cachedPageNumber, Page = cached };
-            }
-
-            ReturnPage(cached);
-        }
-
-        long total = _stream.Length / _pgSz;
-        PageInsertTarget? candidate = null;
-
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            byte[] page = ReadPage(pageNumber);
-            if (page[0] != 0x01)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            if ((long)Ri32(page, _dpTDefOff) != tdefPage)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            if (CanInsertRow(page, rowLength))
-            {
-                if (candidate != null)
-                {
-                    ReturnPage(candidate.Page);
-                }
-
-                candidate = new PageInsertTarget { PageNumber = pageNumber, Page = page };
-            }
-            else
-            {
-                ReturnPage(page);
-            }
-        }
-
-        if (candidate != null)
-        {
-            SetCachedInsertPageNumber(tdefPage, candidate.PageNumber);
-            return candidate;
-        }
-
-        long newPageNumber = AppendPage(CreateEmptyDataPage(tdefPage));
-        SetCachedInsertPageNumber(tdefPage, newPageNumber);
-        return new PageInsertTarget { PageNumber = newPageNumber, Page = ReadPage(newPageNumber) };
     }
 
     private async ValueTask<PageInsertTarget> FindInsertTargetAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
@@ -1528,48 +1395,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         finally
         {
             _stateLock.ExitWriteLock();
-        }
-    }
-
-    private IEnumerable<CatalogRow> EnumerateCatalogRows(TableDef msys)
-    {
-        ColumnInfo idColumn = msys.Columns.Find(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo nameColumn = msys.Columns.Find(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo typeColumn = msys.Columns.Find(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo flagsColumn = msys.Columns.Find(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
-        if (nameColumn == null || typeColumn == null)
-        {
-            yield break;
-        }
-
-        long total = _stream.Length / _pgSz;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            byte[] page = ReadPage(pageNumber);
-            if (page[0] != 0x01)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            if (Ri32(page, _dpTDefOff) != 2)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
-            {
-                yield return new CatalogRow
-                {
-                    PageNumber = row.PageNumber,
-                    RowIndex = row.RowIndex,
-                    Name = ReadColumnValue(page, row.RowStart, row.RowSize, nameColumn),
-                    ObjectType = ParseInt32(ReadColumnValue(page, row.RowStart, row.RowSize, typeColumn)),
-                    Flags = ParseInt64(ReadColumnValue(page, row.RowStart, row.RowSize, flagsColumn)),
-                    TDefPage = ParseInt64(ReadColumnValue(page, row.RowStart, row.RowSize, idColumn)) & 0x00FFFFFFL,
-                };
-            }
         }
     }
 

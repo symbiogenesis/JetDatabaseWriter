@@ -1069,27 +1069,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    private protected override IEnumerable<byte[]> EnumerateTablePages(long tdefPage)
-    {
-        long total = _stream.Length / _pgSz;
-        for (long p = 3; p < total; p++)
-        {
-            byte[] page = ReadPageCached(p);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            long owner = (long)Ri32(page, _dpTDefOff);
-            if (owner != tdefPage)
-            {
-                continue;
-            }
-
-            yield return page;
-        }
-    }
-
     private static string SafeGet(List<string> row, int idx) =>
         (idx >= 0 && idx < row.Count) ? row[idx] : string.Empty;
 
@@ -1860,40 +1839,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>Reads a page through the cache if enabled (PageCacheSize > 0).</summary>
-    private byte[] ReadPageCached(long n)
-    {
-        ThrowIfDisposed();
-
-        if (PageCacheSize < 0)
-        {
-            return ReadPage(n);  // cache disabled
-        }
-
-        // Lazy-init: only one thread creates the cache; LruCache is internally thread-safe
-        // so subsequent TryGetValue/Add calls need no outer lock.
-        if (_pageCache == null && PageCacheSize > 0)
-        {
-            lock (_cacheLock)
-            {
-                if (_pageCache == null)
-                {
-                    _pageCache = new LruCache<long, byte[]>(PageCacheSize);
-                }
-            }
-        }
-
-        if (_pageCache != null && _pageCache.TryGetValue(n, out byte[] cached))
-        {
-            _ = Interlocked.Increment(ref _cacheHits);
-            return cached;
-        }
-
-        _ = Interlocked.Increment(ref _cacheMisses);
-        byte[] page = ReadPage(n);
-        _pageCache?.Add(n, page);
-        return page;
-    }
-
     private async ValueTask<byte[]> ReadPageCachedAsync(long n, CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
@@ -2757,71 +2702,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Reads <paramref name="maxLen"/> bytes from a single LVAL data page / row.
     /// lval_dp encoding: upper 24 bits = page number, lower 8 bits = row index.
     /// </summary>
-    private byte[]? ReadLvalBytes(uint lvalDp, int maxLen)
-    {
-        try
-        {
-            int lvalPage = (int)(lvalDp >> 8);
-            int lvalRow = (int)(lvalDp & 0xFF);
-            if (lvalPage <= 0)
-            {
-                return null;
-            }
-
-            byte[] page = ReadPageCached(lvalPage);
-            if (page[0] != 0x01)
-            {
-                return null;  // must be a data page
-            }
-
-            int numRows = Ru16(page, _dpNumRows);
-            if (lvalRow >= numRows)
-            {
-                return null;
-            }
-
-            int rawOff = Ru16(page, _dpRowsStart + (lvalRow * 2));
-            if ((rawOff & 0xC000) != 0)
-            {
-                return null;  // deleted or overflow
-            }
-
-            int rowStart = rawOff & 0x1FFF;
-            if (rowStart == 0 || rowStart >= _pgSz)
-            {
-                return null;
-            }
-
-            int rowEnd = _pgSz - 1;
-            for (int r = 0; r < numRows; r++)
-            {
-                int ofs = Ru16(page, _dpRowsStart + (r * 2)) & 0x1FFF;
-                if (ofs > rowStart && ofs < rowEnd)
-                {
-                    rowEnd = ofs - 1;
-                }
-            }
-
-            int rowSize = Math.Min(rowEnd - rowStart + 1, maxLen);
-            if (rowSize <= 0)
-            {
-                return null;
-            }
-
-            var data = new byte[rowSize];
-            Buffer.BlockCopy(page, rowStart, data, 0, rowSize);
-            return data;
-        }
-        catch (ArgumentException)
-        {
-            return null;
-        }
-        catch (IndexOutOfRangeException)
-        {
-            return null;
-        }
-    }
-
     private async ValueTask<byte[]?> ReadLvalBytesAsync(uint lvalDp, int maxLen, CancellationToken cancellationToken)
     {
         try
@@ -2893,126 +2773,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// LVAL page format (mdbtools): [next_page(4)][data_length(4)][data...].
     /// </summary>
     /// <returns>Success: concatenated data bytes from the entire LVAL chain, up to maxLen. Failure: error message.</returns>
-    private LvalChainResult ReadLvalChain(uint firstLvalDp, int maxLen)
-    {
-        try
-        {
-            var chunks = new List<byte[]>();
-            int totalLen = 0;
-            uint currentDp = firstLvalDp;
-            var seen = new HashSet<uint>();
-
-            while (currentDp != 0 && totalLen < maxLen && !seen.Contains(currentDp))
-            {
-                _ = seen.Add(currentDp);
-
-                int lvalPage = (int)(currentDp >> 8);
-                int lvalRow = (int)(currentDp & 0xFF);
-                if (lvalPage <= 0)
-                {
-                    return LvalChainResult.Failure($"invalid page {lvalPage}");
-                }
-
-                byte[] page = ReadPageCached(lvalPage);
-                if (page[0] != 0x01)
-                {
-                    return LvalChainResult.Failure($"page {lvalPage} not data page");
-                }
-
-                int numRows = Ru16(page, _dpNumRows);
-                if (lvalRow >= numRows)
-                {
-                    return LvalChainResult.Failure($"row {lvalRow} >= numRows {numRows}");
-                }
-
-                int rawOff = Ru16(page, _dpRowsStart + (lvalRow * 2));
-                if ((rawOff & 0xC000) != 0)
-                {
-                    return LvalChainResult.Failure("deleted/overflow row");
-                }
-
-                int rowStart = rawOff & 0x1FFF;
-                if (rowStart == 0 || rowStart >= _pgSz)
-                {
-                    return LvalChainResult.Failure($"invalid rowStart {rowStart}");
-                }
-
-                int rowEnd = _pgSz - 1;
-                for (int r = 0; r < numRows; r++)
-                {
-                    int ofs = Ru16(page, _dpRowsStart + (r * 2)) & 0x1FFF;
-                    if (ofs > rowStart && ofs < rowEnd)
-                    {
-                        rowEnd = ofs - 1;
-                    }
-                }
-
-                int rowSize = rowEnd - rowStart + 1;
-                if (rowSize < 8)
-                {
-                    return LvalChainResult.Failure($"rowSize {rowSize} < 8");
-                }
-
-                // LVAL chain format: [next_dp(4)][data_len(4)][data...]
-                currentDp = Ru32(page, rowStart);
-                int dataLen = (int)Ru32(page, rowStart + 4);
-                int dataStart = rowStart + 8;
-                int availableData = Math.Min(dataLen, rowSize - 8);
-
-                if (availableData > 0 && dataStart + availableData <= _pgSz)
-                {
-                    var chunk = new byte[availableData];
-                    Buffer.BlockCopy(page, dataStart, chunk, 0, availableData);
-                    chunks.Add(chunk);
-                    totalLen += availableData;
-                }
-            }
-
-            if (chunks.Count == 0)
-            {
-                return LvalChainResult.Failure("no chunks read");
-            }
-
-            if (chunks.Count == 1)
-            {
-                return LvalChainResult.Success(chunks[0]);
-            }
-
-            // Concatenate all chunks
-            int finalLen = Math.Min(totalLen, maxLen);
-            var result = new byte[finalLen];
-            int pos = 0;
-            foreach (var chunk in chunks)
-            {
-                int copyLen = Math.Min(chunk.Length, finalLen - pos);
-                Buffer.BlockCopy(chunk, 0, result, pos, copyLen);
-                pos += copyLen;
-                if (pos >= finalLen)
-                {
-                    break;
-                }
-            }
-
-            return LvalChainResult.Success(result);
-        }
-        catch (ArgumentException ex)
-        {
-            return LvalChainResult.Failure(ex.Message);
-        }
-        catch (IndexOutOfRangeException ex)
-        {
-            return LvalChainResult.Failure(ex.Message);
-        }
-        catch (OverflowException ex)
-        {
-            return LvalChainResult.Failure(ex.Message);
-        }
-        catch (IOException ex)
-        {
-            return LvalChainResult.Failure(ex.Message);
-        }
-    }
-
     private async ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)
     {
         try
@@ -3130,80 +2890,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             return LvalChainResult.Failure(ex.Message);
         }
-    }
-
-    private string ReadLongValue(byte[] row, int start, int len, bool isOle)
-    {
-        if (len < 12)
-        {
-            return isOle ? "(OLE)" : "(memo)";
-        }
-
-        byte bitmask = row[start + 3];
-        int memoLen = row[start] | (row[start + 1] << 8) | (row[start + 2] << 16);
-
-        if ((bitmask & 0x80) != 0)
-        {
-            // Inline: data follows the 12-byte header
-            int memoStart = start + 12;
-            if (memoStart + memoLen > row.Length)
-            {
-                memoLen = row.Length - memoStart;
-            }
-
-            if (memoLen <= 0)
-            {
-                return string.Empty;
-            }
-
-            if (isOle)
-            {
-                return TryDecodeOleObject(row, memoStart, memoLen)
-                    ?? "data:application/octet-stream;base64," + Convert.ToBase64String(row, memoStart, memoLen);
-            }
-
-            return _jet4 ? DecodeJet4Text(row, memoStart, memoLen)
-                         : _ansiEncoding.GetString(row, memoStart, memoLen);
-        }
-
-        if ((bitmask & 0x40) != 0)
-        {
-            // Single LVAL page — lval_dp = (pageNumber << 8) | rowIndex
-            uint lvalDp = Ru32(row, start + 4);
-            byte[]? lvalData = ReadLvalBytes(lvalDp, memoLen);
-
-            if (lvalData != null)
-            {
-                if (isOle)
-                {
-                    return TryDecodeOleObject(lvalData, 0, lvalData.Length)
-                        ?? "data:application/octet-stream;base64," + Convert.ToBase64String(lvalData);
-                }
-
-                return _jet4 ? DecodeJet4Text(lvalData, 0, lvalData.Length)
-                             : _ansiEncoding.GetString(lvalData);
-            }
-
-            return isOle ? "(OLE)" : "(memo on LVAL page)";
-        }
-
-        // Multi-page LVAL (0x00) — follow the chain
-        uint chainDp = Ru32(row, start + 4);
-        LvalChainResult chain = ReadLvalChain(chainDp, memoLen);
-
-        if (chain.Data != null)
-        {
-            if (isOle)
-            {
-                return TryDecodeOleObject(chain.Data, 0, chain.Data.Length)
-                    ?? "data:application/octet-stream;base64," + Convert.ToBase64String(chain.Data);
-            }
-
-            return _jet4 ? DecodeJet4Text(chain.Data, 0, chain.Data.Length)
-                         : _ansiEncoding.GetString(chain.Data);
-        }
-
-        return isOle ? $"(OLE chain error: {chain.Error})" : $"(memo chain error: {chain.Error})";
     }
 
     private async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
