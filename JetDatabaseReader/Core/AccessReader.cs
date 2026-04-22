@@ -2540,9 +2540,28 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return 0;
         }
 
-        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
-        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
-        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
+        int idxId = -1, idxName = -1, idxType = -1;
+        for (int i = 0; i < msys.Columns.Count; i++)
+        {
+            var col = msys.Columns[i];
+            if (idxId < 0 && string.Equals(col.Name, "Id", StringComparison.OrdinalIgnoreCase))
+            {
+                idxId = i;
+            }
+            else if (idxName < 0 && string.Equals(col.Name, "Name", StringComparison.OrdinalIgnoreCase))
+            {
+                idxName = i;
+            }
+            else if (idxType < 0 && string.Equals(col.Name, "Type", StringComparison.OrdinalIgnoreCase))
+            {
+                idxType = i;
+            }
+
+            if (idxId >= 0 && idxName >= 0 && idxType >= 0)
+            {
+                break;
+            }
+        }
 
         if (idxId < 0 || idxName < 0 || idxType < 0)
         {
