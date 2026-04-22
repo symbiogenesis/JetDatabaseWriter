@@ -38,6 +38,7 @@ public sealed class CreateDatabaseTests
     // ── Round-trip: create → list tables (empty) ──────────────────────
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_Stream_EmptyDatabase_ListTablesReturnsEmpty(DatabaseFormat format)
@@ -59,6 +60,7 @@ public sealed class CreateDatabaseTests
     // ── Round-trip: create → create table → verify columns ────────────
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_Stream_CreateTable_TableIsReadable(DatabaseFormat format)
@@ -91,6 +93,7 @@ public sealed class CreateDatabaseTests
     // ── Round-trip: create → insert → read back ───────────────────────
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_Stream_InsertAndReadBack_DataSurvives(DatabaseFormat format)
@@ -120,6 +123,7 @@ public sealed class CreateDatabaseTests
     // ── Round-trip: create → multiple tables ──────────────────────────
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_Stream_MultipleTables_AllVisible(DatabaseFormat format)
@@ -226,6 +230,39 @@ public sealed class CreateDatabaseTests
     }
 
     [Fact]
+    public async Task CreateDatabaseAsync_Stream_Jet3Mdb_ReturnsNonNullWriter()
+    {
+        var ms = new MemoryStream();
+
+        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet3Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.NotNull(writer);
+        Assert.Equal(DatabaseFormat.Jet3Mdb, writer.DatabaseFormat);
+    }
+
+    [Fact]
+    public async Task CreateDatabaseAsync_Path_Jet3Mdb_CreatesFileOnDisk()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"CreateJet3_{Guid.NewGuid():N}.mdb");
+
+        try
+        {
+            await using (var writer = await AccessWriter.CreateDatabaseAsync(path, DatabaseFormat.Jet3Mdb, cancellationToken: TestContext.Current.CancellationToken))
+            {
+                Assert.NotNull(writer);
+                Assert.Equal(DatabaseFormat.Jet3Mdb, writer.DatabaseFormat);
+            }
+
+            Assert.True(File.Exists(path));
+        }
+        finally
+        {
+            TryDeleteFile(path);
+            TryDeleteFile(Path.ChangeExtension(path, ".ldb"));
+        }
+    }
+
+    [Fact]
     public async Task CreateDatabaseAsync_WhenCancelled_ThrowsOperationCanceledException()
     {
         using var cts = new CancellationTokenSource();
@@ -239,6 +276,7 @@ public sealed class CreateDatabaseTests
     // ── Column type round-trip ────────────────────────────────────────
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_VariousColumnTypes_SurviveRoundTrip(DatabaseFormat format)
@@ -274,6 +312,7 @@ public sealed class CreateDatabaseTests
     // ── Drop table on newly created database ──────────────────────────
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_DropTable_RemovesTable(DatabaseFormat format)
