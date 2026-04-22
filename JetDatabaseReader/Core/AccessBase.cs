@@ -101,16 +101,6 @@ public abstract class AccessBase : IAccessBase
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessBase"/> class
-    /// from the database file header.
-    /// </summary>
-    /// <param name="stream">An open, seekable <see cref="Stream"/> for the database file.</param>
-    private protected AccessBase(Stream stream)
-        : this(stream, ReadHeader(stream))
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AccessBase"/> class
     /// from a pre-read database file header.
     /// </summary>
     /// <param name="stream">An open, seekable <see cref="Stream"/> for the database file.</param>
@@ -243,31 +233,6 @@ public abstract class AccessBase : IAccessBase
         await _stream.DisposeAsync().ConfigureAwait(false);
         _ioGate.Dispose();
         GC.SuppressFinalize(this);
-    }
-
-    /// <summary>
-    /// Reads the fixed-size JET header (first 0x80 bytes) from page 0.
-    /// </summary>
-    /// <param name="fs">An open, seekable stream positioned anywhere.</param>
-    /// <returns>A 0x80-byte header buffer.</returns>
-    private protected static byte[] ReadHeader(Stream fs)
-    {
-        var hdr = new byte[0x80];
-        _ = fs.Seek(0, SeekOrigin.Begin);
-
-        int read = 0;
-        while (read < hdr.Length)
-        {
-            int got = fs.Read(hdr, read, hdr.Length - read);
-            if (got == 0)
-            {
-                break;
-            }
-
-            read += got;
-        }
-
-        return hdr;
     }
 
     /// <summary>
