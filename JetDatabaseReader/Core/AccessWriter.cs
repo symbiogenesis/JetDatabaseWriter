@@ -482,38 +482,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Inserts a linked table entry (type 4) into the MSysObjects catalog.
-    /// This creates a reference to a table in an external database.
-    /// </summary>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
-    /// <param name="sourceDatabasePath">The path to the source database file.</param>
-    /// <param name="foreignTableName">The name of the table in the source database.</param>
-    internal async ValueTask InsertLinkedTableEntry(string linkedTableName, string sourceDatabasePath, string foreignTableName)
-    {
-        TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects").ConfigureAwait(false);
-        var values = new object[msys.Columns.Count];
-        DateTime now = DateTime.UtcNow;
-
-        for (int i = 0; i < msys.Columns.Count; i++)
-        {
-            values[i] = DBNull.Value;
-        }
-
-        SetValue(msys, values, "Id", 0);
-        SetValue(msys, values, "ParentId", 0);
-        SetValue(msys, values, "Name", linkedTableName);
-        SetValue(msys, values, "Type", (short)OBJ_LINKED_TABLE);
-        SetValue(msys, values, "DateCreate", now);
-        SetValue(msys, values, "DateUpdate", now);
-        SetValue(msys, values, "Flags", 0);
-        SetValue(msys, values, "ForeignName", foreignTableName);
-        SetValue(msys, values, "Database", sourceDatabasePath);
-
-        await InsertRowDataAsync(2, msys, values).ConfigureAwait(false);
-        InvalidateCatalogCache();
-    }
-
-    /// <summary>
     /// Asynchronously inserts a linked table entry (type 4) into the MSysObjects catalog.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
