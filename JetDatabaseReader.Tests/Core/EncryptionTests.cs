@@ -57,7 +57,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         ApplyXorMask(data, xorMask);
         SetJet3EncryptionFlag(data);
 
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
@@ -85,7 +85,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
             Password = SecureStringTestHelper.FromString("test"),
         };
 
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
         var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
@@ -100,7 +100,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
         SetJet4PasswordFlag(data);
 
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -118,7 +118,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
             Password = SecureStringTestHelper.FromString("wrong_password"),
         };
 
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         var ex = await Record.ExceptionAsync(async () =>
         {
             await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
@@ -195,7 +195,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
         DataTable dt = (await reader.ReadDataTableAsync("Product", cancellationToken: TestContext.Current.CancellationToken))!;
 
@@ -211,7 +211,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
@@ -229,7 +229,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
         DatabaseStatistics stats = await reader.GetStatisticsAsync(TestContext.Current.CancellationToken);
 
@@ -245,7 +245,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
@@ -268,7 +268,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Rc4EncryptDataPages(data, "test");
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
         Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
@@ -302,7 +302,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
 
         // Once AES is implemented, this should succeed without throwing.
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         var ex = await Record.ExceptionAsync(async () =>
         {
             await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
@@ -321,7 +321,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         SetAccdbEncryptionHeader(data);
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
@@ -341,7 +341,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
         SetAccdbEncryptionHeader(data);
 
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -356,7 +356,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("wrong_password") };
 
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         var ex = await Record.ExceptionAsync(async () =>
         {
             await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
@@ -374,7 +374,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         SetAccdbEncryptionHeader(data);
 
         var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
-        using var ms = ToStream(data);
+        await using var ms = ToStream(data);
         await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
 
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);

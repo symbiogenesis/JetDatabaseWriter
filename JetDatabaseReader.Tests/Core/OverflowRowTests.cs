@@ -77,7 +77,7 @@ public sealed class OverflowRowTests(DatabaseCache db) : IClassFixture<DatabaseC
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task OverflowRows_GetRealRowCount_IncludesOverflowRows(string path)
     {
-        using var ms = await CopyToStreamAsync(path);
+        await using var ms = await CopyToStreamAsync(path);
         if (!IsJet4(ms))
         {
             return;
@@ -113,7 +113,7 @@ public sealed class OverflowRowTests(DatabaseCache db) : IClassFixture<DatabaseC
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task OverflowRows_StreamRows_YieldsAllRows(string path)
     {
-        using var ms = await CopyToStreamAsync(path);
+        await using var ms = await CopyToStreamAsync(path);
         if (!IsJet4(ms))
         {
             return;
@@ -152,7 +152,7 @@ public sealed class OverflowRowTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task OverflowRows_LargeRowContent_IsPreserved(string path)
     {
         // Verify that the actual cell values survive an overflow round-trip
-        using var ms = await CopyToStreamAsync(path);
+        await using var ms = await CopyToStreamAsync(path);
         if (!IsJet4(ms))
         {
             return;
