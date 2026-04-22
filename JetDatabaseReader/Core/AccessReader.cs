@@ -6,6 +6,8 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -198,6 +200,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 throw new UnauthorizedAccessException(
                     "The provided password is incorrect for this database.");
             }
+
+            // Derive AES-128 page decryption key from the password.
+            _aesPageKey = DeriveAesPageKey(password!);
 
             return;
         }
@@ -1104,6 +1109,36 @@ public sealed class AccessReader : AccessBase, IAccessReader
         string raw = Encoding.Unicode.GetString(decoded);
         int nullIdx = raw.IndexOf('\0', StringComparison.Ordinal);
         return nullIdx >= 0 ? raw.Substring(0, nullIdx) : raw;
+    }
+
+    /// <summary>
+    /// Derives a 128-bit AES key from a <see cref="System.Security.SecureString"/> password
+    /// using SHA-256 (truncated to 16 bytes).
+    /// </summary>
+    private static byte[] DeriveAesPageKey(System.Security.SecureString password)
+    {
+        IntPtr ptr = IntPtr.Zero;
+        try
+        {
+            ptr = Marshal.SecureStringToGlobalAllocUnicode(password);
+            string plain = Marshal.PtrToStringUni(ptr, password.Length) ?? string.Empty;
+#if NET5_0_OR_GREATER
+            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(plain));
+#else
+            using var sha = SHA256.Create();
+            byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(plain));
+#endif
+            byte[] key = new byte[16];
+            Buffer.BlockCopy(hash, 0, key, 0, 16);
+            return key; // AES-128
+        }
+        finally
+        {
+            if (ptr != IntPtr.Zero)
+            {
+                Marshal.ZeroFreeGlobalAllocUnicode(ptr);
+            }
+        }
     }
 
     private static string TypeCodeToName(byte t)

@@ -4,11 +4,12 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
-using System.Linq;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
+#pragma warning disable CA5358 // ECB mode is intentional for deterministic test fixture encryption
+#pragma warning disable CA5390 // Hard-coded key is intentional for deterministic test fixtures
 
 /// <summary>
 /// Tests for database encryption across all Jet/ACE versions:
@@ -621,6 +622,31 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         }
 
         Buffer.BlockCopy(encoded, 0, data, 0x42, 40);
+
+        // AES-encrypt all data pages (pages 1+) using the same key derivation
+        // as the reader: SHA256("secret")[0..16].
+        byte[] aesKey = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("secret"))[..16];
+
+        const int pageSize = 4096;
+        for (int page = 1; page * pageSize < data.Length; page++)
+        {
+            int offset = page * pageSize;
+            int length = Math.Min(pageSize, data.Length - offset);
+            if (length % 16 != 0)
+            {
+                continue;
+            }
+
+            using var aes = Aes.Create();
+            aes.Key = aesKey;
+            aes.Mode = CipherMode.ECB;
+            aes.Padding = PaddingMode.None;
+            using var encryptor = aes.CreateEncryptor();
+            byte[] block = new byte[length];
+            Buffer.BlockCopy(data, offset, block, 0, length);
+            byte[] encrypted = encryptor.TransformFinalBlock(block, 0, length);
+            Buffer.BlockCopy(encrypted, 0, data, offset, length);
+        }
     }
 
     private static MemoryStream ToStream(byte[] data)

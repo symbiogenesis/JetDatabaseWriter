@@ -88,6 +88,12 @@ public abstract class AccessBase : IAccessBase
     /// </summary>
     private protected uint? _rc4DbKey;
 
+    /// <summary>
+    /// AES-128 page decryption key for ACCDB CFB-encrypted files.
+    /// Non-null when AES page encryption is active. Used to decrypt pages 1+ via AES-ECB.
+    /// </summary>
+    private protected byte[]? _aesPageKey;
+
     private protected bool _disposed;
     private readonly SemaphoreSlim _ioGate = new SemaphoreSlim(1, 1);
 
@@ -311,6 +317,24 @@ public abstract class AccessBase : IAccessBase
             data[offset + k] ^= s[(s[x] + s[y]) & 0xFF];
         }
     }
+
+    /// <summary>In-place AES-128-ECB decryption of a page buffer.</summary>
+#pragma warning disable CA5358 // ECB mode is required to match the ACCDB AES page encryption scheme
+    private protected static void AesEcbDecryptInPlace(byte[] data, int offset, int length, byte[] key)
+    {
+        using var aes = System.Security.Cryptography.Aes.Create();
+        aes.Key = key;
+        aes.Mode = System.Security.Cryptography.CipherMode.ECB;
+        aes.Padding = System.Security.Cryptography.PaddingMode.None;
+
+        using var decryptor = aes.CreateDecryptor();
+        byte[] block = new byte[length];
+        Buffer.BlockCopy(data, offset, block, 0, length);
+
+        byte[] decrypted = decryptor.TransformFinalBlock(block, 0, length);
+        Buffer.BlockCopy(decrypted, 0, data, offset, length);
+    }
+#pragma warning restore CA5358
 
     private protected static ushort Ru16(byte[] b, int o) =>
         (ushort)(b[o] | (b[o + 1] << 8));
@@ -562,6 +586,11 @@ public abstract class AccessBase : IAccessBase
         {
             byte[] rc4Key = DeriveRc4PageKey(_rc4DbKey.Value, (uint)n);
             Rc4Transform(buf, 0, _pgSz, rc4Key);
+        }
+
+        if (_aesPageKey != null && n >= 1)
+        {
+            AesEcbDecryptInPlace(buf, 0, _pgSz, _aesPageKey);
         }
 
         return buf;
