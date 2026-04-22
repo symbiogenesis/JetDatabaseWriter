@@ -2411,7 +2411,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         try
         {
             long tdefPage = await GetComplexFlatTablePageAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
-
             if (tdefPage <= 0)
             {
                 string nameSuffix = $"_{columnName}";
@@ -2429,14 +2428,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return null;
             }
 
+            // Cache column indices to avoid repeated lookups
             string fkColName = $"{tableName}_{columnName}";
-            int idxFk = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, fkColName, StringComparison.OrdinalIgnoreCase));
-
+            int idxFk = td.Columns.FindIndex(c => string.Equals(c.Name, fkColName, StringComparison.OrdinalIgnoreCase));
             if (idxFk < 0)
             {
-                idxFk = td.Columns.FindIndex(c =>
-                    c.Type == T_LONG && !c.Name.StartsWith("Idx", StringComparison.OrdinalIgnoreCase));
+                idxFk = td.Columns.FindIndex(c => c.Type == T_LONG && !c.Name.StartsWith("Idx", StringComparison.OrdinalIgnoreCase));
             }
 
             if (idxFk < 0)
@@ -2444,31 +2441,25 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return null;
             }
 
-            int idxFileName = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "FileName", StringComparison.OrdinalIgnoreCase));
-            int idxFileData = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "FileData", StringComparison.OrdinalIgnoreCase));
+            int idxFileName = td.Columns.FindIndex(c => string.Equals(c.Name, "FileName", StringComparison.OrdinalIgnoreCase));
+            int idxFileData = td.Columns.FindIndex(c => string.Equals(c.Name, "FileData", StringComparison.OrdinalIgnoreCase));
 
-            var result = new Dictionary<int, byte[]>();
+            var result = new Dictionary<int, byte[]>(capacity: 32); // Preallocate for small tables
             long total = _stream.Length / _pgSz;
 
+            // Use a buffer for the inner loop to avoid repeated allocations
+            byte[]? buffer = null;
             for (long p = 3; p < total; p++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-
                 byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-                if (page[0] != 0x01)
-                {
-                    continue;
-                }
-
-                if (Ri32(page, _dpTDefOff) != tdefPage)
+                if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != tdefPage)
                 {
                     continue;
                 }
 
                 List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-                foreach (List<string> row in rows)
+                foreach (var row in rows)
                 {
                     string fkStr = SafeGet(row, idxFk);
                     if (!int.TryParse(fkStr, out int parentId))
@@ -2491,14 +2482,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     {
                         string fileDataStr = SafeGet(row, idxFileData);
                         fileDataBytes = DecodeColumnBytes(fileDataStr ?? string.Empty, td.Columns[idxFileData].Type);
-
-                        if (fileDataBytes.Length > 1 && fileDataBytes[0] == 0x01)
+                        if (fileDataBytes.Length > 1)
                         {
-                            fileDataBytes = DecompressAttachmentData(fileDataBytes, 1);
-                        }
-                        else if (fileDataBytes.Length > 1 && fileDataBytes[0] == 0x00)
-                        {
-                            fileDataBytes = fileDataBytes.AsSpan(1).ToArray();
+                            if (fileDataBytes[0] == 0x01)
+                            {
+                                fileDataBytes = DecompressAttachmentData(fileDataBytes, 1);
+                            }
+                            else if (fileDataBytes[0] == 0x00)
+                            {
+                                fileDataBytes = fileDataBytes.AsSpan(1).ToArray();
+                            }
                         }
                     }
 
@@ -2507,16 +2500,31 @@ public sealed class AccessReader : AccessBase, IAccessReader
                         continue;
                     }
 
-                    var bytes = new byte[2 + fileNameBytes.Length + fileDataBytes.Length];
-                    bytes[0] = (byte)(fileNameBytes.Length & 0xFF);
-                    bytes[1] = (byte)((fileNameBytes.Length >> 8) & 0xFF);
-                    Buffer.BlockCopy(fileNameBytes, 0, bytes, 2, fileNameBytes.Length);
-                    Buffer.BlockCopy(fileDataBytes, 0, bytes, 2 + fileNameBytes.Length, fileDataBytes.Length);
-                    result[parentId] = bytes;
+                    int totalLen = 2 + fileNameBytes.Length + fileDataBytes.Length;
+                    buffer = buffer is null || buffer.Length < totalLen ? new byte[totalLen] : buffer;
+                    buffer[0] = (byte)(fileNameBytes.Length & 0xFF);
+                    buffer[1] = (byte)((fileNameBytes.Length >> 8) & 0xFF);
+                    if (fileNameBytes.Length > 0)
+                    {
+                        Buffer.BlockCopy(fileNameBytes, 0, buffer, 2, fileNameBytes.Length);
+                    }
+
+                    if (fileDataBytes.Length > 0)
+                    {
+                        Buffer.BlockCopy(fileDataBytes, 0, buffer, 2 + fileNameBytes.Length, fileDataBytes.Length);
+                    }
+
+                    // Copy to new array to avoid overwriting in next iteration
+                    result[parentId] = [.. buffer[..totalLen]];
                 }
             }
 
-            return result.Count > 0 ? result : null;
+            if (result.Count > 0)
+            {
+                return result;
+            }
+
+            return null;
         }
         catch (InvalidDataException)
         {
