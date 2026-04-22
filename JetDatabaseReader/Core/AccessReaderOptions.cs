@@ -67,11 +67,11 @@ public sealed class AccessReaderOptions : IAccessOptions
     }
 
     /// <summary>
-    /// Gets or sets a value indicating whether a lockfile (.ldb / .laccdb) is created
+    /// Gets a value indicating whether a lockfile (.ldb / .laccdb) is created
     /// alongside the database while it is open, and deleted on dispose.
     /// Default: true.
     /// </summary>
-    public bool UseLockFile { get; set; } = true;
+    public bool UseLockFile { get; init; } = true;
 
     /// <summary>
     /// Gets or sets an optional allowlist of directories that linked-table source paths must stay under.

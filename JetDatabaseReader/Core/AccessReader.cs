@@ -453,7 +453,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <inheritdoc/>
     public async IAsyncEnumerable<object[]> StreamRowsAsync(
         string tableName,
-        IProgress<int>? progress = null,
+        IProgress<long>? progress = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -477,7 +477,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         var (entry, td) = resolved.Value;
-        int rowCount = 0;
+        long rowCount = 0;
         Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
         long total = _stream.Length / _pgSz;
 
@@ -504,7 +504,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <inheritdoc/>
     public async IAsyncEnumerable<T> StreamRowsAsync<T>(
         string tableName,
-        IProgress<int>? progress = null,
+        IProgress<long>? progress = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
         where T : class, new()
     {
@@ -525,7 +525,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <inheritdoc/>
     public async IAsyncEnumerable<string[]> StreamRowsAsStringsAsync(
         string tableName,
-        IProgress<int>? progress = null,
+        IProgress<long>? progress = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -549,7 +549,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         var (entry, td) = resolved.Value;
-        int rowCount = 0;
+        long rowCount = 0;
         long total = _stream.Length / _pgSz;
 
         for (long p = 3; p < total; p++)
@@ -644,7 +644,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
-    public async ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
+    public async ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
@@ -762,7 +762,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> with all columns typed as <see cref="string"/>.</returns>
-    public async ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
+    public async ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));

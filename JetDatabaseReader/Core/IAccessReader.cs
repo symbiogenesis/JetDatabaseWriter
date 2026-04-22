@@ -84,7 +84,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> with all columns typed as <see cref="string"/>.</returns>
-    ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
+    ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously yields rows from <paramref name="tableName"/> as properly typed object arrays without collecting them all in memory.
@@ -96,7 +96,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
     /// <returns>An enumerable of object arrays, each representing a row with typed values.</returns>
-    IAsyncEnumerable<object[]> StreamRowsAsync(string tableName, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<object[]> StreamRowsAsync(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously yields rows from <paramref name="tableName"/> mapped to instances of <typeparamref name="T"/>.
@@ -106,7 +106,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
     /// <returns>An enumerable of <typeparamref name="T"/> instances, each representing a row.</returns>
-    IAsyncEnumerable<T> StreamRowsAsync<T>(string tableName, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
+    IAsyncEnumerable<T> StreamRowsAsync<T>(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
@@ -117,7 +117,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
     /// <returns>An enumerable of string arrays, each representing a row.</returns>
-    IAsyncEnumerable<string[]> StreamRowsAsStringsAsync(string tableName, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<string[]> StreamRowsAsStringsAsync(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns rich metadata for all columns in the specified table asynchronously.
@@ -132,7 +132,7 @@ public interface IAccessReader : IAccessBase
     /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
     /// </summary>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns. Returns an empty DataTable if the table is not found.</returns>
-    ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
+    ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns statistical information about the database asynchronously.

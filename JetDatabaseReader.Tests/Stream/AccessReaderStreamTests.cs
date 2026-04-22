@@ -88,17 +88,17 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        var reported = new List<int>();
+        var reported = new List<long>();
 
         // Use synchronous IProgress<T> to avoid Progress<T>'s thread-pool dispatch,
         // which can fire callbacks after the foreach completes and cause a collection
         // modification exception when iterating for assertion.
-        await foreach (object[] row in reader.StreamRowsAsync(table, new SyncProgress<int>(reported.Add), TestContext.Current.CancellationToken))
+        await foreach (object[] row in reader.StreamRowsAsync(table, new SyncProgress<long>(reported.Add), TestContext.Current.CancellationToken))
         {
             _ = row;
         }
 
-        foreach (int v in reported)
+        foreach (long v in reported)
         {
             Assert.True(v >= 0);
         }
@@ -286,14 +286,14 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        var reported = new List<int>();
+        var reported = new List<long>();
 
-        await foreach (StreamGenericRow item in reader.StreamRowsAsync<StreamGenericRow>(table, new SyncProgress<int>(reported.Add), TestContext.Current.CancellationToken))
+        await foreach (StreamGenericRow item in reader.StreamRowsAsync<StreamGenericRow>(table, new SyncProgress<long>(reported.Add), TestContext.Current.CancellationToken))
         {
             _ = item;
         }
 
-        foreach (int v in reported)
+        foreach (long v in reported)
         {
             Assert.True(v >= 0);
         }
