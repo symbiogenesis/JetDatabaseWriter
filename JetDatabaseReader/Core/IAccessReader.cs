@@ -28,10 +28,10 @@ public interface IAccessReader : IAccessBase
     /// Asynchronously returns up to <paramref name="maxRows"/> rows (as strings)
     /// from the first user table.
     /// </summary>
-    /// <param name="maxRows">Maximum number of rows to read. Use with large tables to avoid long reads or out-of-memory errors.</param>
+    /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited. Use with large tables to avoid long reads or out-of-memory errors.</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> with string-typed columns for the first user table, or an empty DataTable if no tables exist.</returns>
-    ValueTask<DataTable> ReadFirstTableAsync(int maxRows = 100, CancellationToken cancellationToken = default);
+    ValueTask<DataTable> ReadFirstTableAsync(uint? maxRows = null, CancellationToken cancellationToken = default);
 
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
@@ -73,14 +73,14 @@ public interface IAccessReader : IAccessBase
     /// </summary>
     /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<List<T>> ReadTableAsync<T>(string tableName, int maxRows, CancellationToken cancellationToken = default)
+    ValueTask<List<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
     /// Reads up to <paramref name="maxRows"/> rows as a string-typed <see cref="DataTable"/> asynchronously.
     /// </summary>
     /// <returns>A <see cref="DataTable"/> with all columns typed as <see cref="string"/>.</returns>
-    ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, int maxRows, CancellationToken cancellationToken = default);
+    ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously yields rows from <paramref name="tableName"/> as properly typed object arrays without collecting them all in memory.
@@ -137,7 +137,7 @@ public interface IAccessReader : IAccessBase
     /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
     /// </summary>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<DataTable?> ReadDataTableAsync(string? tableName = null, int maxRows = 0, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
+    ValueTask<DataTable?> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns statistical information about the database asynchronously.

@@ -297,7 +297,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
-    public async ValueTask<DataTable> ReadFirstTableAsync(int maxRows = 100, CancellationToken cancellationToken = default)
+    public async ValueTask<DataTable> ReadFirstTableAsync(uint? maxRows = null, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
@@ -339,7 +339,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
                 {
                     _ = dt.Rows.Add(row.ToArray());
-                    if (dt.Rows.Count >= maxRows)
+                    if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
                     {
                         var result = dt;
                         dt = null;
@@ -640,11 +640,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
-    /// <param name="maxRows">Maximum number of rows to read. 0 = unlimited.</param>
+    /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
-    public async ValueTask<DataTable?> ReadDataTableAsync(string? tableName = null, int maxRows = 0, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
+    public async ValueTask<DataTable?> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
@@ -705,7 +705,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
                 {
                     _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
-                    if (maxRows > 0 && dt.Rows.Count >= maxRows)
+                    if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
                     {
                         progress?.Report(dt.Rows.Count);
                         var result = dt;
@@ -728,7 +728,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
-    public async ValueTask<List<T>> ReadTableAsync<T>(string tableName, int maxRows, CancellationToken cancellationToken = default)
+    public async ValueTask<List<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
         where T : class, new()
     {
         ThrowIfDisposed();
@@ -745,7 +745,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             items.Add(RowMapper<T>.Map(row, index));
             count++;
-            if (count >= maxRows)
+            if (maxRows.HasValue && count >= maxRows.Value)
             {
                 break;
             }
@@ -758,10 +758,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Reads up to <paramref name="maxRows"/> rows as a string-typed <see cref="DataTable"/> asynchronously.
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
-    /// <param name="maxRows">Maximum number of rows to read.</param>
+    /// <param name="maxRows">Maximum number of rows to read, or <c>null</c> for unlimited.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> with all columns typed as <see cref="string"/>.</returns>
-    public async ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, int maxRows, CancellationToken cancellationToken = default)
+    public async ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -804,7 +804,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
                 {
                     _ = dt.Rows.Add(row.ToArray());
-                    if (dt.Rows.Count >= maxRows)
+                    if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
                     {
                         var result = dt;
                         dt = null;
