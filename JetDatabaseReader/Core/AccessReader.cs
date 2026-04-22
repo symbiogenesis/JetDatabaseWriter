@@ -862,7 +862,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             TableRowCounts = tableRowCounts,
             PageCacheHitRate = pageCacheHitRate,
             Version = _format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE",
-            PageSize = _pgSz,
+            Format = _format,
             CodePage = _codePage,
         };
     }

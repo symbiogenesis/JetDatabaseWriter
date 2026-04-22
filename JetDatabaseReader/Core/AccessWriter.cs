@@ -932,7 +932,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private static byte[] BuildEmptyDatabase(DatabaseFormat format)
     {
-        int pgSz = format != DatabaseFormat.Jet3Mdb ? 4096 : 2048;
+        int pgSz = GetPageSize(format);
         byte[] db = new byte[pgSz * 3];
 
         // ── Page 0: JET header ─────────────────────────────────────

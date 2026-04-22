@@ -38,8 +38,11 @@ public sealed class DatabaseStatistics
     /// <summary>Gets or initializes the JET version string (e.g., "Jet4/ACE", "Jet3").</summary>
     public string Version { get; init; } = string.Empty;
 
-    /// <summary>Gets or initializes the page size in bytes (2048 for Jet3, 4096 for Jet4).</summary>
-    public int PageSize { get; init; }
+    /// <summary>Gets or initializes the database format (Jet3, Jet4, or ACE).</summary>
+    public DatabaseFormat Format { get; init; }
+
+    /// <summary>Gets the page size in bytes (2048 for Jet3, 4096 for Jet4/ACE), derived from <see cref="Format"/>.</summary>
+    public int PageSize => AccessBase.GetPageSize(Format);
 
     /// <summary>Gets or initializes the code page identifier used for text encoding.</summary>
     public int CodePage { get; init; }

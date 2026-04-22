@@ -120,7 +120,7 @@ public abstract class AccessBase : IAccessBase
         _format = ver >= 2 ? DatabaseFormat.AceAccdb
                 : ver >= 1 ? DatabaseFormat.Jet4Mdb
                 : DatabaseFormat.Jet3Mdb;
-        _pgSz = _format != DatabaseFormat.Jet3Mdb ? 4096 : 2048;
+        _pgSz = GetPageSize(_format);
 
         // Jet3 XOR encryption: byte 0x62 bit 0x01 means pages 1+ are XOR-masked
         if (_format == DatabaseFormat.Jet3Mdb && hdr.Length > 0x62 && (hdr[0x62] & 0x01) != 0)
@@ -254,6 +254,9 @@ public abstract class AccessBase : IAccessBase
         _ioGate.Dispose();
         GC.SuppressFinalize(this);
     }
+
+    /// <summary>Returns the page size in bytes for the given database format (2048 for Jet3, 4096 for Jet4/ACE).</summary>
+    internal static int GetPageSize(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb ? 4096 : 2048;
 
     /// <summary>
     /// Asynchronously reads the fixed-size JET header (first 0x80 bytes) from page 0.
