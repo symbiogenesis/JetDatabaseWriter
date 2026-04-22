@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 
 #pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
+#pragma warning disable SA1204 // Static members grouped logically alongside related instance members
 #pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API
 
 /// <summary>
@@ -131,6 +132,97 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Asynchronously creates a new, empty JET database file at the specified path
+    /// and returns a new <see cref="AccessWriter"/> ready for table creation and data insertion.
+    /// The file must not already exist.
+    /// </summary>
+    /// <param name="path">Path where the new .mdb or .accdb file will be created.</param>
+    /// <param name="format">The database format to use (Jet4 .mdb or ACE .accdb).</param>
+    /// <param name="options">Optional configuration options.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
+    public static async ValueTask<AccessWriter> CreateDatabaseAsync(string path, JetDatabaseFormat format, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(path, nameof(path));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (File.Exists(path))
+        {
+            throw new IOException($"Database file already exists: {path}");
+        }
+
+        byte[] dbBytes = BuildEmptyDatabase(format);
+
+        await using (var fs = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
+        {
+            await fs.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        try
+        {
+            return await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // Best-effort cleanup of the partially-created file.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Best-effort cleanup if we lack permission.
+            }
+
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously writes a new, empty JET database into the specified stream
+    /// and returns a new <see cref="AccessWriter"/> ready for table creation and data insertion.
+    /// The stream must be readable, writable, and seekable.
+    /// </summary>
+    /// <param name="stream">A writable, seekable stream to write the new database into.</param>
+    /// <param name="format">The database format to use (Jet4 .mdb or ACE .accdb).</param>
+    /// <param name="options">Optional configuration options.</param>
+    /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the writer is disposed. Default is <c>false</c>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
+    public static async ValueTask<AccessWriter> CreateDatabaseAsync(Stream stream, JetDatabaseFormat format, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(stream, nameof(stream));
+
+        if (!stream.CanRead)
+        {
+            throw new ArgumentException("Stream must be readable.", nameof(stream));
+        }
+
+        if (!stream.CanWrite)
+        {
+            throw new ArgumentException("Stream must be writable.", nameof(stream));
+        }
+
+        if (!stream.CanSeek)
+        {
+            throw new ArgumentException("Stream must be seekable.", nameof(stream));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        byte[] dbBytes = BuildEmptyDatabase(format);
+        await stream.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        stream.Position = 0;
+
+        return await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -869,6 +961,117 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Wu16(page, _tdNumCols - 2, numVarCols);
         Wi32(page, 8, Math.Max(0, namePos - 8));
         return page;
+    }
+
+    /// <summary>
+    /// Builds a minimal, empty JET database as a byte array.
+    /// The database contains three 4096-byte pages:
+    /// page 0 (header), page 1 (unused placeholder), and page 2 (MSysObjects TDEF).
+    /// </summary>
+    private static byte[] BuildEmptyDatabase(JetDatabaseFormat format)
+    {
+        const int pgSz = 4096;
+        byte[] db = new byte[pgSz * 3];
+
+        // ── Page 0: JET header ─────────────────────────────────────
+        db[0] = 0x00;
+        db[1] = 0x01;
+        db[2] = 0x00;
+        db[3] = 0x00;
+
+        byte[] magic = format == JetDatabaseFormat.AceAccdb
+            ? Encoding.ASCII.GetBytes("Standard ACE DB\0")
+            : Encoding.ASCII.GetBytes("Standard Jet DB\0");
+        Buffer.BlockCopy(magic, 0, db, 4, magic.Length);
+
+        db[0x14] = format == JetDatabaseFormat.AceAccdb ? (byte)0x02 : (byte)0x01;
+
+        // Sort order / code page at 0x3C-0x3D left as 0x0000 → defaults to 1252.
+
+        // ── Page 1: placeholder (left as zeros / unused page type) ──
+        // Must exist so that page 2 sits at the correct file offset.
+
+        // ── Page 2: TDEF for MSysObjects ───────────────────────────
+        BuildMSysObjectsTDef(db, pgSz * 2);
+
+        return db;
+    }
+
+    /// <summary>
+    /// Writes a minimal MSysObjects TDEF page into <paramref name="db"/> at the given
+    /// <paramref name="offset"/>. The TDEF defines nine columns: Id, ParentId, Name,
+    /// Type, DateCreate, DateUpdate, Flags, ForeignName, and Database.
+    /// Uses Jet4 format constants (both Jet4 .mdb and ACE .accdb share the same layout).
+    /// </summary>
+    private static void BuildMSysObjectsTDef(byte[] db, int offset)
+    {
+        // Jet4 TDEF format constants (must match the values in AccessBase)
+        const int tdNumCols = 45;
+        const int tdBlockEnd = 63;
+        const int colDescSz = 25;
+        const int colTypeOff = 0;
+        const int colNumOff = 5;
+        const int colVarOff = 7;
+        const int colFlagsOff = 15;
+        const int colFixedOff = 21;
+        const int colSzOff = 23;
+
+        // MSysObjects columns.
+        // Fixed: Id(T_LONG,4), ParentId(T_LONG,4), Type(T_INT,2),
+        //        DateCreate(T_DATETIME,8), DateUpdate(T_DATETIME,8), Flags(T_LONG,4).
+        // Variable: Name(T_TEXT), ForeignName(T_TEXT), Database(T_TEXT).
+        var columns = new (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[]
+        {
+            ("Id",          T_LONG,     0, 0, 0,  4,   0x03),
+            ("ParentId",    T_LONG,     1, 0, 4,  4,   0x03),
+            ("Name",        T_TEXT,     2, 0, 0,  510, 0x02),
+            ("Type",        T_INT,      3, 0, 8,  2,   0x03),
+            ("DateCreate",  T_DATETIME, 4, 0, 10, 8,   0x03),
+            ("DateUpdate",  T_DATETIME, 5, 0, 18, 8,   0x03),
+            ("Flags",       T_LONG,     6, 0, 26, 4,   0x03),
+            ("ForeignName", T_TEXT,     7, 1, 0,  510, 0x02),
+            ("Database",    T_TEXT,     8, 2, 0,  510, 0x02),
+        };
+
+        int numCols = columns.Length;
+        int numVarCols = 3;
+
+        db[offset] = 0x02;
+        db[offset + 1] = 0x01;
+
+        // Next TDEF page = 0 (single page, no chain).
+        Wi32(db, offset + 4, 0);
+
+        // Header fields
+        db[offset + tdNumCols - 5] = 0x4E;
+        Wu16(db, offset + tdNumCols - 4, numCols);
+        Wu16(db, offset + tdNumCols - 2, numVarCols);
+        Wu16(db, offset + tdNumCols, numCols);
+
+        // Column descriptors start at tdBlockEnd (no real indexes).
+        int colStart = offset + tdBlockEnd;
+        int namePos = colStart + (numCols * colDescSz);
+
+        for (int i = 0; i < numCols; i++)
+        {
+            var col = columns[i];
+            int o = colStart + (i * colDescSz);
+
+            db[o + colTypeOff] = col.Type;
+            Wu16(db, o + colNumOff, col.ColNum);
+            Wu16(db, o + colVarOff, col.VarIdx);
+            db[o + colFlagsOff] = col.Flags;
+            Wu16(db, o + colFixedOff, col.FixedOff);
+            Wu16(db, o + colSzOff, col.Size);
+
+            byte[] nameBytes = Encoding.Unicode.GetBytes(col.Name);
+            Wu16(db, namePos, nameBytes.Length);
+            namePos += 2;
+            Buffer.BlockCopy(nameBytes, 0, db, namePos, nameBytes.Length);
+            namePos += nameBytes.Length;
+        }
+
+        Wi32(db, offset + 8, Math.Max(0, namePos - offset - 8));
     }
 
     private async ValueTask InsertRowDataAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default)
