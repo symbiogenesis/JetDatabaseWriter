@@ -1082,7 +1082,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var nullMask = new byte[(numCols + 7) / 8];
         var fixedArea = new byte[maxFixedEnd];
         int fixedAreaSize = 0;
-        var varEntries = maxDefinedVarIdx >= 0 ? new byte[maxDefinedVarIdx + 1][] : Array.Empty<byte[]>();
+        var varEntries = maxDefinedVarIdx >= 0 ? new byte[maxDefinedVarIdx + 1][] : [];
         int maxVarIndex = -1;
         int varPayloadSize = 0;
 
@@ -1164,7 +1164,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int currentOffset = _numColsFldSz + fixedAreaSize;
-        var variableOffsets = varLen > 0 ? new int[varLen] : Array.Empty<int>();
+        var variableOffsets = varLen > 0 ? new int[varLen] : [];
         for (int varIndex = 0; varIndex < varLen; varIndex++)
         {
             variableOffsets[varIndex] = currentOffset;

@@ -30,8 +30,8 @@ public class TableResultBenchmarks
         var stringRows = new List<List<string>>(RowCount);
         for (int i = 0; i < RowCount; i++)
         {
-            typedRows.Add(new object[] { i, $"Name_{i}", i * 1.5, DateTime.Now, i % 2 == 0 });
-            stringRows.Add(new List<string> { i.ToString(System.Globalization.CultureInfo.InvariantCulture), $"Name_{i}", (i * 1.5).ToString(System.Globalization.CultureInfo.InvariantCulture), DateTime.Now.ToString(System.Globalization.CultureInfo.InvariantCulture), (i % 2 == 0).ToString() });
+            typedRows.Add([i, $"Name_{i}", i * 1.5, DateTime.Now, i % 2 == 0]);
+            stringRows.Add([i.ToString(System.Globalization.CultureInfo.InvariantCulture), $"Name_{i}", (i * 1.5).ToString(System.Globalization.CultureInfo.InvariantCulture), DateTime.Now.ToString(System.Globalization.CultureInfo.InvariantCulture), (i % 2 == 0).ToString()]);
         }
 
         _typedResult = new TableResult

@@ -73,11 +73,10 @@ public sealed class LinkedTableTests : IDisposable
         {
             await writer.CreateTableAsync(
                 "RemoteData",
-                new List<ColumnDefinition>
-                {
+                [
                     new("Id", typeof(int)),
                     new("Value", typeof(string), maxLength: 100),
-                },
+                ],
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("RemoteData", [1, "Hello from source"], TestContext.Current.CancellationToken);
         }
@@ -99,11 +98,10 @@ public sealed class LinkedTableTests : IDisposable
         {
             await writer.CreateTableAsync(
                 "RemoteData",
-                new List<ColumnDefinition>
-                {
+                [
                     new("Id", typeof(int)),
                     new("Value", typeof(string), maxLength: 100),
-                },
+                ],
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(
                 "RemoteData",
@@ -150,11 +148,10 @@ public sealed class LinkedTableTests : IDisposable
         {
             await writer.CreateTableAsync(
                 "Products",
-                new List<ColumnDefinition>
-                {
+                [
                     new("ProductID", typeof(int)),
                     new("Name", typeof(string), maxLength: 100),
-                },
+                ],
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Products", [42, "Widget"], TestContext.Current.CancellationToken);
         }
@@ -382,10 +379,9 @@ public sealed class LinkedTableTests : IDisposable
         {
             await writer.CreateTableAsync(
                 "Data",
-                new List<ColumnDefinition>
-                {
+                [
                     new("Id", typeof(int)),
-                },
+                ],
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Data", [1], TestContext.Current.CancellationToken);
         }
@@ -437,12 +433,11 @@ public sealed class LinkedTableTests : IDisposable
         {
             await writer.CreateTableAsync(
                 "Customers",
-                new List<ColumnDefinition>
-                {
+                [
                     new("CustID", typeof(int)),
                     new("Name", typeof(string), maxLength: 100),
                     new("Balance", typeof(decimal)),
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 

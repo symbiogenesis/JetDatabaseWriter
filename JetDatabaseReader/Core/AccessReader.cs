@@ -48,24 +48,24 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // Jet4 password XOR mask (mdbtools / jackcess). Applied together with
     // the 4-byte creation date at offset 0x72 to decode the stored password.
     private static readonly byte[] Jet4PasswordMask =
-    {
+    [
         0x86, 0xFB, 0xEC, 0x37, 0x5D, 0x44, 0x9C, 0xFA,
         0xC6, 0x5E, 0x28, 0xE6, 0x13, 0xB6, 0x8A, 0x60,
         0x54, 0x94, 0x7B, 0x36, 0xD1, 0xEC, 0xDF, 0xB1,
         0x31, 0x6A, 0x13, 0x43, 0xEF, 0x31, 0xB1, 0x33,
         0xA1, 0xFE, 0x6A, 0x7A, 0x42, 0x62, 0x04, 0xFE,
-    };
+    ];
 
     // ACE legacy password mask used for password-only ACCDB files
     // created via DBEngine.CompactDatabase(..., ";pwd=...").
     private static readonly byte[] AccdbLegacyPasswordMask =
-    {
+    [
         0x1F, 0x9B, 0xB7, 0xCA, 0xD4, 0x24, 0xD0, 0x07,
         0x49, 0x3E, 0x62, 0x1B, 0xF9, 0xD6, 0xB4, 0x9D,
         0xBE, 0xF4, 0x45, 0xCB, 0x1F, 0x12, 0xE1, 0x4C,
         0x9D, 0x94, 0x2D, 0xBE, 0x25, 0xCF, 0x8F, 0xCE,
         0xDE, 0x01, 0x47, 0xA6, 0x78, 0xD5, 0x42, 0xD7,
-    };
+    ];
 
     private readonly object _cacheLock = new object();
     private readonly object _catalogLock = new object();
@@ -299,9 +299,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         var empty = new FirstTableResult
         {
-            Headers = new List<string> { "Info" },
-            Rows = new List<List<string>> { new List<string> { "No user tables found" } },
-            Schema = new List<TableColumn>(),
+            Headers = ["Info"],
+            Rows = [["No user tables found"]],
+            Schema = [],
             TableName = string.Empty,
             TableCount = 0,
         };
@@ -318,9 +318,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             return new FirstTableResult
             {
-                Headers = new List<string> { "Info" },
-                Rows = new List<List<string>> { new List<string> { $"Cannot read TDEF for '{entry.Name}'" } },
-                Schema = new List<TableColumn>(),
+                Headers = ["Info"],
+                Rows = [[$"Cannot read TDEF for '{entry.Name}'"]],
+                Schema = [],
                 TableName = entry.Name,
                 TableCount = tables.Count,
             };
@@ -346,7 +346,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 rows.Add(row);
                 if (rows.Count >= maxRows)
                 {
-                    return new FirstTableResult { Headers = headers, Rows = rows, Schema = new List<TableColumn>(), TableName = entry.Name, TableCount = tables.Count };
+                    return new FirstTableResult { Headers = headers, Rows = rows, Schema = [], TableName = entry.Name, TableCount = tables.Count };
                 }
             }
         }
@@ -355,7 +355,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             Headers = headers,
             Rows = rows,
-            Schema = new List<TableColumn>(),
+            Schema = [],
             TableName = entry.Name,
             TableCount = tables.Count,
         };
@@ -758,9 +758,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             return new TableResult
             {
-                Headers = new List<string>(),
+                Headers = [],
                 Rows = new List<object[]>(),
-                Schema = new List<TableColumn>(),
+                Schema = [],
             };
         }
 
@@ -835,9 +835,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             return new StringTableResult
             {
-                Headers = new List<string>(),
-                Rows = new List<List<string>>(),
-                Schema = new List<TableColumn>(),
+                Headers = [],
+                Rows = [],
+                Schema = [],
             };
         }
 
@@ -2293,7 +2293,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             Dictionary<int, byte[]>? colData = await LoadAttachmentDataAsync(tableName, col.Name, cancellationToken).ConfigureAwait(false);
             if (colData != null && colData.Count > 0)
             {
-                result ??= new Dictionary<int, Dictionary<int, byte[]>>();
+                result ??= [];
                 result[i] = colData;
             }
         }

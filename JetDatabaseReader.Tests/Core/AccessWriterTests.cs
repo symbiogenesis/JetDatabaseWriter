@@ -89,7 +89,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await writer.DisposeAsync();
 
-        await Assert.ThrowsAsync<ObjectDisposedException>(async () => await writer.InsertRowAsync("AnyTable", new object[] { 1 }, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () => await writer.InsertRowAsync("AnyTable", [1], TestContext.Current.CancellationToken));
     }
 
     // ── InsertRow ─────────────────────────────────────────────────────
@@ -210,7 +210,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            await writer.InsertRowAsync(tableName, new object[] { 4, "Delta" }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [4, "Delta"], TestContext.Current.CancellationToken);
         }
 
         await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
@@ -513,8 +513,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(newTableName, new object[] { 1, "Hello" }, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(newTableName, new object[] { 2, "World" }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(newTableName, [1, "Hello"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(newTableName, [2, "World"], TestContext.Current.CancellationToken);
         }
 
         await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
@@ -607,7 +607,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.CreateTableAsync(null!, new List<ColumnDefinition>(), TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.CreateTableAsync(null!, [], TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -690,7 +690,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(newTableName, new object[] { 42, "Test Value", date, 3.14, true }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(newTableName, [42, "Test Value", date, 3.14, true], TestContext.Current.CancellationToken);
         }
 
         await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
@@ -954,7 +954,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         // Provide 3 values for a 2-column table
         await Assert.ThrowsAsync<ArgumentException>(async () =>
-            await writer.InsertRowAsync(tableName, new object[] { 1, "Hello", "Extra" }, TestContext.Current.CancellationToken));
+            await writer.InsertRowAsync(tableName, [1, "Hello", "Extra"], TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -981,7 +981,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 1, memoValue }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, memoValue], TestContext.Current.CancellationToken);
         }
 
         await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
@@ -1017,7 +1017,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<JetLimitationException>(async () =>
-            await writer.InsertRowAsync(tableName, new object[] { 1, memoValue }, TestContext.Current.CancellationToken));
+            await writer.InsertRowAsync(tableName, [1, memoValue], TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -1044,7 +1044,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<JetLimitationException>(async () =>
-            await writer.InsertRowAsync(tableName, new object[] { 1, oversized }, TestContext.Current.CancellationToken));
+            await writer.InsertRowAsync(tableName, [1, oversized], TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -1074,7 +1074,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 1, data }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, data], TestContext.Current.CancellationToken);
         }
 
         await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
@@ -1120,9 +1120,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 1, "Keep" }, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 2, "Delete" }, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 3, "Keep" }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, "Keep"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [2, "Delete"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [3, "Keep"], TestContext.Current.CancellationToken);
         }
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
@@ -1162,8 +1162,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 1, "Alice", 100 }, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 2, "Bob", 200 }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, "Alice", 100], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [2, "Bob", 200], TestContext.Current.CancellationToken);
         }
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
@@ -1206,7 +1206,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 1, guid }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, guid], TestContext.Current.CancellationToken);
         }
 
         await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
@@ -1237,7 +1237,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 1, payload }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, payload], TestContext.Current.CancellationToken);
         }
 
         await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
@@ -1268,7 +1268,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
             for (int i = 1; i <= 10; i++)
             {
-                await writer.InsertRowAsync(tableName, new object[] { i, $"Row{i}" }, TestContext.Current.CancellationToken);
+                await writer.InsertRowAsync(tableName, [i, $"Row{i}"], TestContext.Current.CancellationToken);
             }
         }
 
@@ -1293,7 +1293,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
-            await writer.CreateTableAsync("EmptyCol", new List<ColumnDefinition>(), TestContext.Current.CancellationToken));
+            await writer.CreateTableAsync("EmptyCol", [], TestContext.Current.CancellationToken));
     }
 
     // ── DropTable: null/empty name ────────────────────────────────────
@@ -1394,7 +1394,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("NoSuchTable_XYZ_999", new object[] { 1 }, TestContext.Current.CancellationToken));
+            await writer.InsertRowAsync("NoSuchTable_XYZ_999", [1], TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: InsertRows null/empty args ───────────────────
@@ -1522,7 +1522,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
-            await writer.InsertRowAsync(string.Empty, new object[] { 1 }, TestContext.Current.CancellationToken));
+            await writer.InsertRowAsync(string.Empty, [1], TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: DeleteRows non-existent table ────────────────
@@ -1686,9 +1686,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using var writer = await OpenWriterAsync(stream, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(tableName, new object[] { 1, "Alpha" }, TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(tableName, new object[] { 2, "Beta" }, TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(tableName, new object[] { 3, "Gamma" }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(tableName, [1, "Alpha"], TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(tableName, [2, "Beta"], TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(tableName, [3, "Gamma"], TestContext.Current.CancellationToken);
 
         return tableName;
     }
