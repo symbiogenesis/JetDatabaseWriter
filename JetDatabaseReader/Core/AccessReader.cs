@@ -644,7 +644,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
-    public async ValueTask<DataTable?> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
+    public async ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
@@ -654,7 +654,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
             if (tables.Count == 0)
             {
-                return null;
+                return new DataTable();
             }
 
             tableName = tables[0].Name;
@@ -670,7 +670,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return await source.ReadDataTableAsync(link.ForeignName, maxRows, progress, cancellationToken).ConfigureAwait(false);
             }
 
-            return null;
+            return new DataTable(tableName);
         }
 
         var (entry, td) = resolved.Value;
@@ -759,9 +759,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="maxRows">Maximum number of rows to read, or <c>null</c> for unlimited.</param>
+    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> with all columns typed as <see cref="string"/>.</returns>
-    public async ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
+    public async ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -811,6 +812,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                         return result;
                     }
                 }
+
+                progress?.Report(dt.Rows.Count);
             }
 
             var final = dt;
@@ -821,64 +824,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             dt?.Dispose();
         }
-    }
-
-    /// <inheritdoc/>
-    public async ValueTask<DataTable?> ReadTableAsStringDataTableAsync(string? tableName = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (string.IsNullOrEmpty(tableName))
-        {
-            List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
-            if (tables.Count == 0)
-            {
-                return null;
-            }
-
-            tableName = tables[0].Name;
-        }
-
-        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        if (resolved == null)
-        {
-            return null;
-        }
-
-        var (entry, td) = resolved.Value;
-        var dt = new DataTable(tableName);
-        foreach (ColumnInfo col in td.Columns)
-        {
-            _ = dt.Columns.Add(col.Name, typeof(string));
-        }
-
-        long total = _stream.Length / _pgSz;
-        for (long p = 3; p < total; p++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            long owner = Ri32(page, _dpTDefOff);
-            if (owner != entry.TDefPage)
-            {
-                continue;
-            }
-
-            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
-            {
-                _ = dt.Rows.Add(row.ToArray());
-            }
-
-            progress?.Report(dt.Rows.Count);
-        }
-
-        return dt;
     }
 
     /// <summary>
@@ -941,11 +886,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report($"Reading {table.Name}...");
-            DataTable? dt = await ReadDataTableAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (dt != null)
-            {
-                result[table.Name] = dt;
-            }
+            DataTable dt = await ReadDataTableAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
+            result[table.Name] = dt;
         }
 
         return result;
@@ -970,11 +912,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report($"Reading {table.Name}...");
-            DataTable? dt = await ReadTableAsStringDataTableAsync(table.Name, null, cancellationToken).ConfigureAwait(false);
-            if (dt != null)
-            {
-                result[table.Name] = dt;
-            }
+            DataTable dt = await ReadTableAsStringsAsync(table.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
+            result[table.Name] = dt;
         }
 
         return result;

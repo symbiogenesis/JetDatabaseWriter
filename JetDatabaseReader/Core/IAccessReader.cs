@@ -79,8 +79,12 @@ public interface IAccessReader : IAccessBase
     /// <summary>
     /// Reads up to <paramref name="maxRows"/> rows as a string-typed <see cref="DataTable"/> asynchronously.
     /// </summary>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="maxRows">Maximum number of rows to read, or <c>null</c> for unlimited.</param>
+    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
+    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> with all columns typed as <see cref="string"/>.</returns>
-    ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default);
+    ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously yields rows from <paramref name="tableName"/> as properly typed object arrays without collecting them all in memory.
@@ -116,15 +120,6 @@ public interface IAccessReader : IAccessBase
     IAsyncEnumerable<string[]> StreamRowsAsStringsAsync(string tableName, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Reads the entire table into a DataTable with all columns typed as strings asynchronously.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
-    /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<DataTable?> ReadTableAsStringDataTableAsync(string? tableName = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Returns rich metadata for all columns in the specified table asynchronously.
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
@@ -136,8 +131,8 @@ public interface IAccessReader : IAccessBase
     /// Reads the entire table into a DataTable with properly typed columns asynchronously.
     /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
     /// </summary>
-    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<DataTable?> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
+    /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns. Returns an empty DataTable if the table is not found.</returns>
+    ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns statistical information about the database asynchronously.
