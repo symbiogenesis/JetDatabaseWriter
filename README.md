@@ -16,7 +16,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | | |
 |---|---|
 | ✅ **No native dependencies** | Pure C# — runs anywhere .NET runs |
-| ✅ **Jet3 & Jet4 / ACE** | Access 97 through Access 2019 (`.mdb` / `.accdb`) |
+| ✅ **Jet3 & Jet4 / ACE** | Access 97 through Access 2021 and Microsoft 365 (`.mdb` / `.accdb`) |
 | ✅ **Typed by default** | `int`, `DateTime`, `decimal`, `Guid` — not just strings |
 | ✅ **All column types** | Text, Integer, Currency, Date/Time, GUID, MEMO, OLE Object, Decimal |
 | ✅ **Streaming API** | Process millions of rows without loading the whole file |
@@ -274,7 +274,7 @@ Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync(
 
 ## Writing Data
 
-> Requires Jet4/ACE format — `.mdb` (Access 2000+) or `.accdb`.
+> Supports Jet3, Jet4, and ACE formats — `.mdb` (Access 97+) or `.accdb`.
 
 ```csharp
 await using var writer = await AccessWriter.OpenAsync("database.mdb");
@@ -389,7 +389,7 @@ dotnet run --project JetDatabaseReader.Scaffold -- Secure.accdb --password secre
 | `--namespace` | `-n` | `GeneratedModels` | Namespace for generated classes |
 | `--password` | `-p` | — | Database password (for encrypted files) |
 | `--records` | | `false` | Emit C# `record` types instead of `class` |
-| `--nullable` | | `false` | Emit nullable reference types (`#nullable enable`) |
+| `--nullable` | | `true` | Emit nullable reference types (`#nullable enable`) |
 
 ### Example Output
 
