@@ -9,6 +9,7 @@
     <File Path="stylecop.json" />
   </Folder>
   <Project Path="JetDatabaseReader.Benchmarks/JetDatabaseReader.Benchmarks.csproj" />
+  <Project Path="JetDatabaseReader.Scaffold/JetDatabaseReader.Scaffold.csproj" />
   <Project Path="JetDatabaseReader.Tests/JetDatabaseReader.Tests.csproj" />
   <Project Path="JetDatabaseReader/JetDatabaseReader.csproj" />
 </Solution>
