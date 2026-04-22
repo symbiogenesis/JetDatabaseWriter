@@ -79,7 +79,7 @@ public interface IAccessWriter : IAccessBase
     /// <param name="updatedValues">Dictionary of column-name -> new-value pairs to apply.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows updated.</returns>
-    ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IDictionary<string, object> updatedValues, CancellationToken cancellationToken = default);
+    ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object> updatedValues, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously deletes rows from the specified table where the predicate column matches the given value.

@@ -374,7 +374,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <inheritdoc/>
-    public async ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IDictionary<string, object> updatedValues, CancellationToken cancellationToken = default)
+    public async ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object> updatedValues, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
