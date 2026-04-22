@@ -42,21 +42,21 @@ public class AccessReaderBenchmarks
     }
 
     [Benchmark]
-    public async Task<TableResult> ReadTable_100()
+    public async Task<DataTable?> ReadTable_100()
     {
         await using var reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.ReadTableAsync(_tableName, 100);
+        return await reader.ReadDataTableAsync(_tableName, 100);
     }
 
     [Benchmark]
-    public async Task<TableResult> ReadTable_1000()
+    public async Task<DataTable?> ReadTable_1000()
     {
         await using var reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.ReadTableAsync(_tableName, 1000);
+        return await reader.ReadDataTableAsync(_tableName, 1000);
     }
 
     [Benchmark]
-    public async Task<StringTableResult> ReadTableAsStrings_100()
+    public async Task<DataTable> ReadTableAsStrings_100()
     {
         await using var reader = await AccessReader.OpenAsync(DbPath);
         return await reader.ReadTableAsStringsAsync(_tableName, 100);
@@ -91,10 +91,10 @@ public class AccessReaderBenchmarks
     }
 
     [Benchmark]
-    public async Task<DataTable> ReadTable_AsDataTable()
+    public async Task<DataTable?> ReadTable_AsDataTable()
     {
         await using var reader = await AccessReader.OpenAsync(DbPath);
-        return (await reader.ReadTableAsync(_tableName, 100)).ToDataTable();
+        return await reader.ReadDataTableAsync(_tableName, 100);
     }
 
     [Benchmark]

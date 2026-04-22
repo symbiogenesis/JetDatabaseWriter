@@ -92,25 +92,27 @@ public class AccessWriterBenchmarks
     public async Task CreateTable()
     {
         await using var writer = await AccessWriter.OpenAsync(_tempPath);
-        await writer.CreateTableAsync("BenchTable",
-        [
-            new("Id", typeof(int)),
-            new("Name", typeof(string), 255),
-            new("Value", typeof(double)),
-            new("Created", typeof(DateTime)),
-            new("Active", typeof(bool)),
-        ]);
+        await writer.CreateTableAsync(
+            "BenchTable",
+            [
+                new("Id", typeof(int)),
+                new("Name", typeof(string), 255),
+                new("Value", typeof(double)),
+                new("Created", typeof(DateTime)),
+                new("Active", typeof(bool)),
+            ]);
     }
 
     [Benchmark]
     public async Task CreateAndDropTable()
     {
         await using var writer = await AccessWriter.OpenAsync(_tempPath);
-        await writer.CreateTableAsync("BenchDrop",
-        [
-            new("Id", typeof(int)),
-            new("Name", typeof(string), 255),
-        ]);
+        await writer.CreateTableAsync(
+            "BenchDrop",
+            [
+                new("Id", typeof(int)),
+                new("Name", typeof(string), 255),
+            ]);
         await writer.DropTableAsync("BenchDrop");
     }
 

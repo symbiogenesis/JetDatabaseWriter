@@ -297,72 +297,65 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
-    public async ValueTask<FirstTableResult> ReadFirstTableAsync(int maxRows = 100, CancellationToken cancellationToken = default)
+    public async ValueTask<DataTable> ReadFirstTableAsync(int maxRows = 100, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
 
-        var empty = new FirstTableResult
-        {
-            Headers = ["Info"],
-            Rows = [["No user tables found"]],
-            Schema = [],
-            TableName = string.Empty,
-            TableCount = 0,
-        };
-
         List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
         if (tables.Count == 0)
         {
-            return empty;
+            return new DataTable();
         }
 
         CatalogEntry entry = tables[0];
         TableDef? td = await ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         if (td == null || td.Columns.Count == 0)
         {
-            return new FirstTableResult
-            {
-                Headers = ["Info"],
-                Rows = [[$"Cannot read TDEF for '{entry.Name}'"]],
-                Schema = [],
-                TableName = entry.Name,
-                TableCount = tables.Count,
-            };
+            return new DataTable(entry.Name);
         }
 
-        var headers = td.Columns.ConvertAll(c => c.Name);
-        var rows = new List<List<string>>();
-        long totalPages = _stream.Length / _pgSz;
-
-        for (long p = 3; p < totalPages; p++)
+        DataTable? dt = null;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != entry.TDefPage)
+            dt = new DataTable(entry.Name);
+            foreach (ColumnInfo col in td.Columns)
             {
-                continue;
+                _ = dt.Columns.Add(col.Name, typeof(string));
             }
 
-            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+            long totalPages = _stream.Length / _pgSz;
+
+            for (long p = 3; p < totalPages; p++)
             {
-                rows.Add(row);
-                if (rows.Count >= maxRows)
+                cancellationToken.ThrowIfCancellationRequested();
+
+                byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+                if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != entry.TDefPage)
                 {
-                    return new FirstTableResult { Headers = headers, Rows = rows, Schema = [], TableName = entry.Name, TableCount = tables.Count };
+                    continue;
+                }
+
+                await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+                {
+                    _ = dt.Rows.Add(row.ToArray());
+                    if (dt.Rows.Count >= maxRows)
+                    {
+                        var result = dt;
+                        dt = null;
+                        return result;
+                    }
                 }
             }
-        }
 
-        return new FirstTableResult
+            var final = dt;
+            dt = null;
+            return final;
+        }
+        finally
         {
-            Headers = headers,
-            Rows = rows,
-            Schema = [],
-            TableName = entry.Name,
-            TableCount = tables.Count,
-        };
+            dt?.Dispose();
+        }
     }
 
     /// <inheritdoc/>
@@ -734,97 +727,41 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    /// <summary>
-    /// Reads up to <paramref name="maxRows"/> rows with native CLR types asynchronously.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive).</param>
-    /// <param name="maxRows">Maximum number of rows to read.</param>
-    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
-    /// <returns>A <see cref="TableResult"/> containing headers, typed rows, and schema.</returns>
-    public async ValueTask<TableResult> ReadTableAsync(string tableName, int maxRows, CancellationToken cancellationToken = default)
+    /// <inheritdoc/>
+    public async ValueTask<List<T>> ReadTableAsync<T>(string tableName, int maxRows, CancellationToken cancellationToken = default)
+        where T : class, new()
     {
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
-        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        if (resolved == null)
-        {
-            LinkedTableInfo? link = await FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-            if (link != null)
-            {
-                await using AccessReader source = await OpenLinkedSourceAsync(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator, cancellationToken).ConfigureAwait(false);
-                return await source.ReadTableAsync(link.ForeignName, maxRows, cancellationToken).ConfigureAwait(false);
-            }
+        List<ColumnMetadata> meta = await GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
+        var headers = meta.ConvertAll(m => m.Name);
+        var index = RowMapper<T>.BuildIndex(headers);
+        var items = new List<T>();
+        int count = 0;
 
-            return new TableResult
-            {
-                Headers = [],
-                Rows = new List<object[]>(),
-                Schema = [],
-            };
-        }
-
-        var (entry, td) = resolved.Value;
-        var headers = td.Columns.ConvertAll(c => c.Name);
-        var schema = BuildSchema(td.Columns);
-        var typedRows = new List<object[]>();
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
-        long total = _stream.Length / _pgSz;
-
-        for (long p = 3; p < total; p++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            long owner = Ri32(page, _dpTDefOff);
-            if (owner != entry.TDefPage)
-            {
-                continue;
-            }
-
-            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
-            {
-                typedRows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
-                if (typedRows.Count >= maxRows)
-                {
-                    return new TableResult { Headers = headers, Rows = typedRows, Schema = schema, TableName = tableName };
-                }
-            }
-        }
-
-        return new TableResult { Headers = headers, Rows = typedRows, Schema = schema, TableName = tableName };
-    }
-
-    /// <inheritdoc/>
-    public async ValueTask<List<T>> ReadTableAsync<T>(string tableName, int maxRows, CancellationToken cancellationToken = default)
-        where T : class, new()
-    {
-        TableResult result = await ReadTableAsync(tableName, maxRows, cancellationToken).ConfigureAwait(false);
-        var index = RowMapper<T>.BuildIndex(result.Headers);
-        var items = new List<T>(result.Rows.Count);
-
-        foreach (IReadOnlyList<object?> row in result.Rows)
+        await foreach (object[] row in StreamRowsAsync(tableName, cancellationToken: cancellationToken).ConfigureAwait(false))
         {
             items.Add(RowMapper<T>.Map(row, index));
+            count++;
+            if (count >= maxRows)
+            {
+                break;
+            }
         }
 
         return items;
     }
 
     /// <summary>
-    /// Reads up to <paramref name="maxRows"/> rows as strings asynchronously.
+    /// Reads up to <paramref name="maxRows"/> rows as a string-typed <see cref="DataTable"/> asynchronously.
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="maxRows">Maximum number of rows to read.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
-    /// <returns>A <see cref="StringTableResult"/> containing headers, string rows, and schema.</returns>
-    public async ValueTask<StringTableResult> ReadTableAsStringsAsync(string tableName, int maxRows, CancellationToken cancellationToken = default)
+    /// <returns>A <see cref="DataTable"/> with all columns typed as <see cref="string"/>.</returns>
+    public async ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, int maxRows, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -833,47 +770,57 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            return new StringTableResult
-            {
-                Headers = [],
-                Rows = [],
-                Schema = [],
-            };
+            return new DataTable(tableName);
         }
 
         var (entry, td) = resolved.Value;
-        var headers = td.Columns.ConvertAll(c => c.Name);
-        var schema = BuildSchema(td.Columns);
-        var rows = new List<List<string>>();
-        long total = _stream.Length / _pgSz;
-
-        for (long p = 3; p < total; p++)
+        DataTable? dt = null;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
+            dt = new DataTable(tableName);
+            foreach (ColumnInfo col in td.Columns)
             {
-                continue;
+                _ = dt.Columns.Add(col.Name, typeof(string));
             }
 
-            long owner = Ri32(page, _dpTDefOff);
-            if (owner != entry.TDefPage)
-            {
-                continue;
-            }
+            long total = _stream.Length / _pgSz;
 
-            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+            for (long p = 3; p < total; p++)
             {
-                rows.Add(row);
-                if (rows.Count >= maxRows)
+                cancellationToken.ThrowIfCancellationRequested();
+
+                byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+                if (page[0] != 0x01)
                 {
-                    return new StringTableResult { Headers = headers, Rows = rows, Schema = schema, TableName = tableName };
+                    continue;
+                }
+
+                long owner = Ri32(page, _dpTDefOff);
+                if (owner != entry.TDefPage)
+                {
+                    continue;
+                }
+
+                await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+                {
+                    _ = dt.Rows.Add(row.ToArray());
+                    if (dt.Rows.Count >= maxRows)
+                    {
+                        var result = dt;
+                        dt = null;
+                        return result;
+                    }
                 }
             }
-        }
 
-        return new StringTableResult { Headers = headers, Rows = rows, Schema = schema, TableName = tableName };
+            var final = dt;
+            dt = null;
+            return final;
+        }
+        finally
+        {
+            dt?.Dispose();
+        }
     }
 
     /// <inheritdoc/>
@@ -1387,16 +1334,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             b[start + 13],
             b[start + 14],
             b[start + 15]);
-    }
-
-    private static List<TableColumn> BuildSchema(List<ColumnInfo> columns)
-    {
-        return columns.ConvertAll(c => new TableColumn
-        {
-            Name = c.Name,
-            Type = TypeCodeToClrType(c.Type),
-            Size = SizeForColumn(c),
-        });
     }
 
     private static async ValueTask<AccessReader> OpenLinkedSourceAsync(

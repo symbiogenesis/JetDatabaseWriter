@@ -2,6 +2,7 @@ namespace JetDatabaseReader.Tests;
 
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
 using Xunit;
@@ -235,56 +236,59 @@ public class AccessReaderCoreTests(DatabaseCache db) : IClassFixture<DatabaseCac
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        FirstTableResult result = await reader.ReadFirstTableAsync(cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadFirstTableAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        Assert.NotEmpty(result.Headers);
-        Assert.False(string.IsNullOrWhiteSpace(result.TableName));
-        Assert.True(result.TableCount > 0);
+        Assert.True(table.Columns.Count > 0);
+        Assert.False(string.IsNullOrWhiteSpace(table.TableName));
     }
 
-    // ── ReadTable (preview overload) ──────────────────────────────────
+    // ── ReadDataTable (preview) ──────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadTable_Preview_HeadersMatchSchemaColumnNames(string path)
+    public async Task ReadDataTable_Preview_ColumnMetadata_Matches(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        TableResult preview = await reader.ReadTableAsync(table, 10, TestContext.Current.CancellationToken);
+        DataTable? preview = await reader.ReadDataTableAsync(table, 10, cancellationToken: TestContext.Current.CancellationToken);
+        var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
-        Assert.Equal(preview.Schema.Count, preview.Headers.Count);
-        for (int i = 0; i < preview.Headers.Count; i++)
+        Assert.NotNull(preview);
+        Assert.Equal(meta.Count, preview.Columns.Count);
+        for (int i = 0; i < meta.Count; i++)
         {
-            Assert.Equal(preview.Schema[i].Name, preview.Headers[i]);
+            Assert.Equal(meta[i].Name, preview.Columns[i].ColumnName);
         }
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadTable_Preview_RowCount_DoesNotExceedMaxRows(string path)
+    public async Task ReadDataTable_Preview_RowCount_DoesNotExceedMaxRows(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         const int max = 5;
 
-        TableResult preview = await reader.ReadTableAsync(table, max, TestContext.Current.CancellationToken);
+        DataTable? preview = await reader.ReadDataTableAsync(table, max, cancellationToken: TestContext.Current.CancellationToken);
 
+        Assert.NotNull(preview);
         Assert.True(preview.Rows.Count <= max);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadTable_Preview_EachRow_HasSameColumnCountAsHeaders(string path)
+    public async Task ReadDataTable_Preview_EachRow_HasSameColumnCount(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        TableResult preview = await reader.ReadTableAsync(table, 20, TestContext.Current.CancellationToken);
+        DataTable? preview = await reader.ReadDataTableAsync(table, 20, cancellationToken: TestContext.Current.CancellationToken);
 
-        foreach (var row in preview.Rows)
+        Assert.NotNull(preview);
+        foreach (DataRow row in preview.Rows)
         {
-            Assert.Equal(preview.Headers.Count, row.Count);
+            Assert.Equal(preview.Columns.Count, row.ItemArray.Length);
         }
     }
 

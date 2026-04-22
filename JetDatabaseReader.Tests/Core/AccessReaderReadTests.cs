@@ -220,9 +220,10 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        TableResult typed = await reader.ReadTableAsync(table, 100, TestContext.Current.CancellationToken);
+        DataTable? typed = await reader.ReadDataTableAsync(table, 100, cancellationToken: TestContext.Current.CancellationToken);
         List<GenericRow> generic = await reader.ReadTableAsync<GenericRow>(table, 100, TestContext.Current.CancellationToken);
 
+        Assert.NotNull(typed);
         Assert.Equal(typed.Rows.Count, generic.Count);
     }
 

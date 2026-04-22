@@ -25,13 +25,13 @@ public interface IAccessReader : IAccessBase
     string LastDiagnostics { get; }
 
     /// <summary>
-    /// Asynchronously returns the column headers and up to <paramref name="maxRows"/> rows
-    /// from the first user table, plus the table name and total table count.
+    /// Asynchronously returns up to <paramref name="maxRows"/> rows (as strings)
+    /// from the first user table.
     /// </summary>
     /// <param name="maxRows">Maximum number of rows to read. Use with large tables to avoid long reads or out-of-memory errors.</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
-    /// <returns>A <see cref="FirstTableResult"/> containing headers, string rows, and schema information.</returns>
-    ValueTask<FirstTableResult> ReadFirstTableAsync(int maxRows = 100, CancellationToken cancellationToken = default);
+    /// <returns>A <see cref="DataTable"/> with string-typed columns for the first user table, or an empty DataTable if no tables exist.</returns>
+    ValueTask<DataTable> ReadFirstTableAsync(int maxRows = 100, CancellationToken cancellationToken = default);
 
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
@@ -69,12 +69,6 @@ public interface IAccessReader : IAccessBase
     ValueTask<long> GetRealRowCountAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Reads up to <paramref name="maxRows"/> rows with native CLR types asynchronously.
-    /// </summary>
-    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<TableResult> ReadTableAsync(string tableName, int maxRows, CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Reads up to <paramref name="maxRows"/> rows mapped to <typeparamref name="T"/> asynchronously.
     /// </summary>
     /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
@@ -83,10 +77,10 @@ public interface IAccessReader : IAccessBase
         where T : class, new();
 
     /// <summary>
-    /// Reads up to <paramref name="maxRows"/> rows as strings asynchronously.
+    /// Reads up to <paramref name="maxRows"/> rows as a string-typed <see cref="DataTable"/> asynchronously.
     /// </summary>
-    /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
-    ValueTask<StringTableResult> ReadTableAsStringsAsync(string tableName, int maxRows, CancellationToken cancellationToken = default);
+    /// <returns>A <see cref="DataTable"/> with all columns typed as <see cref="string"/>.</returns>
+    ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, int maxRows, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously yields rows from <paramref name="tableName"/> as properly typed object arrays without collecting them all in memory.

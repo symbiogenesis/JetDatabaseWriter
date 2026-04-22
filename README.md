@@ -85,7 +85,7 @@ foreach (Order o in orders)
     Console.WriteLine($"#{o.OrderID}  {o.OrderDate:yyyy-MM-dd}  {o.Freight:C}");
 ```
 
-Synchronous methods are still available, but `OpenAsync(...)` + `await using` is the recommended default for new code.
+`OpenAsync(...)` + `await using` is the recommended pattern.
 
 ---
 
@@ -146,36 +146,32 @@ Property names are matched to column headers **case-insensitively**. Unmatched p
 ### Typed DataTable
 
 ```csharp
-DataTable dt = await reader.ReadTableAsync("Products", cancellationToken: cancellationToken);
+DataTable? dt = await reader.ReadDataTableAsync("Products", cancellationToken: cancellationToken);
 // dt.Columns["ProductID"].DataType    == typeof(int)
 // dt.Columns["UnitPrice"].DataType    == typeof(decimal)
 // dt.Columns["Discontinued"].DataType == typeof(bool)
 ```
 
-### Table preview with schema
+### Column metadata
 
 ```csharp
-TableResult preview = await reader.ReadTableAsync("Products", maxRows: 20, cancellationToken);
-foreach (TableColumn col in preview.Schema)
+List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Products", cancellationToken);
+foreach (ColumnMetadata col in meta)
 {
-    Type   clrType = col.Type;            // e.g. typeof(int), typeof(string)
+    Type   clrType = col.ClrType;         // e.g. typeof(int), typeof(string)
     string display = col.Size.ToString(); // e.g. "4 bytes", "255 chars", "LVAL"
     Console.WriteLine($"{col.Name}: {clrType.Name} ({col.Size})");
 }
-
-// Convert to DataTable with CLR-typed columns
-DataTable dt = preview.ToDataTable();
-// dt.Columns["UnitPrice"].DataType == typeof(decimal)
 ```
 
-### String variants — compatibility
+### String DataTable — compatibility
 
 ```csharp
 // All values as strings
-StringTableResult preview = await reader.ReadTableAsStringsAsync("Products", maxRows: 20, cancellationToken);
+DataTable preview = await reader.ReadTableAsStringsAsync("Products", maxRows: 20, cancellationToken);
 
-// String preview with row access
-string firstCell = preview.Rows[0][0];  // always a string
+// String row access
+string firstCell = preview.Rows[0][0].ToString();
 ```
 
 ---
@@ -187,14 +183,14 @@ string firstCell = preview.Rows[0][0];  // always a string
 ```csharp
 var progress = new Progress<int>(n => Console.Write($"\r{n:N0} rows"));
 
-foreach (Product p in reader.StreamRows<Product>("Products", progress))
+await foreach (Product p in reader.StreamRowsAsync<Product>("Products", progress))
     Console.WriteLine($"{p.ProductName}: {p.UnitPrice:C}");
 ```
 
 ### Typed object array streaming
 
 ```csharp
-foreach (object[] row in reader.StreamRows("BigTable"))
+await foreach (object[] row in reader.StreamRowsAsync("BigTable"))
 {
     int     id  = (int)row[0];
     decimal val = row[2] == DBNull.Value ? 0m : (decimal)row[2];
@@ -204,7 +200,7 @@ foreach (object[] row in reader.StreamRows("BigTable"))
 ### String streaming — compatibility
 
 ```csharp
-foreach (string[] row in reader.StreamRowsAsStrings("BigTable"))
+await foreach (string[] row in reader.StreamRowsAsStringsAsync("BigTable"))
     Console.WriteLine(string.Join(", ", row));
 ```
 
@@ -216,26 +212,28 @@ Null values in typed `object[]` rows surface as `DBNull.Value`.
 
 ```csharp
 // Generic POCO result
-Order? first = reader.Query("Orders")
+Order? first = await reader.Query("Orders")
     .Where(row => row[2] is DateTime d && d.Year == 2024)
     .Take(10)
-    .FirstOrDefault<Order>();
+    .FirstOrDefaultAsync<Order>();
 
-List<Order> recent = reader.Query("Orders")
+List<Order> recent = new();
+await foreach (Order o in reader.Query("Orders")
     .Where(row => row[2] is DateTime d && d.Year == 2024)
-    .Execute<Order>()
-    .ToList();
+    .ExecuteAsync<Order>())
+    recent.Add(o);
 
 // Object array chain
-int count = reader.Query("OrderDetails")
+int count = await reader.Query("OrderDetails")
     .Where(row => row[3] is decimal p && p > 100m)
-    .Count();
+    .CountAsync();
 
 // String chain
-IEnumerable<string[]> rows = reader.Query("Orders")
+await foreach (string[] row in reader.Query("Orders")
     .WhereAsStrings(row => row[2].StartsWith("2024"))
     .Take(50)
-    .ExecuteAsStrings();
+    .ExecuteAsStringsAsync())
+    Console.WriteLine(string.Join(", ", row));
 ```
 
 ---
@@ -248,9 +246,8 @@ await using var reader = await AccessReader.OpenAsync("database.mdb", cancellati
 
 List<Order>                   orders = await reader.ReadTableAsync<Order>("Orders", 50, cts.Token);
 List<string>                  tables = await reader.ListTablesAsync(cts.Token);
-DataTable                     dt     = await reader.ReadTableAsync("Orders", cancellationToken: cts.Token);
-TableResult                   typed  = await reader.ReadTableAsync("Orders", 50, cts.Token);
-StringTableResult             str    = await reader.ReadTableAsStringsAsync("Orders", 50, cts.Token);
+DataTable?                    dt     = await reader.ReadDataTableAsync("Orders", cancellationToken: cts.Token);
+DataTable                     str    = await reader.ReadTableAsStringsAsync("Orders", 50, cts.Token);
 DatabaseStatistics            stats  = await reader.GetStatisticsAsync(cts.Token);
 Dictionary<string, DataTable> all    = await reader.ReadAllTablesAsync(cancellationToken: cts.Token);
 Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync(cancellationToken: cts.Token);
@@ -283,12 +280,10 @@ Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync(
 await using var writer = await AccessWriter.OpenAsync("database.mdb");
 ```
 
-`AccessWriter.Open(...)` is still available for synchronous workflows.
-
 ### Create & drop tables
 
 ```csharp
-writer.CreateTable("Contacts", new[]
+await writer.CreateTableAsync("Contacts", new[]
 {
     new ColumnDefinition("ContactID", typeof(int)),
     new ColumnDefinition("Name",      typeof(string), maxLength: 100),
@@ -296,7 +291,7 @@ writer.CreateTable("Contacts", new[]
     new ColumnDefinition("Score",     typeof(decimal)),
 });
 
-writer.DropTable("Contacts");
+await writer.DropTableAsync("Contacts");
 ```
 
 ### Insert rows — generic POCO
@@ -310,9 +305,9 @@ public class Contact
     public decimal Score { get; set; }
 }
 
-writer.InsertRow("Contacts", new Contact { ContactID = 1, Name = "Alice", Email = "alice@example.com", Score = 95.5m });
+await writer.InsertRowAsync("Contacts", new Contact { ContactID = 1, Name = "Alice", Email = "alice@example.com", Score = 95.5m });
 
-writer.InsertRows("Contacts", new[]
+await writer.InsertRowsAsync("Contacts", new[]
 {
     new Contact { ContactID = 2, Name = "Bob",   Email = "bob@example.com",   Score = 88.0m },
     new Contact { ContactID = 3, Name = "Carol", Email = "carol@example.com", Score = 92.3m },
@@ -322,9 +317,9 @@ writer.InsertRows("Contacts", new[]
 ### Insert rows — object array
 
 ```csharp
-writer.InsertRow("Contacts", new object[] { 4, "Dave", "dave@example.com", 77.1m });
+await writer.InsertRowAsync("Contacts", new object[] { 4, "Dave", "dave@example.com", 77.1m });
 
-writer.InsertRows("Contacts", new[]
+await writer.InsertRowsAsync("Contacts", new[]
 {
     new object[] { 5, "Eve",   "eve@example.com",   91.0m },
     new object[] { 6, "Frank", "frank@example.com", 85.4m },
@@ -334,10 +329,10 @@ writer.InsertRows("Contacts", new[]
 ### Update & delete
 
 ```csharp
-int updated = writer.UpdateRows("Contacts", "ContactID", 1,
+int updated = await writer.UpdateRowsAsync("Contacts", "ContactID", 1,
     new Dictionary<string, object> { ["Score"] = 99.9m });
 
-int deleted = writer.DeleteRows("Contacts", "ContactID", 3);
+int deleted = await writer.DeleteRowsAsync("Contacts", "ContactID", 3);
 ```
 
 ---
@@ -345,16 +340,16 @@ int deleted = writer.DeleteRows("Contacts", "ContactID", 3);
 ## Statistics & Metadata
 
 ```csharp
-foreach (ColumnMetadata col in reader.GetColumnMetadata("Orders"))
+foreach (ColumnMetadata col in await reader.GetColumnMetadataAsync("Orders", cancellationToken))
     Console.WriteLine($"{col.Ordinal}. {col.Name} — {col.TypeName} ({col.ClrType.Name})");
 
 // Table-level stats (single catalog scan)
-foreach (TableStat s in reader.GetTableStats())
-    Console.WriteLine($"{s.Name}: {s.RowCount:N0} rows, {s.ColumnCount} cols");
+foreach (TableStat ts in await reader.GetTableStatsAsync(cancellationToken))
+    Console.WriteLine($"{ts.Name}: {ts.RowCount:N0} rows, {ts.ColumnCount} cols");
 
-// First table preview + total table count
-FirstTableResult first = reader.ReadFirstTable();
-Console.WriteLine($"First: {first.TableName} ({first.TableCount} tables total)");
+// First table preview as DataTable
+DataTable first = await reader.ReadFirstTableAsync(maxRows: 20, cancellationToken);
+Console.WriteLine($"First table: {first.TableName}, {first.Rows.Count} rows");
 
 DatabaseStatistics s = await reader.GetStatisticsAsync(cancellationToken);
 Console.WriteLine($"Version:   {s.Version}");

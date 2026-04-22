@@ -97,8 +97,8 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
                 continue;
             }
 
-            TableResult result = await reader.ReadTableAsync(table, 1, TestContext.Current.CancellationToken);
-            DataTable dt = result.ToDataTable();
+            DataTable? dt = await reader.ReadDataTableAsync(table, 1, cancellationToken: TestContext.Current.CancellationToken);
+            Assert.NotNull(dt);
             foreach (var col in attachCols)
             {
                 Assert.NotEqual(typeof(string), dt.Columns[col.Name]!.DataType);
@@ -124,7 +124,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
 
             if (hasComplex)
             {
-                var ex = await Record.ExceptionAsync(async () => await reader.ReadTableAsync(table, 5, TestContext.Current.CancellationToken));
+                var ex = await Record.ExceptionAsync(async () => await reader.ReadDataTableAsync(table, 5, cancellationToken: TestContext.Current.CancellationToken));
                 Assert.Null(ex);
             }
         }

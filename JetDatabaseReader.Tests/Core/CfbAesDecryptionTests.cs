@@ -113,9 +113,9 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        // Read as TableResult (typed object arrays) rather than specific POCO,
+        // Read as DataTable (typed columns) rather than specific POCO,
         // since we don't know the exact schema of the first table.
-        TableResult result = await reader.ReadTableAsync(tables[0], maxRows: 10, TestContext.Current.CancellationToken);
+        DataTable? result = await reader.ReadDataTableAsync(tables[0], maxRows: 10, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(result);
         Assert.True(result.Rows.Count > 0, "AES-decrypted typed read should return rows.");

@@ -245,8 +245,7 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
     {
         // DataTable conversion must not coerce attachment columns to string.
         var reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        TableResult result = await reader.ReadTableAsync(DocumentsTable, 5, TestContext.Current.CancellationToken);
-        DataTable dt = result.ToDataTable();
+        DataTable? dt = await reader.ReadDataTableAsync(DocumentsTable, 5, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
         Assert.True(
