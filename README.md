@@ -33,6 +33,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Jet3 encryption** | Transparent page-level XOR decryption for Access 97 `.mdb` databases |
 | ✅ **Password verification** | Jet4 `.mdb` and legacy password-only `.accdb` (ACE CompactDatabase `;pwd=`) |
 | ✅ **Linked table metadata** | `ListLinkedTables()` returns source paths and foreign names |
+| ✅ **Complex fields** | Attachment and multi-value columns resolved via `MSysComplexColumns` FK lookup |
 | ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on disposal (opt-out) |
 
 ---
@@ -413,7 +414,6 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 | | |
 |---|---|
 | ⚠️ ACCDB AES encryption | Legacy password-only `.accdb` is supported; AES-encrypted Access 2007+ `.accdb` (CFB-wrapped) is detected, but page decryption is not yet supported |
-| ⚠️ Complex fields (0x11/0x12) | Metadata and subtypes decoded via `MSysComplexColumns`; cell values still returned as raw bytes or `DBNull` (FK lookup into hidden system tables not yet implemented) |
 
 ---
 
