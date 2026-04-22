@@ -340,8 +340,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            List<List<string>> pageRows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in pageRows)
+            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
             {
                 rows.Add(row);
                 if (rows.Count >= maxRows)
@@ -494,8 +493,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in rows)
+            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
             {
                 yield return ConvertRowToTyped(row, td.Columns, tableName, complexData);
                 rowCount++;
@@ -566,8 +564,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in rows)
+            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
             {
                 yield return row.ToArray();
                 rowCount++;
@@ -707,8 +704,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-                foreach (List<string> row in rows)
+                await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
                 {
                     _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
                     if (maxRows > 0 && dt.Rows.Count >= maxRows)
@@ -787,8 +783,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in rows)
+            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
             {
                 typedRows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
                 if (typedRows.Count >= maxRows)
@@ -863,8 +858,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            List<List<string>> pageRows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in pageRows)
+            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
             {
                 rows.Add(row);
                 if (rows.Count >= maxRows)
@@ -924,8 +918,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in rows)
+            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
             {
                 _ = dt.Rows.Add(row.ToArray());
             }
@@ -1678,8 +1671,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             catPages++;
 
-            List<List<string>> rows = await EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in rows)
+            await foreach (List<string> row in EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false))
             {
                 allRows++;
                 string typeStr = SafeGet(row, idxType);
@@ -1777,8 +1769,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            List<List<string>> rows = await EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in rows)
+            await foreach (List<string> row in EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false))
             {
                 string typeStr = SafeGet(row, idxType);
                 if (!int.TryParse(typeStr, out int objType))
@@ -1899,9 +1890,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>Yields decoded rows from a single data page.</summary>
-    private async ValueTask<List<List<string>>> EnumerateRowsAsync(byte[] page, TableDef td, CancellationToken cancellationToken)
+    /// <param name="page">The data page to enumerate rows from.</param>
+    /// <param name="td">The table definition containing column information.</param>
+    /// <param name="cancellationToken">A cancellation token to observe while waiting for rows.</param>
+    private async IAsyncEnumerable<List<string>> EnumerateRowsAsync(byte[] page, TableDef td, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var rows = new List<List<string>>();
         foreach (RowBound rb in EnumerateLiveRowBounds(page))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1914,11 +1907,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
             List<string>? values = await CrackRowAsync(page, rb.RowStart, rb.RowSize, td, cancellationToken).ConfigureAwait(false);
             if (values != null)
             {
-                rows.Add(values);
+                yield return values;
             }
         }
-
-        return rows;
     }
 
     private async ValueTask<List<string>?> CrackRowAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
@@ -2165,8 +2156,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-                foreach (List<string> row in rows)
+                await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
                 {
                     if (idxConceptualTable >= 0 && targetTdefPage > 0)
                     {
@@ -2240,8 +2230,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            List<List<string>> rows = await EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in rows)
+            await foreach (List<string> row in EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false))
             {
                 string nameStr = SafeGet(row, idxName);
                 if (!string.Equals(nameStr, name, StringComparison.OrdinalIgnoreCase))
@@ -2353,8 +2342,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-                foreach (List<string> row in rows)
+                await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
                 {
                     string colName = SafeGet(row, idxCol);
                     if (!string.Equals(colName, columnName, StringComparison.OrdinalIgnoreCase))
@@ -2458,8 +2446,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                List<List<string>> rows = await EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false);
-                foreach (var row in rows)
+                await foreach (var row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
                 {
                     string fkStr = SafeGet(row, idxFk);
                     if (!int.TryParse(fkStr, out int parentId))
@@ -2573,8 +2560,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            List<List<string>> rows = await EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false);
-            foreach (List<string> row in rows)
+            await foreach (var row in EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false))
             {
                 string nameStr = SafeGet(row, idxName);
                 if (!nameStr.EndsWith(nameSuffix, StringComparison.OrdinalIgnoreCase))
