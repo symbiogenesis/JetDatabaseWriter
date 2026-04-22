@@ -111,7 +111,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // Truly encrypted ACCDB files are detected later when the catalog page is unreadable.
         byte ver = hdr[0x14];
 
-        if (_jet4 && ver == 1 && hdr.Length > 0x62)
+        if (_format == DatabaseFormat.Jet4Mdb && hdr.Length > 0x62)
         {
             byte encFlag = hdr[0x62];
 
@@ -148,14 +148,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
         }
 
-        bool isAccdbCfbEncrypted = _jet4 && ver >= 2 && hdr.Length >= 4 &&
+        bool isAccdbCfbEncrypted = _format == DatabaseFormat.AceAccdb && hdr.Length >= 4 &&
             hdr[0] == 0xD0 && hdr[1] == 0xCF && hdr[2] == 0x11 && hdr[3] == 0xE0;
 
         // ACCDB legacy password-only mode (standard ACCDB header, ver >= 2).
         // In practice, many normal ACCDB files reuse overlapping header bits at 0x62,
         // so we only enforce password verification for the known legacy-password
         // signature used by Access 2010+ CompactDatabase(";pwd=...") test fixtures.
-        if (_jet4 && ver >= 3 && !isAccdbCfbEncrypted && hdr.Length > 0x62)
+        if (_format == DatabaseFormat.AceAccdb && ver >= 3 && !isAccdbCfbEncrypted && hdr.Length > 0x62)
         {
             byte encFlag = hdr[0x62];
             if (encFlag == 0x07)
@@ -861,7 +861,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             TotalRows = totalRows,
             TableRowCounts = tableRowCounts,
             PageCacheHitRate = pageCacheHitRate,
-            Version = _jet4 ? "Jet4/ACE" : "Jet3",
+            Version = _format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE",
             PageSize = _pgSz,
             CodePage = _codePage,
         };
@@ -1584,7 +1584,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         cancellationToken.ThrowIfCancellationRequested();
 
         var diag = new System.Text.StringBuilder();
-        _ = diag.AppendLine($"JET: {(_jet4 ? "Jet4/ACE" : "Jet3")}  PageSize: {_pgSz}  TotalPages: {_stream.Length / _pgSz}");
+        _ = diag.AppendLine($"JET: {(_format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE")}  PageSize: {_pgSz}  TotalPages: {_stream.Length / _pgSz}");
 
         TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
@@ -1889,7 +1889,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        int numCols = _jet4 ? Ru16(page, rowStart) : page[rowStart];
+        int numCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
         if (numCols == 0)
         {
             return null;
@@ -1916,8 +1916,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        int varLen = _jet4 ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
-        int jumpSz = _jet4 ? 0 : (rowSize / 256);
+        int varLen = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
+        int jumpSz = _format != DatabaseFormat.Jet3Mdb ? 0 : (rowSize / 256);
 
         int varTableStart = varLenPos - jumpSz - (varLen * _varEntrySz);
         int eodPos = varTableStart - _eodFldSz;
@@ -1926,7 +1926,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        int eod = _jet4 ? Ru16(page, rowStart + eodPos) : page[rowStart + eodPos];
+        int eod = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + eodPos) : page[rowStart + eodPos];
         var result = new List<string>(td.Columns.Count);
 
         for (int i = 0; i < td.Columns.Count; i++)
@@ -1984,13 +1984,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                int varOff = _jet4 ? Ru16(page, rowStart + entryPos) : page[rowStart + entryPos];
+                int varOff = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + entryPos) : page[rowStart + entryPos];
 
                 int varEnd;
                 if (col.VarIdx + 1 < varLen)
                 {
                     int nextEntry = varTableStart + ((varLen - 2 - col.VarIdx) * _varEntrySz);
-                    varEnd = _jet4 ? Ru16(page, rowStart + nextEntry) : page[rowStart + nextEntry];
+                    varEnd = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + nextEntry) : page[rowStart + nextEntry];
                 }
                 else
                 {
@@ -2025,7 +2025,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             switch (col.Type)
             {
                 case T_TEXT:
-                    return _jet4 ? DecodeJet4Text(row, start, len)
+                    return _format != DatabaseFormat.Jet3Mdb ? DecodeJet4Text(row, start, len)
                                  : _ansiEncoding.GetString(row, start, len);
 
                 case T_BINARY:
@@ -2902,7 +2902,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     ?? "data:application/octet-stream;base64," + Convert.ToBase64String(row, memoStart, memoLen);
             }
 
-            return _jet4 ? DecodeJet4Text(row, memoStart, memoLen)
+            return _format != DatabaseFormat.Jet3Mdb ? DecodeJet4Text(row, memoStart, memoLen)
                          : _ansiEncoding.GetString(row, memoStart, memoLen);
         }
 
@@ -2919,7 +2919,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                         ?? "data:application/octet-stream;base64," + Convert.ToBase64String(lvalData);
                 }
 
-                return _jet4 ? DecodeJet4Text(lvalData, 0, lvalData.Length)
+                return _format != DatabaseFormat.Jet3Mdb ? DecodeJet4Text(lvalData, 0, lvalData.Length)
                              : _ansiEncoding.GetString(lvalData);
             }
 
@@ -2937,7 +2937,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     ?? "data:application/octet-stream;base64," + Convert.ToBase64String(chain.Data);
             }
 
-            return _jet4 ? DecodeJet4Text(chain.Data, 0, chain.Data.Length)
+            return _format != DatabaseFormat.Jet3Mdb ? DecodeJet4Text(chain.Data, 0, chain.Data.Length)
                          : _ansiEncoding.GetString(chain.Data);
         }
 

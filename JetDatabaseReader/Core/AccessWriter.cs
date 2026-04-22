@@ -144,7 +144,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <param name="options">Optional configuration options.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
-    public static async ValueTask<AccessWriter> CreateDatabaseAsync(string path, JetDatabaseFormat format, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
+    public static async ValueTask<AccessWriter> CreateDatabaseAsync(string path, DatabaseFormat format, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(path, nameof(path));
         cancellationToken.ThrowIfCancellationRequested();
@@ -196,7 +196,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the writer is disposed. Default is <c>false</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
-    public static async ValueTask<AccessWriter> CreateDatabaseAsync(Stream stream, JetDatabaseFormat format, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
+    public static async ValueTask<AccessWriter> CreateDatabaseAsync(Stream stream, DatabaseFormat format, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
         Guard.NotNull(stream, nameof(stream));
 
@@ -243,7 +243,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new InvalidOperationException($"Table '{tableName}' already exists.");
         }
 
-        TableDef tableDef = BuildTableDefinition(columns, _jet4);
+        TableDef tableDef = BuildTableDefinition(columns, _format);
         byte[] tdefPage = BuildTDefPage(tableDef);
         long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
@@ -619,7 +619,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    private static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, bool jet4)
+    private static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, DatabaseFormat format)
     {
         var result = new TableDef();
         int fixedOffset = 0;
@@ -630,7 +630,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ColumnDefinition definition = columns[i];
             byte type = TypeCodeFromDefinition(definition);
             bool variable = IsVariableType(type);
-            int size = GetDeclaredSize(type, definition.MaxLength, jet4);
+            int size = GetDeclaredSize(type, definition.MaxLength, format);
 
             var column = new ColumnInfo
             {
@@ -658,7 +658,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return result;
     }
 
-    private static int GetDeclaredSize(byte type, int maxLength, bool jet4)
+    private static int GetDeclaredSize(byte type, int maxLength, DatabaseFormat format)
     {
         switch (type)
         {
@@ -684,7 +684,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return 17;
             case T_TEXT:
                 int charLen = maxLength > 0 ? maxLength : 255;
-                return jet4 ? Math.Max(2, charLen * 2) : charLen;
+                return format != DatabaseFormat.Jet3Mdb ? Math.Max(2, charLen * 2) : charLen;
             case T_BINARY:
                 return maxLength > 0 ? maxLength : 255;
             default:
@@ -871,7 +871,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int numCols = tableDef.Columns.Count;
         int colStart = _tdBlockEnd;
         int namePos = colStart + (numCols * _colDescSz);
-        int nameLenSize = _jet4 ? 2 : 1;
+        int nameLenSize = _format != DatabaseFormat.Jet3Mdb ? 2 : 1;
 
         page[0] = 0x02;
         page[1] = 0x01;
@@ -900,13 +900,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             Wu16(page, o + _colFixedOff, col.FixedOff);
             Wu16(page, o + _colSzOff, col.Size);
 
-            byte[] nameBytes = _jet4 ? Encoding.Unicode.GetBytes(col.Name) : _ansiEncoding.GetBytes(col.Name);
+            byte[] nameBytes = _format != DatabaseFormat.Jet3Mdb ? Encoding.Unicode.GetBytes(col.Name) : _ansiEncoding.GetBytes(col.Name);
             if (namePos + nameLenSize + nameBytes.Length > page.Length)
             {
                 throw new NotSupportedException("Table definition does not fit within a single TDEF page.");
             }
 
-            if (_jet4)
+            if (_format != DatabaseFormat.Jet3Mdb)
             {
                 Wu16(page, namePos, nameBytes.Length);
             }
@@ -930,7 +930,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// The database contains three 4096-byte pages:
     /// page 0 (header), page 1 (unused placeholder), and page 2 (MSysObjects TDEF).
     /// </summary>
-    private static byte[] BuildEmptyDatabase(JetDatabaseFormat format)
+    private static byte[] BuildEmptyDatabase(DatabaseFormat format)
     {
         const int pgSz = 4096;
         byte[] db = new byte[pgSz * 3];
@@ -941,12 +941,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         db[2] = 0x00;
         db[3] = 0x00;
 
-        byte[] magic = format == JetDatabaseFormat.AceAccdb
+        byte[] magic = format == DatabaseFormat.AceAccdb
             ? Encoding.ASCII.GetBytes("Standard ACE DB\0")
             : Encoding.ASCII.GetBytes("Standard Jet DB\0");
         Buffer.BlockCopy(magic, 0, db, 4, magic.Length);
 
-        db[0x14] = format == JetDatabaseFormat.AceAccdb ? (byte)0x02 : (byte)0x01;
+        db[0x14] = format == DatabaseFormat.AceAccdb ? (byte)0x02 : (byte)0x01;
 
         // Sort order / code page at 0x3C-0x3D left as 0x0000 → defaults to 1252.
 
@@ -1307,9 +1307,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int baseRowLength = _numColsFldSz + fixedAreaSize + varPayloadSize + _eodFldSz + (varLen * _varEntrySz) + _varLenFldSz + nullMask.Length;
 
         // Jet3 rows include a jump table whose size depends on total row length.
-        int jumpSize = _jet4 ? 0 : baseRowLength / 256;
+        int jumpSize = _format != DatabaseFormat.Jet3Mdb ? 0 : baseRowLength / 256;
         int rowLength = baseRowLength + jumpSize;
-        int finalJump = _jet4 ? 0 : rowLength / 256;
+        int finalJump = _format != DatabaseFormat.Jet3Mdb ? 0 : rowLength / 256;
         if (finalJump != jumpSize)
         {
             jumpSize = finalJump;
@@ -1406,10 +1406,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return null;
         }
 
-        byte[] bytes = _jet4 ? Encoding.Unicode.GetBytes(value) : _ansiEncoding.GetBytes(value);
+        byte[] bytes = _format != DatabaseFormat.Jet3Mdb ? Encoding.Unicode.GetBytes(value) : _ansiEncoding.GetBytes(value);
         if (maxSize > 0 && bytes.Length > maxSize)
         {
-            int allowed = _jet4 ? maxSize & ~1 : maxSize;
+            int allowed = _format != DatabaseFormat.Jet3Mdb ? maxSize & ~1 : maxSize;
             if (allowed <= 0)
             {
                 return [];
@@ -1450,7 +1450,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return null;
         }
 
-        byte[] data = _jet4 ? Encoding.Unicode.GetBytes(value) : _ansiEncoding.GetBytes(value);
+        byte[] data = _format != DatabaseFormat.Jet3Mdb ? Encoding.Unicode.GetBytes(value) : _ansiEncoding.GetBytes(value);
         if (data.Length > MaxInlineMemoBytes)
         {
             throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {MaxInlineMemoBytes} bytes.");
@@ -1619,7 +1619,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return string.Empty;
         }
 
-        int numCols = _jet4 ? Ru16(page, rowStart) : page[rowStart];
+        int numCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
         if (numCols == 0)
         {
             return string.Empty;
@@ -1638,8 +1638,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return string.Empty;
         }
 
-        int varLen = _jet4 ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
-        int jumpSize = _jet4 ? 0 : rowSize / 256;
+        int varLen = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
+        int jumpSize = _format != DatabaseFormat.Jet3Mdb ? 0 : rowSize / 256;
         int varTableStart = varLenPos - jumpSize - (varLen * _varEntrySz);
         int eodPos = varTableStart - _eodFldSz;
         if (eodPos < _numColsFldSz)
@@ -1647,7 +1647,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return string.Empty;
         }
 
-        int eod = _jet4 ? Ru16(page, rowStart + eodPos) : page[rowStart + eodPos];
+        int eod = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + eodPos) : page[rowStart + eodPos];
         bool nullBit = false;
         if (column.ColNum < numCols)
         {
@@ -1692,12 +1692,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return string.Empty;
         }
 
-        int varOff = _jet4 ? Ru16(page, rowStart + entryPos) : page[rowStart + entryPos];
+        int varOff = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + entryPos) : page[rowStart + entryPos];
         int varEnd;
         if (column.VarIdx + 1 < varLen)
         {
             int nextEntry = varTableStart + ((varLen - 2 - column.VarIdx) * _varEntrySz);
-            varEnd = _jet4 ? Ru16(page, rowStart + nextEntry) : page[rowStart + nextEntry];
+            varEnd = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + nextEntry) : page[rowStart + nextEntry];
         }
         else
         {
@@ -1714,7 +1714,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         switch (column.Type)
         {
             case T_TEXT:
-                return _jet4 ? DecodeJet4Text(page, rowStart + dataStart, dataLen) : _ansiEncoding.GetString(page, rowStart + dataStart, dataLen);
+                return _format != DatabaseFormat.Jet3Mdb ? DecodeJet4Text(page, rowStart + dataStart, dataLen) : _ansiEncoding.GetString(page, rowStart + dataStart, dataLen);
             case T_BINARY:
                 return BitConverter.ToString(page, rowStart + dataStart, dataLen);
             default:
