@@ -7,6 +7,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Internal;
 
 #pragma warning disable SA1401 // Field should be private — fields are private protected (assembly-only)
 
@@ -75,6 +76,7 @@ public abstract class AccessBase : IAccessBase
     private protected readonly Stream _stream;
     private protected readonly Encoding _ansiEncoding;
     private protected readonly int _codePage;
+    private protected readonly string _path;
 
     /// <summary>
     /// Jet3 XOR decryption mask (128 bytes). Non-null when Jet3 encryption flag is set.
@@ -111,9 +113,11 @@ public abstract class AccessBase : IAccessBase
     /// </summary>
     /// <param name="stream">An open, seekable <see cref="Stream"/> for the database file.</param>
     /// <param name="hdr">Header bytes read from page 0.</param>
-    private protected AccessBase(Stream stream, byte[] hdr)
+    /// <param name="path">Path to the database file, or empty when opened from a stream.</param>
+    private protected AccessBase(Stream stream, byte[] hdr, string path = "")
     {
         _stream = stream;
+        _path = path ?? string.Empty;
 
         // Offset 0x14: 0 = Jet3, 1 = Jet4, ≥ 2 = ACE/ACCDB
         byte ver = hdr[0x14];

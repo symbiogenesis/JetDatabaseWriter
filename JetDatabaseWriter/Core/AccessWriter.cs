@@ -9,6 +9,7 @@ using System.Security;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Internal;
 
 #pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
@@ -25,7 +26,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private const int MaxInlineOleBytes = 256;
     private const int TDefRowCountOffset = 16;
 
-    private readonly string _path;
     private readonly SecureString? _password;
     private readonly bool _useLockFile;
     private readonly bool _respectExistingLockFile;
@@ -42,16 +42,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         SecureString? password,
         bool useLockFile,
         bool respectExistingLockFile)
-        : base(stream, header)
+        : base(stream, header, path)
     {
-        _path = path;
         _password = SecureStringUtilities.CopyAsReadOnly(password);
         _useLockFile = useLockFile && !string.IsNullOrEmpty(path);
         _respectExistingLockFile = respectExistingLockFile;
 
         if (_useLockFile)
         {
-            CreateLockFile();
+            LockFileManager.Create(_path, nameof(AccessWriter), _respectExistingLockFile);
         }
     }
 
@@ -526,7 +525,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         if (_useLockFile)
         {
-            DeleteLockFile();
+            LockFileManager.Delete(_path, nameof(AccessWriter));
         }
 
         _password?.Dispose();
@@ -1805,52 +1804,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Wu16(page, offsetPos, raw | 0x8000);
         await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         ReturnPage(page);
-    }
-
-    private string GetLockFilePath()
-    {
-        string ext = Path.GetExtension(_path);
-        string lockExt = ext.Equals(".accdb", StringComparison.OrdinalIgnoreCase) ? ".laccdb" : ".ldb";
-        return Path.ChangeExtension(_path, lockExt);
-    }
-
-    private void CreateLockFile()
-    {
-        string lockPath = GetLockFilePath();
-        try
-        {
-            if (_respectExistingLockFile && File.Exists(lockPath))
-            {
-                throw new IOException($"Database is already in use. A lockfile exists at: {lockPath}");
-            }
-
-            using var fs = new FileStream(lockPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
-        }
-        catch (IOException) when (!_respectExistingLockFile)
-        {
-            // Best-effort: if another process holds the lock, continue without it.
-        }
-        catch (UnauthorizedAccessException) when (!_respectExistingLockFile)
-        {
-            // Best-effort: if we lack permission, continue without it.
-        }
-    }
-
-    private void DeleteLockFile()
-    {
-        string lockPath = GetLockFilePath();
-        try
-        {
-            File.Delete(lockPath);
-        }
-        catch (IOException)
-        {
-            // Best-effort: file may be held by another process.
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Best-effort: we may lack permission.
-        }
     }
 
     private readonly record struct RowLocation(long PageNumber, int RowIndex, int RowStart, int RowSize)
