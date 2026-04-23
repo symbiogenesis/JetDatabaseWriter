@@ -953,21 +953,7 @@ public abstract class AccessBase : IAccessBase
 
     // ── Inner types ──────────────────────────────────────────────────
 
-    private protected readonly record struct RowBound
-    {
-        public RowBound(int rowIndex, int rowStart, int rowSize)
-        {
-            RowIndex = rowIndex;
-            RowStart = rowStart;
-            RowSize = rowSize;
-        }
-
-        public int RowIndex { get; }
-
-        public int RowStart { get; }
-
-        public int RowSize { get; }
-    }
+    private protected readonly record struct RowBound(int RowIndex, int RowStart, int RowSize);
 
     private protected sealed record CatalogEntry(string Name, long TDefPage);
 }
