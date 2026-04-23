@@ -2,7 +2,6 @@ namespace JetDatabaseReader.Tests;
 
 using System;
 using System.Buffers.Binary;
-using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
