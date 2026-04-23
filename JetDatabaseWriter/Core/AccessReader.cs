@@ -11,6 +11,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Internal;
 
 #pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
 #pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API
@@ -71,7 +72,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private readonly object _cacheLock = new();
     private readonly object _catalogLock = new();
-    private readonly string _path;
     private readonly bool _useLockFile;
     private readonly bool _strictParsing;
     private readonly Func<LinkedTableInfo, string, bool>? _linkedSourcePathValidator;
@@ -91,11 +91,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="stream">An open, seekable stream for the database file.</param>
     /// <param name="hdr">Header bytes read from page 0.</param>
     private AccessReader(string path, AccessReaderOptions options, Stream stream, byte[] hdr)
-        : base(stream, hdr)
+        : base(stream, hdr, path)
     {
         Guard.NotNull(options, nameof(options));
 
-        _path = path;
         _useLockFile = options.UseLockFile && !string.IsNullOrEmpty(path);
         _strictParsing = options.StrictParsing;
         _linkedSourcePathValidator = options.LinkedSourcePathValidator;
@@ -214,7 +213,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         if (_useLockFile)
         {
-            CreateLockFile();
+            LockFileManager.Create(_path, nameof(AccessReader));
         }
     }
 
@@ -995,7 +994,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             if (_useLockFile)
             {
-                DeleteLockFile();
+                LockFileManager.Delete(_path, nameof(AccessReader));
             }
 
             lock (_cacheLock)
@@ -3005,50 +3004,5 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return isOle ? $"(OLE chain error: {chain.Error})" : $"(memo chain error: {chain.Error})";
-    }
-
-    private string GetLockFilePath()
-    {
-        string ext = Path.GetExtension(_path);
-        string lockExt = ext.Equals(".accdb", StringComparison.OrdinalIgnoreCase) ? ".laccdb" : ".ldb";
-        return Path.ChangeExtension(_path, lockExt);
-    }
-
-    private void CreateLockFile()
-    {
-        string lockPath = GetLockFilePath();
-        try
-        {
-            using var fs = new FileStream(lockPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
-        }
-        catch (IOException ex)
-        {
-            // Best-effort: if another process holds the lock, continue without it.
-            System.Diagnostics.Trace.WriteLine($"[AccessReader] Best-effort lock-file suppression in CreateLockFile: '{lockPath}' ({ex.GetType().Name}: {ex.Message})");
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            // Best-effort: if we lack permission, continue without it.
-            System.Diagnostics.Trace.WriteLine($"[AccessReader] Best-effort lock-file suppression in CreateLockFile: '{lockPath}' ({ex.GetType().Name}: {ex.Message})");
-        }
-    }
-
-    private void DeleteLockFile()
-    {
-        string lockPath = GetLockFilePath();
-        try
-        {
-            File.Delete(lockPath);
-        }
-        catch (IOException ex)
-        {
-            // Best-effort: file may be held by another process.
-            System.Diagnostics.Trace.WriteLine($"[AccessReader] Best-effort lock-file suppression in DeleteLockFile: '{lockPath}' ({ex.GetType().Name}: {ex.Message})");
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            // Best-effort: we may lack permission.
-            System.Diagnostics.Trace.WriteLine($"[AccessReader] Best-effort lock-file suppression in DeleteLockFile: '{lockPath}' ({ex.GetType().Name}: {ex.Message})");
-        }
     }
 }
