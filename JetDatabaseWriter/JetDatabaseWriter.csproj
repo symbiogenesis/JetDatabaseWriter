@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <PackageId>JetDatabaseWriter</PackageId>
+    <Version>4.0.0</Version>
+    <Authors>Diego Ripera</Authors>
+    <Company>Ripera</Company>
+    <Description>Pure-managed reader and writer for Microsoft Access JET databases (.mdb/.accdb). No OleDB, ODBC, or ACE drivers required.</Description>
+    <PackageTags>access;jet;mdb;accdb;database;microsoft-access</PackageTags>
+    <PackageProjectUrl>https://github.com/diegoripera/JetDatabaseWriter</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/diegoripera/JetDatabaseWriter</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>v4.0.0 — Async-only API, full encryption/password support (Jet3 XOR, Jet4 RC4, ACCDB AES), lockfile handling, scaffolding CLI tool, create new database files. See CHANGELOG.md for full details.</PackageReleaseNotes>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="JetDatabaseWriter.Tests" />
+    <InternalsVisibleTo Include="JetDatabaseWriter.Benchmarks" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.6" />
+  </ItemGroup>
+</Project>

@@ -8,8 +8,8 @@
     <File Path="PUBLISH.md" />
     <File Path="stylecop.json" />
   </Folder>
-  <Project Path="JetDatabaseReader.Benchmarks/JetDatabaseReader.Benchmarks.csproj" />
-  <Project Path="JetDatabaseReader.Scaffold/JetDatabaseReader.Scaffold.csproj" />
-  <Project Path="JetDatabaseReader.Tests/JetDatabaseReader.Tests.csproj" />
-  <Project Path="JetDatabaseReader/JetDatabaseReader.csproj" />
+  <Project Path="JetDatabaseWriter.Benchmarks/JetDatabaseWriter.Benchmarks.csproj" />
+  <Project Path="JetDatabaseWriter.Scaffold/JetDatabaseWriter.Scaffold.csproj" />
+  <Project Path="JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj" />
+  <Project Path="JetDatabaseWriter/JetDatabaseWriter.csproj" />
 </Solution>

@@ -1,0 +1,247 @@
+namespace JetDatabaseWriter.Tests;
+
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using Xunit;
+
+#pragma warning disable CA1707 // Test names use underscores by convention
+
+/// <summary>
+/// TDD tests (initially RED) for the README limitation:
+///
+///   "Office Crypto API 'Agile' key derivation is not yet supported"
+///
+/// Agile encryption (ECMA-376 §2.3.4.10–.13) is the modern scheme used by
+/// password-encrypted .accdb files produced by Access 2010 SP1+ /
+/// Microsoft 365 with the "Encrypt with Password" command. The file is a
+/// CFB compound document with two streams:
+///
+///   • <c>EncryptionInfo</c>  — version (4,4) header + UTF-8 XML descriptor
+///                              (PBKDF salt, spinCount, hashAlgorithm,
+///                              cipherAlgorithm, encryptedKeyValue, etc.)
+///   • <c>EncryptedPackage</c> — 8-byte little-endian decrypted size, then
+///                              AES-CBC encrypted segments (4096-byte
+///                              segments with per-segment IV derived from
+///                              the keyData salt and segment index).
+///
+/// These tests build a real, spec-compliant Agile-encrypted .accdb fixture
+/// in memory by wrapping <see cref="TestDatabases.ComplexFields"/> and feed
+/// it through <see cref="AccessReader.OpenAsync(Stream, AccessReaderOptions?, bool, System.Threading.CancellationToken)"/>.
+/// They will all fail until the reader can:
+///   1. Parse the CFB container
+///   2. Detect the Agile EncryptionInfo header (version 4.4, flag 0x40)
+///   3. Parse the EncryptionInfo XML
+///   4. Derive the intermediate key from the password (Agile PBKDF)
+///   5. Verify the password (verifierHashInput vs verifierHashValue)
+///   6. Decrypt the EncryptedPackage segments
+///   7. Hand the decrypted bytes to the existing JET page reader.
+/// </summary>
+public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>
+{
+    private const string Password = "secret";
+
+    private static readonly string InnerSource = TestDatabases.ComplexFields;
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 1. PASSWORD ENFORCEMENT — Agile-encrypted file requires a password
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Agile_OpenWithoutPassword_ThrowsUnauthorizedAccessException()
+    {
+        byte[] data = await BuildAgileEncryptedFixtureAsync();
+
+        await using var ms = new MemoryStream(data, writable: false);
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            async () => await AccessReader.OpenAsync(
+                ms,
+                new AccessReaderOptions { UseLockFile = false },
+                leaveOpen: true,
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Agile_OpenWithWrongPassword_ThrowsUnauthorizedAccessException()
+    {
+        byte[] data = await BuildAgileEncryptedFixtureAsync();
+
+        await using var ms = new MemoryStream(data, writable: false);
+        var options = new AccessReaderOptions
+        {
+            Password = SecureStringTestHelper.FromString("definitely_wrong"),
+            UseLockFile = false,
+        };
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            async () => await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 2. SUCCESSFUL OPEN + CATALOG — Agile decryption produces a JET stream
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Agile_OpenWithCorrectPassword_Succeeds()
+    {
+        byte[] data = await BuildAgileEncryptedFixtureAsync();
+
+        await using var ms = new MemoryStream(data, writable: false);
+        await using var reader = await AccessReader.OpenAsync(
+            ms,
+            CorrectPasswordOptions(),
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        // Smoke check: ListTables must succeed (i.e. catalog page decrypted).
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        Assert.NotEmpty(tables);
+    }
+
+    [Fact]
+    public async Task Agile_ListTables_MatchesUnencryptedSource()
+    {
+        // Compare the table list of the Agile-decrypted fixture against the
+        // original unencrypted source — they must match exactly.
+        var sourceReader = await db.GetReaderAsync(InnerSource, TestContext.Current.CancellationToken);
+        List<string> expected = (await sourceReader.ListTablesAsync(TestContext.Current.CancellationToken))
+            .OrderBy(t => t, StringComparer.Ordinal)
+            .ToList();
+
+        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        await using var ms = new MemoryStream(data, writable: false);
+        await using var encReader = await AccessReader.OpenAsync(
+            ms,
+            CorrectPasswordOptions(),
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        List<string> actual = (await encReader.ListTablesAsync(TestContext.Current.CancellationToken))
+            .OrderBy(t => t, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(expected, actual);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 3. DATA PAGE DECRYPTION — rows survive Agile + JET round-trip
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Agile_ReadDataTable_ReturnsRows()
+    {
+        byte[] data = await BuildAgileEncryptedFixtureAsync();
+
+        await using var ms = new MemoryStream(data, writable: false);
+        await using var reader = await AccessReader.OpenAsync(
+            ms,
+            CorrectPasswordOptions(),
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        Assert.NotEmpty(tables);
+
+        DataTable? dt = await reader.ReadDataTableAsync(
+            tables[0],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.NotNull(dt);
+        Assert.True(dt!.Rows.Count > 0, "Agile-decrypted table should contain rows.");
+    }
+
+    [Fact]
+    public async Task Agile_StreamRows_YieldsRows()
+    {
+        byte[] data = await BuildAgileEncryptedFixtureAsync();
+
+        await using var ms = new MemoryStream(data, writable: false);
+        await using var reader = await AccessReader.OpenAsync(
+            ms,
+            CorrectPasswordOptions(),
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        Assert.NotEmpty(tables);
+
+        int count = await reader.StreamRowsAsync(
+            tables[0],
+            cancellationToken: TestContext.Current.CancellationToken)
+            .CountAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(count > 0, "Agile-decrypted stream should yield rows.");
+    }
+
+    [Fact]
+    public async Task Agile_RowCounts_MatchUnencryptedSource()
+    {
+        var sourceReader = await db.GetReaderAsync(InnerSource, TestContext.Current.CancellationToken);
+        List<TableStat> expected = await sourceReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+
+        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        await using var ms = new MemoryStream(data, writable: false);
+        await using var encReader = await AccessReader.OpenAsync(
+            ms,
+            CorrectPasswordOptions(),
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        List<TableStat> actual = await encReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(expected.Count, actual.Count);
+        foreach (TableStat exp in expected)
+        {
+            TableStat? act = actual.FirstOrDefault(s => s.Name == exp.Name);
+            Assert.NotNull(act);
+            Assert.Equal(exp.RowCount, act!.RowCount);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 4. KEY DERIVATION VECTOR — exercises the Agile PBKDF independently
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Round-trip self-check: deriving the intermediate key with the same
+    /// inputs the fixture builder used must reproduce the verifierHashInput
+    /// → verifierHashValue chain, proving the spec primitives are wired
+    /// correctly. When the reader implementation lands and exposes the same
+    /// primitive (or this helper is migrated next to it), this acts as a
+    /// regression guard.
+    /// </summary>
+    [Fact]
+    public void Agile_KeyDerivation_VerifierRoundTripsAgainstStoredHash()
+    {
+        // Use a fixed, known set of Agile parameters — any change to the
+        // PBKDF, block-key constants, or hashing chain breaks this test.
+        var p = AgileEncryptionFixtureBuilder.DeterministicParameters();
+
+        byte[] verifierInput = AgileEncryptionFixtureBuilder.DecryptVerifierHashInput(p, Password);
+        byte[] expectedHash = System.Security.Cryptography.SHA512.HashData(verifierInput);
+        byte[] storedHash = AgileEncryptionFixtureBuilder.DecryptVerifierHashValue(p, Password);
+
+        Assert.Equal(expectedHash, storedHash);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Helpers
+    // ═══════════════════════════════════════════════════════════════════
+
+    private static AccessReaderOptions CorrectPasswordOptions() => new()
+    {
+        Password = SecureStringTestHelper.FromString(Password),
+        UseLockFile = false,
+    };
+
+    private async Task<byte[]> BuildAgileEncryptedFixtureAsync()
+    {
+        byte[] inner = await db.GetFileAsync(InnerSource, TestContext.Current.CancellationToken);
+        return AgileEncryptionFixtureBuilder.Build(inner, Password);
+    }
+}

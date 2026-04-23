@@ -1,7 +1,7 @@
 # JetDatabaseWriter
 
-[![NuGet](https://img.shields.io/nuget/v/JetDatabaseReader.svg)](https://www.nuget.org/packages/JetDatabaseReader/)
-[![Downloads](https://img.shields.io/nuget/dt/JetDatabaseReader.svg)](https://www.nuget.org/packages/JetDatabaseReader/)
+[![NuGet](https://img.shields.io/nuget/v/JetDatabaseWriter.svg)](https://www.nuget.org/packages/JetDatabaseWriter/)
+[![Downloads](https://img.shields.io/nuget/dt/JetDatabaseWriter.svg)](https://www.nuget.org/packages/JetDatabaseWriter/)
 [![.NET Standard](https://img.shields.io/badge/.NET%20Standard-2.1-blue)](https://docs.microsoft.com/en-us/dotnet/standard/net-standard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -39,16 +39,16 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 ## Installation
 
 ```bash
-dotnet add package JetDatabaseReader
+dotnet add package JetDatabaseWriter
 ```
 
 ```powershell
-Install-Package JetDatabaseReader
+Install-Package JetDatabaseWriter
 ```
 
 ### NuGet target compatibility
 
-`JetDatabaseReader` targets **`netstandard2.1`**, which is consumed by the following .NET surfaces:
+`JetDatabaseWriter` targets **`netstandard2.1`**, which is consumed by the following .NET surfaces:
 
 | Consumer | Minimum version |
 |----------|----------------|
@@ -64,7 +64,7 @@ Install-Package JetDatabaseReader
 ## Quick Start
 
 ```csharp
-using JetDatabaseReader;
+using JetDatabaseWriter;
 using System.Threading;
 
 public class Order
@@ -362,22 +362,22 @@ Console.WriteLine($"Cache hit: {s.PageCacheHitRate}%");
 
 ## Scaffolding — Generate C# Models from a Database
 
-The **JetDatabaseReader.Scaffold** CLI tool reads the schema of every user table in a JET database and emits one C# entity-model source file per table.
+The **JetDatabaseWriter.Scaffold** CLI tool reads the schema of every user table in a JET database and emits one C# entity-model source file per table.
 
 ### Usage
 
 ```bash
 # Positional argument
-dotnet run --project JetDatabaseReader.Scaffold -- Northwind.mdb
+dotnet run --project JetDatabaseWriter.Scaffold -- Northwind.mdb
 
 # Named options
-dotnet run --project JetDatabaseReader.Scaffold -- --database Northwind.mdb --output ./Entities --namespace MyApp.Models
+dotnet run --project JetDatabaseWriter.Scaffold -- --database Northwind.mdb --output ./Entities --namespace MyApp.Models
 
 # Emit records with nullable reference types
-dotnet run --project JetDatabaseReader.Scaffold -- Northwind.mdb --records --nullable
+dotnet run --project JetDatabaseWriter.Scaffold -- Northwind.mdb --records --nullable
 
 # Password-protected database
-dotnet run --project JetDatabaseReader.Scaffold -- Secure.accdb --password secret
+dotnet run --project JetDatabaseWriter.Scaffold -- Secure.accdb --password secret
 ```
 
 ### Options
@@ -462,7 +462,7 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 
 ## Encryption Support
 
-All password-protected formats produced by Microsoft Access from Access 97 through Microsoft 365 are read-supported. Supply the password via [`AccessReaderOptions.Password`](JetDatabaseReader/Core/AccessReaderOptions.cs); the format is auto-detected from the file header.
+All password-protected formats produced by Microsoft Access from Access 97 through Microsoft 365 are read-supported. Supply the password via [`AccessReaderOptions.Password`](JetDatabaseWriter/Core/AccessReaderOptions.cs); the format is auto-detected from the file header.
 
 | Format | Versions | Detection | Key derivation | Page / payload cipher |
 |---|---|---|---|---|
@@ -490,7 +490,7 @@ Based on the [mdbtools format specification](https://github.com/mdbtools/mdbtool
 
 ## Contributing
 
-Issues and pull requests welcome at [github.com/diegoripera/JetDatabaseReader](https://github.com/diegoripera/JetDatabaseReader).
+Issues and pull requests welcome at [github.com/diegoripera/JetDatabaseWriter](https://github.com/diegoripera/JetDatabaseWriter).
 
 ## License
 
