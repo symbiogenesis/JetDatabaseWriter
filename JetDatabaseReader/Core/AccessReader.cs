@@ -73,6 +73,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private readonly object _catalogLock = new();
     private readonly string _path;
     private readonly bool _useLockFile;
+    private readonly bool _strictParsing;
     private readonly Func<LinkedTableInfo, string, bool>? _linkedSourcePathValidator;
     private readonly string[] _linkedSourcePathAllowlist;
     private readonly AccessReaderOptions _linkedSourceOpenOptions;
@@ -96,6 +97,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         _path = path;
         _useLockFile = options.UseLockFile && !string.IsNullOrEmpty(path);
+        _strictParsing = options.StrictParsing;
         _linkedSourcePathValidator = options.LinkedSourcePathValidator;
         _linkedSourcePathAllowlist = NormalizeLinkedSourcePathAllowlist(options.LinkedSourcePathAllowlist, path);
         _linkedSourceOpenOptions = CreateLinkedSourceOpenOptions(options, _linkedSourcePathAllowlist, _linkedSourcePathValidator);
@@ -553,7 +555,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
             {
-                yield return ConvertRowToTyped(row, td.Columns, tableName, complexData);
+                yield return ConvertRowToTyped(row, td.Columns, tableName, complexData, _strictParsing);
                 rowCount++;
             }
 
@@ -764,7 +766,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
                 {
-                    _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData));
+                    _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData, _strictParsing));
                     if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
                     {
                         progress?.Report(dt.Rows.Count);
@@ -1483,6 +1485,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             DiagnosticsEnabled = options.DiagnosticsEnabled,
             ParallelPageReadsEnabled = options.ParallelPageReadsEnabled,
             ValidateOnOpen = options.ValidateOnOpen,
+            StrictParsing = options.StrictParsing,
             FileAccess = options.FileAccess,
             FileShare = options.FileShare,
             Password = SecureStringUtilities.CopyAsReadOnly(options.Password),
@@ -1558,7 +1561,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return path;
     }
 
-    private static object[] ConvertRowToTyped(List<string> row, List<ColumnInfo> columns, string? tableName = null, Dictionary<int, Dictionary<int, byte[]>>? complexData = null)
+    private static object[] ConvertRowToTyped(List<string> row, List<ColumnInfo> columns, string? tableName = null, Dictionary<int, Dictionary<int, byte[]>>? complexData = null, bool strictParsing = true)
     {
         var typedRow = new object[row.Count];
         for (int i = 0; i < row.Count && i < columns.Count; i++)
@@ -1592,7 +1595,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            typedRow[i] = TypedValueParser.ParseValue(raw, TypeCodeToClrType(col.Type));
+            typedRow[i] = TypedValueParser.ParseValue(raw, TypeCodeToClrType(col.Type), strictParsing);
         }
 
         return typedRow;

@@ -41,6 +41,14 @@ public sealed class AccessReaderOptions : IAccessOptions
     /// <summary>Gets or sets a value indicating whether the database format is validated on open. Default: true.</summary>
     public bool ValidateOnOpen { get; set; } = true;
 
+    /// <summary>
+    /// Gets or sets a value indicating whether strict value parsing is enforced when converting raw column
+    /// strings to their CLR types. When <see langword="true"/> (the default), values that cannot be parsed as
+    /// the target type cause a <see cref="FormatException"/> to be thrown. When <see langword="false"/>,
+    /// unparseable values are silently coerced to <see cref="DBNull.Value"/>.
+    /// </summary>
+    public bool StrictParsing { get; set; } = true;
+
     /// <summary>Gets or sets the file access mode. Default: Read.</summary>
     public FileAccess FileAccess { get; set; } = FileAccess.Read;
 

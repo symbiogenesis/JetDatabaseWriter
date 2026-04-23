@@ -9,7 +9,7 @@ using System.Globalization;
 internal static class TypedValueParser
 {
 #pragma warning disable CA1031 // Catch a more specific exception type
-    public static object ParseValue(string value, Type targetType)
+    public static object ParseValue(string value, Type targetType, bool strictMode = true)
     {
         if (string.IsNullOrEmpty(value))
         {
@@ -35,9 +35,16 @@ internal static class TypedValueParser
                 _ => value,
             };
         }
-        catch
+        catch (Exception) when (!strictMode)
         {
             return DBNull.Value;
+        }
+        catch (Exception ex)
+        {
+            throw new FormatException(
+                $"Failed to parse value '{value}' as {targetType.FullName}. " +
+                "Disable strict mode (strictMode: false) to silently coerce unparseable values to DBNull.",
+                ex);
         }
     }
 #pragma warning restore CA1031
