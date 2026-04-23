@@ -281,6 +281,68 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
             byte[] header = await ReadHeaderAsync(wrapped, cancellationToken).ConfigureAwait(false);
+
+            // Office Crypto API ("Agile") encryption: the file is a real OLE
+            // compound document. Detect by CFB magic, then look for an
+            // EncryptionInfo + EncryptedPackage stream pair. If present and
+            // Agile-formatted, decrypt the package in memory and re-enter
+            // OpenAsync on the inner database bytes.
+            if (CompoundFileReader.HasCompoundFileMagic(header))
+            {
+                System.Collections.Generic.Dictionary<string, byte[]>? streams = null;
+                try
+                {
+                    streams = await CompoundFileReader.ReadStreamsAsync(wrapped, cancellationToken).ConfigureAwait(false);
+                }
+                catch (InvalidDataException)
+                {
+                    // Not a real CFB — fall through to the legacy synthetic path.
+                }
+                catch (EndOfStreamException)
+                {
+                    // Truncated/legacy CFB-magic file — fall through.
+                }
+
+                if (streams != null &&
+                    streams.TryGetValue("EncryptionInfo", out byte[]? encryptionInfo) &&
+                    streams.TryGetValue("EncryptedPackage", out byte[]? encryptedPackage) &&
+                    OfficeCryptoAgile.IsAgileEncryptionInfo(encryptionInfo))
+                {
+                    if (SecureStringUtilities.IsNullOrEmpty(options.Password))
+                    {
+                        throw new UnauthorizedAccessException(
+                            "This .accdb file is encrypted with Office Crypto API 'Agile' encryption. " +
+                            "Provide the database password via AccessReaderOptions.Password to open it, " +
+                            "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
+                    }
+
+                    byte[] decrypted = OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, options.Password!);
+
+                    // Always release the source-wrapper now: when leaveOpen is
+                    // true wrapped is a NonClosingStreamWrapper that does not
+                    // close the user stream, otherwise it is the user stream we
+                    // own per the leaveOpen=false contract.
+                    await wrapped.DisposeAsync().ConfigureAwait(false);
+
+                    MemoryStream? inner = null;
+                    try
+                    {
+                        inner = new MemoryStream(decrypted, writable: false);
+                        byte[] innerHeader = await ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
+                        var reader = new AccessReader(string.Empty, options, inner, innerHeader);
+                        inner = null;
+                        return reader;
+                    }
+                    finally
+                    {
+                        if (inner != null)
+                        {
+                            await inner.DisposeAsync().ConfigureAwait(false);
+                        }
+                    }
+                }
+            }
+
             return new AccessReader(path, options, wrapped, header);
         }
         catch

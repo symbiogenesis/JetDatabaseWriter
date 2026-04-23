@@ -29,7 +29,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Non-Western text** | Code page auto-detected from the database header |
 | ✅ **OLE Objects** | Detects embedded JPEG, PNG, PDF, ZIP, DOC, RTF |
 | ✅ **Write support** | Create databases, Create/drop tables, insert/update/delete rows (Jet3/Jet4/ACE) |
-| ✅ **Encryption & passwords** | Jet3 page-level XOR decryption, Jet4 `.mdb` and legacy password-only `.accdb` (`;pwd=`) |
+| ✅ **Encryption & passwords** | Jet3 page-level XOR, Jet4 `.mdb` RC4, legacy password-only `.accdb` (`;pwd=`), AES-128 page-encrypted Access 2007+ `.accdb` (CFB-wrapped), and Office Crypto API ECMA-376 "Agile" (SHA-512 PBKDF + AES-CBC) used by Access 2010 SP1+ / Microsoft 365 |
 | ✅ **Linked table metadata** | `ListLinkedTables()` returns source paths and foreign names |
 | ✅ **Complex fields** | Attachment and multi-value columns resolved via `MSysComplexColumns` FK lookup |
 | ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on disposal (opt-out) |
@@ -460,11 +460,19 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 
 ---
 
-## Limitations
+## Encryption Support
 
-| | |
-|---|---|
-| ⚠️ ACCDB AES encryption | Legacy password-only `.accdb` and AES-128 (SHA-256-derived key) page-encrypted Access 2007+ `.accdb` (CFB-wrapped) are supported when the password is supplied via `AccessReaderOptions.Password`. Office Crypto API "Agile" key derivation is not yet supported |
+All password-protected formats produced by Microsoft Access from Access 97 through Microsoft 365 are read-supported. Supply the password via [`AccessReaderOptions.Password`](JetDatabaseReader/Core/AccessReaderOptions.cs); the format is auto-detected from the file header.
+
+| Format | Versions | Detection | Key derivation | Page / payload cipher |
+|---|---|---|---|---|
+| Jet3 page XOR | Access 97 (`.mdb`) | header byte `0x62` bit `0x01` | static 128-byte mask | XOR (no password required) |
+| Jet4 RC4 | Access 2000–2003 (`.mdb`) | header byte `0x62` value `0x02` / `0x03` | password XOR-verified at `0x42`; `dbKey` at `0x3E` | per-page RC4 with `MD5(dbKey ‖ pageNumber)` |
+| ACCDB legacy password | Access 2007+ (`.accdb`, `;pwd=...`) | header byte `0x62` value `0x07` | password XOR-verified at `0x42` | none (password only) |
+| ACCDB AES-128 (CFB-wrapped) | Access 2007+ (`.accdb`) | CFB magic `D0 CF 11 E0` + Jet4-style header password | SHA-256(password) → 16 bytes | per-page AES-128-ECB |
+| ACCDB Agile (Office Crypto API) | Access 2010 SP1+, Microsoft 365 (`.accdb`) | CFB compound document with `EncryptionInfo` (version 4.4, flag `0x40`) and `EncryptedPackage` streams | ECMA-376 §2.3.4.11 PBKDF: SHA-512 + `spinCount` iterations + spec block keys (`0xfea7d2763b4b9e79`, `0xd7aa0f6d3061344e`, `0x146e0be7abacd0d6`) | AES-256-CBC over 4096-byte segments with per-segment IV `SHA-512(keyDataSalt ‖ uint32_le(segmentIndex))[:16]` |
+
+Wrong or missing passwords throw `UnauthorizedAccessException`. Corrupt or non-JET data throws `InvalidDataException`.
 
 ---
 
