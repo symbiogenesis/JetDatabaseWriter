@@ -464,7 +464,7 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 
 | | |
 |---|---|
-| ⚠️ ACCDB AES encryption | Legacy password-only `.accdb` is supported; AES-encrypted Access 2007+ `.accdb` (CFB-wrapped) is detected, but page decryption is not yet supported |
+| ⚠️ ACCDB AES encryption | Legacy password-only `.accdb` and AES-128 (SHA-256-derived key) page-encrypted Access 2007+ `.accdb` (CFB-wrapped) are supported when the password is supplied via `AccessReaderOptions.Password`. Office Crypto API "Agile" key derivation is not yet supported |
 
 ---
 

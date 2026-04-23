@@ -179,17 +179,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // ACCDB genuine AES encryption (CFB wrapped file).
         if (isAccdbCfbEncrypted)
         {
-            // CFB magic: the file is genuinely AES-encrypted.
-            // When a password is supplied, attempt to read anyway — the caller has
-            // acknowledged the encrypted format and provided credentials.
-            // Without a password, throw immediately with a clear message.
+            // CFB magic: the file is genuinely AES-encrypted. AES-128 page
+            // decryption is supported — the caller must supply the password
+            // via AccessReaderOptions.Password.
             if (SecureStringUtilities.IsNullOrEmpty(password))
             {
                 throw new UnauthorizedAccessException(
-                    "This .accdb file is encrypted with Access 2007+ AES encryption (Office Crypto API). " +
-                    "Full AES page decryption is not yet supported by this library. " +
-                    "To open the file, remove the password in Microsoft Access " +
-                    "(File > Info > Decrypt Database) and try again.");
+                    "This .accdb file is encrypted with Access 2007+ AES encryption. " +
+                    "Provide the database password via AccessReaderOptions.Password to open it, " +
+                    "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
             }
 
             // Verify the provided password against the stored password at 0x42.
