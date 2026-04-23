@@ -19,13 +19,13 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Restore dependencies
-        run: dotnet restore ${{ github.workspace }}/JetDatabaseReader/JetDatabaseReader.csproj
+        run: dotnet restore ${{ github.workspace }}/JetDatabaseWriter/JetDatabaseWriter.csproj
 
       - name: Build
-        run: dotnet build ${{ github.workspace }}/JetDatabaseReader/JetDatabaseReader.csproj -c Release --no-restore
+        run: dotnet build ${{ github.workspace }}/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-restore
 
       - name: Create NuGet package
-        run: dotnet pack ${{ github.workspace }}/JetDatabaseReader/JetDatabaseReader.csproj -c Release --no-build -o ${{ github.workspace }}/nupkg
+        run: dotnet pack ${{ github.workspace }}/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-build -o ${{ github.workspace }}/nupkg
 
       - name: List files (debug)
         run: dir ${{ github.workspace }}\nupkg

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>JetDatabaseWriter.Scaffold</RootNamespace>
+    <AssemblyName>JetDatabaseWriter.Scaffold</AssemblyName>
+    <!-- CA1303: literal strings are fine in a CLI tool; CA1849: sync Console is fine for a CLI -->
+    <NoWarn>$(NoWarn);CA1303;CA1849</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="JetDatabaseWriter.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JetDatabaseWriter\JetDatabaseWriter.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.*" />
+    <PackageReference Include="System.CommandLine" Version="2.0.7" />
+  </ItemGroup>
+</Project>
