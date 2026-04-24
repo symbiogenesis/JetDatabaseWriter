@@ -340,6 +340,21 @@ int updated = await writer.UpdateRowsAsync("Contacts", "ContactID", 1,
 int deleted = await writer.DeleteRowsAsync("Contacts", "ContactID", 3);
 ```
 
+### Add, drop, and rename columns
+
+```csharp
+// Append a new column. Existing rows receive DBNull for the new column.
+await writer.AddColumnAsync("Contacts", new ColumnDefinition("Phone", typeof(string), maxLength: 32));
+
+// Rename an existing column. Row data is preserved.
+await writer.RenameColumnAsync("Contacts", "Score", "Rating");
+
+// Drop a column. Its data is permanently lost.
+await writer.DropColumnAsync("Contacts", "Phone");
+```
+
+> These operations rewrite the whole table (copy rows to a new schema, then swap the catalog entry). Cost scales with row count.
+
 ---
 
 ## Statistics & Metadata
@@ -486,7 +501,7 @@ Wrong or missing passwords throw `UnauthorizedAccessException`. Corrupt or non-J
 The writer is intentionally focused on the most common create / insert / update / delete scenarios. The following are **not** supported today:
 
 ### Schema evolution
-- **No `ALTER TABLE`.** There is no `AddColumnAsync`, `DropColumnAsync`, or `RenameColumnAsync`. Once a table is created with `CreateTableAsync`, its column list is fixed. To change shape, create a new table, copy rows, drop the original, and rename — or recreate the database from scaffolded models.
+- **Limited `ALTER TABLE`.** `AddColumnAsync`, `DropColumnAsync`, and `RenameColumnAsync` are supported. They are implemented internally by copying the table to a new schema and replacing the original — so they rewrite all rows and are not free for large tables. Existing rows receive `DBNull.Value` for newly added columns; dropped column data is permanently lost.
 - **No index, primary-key, foreign-key, or relationship creation.** `CreateTableAsync` emits a heap table with no indexes. `MSysRelationships` and `MSysIndexes` entries are not written.
 - **No constraint or default-value definition.** `ColumnDefinition` exposes `Name`, `ClrType`, and `MaxLength` only — no `NotNull`, `Default`, `AutoIncrement`, or validation rule.
 
