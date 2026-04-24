@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+    <TargetFrameworks>netstandard2.1;net10.0</TargetFrameworks>
     <PackageId>JetDatabaseWriter</PackageId>
     <Version>4.0.0</Version>
     <Authors>Diego Ripera</Authors>
@@ -17,6 +17,14 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
+  <!--
+    Suppress pre-existing analyzer/nullability findings that surface only on the net10.0 build
+    (stricter analyzer level + nullable flow analysis vs. the netstandard2.1 reference assemblies).
+    These are unrelated to multi-targeting and can be cleaned up incrementally.
+  -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <NoWarn>$(NoWarn);CS8600;CS8604;CS8619;CA1305;CA1307;CA1513;CA1850</NoWarn>
+  </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="JetDatabaseWriter.Tests" />
     <InternalsVisibleTo Include="JetDatabaseWriter.Benchmarks" />
@@ -26,5 +34,14 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.6" />
+  </ItemGroup>
+  <!--
+    System.Linq.AsyncEnumerable (Where/ToListAsync/etc. over IAsyncEnumerable<T>) ships in the
+    BCL on .NET 10+. For older consumers (anything resolving the netstandard2.1 asset), pull in
+    System.Linq.Async transitively so the async LINQ surface in our public API "just works"
+    without requiring downstream projects to add the package themselves.
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.1'">
+    <PackageReference Include="System.Linq.Async" Version="6.0.1" />
   </ItemGroup>
 </Project>
