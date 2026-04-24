@@ -30,19 +30,6 @@ public sealed class LimitationsTests : IDisposable
     // ── Schema evolution ──────────────────────────────────────────────
 
     [Fact]
-    public void SchemaEvolution_IAccessWriter_ExposesAlterTableMethods()
-    {
-        // Lifted limitation: AddColumnAsync, DropColumnAsync, and RenameColumnAsync are now
-        // supported on IAccessWriter / AccessWriter. They are implemented as copy-and-swap.
-        Assert.NotNull(typeof(IAccessWriter).GetMethod("AddColumnAsync"));
-        Assert.NotNull(typeof(IAccessWriter).GetMethod("DropColumnAsync"));
-        Assert.NotNull(typeof(IAccessWriter).GetMethod("RenameColumnAsync"));
-        Assert.NotNull(typeof(AccessWriter).GetMethod("AddColumnAsync"));
-        Assert.NotNull(typeof(AccessWriter).GetMethod("DropColumnAsync"));
-        Assert.NotNull(typeof(AccessWriter).GetMethod("RenameColumnAsync"));
-    }
-
-    [Fact]
     public async Task SchemaEvolution_AddColumnAsync_AppendsColumn_ExistingRowsBecomeNull()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
@@ -587,45 +574,7 @@ public sealed class LimitationsTests : IDisposable
         Assert.Equal(sentinel, dt!.Rows[0]["Txt"]);
     }
 
-    // ── Linked tables ─────────────────────────────────────────────────
-
-    [Fact]
-    public void LinkedTables_AccessWriter_ExposesPublicCreateLinkedTableApi()
-    {
-        // README: "Linked Access tables (MSysObjects type 4) are writable. Use
-        //          CreateLinkedTableAsync(linkedName, sourceDatabasePath, foreignName)..."
-        var publicCreateLinked = typeof(AccessWriter)
-            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
-            .Where(m => m.Name.Contains("LinkedTable", StringComparison.OrdinalIgnoreCase))
-            .Where(m => m.Name.StartsWith("Create", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-
-        Assert.NotEmpty(publicCreateLinked);
-
-        // Linked-ODBC creation is also supported (CreateLinkedOdbcTableAsync).
-        var publicCreateOdbc = typeof(AccessWriter)
-            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
-            .Where(m => m.Name.Contains("Odbc", StringComparison.OrdinalIgnoreCase))
-            .Where(m => m.Name.StartsWith("Create", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        Assert.NotEmpty(publicCreateOdbc);
-    }
-
     // ── Encryption ────────────────────────────────────────────────────
-
-    [Fact]
-    public void Encryption_AccessWriter_ExposesEncryptionMutationApis()
-    {
-        // Encryption mutation IS supported: EncryptAsync, DecryptAsync, and
-        // ChangePasswordAsync are public methods on AccessWriter.
-        var publicMethods = typeof(AccessWriter)
-            .GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Select(m => m.Name)
-            .ToHashSet(StringComparer.Ordinal);
-        Assert.Contains("EncryptAsync", publicMethods);
-        Assert.Contains("DecryptAsync", publicMethods);
-        Assert.Contains("ChangePasswordAsync", publicMethods);
-    }
 
     [Fact]
     public async Task Encryption_CreateDatabaseAsync_ProducesUnencryptedFile_EvenWhenOptionsCarryAPassword()

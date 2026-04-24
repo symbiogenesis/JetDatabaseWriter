@@ -25,47 +25,6 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
             AccessReader.OpenAsync(@"C:\cancel\me.mdb", cancellationToken: cts.Token).AsTask());
     }
 
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task OpenAsync_ReturnedReader_ImplementsIAsyncDisposable(string path)
-    {
-        await using var reader = await AccessReader.OpenAsync(
-            path,
-            new AccessReaderOptions { UseLockFile = false },
-            TestContext.Current.CancellationToken);
-
-        Assert.IsAssignableFrom<IAsyncDisposable>(reader);
-    }
-
-    // ── ListTablesAsync ───────────────────────────────────────────────
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ListTablesAsync_IsIdempotent(string path)
-    {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-
-        List<string> first = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        List<string> second = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equivalent(first, second);
-    }
-
-    // ── ReadTableAsync ────────────────────────────────────────────────
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadTableAsync_RowCount_IsIdempotent(string path)
-    {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-
-        DataTable firstDt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
-        DataTable secondDt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
-
-        Assert.Equal(firstDt.Rows.Count, secondDt.Rows.Count);
-    }
-
     // ── GetStatisticsAsync ────────────────────────────────────────────
 
     [Theory]

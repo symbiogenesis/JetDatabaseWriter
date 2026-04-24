@@ -36,19 +36,6 @@ public class RowsAsyncLinqTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task Rows_WithoutFilter_CountMatchesStreamRows(string path)
-    {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        int expected = await reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
-
-        int actual = await reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(expected, actual);
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task Rows_Take_LimitsResults(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);

@@ -11,14 +11,12 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// TDD tests (initially RED) for the README limitation:
+/// Regression tests for ECMA-376 §2.3.4.10–.13 "Agile" encryption support
+/// in <see cref="AccessReader"/> and <see cref="AccessWriter"/>.
 ///
-///   "Office Crypto API 'Agile' key derivation is not yet supported"
-///
-/// Agile encryption (ECMA-376 §2.3.4.10–.13) is the modern scheme used by
-/// password-encrypted .accdb files produced by Access 2010 SP1+ /
-/// Microsoft 365 with the "Encrypt with Password" command. The file is a
-/// CFB compound document with two streams:
+/// Agile encryption is the modern scheme used by password-encrypted .accdb
+/// files produced by Access 2010 SP1+ / Microsoft 365 with the "Encrypt with
+/// Password" command. The file is a CFB compound document with two streams:
 ///
 ///   • <c>EncryptionInfo</c>  — version (4,4) header + UTF-8 XML descriptor
 ///                              (PBKDF salt, spinCount, hashAlgorithm,
@@ -30,8 +28,8 @@ using Xunit;
 ///
 /// These tests build a real, spec-compliant Agile-encrypted .accdb fixture
 /// in memory by wrapping <see cref="TestDatabases.ComplexFields"/> and feed
-/// it through <see cref="AccessReader.OpenAsync(Stream, AccessReaderOptions?, bool, System.Threading.CancellationToken)"/>.
-/// They will all fail until the reader can:
+/// it through <see cref="AccessReader.OpenAsync(Stream, AccessReaderOptions?, bool, System.Threading.CancellationToken)"/>
+/// to verify the round-trip:
 ///   1. Parse the CFB container
 ///   2. Detect the Agile EncryptionInfo header (version 4.4, flag 0x40)
 ///   3. Parse the EncryptionInfo XML

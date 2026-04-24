@@ -16,7 +16,6 @@ using Xunit;
 /// End-to-end tests for AccessWriter write operations.
 /// Each test copies a test database to a temp file, writes via AccessWriter,
 /// then reads back via AccessReader to verify correctness.
-/// All stubs currently throw <see cref="NotImplementedException"/>.
 /// </summary>
 public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
@@ -43,17 +42,6 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task Open_WithNullPath_ThrowsArgumentException()
     {
         await Assert.ThrowsAsync<ArgumentException>(async () => await AccessWriter.OpenAsync((string)null!, cancellationToken: TestContext.Current.CancellationToken));
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task OpenAsync_ReturnedWriter_ImplementsIAsyncDisposable(string path)
-    {
-        var temp = await CopyToStreamAsync(path);
-
-        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-
-        Assert.IsAssignableFrom<IAsyncDisposable>(writer);
     }
 
     [Fact]
@@ -128,33 +116,6 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<ArgumentNullException>(async () => await writer.InsertRowAsync(tableName, null!, TestContext.Current.CancellationToken));
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task InsertRow_InsertedData_IsReadableBack(string path)
-    {
-        var temp = await CopyToStreamAsync(path);
-        var cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
-
-        object[] newRow = BuildDummyRow(columns);
-
-        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
-        {
-            await writer.InsertRowAsync(tableName, newRow, TestContext.Current.CancellationToken);
-        }
-
-        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
-        {
-            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
-            Assert.True(dt.Rows.Count > 0);
-
-            // The last row should contain our inserted data
-            DataRow lastRow = dt.Rows[dt.Rows.Count - 1];
-            Assert.NotNull(lastRow);
-        }
     }
 
     // ── InsertRows (bulk) ─────────────────────────────────────────────

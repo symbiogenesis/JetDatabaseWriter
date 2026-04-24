@@ -13,30 +13,19 @@ using Xunit;
 #pragma warning disable CA5358 // ECB mode is intentional for deterministic test fixture encryption
 
 /// <summary>
-/// TDD tests for ACCDB AES page decryption — the feature gap from README.md:
-///
-///   "AES-encrypted Access 2007+ .accdb (CFB-wrapped) is detected, but
-///    page decryption is not yet supported."
+/// Regression tests for ACCDB AES page decryption (synthetic CFB-wrapped legacy AES path).
 ///
 /// Each test creates a synthetic AES-encrypted ACCDB by:
 ///   1. Cloning NorthwindTraders.accdb
 ///   2. Setting CFB magic header (D0 CF 11 E0) + encoding the password
 ///   3. AES-encrypting all data pages (pages 1+)
 ///
-/// ── Current state (all tests FAIL) ──────────────────────────────────────────
-///   The reader detects CFB magic and verifies the password, but returns a
-///   reader that reads raw encrypted bytes. All page reads produce garbage,
-///   causing parse failures in catalog, TDEF, or data page parsing.
+/// The reader is expected to detect CFB magic, verify the password, and
+/// transparently decrypt pages so that catalog, TDEF and data reads return
+/// the same content as an unencrypted copy.
 ///
-/// ── Desired behaviour ───────────────────────────────────────────────────────
-///   1. Parse the CFB container to locate the encrypted database stream
-///   2. Derive the AES key from the password (MS-OFFCRYPTO / CryptoAPI spec)
-///   3. Decrypt each page on-the-fly as it is read
-///   4. Return correct, readable data identical to an unencrypted copy
-///
-/// The AES encryption here uses a simplified scheme (SHA-256 key + AES-128-ECB)
-/// for fixture creation. When the real implementation is built following the
-/// Office encryption spec, these fixtures should be updated to match.
+/// The fixture uses a simplified scheme (SHA-256 key + AES-128-ECB) — distinct
+/// from the ECMA-376 Agile path covered by <see cref="AgileEncryptionTests"/>.
 /// </summary>
 public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

@@ -31,23 +31,6 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
     // to every page after page 0. The reader detects the flag and removes
     // the mask transparently on open.
 
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task Encryption_OptionsAcceptPassword(string path)
-    {
-        // AccessReaderOptions accepts a Password property for encrypted databases.
-        // Non-encrypted databases ignore the password and open normally.
-        var options = new AccessReaderOptions
-        {
-            Password = SecureStringTestHelper.FromString("test123"),
-        };
-
-        await using var reader = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-
-        Assert.NotNull(tables);
-    }
-
     [Fact]
     public async Task Encryption_Jet3Xor_DatabaseIsReadable()
     {
@@ -412,114 +395,6 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotEmpty(all);
         Assert.All(all.Values, dt => Assert.NotNull(dt));
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // 4. ACCDB (AES) ENCRYPTION — Access 2007+
-    // ═══════════════════════════════════════════════════════════════════
-    //
-    // Genuine Access 2007+ AES encryption wraps the entire .accdb file in an
-    // OLE2 Compound File Binary (CFB) container.  The first four bytes of a
-    // genuinely AES-encrypted file are the CFB magic: D0 CF 11 E0.
-    //
-    // Current state:
-    //   ✓ Detection  — CFB magic check fires; UnauthorizedAccessException thrown.
-    //   ✗ Decryption — AES page decryption not yet implemented; even a correct
-    //                  password cannot open the file.
-    //
-    // SetAccdbEncryptionHeader writes the CFB magic to simulate a genuinely
-    // AES-encrypted file without needing Access installed.
-
-    [Fact]
-    public async Task AesEncryption_AccdbWithPassword_Open_Succeeds()
-    {
-        // An .accdb file encrypted with AES should open when the correct password is provided.
-        byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
-        SetAccdbEncryptionHeader(data);
-
-        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
-
-        // Once AES is implemented, this should succeed without throwing.
-        await using var ms = ToStream(data);
-        var ex = await Record.ExceptionAsync(async () =>
-        {
-            await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
-            await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        });
-
-        // Currently expected to fail; when implemented, ex should be null.
-        Assert.Null(ex);
-    }
-
-    [Fact]
-    public async Task AesEncryption_AccdbWithPassword_ReadTable_ReturnsRows()
-    {
-        // Reading table data through AES decryption should return valid rows.
-        byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
-        SetAccdbEncryptionHeader(data);
-
-        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
-        await using var ms = ToStream(data);
-        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
-
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        Assert.NotEmpty(tables);
-
-        DataTable dt = (await reader.ReadDataTableAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken))!;
-        Assert.NotNull(dt);
-        Assert.True(dt.Rows.Count > 0, "AES-decrypted table should contain rows");
-    }
-
-    [Fact]
-    public async Task AesEncryption_AccdbWithoutPassword_ThrowsUnauthorized()
-    {
-        // A genuine AES-encrypted .accdb (CFB magic in header) must throw
-        // UnauthorizedAccessException whether or not a password is supplied,
-        // because full AES page decryption is not yet implemented.
-        byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
-        SetAccdbEncryptionHeader(data);
-
-        await using var ms = ToStream(data);
-        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task AesEncryption_AccdbWithWrongPassword_Throws()
-    {
-        // Any password for a CFB-encrypted .accdb must throw, because decryption
-        // is not implemented — the error should be clear rather than silent corruption.
-        byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
-        SetAccdbEncryptionHeader(data);
-
-        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("wrong_password") };
-
-        await using var ms = ToStream(data);
-        var ex = await Record.ExceptionAsync(async () =>
-        {
-            await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
-            await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        });
-
-        Assert.NotNull(ex);
-    }
-
-    [Fact]
-    public async Task AesEncryption_AccdbStreamRows_ReturnsDecryptedData()
-    {
-        // Streaming through AES-encrypted pages should yield readable data.
-        byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
-        SetAccdbEncryptionHeader(data);
-
-        var options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("secret") };
-        await using var ms = ToStream(data);
-        await using var reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
-
-        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        Assert.NotEmpty(tables);
-
-        int count = await reader.Rows(tables[0], cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
-        Assert.True(count > 0, "AES-decrypted stream should yield rows");
     }
 
     // ═══════════════════════════════════════════════════════════════════

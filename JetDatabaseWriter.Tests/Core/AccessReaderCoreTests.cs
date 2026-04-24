@@ -199,33 +199,37 @@ public class AccessReaderCoreTests(DatabaseCache db) : IClassFixture<DatabaseCac
         Assert.All(meta, m => Assert.NotNull(m.ClrType));
     }
 
+    [Theory]
+    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
+    public async Task GetColumnMetadata_TypeName_IsNeverRawHex(string path)
+    {
+        // No column should surface a raw hex TypeName like "0x11" / "0x12";
+        // the reader must always resolve a friendly name (incl. for complex columns).
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+
+        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
+        {
+            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            Assert.All(meta, col =>
+                Assert.False(
+                    col.TypeName.StartsWith("0x", StringComparison.Ordinal),
+                    $"Column '{col.Name}' in table '{table}' has raw hex TypeName '{col.TypeName}'"));
+        }
+    }
+
     // ── GetRealRowCount ───────────────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task GetRealRowCount_IsNonNegative(string path)
-    {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-
-        long count = await reader.GetRealRowCountAsync(table, TestContext.Current.CancellationToken);
-
-        Assert.True(count >= 0);
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task GetRealRowCount_ConsistentWithStatsTdefRowCount(string path)
+    public async Task GetRealRowCount_MatchesReadDataTableRowCount(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         long real = await reader.GetRealRowCountAsync(table, TestContext.Current.CancellationToken);
-        long tdef = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).Find(s => s.Name == table)!.RowCount;
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
 
-        // Real row count may differ from TDEF after deletes — both must be >= 0
-        Assert.True(real >= 0);
-        Assert.True(tdef >= 0);
+        Assert.Equal(dt.Rows.Count, real);
     }
 
     // ── ReadFirstTable ────────────────────────────────────────────────

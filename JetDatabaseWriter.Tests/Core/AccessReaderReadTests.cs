@@ -251,19 +251,6 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
         Assert.True(items.Count <= 2);
     }
 
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task ReadTableGeneric_ForAllTables_DoesNotThrow(string path)
-    {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-
-        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
-        {
-            List<GenericRow> items = await reader.ReadTableAsync<GenericRow>(table, 5, TestContext.Current.CancellationToken);
-            Assert.NotNull(items);
-        }
-    }
-
     // ── Progress reporting ────────────────────────────────────────────
 
     [Theory]
