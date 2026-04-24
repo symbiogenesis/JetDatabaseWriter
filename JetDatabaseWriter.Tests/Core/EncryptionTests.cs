@@ -176,6 +176,143 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Assert.NotNull(writer);
     }
 
+    // ───── Write-back encryption (re-encrypt pages on flush) ─────────
+
+    [Fact]
+    public async Task Encryption_Jet4Rc4_WriterRoundTrip_InsertedRowReadsBackThroughRc4()
+    {
+        // After full RC4 page encryption is applied to a Jet4 file, opening
+        // it with AccessWriter and inserting a row must re-encrypt the
+        // mutated pages on flush. Re-opening with AccessReader (RC4 path)
+        // must surface the new row as plaintext.
+        byte[] data = await CloneFileAsync(TestDatabases.AdventureWorks);
+        Rc4EncryptDataPages(data, "test");
+        string temp = WriteTempBytes(data, ".mdb");
+
+        var writerOptions = new AccessWriterOptions
+        {
+            UseLockFile = false,
+            Password = SecureStringTestHelper.FromString("test"),
+        };
+
+        const string TableName = "JetWriteEncTest";
+        await using (var writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                TableName,
+                new[]
+                {
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Label", typeof(string), maxLength: 64),
+                },
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                TableName,
+                new object[] { 42, "encrypted-write" },
+                TestContext.Current.CancellationToken);
+        }
+
+        var readerOptions = new AccessReaderOptions { Password = SecureStringTestHelper.FromString("test") };
+        await using var reader = await AccessReader.OpenAsync(temp, readerOptions, TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+
+        Assert.NotNull(dt);
+        Assert.Single(dt.Rows);
+        Assert.Equal(42, dt.Rows[0]["Id"]);
+        Assert.Equal("encrypted-write", dt.Rows[0]["Label"]);
+    }
+
+    [Fact]
+    public async Task Encryption_Jet3Xor_WriterRoundTrip_InsertedRowReadsBackThroughXor()
+    {
+        // The Jet3 XOR mask is symmetric — write-back must re-mask each page
+        // so a fresh reader can decrypt it.
+        byte[] data = await CloneFileAsync(TestDatabases.Jet3Test);
+        ApplyXorMask(data, BuildJet3XorMask());
+        SetJet3EncryptionFlag(data);
+        string temp = WriteTempBytes(data, ".mdb");
+
+        var writerOptions = new AccessWriterOptions { UseLockFile = false };
+
+        const string TableName = "Jet3WriteEncTest";
+        await using (var writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                TableName,
+                new[]
+                {
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Label", typeof(string), maxLength: 64),
+                },
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                TableName,
+                new object[] { 7, "jet3-xor-write" },
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+
+        Assert.NotNull(dt);
+        Assert.Single(dt.Rows);
+        Assert.Equal(7, dt.Rows[0]["Id"]);
+        Assert.Equal("jet3-xor-write", dt.Rows[0]["Label"]);
+    }
+
+    [Fact]
+    public async Task Encryption_AccdbCfbWrapped_LegacyAes_Writer_RoundTripsRow()
+    {
+        // Synthetic legacy AES-128 CFB-wrapped .accdb files (CFB magic at byte 0
+        // but flat per-page AES-128-ECB beneath) are now writable in place: the
+        // existing PrepareEncryptedPageForWrite pipeline re-encrypts every page
+        // we flush. Verify a round-trip by inserting a row and reading it back.
+        const string Password = "secret";
+        const string TableName = "AesWriteRoundTrip";
+
+        byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
+        SetAccdbEncryptionHeader(data);
+        string temp = WriteTempBytes(data, ".accdb");
+
+        var options = new AccessWriterOptions
+        {
+            UseLockFile = false,
+            Password = SecureStringTestHelper.FromString(Password),
+        };
+
+        await using (var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                TableName,
+                new[]
+                {
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Label", typeof(string), maxLength: 64),
+                },
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                TableName,
+                new object[] { 11, "legacy-aes-cfb-write" },
+                TestContext.Current.CancellationToken);
+        }
+
+        var readerOptions = new AccessReaderOptions
+        {
+            UseLockFile = false,
+            Password = SecureStringTestHelper.FromString(Password),
+        };
+        await using var reader = await AccessReader.OpenAsync(temp, readerOptions, TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+
+        Assert.NotNull(dt);
+        Assert.Single(dt.Rows);
+        Assert.Equal(11, dt.Rows[0]["Id"]);
+        Assert.Equal("legacy-aes-cfb-write", dt.Rows[0]["Label"]);
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // 3. JET4 RC4 PAGE DECRYPTION
     // ═══════════════════════════════════════════════════════════════════

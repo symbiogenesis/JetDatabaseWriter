@@ -230,6 +230,69 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // 5. WRITE SUPPORT — decrypt-on-open + re-encrypt-on-dispose round-trip
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// AccessWriter must transparently decrypt the Agile-encrypted CFB on
+    /// open, accept writes against the in-memory decrypted ACCDB, and
+    /// re-encrypt the entire compound document back to disk on dispose.
+    /// </summary>
+    /// <returns>A task that completes when the round-trip assertion has run.</returns>
+    [Fact]
+    public async Task Agile_WriterRoundTrip_InsertedRow_VisibleAfterReopen()
+    {
+        const string TableName = "AgileWriteRoundTrip";
+
+        byte[] data = await BuildAgileEncryptedFixtureAsync();
+        string temp = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.accdb");
+        await File.WriteAllBytesAsync(temp, data, TestContext.Current.CancellationToken);
+
+        try
+        {
+            var writerOptions = new AccessWriterOptions
+            {
+                UseLockFile = false,
+                Password = SecureStringTestHelper.FromString(Password),
+            };
+
+            await using (var writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
+            {
+                await writer.CreateTableAsync(
+                    TableName,
+                    new[]
+                    {
+                        new ColumnDefinition("Id", typeof(int)),
+                        new ColumnDefinition("Label", typeof(string), maxLength: 64),
+                    },
+                    TestContext.Current.CancellationToken);
+
+                await writer.InsertRowAsync(
+                    TableName,
+                    new object[] { 42, "agile-write-roundtrip" },
+                    TestContext.Current.CancellationToken);
+            }
+
+            // Reopen via AccessReader: must still detect Agile, decrypt,
+            // and surface the freshly-inserted row.
+            await using var reader = await AccessReader.OpenAsync(temp, CorrectPasswordOptions(), TestContext.Current.CancellationToken);
+            DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+
+            Assert.NotNull(dt);
+            Assert.Single(dt.Rows);
+            Assert.Equal(42, dt.Rows[0]["Id"]);
+            Assert.Equal("agile-write-roundtrip", dt.Rows[0]["Label"]);
+        }
+        finally
+        {
+            if (File.Exists(temp))
+            {
+                File.Delete(temp);
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════════
 
