@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.Runtime.CompilerServices;
 
 /// <summary>
 /// Helper methods for input validation and guard clauses.
@@ -41,11 +42,23 @@ internal static class Guard
         }
     }
 
-    public static void NotDisposed(bool disposed, string objectName)
+    /// <summary>
+    /// Throws an <see cref="ObjectDisposedException"/> when <paramref name="disposed"/> is
+    /// <see langword="true"/>, using the runtime type of <paramref name="instance"/> as the object
+    /// name. Forwards to <c>ObjectDisposedException.ThrowIf</c> on .NET 7+ for JIT-friendlier codegen.
+    /// </summary>
+    /// <param name="disposed">The disposed flag of the calling instance.</param>
+    /// <param name="instance">The instance being checked; typically <c>this</c>.</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void ThrowIfDisposed(bool disposed, object instance)
     {
+#if NET7_0_OR_GREATER
+        ObjectDisposedException.ThrowIf(disposed, instance);
+#else
         if (disposed)
         {
-            throw new ObjectDisposedException(objectName);
+            throw new ObjectDisposedException(instance?.GetType().FullName);
         }
+#endif
     }
 }
