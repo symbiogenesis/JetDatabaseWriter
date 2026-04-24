@@ -299,6 +299,26 @@ await writer.CreateTableAsync("Contacts", new[]
 await writer.DropTableAsync("Contacts");
 ```
 
+#### Column constraints
+
+`ColumnDefinition` accepts four optional constraints in addition to `Name`/`ClrType`/`MaxLength`:
+
+```csharp
+await writer.CreateTableAsync("Contacts", new[]
+{
+    new ColumnDefinition("ContactID", typeof(int)) { IsAutoIncrement = true, IsNullable = false },
+    new ColumnDefinition("Name",      typeof(string), maxLength: 100) { IsNullable = false },
+    new ColumnDefinition("Score",     typeof(int)) { DefaultValue = 0, ValidationRule = v => v is int i and >= 0 and <= 100 },
+});
+```
+
+| Constraint | Persisted in the file? | Notes |
+|---|---|---|
+| `IsNullable` | ✅ TDEF flag bit `FLAG_NULL_ALLOWED 0x02` | Restored on reopen; surfaced to readers via `ColumnMetadata.IsNullable`. |
+| `IsAutoIncrement` | ✅ TDEF flag bit `FLAG_AUTO_LONG 0x04` | Supported for `byte`/`short`/`int`/`long`. Seeded from `max(existing) + 1` on first use. |
+| `DefaultValue` | ❌ client-side only | Substituted for `DBNull.Value` at insert time. Lives on the `AccessWriter` instance that declared it. |
+| `ValidationRule` | ❌ client-side only | A CLR `Func<>` cannot be serialized into the file. Lives on the `AccessWriter` instance that declared it. |
+
 ### Insert rows — generic POCO
 
 ```csharp
@@ -503,7 +523,6 @@ The writer is intentionally focused on the most common create / insert / update 
 ### Schema evolution
 - **Limited `ALTER TABLE`.** `AddColumnAsync`, `DropColumnAsync`, and `RenameColumnAsync` are supported. They are implemented internally by copying the table to a new schema and replacing the original — so they rewrite all rows and are not free for large tables. Existing rows receive `DBNull.Value` for newly added columns; dropped column data is permanently lost.
 - **No index, primary-key, foreign-key, or relationship creation.** `CreateTableAsync` emits a heap table with no indexes. `MSysRelationships` and `MSysIndexes` entries are not written.
-- **No constraint or default-value definition.** `ColumnDefinition` exposes `Name`, `ClrType`, and `MaxLength` only — no `NotNull`, `Default`, `AutoIncrement`, or validation rule.
 
 ### Specialized column kinds
 - **No attachment columns.** Reading attachments via the `MSysComplexColumns` FK lookup is supported, but `CreateTableAsync` cannot declare an Attachment column, and there is no API to add files to one.

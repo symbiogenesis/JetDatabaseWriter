@@ -28,4 +28,46 @@ public sealed record ColumnDefinition
 
     /// <summary>Gets the maximum length for variable-length columns. 0 means default.</summary>
     public int MaxLength { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether this column accepts null / <see cref="DBNull.Value"/>.
+    /// Default is <c>true</c>. When <c>false</c>, the writer rejects inserts whose value for
+    /// this column is null after <see cref="DefaultValue"/> substitution and auto-increment
+    /// assignment have run.
+    /// </summary>
+    /// <remarks>
+    /// Persisted in the JET TDEF column-flag bit <c>FLAG_NULL_ALLOWED (0x02)</c>. The
+    /// constraint is restored when the database is reopened by any <see cref="AccessWriter"/>
+    /// and is surfaced to readers via <see cref="ColumnMetadata.IsNullable"/>.
+    /// </remarks>
+    public bool IsNullable { get; init; } = true;
+
+    /// <summary>
+    /// Gets an optional default value substituted for null / <see cref="DBNull.Value"/> at
+    /// insert time. The value must be assignment-compatible with <see cref="ClrType"/>.
+    /// Enforced client-side by the <see cref="AccessWriter"/> instance that declared it —
+    /// not written into the file.
+    /// </summary>
+    public object? DefaultValue { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether this column auto-assigns a monotonically increasing
+    /// integer when the supplied value is null / <see cref="DBNull.Value"/>. The next value
+    /// is seeded from <c>max(existing) + 1</c> on first use (or <c>1</c> for an empty table)
+    /// and incremented per insert. Only valid for <see cref="byte"/>, <see cref="short"/>,
+    /// <see cref="int"/>, and <see cref="long"/> columns.
+    /// </summary>
+    /// <remarks>
+    /// Persisted in the JET TDEF column-flag bit <c>FLAG_AUTO_LONG (0x04)</c>. The
+    /// auto-increment behaviour is restored when the database is reopened.
+    /// </remarks>
+    public bool IsAutoIncrement { get; init; }
+
+    /// <summary>
+    /// Gets an optional client-side validation predicate invoked for every supplied
+    /// non-null value before the row is written. Returning <c>false</c> raises an
+    /// <see cref="ArgumentException"/>. Not persisted — a CLR delegate cannot be
+    /// serialized into the JET file.
+    /// </summary>
+    public Func<object?, bool>? ValidationRule { get; init; }
 }

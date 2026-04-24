@@ -31,6 +31,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly bool _respectExistingLockFile;
     private readonly ReaderWriterLockSlim _stateLock = new(LockRecursionPolicy.NoRecursion);
 
+    /// <summary>
+    /// Per-table client-side constraint registry. Populated by <see cref="CreateTableAsync"/>
+    /// and the schema-evolution helpers. Keyed by table name (case-insensitive). The list is
+    /// kept positionally aligned with the table's columns and is consulted at insert time to
+    /// apply default values, auto-increment, required-field, and validation rule semantics.
+    /// </summary>
+    private readonly Dictionary<string, List<ColumnConstraint>> _constraints =
+        new(StringComparer.OrdinalIgnoreCase);
+
     private List<CatalogEntry>? _catalogCache;
     private long _cachedInsertTDefPage = -1;
     private long _cachedInsertPageNumber = -1;
@@ -247,6 +256,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         await InsertCatalogEntryAsync(tableName, tdefPageNumber, cancellationToken).ConfigureAwait(false);
+        RegisterConstraints(tableName, columns);
         InvalidateCatalogCache();
     }
 
@@ -291,6 +301,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new InvalidOperationException($"Table '{tableName}' does not exist.");
         }
 
+        UnregisterConstraints(tableName);
         InvalidateCatalogCache();
     }
 
@@ -398,7 +409,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 var next = new List<ColumnDefinition>(existing);
                 ColumnDefinition src = next[idx];
-                next[idx] = new ColumnDefinition(newColumnName, src.ClrType, src.MaxLength);
+                next[idx] = new ColumnDefinition(newColumnName, src.ClrType, src.MaxLength)
+                {
+                    IsNullable = src.IsNullable,
+                    DefaultValue = src.DefaultValue,
+                    IsAutoIncrement = src.IsAutoIncrement,
+                    ValidationRule = src.ValidationRule,
+                };
                 return next;
             },
             (oldRow, _) => oldRow,
@@ -415,6 +432,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        await ApplyConstraintsAsync(tableName, tableDef, values, cancellationToken).ConfigureAwait(false);
         await InsertRowDataAsync(entry.TDefPage, tableDef, values, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
@@ -434,6 +452,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             cancellationToken.ThrowIfCancellationRequested();
             Guard.NotNull(row, nameof(rows));
+            await ApplyConstraintsAsync(tableName, tableDef, row, cancellationToken).ConfigureAwait(false);
             await InsertRowDataAsync(entry.TDefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
             inserted++;
         }
@@ -454,7 +473,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
         var headers = tableDef.Columns.ConvertAll(c => c.Name);
         var index = RowMapper<T>.BuildIndex(headers);
-        await InsertRowDataAsync(entry.TDefPage, tableDef, RowMapper<T>.ToRow(item, index), cancellationToken: cancellationToken).ConfigureAwait(false);
+        object[] mappedRow = RowMapper<T>.ToRow(item, index);
+        await ApplyConstraintsAsync(tableName, tableDef, mappedRow, cancellationToken).ConfigureAwait(false);
+        await InsertRowDataAsync(entry.TDefPage, tableDef, mappedRow, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -476,7 +497,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             cancellationToken.ThrowIfCancellationRequested();
             Guard.NotNull(item, nameof(items));
-            await InsertRowDataAsync(entry.TDefPage, tableDef, RowMapper<T>.ToRow(item, index), cancellationToken: cancellationToken).ConfigureAwait(false);
+            object[] mappedRow = RowMapper<T>.ToRow(item, index);
+            await ApplyConstraintsAsync(tableName, tableDef, mappedRow, cancellationToken).ConfigureAwait(false);
+            await InsertRowDataAsync(entry.TDefPage, tableDef, mappedRow, cancellationToken: cancellationToken).ConfigureAwait(false);
             inserted++;
         }
 
@@ -645,6 +668,251 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         await base.DisposeAsync().ConfigureAwait(false);
     }
 
+    private static ColumnConstraint ToConstraint(ColumnDefinition def)
+    {
+        return new ColumnConstraint
+        {
+            Name = def.Name,
+            ClrType = def.ClrType,
+            IsNullable = def.IsNullable,
+            DefaultValue = def.DefaultValue,
+            IsAutoIncrement = def.IsAutoIncrement,
+            ValidationRule = def.ValidationRule,
+        };
+    }
+
+    private static bool IsIntegralType(Type t)
+    {
+        return t == typeof(byte) || t == typeof(short) || t == typeof(int) || t == typeof(long);
+    }
+
+    // The return type must remain 'object' so callers can store the boxed integral
+    // (byte/short/int/long) directly into a values[] array preserving the column's CLR type.
+#pragma warning disable CA1859
+    private static object ConvertIntegral(long value, Type targetType)
+#pragma warning restore CA1859
+    {
+        if (targetType == typeof(byte))
+        {
+            return checked((byte)value);
+        }
+
+        if (targetType == typeof(short))
+        {
+            return checked((short)value);
+        }
+
+        if (targetType == typeof(int))
+        {
+            return checked((int)value);
+        }
+
+        if (targetType == typeof(long))
+        {
+            return value;
+        }
+
+        return value;
+    }
+
+    private void RegisterConstraints(string tableName, IReadOnlyList<ColumnDefinition> defs)
+    {
+        var list = new List<ColumnConstraint>(defs.Count);
+        bool anyConstraint = false;
+        foreach (ColumnDefinition def in defs)
+        {
+            ColumnConstraint c = ToConstraint(def);
+            anyConstraint |= c.HasAnyConstraint;
+
+            if (c.IsAutoIncrement && !IsIntegralType(c.ClrType))
+            {
+                throw new ArgumentException(
+                    $"Column '{c.Name}' is marked IsAutoIncrement=true but its CLR type '{c.ClrType}' is not an integer type.",
+                    nameof(defs));
+            }
+
+            list.Add(c);
+        }
+
+        if (anyConstraint)
+        {
+            _constraints[tableName] = list;
+        }
+        else
+        {
+            _constraints.Remove(tableName);
+        }
+    }
+
+    private void UnregisterConstraints(string tableName)
+    {
+        _constraints.Remove(tableName);
+    }
+
+    private void RenameConstraintsTable(string oldName, string newName)
+    {
+        if (_constraints.TryGetValue(oldName, out List<ColumnConstraint>? list))
+        {
+            _constraints.Remove(oldName);
+            _constraints[newName] = list;
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds a per-column constraint list from the persisted TDEF column flags.
+    /// Only the bits that JET physically stores (FLAG_NULL_ALLOWED, FLAG_AUTO_LONG)
+    /// are restored — DefaultValue and ValidationRule remain client-side and are
+    /// only present when the same writer instance declared them.
+    /// </summary>
+    private List<ColumnConstraint> HydrateConstraintsFromTableDef(string tableName, TableDef tableDef)
+    {
+        var list = new List<ColumnConstraint>(tableDef.Columns.Count);
+        bool anyConstraint = false;
+        foreach (ColumnInfo col in tableDef.Columns)
+        {
+            bool isNullable = (col.Flags & 0x02) != 0;
+            bool isAutoIncrement = (col.Flags & 0x04) != 0;
+
+            ColumnConstraint c = new()
+            {
+                Name = col.Name,
+                ClrType = TdefTypeToClrType(col.Type),
+                IsNullable = isNullable,
+                IsAutoIncrement = isAutoIncrement,
+            };
+
+            anyConstraint |= c.HasAnyConstraint;
+            list.Add(c);
+        }
+
+        if (anyConstraint)
+        {
+            _constraints[tableName] = list;
+        }
+
+        return list;
+    }
+
+    private static Type TdefTypeToClrType(byte type)
+    {
+        switch (type)
+        {
+            case T_BOOL: return typeof(bool);
+            case T_BYTE: return typeof(byte);
+            case T_INT: return typeof(short);
+            case T_LONG: return typeof(int);
+            case T_MONEY: return typeof(decimal);
+            case T_FLOAT: return typeof(float);
+            case T_DOUBLE: return typeof(double);
+            case T_DATETIME: return typeof(DateTime);
+            case T_NUMERIC: return typeof(decimal);
+            case T_GUID: return typeof(Guid);
+            case T_TEXT:
+            case T_MEMO: return typeof(string);
+            case T_BINARY:
+            case T_OLE: return typeof(byte[]);
+            default: return typeof(object);
+        }
+    }
+
+    private async ValueTask ApplyConstraintsAsync(string tableName, TableDef tableDef, object[] values, CancellationToken cancellationToken)
+    {
+        if (!_constraints.TryGetValue(tableName, out List<ColumnConstraint>? list) || list == null)
+        {
+            // The table may have been created by an earlier writer instance (or by Access
+            // itself). Hydrate the registry from the persisted column flags so NOT NULL /
+            // AutoIncrement constraints declared at CreateTableAsync time still take effect
+            // after the database is closed and reopened. DefaultValue and ValidationRule are
+            // not persisted in the JET TDEF and remain client-side only.
+            list = HydrateConstraintsFromTableDef(tableName, tableDef);
+        }
+
+        // The constraint list is positionally aligned with the columns at registration time.
+        // Add/Drop/Rename re-registers, so the count must match. Defensive bail-out otherwise.
+        if (list.Count != tableDef.Columns.Count || values.Length != tableDef.Columns.Count)
+        {
+            return;
+        }
+
+        for (int i = 0; i < list.Count; i++)
+        {
+            ColumnConstraint c = list[i];
+            object? value = values[i];
+            bool isNull = value is null || value is DBNull;
+
+            if (isNull && c.DefaultValue != null)
+            {
+                value = c.DefaultValue;
+                isNull = false;
+            }
+
+            if (isNull && c.IsAutoIncrement)
+            {
+                long next = await GetNextAutoValueAsync(tableName, c, i, cancellationToken).ConfigureAwait(false);
+                value = ConvertIntegral(next, c.ClrType);
+                isNull = false;
+            }
+
+            if (isNull && !c.IsNullable)
+            {
+                throw new InvalidOperationException(
+                    $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and no value was supplied.");
+            }
+
+            if (!isNull && c.ValidationRule != null && !c.ValidationRule(value))
+            {
+                throw new ArgumentException(
+                    $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.");
+            }
+
+            values[i] = value ?? DBNull.Value;
+        }
+    }
+
+    private async ValueTask<long> GetNextAutoValueAsync(string tableName, ColumnConstraint c, int columnIndex, CancellationToken cancellationToken)
+    {
+        if (c.NextAutoValue == null)
+        {
+            long max = 0;
+            using DataTable snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+            if (snapshot.Columns.Count > columnIndex)
+            {
+                foreach (DataRow row in snapshot.Rows)
+                {
+                    object cell = row[columnIndex];
+                    if (cell is null || cell is DBNull)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        long v = Convert.ToInt64(cell, CultureInfo.InvariantCulture);
+                        if (v > max)
+                        {
+                            max = v;
+                        }
+                    }
+                    catch (FormatException)
+                    {
+                    }
+                    catch (InvalidCastException)
+                    {
+                    }
+                    catch (OverflowException)
+                    {
+                    }
+                }
+            }
+
+            c.NextAutoValue = max + 1;
+        }
+
+        long assigned = c.NextAutoValue.Value;
+        c.NextAutoValue = assigned + 1;
+        return assigned;
+    }
+
     private static byte[]? EncodeOleValue(object value)
     {
         byte[]? data = value as byte[];
@@ -742,6 +1010,29 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             bool variable = IsVariableType(type);
             int size = GetDeclaredSize(type, definition.MaxLength, format);
 
+            // JET column-descriptor flag bits (mdbtools naming):
+            //   0x01  FLAG_FIXED        — value lives in the fixed area of the row
+            //   0x02  FLAG_NULL_ALLOWED — column accepts NULL (cleared = NOT NULL)
+            //   0x04  FLAG_AUTO_LONG    — auto-increment (Access "AutoNumber")
+            // IsNullable and IsAutoIncrement are persisted here so that constraints
+            // declared on CreateTableAsync survive across writer instances and can be
+            // rebuilt from the TDEF when the database is reopened.
+            byte flags = 0;
+            if (!variable)
+            {
+                flags |= 0x01;
+            }
+
+            if (definition.IsNullable)
+            {
+                flags |= 0x02;
+            }
+
+            if (definition.IsAutoIncrement)
+            {
+                flags |= 0x04;
+            }
+
             var column = new ColumnInfo
             {
                 Name = definition.Name,
@@ -750,7 +1041,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 VarIdx = variable ? nextVarIndex : 0,
                 FixedOff = variable ? 0 : fixedOffset,
                 Size = size,
-                Flags = (byte)(variable ? 0x02 : 0x03),
+                Flags = flags,
             };
 
             result.Columns.Add(column);
@@ -984,10 +1275,29 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
 
+        // Carry forward any client-side constraints registered for the original schema so
+        // Add/Drop/Rename do not silently strip NotNull / Default / AutoIncrement / validation rules.
+        _constraints.TryGetValue(tableName, out List<ColumnConstraint>? existingConstraints);
+
         var existingDefs = new List<ColumnDefinition>(tableDef.Columns.Count);
-        foreach (ColumnInfo col in tableDef.Columns)
+        for (int i = 0; i < tableDef.Columns.Count; i++)
         {
-            existingDefs.Add(BuildColumnDefinitionFromInfo(col));
+            ColumnInfo col = tableDef.Columns[i];
+            ColumnDefinition baseDef = BuildColumnDefinitionFromInfo(col);
+            if (existingConstraints != null && i < existingConstraints.Count
+                && string.Equals(existingConstraints[i].Name, col.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                ColumnConstraint c = existingConstraints[i];
+                baseDef = baseDef with
+                {
+                    IsNullable = c.IsNullable,
+                    DefaultValue = c.DefaultValue,
+                    IsAutoIncrement = c.IsAutoIncrement,
+                    ValidationRule = c.ValidationRule,
+                };
+            }
+
+            existingDefs.Add(baseDef);
         }
 
         List<ColumnDefinition> newDefs = projectColumns(existingDefs, tableDef);
@@ -1054,35 +1364,47 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         await InsertCatalogEntryAsync(newName, tdefPage.Value, cancellationToken).ConfigureAwait(false);
+        RenameConstraintsTable(oldName, newName);
         InvalidateCatalogCache();
     }
 
     private ColumnDefinition BuildColumnDefinitionFromInfo(ColumnInfo column)
     {
+        ColumnDefinition baseDef;
         switch (column.Type)
         {
-            case T_BOOL: return new ColumnDefinition(column.Name, typeof(bool));
-            case T_BYTE: return new ColumnDefinition(column.Name, typeof(byte));
-            case T_INT: return new ColumnDefinition(column.Name, typeof(short));
-            case T_LONG: return new ColumnDefinition(column.Name, typeof(int));
-            case T_MONEY: return new ColumnDefinition(column.Name, typeof(decimal));
-            case T_FLOAT: return new ColumnDefinition(column.Name, typeof(float));
-            case T_DOUBLE: return new ColumnDefinition(column.Name, typeof(double));
-            case T_DATETIME: return new ColumnDefinition(column.Name, typeof(DateTime));
-            case T_NUMERIC: return new ColumnDefinition(column.Name, typeof(decimal));
-            case T_GUID: return new ColumnDefinition(column.Name, typeof(Guid));
+            case T_BOOL: baseDef = new ColumnDefinition(column.Name, typeof(bool)); break;
+            case T_BYTE: baseDef = new ColumnDefinition(column.Name, typeof(byte)); break;
+            case T_INT: baseDef = new ColumnDefinition(column.Name, typeof(short)); break;
+            case T_LONG: baseDef = new ColumnDefinition(column.Name, typeof(int)); break;
+            case T_MONEY: baseDef = new ColumnDefinition(column.Name, typeof(decimal)); break;
+            case T_FLOAT: baseDef = new ColumnDefinition(column.Name, typeof(float)); break;
+            case T_DOUBLE: baseDef = new ColumnDefinition(column.Name, typeof(double)); break;
+            case T_DATETIME: baseDef = new ColumnDefinition(column.Name, typeof(DateTime)); break;
+            case T_NUMERIC: baseDef = new ColumnDefinition(column.Name, typeof(decimal)); break;
+            case T_GUID: baseDef = new ColumnDefinition(column.Name, typeof(Guid)); break;
             case T_TEXT:
                 int charLen = _format != DatabaseFormat.Jet3Mdb ? Math.Max(1, column.Size / 2) : Math.Max(1, column.Size);
-                return new ColumnDefinition(column.Name, typeof(string), charLen);
-            case T_MEMO: return new ColumnDefinition(column.Name, typeof(string));
-            case T_BINARY: return new ColumnDefinition(column.Name, typeof(byte[]), column.Size > 0 ? column.Size : 255);
-            case T_OLE: return new ColumnDefinition(column.Name, typeof(byte[]));
+                baseDef = new ColumnDefinition(column.Name, typeof(string), charLen);
+                break;
+            case T_MEMO: baseDef = new ColumnDefinition(column.Name, typeof(string)); break;
+            case T_BINARY: baseDef = new ColumnDefinition(column.Name, typeof(byte[]), column.Size > 0 ? column.Size : 255); break;
+            case T_OLE: baseDef = new ColumnDefinition(column.Name, typeof(byte[])); break;
             case T_ATTACHMENT:
             case T_COMPLEX:
                 throw new NotSupportedException($"Column '{column.Name}' has a complex type (attachment / multi-value) that cannot be rewritten by AddColumnAsync / DropColumnAsync / RenameColumnAsync.");
             default:
                 throw new NotSupportedException($"Column '{column.Name}' has unsupported type code 0x{column.Type:X2}.");
         }
+
+        // Surface the persisted TDEF flag bits as ColumnDefinition properties so the
+        // schema-rewrite path retains NOT NULL / auto-increment metadata that Access
+        // wrote into the original column descriptor.
+        return baseDef with
+        {
+            IsNullable = (column.Flags & 0x02) != 0,
+            IsAutoIncrement = (column.Flags & 0x04) != 0,
+        };
     }
 
     private byte[] BuildTDefPage(TableDef tableDef)
@@ -2058,5 +2380,26 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         public long PageNumber { get; set; }
 
         public byte[] Page { get; set; } = [];
+    }
+
+    private sealed class ColumnConstraint
+    {
+        public string Name { get; set; } = string.Empty;
+
+        public Type ClrType { get; set; } = typeof(object);
+
+        public bool IsNullable { get; set; } = true;
+
+        public object? DefaultValue { get; set; }
+
+        public bool IsAutoIncrement { get; set; }
+
+        public Func<object?, bool>? ValidationRule { get; set; }
+
+        // Lazy-seeded next auto-increment value (max(existing) + 1). Null until first use.
+        public long? NextAutoValue { get; set; }
+
+        public bool HasAnyConstraint =>
+            !IsNullable || DefaultValue != null || IsAutoIncrement || ValidationRule != null;
     }
 }

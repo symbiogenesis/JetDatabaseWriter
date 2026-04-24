@@ -545,7 +545,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 : TypeCodeToName(col.Type),
             ClrType = TypeCodeToClrType(col.Type),
             MaxLength = col.Size > 0 ? col.Size : null,
-            IsNullable = true,
+            IsNullable = (col.Flags & 0x02) != 0,
             IsFixedLength = col.IsFixed,
             Ordinal = index,
             Size = SizeForColumn(col),

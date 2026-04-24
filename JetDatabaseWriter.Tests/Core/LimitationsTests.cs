@@ -198,31 +198,214 @@ public sealed class LimitationsTests : IDisposable
     }
 
     [Fact]
-    public void SchemaEvolution_ColumnDefinition_OnlyExposesNameClrTypeAndMaxLength()
+    public void SchemaEvolution_ColumnDefinition_ExposesConstraintProperties()
     {
-        // README: "ColumnDefinition exposes Name, ClrType, and MaxLength only — no
-        //          NotNull, Default, AutoIncrement, or validation rule."
+        // Lifted limitation: ColumnDefinition now exposes IsNullable, DefaultValue,
+        // IsAutoIncrement, and ValidationRule on top of Name/ClrType/MaxLength.
+        // IsNullable and IsAutoIncrement are persisted in the TDEF column-flag bits;
+        // DefaultValue and ValidationRule remain client-side.
         var publicProps = typeof(ColumnDefinition)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Select(p => p.Name)
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray();
 
-        string[] expected = ["ClrType", "MaxLength", "Name"];
+        string[] expected = ["ClrType", "DefaultValue", "IsAutoIncrement", "IsNullable", "MaxLength", "Name", "ValidationRule"];
         Assert.Equal(expected, publicProps);
     }
 
     [Fact]
-    public void SchemaEvolution_ColumnDefinition_DoesNotExposeNullabilityDefaultOrAutoIncrement()
+    public void SchemaEvolution_ColumnDefinition_DefaultsAreBackwardCompatible()
     {
-        Type t = typeof(ColumnDefinition);
-        Assert.Null(t.GetProperty("IsNullable", BindingFlags.Public | BindingFlags.Instance));
-        Assert.Null(t.GetProperty("AllowNull", BindingFlags.Public | BindingFlags.Instance));
-        Assert.Null(t.GetProperty("NotNull", BindingFlags.Public | BindingFlags.Instance));
-        Assert.Null(t.GetProperty("Default", BindingFlags.Public | BindingFlags.Instance));
-        Assert.Null(t.GetProperty("DefaultValue", BindingFlags.Public | BindingFlags.Instance));
-        Assert.Null(t.GetProperty("AutoIncrement", BindingFlags.Public | BindingFlags.Instance));
-        Assert.Null(t.GetProperty("ValidationRule", BindingFlags.Public | BindingFlags.Instance));
+        // The new properties must default to "no constraint" so existing callers
+        // observe identical behaviour to the pre-feature ColumnDefinition.
+        var def = new ColumnDefinition("X", typeof(int));
+        Assert.True(def.IsNullable);
+        Assert.Null(def.DefaultValue);
+        Assert.False(def.IsAutoIncrement);
+        Assert.Null(def.ValidationRule);
+    }
+
+    [Fact]
+    public async Task SchemaEvolution_ColumnDefinition_DefaultValue_IsAppliedOnInsert()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        const string table = "Defaults";
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Score", typeof(int)) { DefaultValue = 42 },
+                ],
+                TestContext.Current.CancellationToken);
+
+            // Caller passes DBNull for Score → writer should substitute the default.
+            await writer.InsertRowAsync(table, [1, DBNull.Value], TestContext.Current.CancellationToken);
+
+            // Caller passes a value → default is NOT applied.
+            await writer.InsertRowAsync(table, [2, 7], TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Equal(2, dt.Rows.Count);
+        Assert.Equal(42, dt.Rows[0]["Score"]);
+        Assert.Equal(7, dt.Rows[1]["Score"]);
+    }
+
+    [Fact]
+    public async Task SchemaEvolution_ColumnDefinition_NotNull_RejectsMissingValue()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        const string table = "Required";
+
+        await using var writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            table,
+            [
+                new("Id", typeof(int)),
+                new("Name", typeof(string), maxLength: 50) { IsNullable = false },
+            ],
+            TestContext.Current.CancellationToken);
+
+        // Supplying DBNull for the required column must throw.
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await writer.InsertRowAsync(table, [1, DBNull.Value], TestContext.Current.CancellationToken));
+
+        // A non-null value is accepted.
+        await writer.InsertRowAsync(table, [2, "Alice"], TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task SchemaEvolution_ColumnDefinition_AutoIncrement_AssignsMonotonicValues()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        const string table = "AutoInc";
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)) { IsAutoIncrement = true, IsNullable = false },
+                    new("Name", typeof(string), maxLength: 50),
+                ],
+                TestContext.Current.CancellationToken);
+
+            // Pass DBNull for Id → writer assigns 1, 2, 3.
+            await writer.InsertRowAsync(table, [DBNull.Value, "A"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [DBNull.Value, "B"], TestContext.Current.CancellationToken);
+
+            // Explicit value is honoured (and may exceed the running counter).
+            await writer.InsertRowAsync(table, [100, "C"], TestContext.Current.CancellationToken);
+
+            // Next auto-increment continues from where the counter left off (3 here).
+            await writer.InsertRowAsync(table, [DBNull.Value, "D"], TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Equal(4, dt.Rows.Count);
+        Assert.Equal(1, dt.Rows[0]["Id"]);
+        Assert.Equal(2, dt.Rows[1]["Id"]);
+        Assert.Equal(100, dt.Rows[2]["Id"]);
+        Assert.Equal(3, dt.Rows[3]["Id"]);
+    }
+
+    [Fact]
+    public async Task SchemaEvolution_ColumnDefinition_NotNull_PersistsAcrossWriterReopen()
+    {
+        // IsNullable=false is encoded in the JET TDEF column-flag bit FLAG_NULL_ALLOWED (0x02).
+        // A second writer must restore the constraint without any in-memory state from the
+        // writer that originally declared it.
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        const string table = "Required";
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Name", typeof(string), maxLength: 50) { IsNullable = false },
+                ],
+                TestContext.Current.CancellationToken);
+        }
+
+        // Reopen and verify the constraint still throws on a NULL insert.
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await writer.InsertRowAsync(table, [1, DBNull.Value], TestContext.Current.CancellationToken));
+
+            await writer.InsertRowAsync(table, [2, "Alice"], TestContext.Current.CancellationToken);
+        }
+
+        // The reader also surfaces the persisted nullability via ColumnMetadata.
+        await using var reader = await OpenReaderAsync(stream);
+        var meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+        Assert.True(meta[0].IsNullable);
+        Assert.False(meta[1].IsNullable);
+    }
+
+    [Fact]
+    public async Task SchemaEvolution_ColumnDefinition_AutoIncrement_PersistsAcrossWriterReopen()
+    {
+        // IsAutoIncrement=true is encoded in the JET TDEF column-flag bit FLAG_AUTO_LONG (0x04).
+        // A second writer must continue assigning monotonic values seeded from max(existing) + 1.
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        const string table = "AutoIncPersist";
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)) { IsAutoIncrement = true, IsNullable = false },
+                    new("Name", typeof(string), maxLength: 50),
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(table, [DBNull.Value, "A"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [DBNull.Value, "B"], TestContext.Current.CancellationToken);
+        }
+
+        // Reopen and continue inserting — the auto-increment must resume from max+1 = 3.
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync(table, [DBNull.Value, "C"], TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Equal(3, dt.Rows.Count);
+        Assert.Equal(1, dt.Rows[0]["Id"]);
+        Assert.Equal(2, dt.Rows[1]["Id"]);
+        Assert.Equal(3, dt.Rows[2]["Id"]);
+    }
+
+    [Fact]
+    public async Task SchemaEvolution_ColumnDefinition_ValidationRule_RejectsBadValues()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        const string table = "Validated";
+
+        await using var writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            table,
+            [
+                new("Id", typeof(int)),
+                new("Score", typeof(int)) { ValidationRule = v => v is int i && i is >= 0 and <= 100 },
+            ],
+            TestContext.Current.CancellationToken);
+
+        await writer.InsertRowAsync(table, [1, 50], TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.InsertRowAsync(table, [2, 250], TestContext.Current.CancellationToken));
     }
 
     [Fact]
