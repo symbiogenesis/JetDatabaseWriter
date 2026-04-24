@@ -70,4 +70,34 @@ public sealed record ColumnDefinition
     /// serialized into the JET file.
     /// </summary>
     public Func<object?, bool>? ValidationRule { get; init; }
+
+    /// <summary>
+    /// Gets the persisted Jet expression string used as the column default at the database
+    /// engine level (e.g. <c>"0"</c>, <c>"\"hi\""</c>, <c>"=Now()"</c>). When set, this value
+    /// is written into <c>MSysObjects.LvProp</c> so it survives across writer instances and
+    /// is honoured by Microsoft Access. Takes precedence over <see cref="DefaultValue"/> for
+    /// persistence; the CLR <see cref="DefaultValue"/> continues to drive the in-process
+    /// <see cref="DBNull"/>-substitution path.
+    /// </summary>
+    public string? DefaultValueExpression { get; init; }
+
+    /// <summary>
+    /// Gets the persisted Jet expression evaluated by the database engine on insert / update
+    /// (e.g. <c>"&gt;=0 And &lt;=100"</c>). Persisted in <c>MSysObjects.LvProp</c>. Independent
+    /// of the in-process <see cref="ValidationRule"/> delegate.
+    /// </summary>
+    public string? ValidationRuleExpression { get; init; }
+
+    /// <summary>
+    /// Gets the user-facing message Microsoft Access displays when
+    /// <see cref="ValidationRuleExpression"/> rejects a value. Persisted in
+    /// <c>MSysObjects.LvProp</c>.
+    /// </summary>
+    public string? ValidationText { get; init; }
+
+    /// <summary>
+    /// Gets the free-text column description shown in Access Design View. Persisted in
+    /// <c>MSysObjects.LvProp</c>.
+    /// </summary>
+    public string? Description { get; init; }
 }

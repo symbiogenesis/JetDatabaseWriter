@@ -13,6 +13,21 @@ using Xunit;
 /// </summary>
 public sealed class CreateDatabaseTests
 {
+#pragma warning disable SA1202 // Phase 3 catalog name fixtures kept adjacent to the tests that consume them.
+    private static readonly string[] FullCatalogColumnNames =
+    [
+        "Id", "ParentId", "Name", "Type", "DateCreate", "DateUpdate", "Owner",
+        "Flags", "Database", "Connect", "ForeignName", "RmtInfoShort",
+        "RmtInfoLong", "Lv", "LvProp", "LvModule", "LvExtra",
+    ];
+
+    private static readonly string[] SlimCatalogColumnNames =
+    [
+        "Id", "ParentId", "Name", "Type", "DateCreate", "DateUpdate", "Flags",
+        "ForeignName", "Database",
+    ];
+#pragma warning restore SA1202
+
     // ── CreateDatabaseAsync (Stream, Jet4Mdb) ─────────────────────────────────
 
     [Fact]
@@ -333,6 +348,98 @@ public sealed class CreateDatabaseTests
     }
 
     // ── Helpers ────────────────────────────────────────────────────────
+
+    // ── Phase 3: WriteFullCatalogSchema ───────────────────────────────
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateDatabaseAsync_FullCatalogSchema_DefaultEmits17ColumnMSysObjects(DatabaseFormat format)
+    {
+        var ms = new MemoryStream();
+
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            // Default: WriteFullCatalogSchema = true
+        }
+
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        JetDatabaseWriter.TableDef? msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
+
+        Assert.NotNull(msys);
+        Assert.Equal(FullCatalogColumnNames, msys!.Columns.ConvertAll(c => c.Name));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateDatabaseAsync_FullCatalogSchema_OptedOutEmitsLegacy9ColumnMSysObjects(DatabaseFormat format)
+    {
+        var ms = new MemoryStream();
+        var opts = new AccessWriterOptions { UseLockFile = false, WriteFullCatalogSchema = false };
+
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, opts, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            // Opt-out: WriteFullCatalogSchema = false retains the historical layout.
+        }
+
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        JetDatabaseWriter.TableDef? msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
+
+        Assert.NotNull(msys);
+        Assert.Equal(SlimCatalogColumnNames, msys!.Columns.ConvertAll(c => c.Name));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateDatabaseAsync_FullCatalogSchema_CreateTable_RoundTripsAcrossOpenClose(DatabaseFormat format)
+    {
+        var ms = new MemoryStream();
+        var defs = new[] { new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Name", typeof(string), 50) };
+
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("People", defs, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("People", [1, "Alice"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("People", [2, "Bob"], TestContext.Current.CancellationToken);
+        }
+
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+
+        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(["People"], tables);
+
+        var meta = await reader.GetColumnMetadataAsync("People", TestContext.Current.CancellationToken);
+        Assert.Equal(["Id", "Name"], meta.ConvertAll(c => c.Name));
+
+        // None of the new property fields are populated yet (Phase 4 writes them).
+        Assert.All(meta, m =>
+        {
+            Assert.Null(m.DefaultValueExpression);
+            Assert.Null(m.ValidationRuleExpression);
+            Assert.Null(m.ValidationText);
+            Assert.Null(m.Description);
+        });
+
+        var rows = new List<object[]>();
+        await foreach (object[] row in reader.Rows("People", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            rows.Add(row);
+        }
+
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(1, rows[0][0]);
+        Assert.Equal("Alice", rows[0][1]);
+        Assert.Equal(2, rows[1][0]);
+        Assert.Equal("Bob", rows[1][1]);
+    }
 
     private static void TryDeleteFile(string path)
     {
