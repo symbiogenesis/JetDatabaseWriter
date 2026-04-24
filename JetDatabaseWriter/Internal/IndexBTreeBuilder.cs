@@ -76,7 +76,11 @@ internal static class IndexBTreeBuilder
         IReadOnlyList<IndexLeafPageBuilder.LeafEntry> entries,
         long firstPageNumber)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(pageSize, IndexLeafPageBuilder.Jet4FirstEntryOffset);
+        if (pageSize <= IndexLeafPageBuilder.Jet4FirstEntryOffset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {IndexLeafPageBuilder.Jet4FirstEntryOffset}.");
+        }
+
         Guard.NotNull(entries, nameof(entries));
 
         if (firstPageNumber < 0 || firstPageNumber > 0xFFFFFF)

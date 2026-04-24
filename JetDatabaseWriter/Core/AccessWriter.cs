@@ -529,7 +529,38 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return next;
             },
             (oldRow, _) => oldRow,
-            cancellationToken);
+            cancellationToken,
+            projectIndexes: (existingIndexes, newDefs) =>
+            {
+                var newColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (ColumnDefinition c in newDefs)
+                {
+                    newColumnNames.Add(c.Name);
+                }
+
+                var result = new List<IndexDefinition>(existingIndexes.Count);
+                foreach (IndexMetadata idx in existingIndexes)
+                {
+                    if (idx.Kind != IndexKind.Normal || idx.Columns.Count != 1)
+                    {
+                        continue;
+                    }
+
+                    string keyColumn = idx.Columns[0].Name;
+                    string remapped = string.Equals(keyColumn, oldColumnName, StringComparison.OrdinalIgnoreCase)
+                        ? newColumnName
+                        : keyColumn;
+
+                    if (string.IsNullOrEmpty(remapped) || !newColumnNames.Contains(remapped))
+                    {
+                        continue;
+                    }
+
+                    result.Add(new IndexDefinition(idx.Name, remapped));
+                }
+
+                return result;
+            });
     }
 
     /// <inheritdoc/>
@@ -544,6 +575,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
         await ApplyConstraintsAsync(tableName, tableDef, values, cancellationToken).ConfigureAwait(false);
         await InsertRowDataAsync(entry.TDefPage, tableDef, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -567,6 +599,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             inserted++;
         }
 
+        if (inserted > 0)
+        {
+            await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        }
+
         return inserted;
     }
 
@@ -586,6 +623,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         object[] mappedRow = RowMapper<T>.ToRow(item, index);
         await ApplyConstraintsAsync(tableName, tableDef, mappedRow, cancellationToken).ConfigureAwait(false);
         await InsertRowDataAsync(entry.TDefPage, tableDef, mappedRow, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -611,6 +649,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             await ApplyConstraintsAsync(tableName, tableDef, mappedRow, cancellationToken).ConfigureAwait(false);
             await InsertRowDataAsync(entry.TDefPage, tableDef, mappedRow, cancellationToken: cancellationToken).ConfigureAwait(false);
             inserted++;
+        }
+
+        if (inserted > 0)
+        {
+            await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
         }
 
         return inserted;
@@ -677,6 +720,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             updated++;
         }
 
+        if (updated > 0)
+        {
+            await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        }
+
         return updated;
     }
 
@@ -719,6 +767,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (deleted > 0)
         {
             await AdjustTDefRowCountAsync(entry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
+            await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
         }
 
         return deleted;
@@ -1809,6 +1858,79 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     /// <summary>
     /// Opens a transient <see cref="AccessReader"/> against the same backing file/stream
+    /// to enumerate <paramref name="tableName"/>'s logical indexes via the same parser
+    /// that <see cref="IAccessReader.ListIndexesAsync"/> uses. Used by
+    /// <see cref="RewriteTableAsync"/> to forward existing index definitions through
+    /// Add/Drop/Rename column operations (W5).
+    /// </summary>
+    private async ValueTask<IReadOnlyList<IndexMetadata>> ReadIndexMetadataSnapshotAsync(string tableName, CancellationToken cancellationToken = default)
+    {
+        var options = new AccessReaderOptions
+        {
+            FileShare = FileShare.ReadWrite,
+            ValidateOnOpen = false,
+            Password = _password,
+        };
+
+        AccessReader reader;
+        if (!string.IsNullOrEmpty(_path) && !_isAgileEncryptedRewrap)
+        {
+            reader = await AccessReader.OpenAsync(_path, options, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            _stream.Position = 0;
+            reader = await AccessReader.OpenAsync(_stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
+        }
+
+        await using (reader)
+        {
+            return await reader.ListIndexesAsync(tableName, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Default index-projection strategy used by <see cref="RewriteTableAsync"/>
+    /// when no caller-specific projection is supplied. Forwards every existing
+    /// single-column normal index whose key column still exists (case-insensitive
+    /// name match) in the rebuilt schema. PK / FK / multi-column indexes are not
+    /// emitted today (W8/W9 territory) so they are filtered out unconditionally.
+    /// </summary>
+    private static List<IndexDefinition> DefaultIndexProjection(IReadOnlyList<IndexMetadata> existing, IReadOnlyList<ColumnDefinition> newDefs)
+    {
+        var result = new List<IndexDefinition>(existing.Count);
+        var newColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (ColumnDefinition c in newDefs)
+        {
+            newColumnNames.Add(c.Name);
+        }
+
+        foreach (IndexMetadata idx in existing)
+        {
+            if (idx.Kind != IndexKind.Normal)
+            {
+                continue;
+            }
+
+            if (idx.Columns.Count != 1)
+            {
+                continue;
+            }
+
+            string keyColumn = idx.Columns[0].Name;
+            if (string.IsNullOrEmpty(keyColumn) || !newColumnNames.Contains(keyColumn))
+            {
+                continue;
+            }
+
+            result.Add(new IndexDefinition(idx.Name, keyColumn));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Opens a transient <see cref="AccessReader"/> against the same backing file/stream
     /// to read and parse the <c>MSysObjects.LvProp</c> blob for the catalog row whose
     /// <c>Id</c> low-24 bits equal <paramref name="tdefPage"/>. Returns
     /// <see langword="null"/> when the catalog has no <c>LvProp</c> column or the row
@@ -1940,7 +2062,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         string tableName,
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
         Func<object[], TableDef, object[]> projectRow,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<IReadOnlyList<IndexMetadata>, IReadOnlyList<ColumnDefinition>, List<IndexDefinition>>? projectIndexes = null)
     {
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
@@ -1999,12 +2122,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new InvalidOperationException($"Table '{tableName}' must retain at least one column.");
         }
 
-        // Snapshot existing rows BEFORE we mutate the catalog so the snapshot reader
-        // sees the original schema.
+        // Snapshot existing rows AND existing indexes BEFORE we mutate the catalog,
+        // so the snapshot reader sees the original schema and we can forward
+        // surviving index definitions to the rebuilt table (W5).
         using DataTable snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<IndexMetadata> existingIndexes = await ReadIndexMetadataSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+
+        // Default index projection: keep every existing index whose single key
+        // column survives in the new schema (matched by case-insensitive name).
+        // AddColumn / DropColumn use this default; RenameColumn supplies a custom
+        // projection that rewrites references to the renamed column.
+        List<IndexDefinition> projectedIndexes = projectIndexes != null
+            ? projectIndexes(existingIndexes, newDefs)
+            : DefaultIndexProjection(existingIndexes, newDefs);
 
         string tempName = $"~tmp_{Guid.NewGuid():N}".Substring(0, 18);
-        await CreateTableAsync(tempName, newDefs, cancellationToken).ConfigureAwait(false);
+        await CreateTableAsync(tempName, newDefs, projectedIndexes, cancellationToken).ConfigureAwait(false);
 
         CatalogEntry tempEntry = await GetRequiredCatalogEntryAsync(tempName, cancellationToken).ConfigureAwait(false);
         TableDef tempDef = await ReadRequiredTableDefAsync(tempEntry.TDefPage, tempName, cancellationToken).ConfigureAwait(false);
@@ -2021,6 +2154,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             object[] projected = projectRow(sourceRow, tableDef);
             await InsertRowDataAsync(tempEntry.TDefPage, tempDef, projected, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        // W5: rebuild forwarded indexes once after the bulk row copy completes,
+        // so we don't pay the rebuild cost per row.
+        if (projectedIndexes.Count > 0 && snapshot.Rows.Count > 0)
+        {
+            await MaintainIndexesAsync(tempEntry.TDefPage, tempDef, tempName, cancellationToken).ConfigureAwait(false);
         }
 
         // Drop the original table, then rename the temp catalog entry to take its place.
@@ -3253,6 +3393,196 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             yield return new RowLocation(pageNumber, rb.RowIndex, rb.RowStart, rb.RowSize);
         }
+    }
+
+    /// <summary>
+    /// W5: rebuild every index B-tree on <paramref name="tableName"/> from the
+    /// current row data. Called at the end of each public mutation method that
+    /// touches table rows so that indexes stay live instead of going stale until
+    /// Microsoft Access rebuilds them on Compact &amp; Repair.
+    /// <para>
+    /// The implementation is a bulk rebuild: for each real index, every live row
+    /// is encoded via <see cref="IndexKeyEncoder"/>, the entries are sorted by
+    /// encoded key, and a fresh B-tree is built via <see cref="IndexBTreeBuilder"/>.
+    /// The new root page is patched into the real-index <c>first_dp</c> field on
+    /// the TDEF. Old index pages are orphaned (acceptable; Access compact-and-repair
+    /// reclaims them — this library does not maintain a free-page bitmap).
+    /// </para>
+    /// <para>
+    /// Indexes whose key column type is unsupported by the encoder (text, GUID,
+    /// numeric, attachment, etc.) are skipped silently; their <c>first_dp</c> stays
+    /// pointing at whatever leaf was emitted at <c>CreateTableAsync</c> time, which
+    /// will go stale on first row write — same behaviour as W4 shipped with.
+    /// </para>
+    /// </summary>
+    private async ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
+    {
+        // Jet3 (.mdb Access 97) index emission is not supported by W1, so there
+        // is nothing to maintain. CreateTableAsync rejects IndexDefinition entries
+        // for Jet3 outright; any indexes encountered here would be foreign data
+        // we cannot safely rebuild.
+        if (_format == DatabaseFormat.Jet3Mdb)
+        {
+            return;
+        }
+
+        // Read the TDEF page bytes (single-page TDEFs produced by this writer).
+        // Multi-page TDEF chains are not produced by CreateTableAsync today.
+        byte[] tdefPageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] tdefBuffer;
+        try
+        {
+            tdefBuffer = (byte[])tdefPageBytes.Clone();
+        }
+        finally
+        {
+            ReturnPage(tdefPageBytes);
+        }
+
+        int numCols = Ru16(tdefBuffer, _tdNumCols);
+        int numIdx = Ri32(tdefBuffer, _tdNumCols + 2);
+        int numRealIdx = Ri32(tdefBuffer, _tdNumRealIdx);
+        if (numIdx <= 0 || numRealIdx <= 0 || numIdx > 1000 || numRealIdx > 1000)
+        {
+            return;
+        }
+
+        const int RealIdxPhysSz = 52; // Jet4/ACE only; gated above.
+        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
+        int namePos = colStart + (numCols * _colDescSz);
+        for (int i = 0; i < numCols; i++)
+        {
+            if (ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
+            {
+                return;
+            }
+        }
+
+        int realIdxDescStart = namePos;
+
+        // For each real-index slot referenced by a logical index, recover the key
+        // column number (col_map slot 0; W1/W2 emits exactly one column per index)
+        // and the byte offset of that real-idx's first_dp field.
+        var realIdxToKey = new Dictionary<int, (int ColumnNumber, int FirstDpOffset)>();
+        for (int ri = 0; ri < numRealIdx; ri++)
+        {
+            int phys = realIdxDescStart + (ri * RealIdxPhysSz);
+            if (phys + RealIdxPhysSz > tdefBuffer.Length)
+            {
+                break;
+            }
+
+            int keyColNum = Ru16(tdefBuffer, phys + 4);
+            if (keyColNum == 0xFFFF)
+            {
+                continue;
+            }
+
+            // first_dp offset: unknown(4) + col_map(30) + used_pages(4).
+            realIdxToKey[ri] = (keyColNum, phys + 4 + 30 + 4);
+        }
+
+        if (realIdxToKey.Count == 0)
+        {
+            return;
+        }
+
+        // Build column ordinal lookup so we can find each key column's value in the
+        // snapshot row by ColNum (deleted-column gaps mean ColNum != snapshot index).
+        var snapshotIndexByColNum = new Dictionary<int, int>(tableDef.Columns.Count);
+        for (int c = 0; c < tableDef.Columns.Count; c++)
+        {
+            snapshotIndexByColNum[tableDef.Columns[c].ColNum] = c;
+        }
+
+        // Snapshot rows + locations in matching order (same page-walk semantics as
+        // the existing UpdateRowsAsync/DeleteRowsAsync rely on).
+        using DataTable snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+        List<RowLocation> locations = await GetLiveRowLocationsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        int rowCount = Math.Min(snapshot.Rows.Count, locations.Count);
+
+        bool tdefDirty = false;
+        foreach (KeyValuePair<int, (int ColumnNumber, int FirstDpOffset)> kvp in realIdxToKey)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            ColumnInfo? keyCol = tableDef.Columns.Find(c => c.ColNum == kvp.Value.ColumnNumber);
+            if (keyCol == null)
+            {
+                continue;
+            }
+
+            if (!snapshotIndexByColNum.TryGetValue(kvp.Value.ColumnNumber, out int snapIdx))
+            {
+                continue;
+            }
+
+            var entries = new List<(byte[] Key, long Page, byte Row)>(rowCount);
+            bool encoderRejected = false;
+            for (int r = 0; r < rowCount; r++)
+            {
+                object cell = snapshot.Rows[r][snapIdx];
+                object? value = cell is DBNull ? null : cell;
+                byte[] encoded;
+                try
+                {
+                    encoded = IndexKeyEncoder.EncodeEntry(keyCol.Type, value, ascending: true);
+                }
+                catch (NotSupportedException)
+                {
+                    // Unsupported key type for this column (text, GUID, numeric,
+                    // attachment, etc.). Leave first_dp pointing at the existing
+                    // (now-stale) leaf — same behaviour as before W5 shipped.
+                    encoderRejected = true;
+                    break;
+                }
+
+                entries.Add((encoded, locations[r].PageNumber, (byte)locations[r].RowIndex));
+            }
+
+            if (encoderRejected)
+            {
+                continue;
+            }
+
+            entries.Sort(static (a, b) => CompareKeyBytes(a.Key, b.Key));
+
+            var leafEntries = new List<IndexLeafPageBuilder.LeafEntry>(entries.Count);
+            foreach ((byte[] key, long page, byte row) in entries)
+            {
+                leafEntries.Add(new IndexLeafPageBuilder.LeafEntry(key, page, row));
+            }
+
+            long firstPageNumber = _stream.Length / _pgSz;
+            IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(_pgSz, tdefPage, leafEntries, firstPageNumber);
+            foreach (byte[] page in build.Pages)
+            {
+                await AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+            }
+
+            Wi32(tdefBuffer, kvp.Value.FirstDpOffset, checked((int)build.RootPageNumber));
+            tdefDirty = true;
+        }
+
+        if (tdefDirty)
+        {
+            await WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static int CompareKeyBytes(byte[] a, byte[] b)
+    {
+        int n = Math.Min(a.Length, b.Length);
+        for (int i = 0; i < n; i++)
+        {
+            int diff = a[i] - b[i];
+            if (diff != 0)
+            {
+                return diff;
+            }
+        }
+
+        return a.Length - b.Length;
     }
 
     private async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
