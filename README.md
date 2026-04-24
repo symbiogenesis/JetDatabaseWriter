@@ -542,7 +542,6 @@ The writer is intentionally focused on the most common create / insert / update 
 - **No hyperlink semantics.** Hyperlink fields round-trip as plain MEMO text; the `#display#address#subaddress#` structure is not parsed or emitted.
 
 ### Compression on write
-- **Strings are written uncompressed.** The reader handles JET4 "compressed unicode" (the `0xFF 0xFE` marker + 1-byte/2-byte mode toggle), but the writer always emits full UCS-2. Files written by this library will be larger than the equivalent file written by Access for the same ASCII-heavy text.
 - **Attachment payloads are not Deflate-compressed.** Access prefixes attachment `FileData` with a 1-byte flag (`0x00` raw, `0x01` zlib-Deflate). The reader decompresses both; there is no writer API that emits the compressed form. (This is moot today because attachment column creation is also unsupported — see above.)
 
 ### Linked tables

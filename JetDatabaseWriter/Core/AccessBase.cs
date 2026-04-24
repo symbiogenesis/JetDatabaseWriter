@@ -326,6 +326,57 @@ public abstract class AccessBase : IAccessBase
     }
 
     /// <summary>
+    /// Encodes a string for storage in a Jet4 text/memo column.
+    /// When all characters are in the U+0001..U+00FF range, emits the
+    /// compressed form (<c>0xFF 0xFE</c> marker + 1 byte per character),
+    /// which the reader decodes via <see cref="DecompressJet4"/>.
+    /// Otherwise emits plain UCS-2 LE.
+    /// </summary>
+    /// <remarks>
+    /// The "no NUL" restriction (chars must be > U+0000) avoids ambiguity
+    /// with the compressed-mode toggle byte (<c>0x00</c>). The compressed
+    /// form is only chosen when it actually saves bytes (length &gt;= 3
+    /// characters), so 1- and 2-character strings are still written as
+    /// plain UCS-2 to avoid the 2-byte marker overhead.
+    /// </remarks>
+    private protected static byte[] EncodeJet4Text(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return [];
+        }
+
+        bool compressible = value.Length >= 3;
+        if (compressible)
+        {
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (c == '\0' || c > 0xFF)
+                {
+                    compressible = false;
+                    break;
+                }
+            }
+        }
+
+        if (!compressible)
+        {
+            return Encoding.Unicode.GetBytes(value);
+        }
+
+        byte[] result = new byte[value.Length + 2];
+        result[0] = 0xFF;
+        result[1] = 0xFE;
+        for (int i = 0; i < value.Length; i++)
+        {
+            result[i + 2] = (byte)value[i];
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Decodes Jet4 text (UCS-2 / UTF-16LE).
     /// If data starts with the compressed-unicode marker 0xFF 0xFE, the
     /// JET4 compressed-string algorithm is applied first.

@@ -539,16 +539,13 @@ public sealed class LimitationsTests : IDisposable
     // ── Compression on write ──────────────────────────────────────────
 
     [Fact]
-    public async Task Compression_AsciiInlineText_IsWrittenAsUncompressedUcs2()
+    public async Task Compression_AsciiInlineText_IsWrittenAsCompressedUnicode()
     {
-        // README: "Strings are written uncompressed. The reader handles JET4
-        //          'compressed unicode' (the 0xFF 0xFE marker + 1-byte/2-byte
-        //          mode toggle), but the writer always emits full UCS-2."
-        //
-        // Strategy: insert a unique ASCII sentinel into a fresh ACCDB and verify
-        // the bytes appear as UCS-2 (one 0x00 between each ASCII byte). If the
-        // writer ever starts emitting the compressed form we'll see the sentinel
-        // preceded by the 0xFF 0xFE marker as 1-byte chars instead.
+        // The writer emits the JET4 "compressed unicode" form (0xFF 0xFE marker
+        // + 1 byte per character) for text/memo values whose characters all fit
+        // in U+0001..U+00FF and are at least 3 characters long. This matches
+        // what Microsoft Access produces for ASCII-heavy text and roughly
+        // halves storage cost for such data.
         const string sentinel = "ZZUNIQUEWRITERSENTINELZZ";
 
         var ms = new MemoryStream();
@@ -569,18 +566,25 @@ public sealed class LimitationsTests : IDisposable
         byte[] ucs2 = System.Text.Encoding.Unicode.GetBytes(sentinel);
         byte[] ascii = System.Text.Encoding.ASCII.GetBytes(sentinel);
 
-        Assert.True(
-            IndexOf(bytes, ucs2) >= 0,
-            "Expected the sentinel string to be stored as UCS-2 in the file bytes.");
-
-        // Compressed JET4 strings are prefixed with 0xFF 0xFE followed by the 1-byte form.
         byte[] compressed = new byte[ascii.Length + 2];
         compressed[0] = 0xFF;
         compressed[1] = 0xFE;
         Buffer.BlockCopy(ascii, 0, compressed, 2, ascii.Length);
+
         Assert.True(
-            IndexOf(bytes, compressed) < 0,
-            "Sentinel must NOT appear in the JET4 compressed-unicode form (FF FE + 1-byte).");
+            IndexOf(bytes, compressed) >= 0,
+            "Expected the sentinel string to be stored in JET4 compressed-unicode form (FF FE + 1-byte).");
+
+        Assert.True(
+            IndexOf(bytes, ucs2) < 0,
+            "Sentinel must NOT appear in plain UCS-2 form when compression is applicable.");
+
+        // Round-trip: the reader should still see the original string.
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.NotNull(dt);
+        Assert.Equal(sentinel, dt!.Rows[0]["Txt"]);
     }
 
     // ── Linked tables ─────────────────────────────────────────────────

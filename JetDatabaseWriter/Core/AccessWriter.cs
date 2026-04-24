@@ -2108,10 +2108,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return null;
         }
 
-        byte[] bytes = _format != DatabaseFormat.Jet3Mdb ? Encoding.Unicode.GetBytes(value) : _ansiEncoding.GetBytes(value);
+        byte[] bytes = _format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(value) : _ansiEncoding.GetBytes(value);
         if (maxSize > 0 && bytes.Length > maxSize)
         {
-            int allowed = _format != DatabaseFormat.Jet3Mdb ? maxSize & ~1 : maxSize;
+            // For Jet4 compressed text (FF FE prefix + 1 byte/char) any byte
+            // boundary within the payload is a valid character boundary, so we
+            // can truncate freely. For plain UCS-2 we must stay aligned to a
+            // 2-byte char. Jet3 ANSI is 1 byte/char.
+            bool isCompressedJet4 = _format != DatabaseFormat.Jet3Mdb && bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE;
+            int allowed = _format != DatabaseFormat.Jet3Mdb && !isCompressedJet4 ? maxSize & ~1 : maxSize;
             if (allowed <= 0)
             {
                 return [];
@@ -2152,7 +2157,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return null;
         }
 
-        byte[] data = _format != DatabaseFormat.Jet3Mdb ? Encoding.Unicode.GetBytes(value) : _ansiEncoding.GetBytes(value);
+        byte[] data = _format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(value) : _ansiEncoding.GetBytes(value);
         if (data.Length > MaxInlineMemoBytes)
         {
             throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {MaxInlineMemoBytes} bytes.");
