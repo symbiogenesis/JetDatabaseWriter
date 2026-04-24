@@ -1,6 +1,7 @@
 ﻿namespace JetDatabaseWriter;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -1370,6 +1371,17 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
+    /// Strips the 1-byte compression flag from raw attachment FileData bytes,
+    /// decompressing if the flag indicates deflate-compressed content.
+    /// </summary>
+    private static byte[] DecodeAttachmentFileData(byte[] raw) => raw.Length <= 1 ? raw : raw[0] switch
+    {
+        0x01 => DecompressAttachmentData(raw, 1),
+        0x00 => raw.AsSpan(1).ToArray(),
+        _ => raw,
+    };
+
+    /// <summary>
     /// Decompresses Access attachment file data using raw Deflate.
     /// Access stores attachment data with a 1-byte compression flag followed by
     /// deflate-compressed content.
@@ -2238,22 +2250,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
             long tdefPage = await GetComplexFlatTablePageAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
             if (tdefPage <= 0)
             {
-                string nameSuffix = $"_{columnName}";
-                tdefPage = await FindSystemTablePageBySuffixAsync(nameSuffix, cancellationToken).ConfigureAwait(false);
+                tdefPage = await FindSystemTablePageBySuffixAsync($"_{columnName}", cancellationToken).ConfigureAwait(false);
             }
 
-            if (tdefPage <= 0)
-            {
-                return null;
-            }
-
-            TableDef? td = await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+            TableDef? td = tdefPage > 0 ? await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
             if (td == null)
             {
                 return null;
             }
 
-            // Cache column indices to avoid repeated lookups
             string fkColName = $"{tableName}_{columnName}";
             int idxFk = td.Columns.FindIndex(c => string.Equals(c.Name, fkColName, StringComparison.OrdinalIgnoreCase));
             if (idxFk < 0)
@@ -2269,85 +2274,39 @@ public sealed class AccessReader : AccessBase, IAccessReader
             int idxFileName = td.Columns.FindIndex(c => string.Equals(c.Name, "FileName", StringComparison.OrdinalIgnoreCase));
             int idxFileData = td.Columns.FindIndex(c => string.Equals(c.Name, "FileData", StringComparison.OrdinalIgnoreCase));
 
-            var result = new Dictionary<int, byte[]>(capacity: 32); // Preallocate for small tables
+            var result = new Dictionary<int, byte[]>(capacity: 32);
 
-            // Use a buffer for the inner loop to avoid repeated allocations
-            byte[]? buffer = null;
             await foreach (var row in EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
             {
-                string fkStr = SafeGet(row, idxFk);
-                if (!int.TryParse(fkStr, out int parentId))
+                if (!int.TryParse(SafeGet(row, idxFk), out int parentId))
                 {
                     continue;
                 }
 
-                byte[] fileNameBytes = [];
-                if (idxFileName >= 0)
-                {
-                    string fileName = SafeGet(row, idxFileName);
-                    if (!string.IsNullOrEmpty(fileName))
-                    {
-                        fileNameBytes = Encoding.Unicode.GetBytes(fileName);
-                    }
-                }
+                byte[] fileNameBytes = idxFileName >= 0 && SafeGet(row, idxFileName) is { Length: > 0 } fileName
+                    ? Encoding.Unicode.GetBytes(fileName)
+                    : [];
 
-                byte[] fileDataBytes = [];
-                if (idxFileData >= 0)
-                {
-                    string fileDataStr = SafeGet(row, idxFileData);
-                    fileDataBytes = DecodeColumnBytes(fileDataStr ?? string.Empty, td.Columns[idxFileData].Type);
-                    if (fileDataBytes.Length > 1)
-                    {
-                        if (fileDataBytes[0] == 0x01)
-                        {
-                            fileDataBytes = DecompressAttachmentData(fileDataBytes, 1);
-                        }
-                        else if (fileDataBytes[0] == 0x00)
-                        {
-                            fileDataBytes = fileDataBytes.AsSpan(1).ToArray();
-                        }
-                    }
-                }
+                byte[] fileDataBytes = idxFileData >= 0
+                    ? DecodeAttachmentFileData(DecodeColumnBytes(SafeGet(row, idxFileData) ?? string.Empty, td.Columns[idxFileData].Type))
+                    : [];
 
                 if (fileNameBytes.Length == 0 && fileDataBytes.Length == 0)
                 {
                     continue;
                 }
 
-                int totalLen = 2 + fileNameBytes.Length + fileDataBytes.Length;
-                buffer = buffer is null || buffer.Length < totalLen ? new byte[totalLen] : buffer;
-                buffer[0] = (byte)(fileNameBytes.Length & 0xFF);
-                buffer[1] = (byte)((fileNameBytes.Length >> 8) & 0xFF);
-                if (fileNameBytes.Length > 0)
-                {
-                    Buffer.BlockCopy(fileNameBytes, 0, buffer, 2, fileNameBytes.Length);
-                }
+                var serialized = new byte[2 + fileNameBytes.Length + fileDataBytes.Length];
+                BinaryPrimitives.WriteUInt16LittleEndian(serialized, (ushort)fileNameBytes.Length);
+                Buffer.BlockCopy(fileNameBytes, 0, serialized, 2, fileNameBytes.Length);
+                Buffer.BlockCopy(fileDataBytes, 0, serialized, 2 + fileNameBytes.Length, fileDataBytes.Length);
 
-                if (fileDataBytes.Length > 0)
-                {
-                    Buffer.BlockCopy(fileDataBytes, 0, buffer, 2 + fileNameBytes.Length, fileDataBytes.Length);
-                }
-
-                // Copy to new array to avoid overwriting in next iteration
-                result[parentId] = [.. buffer[..totalLen]];
+                result[parentId] = serialized;
             }
 
-            if (result.Count > 0)
-            {
-                return result;
-            }
-
-            return null;
+            return result.Count > 0 ? result : null;
         }
-        catch (InvalidDataException)
-        {
-            return null;
-        }
-        catch (IndexOutOfRangeException)
-        {
-            return null;
-        }
-        catch (IOException)
+        catch (Exception ex) when (ex is InvalidDataException or IndexOutOfRangeException or IOException)
         {
             return null;
         }
