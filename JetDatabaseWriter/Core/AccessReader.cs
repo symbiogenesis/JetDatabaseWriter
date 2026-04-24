@@ -1348,6 +1348,102 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return 0;
     }
 
+    /// <summary>
+    /// Decompresses Access attachment file data using raw Deflate.
+    /// Access stores attachment data with a 1-byte compression flag followed by
+    /// deflate-compressed content.
+    /// </summary>
+    private static byte[] DecompressAttachmentData(byte[] data, int offset)
+    {
+        try
+        {
+            // Scan for zlib header (0x78) after the compression flag byte.
+            // Access attachment data starts with a 1-byte compression flag,
+            // followed by implementation-dependent header bytes, then zlib-compressed data.
+            int zlibPos = -1;
+            for (int i = offset; i < data.Length - 1; i++)
+            {
+                if (data[i] == 0x78 && (data[i + 1] == 0x01 || data[i + 1] == 0x5E || data[i + 1] == 0x9C || data[i + 1] == 0xDA))
+                {
+                    zlibPos = i;
+                    break;
+                }
+            }
+
+            if (zlibPos < 0 || zlibPos + 2 >= data.Length)
+            {
+                return data.AsSpan(offset).ToArray();
+            }
+
+            // Skip the 2-byte zlib header for raw DeflateStream
+            int deflateStart = zlibPos + 2;
+            using var input = new MemoryStream(data, deflateStart, data.Length - deflateStart);
+            using var deflate = new System.IO.Compression.DeflateStream(input, System.IO.Compression.CompressionMode.Decompress);
+            using var output = new MemoryStream();
+            deflate.CopyTo(output);
+            return output.ToArray();
+        }
+        catch (InvalidDataException)
+        {
+            // Not valid deflate — return raw bytes without compression flag.
+            return data.AsSpan(offset).ToArray();
+        }
+    }
+
+    /// <summary>
+    /// Attempts to convert a string column value back to raw bytes.
+    /// Handles: Base64 data URIs (OLE), hex strings (Binary), plain text (Memo).
+    /// </summary>
+    private static byte[] DecodeColumnBytes(string value, byte colType)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return [];
+        }
+
+        // Base64 data URI from OLE column: "data:...;base64,<b64>"
+        if (value.StartsWith("data:", StringComparison.Ordinal))
+        {
+            int commaIdx = value.IndexOf(',', StringComparison.Ordinal);
+            if (commaIdx >= 0)
+            {
+                try
+                {
+                    return Convert.FromBase64String(value.Substring(commaIdx + 1));
+                }
+                catch (FormatException)
+                {
+                    return [];
+                }
+            }
+
+            return [];
+        }
+
+        // Hex string from Binary column: "XX-XX-XX-..."
+        if (colType == T_BINARY && value.Contains('-', StringComparison.Ordinal))
+        {
+            try
+            {
+                string[] parts = value.Split('-');
+                var bytes = new byte[parts.Length];
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    bytes[i] = Convert.ToByte(parts[i], 16);
+                }
+
+                return bytes;
+            }
+            catch (FormatException)
+            {
+                return [];
+            }
+        }
+
+        // Plain text (Memo): encode as UTF-8
+        return Encoding.UTF8.GetBytes(value);
+    }
+
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
     private protected override async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
     {
@@ -2347,106 +2443,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return 0;
-    }
-
-    /// <summary>
-    /// Decompresses Access attachment file data using raw Deflate.
-    /// Access stores attachment data with a 1-byte compression flag followed by
-    /// deflate-compressed content.
-    /// </summary>
-#pragma warning disable SA1204
-    private static byte[] DecompressAttachmentData(byte[] data, int offset)
-#pragma warning restore SA1204
-    {
-        try
-        {
-            // Scan for zlib header (0x78) after the compression flag byte.
-            // Access attachment data starts with a 1-byte compression flag,
-            // followed by implementation-dependent header bytes, then zlib-compressed data.
-            int zlibPos = -1;
-            for (int i = offset; i < data.Length - 1; i++)
-            {
-                if (data[i] == 0x78 && (data[i + 1] == 0x01 || data[i + 1] == 0x5E || data[i + 1] == 0x9C || data[i + 1] == 0xDA))
-                {
-                    zlibPos = i;
-                    break;
-                }
-            }
-
-            if (zlibPos < 0 || zlibPos + 2 >= data.Length)
-            {
-                return data.AsSpan(offset).ToArray();
-            }
-
-            // Skip the 2-byte zlib header for raw DeflateStream
-            int deflateStart = zlibPos + 2;
-            using var input = new MemoryStream(data, deflateStart, data.Length - deflateStart);
-            using var deflate = new System.IO.Compression.DeflateStream(input, System.IO.Compression.CompressionMode.Decompress);
-            using var output = new MemoryStream();
-            deflate.CopyTo(output);
-            return output.ToArray();
-        }
-        catch (InvalidDataException)
-        {
-            // Not valid deflate — return raw bytes without compression flag.
-            return data.AsSpan(offset).ToArray();
-        }
-    }
-
-    /// <summary>
-    /// Attempts to convert a string column value back to raw bytes.
-    /// Handles: Base64 data URIs (OLE), hex strings (Binary), plain text (Memo).
-    /// </summary>
-#pragma warning disable SA1204 // Static helper placed here for proximity to its only caller
-    private static byte[] DecodeColumnBytes(string value, byte colType)
-#pragma warning restore SA1204
-    {
-        if (string.IsNullOrEmpty(value))
-        {
-            return [];
-        }
-
-        // Base64 data URI from OLE column: "data:...;base64,<b64>"
-        if (value.StartsWith("data:", StringComparison.Ordinal))
-        {
-            int commaIdx = value.IndexOf(',', StringComparison.Ordinal);
-            if (commaIdx >= 0)
-            {
-                try
-                {
-                    return Convert.FromBase64String(value.Substring(commaIdx + 1));
-                }
-                catch (FormatException)
-                {
-                    return [];
-                }
-            }
-
-            return [];
-        }
-
-        // Hex string from Binary column: "XX-XX-XX-..."
-        if (colType == T_BINARY && value.Contains('-', StringComparison.Ordinal))
-        {
-            try
-            {
-                string[] parts = value.Split('-');
-                var bytes = new byte[parts.Length];
-                for (int i = 0; i < parts.Length; i++)
-                {
-                    bytes[i] = Convert.ToByte(parts[i], 16);
-                }
-
-                return bytes;
-            }
-            catch (FormatException)
-            {
-                return [];
-            }
-        }
-
-        // Plain text (Memo): encode as UTF-8
-        return Encoding.UTF8.GetBytes(value);
     }
 
     // [memo_len: 3 bytes][bitmask: 1 byte][lval_dp: 4 bytes][unknown: 4 bytes]
