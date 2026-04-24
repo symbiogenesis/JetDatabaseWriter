@@ -109,7 +109,7 @@ internal static class CompoundFileWriter
         }
 
         // ── Allocate the file buffer ───────────────────────────────────
-        long fileSize = (long)CfbSectorSize + ((long)totalSectors * CfbSectorSize);
+        long fileSize = CfbSectorSize + ((long)totalSectors * CfbSectorSize);
         if (fileSize > int.MaxValue)
         {
             throw new NotSupportedException(

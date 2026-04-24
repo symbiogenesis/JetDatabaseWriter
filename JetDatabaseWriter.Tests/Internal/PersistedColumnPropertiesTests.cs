@@ -21,12 +21,12 @@ public sealed class PersistedColumnPropertiesTests
     }
 
     [Theory]
-    [InlineData((int)0, "0")]
-    [InlineData((int)42, "42")]
-    [InlineData((int)-1, "-1")]
+    [InlineData(0, "0")]
+    [InlineData(42, "42")]
+    [InlineData(-1, "-1")]
     [InlineData((short)7, "7")]
     [InlineData((byte)5, "5")]
-    [InlineData((long)9999999999, "9999999999")]
+    [InlineData(9999999999, "9999999999")]
     public void ToJetExpression_Integers_RoundTripInvariant(object value, string expected)
     {
         Assert.Equal(expected, JetExpressionConverter.ToJetExpression(value));

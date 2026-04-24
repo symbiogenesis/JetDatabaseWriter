@@ -327,7 +327,7 @@ internal static class CompoundFileReader
             int remaining = result.Length - dstOffset;
             (uint runStart, int runSectors, uint next) = CoalesceRun(sector, miniFat, miniSectorSize, remaining);
 
-            long offset = (long)runStart * miniSectorSize;
+            long offset = runStart * miniSectorSize;
             long runBytes = (long)runSectors * miniSectorSize;
             if (offset + runBytes > miniStream.Length)
             {

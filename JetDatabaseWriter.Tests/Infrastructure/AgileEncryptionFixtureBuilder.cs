@@ -433,7 +433,7 @@ internal static class AgileEncryptionFixtureBuilder
             file,
             dirOffset + DirEntrySize,
             "EncryptionInfo",
-            (uint)eiStartSector,
+            eiStartSector,
             encryptionInfo.Length,
             leftSibling: FreeSect,
             rightSibling: 2);
