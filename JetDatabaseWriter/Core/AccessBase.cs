@@ -39,6 +39,7 @@ public abstract class AccessBase : IAccessBase
     private protected const byte T_NUMERIC = 0x10; // 17 bytes scaled decimal
     private protected const byte T_ATTACHMENT = 0x11; // complex: attachment (Access 2007+)
     private protected const byte T_COMPLEX = 0x12; // complex: multi-value / version history (Access 2007+)
+    private protected const byte T_DATETIMEEXT = 0x14; // 42-byte fixed string: extended Date/Time (Access 2019+)
 
     // Catalog (MSysObjects) constants
     private protected const int OBJ_TABLE = 1;
