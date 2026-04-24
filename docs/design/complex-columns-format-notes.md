@@ -184,8 +184,8 @@ Match case-insensitively against `FileType` (which Jackcess lowercases on store)
 
 ### 4.2 Reader (additions needed for writer round-trip)
 
-- `IAccessReader.GetComplexColumnsAsync(string tableName, CT)` returning `IReadOnlyList<ComplexColumnInfo>` per parent-column metadata so writer tests can assert structural fidelity.
-- `IAccessReader.GetAttachmentsAsync(string tableName, string columnName, IReadOnlyDictionary<string,object> rowKey, CT)` — typed alternative to the current "decode opaque byte[]" surface.
+- ✅ **Implemented (2026-04-24):** `IAccessReader.GetComplexColumnsAsync(string tableName, CT)` returns `IReadOnlyList<ComplexColumnInfo>` per parent-column metadata (ColumnName, ComplexId, Kind, FlatTableName, FlatTableId, ConceptualTableId, ComplexTypeObjectId, ComplexTypeName) — joins parent TDEF column descriptors with `MSysComplexColumns` and resolves flat-table / template names via `MSysObjects`. Tests in `JetDatabaseWriter.Tests/Core/ComplexColumnInfoTests.cs`.
+- `IAccessReader.GetAttachmentsAsync(string tableName, string columnName, IReadOnlyDictionary<string,object> rowKey, CT)` — typed alternative to the current "decode opaque byte[]" surface. Still TODO.
 
 ### 4.3 Writer (new)
 

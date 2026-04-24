@@ -40,7 +40,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly bool _isAgileEncryptedRewrap;
 
     /// <summary>
-    /// Per-table client-side constraint registry. Populated by <see cref="CreateTableAsync"/>
+    /// Per-table client-side constraint registry. Populated by <see cref="CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, CancellationToken)"/>
     /// and the schema-evolution helpers. Keyed by table name (case-insensitive). The list is
     /// kept positionally aligned with the table's columns and is consulted at insert time to
     /// apply default values, auto-increment, required-field, and validation rule semantics.
@@ -305,10 +305,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <inheritdoc/>
-    public async ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, CancellationToken cancellationToken = default)
+    public ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, CancellationToken cancellationToken = default)
+        => CreateTableAsync(tableName, columns, indexes: Array.Empty<IndexDefinition>(), cancellationToken);
+
+    /// <inheritdoc/>
+    public async ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(columns, nameof(columns));
+        Guard.NotNull(indexes, nameof(indexes));
         Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -317,13 +322,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new ArgumentException("At least one column is required", nameof(columns));
         }
 
+        if (indexes.Count > 0 && _format == DatabaseFormat.Jet3Mdb)
+        {
+            throw new NotSupportedException("Index emission is only supported for Jet4 (.mdb) and ACE (.accdb) databases.");
+        }
+
         if (await GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) != null)
         {
             throw new InvalidOperationException($"Table '{tableName}' already exists.");
         }
 
         TableDef tableDef = BuildTableDefinition(columns, _format);
-        byte[] tdefPage = BuildTDefPage(tableDef);
+        IReadOnlyList<ResolvedIndex> resolvedIndexes = ResolveIndexes(indexes, tableDef);
+        byte[] tdefPage = BuildTDefPage(tableDef, resolvedIndexes);
         long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         byte[]? lvProp = JetExpressionConverter.BuildLvPropBlob(columns, _format);
@@ -2070,12 +2081,24 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     private byte[] BuildTDefPage(TableDef tableDef)
+        => BuildTDefPage(tableDef, Array.Empty<ResolvedIndex>());
+
+    private byte[] BuildTDefPage(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
     {
         byte[] page = new byte[_pgSz];
         int numCols = tableDef.Columns.Count;
-        int colStart = _tdBlockEnd;
+        int numIdx = indexes.Count;
+        bool jet4 = _format != DatabaseFormat.Jet3Mdb;
+
+        // W1 phase: one real-idx slot per logical-idx (no sharing). See
+        // docs/design/index-and-relationship-format-notes.md §3.3.
+        int numRealIdx = numIdx;
+        int realIdxPhysSz = jet4 ? 52 : 39;
+        int logIdxEntrySz = jet4 ? 28 : 20;
+
+        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
         int namePos = colStart + (numCols * _colDescSz);
-        int nameLenSize = _format != DatabaseFormat.Jet3Mdb ? 2 : 1;
+        int nameLenSize = jet4 ? 2 : 1;
 
         page[0] = 0x02;
         page[1] = 0x01;
@@ -2085,6 +2108,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         page[_tdNumCols - 5] = 0x4E;
         Wu16(page, _tdNumCols - 4, numCols);
         Wu16(page, _tdNumCols, numCols);
+
+        // num_idx (4 bytes immediately after num_cols) and num_real_idx.
+        Wi32(page, _tdNumCols + 2, numIdx);
+        Wi32(page, _tdNumRealIdx, numRealIdx);
+
+        // Leading real-index entries (Jet4: 12 bytes each; Jet3: 8 bytes each).
+        // Per mdbtools: unknown(4) + num_idx_rows(4) + unknown(4). Zeroed for W1.
+        // Slot lives at _tdBlockEnd .. colStart and is already zero-initialised.
 
         int numVarCols = 0;
         for (int i = 0; i < numCols; i++)
@@ -2104,13 +2135,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             Wu16(page, o + _colFixedOff, col.FixedOff);
             Wu16(page, o + _colSzOff, col.Size);
 
-            byte[] nameBytes = _format != DatabaseFormat.Jet3Mdb ? Encoding.Unicode.GetBytes(col.Name) : _ansiEncoding.GetBytes(col.Name);
+            byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : _ansiEncoding.GetBytes(col.Name);
             if (namePos + nameLenSize + nameBytes.Length > page.Length)
             {
                 throw new NotSupportedException("Table definition does not fit within a single TDEF page.");
             }
 
-            if (_format != DatabaseFormat.Jet3Mdb)
+            if (jet4)
             {
                 Wu16(page, namePos, nameBytes.Length);
             }
@@ -2125,8 +2156,131 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         Wu16(page, _tdNumCols - 2, numVarCols);
+
+        // ── Index sections (W1: only Jet4/ACE supports this code path) ─────
+        if (numIdx > 0)
+        {
+            int realIdxPhysStart = namePos;
+            int logIdxStart = realIdxPhysStart + (numRealIdx * realIdxPhysSz);
+            int logIdxNameStart = logIdxStart + (numIdx * logIdxEntrySz);
+
+            // Bound check (logical-index name byte count is variable; account for it below).
+            int totalIdxBytesLowerBound = logIdxNameStart - realIdxPhysStart;
+            if (realIdxPhysStart + totalIdxBytesLowerBound > page.Length)
+            {
+                throw new NotSupportedException("Table definition (with indexes) does not fit within a single TDEF page.");
+            }
+
+            for (int i = 0; i < numIdx; i++)
+            {
+                ResolvedIndex ri = indexes[i];
+
+                // ── Real-index physical descriptor (Jet4: 52 bytes) ─────────
+                // §3.1: unknown(4) + col_map(30) + used_pages(4) + first_dp(4) + flags(1) + unknown(9).
+                int phys = realIdxPhysStart + (i * realIdxPhysSz);
+
+                // col_map: 10 × { col_num(2), col_order(1) }. Slot 0 = our column, rest = 0xFFFF.
+                for (int slot = 0; slot < 10; slot++)
+                {
+                    int so = phys + 4 + (slot * 3);
+                    if (slot == 0)
+                    {
+                        Wu16(page, so, ri.ColumnNumber);
+                        page[so + 2] = 0x01; // ascending
+                    }
+                    else
+                    {
+                        Wu16(page, so, 0xFFFF);
+                        page[so + 2] = 0x00;
+                    }
+                }
+
+                // used_pages, first_dp, flags, trailing 9 bytes — all zero.
+                // first_dp = 0 means "no leaf B-tree page". Microsoft Access will
+                // rebuild the index on next compact/repair; this library's reader
+                // surfaces the metadata via ListIndexesAsync regardless.
+
+                // ── Logical-index entry (Jet4: 28 bytes) ────────────────────
+                // §3.2: unknown(4) + index_num(4) + index_num2(4) + rel_tbl_type(1)
+                //     + rel_idx_num(4) + rel_tbl_page(4) + cascade_ups(1) + cascade_dels(1)
+                //     + index_type(1) + trailing(4).
+                int log = logIdxStart + (i * logIdxEntrySz);
+                Wi32(page, log + 4, i);                  // index_num
+                Wi32(page, log + 8, i);                  // index_num2 (one real per logical)
+                Wi32(page, log + 13, -1);                // rel_idx_num = 0xFFFFFFFF (not a FK)
+
+                // index_type = 0x00 (Normal), cascade flags = 0, all else zero.
+            }
+
+            // Logical-index names — same length-prefix encoding as column names.
+            int npos = logIdxNameStart;
+            for (int i = 0; i < numIdx; i++)
+            {
+                byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(indexes[i].Name) : _ansiEncoding.GetBytes(indexes[i].Name);
+                if (npos + nameLenSize + nameBytes.Length > page.Length)
+                {
+                    throw new NotSupportedException("Table definition (with indexes) does not fit within a single TDEF page.");
+                }
+
+                if (jet4)
+                {
+                    Wu16(page, npos, nameBytes.Length);
+                }
+                else
+                {
+                    page[npos] = (byte)nameBytes.Length;
+                }
+
+                npos += nameLenSize;
+                Buffer.BlockCopy(nameBytes, 0, page, npos, nameBytes.Length);
+                npos += nameBytes.Length;
+            }
+
+            namePos = npos;
+        }
+
         Wi32(page, 8, Math.Max(0, namePos - 8));
         return page;
+    }
+
+    private IReadOnlyList<ResolvedIndex> ResolveIndexes(IReadOnlyList<IndexDefinition> indexes, TableDef tableDef)
+    {
+        if (indexes.Count == 0)
+        {
+            return Array.Empty<ResolvedIndex>();
+        }
+
+        var result = new List<ResolvedIndex>(indexes.Count);
+        var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < indexes.Count; i++)
+        {
+            IndexDefinition def = indexes[i];
+            if (string.IsNullOrEmpty(def.Name))
+            {
+                throw new ArgumentException($"IndexDefinition at position {i} has an empty name.", nameof(indexes));
+            }
+
+            if (!seenNames.Add(def.Name))
+            {
+                throw new ArgumentException($"Duplicate index name '{def.Name}'.", nameof(indexes));
+            }
+
+            if (def.Columns.Count != 1)
+            {
+                throw new NotSupportedException($"IndexDefinition '{def.Name}' must reference exactly one column (multi-column indexes are not supported in this phase).");
+            }
+
+            string columnName = def.Columns[0];
+            ColumnInfo? column = tableDef.Columns.Find(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+            if (column is null)
+            {
+                throw new ArgumentException($"IndexDefinition '{def.Name}' references unknown column '{columnName}'.", nameof(indexes));
+            }
+
+            result.Add(new ResolvedIndex(def.Name, column.ColNum));
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -3133,5 +3287,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         public bool HasAnyConstraint =>
             !IsNullable || DefaultValue != null || IsAutoIncrement || ValidationRule != null;
+    }
+
+    private readonly struct ResolvedIndex
+    {
+        public ResolvedIndex(string name, int columnNumber)
+        {
+            Name = name;
+            ColumnNumber = columnNumber;
+        }
+
+        public string Name { get; }
+
+        public int ColumnNumber { get; }
     }
 }

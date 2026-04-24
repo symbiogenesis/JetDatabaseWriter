@@ -28,6 +28,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="JetDatabaseWriter.Tests" />
     <InternalsVisibleTo Include="JetDatabaseWriter.Benchmarks" />
+    <InternalsVisibleTo Include="JetDatabaseWriter.FormatProbe" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\README.md" Pack="true" PackagePath="\" />

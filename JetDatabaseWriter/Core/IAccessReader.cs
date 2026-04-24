@@ -95,6 +95,36 @@ public interface IAccessReader : IAccessBase
     ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Returns metadata for every logical index defined on <paramref name="tableName"/>,
+    /// parsed from the table's TDEF page chain.
+    /// </summary>
+    /// <remarks>
+    /// Only schema metadata is surfaced — the index B-tree leaf pages are not traversed.
+    /// Multiple logical indexes may share the same physical (real) index; consult
+    /// <see cref="IndexMetadata.RealIndexNumber"/> to detect that sharing. Returns an
+    /// empty list when the table has no indexes or cannot be resolved.
+    /// </remarks>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
+    /// <returns>A read-only list of <see cref="IndexMetadata"/> entries in TDEF order.</returns>
+    ValueTask<IReadOnlyList<IndexMetadata>> ListIndexesAsync(string tableName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns metadata for every Access 2007+ "complex" column (Attachment,
+    /// Multi-value, Version-history) declared on <paramref name="tableName"/>.
+    /// </summary>
+    /// <remarks>
+    /// Joins the parent TDEF column descriptors with <c>MSysComplexColumns</c> to
+    /// expose the per-column <c>ComplexID</c>, the hidden flat child-table name and
+    /// page, and the column subtype. Returns an empty list for tables that contain
+    /// no complex columns or for older Jet3 / Jet4 databases.
+    /// </remarks>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
+    /// <returns>A read-only list of <see cref="ComplexColumnInfo"/> entries, one per complex column on the table.</returns>
+    ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Reads the entire table into a DataTable with properly typed columns asynchronously.
     /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
     /// </summary>

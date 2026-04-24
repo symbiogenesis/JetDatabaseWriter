@@ -3,7 +3,7 @@ namespace JetDatabaseWriter;
 using System;
 
 /// <summary>
-/// Defines a column for use with <see cref="IAccessWriter.CreateTableAsync"/>.
+/// Defines a column for use with <see cref="IAccessWriter.CreateTableAsync(string, System.Collections.Generic.IReadOnlyList{ColumnDefinition}, System.Threading.CancellationToken)"/>.
 /// </summary>
 public sealed record ColumnDefinition
 {
