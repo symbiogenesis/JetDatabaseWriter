@@ -2658,64 +2658,43 @@ public sealed class AccessReader : AccessBase, IAccessReader
         byte bitmask = row[start + 3];
         int memoLen = row[start] | (row[start + 1] << 8) | (row[start + 2] << 16);
 
-        if ((bitmask & 0x80) != 0)
+        switch (bitmask & 0xC0)
         {
-            int memoStart = start + 12;
-            if (memoStart + memoLen > row.Length)
-            {
-                memoLen = row.Length - memoStart;
-            }
+            case 0x80:
+                // Inline data — the memo/OLE bytes follow the 12-byte header
+                // directly within this row, with no LVAL page indirection.
+                int memoStart = start + 12;
+                int inlineLen = Math.Min(memoLen, row.Length - memoStart);
+                return inlineLen <= 0 ? string.Empty : DecodeLongValue(row, memoStart, inlineLen, isOle);
 
-            if (memoLen <= 0)
-            {
-                return string.Empty;
-            }
+            case 0x40:
+                // Single LVAL page — the header stores a pointer (page<<8 | row)
+                // to one LVAL page/row that holds the entire memo/OLE payload.
+                byte[]? lvalData = await ReadLvalBytesAsync(Ru32(row, start + 4), memoLen, cancellationToken).ConfigureAwait(false);
+                return lvalData != null
+                    ? DecodeLongValue(lvalData, 0, lvalData.Length, isOle)
+                    : (isOle ? "(OLE)" : "(memo on LVAL page)");
 
-            if (isOle)
-            {
-                return TryDecodeOleObject(row, memoStart, memoLen)
-                    ?? "data:application/octet-stream;base64," + Convert.ToBase64String(row, memoStart, memoLen);
-            }
+            default:
+                // Chained LVAL pages — the payload spans multiple LVAL pages
+                // linked together, walked by ReadLvalChainAsync.
+                LvalChainResult chain = await ReadLvalChainAsync(Ru32(row, start + 4), memoLen, cancellationToken).ConfigureAwait(false);
+                return chain.Data != null
+                    ? DecodeLongValue(chain.Data, 0, chain.Data.Length, isOle)
+                    : (isOle ? $"(OLE chain error: {chain.Error})" : $"(memo chain error: {chain.Error})");
+        }
+    }
 
-            return _format != DatabaseFormat.Jet3Mdb ? DecodeJet4Text(row, memoStart, memoLen)
-                         : _ansiEncoding.GetString(row, memoStart, memoLen);
+    private string DecodeLongValue(byte[] buffer, int offset, int length, bool isOle)
+    {
+        if (isOle)
+        {
+            return TryDecodeOleObject(buffer, offset, length)
+                ?? "data:application/octet-stream;base64," + Convert.ToBase64String(buffer, offset, length);
         }
 
-        if ((bitmask & 0x40) != 0)
-        {
-            uint lvalDp = Ru32(row, start + 4);
-            byte[]? lvalData = await ReadLvalBytesAsync(lvalDp, memoLen, cancellationToken).ConfigureAwait(false);
-
-            if (lvalData != null)
-            {
-                if (isOle)
-                {
-                    return TryDecodeOleObject(lvalData, 0, lvalData.Length)
-                        ?? "data:application/octet-stream;base64," + Convert.ToBase64String(lvalData);
-                }
-
-                return _format != DatabaseFormat.Jet3Mdb ? DecodeJet4Text(lvalData, 0, lvalData.Length)
-                             : _ansiEncoding.GetString(lvalData);
-            }
-
-            return isOle ? "(OLE)" : "(memo on LVAL page)";
-        }
-
-        uint chainDp = Ru32(row, start + 4);
-        LvalChainResult chain = await ReadLvalChainAsync(chainDp, memoLen, cancellationToken).ConfigureAwait(false);
-
-        if (chain.Data != null)
-        {
-            if (isOle)
-            {
-                return TryDecodeOleObject(chain.Data, 0, chain.Data.Length)
-                    ?? "data:application/octet-stream;base64," + Convert.ToBase64String(chain.Data);
-            }
-
-            return _format != DatabaseFormat.Jet3Mdb ? DecodeJet4Text(chain.Data, 0, chain.Data.Length)
-                         : _ansiEncoding.GetString(chain.Data);
-        }
-
-        return isOle ? $"(OLE chain error: {chain.Error})" : $"(memo chain error: {chain.Error})";
+        return _format != DatabaseFormat.Jet3Mdb
+            ? DecodeJet4Text(buffer, offset, length)
+            : _ansiEncoding.GetString(buffer, offset, length);
     }
 }
