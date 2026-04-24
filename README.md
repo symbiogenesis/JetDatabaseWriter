@@ -556,8 +556,6 @@ The writer is intentionally focused on the most common create / insert / update 
 ### Concurrency
 - The lockfile (`.ldb` / `.laccdb`) is created for cooperative signaling, but the writer does **not** implement page-level locking. Concurrent writers against the same file will corrupt it. Open with `RespectExistingLockFile = true` (default) to fail fast when another process holds the file.
 
-If any of these are blockers for your scenario, please open an issue at [github.com/diegoripera/JetDatabaseWriter](https://github.com/diegoripera/JetDatabaseWriter).
-
 ---
 
 ## How It Works
