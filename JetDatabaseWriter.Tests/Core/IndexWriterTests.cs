@@ -10,14 +10,18 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Round-trip tests for the W1 phase of the index writer
-/// (<see cref="IAccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, System.Threading.CancellationToken)"/>):
+/// Round-trip tests for <see cref="IAccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, System.Threading.CancellationToken)"/>:
 /// emit single-column non-unique ascending logical indexes into the new table's
 /// TDEF page chain, and confirm they are surfaced by
-/// <see cref="IAccessReader.ListIndexesAsync"/>.
+/// <see cref="IAccessReader.ListIndexesAsync"/>. The W3 follow-up also appends
+/// one empty B-tree leaf page (<c>page_type = 0x04</c>) per index and patches
+/// the leaf's page number into the matching real-index <c>first_dp</c> field;
+/// the last two tests in this class scan the on-disk byte stream to confirm
+/// that wiring.
 /// <para>
-/// W1 only writes TDEF metadata — no B-tree leaf pages are emitted, so these
-/// tests do <em>not</em> assert any seek / lookup behaviour.
+/// These tests do <em>not</em> assert any seek / lookup behaviour — the leaf is
+/// empty at table-creation time and is not maintained by subsequent inserts
+/// (W5 is not yet implemented).
 /// See <c>docs/design/index-and-relationship-format-notes.md</c>.
 /// </para>
 /// </summary>
@@ -238,6 +242,88 @@ public sealed class IndexWriterTests
         Assert.Equal(typeof(string), meta[1].ClrType);
         Assert.Equal("Score", meta[2].Name);
         Assert.Equal(typeof(double), meta[2].ClrType);
+    }
+
+    [Fact]
+    public async Task CreateTable_WithIndex_EmitsLeafPageWithMatchingParent()
+    {
+        // W3: a single empty leaf page (page_type=0x04) is appended per index,
+        // and its page number is patched into the real-idx physical descriptor's
+        // first_dp field. We don't have a public API to read first_dp directly,
+        // but we can verify by scanning the file for leaf pages and checking
+        // their parent_page is non-zero — for a single-table single-index
+        // database, exactly one such page must exist.
+        await using var stream = await CreateFreshAccdbStreamAsync();
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "Idx_Leaf_Single",
+                new[] { new ColumnDefinition("Id", typeof(int)) },
+                new[] { new IndexDefinition("IX_Id", "Id") },
+                TestContext.Current.CancellationToken);
+        }
+
+        const int PageSize = 4096; // ACE
+        byte[] bytes = stream.ToArray();
+        int totalPages = bytes.Length / PageSize;
+
+        int leafCount = 0;
+        int observedParent = -1;
+        int observedFreeSpace = -1;
+        for (int p = 0; p < totalPages; p++)
+        {
+            int o = p * PageSize;
+            if (bytes[o] == 0x04 && bytes[o + 1] == 0x01)
+            {
+                leafCount++;
+                observedFreeSpace = bytes[o + 2] | (bytes[o + 3] << 8);
+                observedParent = bytes[o + 4] | (bytes[o + 5] << 8) | (bytes[o + 6] << 16) | (bytes[o + 7] << 24);
+            }
+        }
+
+        Assert.Equal(1, leafCount);
+        Assert.True(observedParent > 0, "Index leaf parent_page must reference a TDEF page.");
+        Assert.Equal(PageSize - 0x1E0, observedFreeSpace);
+    }
+
+    [Fact]
+    public async Task CreateTable_WithMultipleIndexes_EmitsOneLeafPagePerIndex()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "Idx_Leaf_Multi",
+                new[]
+                {
+                    new ColumnDefinition("A", typeof(int)),
+                    new ColumnDefinition("B", typeof(int)),
+                    new ColumnDefinition("C", typeof(int)),
+                },
+                new[]
+                {
+                    new IndexDefinition("IX_A", "A"),
+                    new IndexDefinition("IX_B", "B"),
+                    new IndexDefinition("IX_C", "C"),
+                },
+                TestContext.Current.CancellationToken);
+        }
+
+        const int PageSize = 4096;
+        byte[] bytes = stream.ToArray();
+        int leafCount = 0;
+        for (int p = 0; p < bytes.Length / PageSize; p++)
+        {
+            int o = p * PageSize;
+            if (bytes[o] == 0x04 && bytes[o + 1] == 0x01)
+            {
+                leafCount++;
+            }
+        }
+
+        Assert.Equal(3, leafCount);
     }
 
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()

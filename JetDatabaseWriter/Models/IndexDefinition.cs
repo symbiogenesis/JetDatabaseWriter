@@ -9,24 +9,28 @@ using System.Collections.Generic;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Phase W1 of the index-writer roadmap (see
-/// <c>docs/design/index-and-relationship-format-notes.md</c>): only the TDEF
+/// Phases W1–W3 of the index-writer roadmap (see
+/// <c>docs/design/index-and-relationship-format-notes.md</c>) ship the TDEF
 /// schema metadata (real-index physical descriptor + logical-index entry +
-/// logical-index name) is written. The B-tree leaf pages that would let
-/// Microsoft Access actually seek through the index are <em>not</em> emitted —
-/// the physical descriptor's <c>first_dp</c> is set to <c>0</c>. The reader
-/// surfaces the resulting metadata via <see cref="IAccessReader.ListIndexesAsync"/>,
-/// but Microsoft Access will rebuild (or reject) the index on its next compact /
-/// repair pass.
+/// logical-index name) <em>and</em> a single empty B-tree leaf page
+/// (<c>page_type = 0x04</c>) per index, with the leaf's page number patched
+/// into the real-index <c>first_dp</c> field. The leaf is empty at table
+/// creation time and is <em>not</em> maintained by subsequent
+/// <c>InsertRowAsync</c> / <c>InsertRowsAsync</c> / <c>UpdateRowsAsync</c> /
+/// <c>DeleteRowsAsync</c> / <c>AddColumnAsync</c> / <c>DropColumnAsync</c> /
+/// <c>RenameColumnAsync</c> calls (those W5 hooks are not yet implemented).
+/// As a result the index goes stale as soon as the table mutates and Microsoft
+/// Access will rebuild it on the next Compact &amp; Repair pass.
 /// </para>
 /// <para>
-/// Constraints:
+/// Constraints (enforced at <c>CreateTableAsync</c> time):
 /// </para>
 /// <list type="bullet">
 ///   <item><description>Single column only — multi-column indexes are not supported in this phase.</description></item>
 ///   <item><description>Non-unique only (<see cref="IndexMetadata.IsUnique"/> always reads back <c>false</c>).</description></item>
 ///   <item><description>Ascending only.</description></item>
 ///   <item><description>No primary-key, foreign-key, or relationship semantics.</description></item>
+///   <item><description>Jet4 / ACE only — Jet3 (<c>.mdb</c> Access 97) databases reject any non-empty index list with <see cref="System.NotSupportedException"/>.</description></item>
 /// </list>
 /// </remarks>
 public sealed record IndexDefinition
@@ -47,8 +51,8 @@ public sealed record IndexDefinition
     public string Name { get; }
 
     /// <summary>
-    /// Gets the column names that make up the index key, in key order. In phase W1
-    /// this list always contains exactly one entry.
+    /// Gets the column names that make up the index key, in key order. In phases
+    /// W1–W3 this list always contains exactly one entry.
     /// </summary>
     public IReadOnlyList<string> Columns { get; }
 }

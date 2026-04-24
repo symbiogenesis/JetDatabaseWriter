@@ -334,8 +334,31 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         TableDef tableDef = BuildTableDefinition(columns, _format);
         IReadOnlyList<ResolvedIndex> resolvedIndexes = ResolveIndexes(indexes, tableDef);
-        byte[] tdefPage = BuildTDefPage(tableDef, resolvedIndexes);
+        (byte[] tdefPage, int[] firstDpOffsets) = BuildTDefPageWithIndexOffsets(tableDef, resolvedIndexes);
         long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+
+        // W3: emit one empty index leaf page per real index and patch its page
+        // number into the corresponding `first_dp` field of the real-idx physical
+        // descriptor. The leaf is empty because CreateTableAsync starts with no
+        // rows; subsequent inserts/updates/deletes do NOT maintain the leaf
+        // (W5 territory), so the index goes stale until Microsoft Access rebuilds
+        // it on the next Compact & Repair pass. See
+        // docs/design/index-and-relationship-format-notes.md §7 W2/W3.
+        if (resolvedIndexes.Count > 0)
+        {
+            for (int i = 0; i < resolvedIndexes.Count; i++)
+            {
+                byte[] leafPage = IndexLeafPageBuilder.BuildJet4LeafPage(
+                    _pgSz,
+                    tdefPageNumber,
+                    Array.Empty<IndexLeafPageBuilder.LeafEntry>());
+                long leafPageNumber = await AppendPageAsync(leafPage, cancellationToken).ConfigureAwait(false);
+                Wi32(tdefPage, firstDpOffsets[i], checked((int)leafPageNumber));
+            }
+
+            // Re-flush the TDEF with the patched first_dp values.
+            await WritePageAsync(tdefPageNumber, tdefPage, cancellationToken).ConfigureAwait(false);
+        }
 
         byte[]? lvProp = JetExpressionConverter.BuildLvPropBlob(columns, _format);
         await InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, cancellationToken).ConfigureAwait(false);
@@ -2081,9 +2104,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     private byte[] BuildTDefPage(TableDef tableDef)
-        => BuildTDefPage(tableDef, Array.Empty<ResolvedIndex>());
+        => BuildTDefPageWithIndexOffsets(tableDef, Array.Empty<ResolvedIndex>()).Page;
 
     private byte[] BuildTDefPage(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
+        => BuildTDefPageWithIndexOffsets(tableDef, indexes).Page;
+
+    /// <summary>
+    /// Builds a TDEF page and also returns, for each logical index in
+    /// <paramref name="indexes"/>, the byte offset within the page of that
+    /// real-index physical descriptor's <c>first_dp</c> field (§3.1). The
+    /// caller uses these offsets to patch in the index leaf-page numbers
+    /// after the leafs themselves have been appended (W3).
+    /// </summary>
+    private (byte[] Page, int[] FirstDpOffsets) BuildTDefPageWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
     {
         byte[] page = new byte[_pgSz];
         int numCols = tableDef.Columns.Count;
@@ -2157,7 +2190,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         Wu16(page, _tdNumCols - 2, numVarCols);
 
-        // ── Index sections (W1: only Jet4/ACE supports this code path) ─────
+        // ── Index sections (W1+W3: only Jet4/ACE supports this code path) ─────
+        int[] firstDpOffsets = numIdx > 0 ? new int[numIdx] : Array.Empty<int>();
         if (numIdx > 0)
         {
             int realIdxPhysStart = namePos;
@@ -2195,10 +2229,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     }
                 }
 
-                // used_pages, first_dp, flags, trailing 9 bytes — all zero.
-                // first_dp = 0 means "no leaf B-tree page". Microsoft Access will
-                // rebuild the index on next compact/repair; this library's reader
-                // surfaces the metadata via ListIndexesAsync regardless.
+                // used_pages (4 bytes) at phys + 34, first_dp (4 bytes) at phys + 38,
+                // flags (1) at phys + 42, trailing 9 bytes at phys + 43..51 — all
+                // start zero. The caller patches first_dp after appending the
+                // leaf page (W3); used_pages remains 0 (no usage bitmap is emitted).
+                firstDpOffsets[i] = phys + 4 + 30 + 4;
 
                 // ── Logical-index entry (Jet4: 28 bytes) ────────────────────
                 // §3.2: unknown(4) + index_num(4) + index_num2(4) + rel_tbl_type(1)
@@ -2240,7 +2275,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         Wi32(page, 8, Math.Max(0, namePos - 8));
-        return page;
+        return (page, firstDpOffsets);
     }
 
     private IReadOnlyList<ResolvedIndex> ResolveIndexes(IReadOnlyList<IndexDefinition> indexes, TableDef tableDef)

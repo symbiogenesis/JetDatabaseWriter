@@ -29,8 +29,11 @@ public interface IAccessWriter : IAccessBase
     /// <param name="columns">Column definitions for the new table.</param>
     /// <param name="indexes">
     /// Logical-index schema entries to write into the new table's TDEF page chain.
-    /// See <see cref="IndexDefinition"/> for the W1 phase constraints (single column,
-    /// non-unique, ascending, no leaf B-tree pages emitted).
+    /// See <see cref="IndexDefinition"/> for the constraints in force today (single
+    /// column, non-unique, ascending, Jet4/ACE only). One empty B-tree leaf page is
+    /// allocated per index at table-creation time, but the leaf is not maintained
+    /// by subsequent insert / update / delete calls and goes stale until Microsoft
+    /// Access rebuilds it on the next Compact &amp; Repair pass.
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
