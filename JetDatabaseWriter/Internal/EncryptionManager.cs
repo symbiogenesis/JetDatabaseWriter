@@ -61,6 +61,21 @@ internal static class EncryptionManager
         0xDE, 0x01, 0x47, 0xA6, 0x78, 0xD5, 0x42, 0xD7,
     ];
 
+    /// <summary>
+    /// Gets a read-only view of the Jet4 password XOR mask used for encoding /
+    /// decoding the 40-byte password area at header offset <c>0x42</c>.
+    /// Exposed for <see cref="EncryptionConverter"/> so it can re-encode
+    /// passwords when re-keying or applying encryption to a clean file.
+    /// </summary>
+    internal static ReadOnlySpan<byte> Jet4PasswordMaskForWrite => Jet4PasswordMask;
+
+    /// <summary>
+    /// Gets a read-only view of the ACCDB legacy password XOR mask (the one used by
+    /// <c>DBEngine.CompactDatabase(..., ";pwd=...")</c>). Exposed for
+    /// <see cref="EncryptionConverter"/>.
+    /// </summary>
+    internal static ReadOnlySpan<byte> AccdbLegacyPasswordMaskForWrite => AccdbLegacyPasswordMask;
+
     /// <summary>Returns true when the file begins with the OLE2 Compound File Binary magic bytes.</summary>
     public static bool IsCompoundFileEncrypted(byte[] header) =>
         header != null && header.Length >= 4 &&

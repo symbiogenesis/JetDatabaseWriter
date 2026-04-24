@@ -614,20 +614,17 @@ public sealed class LimitationsTests : IDisposable
     // ── Encryption ────────────────────────────────────────────────────
 
     [Fact]
-    public void Encryption_AccessWriter_DoesNotExposePasswordChangeOrReencryptApis()
+    public void Encryption_AccessWriter_ExposesEncryptionMutationApis()
     {
-        // README: "Creating a new encrypted database, changing a password, or
-        //          re-encrypting an existing file is not supported."
-        AssertNoMethodMatching(typeof(IAccessWriter), "ChangePassword");
-        AssertNoMethodMatching(typeof(IAccessWriter), "SetPassword");
-        AssertNoMethodMatching(typeof(IAccessWriter), "RemovePassword");
-        AssertNoMethodMatching(typeof(IAccessWriter), "Encrypt");
-        AssertNoMethodMatching(typeof(IAccessWriter), "Decrypt");
-        AssertNoMethodMatching(typeof(AccessWriter), "ChangePassword");
-        AssertNoMethodMatching(typeof(AccessWriter), "SetPassword");
-        AssertNoMethodMatching(typeof(AccessWriter), "RemovePassword");
-        AssertNoMethodMatching(typeof(AccessWriter), "Encrypt");
-        AssertNoMethodMatching(typeof(AccessWriter), "Decrypt");
+        // Encryption mutation IS supported: EncryptAsync, DecryptAsync, and
+        // ChangePasswordAsync are public methods on AccessWriter.
+        var publicMethods = typeof(AccessWriter)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Select(m => m.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.Contains("EncryptAsync", publicMethods);
+        Assert.Contains("DecryptAsync", publicMethods);
+        Assert.Contains("ChangePasswordAsync", publicMethods);
     }
 
     [Fact]

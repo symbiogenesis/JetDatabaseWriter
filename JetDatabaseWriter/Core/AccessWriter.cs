@@ -787,6 +787,414 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         InvalidateCatalogCache();
     }
 
+    // ════════════════════════════════════════════════════════════════
+    // Encryption mutation: change password / encrypt / decrypt
+    // ════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Detects the on-disk encryption format of the database at
+    /// <paramref name="path"/>. Returns <see cref="AccessEncryptionFormat.None"/>
+    /// when the file is unencrypted. The file is read but not modified.
+    /// </summary>
+    /// <param name="path">Path to the .mdb or .accdb file.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="ValueTask{TResult}"/> yielding the detected format.</returns>
+    public static async ValueTask<AccessEncryptionFormat> DetectEncryptionFormatAsync(
+        string path,
+        CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(path, nameof(path));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"Database file not found: {path}", path);
+        }
+
+        await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
+        return await DetectEncryptionFormatAsync(fs, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Detects the on-disk encryption format of the database in <paramref name="stream"/>
+    /// without modifying it. The stream must be seekable.
+    /// </summary>
+    /// <param name="stream">A readable, seekable stream containing the database bytes.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="ValueTask{TResult}"/> yielding the detected format.</returns>
+    public static async ValueTask<AccessEncryptionFormat> DetectEncryptionFormatAsync(
+        Stream stream,
+        CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(stream, nameof(stream));
+        if (!stream.CanRead || !stream.CanSeek)
+        {
+            throw new ArgumentException("Stream must be readable and seekable.", nameof(stream));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        long origin = stream.Position;
+        try
+        {
+            _ = stream.Seek(0, SeekOrigin.Begin);
+            byte[] sniff = new byte[0x80];
+            int read = 0;
+            while (read < sniff.Length)
+            {
+                int got = await stream.ReadAsync(sniff.AsMemory(read, sniff.Length - read), cancellationToken).ConfigureAwait(false);
+                if (got == 0)
+                {
+                    break;
+                }
+
+                read += got;
+            }
+
+            return EncryptionConverter.Detect(sniff);
+        }
+        finally
+        {
+            _ = stream.Seek(origin, SeekOrigin.Begin);
+        }
+    }
+
+    /// <summary>
+    /// Changes the password of an already-encrypted JET / ACE database in place,
+    /// preserving the existing on-disk encryption format. Use
+    /// <see cref="EncryptAsync(string, string, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>
+    /// to add encryption to an unencrypted database, or
+    /// <see cref="DecryptAsync(string, string, AccessWriterOptions?, CancellationToken)"/>
+    /// to remove it.
+    /// </summary>
+    /// <param name="path">Path to an existing encrypted .mdb or .accdb file.</param>
+    /// <param name="oldPassword">The current password.</param>
+    /// <param name="newPassword">The new password (must be non-empty).</param>
+    /// <param name="options">Optional configuration. Used only for lockfile honouring; the password fields are ignored.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    /// <exception cref="UnauthorizedAccessException">The supplied <paramref name="oldPassword"/> is wrong, or the database is unencrypted.</exception>
+    /// <exception cref="ArgumentException"><paramref name="newPassword"/> is null or empty.</exception>
+    public static ValueTask ChangePasswordAsync(
+        string path,
+        string oldPassword,
+        string newPassword,
+        AccessWriterOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(path, nameof(path));
+        Guard.NotNullOrEmpty(newPassword, nameof(newPassword));
+        return ReencryptFileAsync(
+            path,
+            oldPassword,
+            newPassword,
+            targetFormat: null,
+            requireSourceEncrypted: true,
+            options,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Encrypts a currently-unencrypted JET / ACE database in place, applying the
+    /// requested <paramref name="targetFormat"/>.
+    /// </summary>
+    /// <param name="path">Path to an existing unencrypted .mdb or .accdb file.</param>
+    /// <param name="newPassword">The password to apply (must be non-empty).</param>
+    /// <param name="targetFormat">The encryption format to use. Must be valid for the file kind (Jet4 / ACE).</param>
+    /// <param name="options">Optional configuration. Used only for lockfile honouring.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="newPassword"/> is null/empty,
+    /// <paramref name="targetFormat"/> is <see cref="AccessEncryptionFormat.None"/>,
+    /// or the format is not valid for the underlying file kind.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">The file is already encrypted.</exception>
+    public static ValueTask EncryptAsync(
+        string path,
+        string newPassword,
+        AccessEncryptionFormat targetFormat,
+        AccessWriterOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(path, nameof(path));
+        Guard.NotNullOrEmpty(newPassword, nameof(newPassword));
+        if (targetFormat == AccessEncryptionFormat.None)
+        {
+            throw new ArgumentException(
+                "Target format must not be None. Use DecryptAsync to remove encryption.",
+                nameof(targetFormat));
+        }
+
+        return ReencryptFileAsync(
+            path,
+            oldPassword: null,
+            newPassword,
+            targetFormat,
+            requireSourceEncrypted: false,
+            options,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Removes encryption from a JET / ACE database in place, leaving an
+    /// unencrypted file with no header password residue.
+    /// </summary>
+    /// <param name="path">Path to an existing encrypted .mdb or .accdb file.</param>
+    /// <param name="oldPassword">The current password.</param>
+    /// <param name="options">Optional configuration. Used only for lockfile honouring.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    /// <exception cref="UnauthorizedAccessException">The supplied <paramref name="oldPassword"/> is wrong.</exception>
+    /// <exception cref="InvalidOperationException">The file is already unencrypted.</exception>
+    public static ValueTask DecryptAsync(
+        string path,
+        string oldPassword,
+        AccessWriterOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(path, nameof(path));
+        return ReencryptFileAsync(
+            path,
+            oldPassword,
+            newPassword: null,
+            targetFormat: AccessEncryptionFormat.None,
+            requireSourceEncrypted: true,
+            options,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Stream-based equivalent of
+    /// <see cref="ChangePasswordAsync(string, string, string, AccessWriterOptions?, CancellationToken)"/>.
+    /// The stream must be readable, writable, and seekable; it is rewritten
+    /// in place (length may change for Agile transitions).
+    /// </summary>
+    /// <param name="stream">A readable, writable, seekable stream containing the database bytes.</param>
+    /// <param name="oldPassword">The current password.</param>
+    /// <param name="newPassword">The new password (must be non-empty).</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    public static ValueTask ChangePasswordAsync(
+        Stream stream,
+        string oldPassword,
+        string newPassword,
+        CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(stream, nameof(stream));
+        Guard.NotNullOrEmpty(newPassword, nameof(newPassword));
+        return ReencryptStreamAsync(
+            stream,
+            oldPassword,
+            newPassword,
+            targetFormat: null,
+            requireSourceEncrypted: true,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Stream-based equivalent of
+    /// <see cref="EncryptAsync(string, string, AccessEncryptionFormat, AccessWriterOptions?, CancellationToken)"/>.
+    /// </summary>
+    /// <param name="stream">A readable, writable, seekable stream containing the unencrypted database bytes.</param>
+    /// <param name="newPassword">The password to apply.</param>
+    /// <param name="targetFormat">The encryption format to use.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    public static ValueTask EncryptAsync(
+        Stream stream,
+        string newPassword,
+        AccessEncryptionFormat targetFormat,
+        CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(stream, nameof(stream));
+        Guard.NotNullOrEmpty(newPassword, nameof(newPassword));
+        if (targetFormat == AccessEncryptionFormat.None)
+        {
+            throw new ArgumentException(
+                "Target format must not be None. Use DecryptAsync to remove encryption.",
+                nameof(targetFormat));
+        }
+
+        return ReencryptStreamAsync(
+            stream,
+            oldPassword: null,
+            newPassword,
+            targetFormat,
+            requireSourceEncrypted: false,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Stream-based equivalent of
+    /// <see cref="DecryptAsync(string, string, AccessWriterOptions?, CancellationToken)"/>.
+    /// </summary>
+    /// <param name="stream">A readable, writable, seekable stream containing the encrypted database bytes.</param>
+    /// <param name="oldPassword">The current password.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    public static ValueTask DecryptAsync(
+        Stream stream,
+        string oldPassword,
+        CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(stream, nameof(stream));
+        return ReencryptStreamAsync(
+            stream,
+            oldPassword,
+            newPassword: null,
+            targetFormat: AccessEncryptionFormat.None,
+            requireSourceEncrypted: true,
+            cancellationToken);
+    }
+
+    private static async ValueTask ReencryptFileAsync(
+        string path,
+        string? oldPassword,
+        string? newPassword,
+        AccessEncryptionFormat? targetFormat,
+        bool requireSourceEncrypted,
+        AccessWriterOptions? options,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"Database file not found: {path}", path);
+        }
+
+        // Lockfile honouring: respect any existing lockfile while we rewrite.
+        bool useLockFile = options?.UseLockFile ?? true;
+        bool respectLockFile = options?.RespectExistingLockFile ?? true;
+        if (useLockFile)
+        {
+            LockFileManager.Create(path, nameof(AccessWriter), respectLockFile);
+        }
+
+        try
+        {
+            byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+            using var sourceStream = new MemoryStream(sourceBytes, writable: false);
+
+            byte[] result = await ReencryptCoreAsync(
+                sourceStream,
+                oldPassword,
+                newPassword,
+                targetFormat,
+                requireSourceEncrypted,
+                cancellationToken).ConfigureAwait(false);
+
+            // Atomic-ish replace: write to a sibling temp file then move into place.
+            string tempPath = path + ".reenc-" + Guid.NewGuid().ToString("N") + ".tmp";
+            await using (var fs = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
+            {
+                await fs.WriteAsync(result.AsMemory(), cancellationToken).ConfigureAwait(false);
+                await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            try
+            {
+                File.Replace(tempPath, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
+            }
+            catch (PlatformNotSupportedException)
+            {
+                // Some filesystems / platforms don't support File.Replace.
+                File.Delete(path);
+                File.Move(tempPath, path);
+            }
+            catch (IOException)
+            {
+                // Fallback for filesystems that reject Replace (e.g. across volumes).
+                File.Delete(path);
+                File.Move(tempPath, path);
+            }
+        }
+        finally
+        {
+            if (useLockFile)
+            {
+                LockFileManager.Delete(path, nameof(AccessWriter));
+            }
+        }
+    }
+
+    private static async ValueTask ReencryptStreamAsync(
+        Stream stream,
+        string? oldPassword,
+        string? newPassword,
+        AccessEncryptionFormat? targetFormat,
+        bool requireSourceEncrypted,
+        CancellationToken cancellationToken)
+    {
+        Guard.NotNull(stream, nameof(stream));
+        if (!stream.CanRead || !stream.CanWrite || !stream.CanSeek)
+        {
+            throw new ArgumentException("Stream must be readable, writable, and seekable.", nameof(stream));
+        }
+
+        byte[] result = await ReencryptCoreAsync(
+            stream,
+            oldPassword,
+            newPassword,
+            targetFormat,
+            requireSourceEncrypted,
+            cancellationToken).ConfigureAwait(false);
+
+        _ = stream.Seek(0, SeekOrigin.Begin);
+        await stream.WriteAsync(result.AsMemory(), cancellationToken).ConfigureAwait(false);
+        stream.SetLength(result.Length);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<byte[]> ReencryptCoreAsync(
+        Stream source,
+        string? oldPassword,
+        string? newPassword,
+        AccessEncryptionFormat? targetFormat,
+        bool requireSourceEncrypted,
+        CancellationToken cancellationToken)
+    {
+        SecureString? oldSecure = SecureStringUtilities.FromPlainText(oldPassword);
+        SecureString? newSecure = SecureStringUtilities.FromPlainText(newPassword);
+        try
+        {
+            // Peek the format up front so EncryptAsync / DecryptAsync /
+            // ChangePasswordAsync produce a clear InvalidOperationException
+            // (instead of an UnauthorizedAccessException from the decrypt
+            // step) when the source file is in the wrong state for the
+            // requested operation.
+            long origPos = source.Position;
+            AccessEncryptionFormat detectedFormat = await DetectEncryptionFormatAsync(source, cancellationToken).ConfigureAwait(false);
+            _ = source.Seek(origPos, SeekOrigin.Begin);
+
+            if (requireSourceEncrypted && detectedFormat == AccessEncryptionFormat.None)
+            {
+                throw new InvalidOperationException(
+                    "The source database is not encrypted. Use EncryptAsync to add a password.");
+            }
+
+            if (!requireSourceEncrypted && detectedFormat != AccessEncryptionFormat.None)
+            {
+                throw new InvalidOperationException(
+                    $"The source database is already encrypted ({detectedFormat}). Use ChangePasswordAsync or DecryptAsync.");
+            }
+
+            (byte[] plaintext, AccessEncryptionFormat sourceFormat) = await EncryptionConverter
+                .ReadDecryptedAsync(source, oldSecure, cancellationToken)
+                .ConfigureAwait(false);
+
+            // Default target = same as source when caller didn't override.
+            AccessEncryptionFormat effectiveTarget = targetFormat ?? sourceFormat;
+            return EncryptionConverter.ApplyEncryption(plaintext, effectiveTarget, newSecure);
+        }
+        finally
+        {
+            oldSecure?.Dispose();
+            newSecure?.Dispose();
+        }
+    }
+
     /// <inheritdoc/>
     public override async ValueTask DisposeAsync()
     {
