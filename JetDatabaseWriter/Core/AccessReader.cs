@@ -48,28 +48,6 @@ using JetDatabaseWriter.Internal;
 /// </summary>
 public sealed class AccessReader : AccessBase, IAccessReader
 {
-    // Jet4 password XOR mask (mdbtools / jackcess). Applied together with
-    // the 4-byte creation date at offset 0x72 to decode the stored password.
-    private static readonly byte[] Jet4PasswordMask =
-    [
-        0x86, 0xFB, 0xEC, 0x37, 0x5D, 0x44, 0x9C, 0xFA,
-        0xC6, 0x5E, 0x28, 0xE6, 0x13, 0xB6, 0x8A, 0x60,
-        0x54, 0x94, 0x7B, 0x36, 0xD1, 0xEC, 0xDF, 0xB1,
-        0x31, 0x6A, 0x13, 0x43, 0xEF, 0x31, 0xB1, 0x33,
-        0xA1, 0xFE, 0x6A, 0x7A, 0x42, 0x62, 0x04, 0xFE,
-    ];
-
-    // ACE legacy password mask used for password-only ACCDB files
-    // created via DBEngine.CompactDatabase(..., ";pwd=...").
-    private static readonly byte[] AccdbLegacyPasswordMask =
-    [
-        0x1F, 0x9B, 0xB7, 0xCA, 0xD4, 0x24, 0xD0, 0x07,
-        0x49, 0x3E, 0x62, 0x1B, 0xF9, 0xD6, 0xB4, 0x9D,
-        0xBE, 0xF4, 0x45, 0xCB, 0x1F, 0x12, 0xE1, 0x4C,
-        0x9D, 0x94, 0x2D, 0xBE, 0x25, 0xCF, 0x8F, 0xCE,
-        0xDE, 0x01, 0x47, 0xA6, 0x78, 0xD5, 0x42, 0xD7,
-    ];
-
     private readonly object _cacheLock = new();
     private readonly object _catalogLock = new();
     private readonly bool _useLockFile;
@@ -106,103 +84,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
         PageCacheSize = options.PageCacheSize;
         ParallelPageReadsEnabled = options.ParallelPageReadsEnabled;
 
-        // Offset 0x62: encryption flag — only valid for Jet4 (ver == 1, Access 2000-2003).
-        // ACCDB format (ver >= 2, Access 2007+) has completely different header semantics
-        // at this offset; applying the Jet4 check to ACCDB files produces false positives.
-        // Truly encrypted ACCDB files are detected later when the catalog page is unreadable.
-        byte ver = hdr[0x14];
+        bool isAccdbCfbEncrypted = EncryptionManager.IsCompoundFileEncrypted(hdr);
+        (_pageKeys.Rc4DbKey, _pageKeys.AesPageKey) =
+            EncryptionManager.ResolveReaderPageKeys(hdr, _format, isAccdbCfbEncrypted, password);
 
-        if (_format == DatabaseFormat.Jet4Mdb && hdr.Length > 0x62)
-        {
-            byte encFlag = hdr[0x62];
-
-            // Jet4 encryption flag values (offset 0x62):
-            //   0x01 = Office97 password only (no page encryption)
-            //   0x02 = RC4 page encryption
-            //   0x03 = RC4 + password
-            // Other values at this offset (e.g. 0xC3 in Jackcess test databases)
-            // do NOT indicate encryption — they have different format-specific meaning.
-            if (encFlag >= 0x01 && encFlag <= 0x03)
-            {
-                if (SecureStringUtilities.IsNullOrEmpty(password))
-                {
-                    throw new UnauthorizedAccessException(
-                        "This database is encrypted or password-protected. " +
-                        "Provide a password via AccessReaderOptions.Password, or " +
-                        "remove the password in Microsoft Access (File > Info > Encrypt with Password) and try again.");
-                }
-
-                // Verify the provided password against the stored password at 0x42.
-                // The stored password is XOR'd with a fixed mask + creation date bytes.
-                string storedPassword = DecodeJet4Password(hdr);
-                if (!SecureStringUtilities.EqualsPlainText(password, storedPassword))
-                {
-                    throw new UnauthorizedAccessException(
-                        "The provided password is incorrect for this database.");
-                }
-
-                // Enable RC4 page decryption using the database key at offset 0x3E
-                if ((encFlag & 0x02) != 0)
-                {
-                    _rc4DbKey = BitConverter.ToUInt32(hdr, 0x3E);
-                }
-            }
-        }
-
-        bool isAccdbCfbEncrypted = _format == DatabaseFormat.AceAccdb && hdr.Length >= 4 &&
-            hdr[0] == 0xD0 && hdr[1] == 0xCF && hdr[2] == 0x11 && hdr[3] == 0xE0;
-
-        // ACCDB legacy password-only mode (standard ACCDB header, ver >= 2).
-        // In practice, many normal ACCDB files reuse overlapping header bits at 0x62,
-        // so we only enforce password verification for the known legacy-password
-        // signature used by Access 2010+ CompactDatabase(";pwd=...") test fixtures.
-        if (_format == DatabaseFormat.AceAccdb && ver >= 3 && !isAccdbCfbEncrypted && hdr.Length > 0x62)
-        {
-            byte encFlag = hdr[0x62];
-            if (encFlag == 0x07)
-            {
-                if (SecureStringUtilities.IsNullOrEmpty(password))
-                {
-                    throw new UnauthorizedAccessException(
-                        "This database is password-protected. " +
-                        "Provide a password via AccessReaderOptions.Password.");
-                }
-
-                string storedPassword = DecodeAccdbPassword(hdr);
-                if (!SecureStringUtilities.EqualsPlainText(password, storedPassword))
-                {
-                    throw new UnauthorizedAccessException(
-                        "The provided password is incorrect for this database.");
-                }
-            }
-        }
-
-        // ACCDB genuine AES encryption (CFB wrapped file).
         if (isAccdbCfbEncrypted)
         {
-            // CFB magic: the file is genuinely AES-encrypted. AES-128 page
-            // decryption is supported — the caller must supply the password
-            // via AccessReaderOptions.Password.
-            if (SecureStringUtilities.IsNullOrEmpty(password))
-            {
-                throw new UnauthorizedAccessException(
-                    "This .accdb file is encrypted with Access 2007+ AES encryption. " +
-                    "Provide the database password via AccessReaderOptions.Password to open it, " +
-                    "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
-            }
-
-            // Verify the provided password against the stored password at 0x42.
-            // ACCDB uses the same XOR scheme as Jet4 for the header password area.
-            string storedPassword = DecodeJet4Password(hdr);
-            if (!SecureStringUtilities.EqualsPlainText(password, storedPassword))
-            {
-                throw new UnauthorizedAccessException(
-                    "The provided password is incorrect for this database.");
-            }
-
-            // Derive AES-128 page decryption key from the password.
-            _aesPageKey = DeriveAesPageKey(password!);
-
+            // ACCDB AES (legacy synthetic CFB header path): page-level
+            // decryption is now configured; skip catalog validation because
+            // the header bytes themselves are still raw CFB until ReadPageAsync
+            // decrypts page 1+ on first access.
             return;
         }
 
@@ -284,62 +175,35 @@ public sealed class AccessReader : AccessBase, IAccessReader
             byte[] header = await ReadHeaderAsync(wrapped, cancellationToken).ConfigureAwait(false);
 
             // Office Crypto API ("Agile") encryption: the file is a real OLE
-            // compound document. Detect by CFB magic, then look for an
-            // EncryptionInfo + EncryptedPackage stream pair. If present and
-            // Agile-formatted, decrypt the package in memory and re-enter
-            // OpenAsync on the inner database bytes.
-            if (CompoundFileReader.HasCompoundFileMagic(header))
+            // compound document with EncryptionInfo + EncryptedPackage streams.
+            // EncryptionManager handles detection, password verification, and
+            // package decryption; on success we re-enter on the inner ACCDB
+            // bytes.
+            byte[]? decryptedAgile = await EncryptionManager
+                .TryDecryptAgileCompoundFileAsync(wrapped, header, options.Password, cancellationToken)
+                .ConfigureAwait(false);
+            if (decryptedAgile != null)
             {
-                System.Collections.Generic.Dictionary<string, byte[]>? streams = null;
+                // Always release the source-wrapper now: when leaveOpen is
+                // true wrapped is a NonClosingStreamWrapper that does not
+                // close the user stream, otherwise it is the user stream we
+                // own per the leaveOpen=false contract.
+                await wrapped.DisposeAsync().ConfigureAwait(false);
+
+                MemoryStream? inner = null;
                 try
                 {
-                    streams = await CompoundFileReader.ReadStreamsAsync(wrapped, cancellationToken).ConfigureAwait(false);
+                    inner = new MemoryStream(decryptedAgile, writable: false);
+                    byte[] innerHeader = await ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
+                    var reader = new AccessReader(string.Empty, options, inner, innerHeader);
+                    inner = null;
+                    return reader;
                 }
-                catch (InvalidDataException)
+                finally
                 {
-                    // Not a real CFB — fall through to the legacy synthetic path.
-                }
-                catch (EndOfStreamException)
-                {
-                    // Truncated/legacy CFB-magic file — fall through.
-                }
-
-                if (streams != null &&
-                    streams.TryGetValue("EncryptionInfo", out byte[]? encryptionInfo) &&
-                    streams.TryGetValue("EncryptedPackage", out byte[]? encryptedPackage) &&
-                    OfficeCryptoAgile.IsAgileEncryptionInfo(encryptionInfo))
-                {
-                    if (SecureStringUtilities.IsNullOrEmpty(options.Password))
+                    if (inner != null)
                     {
-                        throw new UnauthorizedAccessException(
-                            "This .accdb file is encrypted with Office Crypto API 'Agile' encryption. " +
-                            "Provide the database password via AccessReaderOptions.Password to open it, " +
-                            "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
-                    }
-
-                    byte[] decrypted = OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, options.Password!);
-
-                    // Always release the source-wrapper now: when leaveOpen is
-                    // true wrapped is a NonClosingStreamWrapper that does not
-                    // close the user stream, otherwise it is the user stream we
-                    // own per the leaveOpen=false contract.
-                    await wrapped.DisposeAsync().ConfigureAwait(false);
-
-                    MemoryStream? inner = null;
-                    try
-                    {
-                        inner = new MemoryStream(decrypted, writable: false);
-                        byte[] innerHeader = await ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
-                        var reader = new AccessReader(string.Empty, options, inner, innerHeader);
-                        inner = null;
-                        return reader;
-                    }
-                    finally
-                    {
-                        if (inner != null)
-                        {
-                            await inner.DisposeAsync().ConfigureAwait(false);
-                        }
+                        await inner.DisposeAsync().ConfigureAwait(false);
                     }
                 }
             }
@@ -1008,145 +872,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private static FileStream CreateStream(string path, AccessReaderOptions options)
     {
         return new FileStream(path, FileMode.Open, options.FileAccess, options.FileShare, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
-    }
-
-    /// <summary>
-    /// Decodes the stored Jet4 password from the database header.
-    /// The 40 bytes at offset 0x42 are XOR'd with a fixed mask and the
-    /// 4-byte creation date at offset 0x72.
-    /// </summary>
-    private static string DecodeJet4Password(byte[] hdr)
-    {
-        var decoded = new byte[40];
-        for (int i = 0; i < 40; i++)
-        {
-            decoded[i] = (byte)(hdr[0x42 + i] ^ Jet4PasswordMask[i] ^ hdr[0x72 + (i % 4)]);
-        }
-
-        // Decode as UTF-16LE. Stop at the first null character rather than
-        // trimming from the end, because the encryption flag at 0x62 overlaps
-        // byte 32 of the password area and may produce a non-null artifact.
-        string raw = Encoding.Unicode.GetString(decoded);
-        int nullIdx = raw.IndexOf('\0', StringComparison.Ordinal);
-        return nullIdx >= 0 ? raw.Substring(0, nullIdx) : raw;
-    }
-
-    private static string DecodeAccdbPassword(byte[] hdr)
-    {
-        var decoded = new byte[40];
-        for (int i = 0; i < 40; i++)
-        {
-            decoded[i] = (byte)(hdr[0x42 + i] ^ AccdbLegacyPasswordMask[i] ^ hdr[0x72 + (i % 4)]);
-        }
-
-        // Offset 0x62 overlaps the password area for 40-byte decode blocks,
-        // so stop at the first null character.
-        string raw = Encoding.Unicode.GetString(decoded);
-        int nullIdx = raw.IndexOf('\0', StringComparison.Ordinal);
-        return nullIdx >= 0 ? raw.Substring(0, nullIdx) : raw;
-    }
-
-    /// <summary>
-    /// Derives a 128-bit AES key from a <see cref="System.Security.SecureString"/> password
-    /// using SHA-256 (truncated to 16 bytes).
-    /// </summary>
-    private static byte[] DeriveAesPageKey(System.Security.SecureString password)
-    {
-        IntPtr ptr = IntPtr.Zero;
-        try
-        {
-            ptr = Marshal.SecureStringToGlobalAllocUnicode(password);
-            int charCount = password.Length;
-
-            // Single-pass: read chars from unmanaged memory and encode to UTF-8
-            // directly, eliminating the intermediate char buffer and a separate
-            // Encoding.UTF8.GetBytes pass.
-            Span<byte> utf8 = stackalloc byte[charCount * 3];
-            int utf8Len = 0;
-
-            // Batch-read 4 chars (8 bytes) per Marshal call to reduce P/Invoke overhead.
-            int i = 0;
-            for (; i + 3 < charCount; i += 4)
-            {
-                long val = Marshal.ReadInt64(ptr, i * 2);
-                char c0 = (char)(val & 0xFFFF);
-                char c1 = (char)((val >> 16) & 0xFFFF);
-                char c2 = (char)((val >> 32) & 0xFFFF);
-                char c3 = (char)((val >> 48) & 0xFFFF);
-
-                // Fast path: all 4 chars are ASCII — skip per-char branching.
-                if ((c0 | c1 | c2 | c3) < 0x80)
-                {
-                    utf8[utf8Len] = (byte)c0;
-                    utf8[utf8Len + 1] = (byte)c1;
-                    utf8[utf8Len + 2] = (byte)c2;
-                    utf8[utf8Len + 3] = (byte)c3;
-                    utf8Len += 4;
-                }
-                else
-                {
-                    Utf8EncodeChar(c0, utf8, ref utf8Len);
-                    Utf8EncodeChar(c1, utf8, ref utf8Len);
-                    Utf8EncodeChar(c2, utf8, ref utf8Len);
-                    Utf8EncodeChar(c3, utf8, ref utf8Len);
-                }
-            }
-
-            for (; i < charCount; i++)
-            {
-                char c = (char)Marshal.ReadInt16(ptr, i * 2);
-                if (c < 0x80)
-                {
-                    utf8[utf8Len++] = (byte)c;
-                }
-                else
-                {
-                    Utf8EncodeChar(c, utf8, ref utf8Len);
-                }
-            }
-
-            Span<byte> hash = stackalloc byte[32];
-            using var sha = SHA256.Create();
-            if (!sha.TryComputeHash(utf8.Slice(0, utf8Len), hash, out _))
-            {
-                throw new CryptographicException("SHA-256 hash computation failed.");
-            }
-
-            utf8[..utf8Len].Clear();
-
-            byte[] key = new byte[16];
-            hash[..16].CopyTo(key);
-            hash.Clear();
-            return key; // AES-128
-        }
-        finally
-        {
-            if (ptr != IntPtr.Zero)
-            {
-                Marshal.ZeroFreeGlobalAllocUnicode(ptr);
-            }
-        }
-    }
-
-    /// <summary>Encodes a single BMP character as UTF-8 into the destination span.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void Utf8EncodeChar(char c, Span<byte> buf, ref int pos)
-    {
-        if (c < 0x80)
-        {
-            buf[pos++] = (byte)c;
-        }
-        else if (c < 0x800)
-        {
-            buf[pos++] = (byte)(0xC0 | (c >> 6));
-            buf[pos++] = (byte)(0x80 | (c & 0x3F));
-        }
-        else
-        {
-            buf[pos++] = (byte)(0xE0 | (c >> 12));
-            buf[pos++] = (byte)(0x80 | ((c >> 6) & 0x3F));
-            buf[pos++] = (byte)(0x80 | (c & 0x3F));
-        }
     }
 
     private static string TypeCodeToName(byte t) => t switch

@@ -79,22 +79,12 @@ public abstract class AccessBase : IAccessBase
     private protected readonly string _path;
 
     /// <summary>
-    /// Jet3 XOR decryption mask (128 bytes). Non-null when Jet3 encryption flag is set.
-    /// Applied cyclically to pages 1+ during ReadPage.
+    /// Per-page decryption keys (Jet3 XOR, Jet4 RC4, ACCDB AES). Populated during
+    /// reader construction by <see cref="EncryptionManager"/>. Mutated only on the
+    /// constructor thread; consulted by every page read via
+    /// <see cref="EncryptionManager.DecryptPageInPlace"/>.
     /// </summary>
-    private protected readonly byte[]? _jet3XorMask;
-
-    /// <summary>
-    /// Jet4 RC4 database key (from header offset 0x3E). Non-null when RC4 encryption is active.
-    /// Used to derive per-page RC4 keys for decrypting pages 1+.
-    /// </summary>
-    private protected uint? _rc4DbKey;
-
-    /// <summary>
-    /// AES-128 page decryption key for ACCDB CFB-encrypted files.
-    /// Non-null when AES page encryption is active. Used to decrypt pages 1+ via AES-ECB.
-    /// </summary>
-    private protected byte[]? _aesPageKey;
+    private protected readonly EncryptionManager.PageDecryptionKeys _pageKeys = new();
 
     private protected bool _disposed;
     private readonly SemaphoreSlim _ioGate = new(1, 1);
@@ -126,29 +116,7 @@ public abstract class AccessBase : IAccessBase
                 : DatabaseFormat.Jet3Mdb;
         _pgSz = GetPageSize(_format);
 
-        // Jet3 XOR encryption: byte 0x62 bit 0x01 means pages 1+ are XOR-masked
-        if (_format == DatabaseFormat.Jet3Mdb && hdr.Length > 0x62 && (hdr[0x62] & 0x01) != 0)
-        {
-            _jet3XorMask =
-            [
-                0xEC, 0x7B, 0x28, 0x07, 0x77, 0x26, 0x13, 0x82,
-                0x75, 0x4E, 0x22, 0x04, 0x42, 0xCE, 0xB3, 0x19,
-                0xA1, 0x32, 0x75, 0x46, 0xE3, 0x66, 0x27, 0x37,
-                0x19, 0x9E, 0xA3, 0x56, 0x85, 0x3A, 0xD6, 0xDE,
-                0xEC, 0x03, 0xE6, 0xFC, 0xF8, 0x85, 0x8F, 0xA0,
-                0x1B, 0x20, 0xAD, 0xE5, 0x0E, 0x7A, 0xF7, 0x38,
-                0x54, 0xFC, 0x10, 0x4E, 0x25, 0x22, 0xBD, 0xC7,
-                0x5D, 0x62, 0x5E, 0x44, 0xBB, 0x6D, 0xCB, 0xB5,
-                0x90, 0x14, 0xDE, 0xC5, 0xD7, 0xA5, 0x4F, 0x84,
-                0xBE, 0xE5, 0x06, 0x62, 0xC5, 0xF1, 0xBB, 0xBB,
-                0xE3, 0xBB, 0x4C, 0xFD, 0x38, 0x7B, 0xDA, 0x88,
-                0x1F, 0x5C, 0x2E, 0x5A, 0x49, 0xEB, 0x47, 0xE2,
-                0xCA, 0xAD, 0xCE, 0x73, 0xBB, 0x25, 0xF9, 0xED,
-                0x47, 0x59, 0x4C, 0x42, 0xEF, 0xF0, 0xB1, 0x58,
-                0x45, 0x58, 0x5D, 0xF3, 0xBC, 0x27, 0xBC, 0x60,
-                0x19, 0xEB, 0xB1, 0xF9, 0x4F, 0x5D, 0xD1, 0x12,
-            ];
-        }
+        _pageKeys.Jet3XorMask = EncryptionManager.GetJet3PageMask(_format, hdr);
 
         // Offset 0x3C (Jet4) or 0x3A (Jet3): sort order / code page ID
         // Common: 1033=en-US(1252), 1049=ru(1251), 1041=ja(932)
@@ -295,67 +263,6 @@ public abstract class AccessBase : IAccessBase
     {
         ArrayPool<byte>.Shared.Return(page);
     }
-
-#pragma warning disable CA5351 // MD5 is required by the Jet4 RC4 key derivation spec
-    /// <summary>
-    /// Derives the RC4 key for a specific page: MD5(dbKey LE + pageNumber LE)[0..4].
-    /// </summary>
-    private protected static byte[] DeriveRc4PageKey(uint dbKey, uint pageNumber)
-    {
-        byte[] input = new byte[8];
-        BitConverter.GetBytes(dbKey).CopyTo(input, 0);
-        BitConverter.GetBytes(pageNumber).CopyTo(input, 4);
-        using var md5 = System.Security.Cryptography.MD5.Create();
-        byte[] hash = md5.ComputeHash(input);
-        byte[] key = new byte[4];
-        Buffer.BlockCopy(hash, 0, key, 0, 4);
-        return key;
-    }
-#pragma warning restore CA5351
-
-    /// <summary>In-place RC4 transform (encrypt and decrypt are the same operation).</summary>
-    private protected static void Rc4Transform(byte[] data, int offset, int length, byte[] key)
-    {
-        byte[] s = new byte[256];
-        for (int i = 0; i < 256; i++)
-        {
-            s[i] = (byte)i;
-        }
-
-        int j = 0;
-        for (int i = 0; i < 256; i++)
-        {
-            j = (j + s[i] + key[i % key.Length]) & 0xFF;
-            (s[i], s[j]) = (s[j], s[i]);
-        }
-
-        int x = 0, y = 0;
-        for (int k = 0; k < length; k++)
-        {
-            x = (x + 1) & 0xFF;
-            y = (y + s[x]) & 0xFF;
-            (s[x], s[y]) = (s[y], s[x]);
-            data[offset + k] ^= s[(s[x] + s[y]) & 0xFF];
-        }
-    }
-
-    /// <summary>In-place AES-128-ECB decryption of a page buffer.</summary>
-#pragma warning disable CA5358 // ECB mode is required to match the ACCDB AES page encryption scheme
-    private protected static void AesEcbDecryptInPlace(byte[] data, int offset, int length, byte[] key)
-    {
-        using var aes = System.Security.Cryptography.Aes.Create();
-        aes.Key = key;
-        aes.Mode = System.Security.Cryptography.CipherMode.ECB;
-        aes.Padding = System.Security.Cryptography.PaddingMode.None;
-
-        using var decryptor = aes.CreateDecryptor();
-        byte[] block = new byte[length];
-        Buffer.BlockCopy(data, offset, block, 0, length);
-
-        byte[] decrypted = decryptor.TransformFinalBlock(block, 0, length);
-        Buffer.BlockCopy(decrypted, 0, data, offset, length);
-    }
-#pragma warning restore CA5358
 
     private protected static ushort Ru16(byte[] b, int o) =>
         (ushort)(b[o] | (b[o + 1] << 8));
@@ -594,25 +501,7 @@ public abstract class AccessBase : IAccessBase
             _ = _ioGate.Release();
         }
 
-        if (_jet3XorMask != null && n >= 1)
-        {
-            long fileOffset = n * _pgSz;
-            for (int b = 0; b < _pgSz; b++)
-            {
-                buf[b] ^= _jet3XorMask[(int)((fileOffset + b - _pgSz) % _jet3XorMask.Length)];
-            }
-        }
-
-        if (_rc4DbKey.HasValue && n >= 1)
-        {
-            byte[] rc4Key = DeriveRc4PageKey(_rc4DbKey.Value, (uint)n);
-            Rc4Transform(buf, 0, _pgSz, rc4Key);
-        }
-
-        if (_aesPageKey != null && n >= 1)
-        {
-            AesEcbDecryptInPlace(buf, 0, _pgSz, _aesPageKey);
-        }
+        EncryptionManager.DecryptPageInPlace(buf, n, _pgSz, _pageKeys);
 
         return buf;
     }
