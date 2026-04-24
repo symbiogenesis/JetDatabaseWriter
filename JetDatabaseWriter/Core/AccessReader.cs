@@ -512,7 +512,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<object[]> StreamRowsAsync(
+    public async IAsyncEnumerable<object[]> Rows(
         string tableName,
         IProgress<long>? progress = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -528,7 +528,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (link != null)
             {
                 await using AccessReader source = await OpenLinkedSourceAsync(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator, cancellationToken).ConfigureAwait(false);
-                await foreach (object[] row in source.StreamRowsAsync(link.ForeignName, progress, cancellationToken).ConfigureAwait(false))
+                await foreach (object[] row in source.Rows(link.ForeignName, progress, cancellationToken).ConfigureAwait(false))
                 {
                     yield return row;
                 }
@@ -563,7 +563,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<T> StreamRowsAsync<T>(
+    public async IAsyncEnumerable<T> Rows<T>(
         string tableName,
         IProgress<long>? progress = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -577,14 +577,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var headers = meta.ConvertAll(m => m.Name);
         var index = RowMapper<T>.BuildIndex(headers);
 
-        await foreach (object[] row in StreamRowsAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
+        await foreach (object[] row in Rows(tableName, progress, cancellationToken).ConfigureAwait(false))
         {
             yield return RowMapper<T>.Map(row, index);
         }
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<string[]> StreamRowsAsStringsAsync(
+    public async IAsyncEnumerable<string[]> RowsAsStrings(
         string tableName,
         IProgress<long>? progress = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -600,7 +600,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (link != null)
             {
                 await using AccessReader source = await OpenLinkedSourceAsync(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator, cancellationToken).ConfigureAwait(false);
-                await foreach (string[] row in source.StreamRowsAsStringsAsync(link.ForeignName, progress, cancellationToken).ConfigureAwait(false))
+                await foreach (string[] row in source.RowsAsStrings(link.ForeignName, progress, cancellationToken).ConfigureAwait(false))
                 {
                     yield return row;
                 }
@@ -673,18 +673,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             Ordinal = index,
             Size = SizeForColumn(col),
         }).ToList();
-    }
-
-    /// <summary>
-    /// Creates a fluent query interface for the specified table.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive).</param>
-    /// <returns>A <see cref="TableQuery"/> for the specified table.</returns>
-    public TableQuery Query(string tableName)
-    {
-        ThrowIfDisposed();
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        return new TableQuery(this, tableName);
     }
 
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
@@ -802,7 +790,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var items = new List<T>();
         int count = 0;
 
-        await foreach (object[] row in StreamRowsAsync(tableName, cancellationToken: cancellationToken).ConfigureAwait(false))
+        await foreach (object[] row in Rows(tableName, cancellationToken: cancellationToken).ConfigureAwait(false))
         {
             items.Add(RowMapper<T>.Map(row, index));
             count++;

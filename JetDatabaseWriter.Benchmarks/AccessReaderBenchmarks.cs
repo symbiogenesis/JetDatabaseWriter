@@ -66,14 +66,14 @@ public class AccessReaderBenchmarks
     public async Task<int> StreamRows_All()
     {
         await using var reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.StreamRowsAsync(_tableName).CountAsync();
+        return await reader.Rows(_tableName).CountAsync();
     }
 
     [Benchmark]
     public async Task<int> StreamRowsAsStrings_All()
     {
         await using var reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.StreamRowsAsStringsAsync(_tableName).CountAsync();
+        return await reader.RowsAsStrings(_tableName).CountAsync();
     }
 
     [Benchmark]
@@ -101,13 +101,13 @@ public class AccessReaderBenchmarks
     public async Task<int> Query_Where_Count()
     {
         await using var reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.Query(_tableName).Where(_ => true).CountAsync();
+        return await reader.Rows(_tableName).Where(_ => true).CountAsync();
     }
 
     [Benchmark]
     public async Task<object[]?> Query_FirstOrDefault()
     {
         await using var reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.Query(_tableName).FirstOrDefaultAsync();
+        return await reader.Rows(_tableName).FirstOrDefaultAsync();
     }
 }

@@ -257,7 +257,7 @@ public sealed class LinkedTableTests : IDisposable
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedItems", sourcePath, "Items", TestContext.Current.CancellationToken);
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        int count = await reader.StreamRowsAsync("LinkedItems", cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
+        int count = await reader.Rows("LinkedItems", cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, count);
     }

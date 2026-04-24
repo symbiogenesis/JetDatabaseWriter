@@ -142,7 +142,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        int count = await reader.StreamRowsAsync(tables[0], cancellationToken: TestContext.Current.CancellationToken)
+        int count = await reader.Rows(tables[0], cancellationToken: TestContext.Current.CancellationToken)
             .CountAsync(TestContext.Current.CancellationToken);
 
         Assert.True(count > 0, "AES-decrypted stream should yield rows.");

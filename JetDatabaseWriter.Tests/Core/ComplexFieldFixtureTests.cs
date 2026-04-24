@@ -102,7 +102,7 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
     {
         // The fixture was created with exactly two rows.
         var reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        int count = await reader.StreamRowsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
+        int count = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
         Assert.Equal(2, count);
     }
 
@@ -130,7 +130,7 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
         Assert.True(attachIdx >= 0, $"Column '{AttachmentsColumn}' not found in {DocumentsTable}");
 
-        object[] row1 = await reader.StreamRowsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
+        object[] row1 = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
 
         Assert.True(
             row1[attachIdx] is not DBNull,
@@ -145,7 +145,7 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
         List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
-        List<object[]> rows = await reader.StreamRowsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).Take(2).ToListAsync(TestContext.Current.CancellationToken);
+        List<object[]> rows = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).Take(2).ToListAsync(TestContext.Current.CancellationToken);
         Assert.Equal(2, rows.Count);
 
         object[] row2 = rows[1];
@@ -163,7 +163,7 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
         List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
-        List<object[]> rows = await reader.StreamRowsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken);
+        List<object[]> rows = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(rows);
 
         var nullRows = rows.Where(r => r[attachIdx] is DBNull).ToList();
@@ -179,7 +179,7 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
         List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
-        object[] row1 = await reader.StreamRowsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
+        object[] row1 = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
         object cell = row1[attachIdx];
 
         Assert.NotEqual(DBNull.Value, cell);
@@ -202,7 +202,7 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
         List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
-        object[] row1 = await reader.StreamRowsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
+        object[] row1 = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
         object cell = row1[attachIdx];
 
         Assert.True(cell is byte[], $"Expected byte[], got {cell?.GetType()?.Name ?? "DBNull"}");
@@ -228,7 +228,7 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
         List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));
 
-        object[] row1 = await reader.StreamRowsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
+        object[] row1 = await reader.Rows(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).FirstAsync(TestContext.Current.CancellationToken);
         object cell = row1[attachIdx];
 
         Assert.True(cell is byte[], $"Expected byte[], got {cell?.GetType()?.Name ?? "DBNull"}");
@@ -260,7 +260,7 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
     {
         // String streaming on tables with attachment columns must not crash.
         var reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        var ex = await Record.ExceptionAsync(async () => await reader.StreamRowsAsStringsAsync(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).Take(5).ToListAsync(TestContext.Current.CancellationToken));
+        var ex = await Record.ExceptionAsync(async () => await reader.RowsAsStrings(DocumentsTable, cancellationToken: TestContext.Current.CancellationToken).Take(5).ToListAsync(TestContext.Current.CancellationToken));
         Assert.Null(ex);
     }
 

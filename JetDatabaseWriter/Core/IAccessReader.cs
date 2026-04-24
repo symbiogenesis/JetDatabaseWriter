@@ -87,39 +87,6 @@ public interface IAccessReader : IAccessBase
     ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Asynchronously yields rows from <paramref name="tableName"/> as properly typed object arrays without collecting them all in memory.
-    /// Each element in the array is the native CLR type (int, DateTime, decimal, etc.).
-    /// Ideal for large tables — use foreach to process one row at a time.
-    /// This is the recommended method for streaming data.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive).</param>
-    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
-    /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
-    /// <returns>An enumerable of object arrays, each representing a row with typed values.</returns>
-    IAsyncEnumerable<object[]> StreamRowsAsync(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Asynchronously yields rows from <paramref name="tableName"/> mapped to instances of <typeparamref name="T"/>.
-    /// </summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
-    /// <param name="tableName">Table name (case-insensitive).</param>
-    /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
-    /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
-    /// <returns>An enumerable of <typeparamref name="T"/> instances, each representing a row.</returns>
-    IAsyncEnumerable<T> StreamRowsAsync<T>(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
-        where T : class, new();
-
-    /// <summary>
-    /// Asynchronously yields rows from <paramref name="tableName"/> as string arrays
-    /// without collecting them all in memory.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive).</param>
-    /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
-    /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
-    /// <returns>An enumerable of string arrays, each representing a row.</returns>
-    IAsyncEnumerable<string[]> StreamRowsAsStringsAsync(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Returns rich metadata for all columns in the specified table asynchronously.
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
@@ -155,13 +122,38 @@ public interface IAccessReader : IAccessBase
     ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Creates a fluent query interface for the specified table.
-    /// Supports both typed and string row access:
-    /// <list type="bullet">
-    ///   <item>Typed chain:  <c>Where(obj => ...)</c>          → <c>ExecuteAsync()</c>          / <c>FirstOrDefaultAsync()</c>          / <c>CountAsync()</c></item>
-    ///   <item>String chain: <c>WhereAsStrings(str => ...)</c> → <c>ExecuteAsStringsAsync()</c> / <c>FirstOrDefaultAsStringsAsync()</c> / <c>CountAsStringsAsync()</c></item>
-    /// </list>
+    /// Returns the rows of <paramref name="tableName"/> as a lazily-streamed
+    /// <see cref="IAsyncEnumerable{T}"/> of typed object arrays. Compose with the standard
+    /// async LINQ operators (<c>Where</c>, <c>Take</c>, <c>Select</c>, <c>ToListAsync</c>,
+    /// <c>FirstOrDefaultAsync</c>, <c>CountAsync</c>, …) — no terminal <c>Execute</c> required.
+    /// Ideal for large tables — use <c>await foreach</c> to process one row at a time.
     /// </summary>
-    /// <returns></returns>
-    TableQuery Query(string tableName);
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
+    /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
+    /// <returns>An async sequence of object arrays, each representing a row with typed values.</returns>
+    IAsyncEnumerable<object[]> Rows(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns the rows of <paramref name="tableName"/> mapped to instances of <typeparamref name="T"/>
+    /// as a lazily-streamed <see cref="IAsyncEnumerable{T}"/>.
+    /// Compose with the standard async LINQ operators.
+    /// </summary>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
+    /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
+    /// <returns>An async sequence of <typeparamref name="T"/> instances.</returns>
+    IAsyncEnumerable<T> Rows<T>(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
+        where T : class, new();
+
+    /// <summary>
+    /// Returns the rows of <paramref name="tableName"/> as a lazily-streamed
+    /// <see cref="IAsyncEnumerable{T}"/> of string arrays.
+    /// </summary>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
+    /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
+    /// <returns>An async sequence of string arrays.</returns>
+    IAsyncEnumerable<string[]> RowsAsStrings(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
 }

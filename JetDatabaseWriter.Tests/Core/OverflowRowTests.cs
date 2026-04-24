@@ -141,7 +141,7 @@ public sealed class OverflowRowTests(DatabaseCache db) : IClassFixture<DatabaseC
         }
 
         await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
-        int streamed = await reader.StreamRowsAsync(tableName, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
+        int streamed = await reader.Rows(tableName, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(rowCount, streamed);
     }

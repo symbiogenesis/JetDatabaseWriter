@@ -170,7 +170,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
 
-        int count = await reader.StreamRowsAsync(
+        int count = await reader.Rows(
             tables[0],
             cancellationToken: TestContext.Current.CancellationToken)
             .CountAsync(TestContext.Current.CancellationToken);

@@ -146,7 +146,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
             if (hasComplex)
             {
                 var ex = await Record.ExceptionAsync(async () =>
-                    await reader.StreamRowsAsync(table, cancellationToken: TestContext.Current.CancellationToken).Take(5).ToListAsync(TestContext.Current.CancellationToken));
+                    await reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).Take(5).ToListAsync(TestContext.Current.CancellationToken));
                 Assert.Null(ex);
             }
         }
@@ -169,7 +169,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
                 continue;
             }
 
-            await foreach (object[] row in reader.StreamRowsAsync(table, cancellationToken: TestContext.Current.CancellationToken).Take(10))
+            await foreach (object[] row in reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).Take(10))
             {
                 if (row[attachIdx] is not DBNull)
                 {
@@ -229,7 +229,7 @@ public sealed class ComplexFieldTests(DatabaseCache db) : IClassFixture<Database
                 continue;
             }
 
-            await foreach (object[] row in reader.StreamRowsAsync(table, cancellationToken: TestContext.Current.CancellationToken).Take(10))
+            await foreach (object[] row in reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).Take(10))
             {
                 if (row[complexIdx] is not DBNull)
                 {

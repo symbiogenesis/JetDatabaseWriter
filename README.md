@@ -23,8 +23,8 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Async support** | Async-first `ValueTask<T>` API, `OpenAsync(...)` + `await using` (`IAsyncDisposable`) |
 | ✅ **Stream support** | Open from any seekable `Stream` (byte arrays, blobs, embedded resources) |
 | ✅ **Page cache** | 256-page LRU cache (~1 MB, configurable) |
-| ✅ **Generic POCO mapping** | `ReadTable<T>()`, `StreamRows<T>()`, `InsertRow<T>()` — no manual casting |
-| ✅ **Fluent query** | `Query().Where().Take().Execute()` — typed and string chains |
+| ✅ **Generic POCO mapping** | `ReadTable<T>()`, `Rows<T>()`, `InsertRow<T>()` — no manual casting |
+| ✅ **LINQ-friendly streaming** | `reader.Rows<T>("...").Where(...).Take(...).ToListAsync(ct)` — standard async LINQ over `IAsyncEnumerable<T>` |
 | ✅ **Progress reporting** | `IProgress<int>` callbacks on all long operations |
 | ✅ **Non-Western text** | Code page auto-detected from the database header |
 | ✅ **OLE Objects** | Detects embedded JPEG, PNG, PDF, ZIP, DOC, RTF |
@@ -183,14 +183,14 @@ string firstCell = preview.Rows[0][0].ToString();
 ```csharp
 var progress = new Progress<int>(n => Console.Write($"\r{n:N0} rows"));
 
-await foreach (Product p in reader.StreamRowsAsync<Product>("Products", progress))
+await foreach (Product p in reader.Rows<Product>("Products", progress))
     Console.WriteLine($"{p.ProductName}: {p.UnitPrice:C}");
 ```
 
 ### Typed object array streaming
 
 ```csharp
-await foreach (object[] row in reader.StreamRowsAsync("BigTable"))
+await foreach (object[] row in reader.Rows("BigTable"))
 {
     int     id  = (int)row[0];
     decimal val = row[2] == DBNull.Value ? 0m : (decimal)row[2];
@@ -200,7 +200,7 @@ await foreach (object[] row in reader.StreamRowsAsync("BigTable"))
 ### String streaming — compatibility
 
 ```csharp
-await foreach (string[] row in reader.StreamRowsAsStringsAsync("BigTable"))
+await foreach (string[] row in reader.RowsAsStrings("BigTable"))
     Console.WriteLine(string.Join(", ", row));
 ```
 
@@ -208,33 +208,38 @@ Null values in typed `object[]` rows surface as `DBNull.Value`.
 
 ---
 
-## Fluent Query API
+## Querying with async LINQ
+
+The reader exposes each table as an `IAsyncEnumerable<T>` via `Rows`, `Rows<T>`, and `RowsAsStrings`. Compose with the standard async LINQ operators (`Where`, `Take`, `Select`, `ToListAsync`, `FirstOrDefaultAsync`, `CountAsync`, …) — there is no separate query type and no terminal `Execute` call.
 
 ```csharp
-// Generic POCO result
-Order? first = await reader.Query("Orders")
-    .Where(row => row[2] is DateTime d && d.Year == 2024)
+// Generic POCO result — first match
+Order? first = await reader.Rows<Order>("Orders")
+    .Where(o => o.OrderDate.Year == 2024)
     .Take(10)
-    .FirstOrDefaultAsync<Order>();
+    .FirstOrDefaultAsync(ct);
 
-List<Order> recent = new();
-await foreach (Order o in reader.Query("Orders")
-    .Where(row => row[2] is DateTime d && d.Year == 2024)
-    .ExecuteAsync<Order>())
-    recent.Add(o);
+// Materialize to a list
+List<Order> recent = await reader.Rows<Order>("Orders")
+    .Where(o => o.OrderDate.Year == 2024)
+    .ToListAsync(ct);
 
-// Object array chain
-int count = await reader.Query("OrderDetails")
+// Object-array chain (no POCO)
+int count = await reader.Rows("OrderDetails")
     .Where(row => row[3] is decimal p && p > 100m)
-    .CountAsync();
+    .CountAsync(ct);
 
-// String chain
-await foreach (string[] row in reader.Query("Orders")
-    .WhereAsStrings(row => row[2].StartsWith("2024"))
+// String chain — useful for compatibility / CSV-style consumers
+await foreach (string[] row in reader.RowsAsStrings("Orders")
+    .Where(r => r[2].StartsWith("2024"))
     .Take(50)
-    .ExecuteAsStringsAsync())
+    .WithCancellation(ct))
+{
     Console.WriteLine(string.Join(", ", row));
+}
 ```
+
+Filtering and projection run client-side per row — there is no SQL engine underneath — but enumeration is fully lazy and `Take`/`First` short-circuit the underlying page reader.
 
 ---
 
