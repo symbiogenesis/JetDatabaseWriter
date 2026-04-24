@@ -563,6 +563,392 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }).ToList();
     }
 
+    /// <inheritdoc/>
+    public async ValueTask<IReadOnlyList<IndexMetadata>> ListIndexesAsync(string tableName, CancellationToken cancellationToken = default)
+    {
+        Guard.ThrowIfDisposed(_disposed, this);
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            return [];
+        }
+
+        byte[]? td = await ReadTDefBytesAsync(resolved.Value.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        if (td == null || td.Length < _tdBlockEnd)
+        {
+            return [];
+        }
+
+        return ParseIndexMetadata(td, resolved.Value.Td.Columns);
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken = default)
+    {
+        Guard.ThrowIfDisposed(_disposed, this);
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Complex columns are an Access 2007+ ACE feature. Older formats never carry them.
+        if (_format == DatabaseFormat.Jet3Mdb)
+        {
+            return [];
+        }
+
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            return [];
+        }
+
+        // Walk the parent TDEF column descriptors to extract per-column ComplexID
+        // (the 4-byte misc/misc_ext slot, only meaningful when col_type is 0x11/0x12).
+        byte[]? td = await ReadTDefBytesAsync(resolved.Value.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        if (td == null)
+        {
+            return [];
+        }
+
+        int numCols = Ru16(td, _tdNumCols);
+        int numRealIdx = Ri32(td, _tdNumRealIdx);
+        if (numRealIdx < 0 || numRealIdx > 1000)
+        {
+            numRealIdx = 0;
+        }
+
+        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
+
+        // Jet4/ACE: misc bytes occupy descriptor-relative offsets 11..14 (between offset_V and offset_F).
+        const int Jet4MiscOffset = 11;
+
+        var byComplexId = new Dictionary<int, (string Name, byte Type)>();
+        for (int i = 0; i < numCols; i++)
+        {
+            int o = colStart + (i * _colDescSz);
+            if (o + _colDescSz > td.Length)
+            {
+                break;
+            }
+
+            byte type = td[o + _colTypeOff];
+            if (type != T_COMPLEX && type != T_ATTACHMENT)
+            {
+                continue;
+            }
+
+            int complexId = Ri32(td, o + Jet4MiscOffset);
+            if (complexId <= 0)
+            {
+                continue;
+            }
+
+            int colNum = Ru16(td, o + _colNumOff);
+            ColumnInfo? info = resolved.Value.Td.Columns.Find(c => c.ColNum == colNum);
+            string name = info?.Name ?? string.Empty;
+            byComplexId[complexId] = (name, type);
+        }
+
+        if (byComplexId.Count == 0)
+        {
+            return [];
+        }
+
+        return await JoinComplexColumnsAsync(byComplexId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static ComplexColumnKind ClassifyComplexKind(string complexTypeName)
+    {
+        if (string.IsNullOrEmpty(complexTypeName))
+        {
+            return ComplexColumnKind.Unknown;
+        }
+
+        if (complexTypeName.Equals("MSysComplexType_Attachment", StringComparison.OrdinalIgnoreCase))
+        {
+            return ComplexColumnKind.Attachment;
+        }
+
+        // Memo + datetime "version" template — Access surfaces this via "Append Only" memos.
+        // No probe-confirmed template name yet; classify by primitive-template prefix below
+        // when present, otherwise fall through to MultiValue / Unknown.
+        if (complexTypeName.StartsWith("MSysComplexType_", StringComparison.OrdinalIgnoreCase))
+        {
+            return ComplexColumnKind.MultiValue;
+        }
+
+        return ComplexColumnKind.Unknown;
+    }
+
+    private List<IndexMetadata> ParseIndexMetadata(byte[] td, List<ColumnInfo> columns)
+    {
+        int numCols = Ru16(td, _tdNumCols);
+        int numIdx = Ri32(td, _tdNumCols + 2);
+        int numRealIdx = Ri32(td, _tdNumRealIdx);
+
+        // Defensive bounds: corrupt TDEFs can report absurd counts.
+        if (numIdx <= 0 || numIdx > 1000)
+        {
+            return [];
+        }
+
+        if (numRealIdx < 0 || numRealIdx > 1000)
+        {
+            numRealIdx = 0;
+        }
+
+        bool jet4 = _format != DatabaseFormat.Jet3Mdb;
+        int realIdxPhysSz = jet4 ? 52 : 39;
+        int logIdxEntrySz = jet4 ? 28 : 20;
+
+        // Section walk mirrors AccessBase.ReadTableDefAsync and FormatProbe.
+        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
+        int namesStart = colStart + (numCols * _colDescSz);
+
+        // Walk column-name length-prefix block to find where it ends.
+        int pos = namesStart;
+        for (int i = 0; i < numCols; i++)
+        {
+            if (ReadColumnName(td, ref pos, out _) < 0)
+            {
+                return [];
+            }
+        }
+
+        int realIdxDescStart = pos;
+        int logicalIdxStart = realIdxDescStart + (numRealIdx * realIdxPhysSz);
+        int logicalIdxNamesStart = logicalIdxStart + (numIdx * logIdxEntrySz);
+
+        if (logicalIdxNamesStart > td.Length)
+        {
+            return [];
+        }
+
+        // Build a col_num → name lookup honouring deleted-column gaps.
+        var colNumToName = new Dictionary<int, string>(columns.Count);
+        foreach (ColumnInfo c in columns)
+        {
+            colNumToName[c.ColNum] = c.Name;
+        }
+
+        // Pre-walk index names so we can pair each logical-idx entry with its name.
+        var names = new string[numIdx];
+        int npos = logicalIdxNamesStart;
+        for (int i = 0; i < numIdx; i++)
+        {
+            if (ReadColumnName(td, ref npos, out string n) < 0)
+            {
+                names[i] = string.Empty;
+            }
+            else
+            {
+                names[i] = n;
+            }
+        }
+
+        var result = new List<IndexMetadata>(numIdx);
+        for (int i = 0; i < numIdx; i++)
+        {
+            int entryStart = logicalIdxStart + (i * logIdxEntrySz);
+            if (entryStart + logIdxEntrySz > td.Length)
+            {
+                break;
+            }
+
+            int indexNum = jet4 ? Ri32(td, entryStart + 4) : Ri32(td, entryStart + 4);
+            int realIdxNum = jet4 ? Ri32(td, entryStart + 8) : Ri32(td, entryStart + 8);
+            int relIdxNum = jet4 ? Ri32(td, entryStart + 13) : Ri32(td, entryStart + 9);
+            int relTblPage = jet4 ? Ri32(td, entryStart + 17) : Ri32(td, entryStart + 13);
+            byte cascadeUps = jet4 ? td[entryStart + 21] : td[entryStart + 17];
+            byte cascadeDels = jet4 ? td[entryStart + 22] : td[entryStart + 18];
+            byte indexType = jet4 ? td[entryStart + 23] : td[entryStart + 19];
+
+            // Read the col_map for the backing real-idx entry to recover key columns.
+            var keyColumns = new List<IndexColumnReference>();
+            byte flags = 0x00;
+            if (numRealIdx > 0 && realIdxNum >= 0 && realIdxNum < numRealIdx)
+            {
+                int physStart = realIdxDescStart + (realIdxNum * realIdxPhysSz);
+                if (physStart + realIdxPhysSz <= td.Length)
+                {
+                    if (jet4)
+                    {
+                        // 10 col_map slots: each {col_num(2), col_order(1)}.
+                        for (int slot = 0; slot < 10; slot++)
+                        {
+                            int so = physStart + 4 + (slot * 3);
+                            int cn = Ru16(td, so);
+                            byte order = td[so + 2];
+                            if (cn == 0xFFFF)
+                            {
+                                continue;
+                            }
+
+                            keyColumns.Add(new IndexColumnReference
+                            {
+                                Name = colNumToName.TryGetValue(cn, out string? n) ? n : string.Empty,
+                                ColumnNumber = cn,
+                                IsAscending = order == 0x01,
+                            });
+                        }
+
+                        flags = td[physStart + 42];
+                    }
+                    else
+                    {
+                        // Jet3 layout: HACKING.md is incomplete; emit a best-effort col_map walk
+                        // limited to the documented 10-slot block at offset 4 (still 3 bytes/slot).
+                        for (int slot = 0; slot < 10; slot++)
+                        {
+                            int so = physStart + 4 + (slot * 3);
+                            if (so + 3 > physStart + realIdxPhysSz)
+                            {
+                                break;
+                            }
+
+                            int cn = Ru16(td, so);
+                            byte order = td[so + 2];
+                            if (cn == 0xFFFF)
+                            {
+                                continue;
+                            }
+
+                            keyColumns.Add(new IndexColumnReference
+                            {
+                                Name = colNumToName.TryGetValue(cn, out string? n) ? n : string.Empty,
+                                ColumnNumber = cn,
+                                IsAscending = order == 0x01,
+                            });
+                        }
+                    }
+                }
+            }
+
+            IndexKind kind = indexType switch
+            {
+                0x01 => IndexKind.PrimaryKey,
+                0x02 => IndexKind.ForeignKey,
+                _ => IndexKind.Normal,
+            };
+
+            result.Add(new IndexMetadata
+            {
+                Name = names[i],
+                IndexNumber = indexNum,
+                RealIndexNumber = realIdxNum,
+                Kind = kind,
+                IsUnique = (flags & 0x01) != 0,
+                IgnoreNulls = (flags & 0x02) != 0,
+                IsRequired = (flags & 0x08) != 0,
+                IsForeignKey = relIdxNum != -1,
+                RelatedTablePage = relIdxNum != -1 ? relTblPage : 0,
+                CascadeUpdates = cascadeUps != 0,
+                CascadeDeletes = cascadeDels != 0,
+                Columns = keyColumns,
+            });
+        }
+
+        return result;
+    }
+
+    private async ValueTask<IReadOnlyList<ComplexColumnInfo>> JoinComplexColumnsAsync(
+        Dictionary<int, (string Name, byte Type)> byComplexId,
+        CancellationToken cancellationToken)
+    {
+        long msysTdef = await FindSystemTablePageAsync("MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        if (msysTdef <= 0)
+        {
+            return [];
+        }
+
+        TableDef? msys = await ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
+        if (msys == null)
+        {
+            return [];
+        }
+
+        int idxColumnName = msys.Columns.FindIndex(c => string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
+        int idxComplexId = msys.Columns.FindIndex(c => string.Equals(c.Name, "ComplexID", StringComparison.OrdinalIgnoreCase));
+        int idxFlatTable = msys.Columns.FindIndex(c => string.Equals(c.Name, "FlatTableID", StringComparison.OrdinalIgnoreCase));
+        int idxConceptualTable = msys.Columns.FindIndex(c => string.Equals(c.Name, "ConceptualTableID", StringComparison.OrdinalIgnoreCase));
+        int idxComplexType = msys.Columns.FindIndex(c => string.Equals(c.Name, "ComplexTypeObjectID", StringComparison.OrdinalIgnoreCase));
+
+        if (idxComplexId < 0)
+        {
+            return [];
+        }
+
+        // Pre-resolve flat-table and complex-type id → name via the MSysObjects catalog
+        // so each complex column row can be classified without a per-row catalog scan.
+        Dictionary<long, string> objectNamesById = await BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
+
+        var result = new List<ComplexColumnInfo>(byComplexId.Count);
+        await foreach (List<string> row in EnumerateRowsForTdefAsync(msysTdef, msys, cancellationToken).ConfigureAwait(false))
+        {
+            if (!int.TryParse(SafeGet(row, idxComplexId), out int complexId))
+            {
+                continue;
+            }
+
+            if (!byComplexId.TryGetValue(complexId, out var parent))
+            {
+                continue;
+            }
+
+            int flatId = idxFlatTable >= 0 && int.TryParse(SafeGet(row, idxFlatTable), out int fid) ? fid : 0;
+            int conceptualId = idxConceptualTable >= 0 && int.TryParse(SafeGet(row, idxConceptualTable), out int cid) ? cid : 0;
+            int typeObjectId = idxComplexType >= 0 && int.TryParse(SafeGet(row, idxComplexType), out int tid) ? tid : 0;
+
+            string columnName = idxColumnName >= 0 ? SafeGet(row, idxColumnName) : parent.Name;
+            string flatName = flatId != 0 && objectNamesById.TryGetValue(flatId, out string? fn) ? fn : string.Empty;
+            string typeName = typeObjectId != 0 && objectNamesById.TryGetValue(typeObjectId, out string? tn) ? tn : string.Empty;
+
+            result.Add(new ComplexColumnInfo
+            {
+                ColumnName = string.IsNullOrEmpty(columnName) ? parent.Name : columnName,
+                ComplexId = complexId,
+                Kind = ClassifyComplexKind(typeName),
+                FlatTableName = flatName,
+                FlatTableId = flatId,
+                ConceptualTableId = conceptualId,
+                ComplexTypeObjectId = typeObjectId,
+                ComplexTypeName = typeName,
+            });
+        }
+
+        return result;
+    }
+
+    private async ValueTask<Dictionary<long, string>> BuildObjectNameLookupAsync(CancellationToken cancellationToken)
+    {
+        var map = new Dictionary<long, string>();
+
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (msys == null)
+        {
+            return map;
+        }
+
+        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
+        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        if (idxId < 0 || idxName < 0)
+        {
+            return map;
+        }
+
+        await foreach (List<string> row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
+        {
+            if (long.TryParse(SafeGet(row, idxId), out long id))
+            {
+                map[id] = SafeGet(row, idxName);
+            }
+        }
+
+        return map;
+    }
+
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
     /// <returns>A list of user table names.</returns>
     public async ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default)
@@ -1799,6 +2185,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>Enumerates every row of MSysObjects. Exposed for <see cref="Internal.LinkedTableManager"/>.</summary>
     internal IAsyncEnumerable<List<string>> EnumerateMSysObjectsRowsAsync(TableDef msys, CancellationToken cancellationToken) =>
         EnumerateRowsForTdefAsync(2, msys, cancellationToken);
+
+    /// <summary>
+    /// Returns the concatenated TDEF page-chain bytes for <paramref name="tdefPage"/>,
+    /// with the 8-byte page header included for the first page and stripped from
+    /// continuations (matches <see cref="AccessBase.ReadTDefBytesAsync"/>). Returns
+    /// <see langword="null"/> when the page is not a valid TDEF root. Diagnostic-only
+    /// helper for the format-probe tool under <c>JetDatabaseWriter.FormatProbe</c>.
+    /// </summary>
+    internal ValueTask<byte[]?> GetRawTDefBytesAsync(long tdefPage, CancellationToken cancellationToken) =>
+        ReadTDefBytesAsync(tdefPage, cancellationToken);
 
     /// <summary>
     /// Reads and parses the <c>MSysObjects.LvProp</c> blob for the catalog row whose

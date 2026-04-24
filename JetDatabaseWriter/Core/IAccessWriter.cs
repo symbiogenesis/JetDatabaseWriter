@@ -21,6 +21,22 @@ public interface IAccessWriter : IAccessBase
     ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Asynchronously creates a new table with the specified columns and the specified
+    /// single-column, non-unique, ascending logical indexes. Throws if a table with the
+    /// same name already exists.
+    /// </summary>
+    /// <param name="tableName">Name of the table to create.</param>
+    /// <param name="columns">Column definitions for the new table.</param>
+    /// <param name="indexes">
+    /// Logical-index schema entries to write into the new table's TDEF page chain.
+    /// See <see cref="IndexDefinition"/> for the W1 phase constraints (single column,
+    /// non-unique, ascending, no leaf B-tree pages emitted).
+    /// </param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Asynchronously drops (deletes) the specified table and all of its data.
     /// Throws if the table does not exist.
     /// </summary>

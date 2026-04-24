@@ -164,6 +164,35 @@ foreach (ColumnMetadata col in meta)
 }
 ```
 
+### Index metadata
+
+`ListIndexesAsync` returns the logical indexes declared on a table — primary keys, foreign-key indexes, and ordinary user indexes — parsed directly from the TDEF page chain. Only schema metadata is surfaced; the index B-tree leaf pages are not traversed.
+
+```csharp
+IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Companies", cancellationToken);
+foreach (IndexMetadata idx in indexes)
+{
+    string keys = string.Join(", ", idx.Columns.Select(c => c.Name));
+    Console.WriteLine($"{idx.Name}: {idx.Kind} on ({keys})  unique={idx.IsUnique}  fk={idx.IsForeignKey}");
+}
+```
+
+Multiple logical indexes can share the same physical index — consult `IndexMetadata.RealIndexNumber` to detect that sharing. The `IndexKind` enum distinguishes `Normal`, `PrimaryKey`, and `ForeignKey`. Note: Access does not always set the `IsUnique` flag bit on primary keys (uniqueness is implied by `Kind == PrimaryKey`).
+
+### Complex (Attachment / Multi-value) column metadata
+
+`GetComplexColumnsAsync` joins the parent TDEF column descriptors with `MSysComplexColumns` to expose the per-column `ComplexID`, the hidden flat child-table name, and the column subtype (Attachment, MultiValue, or VersionHistory).
+
+```csharp
+IReadOnlyList<ComplexColumnInfo> complex = await reader.GetComplexColumnsAsync("Documents", cancellationToken);
+foreach (ComplexColumnInfo c in complex)
+{
+    Console.WriteLine($"{c.ColumnName}: {c.Kind}  flat={c.FlatTableName}  template={c.ComplexTypeName}");
+}
+```
+
+Returns an empty list for tables without complex columns and for older Jet3 / Jet4 (`.mdb`) files.
+
 ### String DataTable — compatibility
 
 ```csharp
@@ -557,10 +586,11 @@ Wrong or missing passwords throw `UnauthorizedAccessException`. Corrupt or non-J
 The writer is intentionally focused on the most common create / insert / update / delete scenarios. The following are **not** supported today:
 
 ### Schema evolution
-- **No index, primary-key, foreign-key, or relationship creation.** `CreateTableAsync` emits a heap table with no indexes. `MSysRelationships` and `MSysIndexes` entries are not written.
+- **No primary-key, foreign-key, or relationship creation.** `MSysRelationships` entries are not written, and primary-key / foreign-key flags are not emitted on the TDEF. (Reader-side: existing index, PK, and FK schema is exposed via `ListIndexesAsync`.)
+- **Index creation is metadata-only ("schema-W1").** `CreateTableAsync` accepts an optional `IReadOnlyList<IndexDefinition>` to declare single-column, non-unique, ascending logical indexes. Only the TDEF schema bytes (real-index physical descriptor + logical-index entry + logical-index name) are emitted — **no B-tree leaf or intermediate pages are written**. The indexes round-trip through this library's own `ListIndexesAsync`, but Microsoft Access will rebuild (or reject) them on its next compact / repair pass. Multi-column indexes, unique indexes, descending keys, and the corresponding `IndexDefinition` properties are not yet supported. Jet3 (`.mdb` Access 97) databases reject `IndexDefinition` entirely.
 
 ### Specialized column kinds
-- **No attachment columns.** Reading attachments via the `MSysComplexColumns` FK lookup is supported, but `CreateTableAsync` cannot declare an Attachment column, and there is no API to add files to one.
+- **No attachment columns.** Reading attachments via the `MSysComplexColumns` FK lookup is supported (and structural metadata via `GetComplexColumnsAsync`), but `CreateTableAsync` cannot declare an Attachment column, and there is no API to add files to one.
 - **No multi-value (complex) columns.** Same restriction — readable, not writable.
 - **No calculated columns** (Access 2010+ expression columns).
 - **No hyperlink semantics.** Hyperlink fields round-trip as plain MEMO text; the `#display#address#subaddress#` structure is not parsed or emitted.
