@@ -1,0 +1,214 @@
+# Design notes: Index, primary-key, foreign-key, and relationship format
+
+**Status:** Research / not implemented
+**Owner:** TBD
+**Related limitation:** [`README.md` §"Limitations" → "No index, primary-key, foreign-key, or relationship creation."](../../README.md)
+**Validation requirement:** any PR that lands writer code in this area MUST round-trip through Microsoft Access on Windows (open, compact-and-repair, re-open) before merge. The compact step rebuilds index pages and is the most reliable way to detect a malformed index entry.
+
+> ⚠️ Reverse-engineered notes. The mdbtools spec is partial; many fields are documented as `???`. **Empirical verification against `JetDatabaseWriter.Tests/Databases/NorthwindTraders.accdb` and `testV2007.accdb` is required for every offset cited here before any writer is built.** This document records what is publicly documented today, not a verified specification.
+
+---
+
+## 1. Background
+
+The reader does **not** consume index information today. Row enumeration is a linear data-page scan via the per-table page-usage bitmap. So a writer that emits indexes has zero observable effect through this library — only Microsoft Access (and other tools that consult the index, e.g. compact/repair, AccessVBA, or Jackcess) can validate correctness.
+
+The two pinned tests that codify the current limitation:
+
+- `JetDatabaseWriter.Tests/Core/LimitationsTests.SchemaEvolution_IAccessWriter_DoesNotExposeIndexOrConstraintApis`
+- `JetDatabaseWriter.Tests/Core/LimitationsTests.SchemaEvolution_FreshlyCreatedTable_HasNoUserDefinedIndexEntries`
+
+Both must flip when this is implemented.
+
+## 2. Reader-side prerequisite
+
+Before *any* writer work, the reader needs to be able to enumerate indexes from a TDEF and (optionally) traverse leaf pages. This is the foundation that makes every writer change round-trippable in this repo's own test suite.
+
+Recommended phasing:
+
+1. **Phase R1 — TDEF index metadata.**  Parse the logical-index block and index name list out of the existing TDEF byte buffer. Surface a new `IndexMetadata` model via `AccessReader.ListIndexesAsync(string tableName, CT)`. No B-tree page traversal. No public seek-by-index API.
+2. **Phase R2 — Leaf-page enumeration.**  Walk page-type `0x04` leafs from `first_dp` and decode entries (per the index entry layout in §4 below). Used internally for assertions in writer tests; not necessarily exposed publicly.
+3. **Phase R3 — Index seeking.**  Optional. Public `IAsyncEnumerable<T> SeekRowsAsync(string indexName, object key)` API, with B-tree descent through page-type `0x03` intermediate pages.
+
+Phases R2/R3 require the encoded sort-key implementation that the writer also needs (§5), so doing R2 before W1 amortizes that cost.
+
+## 3. TDEF layout (per [mdbtools HACKING.md](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md) "TDEF (Table Definition) Pages")
+
+The TDEF page chain (page type `0x02`, linked through `next_pg` at offset `4`) is concatenated by `AccessBase.ReadTDefBytesAsync` into a single byte array. Within that buffer, the layout (Jet4 / ACE) is:
+
+| Section | Size | Notes |
+|---|---|---|
+| Page header | 8 bytes | `page_type=0x02`, `unknown=0x01`, `tdef_id`, `next_pg` |
+| Jet4 TDEF block | 55 bytes | `tdef_len`, `unknown`, `num_rows`, `autonumber`, `autonum_flag`, `unknown[3]`, `ct_autonum`, `unknown[8]`, `table_type`, `max_cols`, `num_var_cols`, `num_cols`, **`num_idx`** at relative offset 39 (absolute 47 from page start), **`num_real_idx`** at absolute 51, `used_pages`, `free_pages` |
+| Real-index entries | `num_real_idx × 12` (Jet4) / `× 8` (Jet3) | Already skipped by `AccessBase.ReadTableDefAsync`. Per mdbtools each Jet4 entry: `unknown(4) + num_idx_rows(4) + unknown(4)` |
+| Column descriptors | `num_cols × 25` (Jet4) / `× 18` (Jet3) | Already parsed |
+| Column names | `num_cols ×` length-prefixed | 2-byte len + UTF-16 (Jet4); 1-byte len + ANSI (Jet3) |
+| **Real-index "physical" descriptors** | `num_real_idx × 52` (Jet4) / `× 39` (Jet3) | See §3.1 |
+| **Logical-index entries** | `num_idx × 28` (Jet4) / `× 20` (Jet3) | See §3.2 |
+| **Logical-index names** | `num_idx ×` length-prefixed | Same encoding as column names |
+| Variable-length column trailing block | iterates while `col_num != 0xFFFF` | Per-var-col `used_pages` / `free_pages` pointers |
+
+### 3.1 Real-index "physical" descriptor (Jet4: 52 bytes)
+
+Per HACKING.md the layout is conceptually `30 + 22 = 52` bytes:
+
+```text
+4 bytes  unknown
+30 bytes col_map: 10 × { col_num(2), col_order(1) }    // 0xFFFF col_num = end of list
+4 bytes  used_pages   // FK to usage bitmap for this index
+4 bytes  first_dp     // root index page (0x03 / 0x04 / sometimes 0x01 for tiny tables)
+1 byte   flags        // index_flags table below
+9 bytes  unknown
+```
+
+Index flags (`flags` byte; not exhaustive per mdbtools):
+
+| Bit | Meaning |
+|---|---|
+| `0x01` | Unique |
+| `0x02` | IgnoreNulls |
+| `0x08` | Required |
+
+`col_order` per col-map slot: `0x01` = ascending. Descending support requires tracing real Access output (HACKING.md does not document the descending value explicitly; presumably `0x02` or `0x00` — verify against a fixture with a descending index).
+
+### 3.2 Logical-index entry (Jet4: 28 bytes)
+
+```text
+4 bytes  unknown        // matches "first unknown definition block"
+4 bytes  index_num      // logical index number; NOT necessarily sequential
+4 bytes  index_num2     // index into the real-index list (which physical idx backs this)
+1 byte   rel_tbl_type   // type of the *other* table in this FK relationship
+4 bytes  rel_idx_num    // -1 (0xFFFFFFFF) when this is not a FK
+4 bytes  rel_tbl_page   // page number of the other table in the FK
+1 byte   cascade_ups    // FK: cascade updates flag
+1 byte   cascade_dels   // FK: cascade deletes flag
+1 byte   index_type     // 0x01 = primary key, 0x02 = foreign key, otherwise normal
+```
+
+### 3.3 Sharing rules
+
+> "There can be more logical index infos than physical index infos (currently only seen for foreign-key indexes). In this situation, one or more of the logical indexes actually share the same underlying physical index (the `index_num2` indicates which physical index backs which logical index)." — HACKING.md
+
+When the user enables "enforce referential integrity" in the Access GUI, both sides of the relationship gain an extra logical index (type `0x02`). If the FK columns are already covered by a user-created index, the new logical FK index reuses that physical index data instead of duplicating it.
+
+## 4. Index page layout (page types `0x03` and `0x04`)
+
+`0x04` = leaf, one entry per row. `0x03` = intermediate. For very small tables, `first_dp` can point directly at a `0x01` data page.
+
+### 4.1 Page header
+
+```text
+1 byte   page_type      // 0x03 or 0x04
+1 byte   unknown        // 0x01
+2 bytes  free_space
+4 bytes  parent_page    // TDEF pg for this idx
+4 bytes  prev_page      // sibling at this level
+4 bytes  next_page      // sibling at this level
+4 bytes  tail_page      // pointer to tail leaf (PK-style append optimization)
+2 bytes  pref_len       // shared-prefix length (compression)
+```
+
+### 4.2 Entry-start bitmask
+
+A bitmask immediately following the header marks where each entry begins.
+
+- Jet3: bitmask starts at `0x16`, first entry begins at `0xF8`.
+- Jet4: bitmask starts at `0x1B`, first entry begins at `0x1E0`.
+
+The bitmask encodes 1 bit per byte of payload (LSB-first within each byte). The first entry is implicit (no bit set). A bit at position N indicates an entry begins at offset `(first_entry_offset + N)`.
+
+### 4.3 Entry record
+
+```text
+1 byte   flags          // 0x7F = ascending non-null, 0x80 = descending non-null,
+                        // 0x00 = ascending null, 0xFF = descending null
+n bytes  encoded key    // per-column, in column-map order; null cols contribute only the flag
+3 bytes  data page      // page containing the row (24-bit, big-endian per HACKING.md)
+1 byte   data row       // row number on that page
+4 bytes  child page     // ONLY on 0x03 intermediate pages; this entry is the LAST entry
+                        // on the referenced child page
+```
+
+> "0x80 is the one's complement of 0x7F and all text data in the index would then need to be negated. The reason for this negation is descending order." — HACKING.md
+
+### 4.4 Prefix compression
+
+If `pref_len > 0`, the first `pref_len` bytes of the *first* entry are implicitly prepended to every subsequent entry on that page. So a 4-byte-prefix page could cut every int-key entry from 9 bytes (`flag + int32 + 3-byte page + 1-byte row`) to 5 bytes.
+
+### 4.5 Tail-page optimization
+
+PK-style indexes that mostly append (e.g. autoincrement) maintain a `tail_page` pointer on the rightmost leaf. New leaf pages chain through this pointer until full, *then* propagate up the tree. A reader/seeker that walks the index tree must follow `tail_page` after exhausting the normal traversal, otherwise it misses recent appends.
+
+## 5. Sort-key encoding ("alphabetic sort order")
+
+Per HACKING.md the **General legacy** encoding (Access 2000–2007, locale 1033 version 0):
+
+| Char range | Encoded bytes |
+|---|---|
+| `0–9` | `0x56–0x5F` |
+| `A–Z` | `0x60–0x79` |
+| `a–z` | `0x60–0x79` (case-insensitive) |
+
+Text key terminator: `0x00` (or `0xFF` when negated for descending).
+
+Access 2010 introduced a **General** encoding (locale 1033 version 1) that is *different* from General Legacy. HACKING.md does not document the new encoding. Real Access output will need to be diffed to derive it.
+
+For non-text fixed types the encoding is conceptually big-endian with a sign-flip on the high bit:
+
+- `int32`: write as big-endian; XOR the top byte with `0x80`. Then a leading `0x7F` (or `0x00` for null), trailing `0x00`.
+- `int16`, `int8`, `int64`: same pattern at appropriate widths.
+- `double`/`single`: IEEE-754 → big-endian → if positive, flip sign bit; if negative, complement all bits. Then `0x7F` prefix / `0x00` suffix.
+- `currency` / `money`: int64 internally, encode as int64.
+- `datetime`: stored as IEEE double (OA date), use the double encoding.
+- `guid`, `binary(≤255)`: literal big-endian bytes.
+
+> ⚠️ The exact byte sequences above are conventional B-tree sort-key encodings and match what Jackcess emits. They are **NOT** independently verified against this codebase's test fixtures and need to be byte-compared with `NorthwindTraders.accdb` index leafs before use.
+
+Because text data is **mangled** by sort-key encoding, "covered queries" (queries answerable from index alone) are not possible against text columns. This is a JET property, not a library limitation.
+
+## 6. `MSysIndexes` / `MSysIndexColumns` / `MSysRelationships` catalog tables
+
+The TDEF index block describes *physical* index structure. Microsoft Access ALSO writes catalog metadata to system tables that mirror the same information at the SQL level. Without these rows, Access UI shows the table as having no indexes, even if the TDEF block is correct.
+
+| Catalog table | Purpose | Notes |
+|---|---|---|
+| `MSysObjects` | Existing | Already written by `AccessWriter`. Index entries do not get a row here. |
+| `MSysIndexes` | One row per logical index | Columns: `Name`, `Number`, `ObjectId` (FK→`MSysObjects.Id`), `Grbit` (flags), `OwnerSid` |
+| `MSysIndexColumns` | One row per column-in-index | Columns: `IndexId`, `Grbit`, `Name`, `OrdinalPos`, `ColumnGuid` |
+| `MSysRelationships` | One row per relationship (cross-table FK) | Columns: `ccolumn`, `grbit`, `icolumn`, `szColumn`, `szObject`, `szReferencedColumn`, `szReferencedObject`, `szRelationship` |
+
+**Critical:** `BuildEmptyDatabase` in [`AccessWriter.cs`](../../JetDatabaseWriter/Core/AccessWriter.cs) does not currently create `MSysIndexes`, `MSysIndexColumns`, or `MSysRelationships`. Empty databases this library produces lack these tables entirely. Adding indexes therefore requires *also* extending the empty-DB scaffold to materialize the system tables (with hidden flag bits and the right `ObjectId` ranges).
+
+## 7. Implementation phases (writer)
+
+Once the reader-side foundation (R1+R2) lands:
+
+| Phase | Scope | Cost (rough) |
+|---|---|---|
+| **W1** | Plumb `IndexDefinition` model + `BuildTDefPage` extension to emit `num_real_idx > 0` with the 52-byte real-idx descriptors and 28-byte logical-idx entries | medium |
+| **W2** | Sort-key encoders for fixed types (int*, double, datetime, guid, currency). Skip text. | medium |
+| **W3** | Leaf-page (`0x04`) emitter: bulk-build a single leaf for tables that fit on one page. | medium |
+| **W4** | B-tree split on overflow: emit intermediate `0x03` pages, maintain `tail_page` chain. | high |
+| **W5** | Index maintenance hooks in `InsertRowDataAsync`, `UpdateRowsAsync`, `DeleteRowsAsync`, and the copy-and-swap path used by `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`. | high |
+| **W6** | `MSysIndexes` / `MSysIndexColumns` catalog rows. Extend `BuildEmptyDatabase` to materialize the catalog tables. | medium |
+| **W7** | Text sort-key encoder (General Legacy first; General 1033v1 if a clean spec emerges). | high; defer if possible |
+| **W8** | Primary-key API (`new ColumnDefinition(...) { IsPrimaryKey = true }` plus a multi-column variant). PK is a unique non-null logical index with `index_type = 0x01`. | small (depends on W1+W6) |
+| **W9** | Foreign-key / relationship API. Adds the 28-byte logical-idx entry with `rel_idx_num` / `rel_tbl_page` populated, plus the `MSysRelationships` row. | medium |
+| **W10** | Cascade flags (`cascade_ups`, `cascade_dels`) and FK enforcement on insert/update/delete. The library has no SQL engine, so enforcement is a runtime check inside `AccessWriter`. | medium |
+
+## 8. Validation strategy
+
+Every writer phase landing on disk format MUST be validated against:
+
+1. **Round-trip in this repo:** writer → reader (using the new index parser) → assert structural equivalence.
+2. **Microsoft Access on Windows:** open the produced file in Access, run **Database Tools → Compact and Repair**, re-open, and verify (a) Access does not report corruption, (b) the index is visible in Design View, (c) Access does not silently rebuild the index (compare file bytes before/after compact).
+3. **Cross-tool sanity:** open with [Jackcess](https://jackcess.sourceforge.io) or [mdbtools](https://github.com/mdbtools/mdbtools) (`mdb-schema -E`) and confirm the index metadata matches.
+
+A PR that ships with only synthetic round-trip tests and no Access verification note **must not** be merged.
+
+## 9. References
+
+- [mdbtools HACKING.md §"TDEF (Table Definition) Pages"](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md) — index block layout
+- [mdbtools HACKING.md §"Indices"](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md) — index page format and sort-key encoding
+- mdbtools source: [`src/libmdb/index.c`](https://github.com/mdbtools/mdbtools/blob/master/src/libmdb/index.c) — read-only index walker
+- Jackcess source: [`com.healthmarketscience.jackcess.impl.IndexImpl`](https://github.com/jahlborn/jackcess/tree/master/src/main/java/com/healthmarketscience/jackcess/impl) and `IndexData` — only known open-source *write* implementation
