@@ -2455,72 +2455,70 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // 0x00 = chained LVAL pages (not decoded; placeholder returned)
 
     /// <summary>
+    /// Locates a single LVAL row within its data page. Shared by single-page and chained
+    /// LVAL readers. lval_dp encoding: upper 24 bits = page number, lower 8 bits = row index.
+    /// </summary>
+    private async ValueTask<LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
+    {
+        int lvalPage = (int)(lvalDp >> 8);
+        int lvalRow = (int)(lvalDp & 0xFF);
+        if (lvalPage <= 0)
+        {
+            return new([], 0, 0, $"invalid page {lvalPage}");
+        }
+
+        byte[] page = await ReadPageCachedAsync(lvalPage, cancellationToken).ConfigureAwait(false);
+        if (page[0] != 0x01)
+        {
+            return new(page, 0, 0, $"page {lvalPage} not data page");
+        }
+
+        int numRows = Ru16(page, _dpNumRows);
+        if (lvalRow >= numRows)
+        {
+            return new(page, 0, 0, $"row {lvalRow} >= numRows {numRows}");
+        }
+
+        int rawOff = Ru16(page, _dpRowsStart + (lvalRow * 2));
+        if ((rawOff & 0xC000) != 0)
+        {
+            return new(page, 0, 0, "deleted/overflow row");
+        }
+
+        int rowStart = rawOff & 0x1FFF;
+        if (rowStart == 0 || rowStart >= _pgSz)
+        {
+            return new(page, 0, 0, $"invalid rowStart {rowStart}");
+        }
+
+        int rowEnd = _pgSz - 1;
+        for (int r = 0; r < numRows; r++)
+        {
+            int ofs = Ru16(page, _dpRowsStart + (r * 2)) & 0x1FFF;
+            if (ofs > rowStart && ofs < rowEnd)
+            {
+                rowEnd = ofs - 1;
+            }
+        }
+
+        return new(page, rowStart, rowEnd - rowStart + 1, null);
+    }
+
+    /// <summary>
     /// Reads <paramref name="maxLen"/> bytes from a single LVAL data page / row.
-    /// lval_dp encoding: upper 24 bits = page number, lower 8 bits = row index.
     /// </summary>
     private async ValueTask<byte[]?> ReadLvalBytesAsync(uint lvalDp, int maxLen, CancellationToken cancellationToken)
     {
-        try
-        {
-            int lvalPage = (int)(lvalDp >> 8);
-            int lvalRow = (int)(lvalDp & 0xFF);
-            if (lvalPage <= 0)
-            {
-                return null;
-            }
-
-            byte[] page = await ReadPageCachedAsync(lvalPage, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
-            {
-                return null;
-            }
-
-            int numRows = Ru16(page, _dpNumRows);
-            if (lvalRow >= numRows)
-            {
-                return null;
-            }
-
-            int rawOff = Ru16(page, _dpRowsStart + (lvalRow * 2));
-            if ((rawOff & 0xC000) != 0)
-            {
-                return null;
-            }
-
-            int rowStart = rawOff & 0x1FFF;
-            if (rowStart == 0 || rowStart >= _pgSz)
-            {
-                return null;
-            }
-
-            int rowEnd = _pgSz - 1;
-            for (int r = 0; r < numRows; r++)
-            {
-                int ofs = Ru16(page, _dpRowsStart + (r * 2)) & 0x1FFF;
-                if (ofs > rowStart && ofs < rowEnd)
-                {
-                    rowEnd = ofs - 1;
-                }
-            }
-
-            int rowSize = Math.Min(rowEnd - rowStart + 1, maxLen);
-            if (rowSize <= 0)
-            {
-                return null;
-            }
-
-            var data = new byte[rowSize];
-            Buffer.BlockCopy(page, rowStart, data, 0, rowSize);
-            return data;
-        }
-        catch (ArgumentException)
+        LvalRowLocation loc = await LocateLvalRowAsync(lvalDp, cancellationToken).ConfigureAwait(false);
+        int rowSize = Math.Min(loc.Size, maxLen);
+        if (loc.Failed || rowSize <= 0)
         {
             return null;
         }
-        catch (IndexOutOfRangeException)
-        {
-            return null;
-        }
+
+        var data = new byte[rowSize];
+        Buffer.BlockCopy(loc.Page, loc.Start, data, 0, rowSize);
+        return data;
     }
 
     /// <summary>
@@ -2531,90 +2529,59 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <returns>Success: concatenated data bytes from the entire LVAL chain, up to maxLen. Failure: error message.</returns>
     private async ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)
     {
+        var chunks = new List<byte[]>();
+        int totalLen = 0;
+        uint currentDp = firstLvalDp;
+        var seen = new HashSet<uint>();
+
         try
         {
-            var chunks = new List<byte[]>();
-            int totalLen = 0;
-            uint currentDp = firstLvalDp;
-            var seen = new HashSet<uint>();
-
-            while (currentDp != 0 && totalLen < maxLen && !seen.Contains(currentDp))
+            while (currentDp != 0 && totalLen < maxLen && seen.Add(currentDp))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                _ = seen.Add(currentDp);
 
-                int lvalPage = (int)(currentDp >> 8);
-                int lvalRow = (int)(currentDp & 0xFF);
-                if (lvalPage <= 0)
+                LvalRowLocation loc = await LocateLvalRowAsync(currentDp, cancellationToken).ConfigureAwait(false);
+                if (loc.Failed)
                 {
-                    return LvalChainResult.Failure($"invalid page {lvalPage}");
+                    return LvalChainResult.Failure(loc.Error!);
                 }
 
-                byte[] page = await ReadPageCachedAsync(lvalPage, cancellationToken).ConfigureAwait(false);
-                if (page[0] != 0x01)
+                if (loc.Size < 8)
                 {
-                    return LvalChainResult.Failure($"page {lvalPage} not data page");
+                    return LvalChainResult.Failure($"rowSize {loc.Size} < 8");
                 }
 
-                int numRows = Ru16(page, _dpNumRows);
-                if (lvalRow >= numRows)
-                {
-                    return LvalChainResult.Failure($"row {lvalRow} >= numRows {numRows}");
-                }
+                currentDp = Ru32(loc.Page, loc.Start);
+                int dataLen = (int)Ru32(loc.Page, loc.Start + 4);
+                int availableData = Math.Min(dataLen, loc.Size - 8);
 
-                int rawOff = Ru16(page, _dpRowsStart + (lvalRow * 2));
-                if ((rawOff & 0xC000) != 0)
-                {
-                    return LvalChainResult.Failure("deleted/overflow row");
-                }
-
-                int rowStart = rawOff & 0x1FFF;
-                if (rowStart == 0 || rowStart >= _pgSz)
-                {
-                    return LvalChainResult.Failure($"invalid rowStart {rowStart}");
-                }
-
-                int rowEnd = _pgSz - 1;
-                for (int r = 0; r < numRows; r++)
-                {
-                    int ofs = Ru16(page, _dpRowsStart + (r * 2)) & 0x1FFF;
-                    if (ofs > rowStart && ofs < rowEnd)
-                    {
-                        rowEnd = ofs - 1;
-                    }
-                }
-
-                int rowSize = rowEnd - rowStart + 1;
-                if (rowSize < 8)
-                {
-                    return LvalChainResult.Failure($"rowSize {rowSize} < 8");
-                }
-
-                currentDp = Ru32(page, rowStart);
-                int dataLen = (int)Ru32(page, rowStart + 4);
-                int dataStart = rowStart + 8;
-                int availableData = Math.Min(dataLen, rowSize - 8);
-
-                if (availableData > 0 && dataStart + availableData <= _pgSz)
+                if (availableData > 0 && loc.Start + 8 + availableData <= _pgSz)
                 {
                     var chunk = new byte[availableData];
-                    Buffer.BlockCopy(page, dataStart, chunk, 0, availableData);
+                    Buffer.BlockCopy(loc.Page, loc.Start + 8, chunk, 0, availableData);
                     chunks.Add(chunk);
                     totalLen += availableData;
                 }
             }
+        }
+        catch (IOException ex)
+        {
+            return LvalChainResult.Failure(ex.Message);
+        }
+        catch (OverflowException ex)
+        {
+            return LvalChainResult.Failure(ex.Message);
+        }
 
-            if (chunks.Count == 0)
-            {
-                return LvalChainResult.Failure("no chunks read");
-            }
+        return chunks.Count switch
+        {
+            0 => LvalChainResult.Failure("no chunks read"),
+            1 => LvalChainResult.Success(chunks[0]),
+            _ => LvalChainResult.Success(Concat(chunks, Math.Min(totalLen, maxLen))),
+        };
 
-            if (chunks.Count == 1)
-            {
-                return LvalChainResult.Success(chunks[0]);
-            }
-
-            int finalLen = Math.Min(totalLen, maxLen);
+        static byte[] Concat(List<byte[]> chunks, int finalLen)
+        {
             var result = new byte[finalLen];
             int pos = 0;
             foreach (byte[] chunk in chunks)
@@ -2628,23 +2595,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
             }
 
-            return LvalChainResult.Success(result);
-        }
-        catch (ArgumentException ex)
-        {
-            return LvalChainResult.Failure(ex.Message);
-        }
-        catch (IndexOutOfRangeException ex)
-        {
-            return LvalChainResult.Failure(ex.Message);
-        }
-        catch (OverflowException ex)
-        {
-            return LvalChainResult.Failure(ex.Message);
-        }
-        catch (IOException ex)
-        {
-            return LvalChainResult.Failure(ex.Message);
+            return result;
         }
     }
 
@@ -2696,5 +2647,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return _format != DatabaseFormat.Jet3Mdb
             ? DecodeJet4Text(buffer, offset, length)
             : _ansiEncoding.GetString(buffer, offset, length);
+    }
+
+    /// <summary>
+    /// Result of locating a single LVAL row within its data page.
+    /// <see cref="Error"/> is non-null when the row could not be located; otherwise
+    /// (<see cref="Page"/>, <see cref="Start"/>, <see cref="Size"/>) describe the row's
+    /// in-page slice and are guaranteed to lie within the page buffer.
+    /// </summary>
+    private readonly record struct LvalRowLocation(byte[] Page, int Start, int Size, string? Error)
+    {
+        public bool Failed => Error is not null;
     }
 }
