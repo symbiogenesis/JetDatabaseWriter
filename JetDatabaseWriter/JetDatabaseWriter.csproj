@@ -3,7 +3,7 @@
     <TargetFrameworks>netstandard2.1;net10.0</TargetFrameworks>
     <PackageId>JetDatabaseWriter</PackageId>
     <Version>4.0.0</Version>
-    <Authors>Diego Ripera</Authors>
+    <Authors>Diego Ripera, Edward Miller</Authors>
     <Company>Ripera</Company>
     <Description>Pure-managed reader and writer for Microsoft Access JET databases (.mdb/.accdb). No OleDB, ODBC, or ACE drivers required.</Description>
     <PackageTags>access;jet;mdb;accdb;database;microsoft-access</PackageTags>
