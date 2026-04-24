@@ -481,6 +481,41 @@ Wrong or missing passwords throw `UnauthorizedAccessException`. Corrupt or non-J
 
 ---
 
+## Limitations
+
+The writer is intentionally focused on the most common create / insert / update / delete scenarios. The following are **not** supported today:
+
+### Schema evolution
+- **No `ALTER TABLE`.** There is no `AddColumnAsync`, `DropColumnAsync`, or `RenameColumnAsync`. Once a table is created with `CreateTableAsync`, its column list is fixed. To change shape, create a new table, copy rows, drop the original, and rename — or recreate the database from scaffolded models.
+- **No index, primary-key, foreign-key, or relationship creation.** `CreateTableAsync` emits a heap table with no indexes. `MSysRelationships` and `MSysIndexes` entries are not written.
+- **No constraint or default-value definition.** `ColumnDefinition` exposes `Name`, `ClrType`, and `MaxLength` only — no `NotNull`, `Default`, `AutoIncrement`, or validation rule.
+
+### Specialized column kinds
+- **No attachment columns.** Reading attachments via the `MSysComplexColumns` FK lookup is supported, but `CreateTableAsync` cannot declare an Attachment column, and there is no API to add files to one.
+- **No multi-value (complex) columns.** Same restriction — readable, not writable.
+- **No calculated columns** (Access 2010+ expression columns).
+- **No hyperlink semantics.** Hyperlink fields round-trip as plain MEMO text; the `#display#address#subaddress#` structure is not parsed or emitted.
+
+### Compression on write
+- **Strings are written uncompressed.** The reader handles JET4 "compressed unicode" (the `0xFF 0xFE` marker + 1-byte/2-byte mode toggle), but the writer always emits full UCS-2. Files written by this library will be larger than the equivalent file written by Access for the same ASCII-heavy text.
+- **Attachment payloads are not Deflate-compressed.** Access prefixes attachment `FileData` with a 1-byte flag (`0x00` raw, `0x01` zlib-Deflate). The reader decompresses both; there is no writer API that emits the compressed form. (This is moot today because attachment column creation is also unsupported — see above.)
+
+### Linked tables
+- **No public API to create linked tables.** An `InsertLinkedTableEntryAsync` helper exists internally for tests but is not part of the public surface. `ListLinkedTablesAsync` (read) is fully supported.
+
+### Encryption
+- **Write support is for unencrypted databases only.** All read-supported encryption formats (Jet3 XOR, Jet4 RC4, ACCDB legacy password, ACCDB AES-128 CFB, ACCDB Agile) can be opened and read with `AccessWriter`, but new pages are written back **unencrypted** in the cases where the format permits it. Creating a new encrypted database, changing a password, or re-encrypting an existing file is not supported.
+
+### Forms, reports, macros, queries, VBA
+- Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.
+
+### Concurrency
+- The lockfile (`.ldb` / `.laccdb`) is created for cooperative signaling, but the writer does **not** implement page-level locking. Concurrent writers against the same file will corrupt it. Open with `RespectExistingLockFile = true` (default) to fail fast when another process holds the file.
+
+If any of these are blockers for your scenario, please open an issue at [github.com/diegoripera/JetDatabaseWriter](https://github.com/diegoripera/JetDatabaseWriter).
+
+---
+
 ## How It Works
 
 Based on the [mdbtools format specification](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md). The library parses JET pages directly:
