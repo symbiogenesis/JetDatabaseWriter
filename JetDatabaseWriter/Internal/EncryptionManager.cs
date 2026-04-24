@@ -270,6 +270,49 @@ internal static class EncryptionManager
         }
     }
 
+    /// <summary>
+    /// Applies any active page encryption (Jet3 XOR, Jet4 RC4, ACCDB AES) to
+    /// <paramref name="buf"/> in place — the inverse of
+    /// <see cref="DecryptPageInPlace"/>. A no-op when no keys are configured
+    /// or when <paramref name="pageNumber"/> is 0 (the unencrypted header
+    /// page). Operations are applied in reverse order so a page round-trips
+    /// back to its original ciphertext.
+    /// </summary>
+    public static void EncryptPageInPlace(byte[] buf, long pageNumber, int pageSize, PageDecryptionKeys keys)
+    {
+        if (pageNumber < 1 || keys == null)
+        {
+            return;
+        }
+
+        // Inverse order of DecryptPageInPlace: AES → RC4 → Jet3 XOR.
+        if (keys.AesPageKey is { } aesKey)
+        {
+            AesEcbEncryptInPlace(buf, 0, pageSize, aesKey);
+        }
+
+        if (keys.Rc4DbKey is uint dbKey)
+        {
+            // RC4 is symmetric: same operation encrypts and decrypts.
+            byte[] rc4Key = DeriveRc4PageKey(dbKey, (uint)pageNumber);
+            Rc4Transform(buf, 0, pageSize, rc4Key);
+        }
+
+        if (keys.Jet3XorMask is { } jet3Mask)
+        {
+            // XOR is symmetric.
+            long fileOffset = pageNumber * pageSize;
+            for (int b = 0; b < pageSize; b++)
+            {
+                buf[b] ^= jet3Mask[(int)((fileOffset + b - pageSize) % jet3Mask.Length)];
+            }
+        }
+    }
+
+    /// <summary>Returns true when <paramref name="keys"/> has any active page encryption configured.</summary>
+    public static bool HasPageEncryption(PageDecryptionKeys keys) =>
+        keys != null && (keys.Jet3XorMask != null || keys.Rc4DbKey.HasValue || keys.AesPageKey != null);
+
     // ── Crypto primitives ────────────────────────────────────────────
 
 #pragma warning disable CA5351 // MD5 is required by the Jet4 RC4 key derivation spec
@@ -330,6 +373,22 @@ internal static class EncryptionManager
 
         byte[] decrypted = decryptor.TransformFinalBlock(block, 0, length);
         Buffer.BlockCopy(decrypted, 0, data, offset, length);
+    }
+
+    /// <summary>In-place AES-128-ECB encryption of a page buffer.</summary>
+    private static void AesEcbEncryptInPlace(byte[] data, int offset, int length, byte[] key)
+    {
+        using var aes = Aes.Create();
+        aes.Key = key;
+        aes.Mode = CipherMode.ECB;
+        aes.Padding = PaddingMode.None;
+
+        using var encryptor = aes.CreateEncryptor();
+        byte[] block = new byte[length];
+        Buffer.BlockCopy(data, offset, block, 0, length);
+
+        byte[] encrypted = encryptor.TransformFinalBlock(block, 0, length);
+        Buffer.BlockCopy(encrypted, 0, data, offset, length);
     }
 #pragma warning restore CA5358
 

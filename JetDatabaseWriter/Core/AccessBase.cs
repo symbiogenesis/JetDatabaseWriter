@@ -753,13 +753,33 @@ public abstract class AccessBase : IAccessBase
 
     // ── Page write I/O ───────────────────────────────────────────────
 
+    /// <summary>
+    /// Returns <paramref name="page"/> unchanged when no page-encryption is
+    /// active, or a freshly allocated, encrypted copy otherwise. The caller's
+    /// buffer is never mutated so it can be reused safely after writing.
+    /// Page 0 (the unencrypted header) is always returned as-is.
+    /// </summary>
+    private protected byte[] PrepareEncryptedPageForWrite(long pageNumber, byte[] page)
+    {
+        if (pageNumber < 1 || !EncryptionManager.HasPageEncryption(_pageKeys))
+        {
+            return page;
+        }
+
+        var copy = new byte[_pgSz];
+        Buffer.BlockCopy(page, 0, copy, 0, _pgSz);
+        EncryptionManager.EncryptPageInPlace(copy, pageNumber, _pgSz, _pageKeys);
+        return copy;
+    }
+
     private protected void WritePage(long pageNumber, byte[] page)
     {
+        byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
         _ioGate.Wait();
         try
         {
             _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-            _stream.Write(page, 0, _pgSz);
+            _stream.Write(toWrite, 0, _pgSz);
             _stream.Flush();
         }
         finally
@@ -772,11 +792,12 @@ public abstract class AccessBase : IAccessBase
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
         await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-            await _stream.WriteAsync(page.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
+            await _stream.WriteAsync(toWrite.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
             await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -791,8 +812,9 @@ public abstract class AccessBase : IAccessBase
         try
         {
             long pageNumber = _stream.Length / _pgSz;
+            byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
             _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-            _stream.Write(page, 0, _pgSz);
+            _stream.Write(toWrite, 0, _pgSz);
             _stream.Flush();
             return pageNumber;
         }
@@ -810,8 +832,9 @@ public abstract class AccessBase : IAccessBase
         try
         {
             long pageNumber = _stream.Length / _pgSz;
+            byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
             _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-            await _stream.WriteAsync(page.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
+            await _stream.WriteAsync(toWrite.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
             await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             return pageNumber;
         }

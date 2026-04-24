@@ -31,6 +31,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly bool _respectExistingLockFile;
     private readonly ReaderWriterLockSlim _stateLock = new(LockRecursionPolicy.NoRecursion);
 
+    // Agile re-encryption context. When non-null, the underlying _stream is an
+    // in-memory MemoryStream containing the *decrypted* inner ACCDB; on
+    // DisposeAsync the bytes are re-encrypted with Office Crypto API "Agile"
+    // and written back to _outerEncryptedStream (which holds the original CFB).
+    private readonly Stream? _outerEncryptedStream;
+    private readonly bool _outerEncryptedLeaveOpen;
+    private readonly bool _isAgileEncryptedRewrap;
+
     /// <summary>
     /// Per-table client-side constraint registry. Populated by <see cref="CreateTableAsync"/>
     /// and the schema-evolution helpers. Keyed by table name (case-insensitive). The list is
@@ -50,12 +58,36 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         byte[] header,
         SecureString? password,
         bool useLockFile,
-        bool respectExistingLockFile)
+        bool respectExistingLockFile,
+        Stream? outerEncryptedStream = null,
+        bool outerEncryptedLeaveOpen = false,
+        bool isAgileEncryptedRewrap = false)
         : base(stream, header, path)
     {
         _password = SecureStringUtilities.CopyAsReadOnly(password);
         _useLockFile = useLockFile && !string.IsNullOrEmpty(path);
         _respectExistingLockFile = respectExistingLockFile;
+        _outerEncryptedStream = outerEncryptedStream;
+        _outerEncryptedLeaveOpen = outerEncryptedLeaveOpen;
+        _isAgileEncryptedRewrap = isAgileEncryptedRewrap;
+
+        // Real CFB-wrapped encrypted ACCDBs (Agile / Office Crypto API) can
+        // only be edited via the in-memory decrypt-then-rewrap path — caller
+        // must supply the outer encrypted stream. The 'header' passed here is
+        // expected to be the inner Jet header, so IsCompoundFileEncrypted
+        // returns false on it. Synthetic legacy AES-128 CFB-wrapped .accdb
+        // files (CFB magic at byte 0 but flat per-page AES-128-ECB beneath)
+        // are written in place — the existing PrepareEncryptedPageForWrite
+        // pipeline re-encrypts every page we flush.
+        bool isLegacyAesCfb =
+            EncryptionManager.IsCompoundFileEncrypted(header) && !isAgileEncryptedRewrap;
+
+        // Populate page-encryption keys for in-place re-encryption of writes
+        // (Jet3 XOR is already configured by AccessBase; this resolves the
+        // Jet4 RC4 database key and / or the legacy AES-128 page key when
+        // applicable).
+        (_pageKeys.Rc4DbKey, _pageKeys.AesPageKey) =
+            EncryptionManager.ResolveReaderPageKeys(header, _format, isLegacyAesCfb, password);
 
         if (_useLockFile)
         {
@@ -123,6 +155,45 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
             byte[] header = await ReadHeaderAsync(wrapped, cancellationToken).ConfigureAwait(false);
+
+            // Office Crypto API ("Agile") encrypted .accdb files are real OLE
+            // compound documents (CFB) wrapping an EncryptedPackage stream.
+            // We can't edit them in place: writes are buffered into an
+            // in-memory MemoryStream containing the *decrypted* inner ACCDB,
+            // and the whole CFB is re-emitted on DisposeAsync.
+            if (EncryptionManager.IsCompoundFileEncrypted(header))
+            {
+                _ = wrapped.Seek(0, SeekOrigin.Begin);
+                byte[]? decryptedAgile = await EncryptionManager
+                    .TryDecryptAgileCompoundFileAsync(wrapped, header, options.Password, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (decryptedAgile != null)
+                {
+                    var inner = new MemoryStream();
+                    await inner.WriteAsync(decryptedAgile.AsMemory(), cancellationToken).ConfigureAwait(false);
+                    inner.Position = 0;
+                    byte[] innerHeader = await ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
+
+                    return new AccessWriter(
+                        path,
+                        inner,
+                        innerHeader,
+                        options.Password,
+                        options.UseLockFile,
+                        options.RespectExistingLockFile,
+                        outerEncryptedStream: wrapped,
+                        outerEncryptedLeaveOpen: leaveOpen,
+                        isAgileEncryptedRewrap: true);
+                }
+
+                // CFB magic but not a real Agile compound document: treat as
+                // the synthetic legacy AES-128 layout (flat per-page AES-ECB
+                // beneath a CFB-magic header byte). The constructor sets up
+                // the page key and writes are re-encrypted on every flush.
+                _ = wrapped.Seek(0, SeekOrigin.Begin);
+            }
+
             return new AccessWriter(
                 path,
                 wrapped,
@@ -667,10 +738,57 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             LockFileManager.Delete(_path, nameof(AccessWriter));
         }
 
+        // For Agile-encrypted databases the underlying _stream is an in-memory
+        // copy of the *decrypted* ACCDB. Re-encrypt it before tearing down so
+        // the user's outer encrypted stream/file ends up with all writes.
+        if (_isAgileEncryptedRewrap && _outerEncryptedStream != null && _password != null)
+        {
+            try
+            {
+                await RewrapAgileOnDisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                if (!_outerEncryptedLeaveOpen)
+                {
+                    await _outerEncryptedStream.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+        }
+
         _password?.Dispose();
         _stateLock.Dispose();
 
         await base.DisposeAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Re-encrypts the in-memory decrypted ACCDB (held by <c>_stream</c>) using
+    /// freshly-generated Agile parameters and writes the resulting CFB document
+    /// back to <see cref="_outerEncryptedStream"/>. Called from
+    /// <see cref="DisposeAsync"/> when the writer was opened on an Agile-encrypted
+    /// .accdb file.
+    /// </summary>
+    private async ValueTask RewrapAgileOnDisposeAsync()
+    {
+        var memory = _stream as MemoryStream
+            ?? throw new InvalidOperationException("Agile-encrypted writer expected an in-memory backing stream.");
+
+        byte[] inner = memory.ToArray();
+
+        (byte[] encryptionInfo, byte[] encryptedPackage) =
+            OfficeCryptoAgile.Encrypt(inner, _password!);
+
+        byte[] cfb = CompoundFileWriter.Build(new[]
+        {
+            new KeyValuePair<string, byte[]>("EncryptionInfo", encryptionInfo),
+            new KeyValuePair<string, byte[]>("EncryptedPackage", encryptedPackage),
+        });
+
+        _ = _outerEncryptedStream!.Seek(0, SeekOrigin.Begin);
+        await _outerEncryptedStream.WriteAsync(cfb.AsMemory()).ConfigureAwait(false);
+        _outerEncryptedStream.SetLength(cfb.Length);
+        await _outerEncryptedStream.FlushAsync().ConfigureAwait(false);
     }
 
     private static ColumnConstraint ToConstraint(ColumnDefinition def)
@@ -1169,7 +1287,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         };
 
         AccessReader reader;
-        if (!string.IsNullOrEmpty(_path))
+        if (!string.IsNullOrEmpty(_path) && !_isAgileEncryptedRewrap)
         {
             reader = await AccessReader.OpenAsync(_path, options, cancellationToken).ConfigureAwait(false);
         }
@@ -1203,7 +1321,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         };
 
         AccessReader reader;
-        if (!string.IsNullOrEmpty(_path))
+        if (!string.IsNullOrEmpty(_path) && !_isAgileEncryptedRewrap)
         {
             reader = await AccessReader.OpenAsync(_path, options, cancellationToken).ConfigureAwait(false);
         }
