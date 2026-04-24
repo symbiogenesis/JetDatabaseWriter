@@ -178,18 +178,18 @@ Because text data is **mangled** by sort-key encoding, "covered queries" (querie
 
 ## 6. `MSysIndexes` / `MSysIndexColumns` / `MSysRelationships` catalog tables
 
-**Empirical correction (probe of `NorthwindTraders.accdb`, 2026-04-24):** modern ACCDB files do **not** contain `MSysIndexes` or `MSysIndexColumns` system tables. See the [appendix catalog table](format-probe-appendix-index.md) — Northwind's `MSysObjects` lists `MSysObjects`, `MSysACEs`, `MSysQueries`, `MSysRelationships`, `MSysComplexColumns`, `MSysComplexType_*`, `MSysAccessStorage`, `MSysNameMap`, `MSysNavPane*`, `MSysResources` — but no `MSysIndexes` / `MSysIndexColumns`. **Index metadata in modern Access lives entirely in the per-table TDEF block** (sections §3.1 / §3.2 above). A writer that emits the TDEF blocks correctly does NOT need to populate any index catalog tables.
+**Empirical correction (probe of `NorthwindTraders.accdb`, 2026-04-24):** modern ACCDB files do **not** contain `MSysIndexes` or `MSysIndexColumns` system tables. See the [appendix catalog table](format-probe-appendix-index.md) — Northwind's `MSysObjects` lists `MSysObjects`, `MSysACEs`, `MSysQueries`, `MSysRelationships`, `MSysComplexColumns`, `MSysComplexType_*`, `MSysAccessStorage`, `MSysNameMap`, `MSysNavPane*`, `MSysResources` — but no `MSysIndexes` / `MSysIndexColumns`. **Index metadata in modern Access lives entirely in the per-table TDEF block** (sections §3.1 / §3.2 above). A writer that emits the TDEF blocks correctly does NOT need to populate any index catalog tables for ACCDB output.
 
 `MSysRelationships` *does* exist and is required for cross-table foreign keys. Its actual schema is in the appendix:
 
 | Catalog table | Status | Required by writer? | Notes |
 |---|---|---|---|
 | `MSysObjects` | Already written | yes | `AccessWriter` already emits this. |
-| `MSysIndexes` | **DOES NOT EXIST** in ACCDB | no | mdbtools docs are misleading on this point. |
-| `MSysIndexColumns` | **DOES NOT EXIST** in ACCDB | no | Same. |
-| `MSysRelationships` | Exists in every fresh ACCDB | yes for FKs | See [appendix](format-probe-appendix-index.md#msysrelationships--tdef-page-5) for actual columns. |
+| `MSysIndexes` | **Not present** in ACCDB | no for ACCDB; **unverified for Jet3 `.mdb`** | mdbtools docs are misleading on this point for ACCDB. Jet3 / Jet4 `.mdb` fixtures must be probed before W6 can be declared unnecessary across all formats this library writes. |
+| `MSysIndexColumns` | **Not present** in ACCDB | no for ACCDB; **unverified for Jet3 `.mdb`** | Same. |
+| `MSysRelationships` | Exists in every fresh ACCDB | yes for FKs | See [appendix](format-probe-appendix-index.md#msysrelationships--tdef-page-5) for actual columns. Jet3 `.mdb` form unverified — add an `mdb`-fixture probe before W9. |
 
-Whether very old `.mdb` (Jet3) files ever wrote `MSysIndexes` is unverified by this probe — the existing `Jet3Test.mdb` fixture has not been examined yet.
+> **Open task before W6 / W9 close-out:** extend `JetDatabaseWriter.FormatProbe` to enumerate `MSysObjects` for the existing `Jet3Test.mdb` and a Jet4 `.mdb` fixture and append a second appendix section. The library targets Access 97 through Microsoft 365, so anything that writes indexes or relationships to `.mdb` output cannot rely solely on the ACCDB-shaped catalog.
 
 ## 7. Implementation phases (writer)
 
@@ -202,9 +202,9 @@ Once the reader-side foundation (R1+R2) lands:
 | **W3** | Leaf-page (`0x04`) emitter: bulk-build a single leaf for tables that fit on one page. | medium | not started |
 | **W4** | B-tree split on overflow: emit intermediate `0x03` pages, maintain `tail_page` chain. | high | not started |
 | **W5** | Index maintenance hooks in `InsertRowDataAsync`, `UpdateRowsAsync`, `DeleteRowsAsync`, and the copy-and-swap path used by `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`. | high | not started |
-| **W6** | `MSysIndexes` / `MSysIndexColumns` catalog rows. Extend `BuildEmptyDatabase` to materialize the catalog tables. | medium | **superseded** — §6 confirms these tables don’t exist in modern ACCDB; phase is unnecessary. |
+| **W6** | `MSysIndexes` / `MSysIndexColumns` catalog rows in `BuildEmptyDatabase`, gated on `DatabaseFormat`. | medium | **not needed for ACCDB** (§6 — these tables are absent from modern fixtures). **Status for Jet3 / Jet4 `.mdb` is unverified** — must probe `Jet3Test.mdb` and a Jet4 `.mdb` fixture before W8/W9 can ship for `.mdb` output. If the probe shows `.mdb` does carry these tables, W6 becomes a hard prerequisite for any `.mdb` index/PK/FK writer phase. |
 | **W7** | Text sort-key encoder (General Legacy first; General 1033v1 if a clean spec emerges). | high; defer if possible | not started |
-| **W8** | Primary-key API (`new ColumnDefinition(...) { IsPrimaryKey = true }` plus a multi-column variant). PK is a unique non-null logical index with `index_type = 0x01`. | small (depends on W1+W6) | not started |
+| **W8** | Primary-key API (`new ColumnDefinition(...) { IsPrimaryKey = true }` plus a multi-column variant). PK is a unique non-null logical index with `index_type = 0x01`. | small (depends on W1) | not started |
 | **W9** | Foreign-key / relationship API. Adds the 28-byte logical-idx entry with `rel_idx_num` / `rel_tbl_page` populated, plus the `MSysRelationships` row. | medium | not started |
 | **W10** | Cascade flags (`cascade_ups`, `cascade_dels`) and FK enforcement on insert/update/delete. The library has no SQL engine, so enforcement is a runtime check inside `AccessWriter`. | medium | not started |
 

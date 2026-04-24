@@ -53,7 +53,7 @@ Because `bitmask = 0x07`, the column is treated as a fixed-length 4-byte column 
 
 ### 2.2 `MSysComplexColumns` catalog table
 
-**Verified against `ComplexFields.accdb`** ([appendix](format-probe-appendix-complex.md#msyscomplexcolumns--tdef-page-18)). Actual schema is **5 columns**, not the 5 I guessed earlier (column names below are correct):
+**Verified against `ComplexFields.accdb`** ([appendix](format-probe-appendix-complex.md#msyscomplexcolumns--tdef-page-18)). Actual schema is **5 columns** (column names and order below are probe-confirmed):
 
 | Column (verified) | Type | Meaning |
 |---|---|---|
@@ -203,8 +203,10 @@ Match case-insensitively against `FileType` (which Jackcess lowercases on store)
 Phases C2–C6 cannot ship until the index foundation in [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) reaches at least:
 
 - W1 (`IndexDefinition` + TDEF emission) — for the autonumber PK on the flat table
-- W3 (leaf-page emitter) — same
-- W6 (`MSysIndexes` / `MSysIndexColumns` rows) — Access UI hides flat tables based on system-flag conventions but indexes them like any other table; without the catalog rows, opening the file in Access reliably triggers compact/repair to "fix" the missing metadata, often in ways that lose data.
+- W3 (leaf-page emitter) — same, so the PK / FK indexes have real B-tree leafs and survive Access's compact/repair pass
+- W8 (PK API) — needed to declare the autonumber column as a primary key on the flat table
+
+> Note on W6 (`MSysIndexes` / `MSysIndexColumns`): these tables are absent from modern ACCDB ([index doc §6](index-and-relationship-format-notes.md#6-msysindexes--msysindexcolumns--msysrelationships-catalog-tables)), so for ACCDB output the flat table's index metadata lives entirely in its own TDEF. Complex columns themselves are an Access 2007+ (ACCDB) feature, so even if Jet3/Jet4 `.mdb` turns out to need W6 for ordinary indexes, that requirement does not propagate here.
 
 ## 5. Validation strategy
 
