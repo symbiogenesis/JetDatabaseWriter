@@ -82,6 +82,20 @@ internal static class IndexLeafPageBuilder
     /// payload area, which means the table is too large for a single-page
     /// leaf and W4 (B-tree splits) is required.</exception>
     public static byte[] BuildJet4LeafPage(int pageSize, long parentTdefPage, IReadOnlyList<LeafEntry> entries)
+        => BuildJet4LeafPage(pageSize, parentTdefPage, entries, prevPage: 0, nextPage: 0, tailPage: 0);
+
+    /// <summary>
+    /// Builds a single Jet4 / ACE index leaf page with caller-supplied sibling
+    /// pointers. Used by <see cref="IndexBTreeBuilder"/> (W4) to chain a row of
+    /// leaf pages together.
+    /// </summary>
+    public static byte[] BuildJet4LeafPage(
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<LeafEntry> entries,
+        long prevPage,
+        long nextPage,
+        long tailPage)
     {
         if (pageSize <= Jet4FirstEntryOffset)
         {
@@ -98,10 +112,10 @@ internal static class IndexLeafPageBuilder
 
         // free_space (offset 2, u16) is patched after we know the entry size.
         Wi32(page, 4, checked((int)parentTdefPage)); // parent_page (TDEF)
-        Wi32(page, 8, 0);   // prev_page
-        Wi32(page, 12, 0);  // next_page
-        Wi32(page, 16, 0);  // tail_page (W4 will populate)
-        Wu16(page, 20, 0);  // pref_len (no prefix compression in W3)
+        Wi32(page, 8, checked((int)prevPage));   // prev_page
+        Wi32(page, 12, checked((int)nextPage));  // next_page
+        Wi32(page, 16, checked((int)tailPage));  // tail_page
+        Wu16(page, 20, 0);  // pref_len (no prefix compression in W3 / W4)
 
         // Bytes 22..0x1A inclusive are reserved; left zeroed.
         // Bitmask spans [0x1B .. 0x1DF] inclusive (485 bytes = 3880 bits) on Jet4.
