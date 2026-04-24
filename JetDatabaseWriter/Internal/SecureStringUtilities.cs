@@ -56,6 +56,33 @@ internal static class SecureStringUtilities
         }
     }
 
+    /// <summary>
+    /// Decrypts <paramref name="password"/> back into a managed <see cref="string"/>.
+    /// Use sparingly — defeats the purpose of <see cref="SecureString"/> and the
+    /// returned string lives until the GC reclaims it.
+    /// </summary>
+    public static string? ToPlainText(SecureString? password)
+    {
+        if (password == null)
+        {
+            return null;
+        }
+
+        IntPtr ptr = IntPtr.Zero;
+        try
+        {
+            ptr = Marshal.SecureStringToGlobalAllocUnicode(password);
+            return Marshal.PtrToStringUni(ptr, password.Length) ?? string.Empty;
+        }
+        finally
+        {
+            if (ptr != IntPtr.Zero)
+            {
+                Marshal.ZeroFreeGlobalAllocUnicode(ptr);
+            }
+        }
+    }
+
     public static SecureString? CopyAsReadOnly(SecureString? password)
     {
         if (password == null)

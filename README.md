@@ -535,7 +535,10 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 
 ## Encryption Support
 
-All password-protected formats produced by Microsoft Access from Access 97 through Microsoft 365 are read-supported. Supply the password via [`AccessReaderOptions.Password`](JetDatabaseWriter/Core/AccessReaderOptions.cs); the format is auto-detected from the file header.
+All password-protected formats produced by Microsoft Access from Access 97 through Microsoft 365 are fully **read- and write-supported**. Supply the password via [`AccessReaderOptions.Password`](JetDatabaseWriter/Core/AccessReaderOptions.cs) or [`AccessWriterOptions.Password`](JetDatabaseWriter/Core/AccessWriterOptions.cs); the format is auto-detected from the file header.
+
+- **In-place mutation.** All formats (Jet3 XOR, Jet4 RC4, ACCDB legacy `;pwd=`, AES-128 CFB-wrapped, and Office Crypto API "Agile") are writable in place — modified pages are re-encrypted on flush, and Agile containers are re-emitted on `DisposeAsync`.
+- **Encryption mutation APIs.** `AccessWriter.EncryptAsync(path, password, AccessEncryptionFormat, …)`, `AccessWriter.DecryptAsync(path, password, …)`, and `AccessWriter.ChangePasswordAsync(path, oldPassword, newPassword, …)` add, remove, or rotate encryption (and switch formats) on an existing file. Use `AccessWriter.DetectEncryptionFormatAsync(path)` to discover the current format.
 
 | Format | Versions | Detection | Key derivation | Page / payload cipher |
 |---|---|---|---|---|
@@ -564,9 +567,6 @@ The writer is intentionally focused on the most common create / insert / update 
 
 ### Compression on write
 - **Attachment payloads are not Deflate-compressed.** Access prefixes attachment `FileData` with a 1-byte flag (`0x00` raw, `0x01` zlib-Deflate). The reader decompresses both; there is no writer API that emits the compressed form. (This is moot today because attachment column creation is also unsupported — see above.)
-
-### Encryption
-- **No password / encryption changes.** All Access encryption formats (Jet3 XOR, Jet4 RC4, ACCDB legacy `;pwd=`, AES-128 CFB-wrapped, and Office Crypto API "Agile") are fully writable in place — modified pages are re-encrypted on flush, and Agile containers are re-emitted on `DisposeAsync`. However, creating a new encrypted database from an unencrypted one, changing a password, or re-encrypting an existing file with different parameters is not supported.
 
 ### Forms, reports, macros, queries, VBA
 - Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.
