@@ -77,8 +77,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         _useLockFile = options.UseLockFile && !string.IsNullOrEmpty(path);
         _strictParsing = options.StrictParsing;
         _linkedSourcePathValidator = options.LinkedSourcePathValidator;
-        _linkedSourcePathAllowlist = NormalizeLinkedSourcePathAllowlist(options.LinkedSourcePathAllowlist, path);
-        _linkedSourceOpenOptions = CreateLinkedSourceOpenOptions(options, _linkedSourcePathAllowlist, _linkedSourcePathValidator);
+        _linkedSourcePathAllowlist = LinkedTableManager.NormalizeAllowlist(options.LinkedSourcePathAllowlist, path);
+        _linkedSourceOpenOptions = LinkedTableManager.CreateLinkedSourceOpenOptions(options, _linkedSourcePathAllowlist, _linkedSourcePathValidator);
         var password = _linkedSourceOpenOptions.Password;
 
         DiagnosticsEnabled = options.DiagnosticsEnabled;
@@ -120,6 +120,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <summary>Gets diagnostic output populated after each call to <see cref="ListTablesAsync"/>.</summary>
     public string LastDiagnostics { get; private set; } = string.Empty;
+
+    /// <summary>Gets the absolute path of the database backing this reader, or empty when opened from a stream. Used by <see cref="Internal.LinkedTableManager"/> to anchor relative source paths.</summary>
+    internal string HostDatabasePath => _path;
+
+    /// <summary>Gets the cached options used to re-open linked-source databases referenced by this reader.</summary>
+    internal AccessReaderOptions LinkedSourceOpenOptions => _linkedSourceOpenOptions;
+
+    /// <summary>Gets the normalized allowlist of directories that linked-source paths must reside under (empty allows any directory).</summary>
+    internal string[] LinkedSourcePathAllowlist => _linkedSourcePathAllowlist;
+
+    /// <summary>Gets the optional callback that approves linked-source paths before opening.</summary>
+    internal Func<LinkedTableInfo, string, bool>? LinkedSourcePathValidator => _linkedSourcePathValidator;
 
     /// <summary>
     /// Asynchronously opens a JET database file and returns a new <see cref="AccessReader"/> instance.
@@ -288,7 +300,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return await GetLinkedTablesAsync(cancellationToken).ConfigureAwait(false);
+        return await LinkedTableManager.GetLinkedTablesAsync(this, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -389,10 +401,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            LinkedTableInfo? link = await FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
             if (link != null)
             {
-                await using AccessReader source = await OpenLinkedSourceAsync(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator, cancellationToken).ConfigureAwait(false);
+                await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
                 await foreach (object[] row in source.Rows(link.ForeignName, progress, cancellationToken).ConfigureAwait(false))
                 {
                     yield return row;
@@ -461,10 +473,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            LinkedTableInfo? link = await FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
             if (link != null)
             {
-                await using AccessReader source = await OpenLinkedSourceAsync(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator, cancellationToken).ConfigureAwait(false);
+                await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
                 await foreach (string[] row in source.RowsAsStrings(link.ForeignName, progress, cancellationToken).ConfigureAwait(false))
                 {
                     yield return row;
@@ -508,10 +520,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            LinkedTableInfo? link = await FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
             if (link != null)
             {
-                await using AccessReader source = await OpenLinkedSourceAsync(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator, cancellationToken).ConfigureAwait(false);
+                await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
                 return await source.GetColumnMetadataAsync(link.ForeignName, cancellationToken).ConfigureAwait(false);
             }
 
@@ -577,10 +589,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            LinkedTableInfo? link = await FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
             if (link != null)
             {
-                await using AccessReader source = await OpenLinkedSourceAsync(link, _path, _linkedSourceOpenOptions, _linkedSourcePathAllowlist, _linkedSourcePathValidator, cancellationToken).ConfigureAwait(false);
+                await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
                 return await source.ReadDataTableAsync(link.ForeignName, maxRows, progress, cancellationToken).ConfigureAwait(false);
             }
 
@@ -1144,157 +1156,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             b[start + 15]);
     }
 
-    private static async ValueTask<AccessReader> OpenLinkedSourceAsync(
-        LinkedTableInfo link,
-        string hostDatabasePath,
-        AccessReaderOptions linkedSourceOpenOptions,
-        string[] linkedSourcePathAllowlist,
-        Func<LinkedTableInfo, string, bool>? linkedSourcePathValidator,
-        CancellationToken cancellationToken)
-    {
-        string resolvedPath = ResolveLinkedSourcePath(link, hostDatabasePath, linkedSourcePathAllowlist, linkedSourcePathValidator);
-        if (!File.Exists(resolvedPath))
-        {
-            throw new FileNotFoundException(
-                $"Source database for linked table '{link.Name}' not found: {resolvedPath}",
-                resolvedPath);
-        }
-
-        return await OpenAsync(resolvedPath, linkedSourceOpenOptions, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static string ResolveLinkedSourcePath(
-        LinkedTableInfo link,
-        string hostDatabasePath,
-        string[] linkedSourcePathAllowlist,
-        Func<LinkedTableInfo, string, bool>? linkedSourcePathValidator)
-    {
-        if (string.IsNullOrWhiteSpace(link.SourceDatabasePath))
-        {
-            throw new FileNotFoundException(
-                $"Source database for linked table '{link.Name}' not found: {link.SourceDatabasePath}",
-                link.SourceDatabasePath);
-        }
-
-        string rawPath = link.SourceDatabasePath.Trim();
-        string baseDirectory = Path.GetDirectoryName(hostDatabasePath) ?? Directory.GetCurrentDirectory();
-        string resolvedPath = ResolvePath(rawPath, baseDirectory, $"linked table '{link.Name}'");
-        bool escapesHostDatabaseDirectory =
-            !Path.IsPathRooted(rawPath) &&
-            !IsPathWithinDirectory(resolvedPath, baseDirectory);
-
-        bool callbackApproved = linkedSourcePathValidator?.Invoke(link, resolvedPath) ?? false;
-
-        if (escapesHostDatabaseDirectory && !callbackApproved)
-        {
-            throw new UnauthorizedAccessException(
-                $"Linked table '{link.Name}' source path '{link.SourceDatabasePath}' escapes the host database directory. " +
-                "Use AccessReaderOptions.LinkedSourcePathValidator to explicitly allow trusted paths.");
-        }
-
-        if (linkedSourcePathAllowlist.Length > 0 &&
-            !linkedSourcePathAllowlist.Any(root => IsPathWithinDirectory(resolvedPath, root)))
-        {
-            throw new UnauthorizedAccessException(
-                $"Linked table '{link.Name}' source path '{resolvedPath}' is not permitted by AccessReaderOptions.LinkedSourcePathAllowlist.");
-        }
-
-        if (linkedSourcePathValidator != null && !callbackApproved)
-        {
-            throw new UnauthorizedAccessException(
-                $"Linked table '{link.Name}' source path '{resolvedPath}' was rejected by AccessReaderOptions.LinkedSourcePathValidator.");
-        }
-
-        return resolvedPath;
-    }
-
-    private static AccessReaderOptions CreateLinkedSourceOpenOptions(
-        AccessReaderOptions options,
-        string[] normalizedAllowlist,
-        Func<LinkedTableInfo, string, bool>? linkedSourcePathValidator)
-    {
-        return new AccessReaderOptions
-        {
-            PageCacheSize = options.PageCacheSize,
-            DiagnosticsEnabled = options.DiagnosticsEnabled,
-            ParallelPageReadsEnabled = options.ParallelPageReadsEnabled,
-            ValidateOnOpen = options.ValidateOnOpen,
-            StrictParsing = options.StrictParsing,
-            FileAccess = options.FileAccess,
-            FileShare = options.FileShare,
-            Password = SecureStringUtilities.CopyAsReadOnly(options.Password),
-            UseLockFile = options.UseLockFile,
-            LinkedSourcePathAllowlist = normalizedAllowlist,
-            LinkedSourcePathValidator = linkedSourcePathValidator,
-        };
-    }
-
-    private static string[] NormalizeLinkedSourcePathAllowlist(IReadOnlyList<string> allowlist, string hostDatabasePath)
-    {
-        if (allowlist == null || allowlist.Count == 0)
-        {
-            return [];
-        }
-
-        string baseDirectory = Path.GetDirectoryName(hostDatabasePath) ?? Directory.GetCurrentDirectory();
-        var normalized = new List<string>(allowlist.Count);
-
-        foreach (string path in allowlist)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                continue;
-            }
-
-            string fullPath = ResolvePath(path.Trim(), baseDirectory, "linked-source allowlist");
-            normalized.Add(EnsureTrailingDirectorySeparator(fullPath));
-        }
-
-        return normalized.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-    }
-
-    private static string ResolvePath(string path, string baseDirectory, string context)
-    {
-        try
-        {
-            return Path.IsPathRooted(path)
-                ? Path.GetFullPath(path)
-                : Path.GetFullPath(Path.Combine(baseDirectory, path));
-        }
-        catch (Exception ex) when (
-            ex is ArgumentException ||
-            ex is NotSupportedException ||
-            ex is PathTooLongException)
-        {
-            throw new UnauthorizedAccessException(
-                $"Invalid path in {context}: '{path}'.",
-                ex);
-        }
-    }
-
-    private static bool IsPathWithinDirectory(string path, string directory)
-    {
-        string fullPath = Path.GetFullPath(path);
-        string fullDirectory = EnsureTrailingDirectorySeparator(Path.GetFullPath(directory));
-        return fullPath.StartsWith(fullDirectory, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string EnsureTrailingDirectorySeparator(string path)
-    {
-        if (string.IsNullOrEmpty(path))
-        {
-            return path;
-        }
-
-        char last = path[path.Length - 1];
-        if (last != Path.DirectorySeparatorChar && last != Path.AltDirectorySeparatorChar)
-        {
-            return path + Path.DirectorySeparatorChar;
-        }
-
-        return path;
-    }
-
     private static object[] ConvertRowToTyped(List<string> row, List<ColumnInfo> columns, string? tableName = null, Dictionary<int, Dictionary<int, byte[]>>? complexData = null, bool strictParsing = true)
     {
         var typedRow = new object[row.Count];
@@ -1606,82 +1467,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    private async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            return [];
-        }
-
-        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
-        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
-        int idxFlags = msys.Columns.FindIndex(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
-        int idxDatabase = msys.Columns.FindIndex(c => string.Equals(c.Name, "Database", StringComparison.OrdinalIgnoreCase));
-        int idxForeignName = msys.Columns.FindIndex(c => string.Equals(c.Name, "ForeignName", StringComparison.OrdinalIgnoreCase));
-        int idxConnect = msys.Columns.FindIndex(c => string.Equals(c.Name, "Connect", StringComparison.OrdinalIgnoreCase));
-
-        if (idxName < 0 || idxType < 0)
-        {
-            return [];
-        }
-
-        var result = new List<LinkedTableInfo>();
-        long totPages = _stream.Length / _pgSz;
-
-        for (long p = 3; p < totPages; p++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != 2)
-            {
-                continue;
-            }
-
-            await foreach (List<string> row in EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false))
-            {
-                string typeStr = SafeGet(row, idxType);
-                if (!int.TryParse(typeStr, out int objType))
-                {
-                    continue;
-                }
-
-                if (objType != OBJ_LINKED_TABLE && objType != OBJ_LINKED_ODBC)
-                {
-                    continue;
-                }
-
-                string nameStr = SafeGet(row, idxName);
-                if (string.IsNullOrEmpty(nameStr))
-                {
-                    continue;
-                }
-
-                string flagsStr = SafeGet(row, idxFlags);
-                if (long.TryParse(flagsStr, out long flagsLong) &&
-                    (unchecked((uint)flagsLong) & SYSTABLE_MASK) != 0)
-                {
-                    continue;
-                }
-
-                bool isOdbc = objType == OBJ_LINKED_ODBC;
-                result.Add(new LinkedTableInfo
-                {
-                    Name = nameStr,
-                    ForeignName = SafeGet(row, idxForeignName),
-                    SourceDatabasePath = isOdbc ? null : SafeGet(row, idxDatabase),
-                    ConnectionString = isOdbc ? SafeGet(row, idxConnect) : null,
-                    IsOdbc = isOdbc,
-                });
-            }
-        }
-
-        return result;
-    }
-
     private void ValidateDatabaseFormat()
     {
         if (_stream.Length < 128)
@@ -1745,16 +1530,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// Finds a linked table entry by name (case-insensitive).
-    /// Returns null if the table is not a linked table.
-    /// </summary>
-    private async ValueTask<LinkedTableInfo?> FindLinkedTableAsync(string tableName, CancellationToken cancellationToken)
-    {
-        List<LinkedTableInfo> links = await GetLinkedTablesAsync(cancellationToken).ConfigureAwait(false);
-        return links.Find(l => string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Yields decoded rows from a single data page.</summary>
@@ -2005,6 +1780,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
         }
     }
+
+    /// <summary>Loads the MSysObjects TableDef (page 2). Exposed for <see cref="Internal.LinkedTableManager"/>.</summary>
+    internal ValueTask<TableDef?> GetMSysObjectsTableDefAsync(CancellationToken cancellationToken) =>
+        ReadTableDefAsync(2, cancellationToken);
+
+    /// <summary>Enumerates every row of MSysObjects. Exposed for <see cref="Internal.LinkedTableManager"/>.</summary>
+    internal IAsyncEnumerable<List<string>> EnumerateMSysObjectsRowsAsync(TableDef msys, CancellationToken cancellationToken) =>
+        EnumerateRowsForTdefAsync(2, msys, cancellationToken);
 
     private async ValueTask<Dictionary<string, string>> ReadComplexColumnSubtypesAsync(string tableName, CancellationToken cancellationToken)
     {

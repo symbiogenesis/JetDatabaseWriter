@@ -17,6 +17,11 @@ using JetDatabaseWriter.Internal;
 /// </summary>
 public abstract class AccessBase : IAccessBase
 {
+    // Catalog (MSysObjects) constants shared with Internal helpers
+    internal const int OBJ_LINKED_TABLE = 4;
+    internal const int OBJ_LINKED_ODBC = 6;
+    internal const uint SYSTABLE_MASK = 0x80000002U;
+
     // ── Column type codes (mdbtools HACKING.md) ──────────────────────
     private protected const byte T_BOOL = 0x01; // 1 bit  – stored in null_mask
     private protected const byte T_BYTE = 0x02; // 1 byte
@@ -37,9 +42,6 @@ public abstract class AccessBase : IAccessBase
 
     // Catalog (MSysObjects) constants
     private protected const int OBJ_TABLE = 1;
-    private protected const int OBJ_LINKED_TABLE = 4;
-    private protected const int OBJ_LINKED_ODBC = 6;
-    private protected const uint SYSTABLE_MASK = 0x80000002U;
 
     // ── Format-specific offsets ───────────────────────────────────────
 
