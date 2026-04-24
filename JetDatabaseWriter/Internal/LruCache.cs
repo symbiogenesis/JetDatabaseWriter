@@ -50,7 +50,11 @@ internal sealed class LruCache<TKey, TValue>
         {
             if (_map.TryGetValue(key, out int idx))
             {
-                MoveToFront(idx);
+                if (_nodes[Sentinel].Next != idx)
+                {
+                    MoveToFront(idx);
+                }
+
                 value = _nodes[idx].Value;
                 return true;
             }
@@ -66,7 +70,11 @@ internal sealed class LruCache<TKey, TValue>
         {
             if (_map.TryGetValue(key, out int existingIdx))
             {
-                MoveToFront(existingIdx);
+                if (_nodes[Sentinel].Next != existingIdx)
+                {
+                    MoveToFront(existingIdx);
+                }
+
                 _nodes[existingIdx].Value = value;
                 return;
             }
@@ -77,8 +85,14 @@ internal sealed class LruCache<TKey, TValue>
                 // Evict LRU entry and reuse its slot in-place (zero allocation).
                 nodeIdx = _nodes[Sentinel].Prev;
                 Detach(nodeIdx);
-                _map.Remove(_nodes[nodeIdx].Key);
-                _onEvict?.Invoke(_nodes[nodeIdx].Value);
+                ref Node evicted = ref _nodes[nodeIdx];
+                _map.Remove(evicted.Key);
+                TValue evictedValue = evicted.Value;
+
+                // Clear references so reused slot doesn't temporarily root the old key/value.
+                evicted.Key = default!;
+                evicted.Value = default!;
+                _onEvict?.Invoke(evictedValue);
             }
             else
             {
@@ -107,6 +121,12 @@ internal sealed class LruCache<TKey, TValue>
                 {
                     onRemove(_nodes[kvp.Value].Value);
                 }
+            }
+
+            // Null out references so the backing array doesn't keep keys/values alive.
+            if (RuntimeHelpers.IsReferenceOrContainsReferences<Node>())
+            {
+                Array.Clear(_nodes, 0, _nextSlot);
             }
 
             _map.Clear();
