@@ -89,7 +89,7 @@ internal sealed class ColumnPropertyBlockBuilder
             }
         }
 
-        var nt = new TargetBuilder { Name = name, ChunkType = 0x0000 };
+        var nt = new TargetBuilder { Name = name, ChunkType = ColumnPropertyChunkType.PropertyBlock };
         Targets.Add(nt);
         return nt;
     }
@@ -180,10 +180,7 @@ internal sealed class ColumnPropertyBlockBuilder
         // Property-block chunks.
         foreach (TargetBuilder t in Targets)
         {
-            ushort chunkType = t.ChunkType == 0
-                ? (ushort)ColumnPropertyChunkType.PropertyBlock
-                : t.ChunkType;
-            WriteChunk(ms, (ColumnPropertyChunkType)chunkType, BuildPropertyBlockPayload(t, nameToIndex, stringEncoding));
+            WriteChunk(ms, t.ChunkType, BuildPropertyBlockPayload(t, nameToIndex, stringEncoding));
         }
 
         // Unknown chunks (preserved verbatim — re-emit at the end so they don't shadow
@@ -300,8 +297,8 @@ internal sealed class ColumnPropertyBlockBuilder
         /// <summary>Gets or sets the target name (column name, or table name for the table-level target).</summary>
         public string Name { get; set; } = string.Empty;
 
-        /// <summary>Gets or sets the chunk-type code. <c>0x0000</c> when the writer should pick the default (<c>0x00</c>).</summary>
-        public ushort ChunkType { get; set; }
+        /// <summary>Gets or sets the chunk-type code. Defaults to <see cref="ColumnPropertyChunkType.PropertyBlock"/> (<c>0x0000</c>), the subtype this library emits for new targets.</summary>
+        public ColumnPropertyChunkType ChunkType { get; set; }
 
         /// <summary>Gets the mutable list of property entries in emission order.</summary>
         public List<EntryBuilder> Entries { get; } = new();

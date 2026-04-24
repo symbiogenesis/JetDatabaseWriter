@@ -14,7 +14,7 @@ using System.Text;
 /// <param name="Entries">Property entries owned by this target, in source order.</param>
 internal sealed record ColumnPropertyTarget(
     string Name,
-    ushort ChunkType,
+    ColumnPropertyChunkType ChunkType,
     IReadOnlyList<ColumnPropertyEntry> Entries)
 {
     /// <summary>Returns the first entry with the given property name (case-insensitive), or <see langword="null"/>.</summary>

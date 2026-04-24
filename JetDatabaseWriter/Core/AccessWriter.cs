@@ -2244,7 +2244,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 Wi32(page, log + 8, i);                  // index_num2 (one real per logical)
                 Wi32(page, log + 13, -1);                // rel_idx_num = 0xFFFFFFFF (not a FK)
 
-                // index_type = 0x00 (Normal), cascade flags = 0, all else zero.
+                // index_type: Normal index (PK/FK emission would set 0x01 / 0x02 here).
+                page[log + 23] = (byte)IndexKind.Normal;
             }
 
             // Logical-index names — same length-prefix encoding as column names.

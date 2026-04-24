@@ -99,7 +99,7 @@ internal sealed class ColumnPropertyBlock
         while (pos + 6 <= blob.Length)
         {
             uint chunkLen = ReadUInt32(blob, pos);
-            ushort chunkType = ReadUInt16(blob, pos + 4);
+            var chunkType = (ColumnPropertyChunkType)ReadUInt16(blob, pos + 4);
 
             if (chunkLen < 6 || pos + chunkLen > (uint)blob.Length)
             {
@@ -109,7 +109,7 @@ internal sealed class ColumnPropertyBlock
             int payloadStart = pos + 6;
             int payloadLen = (int)chunkLen - 6;
 
-            switch ((ColumnPropertyChunkType)chunkType)
+            switch (chunkType)
             {
                 case ColumnPropertyChunkType.NamePool:
                     nameTable.Clear();
@@ -131,7 +131,7 @@ internal sealed class ColumnPropertyBlock
                 default:
                     var opaque = new byte[payloadLen];
                     Buffer.BlockCopy(blob, payloadStart, opaque, 0, payloadLen);
-                    unknown.Add(new ColumnPropertyUnknownChunk(chunkType, opaque));
+                    unknown.Add(new ColumnPropertyUnknownChunk((ushort)chunkType, opaque));
                     break;
             }
 
@@ -191,7 +191,7 @@ internal sealed class ColumnPropertyBlock
         byte[] blob,
         int start,
         int length,
-        ushort chunkType,
+        ColumnPropertyChunkType chunkType,
         List<string> nameTable,
         Encoding stringEncoding,
         bool isJet3)
