@@ -1323,6 +1323,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         T_NUMERIC => "Decimal",
         T_ATTACHMENT => "Attachment",
         T_COMPLEX => "Complex",
+        T_DATETIMEEXT => "Date/Time Extended",
         _ => $"0x{t:X2}",
     };
 
