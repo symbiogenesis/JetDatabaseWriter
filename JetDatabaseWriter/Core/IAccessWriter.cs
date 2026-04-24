@@ -30,6 +30,41 @@ public interface IAccessWriter : IAccessBase
     ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Asynchronously appends a new column to an existing table. Existing rows receive
+    /// <see cref="System.DBNull.Value"/> for the new column. Implemented by copying the
+    /// table to a new schema and renaming the result back to <paramref name="tableName"/>.
+    /// </summary>
+    /// <param name="tableName">Target table name (case-insensitive).</param>
+    /// <param name="column">The new column definition. Its name must not already exist on the table.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    ValueTask AddColumnAsync(string tableName, ColumnDefinition column, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asynchronously drops the named column from an existing table. The column's data is
+    /// permanently lost. Implemented by copying the remaining columns to a new schema and
+    /// renaming the result back to <paramref name="tableName"/>. The table must retain at
+    /// least one column after the drop.
+    /// </summary>
+    /// <param name="tableName">Target table name (case-insensitive).</param>
+    /// <param name="columnName">The column to drop (case-insensitive).</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    ValueTask DropColumnAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asynchronously renames a column on an existing table. Row data is preserved.
+    /// Implemented by copying the table to a new schema and renaming the result back to
+    /// <paramref name="tableName"/>.
+    /// </summary>
+    /// <param name="tableName">Target table name (case-insensitive).</param>
+    /// <param name="oldColumnName">The current column name (case-insensitive).</param>
+    /// <param name="newColumnName">The new column name. Must not already exist on the table.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Asynchronously inserts a single row into the specified table.
     /// Values must be in the same order as the table's columns.
     /// </summary>

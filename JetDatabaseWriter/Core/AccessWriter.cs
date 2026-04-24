@@ -295,6 +295,117 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <inheritdoc/>
+    public ValueTask AddColumnAsync(string tableName, ColumnDefinition column, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(column, nameof(column));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return RewriteTableAsync(
+            tableName,
+            (existing, _) =>
+            {
+                if (existing.Exists(c => string.Equals(c.Name, column.Name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    throw new InvalidOperationException($"Column '{column.Name}' already exists in table '{tableName}'.");
+                }
+
+                var next = new List<ColumnDefinition>(existing);
+                next.Add(column);
+                return next;
+            },
+            (oldRow, _) =>
+            {
+                var next = new object[oldRow.Length + 1];
+                Array.Copy(oldRow, 0, next, 0, oldRow.Length);
+                next[oldRow.Length] = DBNull.Value;
+                return next;
+            },
+            cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public ValueTask DropColumnAsync(string tableName, string columnName, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNullOrEmpty(columnName, nameof(columnName));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        int dropIndex = -1;
+        return RewriteTableAsync(
+            tableName,
+            (existing, _) =>
+            {
+                dropIndex = existing.FindIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+                if (dropIndex < 0)
+                {
+                    throw new ArgumentException($"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName));
+                }
+
+                if (existing.Count == 1)
+                {
+                    throw new InvalidOperationException($"Cannot drop the last remaining column from table '{tableName}'.");
+                }
+
+                var next = new List<ColumnDefinition>(existing);
+                next.RemoveAt(dropIndex);
+                return next;
+            },
+            (oldRow, _) =>
+            {
+                var next = new object[oldRow.Length - 1];
+                int j = 0;
+                for (int i = 0; i < oldRow.Length; i++)
+                {
+                    if (i == dropIndex)
+                    {
+                        continue;
+                    }
+
+                    next[j++] = oldRow[i];
+                }
+
+                return next;
+            },
+            cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNullOrEmpty(oldColumnName, nameof(oldColumnName));
+        Guard.NotNullOrEmpty(newColumnName, nameof(newColumnName));
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return RewriteTableAsync(
+            tableName,
+            (existing, _) =>
+            {
+                int idx = existing.FindIndex(c => string.Equals(c.Name, oldColumnName, StringComparison.OrdinalIgnoreCase));
+                if (idx < 0)
+                {
+                    throw new ArgumentException($"Column '{oldColumnName}' was not found in table '{tableName}'.", nameof(oldColumnName));
+                }
+
+                if (existing.Exists(c => string.Equals(c.Name, newColumnName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    throw new InvalidOperationException($"Column '{newColumnName}' already exists in table '{tableName}'.");
+                }
+
+                var next = new List<ColumnDefinition>(existing);
+                ColumnDefinition src = next[idx];
+                next[idx] = new ColumnDefinition(newColumnName, src.ClrType, src.MaxLength);
+                return next;
+            },
+            (oldRow, _) => oldRow,
+            cancellationToken);
+    }
+
+    /// <inheritdoc/>
     public async ValueTask InsertRowAsync(string tableName, object[] values, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -862,6 +973,116 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         SetValue(msys, values, "Flags", 0);
 
         await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask RewriteTableAsync(
+        string tableName,
+        Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
+        Func<object[], TableDef, object[]> projectRow,
+        CancellationToken cancellationToken)
+    {
+        CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+
+        var existingDefs = new List<ColumnDefinition>(tableDef.Columns.Count);
+        foreach (ColumnInfo col in tableDef.Columns)
+        {
+            existingDefs.Add(BuildColumnDefinitionFromInfo(col));
+        }
+
+        List<ColumnDefinition> newDefs = projectColumns(existingDefs, tableDef);
+        if (newDefs.Count == 0)
+        {
+            throw new InvalidOperationException($"Table '{tableName}' must retain at least one column.");
+        }
+
+        // Snapshot existing rows BEFORE we mutate the catalog so the snapshot reader
+        // sees the original schema.
+        using DataTable snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+
+        string tempName = $"~tmp_{Guid.NewGuid():N}".Substring(0, 18);
+        await CreateTableAsync(tempName, newDefs, cancellationToken).ConfigureAwait(false);
+
+        CatalogEntry tempEntry = await GetRequiredCatalogEntryAsync(tempName, cancellationToken).ConfigureAwait(false);
+        TableDef tempDef = await ReadRequiredTableDefAsync(tempEntry.TDefPage, tempName, cancellationToken).ConfigureAwait(false);
+
+        foreach (DataRow row in snapshot.Rows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            object?[] sourceItems = row.ItemArray;
+            var sourceRow = new object[sourceItems.Length];
+            for (int i = 0; i < sourceItems.Length; i++)
+            {
+                sourceRow[i] = sourceItems[i] ?? DBNull.Value;
+            }
+
+            object[] projected = projectRow(sourceRow, tableDef);
+            await InsertRowDataAsync(tempEntry.TDefPage, tempDef, projected, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        // Drop the original table, then rename the temp catalog entry to take its place.
+        await DropTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        await RenameTableInCatalogAsync(tempName, tableName, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask RenameTableInCatalogAsync(string oldName, string newName, CancellationToken cancellationToken)
+    {
+        TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+
+        long? tdefPage = null;
+        foreach (CatalogRow row in rows)
+        {
+            if (row.ObjectType != OBJ_TABLE)
+            {
+                continue;
+            }
+
+            if (!string.Equals(row.Name, oldName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            tdefPage = row.TDefPage;
+            await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
+            break;
+        }
+
+        if (tdefPage == null)
+        {
+            throw new InvalidOperationException($"Catalog row for '{oldName}' was not found during rename.");
+        }
+
+        await InsertCatalogEntryAsync(newName, tdefPage.Value, cancellationToken).ConfigureAwait(false);
+        InvalidateCatalogCache();
+    }
+
+    private ColumnDefinition BuildColumnDefinitionFromInfo(ColumnInfo column)
+    {
+        switch (column.Type)
+        {
+            case T_BOOL: return new ColumnDefinition(column.Name, typeof(bool));
+            case T_BYTE: return new ColumnDefinition(column.Name, typeof(byte));
+            case T_INT: return new ColumnDefinition(column.Name, typeof(short));
+            case T_LONG: return new ColumnDefinition(column.Name, typeof(int));
+            case T_MONEY: return new ColumnDefinition(column.Name, typeof(decimal));
+            case T_FLOAT: return new ColumnDefinition(column.Name, typeof(float));
+            case T_DOUBLE: return new ColumnDefinition(column.Name, typeof(double));
+            case T_DATETIME: return new ColumnDefinition(column.Name, typeof(DateTime));
+            case T_NUMERIC: return new ColumnDefinition(column.Name, typeof(decimal));
+            case T_GUID: return new ColumnDefinition(column.Name, typeof(Guid));
+            case T_TEXT:
+                int charLen = _format != DatabaseFormat.Jet3Mdb ? Math.Max(1, column.Size / 2) : Math.Max(1, column.Size);
+                return new ColumnDefinition(column.Name, typeof(string), charLen);
+            case T_MEMO: return new ColumnDefinition(column.Name, typeof(string));
+            case T_BINARY: return new ColumnDefinition(column.Name, typeof(byte[]), column.Size > 0 ? column.Size : 255);
+            case T_OLE: return new ColumnDefinition(column.Name, typeof(byte[]));
+            case T_ATTACHMENT:
+            case T_COMPLEX:
+                throw new NotSupportedException($"Column '{column.Name}' has a complex type (attachment / multi-value) that cannot be rewritten by AddColumnAsync / DropColumnAsync / RenameColumnAsync.");
+            default:
+                throw new NotSupportedException($"Column '{column.Name}' has unsupported type code 0x{column.Type:X2}.");
+        }
     }
 
     private byte[] BuildTDefPage(TableDef tableDef)
