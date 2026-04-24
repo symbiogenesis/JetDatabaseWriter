@@ -590,20 +590,25 @@ public sealed class LimitationsTests : IDisposable
     // ── Linked tables ─────────────────────────────────────────────────
 
     [Fact]
-    public void LinkedTables_AccessWriter_DoesNotExposePublicCreateLinkedTableApi()
+    public void LinkedTables_AccessWriter_ExposesPublicCreateLinkedTableApi()
     {
-        // README: "No public API to create linked tables. An InsertLinkedTableEntryAsync
-        //          helper exists internally for tests but is not part of the public surface."
+        // README: "Linked Access tables (MSysObjects type 4) are writable. Use
+        //          CreateLinkedTableAsync(linkedName, sourceDatabasePath, foreignName)..."
         var publicCreateLinked = typeof(AccessWriter)
             .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
             .Where(m => m.Name.Contains("LinkedTable", StringComparison.OrdinalIgnoreCase))
-            .Where(m => m.Name.StartsWith("Create", StringComparison.OrdinalIgnoreCase) ||
-                         m.Name.StartsWith("Insert", StringComparison.OrdinalIgnoreCase) ||
-                         m.Name.StartsWith("Add", StringComparison.OrdinalIgnoreCase))
+            .Where(m => m.Name.StartsWith("Create", StringComparison.OrdinalIgnoreCase))
             .ToArray();
 
-        Assert.Empty(publicCreateLinked);
-        AssertNoMethodMatching(typeof(IAccessWriter), "LinkedTable");
+        Assert.NotEmpty(publicCreateLinked);
+
+        // Linked-ODBC creation is also supported (CreateLinkedOdbcTableAsync).
+        var publicCreateOdbc = typeof(AccessWriter)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
+            .Where(m => m.Name.Contains("Odbc", StringComparison.OrdinalIgnoreCase))
+            .Where(m => m.Name.StartsWith("Create", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        Assert.NotEmpty(publicCreateOdbc);
     }
 
     // ── Encryption ────────────────────────────────────────────────────

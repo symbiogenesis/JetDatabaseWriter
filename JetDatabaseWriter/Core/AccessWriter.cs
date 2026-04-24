@@ -691,16 +691,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Asynchronously inserts a linked table entry (type 4) into the MSysObjects catalog.
+    /// Asynchronously creates a linked-table entry (MSysObjects type 4) that references
+    /// a table in another Access database. No row data is stored locally; readers follow
+    /// the entry to <paramref name="sourceDatabasePath"/> on demand.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
-    /// <param name="sourceDatabasePath">The path to the source database file.</param>
+    /// <param name="sourceDatabasePath">Path to the source Access database file (.mdb / .accdb).</param>
     /// <param name="foreignTableName">The name of the table in the source database.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    internal async ValueTask InsertLinkedTableEntryAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default)
+    public async ValueTask CreateLinkedTableAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default)
     {
+        Guard.NotNullOrEmpty(linkedTableName, nameof(linkedTableName));
+        Guard.NotNullOrEmpty(sourceDatabasePath, nameof(sourceDatabasePath));
+        Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
+
+        if (await GetCatalogEntryAsync(linkedTableName, cancellationToken).ConfigureAwait(false) != null)
+        {
+            throw new InvalidOperationException($"An object named '{linkedTableName}' already exists.");
+        }
 
         TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
         var values = new object[msys.Columns.Count];
@@ -720,6 +731,57 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         SetValue(msys, values, "Flags", 0);
         SetValue(msys, values, "ForeignName", foreignTableName);
         SetValue(msys, values, "Database", sourceDatabasePath);
+
+        await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+        InvalidateCatalogCache();
+    }
+
+    /// <summary>
+    /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 6) that references
+    /// a table accessible via an ODBC connection. No row data is stored locally; readers
+    /// follow the entry to <paramref name="connectionString"/> /
+    /// <paramref name="foreignTableName"/> on demand.
+    /// </summary>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
+    /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    public async ValueTask CreateLinkedOdbcTableAsync(string linkedTableName, string connectionString, string foreignTableName, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(linkedTableName, nameof(linkedTableName));
+        Guard.NotNullOrEmpty(connectionString, nameof(connectionString));
+        Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
+        Guard.ThrowIfDisposed(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (await GetCatalogEntryAsync(linkedTableName, cancellationToken).ConfigureAwait(false) != null)
+        {
+            throw new InvalidOperationException($"An object named '{linkedTableName}' already exists.");
+        }
+
+        string normalizedConnect = connectionString.StartsWith("ODBC;", StringComparison.OrdinalIgnoreCase)
+            ? connectionString
+            : "ODBC;" + connectionString;
+
+        TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
+        var values = new object[msys.Columns.Count];
+        DateTime now = DateTime.UtcNow;
+
+        for (int i = 0; i < msys.Columns.Count; i++)
+        {
+            values[i] = DBNull.Value;
+        }
+
+        SetValue(msys, values, "Id", 0);
+        SetValue(msys, values, "ParentId", 0);
+        SetValue(msys, values, "Name", linkedTableName);
+        SetValue(msys, values, "Type", (short)OBJ_LINKED_ODBC);
+        SetValue(msys, values, "DateCreate", now);
+        SetValue(msys, values, "DateUpdate", now);
+        SetValue(msys, values, "Flags", 0);
+        SetValue(msys, values, "ForeignName", foreignTableName);
+        SetValue(msys, values, "Connect", normalizedConnect);
 
         await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
         InvalidateCatalogCache();

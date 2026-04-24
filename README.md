@@ -30,7 +30,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **OLE Objects** | Detects embedded JPEG, PNG, PDF, ZIP, DOC, RTF |
 | ✅ **Write support** | Create databases, Create/drop tables, insert/update/delete rows (Jet3/Jet4/ACE) |
 | ✅ **Encryption & passwords** | Jet3 page-level XOR, Jet4 `.mdb` RC4, legacy password-only `.accdb` (`;pwd=`), AES-128 page-encrypted Access 2007+ `.accdb` (CFB-wrapped), and Office Crypto API ECMA-376 "Agile" (SHA-512 PBKDF + AES-CBC) used by Access 2010 SP1+ / Microsoft 365 |
-| ✅ **Linked table metadata** | `ListLinkedTables()` returns source paths and foreign names |
+| ✅ **Linked tables** | Read source paths / foreign names via `ListLinkedTablesAsync()`; create Access (type 4) and ODBC (type 6) links via `CreateLinkedTableAsync` / `CreateLinkedOdbcTableAsync` |
 | ✅ **Complex fields** | Attachment and multi-value columns resolved via `MSysComplexColumns` FK lookup |
 | ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on disposal (opt-out) |
 
@@ -387,6 +387,27 @@ await writer.DropColumnAsync("Contacts", "Phone");
 
 > These operations rewrite the whole table (copy rows to a new schema, then swap the catalog entry). Cost scales with row count.
 
+### Linked tables
+
+Linked tables are catalog-only entries that point at data living in another database. The library writes the `MSysObjects` row; readers (this library, Microsoft Access, etc.) follow the entry to fetch the data on demand.
+
+```csharp
+// Linked Access table (MSysObjects type 4) — references a table in another .mdb / .accdb file.
+await writer.CreateLinkedTableAsync(
+    linkedTableName:    "RemoteOrders",
+    sourceDatabasePath: @"C:\Data\Backend.accdb",
+    foreignTableName:   "Orders");
+
+// Linked ODBC table (MSysObjects type 6) — references a table over an ODBC connection.
+// The "ODBC;" prefix is added automatically when omitted.
+await writer.CreateLinkedOdbcTableAsync(
+    linkedTableName:  "LinkedSalesOrders",
+    connectionString: "ODBC;DRIVER={SQL Server};SERVER=db.example.com;DATABASE=Sales;Trusted_Connection=Yes",
+    foreignTableName: "dbo.Orders");
+```
+
+> The library only writes the catalog metadata. It does not open the ODBC source itself — reading an ODBC-linked table from this library is not supported. Use `ListLinkedTablesAsync()` to enumerate linked entries.
+
 ---
 
 ## Statistics & Metadata
@@ -543,9 +564,6 @@ The writer is intentionally focused on the most common create / insert / update 
 
 ### Compression on write
 - **Attachment payloads are not Deflate-compressed.** Access prefixes attachment `FileData` with a 1-byte flag (`0x00` raw, `0x01` zlib-Deflate). The reader decompresses both; there is no writer API that emits the compressed form. (This is moot today because attachment column creation is also unsupported — see above.)
-
-### Linked tables
-- **No public API to create linked tables.** An `InsertLinkedTableEntryAsync` helper exists internally for tests but is not part of the public surface. `ListLinkedTablesAsync` (read) is fully supported.
 
 ### Encryption
 - **No password / encryption changes.** All Access encryption formats (Jet3 XOR, Jet4 RC4, ACCDB legacy `;pwd=`, AES-128 CFB-wrapped, and Office Crypto API "Agile") are fully writable in place — modified pages are re-encrypted on flush, and Agile containers are re-emitted on `DisposeAsync`. However, creating a new encrypted database from an unencrypted one, changing a password, or re-encrypting an existing file with different parameters is not supported.

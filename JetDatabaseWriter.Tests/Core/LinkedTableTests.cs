@@ -127,7 +127,84 @@ public sealed class LinkedTableTests : IDisposable
     }
 
     [Fact]
-    public async Task LinkedTables_InsertLinkedTableEntryAsync_WhenCancelled_ThrowsOperationCanceledException()
+    public async Task LinkedTables_CreateLinkedOdbcTableAsync_PersistsType6EntryWithConnectionString()
+    {
+        string frontEndPath = CreateTempJet4Database("LinkedOdbcFE");
+        const string connect = "ODBC;DRIVER={SQL Server};SERVER=db.example.com;DATABASE=Sales;Trusted_Connection=Yes";
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateLinkedOdbcTableAsync(
+                "LinkedSalesOrders",
+                connect,
+                "dbo.Orders",
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+
+        var entry = linked.FirstOrDefault(l =>
+            string.Equals(l.Name, "LinkedSalesOrders", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(entry);
+        Assert.True(entry.IsOdbc);
+        Assert.Equal("dbo.Orders", entry.ForeignName);
+        Assert.Equal(connect, entry.ConnectionString);
+        Assert.True(string.IsNullOrEmpty(entry.SourceDatabasePath));
+    }
+
+    [Fact]
+    public async Task LinkedTables_CreateLinkedOdbcTableAsync_AddsOdbcPrefixWhenMissing()
+    {
+        string frontEndPath = CreateTempJet4Database("LinkedOdbcPrefix");
+        const string connect = "DSN=Sales;UID=app;PWD=secret";
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateLinkedOdbcTableAsync(
+                "LinkedSales",
+                connect,
+                "Orders",
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        var entry = (await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken))
+            .First(l => string.Equals(l.Name, "LinkedSales", StringComparison.OrdinalIgnoreCase));
+
+        Assert.True(entry.IsOdbc);
+        Assert.Equal("ODBC;" + connect, entry.ConnectionString);
+    }
+
+    [Fact]
+    public async Task LinkedTables_CreateLinkedOdbcTableAsync_WhenCancelled_ThrowsOperationCanceledException()
+    {
+        string frontEndPath = CreateTempJet4Database("LinkedOdbcCancel");
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            writer.CreateLinkedOdbcTableAsync("LinkedOdbcCanceled", "ODBC;DSN=X", "T", cts.Token).AsTask());
+    }
+
+    [Fact]
+    public async Task LinkedTables_CreateLinkedOdbcTableAsync_DuplicateLocalTableName_Throws()
+    {
+        string frontEndPath = CreateTempJet4Database("LinkedOdbcDup");
+
+        await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync(
+            "LocalTable",
+            [new("Id", typeof(int))],
+            TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            writer.CreateLinkedOdbcTableAsync("LocalTable", "ODBC;DSN=Y", "T2", TestContext.Current.CancellationToken).AsTask());
+    }
+
+    [Fact]
+    public async Task LinkedTables_CreateLinkedTableAsync_WhenCancelled_ThrowsOperationCanceledException()
     {
         string frontEndPath = CreateTempJet4Database("LinkedCancel");
         using var cts = new CancellationTokenSource();
@@ -501,7 +578,7 @@ public sealed class LinkedTableTests : IDisposable
         CancellationToken cancellationToken = default)
     {
         await using var writer = await AccessWriter.OpenAsync(dbPath, cancellationToken: cancellationToken);
-        await writer.InsertLinkedTableEntryAsync(linkedTableName, sourceDbPath, foreignTableName, cancellationToken);
+        await writer.CreateLinkedTableAsync(linkedTableName, sourceDbPath, foreignTableName, cancellationToken);
     }
 
     /// <summary>Creates a minimal Jet4 database by copying NorthwindTraders.accdb.</summary>
