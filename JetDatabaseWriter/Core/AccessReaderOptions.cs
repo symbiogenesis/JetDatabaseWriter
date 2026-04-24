@@ -29,34 +29,34 @@ public sealed class AccessReaderOptions : IAccessOptions
         _password = SecureStringUtilities.FromPlainText(plainTextPassword);
     }
 
-    /// <summary>Gets or sets the maximum number of pages to keep in cache. 0 = unlimited, -1 = disabled. Default: 256 (1 MB for 4K pages).</summary>
-    public int PageCacheSize { get; set; } = 256;
+    /// <summary>Gets the maximum number of pages to keep in cache. 0 = unlimited, -1 = disabled. Default: 256 (1 MB for 4K pages).</summary>
+    public int PageCacheSize { get; init; } = 256;
 
-    /// <summary>Gets or sets a value indicating whether verbose diagnostic information is logged. Default: false.</summary>
-    public bool DiagnosticsEnabled { get; set; }
+    /// <summary>Gets a value indicating whether verbose diagnostic information is logged. Default: false.</summary>
+    public bool DiagnosticsEnabled { get; init; }
 
-    /// <summary>Gets or sets a value indicating whether parallel processing is used for reading multiple pages. Can improve performance for large tables. Default: false.</summary>
-    public bool ParallelPageReadsEnabled { get; set; }
+    /// <summary>Gets a value indicating whether parallel processing is used for reading multiple pages. Can improve performance for large tables. Default: false.</summary>
+    public bool ParallelPageReadsEnabled { get; init; }
 
-    /// <summary>Gets or sets a value indicating whether the database format is validated on open. Default: true.</summary>
-    public bool ValidateOnOpen { get; set; } = true;
+    /// <summary>Gets a value indicating whether the database format is validated on open. Default: true.</summary>
+    public bool ValidateOnOpen { get; init; } = true;
 
     /// <summary>
-    /// Gets or sets a value indicating whether strict value parsing is enforced when converting raw column
+    /// Gets a value indicating whether strict value parsing is enforced when converting raw column
     /// strings to their CLR types. When <see langword="true"/> (the default), values that cannot be parsed as
     /// the target type cause a <see cref="FormatException"/> to be thrown. When <see langword="false"/>,
     /// unparseable values are silently coerced to <see cref="DBNull.Value"/>.
     /// </summary>
-    public bool StrictParsing { get; set; } = true;
+    public bool StrictParsing { get; init; } = true;
 
-    /// <summary>Gets or sets the file access mode. Default: Read.</summary>
-    public FileAccess FileAccess { get; set; } = FileAccess.Read;
+    /// <summary>Gets the file access mode. Default: Read.</summary>
+    public FileAccess FileAccess { get; init; } = FileAccess.Read;
 
     /// <summary>
-    /// Gets or sets the file sharing mode. Default: Read (other processes may read but not write while the database is open).
+    /// Gets the file sharing mode. Default: Read (other processes may read but not write while the database is open).
     /// Set to <see cref="FileShare.ReadWrite"/> when another application (e.g. Microsoft Access) holds a write lock on the file.
     /// </summary>
-    public FileShare FileShare { get; set; } = FileShare.ReadWrite;
+    public FileShare FileShare { get; init; } = FileShare.ReadWrite;
 
     /// <summary>
     /// Gets the password for opening encrypted databases.
@@ -82,16 +82,16 @@ public sealed class AccessReaderOptions : IAccessOptions
     public bool UseLockFile { get; init; } = true;
 
     /// <summary>
-    /// Gets or sets an optional allowlist of directories that linked-table source paths must stay under.
+    /// Gets an optional allowlist of directories that linked-table source paths must stay under.
     /// Paths may be absolute or relative (relative entries are resolved from the opened database directory).
     /// Leave empty to allow any directory.
     /// </summary>
-    public IReadOnlyList<string> LinkedSourcePathAllowlist { get; set; } = [];
+    public IReadOnlyList<string> LinkedSourcePathAllowlist { get; init; } = [];
 
     /// <summary>
-    /// Gets or sets an optional callback to approve linked-table source paths.
+    /// Gets an optional callback to approve linked-table source paths.
     /// The callback receives linked-table metadata and the resolved absolute source path.
     /// Return true to allow opening the source; false to block it.
     /// </summary>
-    public Func<LinkedTableInfo, string, bool>? LinkedSourcePathValidator { get; set; }
+    public Func<LinkedTableInfo, string, bool>? LinkedSourcePathValidator { get; init; }
 }

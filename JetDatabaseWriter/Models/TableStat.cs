@@ -6,16 +6,16 @@ namespace JetDatabaseWriter;
 /// </summary>
 public sealed record TableStat
 {
-    /// <summary>Gets or sets the table name.</summary>
-    public string Name { get; set; } = string.Empty;
+    /// <summary>Gets the table name.</summary>
+    public string Name { get; init; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the row count stored in the TDEF page.
+    /// Gets the row count stored in the TDEF page.
     /// May be stale after bulk deletes or imports without a Compact &amp; Repair.
     /// Use <see cref="IAccessReader.GetRealRowCountAsync"/> for an accurate count.
     /// </summary>
-    public long RowCount { get; set; }
+    public long RowCount { get; init; }
 
-    /// <summary>Gets or sets the number of columns defined in the table schema.</summary>
-    public int ColumnCount { get; set; }
+    /// <summary>Gets the number of columns defined in the table schema.</summary>
+    public int ColumnCount { get; init; }
 }

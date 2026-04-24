@@ -49,7 +49,7 @@ public sealed class AccessWriterOptions : IAccessOptions
     public bool UseLockFile { get; init; } = true;
 
     /// <summary>
-    /// Gets or sets a value indicating whether an existing lockfile is respected.
+    /// Gets a value indicating whether an existing lockfile is respected.
     /// When <c>true</c> and <see cref="UseLockFile"/> is also <c>true</c>, opening a
     /// database that already has a lockfile throws an <see cref="System.IO.IOException"/>.
     /// When <c>true</c>, lockfile creation is strict: if the lockfile cannot be created
@@ -57,5 +57,5 @@ public sealed class AccessWriterOptions : IAccessOptions
     /// Set to <c>false</c> for best-effort lockfile behavior (previous behaviour).
     /// Default: true.
     /// </summary>
-    public bool RespectExistingLockFile { get; set; } = true;
+    public bool RespectExistingLockFile { get; init; } = true;
 }
