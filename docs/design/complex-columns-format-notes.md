@@ -7,6 +7,8 @@
 - "No multi-value (complex) columns. Same restriction — readable, not writable."
 - "Attachment payloads are not Deflate-compressed."
 
+**Empirical appendix:** [`format-probe-appendix-complex.md`](format-probe-appendix-complex.md) — annotated hex dumps of `MSysComplexColumns`, every `MSysComplexType_*` template table, an attachment-bearing parent table (`Documents`), and the hidden flat tables from `ComplexFields.accdb`. Regenerate via `dotnet run --project JetDatabaseWriter.FormatProbe`.
+
 **Validation requirement:** identical to [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md): every PR must round-trip through Microsoft Access on Windows (open + compact + re-open + Design View inspection) before merge.
 
 > ⚠️ Reverse-engineered notes. mdbtools documents complex columns only superficially. The authoritative open-source reference is [Jackcess](https://github.com/jahlborn/jackcess) (Java, Apache-2.0) — specifically `com.healthmarketscience.jackcess.impl.complex.*`. Field names and offsets in this document are derived from Jackcess source and the existing reader code in this repo (`AccessReader.BuildComplexColumnDataAsync`, `DecodeAttachmentFileData`).
@@ -17,11 +19,13 @@
 
 Access 2007 introduced three "complex column" kinds. All three are stored the same way: a 4-byte per-row "ConceptualTableID" pseudo-foreign-key in the parent row, pointing into a hidden child ("flat") table that holds the actual values.
 
-| Kind | Column type byte | Storage in child table |
+| Kind | Column type byte (per probe) | Storage in child table |
 |---|---|---|
-| Attachment | `T_ATTACHMENT = 0x11` | One row per attached file. Columns: `FileURL`, `FileName`, `FileType`, `FileFlags`, `FileTimeStamp`, `FileData`. |
+| Attachment | **`0x12` (T_COMPLEX)** in `ComplexFields.accdb` — see appendix `Documents.Attachments`. The `0x11` (T_ATTACHMENT) constant in `AccessBase.cs` may be vestigial; the probe has not yet observed it on disk. | One row per attached file. Columns: `FileURL`, `FileName`, `FileType`, `FileFlags`, `FileTimeStamp`, `FileData`. |
 | Multi-value | `T_COMPLEX = 0x12` | One row per value. Columns: a single value column whose type matches the user-declared element type. |
 | Version history | `T_COMPLEX = 0x12` | One row per historical edit. Columns: `value` (memo), `version` (datetime). Only meaningful on memo columns flagged "Append Only" in Access. |
+
+The discrimination between attachment / multi-value / version-history is **not** done by the column-type byte. It is done by the linked flat table's schema and/or the value of `MSysComplexColumns.ComplexTypeObjectID` (which points at one of the `MSysComplexType_*` template tables — see [appendix](format-probe-appendix-complex.md)).
 
 The reader already implements all three kinds. Writer support has never been added.
 
@@ -49,31 +53,40 @@ Because `bitmask = 0x07`, the column is treated as a fixed-length 4-byte column 
 
 ### 2.2 `MSysComplexColumns` catalog table
 
-One row per complex column in the database.
+**Verified against `ComplexFields.accdb`** ([appendix](format-probe-appendix-complex.md#msyscomplexcolumns--tdef-page-18)). Actual schema is **5 columns**, not the 5 I guessed earlier (column names below are correct):
 
-| Column | Type | Meaning |
+| Column (verified) | Type | Meaning |
 |---|---|---|
-| `ConceptualTableID` | Long | The 4-byte value also stamped into the parent row. Cross-keys parent rows to child rows. |
-| `ParentTable` | Long | `MSysObjects.Id` of the parent table. |
-| `ParentColumn` | Long | Column number within the parent table. |
-| `FlatTableID` | Long | `MSysObjects.Id` of the hidden child ("flat") table that stores the values. |
-| `Type` | Long | Discriminator. Per Jackcess `ComplexDataType`: `1` = unsupported, `2` = version-history, `3` = multi-value, `4` = attachment. |
+| `ColumnName` | `T_TEXT(510)` | Name of the parent column (e.g. `"Attachments"`). |
+| `ComplexID` | `T_LONG` (fixed_off=12) | Per-database ID for this complex column. **Matches the 4-byte value the parent TDEF stores in the column descriptor's `misc`+`misc_ext` slot** (see §2.1). |
+| `ComplexTypeObjectID` | `T_LONG` (fixed_off=0) | `MSysObjects.Id` of the **type-template table** — one of `MSysComplexType_Long`, `MSysComplexType_Text`, `MSysComplexType_Attachment`, etc. The template's schema dictates the kind (attachment vs multi-value of a given inner type). |
+| `ConceptualTableID` | `T_LONG` (fixed_off=8) | Per-table cursor source. The next value is taken from the parent TDEF's `ct_autonum` field (TDEF block offset 28). Each parent row's 4-byte payload is one `ConceptualTableID` value, joining the parent row to its child rows. |
+| `FlatTableID` | `T_LONG` (fixed_off=4) | `MSysObjects.Id` of the hidden child ("flat") table. |
 
-`MSysComplexColumns` is **not** created today by [`AccessWriter.BuildEmptyDatabase`](../../JetDatabaseWriter/Core/AccessWriter.cs). Implementation must add it to the empty-DB scaffold (with the same hidden/system flag bits Access uses).
+**Critical correction from earlier draft:** the `ParentTable` and `ParentColumn` columns I listed previously **do not exist**. The parent reference is implicit: it is recovered by scanning every user TDEF for a complex column whose `misc`+`misc_ext` 4-byte slot equals `ComplexID`. The reader (`AccessReader.BuildComplexColumnDataAsync`) already does this scan.
+
+`MSysComplexColumns` is **not** created today by [`AccessWriter.BuildEmptyDatabase`](../../JetDatabaseWriter/Core/AccessWriter.cs). Implementation must add it to the empty-DB scaffold (with the same hidden/system flag bits Access uses — the appendix shows `Flags = 0x80000000`).
 
 ### 2.3 The hidden "flat" child table
 
-Stored as a normal user table in `MSysObjects` (type `1`), but with `Flags` bits set so Access UI hides it (the `0x80000002` system mask plus `0x00000001` hidden bit). Naming convention used by Access: `f_<guid>` for the flat table; the *type* table (a Jackcess concept; the schema-template table the flat derives from) is named similarly. mdbtools and existing reader code do not require us to follow this naming exactly, but Access UI may not display the parent table consistently if the child is named anomalously.
+**Verified naming and flag conventions** ([appendix](format-probe-appendix-complex.md)):
+
+- Flat-table name pattern: **`f_<32-hex-uppercase>_<userColumnName>`**, e.g. `f_A3DF50CFC033433899AF0AC1A4CF4171_Attachments`. The 32 hex characters are a GUID without dashes.
+- Flat-table `MSysObjects.Flags`: **`0x800A0000`** (probe-confirmed in both `NorthwindTraders.accdb` and `ComplexFields.accdb`).
+- Template ("type") tables: `MSysComplexType_<TypeName>` (`Long`, `Text`, `Attachment`, `UnsignedByte`, `Short`, `IEEESingle`, `IEEEDouble`, `GUID`, `Decimal`). `Flags = 0x80030000`.
+- Stored as a normal user table in `MSysObjects` (Type = 1), but the system-flag bit (`0x80000000`) hides it from Access UI.
 
 The flat table has all the value-bearing columns of the complex type, plus two extra columns:
 
-1. An **autonumber Long primary key** column. Conventionally named the same as the type-table PK, but the name is not load-bearing.
+1. An **autonumber Long primary key** column.
 2. A **Long FK column** that holds the same `ConceptualTableID` value used in the parent row. This is what the reader joins on (`AccessReader.BuildComplexColumnDataAsync`).
 
 The flat table also requires:
 
 - A **primary key** (the autonumber column) — needs the index-creation foundation in [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md).
 - A **non-unique index** on the FK column — same.
+
+> **Implementation tip:** rather than synthesizing a flat-table schema from scratch, copy the schema of the corresponding `MSysComplexType_*` template table and add the extra `_<userColName>` suffix. The templates exist in every fresh ACCDB precisely so that complex-column writers don't have to derive the schema by hand.
 
 ### 2.4 Per-kind flat-table schemas
 
