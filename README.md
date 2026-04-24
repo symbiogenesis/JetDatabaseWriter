@@ -572,7 +572,8 @@ The writer is intentionally focused on the most common create / insert / update 
 - Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.
 
 ### Concurrency
-- The lockfile (`.ldb` / `.laccdb`) is created for cooperative signaling, but the writer does **not** implement page-level locking. Concurrent writers against the same file will corrupt it. Open with `RespectExistingLockFile = true` (default) to fail fast when another process holds the file.
+- The lockfile (`.ldb` / `.laccdb`) is created for cooperative signaling only — Access itself uses it just to advertise connected users; the real concurrency control is page-level (and optionally row-level) byte-range locking on the database file via `LockFileEx`. This library implements **neither** — no byte-range locks are taken on data pages, and `.ldb` slots are not populated with the 64-byte machine-name / SID entries Access expects. Concurrent writers against the same file (including Microsoft Access opening the file while a writer is active) will corrupt it. Open with `RespectExistingLockFile = true` (default) to fail fast when another process holds the file, and keep `FileShare.Read` / `FileShare.None` on the writer to let the OS block other openers.
+- **No transactions or rollback.** Access exposes `BeginTrans` / `CommitTrans` / `Rollback`; this library does not. A crashed write leaves the file in whatever partially-flushed state the page cache had reached.
 
 ---
 
