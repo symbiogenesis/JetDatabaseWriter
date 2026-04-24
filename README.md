@@ -548,8 +548,7 @@ The writer is intentionally focused on the most common create / insert / update 
 - **No public API to create linked tables.** An `InsertLinkedTableEntryAsync` helper exists internally for tests but is not part of the public surface. `ListLinkedTablesAsync` (read) is fully supported.
 
 ### Encryption
-- **All Access encryption formats are writable.** Jet3 XOR-masked `.mdb`, Jet4 RC4-encrypted `.mdb`, legacy password-only ACCDB (`;pwd=`), and Access 2007+ AES-128 CFB-wrapped `.accdb` are written in place — modified pages are re-encrypted on flush. Office Crypto API "Agile" (Access 2010 SP1+ / Microsoft 365) `.accdb` files are edited via decrypt-into-memory; the entire CFB container is re-emitted on `DisposeAsync`, so disposal cost scales with database size for that format.
-- **No password / encryption changes.** Creating a new encrypted database, changing a password, or re-encrypting an existing file is not supported.
+- **No password / encryption changes.** All Access encryption formats (Jet3 XOR, Jet4 RC4, ACCDB legacy `;pwd=`, AES-128 CFB-wrapped, and Office Crypto API "Agile") are fully writable in place — modified pages are re-encrypted on flush, and Agile containers are re-emitted on `DisposeAsync`. However, creating a new encrypted database from an unencrypted one, changing a password, or re-encrypting an existing file with different parameters is not supported.
 
 ### Forms, reports, macros, queries, VBA
 - Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.
