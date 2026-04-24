@@ -229,7 +229,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(columns, nameof(columns));
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         if (columns.Count == 0)
@@ -254,7 +254,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     public async ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
@@ -299,7 +299,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(column, nameof(column));
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         return RewriteTableAsync(
@@ -330,7 +330,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         int dropIndex = -1;
@@ -378,7 +378,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(oldColumnName, nameof(oldColumnName));
         Guard.NotNullOrEmpty(newColumnName, nameof(newColumnName));
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         return RewriteTableAsync(
@@ -410,7 +410,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(values, nameof(values));
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -423,7 +423,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(rows, nameof(rows));
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -447,7 +447,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(item, nameof(item));
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -463,7 +463,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(items, nameof(items));
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -489,7 +489,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
         Guard.NotNull(updatedValues, nameof(updatedValues));
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         if (updatedValues.Count == 0)
@@ -552,7 +552,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);

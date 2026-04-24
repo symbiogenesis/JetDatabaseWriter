@@ -1,4 +1,4 @@
-﻿namespace JetDatabaseWriter;
+namespace JetDatabaseWriter;
 
 using System;
 using System.Buffers.Binary;
@@ -237,7 +237,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <inheritdoc/>
     public async ValueTask<DataTable> ReadFirstTableAsync(uint? maxRows = null, CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
@@ -299,14 +299,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <inheritdoc/>
     public async ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         return await LinkedTableManager.GetLinkedTablesAsync(this, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
     public async ValueTask<List<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         List<CatalogEntry> entries = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
@@ -330,7 +330,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <inheritdoc/>
     public async ValueTask<DataTable> GetTablesAsDataTableAsync(CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         var dt = new DataTable("Tables");
         _ = dt.Columns.Add("TableName", typeof(string));
         _ = dt.Columns.Add("RowCount", typeof(long));
@@ -348,7 +348,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <inheritdoc/>
     public async ValueTask<long> GetRealRowCountAsync(string tableName, CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -394,7 +394,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         IProgress<long>? progress = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -446,7 +446,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
         where T : class, new()
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -466,7 +466,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         IProgress<long>? progress = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -513,7 +513,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <inheritdoc/>
     public async ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -556,7 +556,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <returns>A list of user table names.</returns>
     public async ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
         return tables.ConvertAll(e => e.Name);
     }
@@ -572,7 +572,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
     public async ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         if (string.IsNullOrEmpty(tableName))
@@ -657,7 +657,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<List<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
         where T : class, new()
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -690,7 +690,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <returns>A <see cref="DataTable"/> with all columns typed as <see cref="string"/>.</returns>
     public async ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -758,7 +758,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <returns>A <see cref="DatabaseStatistics"/> object containing various metrics about the database.</returns>
     public async ValueTask<DatabaseStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
@@ -802,7 +802,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <returns>A dictionary mapping table names to their corresponding DataTables.</returns>
     public async ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
@@ -828,7 +828,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <returns>A dictionary mapping table names to their corresponding DataTables with all columns as strings.</returns>
     public async ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
@@ -1488,7 +1488,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>Reads a page through the cache if enabled (PageCacheSize > 0).</summary>
     private async ValueTask<byte[]> ReadPageCachedAsync(long n, CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
+        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         if (PageCacheSize < 0)

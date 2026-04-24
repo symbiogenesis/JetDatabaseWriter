@@ -770,16 +770,6 @@ public abstract class AccessBase : IAccessBase
         }
     }
 
-    // ── Disposed check ───────────────────────────────────────────────
-
-    private protected void ThrowIfDisposed()
-    {
-        if (_disposed)
-        {
-            throw new ObjectDisposedException(GetType().Name);
-        }
-    }
-
     // ── Catalog access ───────────────────────────────────────────────
 
     /// <summary>Finds a catalog entry by name (case-insensitive).</summary>
