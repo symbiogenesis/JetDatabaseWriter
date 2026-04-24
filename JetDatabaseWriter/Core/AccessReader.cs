@@ -537,18 +537,29 @@ public sealed class AccessReader : AccessBase, IAccessReader
             complexSubtypes = await ReadComplexColumnSubtypesAsync(tableName, cancellationToken).ConfigureAwait(false);
         }
 
-        return resolved.Value.Td.Columns.Select((col, index) => new ColumnMetadata
+        ColumnPropertyBlock? properties = await ReadLvPropForTableAsync(
+            resolved.Value.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+
+        return resolved.Value.Td.Columns.Select((col, index) =>
         {
-            Name = col.Name,
-            TypeName = (col.Type == T_COMPLEX && complexSubtypes.TryGetValue(col.Name, out string? subtype))
-                ? subtype
-                : TypeCodeToName(col.Type),
-            ClrType = TypeCodeToClrType(col.Type),
-            MaxLength = col.Size > 0 ? col.Size : null,
-            IsNullable = (col.Flags & 0x02) != 0,
-            IsFixedLength = col.IsFixed,
-            Ordinal = index,
-            Size = SizeForColumn(col),
+            ColumnPropertyTarget? target = properties?.FindTarget(col.Name);
+            return new ColumnMetadata
+            {
+                Name = col.Name,
+                TypeName = (col.Type == T_COMPLEX && complexSubtypes.TryGetValue(col.Name, out string? subtype))
+                    ? subtype
+                    : TypeCodeToName(col.Type),
+                ClrType = TypeCodeToClrType(col.Type),
+                MaxLength = col.Size > 0 ? col.Size : null,
+                IsNullable = (col.Flags & 0x02) != 0,
+                IsFixedLength = col.IsFixed,
+                Ordinal = index,
+                Size = SizeForColumn(col),
+                DefaultValueExpression = target?.GetTextValue(ColumnPropertyNames.DefaultValue, _format),
+                ValidationRuleExpression = target?.GetTextValue(ColumnPropertyNames.ValidationRule, _format),
+                ValidationText = target?.GetTextValue(ColumnPropertyNames.ValidationText, _format),
+                Description = target?.GetTextValue(ColumnPropertyNames.Description, _format),
+            };
         }).ToList();
     }
 
@@ -1788,6 +1799,74 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>Enumerates every row of MSysObjects. Exposed for <see cref="Internal.LinkedTableManager"/>.</summary>
     internal IAsyncEnumerable<List<string>> EnumerateMSysObjectsRowsAsync(TableDef msys, CancellationToken cancellationToken) =>
         EnumerateRowsForTdefAsync(2, msys, cancellationToken);
+
+    /// <summary>
+    /// Reads and parses the <c>MSysObjects.LvProp</c> blob for the catalog row whose
+    /// <c>Id</c> column's low-24 bits match <paramref name="tdefPage"/>. Returns
+    /// <see langword="null"/> when the catalog has no <c>LvProp</c> column (slim
+    /// schemas written by older versions of this library), the row is missing, the
+    /// blob is empty, or the magic header is unrecognised.
+    /// </summary>
+    internal async ValueTask<ColumnPropertyBlock?> ReadLvPropForTableAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        TableDef? msys = await GetMSysObjectsTableDefAsync(cancellationToken).ConfigureAwait(false);
+        if (msys is null)
+        {
+            return null;
+        }
+
+        int idxId = msys.Columns.FindIndex(c =>
+            string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
+        int idxLvProp = msys.Columns.FindIndex(c =>
+            string.Equals(c.Name, "LvProp", StringComparison.OrdinalIgnoreCase));
+        if (idxId < 0 || idxLvProp < 0)
+        {
+            return null;
+        }
+
+        await foreach (List<string> row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
+        {
+            if (!long.TryParse(SafeGet(row, idxId), out long id))
+            {
+                continue;
+            }
+
+            if ((id & 0x00FFFFFFL) != tdefPage)
+            {
+                continue;
+            }
+
+            byte[]? blob = TryDecodeBase64DataUrl(SafeGet(row, idxLvProp));
+            return ColumnPropertyBlock.Parse(blob, _format);
+        }
+
+        return null;
+
+        static byte[]? TryDecodeBase64DataUrl(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return null;
+            }
+
+            const string Prefix = "data:application/octet-stream;base64,";
+            if (!value.StartsWith(Prefix, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            try
+            {
+                return Convert.FromBase64String(value[Prefix.Length..]);
+            }
+            catch (FormatException)
+            {
+                return null;
+            }
+        }
+    }
 
     private async ValueTask<Dictionary<string, string>> ReadComplexColumnSubtypesAsync(string tableName, CancellationToken cancellationToken)
     {

@@ -308,7 +308,15 @@ await writer.CreateTableAsync("Contacts", new[]
 {
     new ColumnDefinition("ContactID", typeof(int)) { IsAutoIncrement = true, IsNullable = false },
     new ColumnDefinition("Name",      typeof(string), maxLength: 100) { IsNullable = false },
-    new ColumnDefinition("Score",     typeof(int)) { DefaultValue = 0, ValidationRule = v => v is int i and >= 0 and <= 100 },
+    new ColumnDefinition("Score",     typeof(int))
+    {
+        DefaultValue             = 0,
+        DefaultValueExpression   = "0",
+        ValidationRule           = v => v is int i and >= 0 and <= 100,
+        ValidationRuleExpression = ">=0 And <=100",
+        ValidationText           = "Score must be between 0 and 100.",
+        Description              = "Test score (0-100).",
+    },
 });
 ```
 
@@ -316,8 +324,12 @@ await writer.CreateTableAsync("Contacts", new[]
 |---|---|---|
 | `IsNullable` | ✅ TDEF flag bit `FLAG_NULL_ALLOWED 0x02` | Restored on reopen; surfaced to readers via `ColumnMetadata.IsNullable`. |
 | `IsAutoIncrement` | ✅ TDEF flag bit `FLAG_AUTO_LONG 0x04` | Supported for `byte`/`short`/`int`/`long`. Seeded from `max(existing) + 1` on first use. |
-| `DefaultValue` | ❌ client-side only | Substituted for `DBNull.Value` at insert time. Lives on the `AccessWriter` instance that declared it. |
-| `ValidationRule` | ❌ client-side only | A CLR `Func<>` cannot be serialized into the file. Lives on the `AccessWriter` instance that declared it. |
+| `DefaultValue` | ⚠️ client-side only | CLR object substituted for `DBNull.Value` at insert time on the `AccessWriter` instance that declared it. For an engine-level default that Microsoft Access also honours, set `DefaultValueExpression` (it is auto-derived from `DefaultValue` when omitted). |
+| `ValidationRule` | ⚠️ client-side only | A CLR `Func<>` cannot be serialized into the file. For an engine-level rule Microsoft Access also enforces, set `ValidationRuleExpression`. |
+| `DefaultValueExpression` | ✅ `MSysObjects.LvProp` (`DefaultValue`) | Jet expression string (e.g. `"0"`, `"\"hi\""`, `"=Now()"`). Surfaced to readers via `ColumnMetadata.DefaultValueExpression`. Wins over `DefaultValue` for persistence. |
+| `ValidationRuleExpression` | ✅ `MSysObjects.LvProp` (`ValidationRule`) | Jet expression string (e.g. `">=0 And <=100"`). Surfaced via `ColumnMetadata.ValidationRuleExpression`. |
+| `ValidationText` | ✅ `MSysObjects.LvProp` (`ValidationText`) | User-facing message Access shows when `ValidationRuleExpression` rejects a value. Surfaced via `ColumnMetadata.ValidationText`. |
+| `Description` | ✅ `MSysObjects.LvProp` (`Description`) | Free-text column description shown in Access Design View. Surfaced via `ColumnMetadata.Description`. Preserved across `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`. |
 
 ### Insert rows — generic POCO
 
@@ -521,7 +533,6 @@ Wrong or missing passwords throw `UnauthorizedAccessException`. Corrupt or non-J
 The writer is intentionally focused on the most common create / insert / update / delete scenarios. The following are **not** supported today:
 
 ### Schema evolution
-- **Limited `ALTER TABLE`.** `AddColumnAsync`, `DropColumnAsync`, and `RenameColumnAsync` are supported. They are implemented internally by copying the table to a new schema and replacing the original — so they rewrite all rows and are not free for large tables. Existing rows receive `DBNull.Value` for newly added columns; dropped column data is permanently lost.
 - **No index, primary-key, foreign-key, or relationship creation.** `CreateTableAsync` emits a heap table with no indexes. `MSysRelationships` and `MSysIndexes` entries are not written.
 
 ### Specialized column kinds

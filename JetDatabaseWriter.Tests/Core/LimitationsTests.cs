@@ -200,17 +200,30 @@ public sealed class LimitationsTests : IDisposable
     [Fact]
     public void SchemaEvolution_ColumnDefinition_ExposesConstraintProperties()
     {
-        // Lifted limitation: ColumnDefinition now exposes IsNullable, DefaultValue,
-        // IsAutoIncrement, and ValidationRule on top of Name/ClrType/MaxLength.
-        // IsNullable and IsAutoIncrement are persisted in the TDEF column-flag bits;
-        // DefaultValue and ValidationRule remain client-side.
+        // Lifted limitation: ColumnDefinition exposes IsNullable, DefaultValue,
+        // IsAutoIncrement, and ValidationRule on top of Name/ClrType/MaxLength,
+        // plus four persisted properties (DefaultValueExpression, ValidationRuleExpression,
+        // ValidationText, Description) round-tripped through MSysObjects.LvProp.
         var publicProps = typeof(ColumnDefinition)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Select(p => p.Name)
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray();
 
-        string[] expected = ["ClrType", "DefaultValue", "IsAutoIncrement", "IsNullable", "MaxLength", "Name", "ValidationRule"];
+        string[] expected =
+        [
+            "ClrType",
+            "DefaultValue",
+            "DefaultValueExpression",
+            "Description",
+            "IsAutoIncrement",
+            "IsNullable",
+            "MaxLength",
+            "Name",
+            "ValidationRule",
+            "ValidationRuleExpression",
+            "ValidationText",
+        ];
         Assert.Equal(expected, publicProps);
     }
 
@@ -478,7 +491,8 @@ public sealed class LimitationsTests : IDisposable
     public void SpecializedColumns_NoCalculatedColumnApi()
     {
         // README: "No calculated columns (Access 2010+ expression columns)."
-        AssertNoMemberMatching(typeof(ColumnDefinition), "Expression");
+        // The Jet-expression-string members (DefaultValueExpression / ValidationRuleExpression)
+        // are persisted-property strings, not Access-2010 calculated-column formulas.
         AssertNoMemberMatching(typeof(ColumnDefinition), "Calculated");
         AssertNoMemberMatching(typeof(ColumnDefinition), "Formula");
     }

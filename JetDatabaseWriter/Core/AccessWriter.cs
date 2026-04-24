@@ -162,7 +162,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new IOException($"Database file already exists: {path}");
         }
 
-        byte[] dbBytes = BuildEmptyDatabase(format);
+        byte[] dbBytes = BuildEmptyDatabase(format, options?.WriteFullCatalogSchema ?? true);
 
         await using (var fs = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
         {
@@ -225,7 +225,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        byte[] dbBytes = BuildEmptyDatabase(format);
+        byte[] dbBytes = BuildEmptyDatabase(format, options?.WriteFullCatalogSchema ?? true);
         await stream.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         stream.Position = 0;
@@ -255,7 +255,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         byte[] tdefPage = BuildTDefPage(tableDef);
         long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
-        await InsertCatalogEntryAsync(tableName, tdefPageNumber, cancellationToken).ConfigureAwait(false);
+        byte[]? lvProp = JetExpressionConverter.BuildLvPropBlob(columns, _format);
+        await InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, cancellationToken).ConfigureAwait(false);
         RegisterConstraints(tableName, columns);
         InvalidateCatalogCache();
     }
@@ -415,6 +416,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     DefaultValue = src.DefaultValue,
                     IsAutoIncrement = src.IsAutoIncrement,
                     ValidationRule = src.ValidationRule,
+                    DefaultValueExpression = src.DefaultValueExpression,
+                    ValidationRuleExpression = src.ValidationRuleExpression,
+                    ValidationText = src.ValidationText,
+                    Description = src.Description,
                 };
                 return next;
             },
@@ -1180,6 +1185,40 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
+    /// <summary>
+    /// Opens a transient <see cref="AccessReader"/> against the same backing file/stream
+    /// to read and parse the <c>MSysObjects.LvProp</c> blob for the catalog row whose
+    /// <c>Id</c> low-24 bits equal <paramref name="tdefPage"/>. Returns
+    /// <see langword="null"/> when the catalog has no <c>LvProp</c> column or the row
+    /// has no property blob.
+    /// </summary>
+    private async ValueTask<ColumnPropertyBlock?> ReadLvPropBlockAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        var options = new AccessReaderOptions
+        {
+            FileShare = FileShare.ReadWrite,
+            ValidateOnOpen = false,
+            UseLockFile = false,
+            Password = _password,
+        };
+
+        AccessReader reader;
+        if (!string.IsNullOrEmpty(_path))
+        {
+            reader = await AccessReader.OpenAsync(_path, options, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            _stream.Position = 0;
+            reader = await AccessReader.OpenAsync(_stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
+        }
+
+        await using (reader)
+        {
+            return await reader.ReadLvPropForTableAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private protected override async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken = default)
     {
         List<CatalogEntry>? cached = GetCatalogCache();
@@ -1244,7 +1283,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return tableDef;
     }
 
-    private async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, CancellationToken cancellationToken = default)
+    private async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, CancellationToken cancellationToken = default)
     {
         TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
         var values = new object[msys.Columns.Count];
@@ -1263,6 +1302,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         SetValue(msys, values, "DateUpdate", now);
         SetValue(msys, values, "Flags", 0);
 
+        // LvProp is the OLE/LongBinary cell carrying per-column persisted properties
+        // (DefaultValue, ValidationRule, ValidationText, Description). Only emitted on
+        // the full 17-column catalog schema (the slim 9-column legacy schema lacks the
+        // column entirely, so SetValue is a no-op).
+        if (lvProp is not null)
+        {
+            SetValue(msys, values, "LvProp", lvProp);
+        }
+
         await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
@@ -1279,6 +1327,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // Add/Drop/Rename do not silently strip NotNull / Default / AutoIncrement / validation rules.
         _constraints.TryGetValue(tableName, out List<ColumnConstraint>? existingConstraints);
 
+        // Hydrate persisted-property fields from MSysObjects.LvProp so that
+        // DefaultValueExpression / ValidationRuleExpression / ValidationText / Description
+        // round-trip through Add/Drop/Rename semantically. Forward-compat note: unknown
+        // chunks and table-level property targets are not yet preserved by this path.
+        ColumnPropertyBlock? originalProperties =
+            await ReadLvPropBlockAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+
         var existingDefs = new List<ColumnDefinition>(tableDef.Columns.Count);
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
@@ -1294,6 +1349,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     DefaultValue = c.DefaultValue,
                     IsAutoIncrement = c.IsAutoIncrement,
                     ValidationRule = c.ValidationRule,
+                };
+            }
+
+            ColumnPropertyTarget? target = originalProperties?.FindTarget(col.Name);
+            if (target is not null)
+            {
+                baseDef = baseDef with
+                {
+                    DefaultValueExpression = target.GetTextValue(ColumnPropertyNames.DefaultValue, _format)
+                        ?? baseDef.DefaultValueExpression,
+                    ValidationRuleExpression = target.GetTextValue(ColumnPropertyNames.ValidationRule, _format)
+                        ?? baseDef.ValidationRuleExpression,
+                    ValidationText = target.GetTextValue(ColumnPropertyNames.ValidationText, _format)
+                        ?? baseDef.ValidationText,
+                    Description = target.GetTextValue(ColumnPropertyNames.Description, _format)
+                        ?? baseDef.Description,
                 };
             }
 
@@ -1331,11 +1402,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         // Drop the original table, then rename the temp catalog entry to take its place.
+        // Pre-compute the LvProp blob from the projected columns so the catalog rename
+        // re-emits the persisted properties under the user-facing table name.
+        byte[]? renamedLvProp = JetExpressionConverter.BuildLvPropBlob(newDefs, _format);
         await DropTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        await RenameTableInCatalogAsync(tempName, tableName, cancellationToken).ConfigureAwait(false);
+        await RenameTableInCatalogAsync(tempName, tableName, renamedLvProp, cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask RenameTableInCatalogAsync(string oldName, string newName, CancellationToken cancellationToken)
+    private async ValueTask RenameTableInCatalogAsync(string oldName, string newName, byte[]? lvProp, CancellationToken cancellationToken)
     {
         TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
         List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
@@ -1363,7 +1437,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new InvalidOperationException($"Catalog row for '{oldName}' was not found during rename.");
         }
 
-        await InsertCatalogEntryAsync(newName, tdefPage.Value, cancellationToken).ConfigureAwait(false);
+        await InsertCatalogEntryAsync(newName, tdefPage.Value, lvProp, cancellationToken).ConfigureAwait(false);
         RenameConstraintsTable(oldName, newName);
         InvalidateCatalogCache();
     }
@@ -1472,7 +1546,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// The database contains three pages (page size varies by format):
     /// page 0 (header), page 1 (unused placeholder), and page 2 (MSysObjects TDEF).
     /// </summary>
-    private static byte[] BuildEmptyDatabase(DatabaseFormat format)
+    /// <param name="format">Target on-disk format.</param>
+    /// <param name="fullCatalogSchema">
+    /// When <see langword="true"/>, page 2 is bootstrapped with the real Access
+    /// 17-column <c>MSysObjects</c> schema (matches files written by Microsoft
+    /// Access across all Jet/ACE versions). When <see langword="false"/>, the
+    /// historical 9-column slim schema is written instead.
+    /// </param>
+    private static byte[] BuildEmptyDatabase(DatabaseFormat format, bool fullCatalogSchema)
     {
         int pgSz = GetPageSize(format);
         byte[] db = new byte[pgSz * 3];
@@ -1503,17 +1584,33 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // Must exist so that page 2 sits at the correct file offset.
 
         // ── Page 2: TDEF for MSysObjects ───────────────────────────
-        BuildMSysObjectsTDef(db, pgSz * 2, format);
+        BuildMSysObjectsTDef(db, pgSz * 2, format, fullCatalogSchema);
 
         return db;
     }
 
     /// <summary>
-    /// Writes a minimal MSysObjects TDEF page into <paramref name="db"/> at the given
-    /// <paramref name="offset"/>. The TDEF defines nine columns: Id, ParentId, Name,
-    /// Type, DateCreate, DateUpdate, Flags, ForeignName, and Database.
+    /// Writes the MSysObjects TDEF page into <paramref name="db"/> at the given
+    /// <paramref name="offset"/>.
+    /// <para>
+    /// When <paramref name="fullCatalogSchema"/> is <see langword="true"/>, emits
+    /// the full 17-column Microsoft Access schema (verified empirically against
+    /// Access-authored Jet3, Jet4, and ACE databases — the column list and column
+    /// types are identical across all formats):
+    /// <c>Id, ParentId, Name, Type, DateCreate, DateUpdate, Owner, Flags, Database,
+    /// Connect, ForeignName, RmtInfoShort, RmtInfoLong, Lv, LvProp, LvModule,
+    /// LvExtra</c>. The <c>LvProp</c> column is required for persisting per-column
+    /// <c>DefaultValue</c> / <c>ValidationRule</c> / <c>ValidationText</c> /
+    /// <c>Description</c> properties.
+    /// </para>
+    /// <para>
+    /// When <paramref name="fullCatalogSchema"/> is <see langword="false"/>, emits
+    /// the historical 9-column slim schema for backward-compatible byte layouts:
+    /// <c>Id, ParentId, Name, Type, DateCreate, DateUpdate, Flags, ForeignName,
+    /// Database</c>. Persisted column properties cannot be stored in this schema.
+    /// </para>
     /// </summary>
-    private static void BuildMSysObjectsTDef(byte[] db, int offset, DatabaseFormat format)
+    private static void BuildMSysObjectsTDef(byte[] db, int offset, DatabaseFormat format, bool fullCatalogSchema)
     {
         bool isJet3 = format == DatabaseFormat.Jet3Mdb;
 
@@ -1529,25 +1626,24 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int colSzOff = isJet3 ? 16 : 23;
         int textColSize = isJet3 ? 255 : 510;
 
-        // MSysObjects columns.
-        // Fixed: Id(T_LONG,4), ParentId(T_LONG,4), Type(T_INT,2),
-        //        DateCreate(T_DATETIME,8), DateUpdate(T_DATETIME,8), Flags(T_LONG,4).
-        // Variable: Name(T_TEXT), ForeignName(T_TEXT), Database(T_TEXT).
-        var columns = new (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[]
-        {
-            ("Id",          T_LONG,     0, 0, 0,  4,            0x03),
-            ("ParentId",    T_LONG,     1, 0, 4,  4,            0x03),
-            ("Name",        T_TEXT,     2, 0, 0,  textColSize,  0x02),
-            ("Type",        T_INT,      3, 0, 8,  2,            0x03),
-            ("DateCreate",  T_DATETIME, 4, 0, 10, 8,            0x03),
-            ("DateUpdate",  T_DATETIME, 5, 0, 18, 8,            0x03),
-            ("Flags",       T_LONG,     6, 0, 26, 4,            0x03),
-            ("ForeignName", T_TEXT,     7, 1, 0,  textColSize,  0x02),
-            ("Database",    T_TEXT,     8, 2, 0,  textColSize,  0x02),
-        };
+        // Flag bytes match what Microsoft Access writes (verified empirically):
+        //   0x13 = fixed + nullable + system    (was 0x03 in slim schema; both work)
+        //   0x12 = variable + nullable + system (was 0x02 in slim schema; both work)
+        //   0x32 = Owner column — adds the auto-populated bit Access uses for SIDs.
+        // Slim 9-col schema retains the historical 0x03/0x02 flags it shipped with.
+        var columns = fullCatalogSchema
+            ? BuildFullCatalogColumns(textColSize)
+            : BuildSlimCatalogColumns(textColSize);
 
         int numCols = columns.Length;
-        int numVarCols = 3;
+        int numVarCols = 0;
+        for (int i = 0; i < numCols; i++)
+        {
+            if (IsVariableType(columns[i].Type))
+            {
+                numVarCols++;
+            }
+        }
 
         db[offset] = 0x02;
         db[offset + 1] = 0x01;
@@ -1598,6 +1694,49 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         Wi32(db, offset + 8, Math.Max(0, namePos - offset - 8));
     }
+
+    /// <summary>
+    /// Historical 9-column slim catalog. Retained for callers that hash whole-file
+    /// output and depend on the legacy byte layout.
+    /// </summary>
+    private static (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] BuildSlimCatalogColumns(int textColSize) =>
+    [
+        ("Id",          T_LONG,     0, 0, 0,  4,           0x03),
+        ("ParentId",    T_LONG,     1, 0, 4,  4,           0x03),
+        ("Name",        T_TEXT,     2, 0, 0,  textColSize, 0x02),
+        ("Type",        T_INT,      3, 0, 8,  2,           0x03),
+        ("DateCreate",  T_DATETIME, 4, 0, 10, 8,           0x03),
+        ("DateUpdate",  T_DATETIME, 5, 0, 18, 8,           0x03),
+        ("Flags",       T_LONG,     6, 0, 26, 4,           0x03),
+        ("ForeignName", T_TEXT,     7, 1, 0,  textColSize, 0x02),
+        ("Database",    T_TEXT,     8, 2, 0,  textColSize, 0x02),
+    ];
+
+    /// <summary>
+    /// Real Microsoft Access 17-column catalog. Column order, types, sizes, fixed
+    /// offsets, variable indices, and flag bytes were verified against Access-authored
+    /// Jet3, Jet4, and ACE files — they are identical across all formats.
+    /// </summary>
+    private static (string Name, byte Type, int ColNum, int VarIdx, int FixedOff, int Size, byte Flags)[] BuildFullCatalogColumns(int textColSize) =>
+    [
+        ("Id",           T_LONG,     0,  0, 0,  4,           0x13),
+        ("ParentId",     T_LONG,     1,  0, 4,  4,           0x13),
+        ("Name",         T_TEXT,     2,  0, 0,  textColSize, 0x12),
+        ("Type",         T_INT,      3,  0, 8,  2,           0x13),
+        ("DateCreate",   T_DATETIME, 4,  0, 10, 8,           0x13),
+        ("DateUpdate",   T_DATETIME, 5,  0, 18, 8,           0x13),
+        ("Owner",        T_BINARY,   6,  1, 0,  textColSize, 0x32),
+        ("Flags",        T_LONG,     7,  0, 26, 4,           0x13),
+        ("Database",     T_MEMO,     8,  2, 0,  0,           0x12),
+        ("Connect",      T_MEMO,     9,  3, 0,  0,           0x12),
+        ("ForeignName",  T_TEXT,     10, 4, 0,  textColSize, 0x12),
+        ("RmtInfoShort", T_BINARY,   11, 5, 0,  textColSize, 0x12),
+        ("RmtInfoLong",  T_OLE,      12, 6, 0,  0,           0x12),
+        ("Lv",           T_OLE,      13, 7, 0,  0,           0x12),
+        ("LvProp",       T_OLE,      14, 8, 0,  0,           0x12),
+        ("LvModule",     T_OLE,      15, 9, 0,  0,           0x12),
+        ("LvExtra",      T_OLE,      16, 10, 0, 0,           0x12),
+    ];
 
     private async ValueTask InsertRowDataAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default)
     {
