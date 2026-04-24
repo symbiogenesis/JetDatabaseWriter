@@ -1695,9 +1695,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         int read = _stream.Read(magic, 0, 4);
         if (read < 4 || magic[0] != 0x00 || magic[1] != 0x01 || magic[2] != 0x00 || magic[3] != 0x00)
         {
-            throw new InvalidDataException(
-                $"File does not have a valid JET magic signature " +
-                $"(expected 00 01 00 00, got {magic[0]:X2} {magic[1]:X2} {magic[2]:X2} {magic[3]:X2}).");
+            var msg = $"File does not have a valid JET magic signature (expected 00 01 00 00, got {magic[0]:X2} {magic[1]:X2} {magic[2]:X2} {magic[3]:X2}).";
+            throw new InvalidDataException(msg);
         }
     }
 
@@ -1716,10 +1715,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             lock (_cacheLock)
             {
-                if (_pageCache == null)
-                {
-                    _pageCache = new LruCache<long, byte[]>(PageCacheSize);
-                }
+                _pageCache ??= new LruCache<long, byte[]>(PageCacheSize);
             }
         }
 
@@ -1960,7 +1956,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case T_DOUBLE:
                     return len >= 8 ? BitConverter.ToDouble(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
                 case T_DATETIME:
-                    return len >= 8 ? ReadFixed(row, start, col, 8) : string.Empty;
                 case T_MONEY:
                     return len >= 8 ? ReadFixed(row, start, col, 8) : string.Empty;
                 case T_GUID:
