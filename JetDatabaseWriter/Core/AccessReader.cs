@@ -869,6 +869,27 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private static string SafeGet(List<string> row, int idx) =>
         (idx >= 0 && idx < row.Count) ? row[idx] : string.Empty;
 
+    /// <summary>
+    /// Returns true when an MSysComplexColumns row's ConceptualTableID column refers to
+    /// the user table identified by <paramref name="targetTdefPage"/> (or, as a fallback,
+    /// matches <paramref name="tableName"/> when the cell holds a name rather than an ID).
+    /// When <paramref name="targetTdefPage"/> is 0, no filtering is applied.
+    /// </summary>
+    private static bool ConceptualTableMatches(string tableIdStr, long targetTdefPage, string? tableName)
+    {
+        if (targetTdefPage <= 0)
+        {
+            return true;
+        }
+
+        if (long.TryParse(tableIdStr, out long tableId))
+        {
+            return (tableId & 0x00FFFFFFL) == targetTdefPage;
+        }
+
+        return tableName != null && string.Equals(tableIdStr, tableName, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static FileStream CreateStream(string path, AccessReaderOptions options)
     {
         return new FileStream(path, FileMode.Open, options.FileAccess, options.FileShare, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
@@ -1951,6 +1972,33 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
+    /// <summary>
+    /// Yields rows from every data page whose owning TDEF page equals <paramref name="tdefPage"/>.
+    /// Centralises the common scan-all-pages-and-decode-rows pattern used by catalog/system-table readers.
+    /// </summary>
+    private async IAsyncEnumerable<List<string>> EnumerateRowsForTdefAsync(
+        long tdefPage,
+        TableDef td,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        long total = _stream.Length / _pgSz;
+        for (long p = 3; p < total; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != tdefPage)
+            {
+                continue;
+            }
+
+            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+            {
+                yield return row;
+            }
+        }
+    }
+
     private async ValueTask<Dictionary<string, string>> ReadComplexColumnSubtypesAsync(string tableName, CancellationToken cancellationToken)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1983,40 +2031,17 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             long targetTdefPage = resolved is { } resolvedValue ? resolvedValue.Entry.TDefPage : 0;
-            long total = _stream.Length / _pgSz;
 
-            for (long p = 3; p < total; p++)
+            await foreach (List<string> row in EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-                if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != tdefPage)
+                if (idxConceptualTable >= 0 &&
+                    !ConceptualTableMatches(SafeGet(row, idxConceptualTable), targetTdefPage, tableName))
                 {
                     continue;
                 }
 
-                await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
-                {
-                    if (idxConceptualTable >= 0 && targetTdefPage > 0)
-                    {
-                        string tableIdStr = SafeGet(row, idxConceptualTable);
-                        if (long.TryParse(tableIdStr, out long tableId))
-                        {
-                            long rowTdefPage = tableId & 0x00FFFFFFL;
-                            if (rowTdefPage != targetTdefPage)
-                            {
-                                continue;
-                            }
-                        }
-                        else if (!string.Equals(tableIdStr, tableName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
-                    }
-
-                    string colName = SafeGet(row, idxCol);
-                    result[colName] = "Attachment";
-                }
+                string colName = SafeGet(row, idxCol);
+                result[colName] = "Attachment";
             }
         }
         catch (InvalidDataException)
@@ -2041,7 +2066,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Finds the TDEF page number for a system table by name (case-insensitive).
     /// Unlike GetUserTables, this includes system tables (SYSTABLE_MASK set).
     /// </summary>
-    private async ValueTask<long> FindSystemTablePageAsync(string name, CancellationToken cancellationToken)
+    private ValueTask<long> FindSystemTablePageAsync(string name, CancellationToken cancellationToken) =>
+        FindSystemTablePageAsync(
+            n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase),
+            cancellationToken);
+
+    /// <summary>
+    /// Finds the TDEF page for the first system table whose name satisfies <paramref name="nameMatches"/>.
+    /// Shared by exact-name and suffix lookups against MSysObjects.
+    /// </summary>
+    private async ValueTask<long> FindSystemTablePageAsync(Predicate<string> nameMatches, CancellationToken cancellationToken)
     {
         TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
@@ -2058,37 +2092,25 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return 0;
         }
 
-        long totPages = _stream.Length / _pgSz;
-        for (long p = 3; p < totPages; p++)
+        await foreach (List<string> row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != 2)
+            string nameStr = SafeGet(row, idxName);
+            if (!nameMatches(nameStr))
             {
                 continue;
             }
 
-            await foreach (List<string> row in EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false))
+            if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != 6))
             {
-                string nameStr = SafeGet(row, idxName);
-                if (!string.Equals(nameStr, name, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
+                continue;
+            }
 
-                if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != 6))
+            if (long.TryParse(SafeGet(row, idxId), out long id))
+            {
+                long tdefPage = id & 0x00FFFFFFL;
+                if (tdefPage > 0)
                 {
-                    continue;
-                }
-
-                if (long.TryParse(SafeGet(row, idxId), out long id))
-                {
-                    long tdefPage = id & 0x00FFFFFFL;
-                    if (tdefPage > 0)
-                    {
-                        return tdefPage;
-                    }
+                    return tdefPage;
                 }
             }
         }
@@ -2165,51 +2187,27 @@ public sealed class AccessReader : AccessBase, IAccessReader
             CatalogEntry entry = tables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
             long targetTdefPage = entry?.TDefPage ?? 0;
 
-            long total = _stream.Length / _pgSz;
-            for (long p = 3; p < total; p++)
+            await foreach (List<string> row in EnumerateRowsForTdefAsync(msysTdef, td, cancellationToken).ConfigureAwait(false))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-                if (page[0] != 0x01)
+                string colName = SafeGet(row, idxCol);
+                if (!string.Equals(colName, columnName, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
 
-                if (Ri32(page, _dpTDefOff) != msysTdef)
+                if (idxConceptualTable >= 0 &&
+                    !ConceptualTableMatches(SafeGet(row, idxConceptualTable), targetTdefPage, tableName: null))
                 {
                     continue;
                 }
 
-                await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+                string flatIdStr = SafeGet(row, idxFlatTable);
+                if (long.TryParse(flatIdStr, out long flatId))
                 {
-                    string colName = SafeGet(row, idxCol);
-                    if (!string.Equals(colName, columnName, StringComparison.OrdinalIgnoreCase))
+                    long flatTdef = flatId & 0x00FFFFFFL;
+                    if (flatTdef > 0)
                     {
-                        continue;
-                    }
-
-                    if (idxConceptualTable >= 0 && targetTdefPage > 0)
-                    {
-                        string tableIdStr = SafeGet(row, idxConceptualTable);
-                        if (long.TryParse(tableIdStr, out long tableId))
-                        {
-                            long rowTdefPage = tableId & 0x00FFFFFFL;
-                            if (rowTdefPage != targetTdefPage)
-                            {
-                                continue;
-                            }
-                        }
-                    }
-
-                    string flatIdStr = SafeGet(row, idxFlatTable);
-                    if (long.TryParse(flatIdStr, out long flatId))
-                    {
-                        long flatTdef = flatId & 0x00FFFFFFL;
-                        if (flatTdef > 0)
-                        {
-                            return flatTdef;
-                        }
+                        return flatTdef;
                     }
                 }
             }
@@ -2272,77 +2270,66 @@ public sealed class AccessReader : AccessBase, IAccessReader
             int idxFileData = td.Columns.FindIndex(c => string.Equals(c.Name, "FileData", StringComparison.OrdinalIgnoreCase));
 
             var result = new Dictionary<int, byte[]>(capacity: 32); // Preallocate for small tables
-            long total = _stream.Length / _pgSz;
 
             // Use a buffer for the inner loop to avoid repeated allocations
             byte[]? buffer = null;
-            for (long p = 3; p < total; p++)
+            await foreach (var row in EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-                if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != tdefPage)
+                string fkStr = SafeGet(row, idxFk);
+                if (!int.TryParse(fkStr, out int parentId))
                 {
                     continue;
                 }
 
-                await foreach (var row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+                byte[] fileNameBytes = [];
+                if (idxFileName >= 0)
                 {
-                    string fkStr = SafeGet(row, idxFk);
-                    if (!int.TryParse(fkStr, out int parentId))
+                    string fileName = SafeGet(row, idxFileName);
+                    if (!string.IsNullOrEmpty(fileName))
                     {
-                        continue;
+                        fileNameBytes = Encoding.Unicode.GetBytes(fileName);
                     }
-
-                    byte[] fileNameBytes = [];
-                    if (idxFileName >= 0)
-                    {
-                        string fileName = SafeGet(row, idxFileName);
-                        if (!string.IsNullOrEmpty(fileName))
-                        {
-                            fileNameBytes = Encoding.Unicode.GetBytes(fileName);
-                        }
-                    }
-
-                    byte[] fileDataBytes = [];
-                    if (idxFileData >= 0)
-                    {
-                        string fileDataStr = SafeGet(row, idxFileData);
-                        fileDataBytes = DecodeColumnBytes(fileDataStr ?? string.Empty, td.Columns[idxFileData].Type);
-                        if (fileDataBytes.Length > 1)
-                        {
-                            if (fileDataBytes[0] == 0x01)
-                            {
-                                fileDataBytes = DecompressAttachmentData(fileDataBytes, 1);
-                            }
-                            else if (fileDataBytes[0] == 0x00)
-                            {
-                                fileDataBytes = fileDataBytes.AsSpan(1).ToArray();
-                            }
-                        }
-                    }
-
-                    if (fileNameBytes.Length == 0 && fileDataBytes.Length == 0)
-                    {
-                        continue;
-                    }
-
-                    int totalLen = 2 + fileNameBytes.Length + fileDataBytes.Length;
-                    buffer = buffer is null || buffer.Length < totalLen ? new byte[totalLen] : buffer;
-                    buffer[0] = (byte)(fileNameBytes.Length & 0xFF);
-                    buffer[1] = (byte)((fileNameBytes.Length >> 8) & 0xFF);
-                    if (fileNameBytes.Length > 0)
-                    {
-                        Buffer.BlockCopy(fileNameBytes, 0, buffer, 2, fileNameBytes.Length);
-                    }
-
-                    if (fileDataBytes.Length > 0)
-                    {
-                        Buffer.BlockCopy(fileDataBytes, 0, buffer, 2 + fileNameBytes.Length, fileDataBytes.Length);
-                    }
-
-                    // Copy to new array to avoid overwriting in next iteration
-                    result[parentId] = [.. buffer[..totalLen]];
                 }
+
+                byte[] fileDataBytes = [];
+                if (idxFileData >= 0)
+                {
+                    string fileDataStr = SafeGet(row, idxFileData);
+                    fileDataBytes = DecodeColumnBytes(fileDataStr ?? string.Empty, td.Columns[idxFileData].Type);
+                    if (fileDataBytes.Length > 1)
+                    {
+                        if (fileDataBytes[0] == 0x01)
+                        {
+                            fileDataBytes = DecompressAttachmentData(fileDataBytes, 1);
+                        }
+                        else if (fileDataBytes[0] == 0x00)
+                        {
+                            fileDataBytes = fileDataBytes.AsSpan(1).ToArray();
+                        }
+                    }
+                }
+
+                if (fileNameBytes.Length == 0 && fileDataBytes.Length == 0)
+                {
+                    continue;
+                }
+
+                int totalLen = 2 + fileNameBytes.Length + fileDataBytes.Length;
+                buffer = buffer is null || buffer.Length < totalLen ? new byte[totalLen] : buffer;
+                buffer[0] = (byte)(fileNameBytes.Length & 0xFF);
+                buffer[1] = (byte)((fileNameBytes.Length >> 8) & 0xFF);
+                if (fileNameBytes.Length > 0)
+                {
+                    Buffer.BlockCopy(fileNameBytes, 0, buffer, 2, fileNameBytes.Length);
+                }
+
+                if (fileDataBytes.Length > 0)
+                {
+                    Buffer.BlockCopy(fileDataBytes, 0, buffer, 2 + fileNameBytes.Length, fileDataBytes.Length);
+                }
+
+                // Copy to new array to avoid overwriting in next iteration
+                result[parentId] = [.. buffer[..totalLen]];
             }
 
             if (result.Count > 0)
@@ -2371,79 +2358,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <paramref name="nameSuffix"/> (case-insensitive). Used to find
     /// <c>f_&lt;GUID&gt;_&lt;columnName&gt;</c> attachment tables.
     /// </summary>
-    private async ValueTask<long> FindSystemTablePageBySuffixAsync(string nameSuffix, CancellationToken cancellationToken)
-    {
-        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            return 0;
-        }
-
-        int idxId = -1, idxName = -1, idxType = -1;
-        for (int i = 0; i < msys.Columns.Count; i++)
-        {
-            var col = msys.Columns[i];
-            if (idxId < 0 && string.Equals(col.Name, "Id", StringComparison.OrdinalIgnoreCase))
-            {
-                idxId = i;
-            }
-            else if (idxName < 0 && string.Equals(col.Name, "Name", StringComparison.OrdinalIgnoreCase))
-            {
-                idxName = i;
-            }
-            else if (idxType < 0 && string.Equals(col.Name, "Type", StringComparison.OrdinalIgnoreCase))
-            {
-                idxType = i;
-            }
-
-            if (idxId >= 0 && idxName >= 0 && idxType >= 0)
-            {
-                break;
-            }
-        }
-
-        if (idxId < 0 || idxName < 0 || idxType < 0)
-        {
-            return 0;
-        }
-
-        long totPages = _stream.Length / _pgSz;
-        for (long p = 3; p < totPages; p++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != 2)
-            {
-                continue;
-            }
-
-            await foreach (var row in EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false))
-            {
-                string nameStr = SafeGet(row, idxName);
-                if (!nameStr.EndsWith(nameSuffix, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != 6))
-                {
-                    continue;
-                }
-
-                if (long.TryParse(SafeGet(row, idxId), out long id))
-                {
-                    long tdefPage = id & 0x00FFFFFFL;
-                    if (tdefPage > 0)
-                    {
-                        return tdefPage;
-                    }
-                }
-            }
-        }
-
-        return 0;
-    }
+    private ValueTask<long> FindSystemTablePageBySuffixAsync(string nameSuffix, CancellationToken cancellationToken) =>
+        FindSystemTablePageAsync(
+            n => n != null && n.EndsWith(nameSuffix, StringComparison.OrdinalIgnoreCase),
+            cancellationToken);
 
     // [memo_len: 3 bytes][bitmask: 1 byte][lval_dp: 4 bytes][unknown: 4 bytes]
     // 0x80 = inline data immediately after the 12-byte header
