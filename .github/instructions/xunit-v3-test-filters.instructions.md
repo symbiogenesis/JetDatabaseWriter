@@ -29,9 +29,10 @@ Use the `runTests` tool when possible. When invoking the CLI manually, prefer th
 
 Notes:
 - Multiple values are space-separated after a single switch: `--filter-class Foo Bar` (not repeated like xUnit v2).
-- Names must be **fully qualified** (`Namespace.Class.Method`).
+- Prefer **fully-qualified** names (`Namespace.Class.Method`) for unambiguous matches.
 - The legacy VSTest `--filter "FullyQualifiedName~..."` syntax does **not** work in MTP mode.
-- Do not use `dotnet test ... -- --xunit-list classes` or other `--`-prefixed forwarding; on SDK 10 the args go directly. (`--xunit-list` was removed; use `--list-tests` to discover tests.)
+- Do not use `dotnet test ... -- --filter-class ...` or other `--`-prefixed forwarding; on SDK 10 the args go directly to `dotnet test`.
+- Use the built-in MTP `--list-tests` switch to discover tests. To see xUnit's native discovery/run banner alongside MTP output, use `--xunit-info`.
 
 ## Discovering tests
 
