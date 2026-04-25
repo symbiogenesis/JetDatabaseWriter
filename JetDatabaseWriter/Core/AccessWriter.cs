@@ -735,6 +735,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         List<(ColumnConstraint Constraint, long? PreviousValue)>? batchAutoCheckpoints = null;
         int inserted = 0;
 
+        // Materialize the batch so the W15 pre-write unique-index check sees
+        // every pending row at once (it must catch intra-batch duplicates).
+        // ApplyConstraintsAsync is run up front for the same reason —
+        // auto-increment values must be assigned before the unique check.
+        var pendingRows = new List<object[]>();
         try
         {
             foreach (object[] row in rows)
@@ -747,6 +752,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 {
                     (batchAutoCheckpoints ??= new List<(ColumnConstraint, long?)>()).AddRange(rowCp);
                 }
+
+                pendingRows.Add(row);
+            }
+
+            // ── W15 — pre-write unique-index enforcement ────────────────
+            await CheckUniqueIndexesPreInsertAsync(entry.TDefPage, tableDef, tableName, pendingRows, cancellationToken).ConfigureAwait(false);
+
+            foreach (object[] row in pendingRows)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
                 if (fkCtx != null)
                 {
@@ -819,6 +834,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         List<(ColumnConstraint Constraint, long? PreviousValue)>? batchAutoCheckpoints = null;
         int inserted = 0;
 
+        // Materialize the batch (see InsertRowsAsync(object[]) above) so the
+        // W15 pre-write unique check sees every pending row at once.
+        var pendingRows = new List<object[]>();
         try
         {
             foreach (T item in items)
@@ -832,6 +850,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 {
                     (batchAutoCheckpoints ??= new List<(ColumnConstraint, long?)>()).AddRange(rowCp);
                 }
+
+                pendingRows.Add(mappedRow);
+            }
+
+            // ── W15 — pre-write unique-index enforcement ────────────────
+            await CheckUniqueIndexesPreInsertAsync(entry.TDefPage, tableDef, tableName, pendingRows, cancellationToken).ConfigureAwait(false);
+
+            foreach (object[] mappedRow in pendingRows)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
                 if (fkCtx != null)
                 {
@@ -981,6 +1009,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 await EnforceFkOnPrimaryUpdateAsync(tableName, changes, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
             }
+        }
+
+        // ── W15 — pre-write unique-index enforcement ────────────────────
+        // After all FK checks succeed, validate that the post-update key set
+        // contains no duplicates for any unique index. The check sees the
+        // snapshot with pendingNewRows substituted at their original indices.
+        if (pendingNewRows.Count > 0)
+        {
+            await CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, snapshot, pendingNewRows, cancellationToken).ConfigureAwait(false);
         }
 
         int updated = 0;
@@ -3888,6 +3925,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 RestoreAutoCounters(autoCheckpoints);
                 throw;
             }
+        }
+
+        // ── W15 — pre-write unique-index enforcement ────────────────────
+        // Reject duplicate keys before any disk page is mutated. The
+        // post-write check inside MaintainIndexesAsync still runs as
+        // defense-in-depth.
+        try
+        {
+            await CheckUniqueIndexesPreInsertAsync(tdefPage, tableDef, tableName, new[] { values }, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            RestoreAutoCounters(autoCheckpoints);
+            throw;
         }
 
         RowLocation loc;
@@ -7794,6 +7845,470 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         return a.Length - b.Length;
+    }
+
+    /// <summary>
+    /// W15: parse the TDEF page and return one descriptor per <em>unique</em>
+    /// real-idx slot (uniqueness is signalled either by the §3.1 real-idx
+    /// <c>flags &amp; 0x01</c> bit or by an associated logical-idx entry whose
+    /// <c>index_type = 0x01</c> primary-key discriminator). Returns an empty
+    /// list on Jet3 (no index emission) or when the TDEF declares no indexes.
+    /// </summary>
+    private async ValueTask<List<UniqueIndexDescriptor>> LoadUniqueIndexDescriptorsAsync(
+        long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
+    {
+        var result = new List<UniqueIndexDescriptor>();
+        if (_format == DatabaseFormat.Jet3Mdb)
+        {
+            return result;
+        }
+
+        byte[] tdefPageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] tdefBuffer;
+        try
+        {
+            tdefBuffer = (byte[])tdefPageBytes.Clone();
+        }
+        finally
+        {
+            ReturnPage(tdefPageBytes);
+        }
+
+        int numCols = Ru16(tdefBuffer, _tdNumCols);
+        int numIdx = Ri32(tdefBuffer, _tdNumCols + 2);
+        int numRealIdx = Ri32(tdefBuffer, _tdNumRealIdx);
+        if (numIdx <= 0 || numRealIdx <= 0 || numIdx > 1000 || numRealIdx > 1000)
+        {
+            return result;
+        }
+
+        const int RealIdxPhysSz = 52;
+        const int LogIdxEntrySz = 28;
+        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
+        int namePos = colStart + (numCols * _colDescSz);
+        for (int i = 0; i < numCols; i++)
+        {
+            if (ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
+            {
+                return result;
+            }
+        }
+
+        int realIdxDescStart = namePos;
+        int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
+
+        // Decode every real-idx slot's key columns + flag bit.
+        var keyColsByRealIdx = new Dictionary<int, List<(int ColNum, bool Ascending)>>();
+        var flagByRealIdx = new Dictionary<int, bool>();
+        for (int ri = 0; ri < numRealIdx; ri++)
+        {
+            int phys = realIdxDescStart + (ri * RealIdxPhysSz);
+            if (phys + RealIdxPhysSz > tdefBuffer.Length)
+            {
+                break;
+            }
+
+            var keyCols = new List<(int ColNum, bool Ascending)>(10);
+            for (int slot = 0; slot < 10; slot++)
+            {
+                int so = phys + 4 + (slot * 3);
+                int cn = Ru16(tdefBuffer, so);
+                if (cn == 0xFFFF)
+                {
+                    continue;
+                }
+
+                byte order = tdefBuffer[so + 2];
+                keyCols.Add((cn, order != 0x02));
+            }
+
+            if (keyCols.Count == 0)
+            {
+                continue;
+            }
+
+            keyColsByRealIdx[ri] = keyCols;
+            flagByRealIdx[ri] = (tdefBuffer[phys + 42] & 0x01) != 0;
+        }
+
+        // Walk the logical-idx entries to (a) promote any real-idx that backs a
+        // PK logical-idx to unique, and (b) capture a best-effort name for each
+        // unique real-idx (first logical-idx referencing it wins).
+        int logIdxNamesStart = logIdxStart + (numIdx * LogIdxEntrySz);
+        List<string> logIdxNames = ReadLogicalIdxNames(tdefBuffer, logIdxNamesStart, numIdx);
+
+        var pkRealIdxNums = new HashSet<int>();
+        var nameByRealIdx = new Dictionary<int, string>();
+        for (int li = 0; li < numIdx; li++)
+        {
+            int entryStart = logIdxStart + (li * LogIdxEntrySz);
+            if (entryStart + LogIdxEntrySz > tdefBuffer.Length)
+            {
+                break;
+            }
+
+            int realIdxNum = Ri32(tdefBuffer, entryStart + 8);
+            byte indexType = tdefBuffer[entryStart + 23];
+            if (indexType == (byte)IndexKind.PrimaryKey)
+            {
+                pkRealIdxNums.Add(realIdxNum);
+            }
+
+            if (li < logIdxNames.Count && !nameByRealIdx.ContainsKey(realIdxNum))
+            {
+                nameByRealIdx[realIdxNum] = logIdxNames[li];
+            }
+        }
+
+        // Build column-ordinal lookup for resolving (ColNum -> snapshot index).
+        var snapshotIndexByColNum = new Dictionary<int, int>(tableDef.Columns.Count);
+        for (int c = 0; c < tableDef.Columns.Count; c++)
+        {
+            snapshotIndexByColNum[tableDef.Columns[c].ColNum] = c;
+        }
+
+        foreach (KeyValuePair<int, List<(int ColNum, bool Ascending)>> kvp in keyColsByRealIdx)
+        {
+            int realIdxNum = kvp.Key;
+            bool isUnique = (flagByRealIdx.TryGetValue(realIdxNum, out bool flag) && flag) || pkRealIdxNums.Contains(realIdxNum);
+            if (!isUnique)
+            {
+                continue;
+            }
+
+            // Resolve every key column up front; if any column is missing from
+            // the snapshot (deleted-column gap), skip — same fall-through model
+            // as MaintainIndexesAsync.
+            var keyColInfos = new List<(ColumnInfo Col, int SnapIdx, bool Ascending)>(kvp.Value.Count);
+            bool resolveOk = true;
+            foreach ((int colNum, bool ascending) in kvp.Value)
+            {
+                ColumnInfo? col = tableDef.Columns.Find(c => c.ColNum == colNum);
+                if (col is null || !snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
+                {
+                    resolveOk = false;
+                    break;
+                }
+
+                keyColInfos.Add((col, snapIdx, ascending));
+            }
+
+            if (!resolveOk)
+            {
+                continue;
+            }
+
+            string name = nameByRealIdx.TryGetValue(realIdxNum, out string? n) ? n : $"realidx#{realIdxNum}";
+            result.Add(new UniqueIndexDescriptor(realIdxNum, name, keyColInfos));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// W15: encode the composite index key for one row using a previously
+    /// computed canonical numeric scale per key column. Returns <c>null</c>
+    /// (i.e. "encoder rejected this row") only when the underlying encoder
+    /// throws <see cref="NotSupportedException"/>; the caller treats that as
+    /// "skip the unique check for this index" — same fall-through model as
+    /// <see cref="MaintainIndexesAsync"/>.
+    /// </summary>
+    private byte[]? EncodeCompositeKeyForUniqueCheck(
+        UniqueIndexDescriptor descriptor,
+        object[] row,
+        int[] numericTargetScales)
+    {
+        bool legacyNumeric = _format == DatabaseFormat.Jet4Mdb;
+        byte[][] perColumn = new byte[descriptor.KeyColumns.Count][];
+        int totalLen = 0;
+        try
+        {
+            for (int k = 0; k < descriptor.KeyColumns.Count; k++)
+            {
+                (ColumnInfo col, int snapIdx, bool ascending) = descriptor.KeyColumns[k];
+                object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
+                object? value = cell is null or DBNull ? null : cell;
+                perColumn[k] = col.Type == T_NUMERIC
+                    ? IndexKeyEncoder.EncodeNumericEntry(value, ascending, numericTargetScales[k], legacyNumeric)
+                    : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
+                totalLen += perColumn[k].Length;
+            }
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+
+        byte[] composite = new byte[totalLen];
+        int offset = 0;
+        for (int k = 0; k < perColumn.Length; k++)
+        {
+            Buffer.BlockCopy(perColumn[k], 0, composite, offset, perColumn[k].Length);
+            offset += perColumn[k].Length;
+        }
+
+        return composite;
+    }
+
+    /// <summary>
+    /// W15: pre-write unique-index validation for an insert batch. Loads the
+    /// table snapshot once, encodes the existing-row keys + the pending-row
+    /// keys for every unique index, and throws
+    /// <see cref="InvalidOperationException"/> on the first collision (existing
+    /// vs. pending or pending vs. pending). On encoder failure for a given
+    /// index (unsupported key type, e.g. text outside General Legacy) the
+    /// check is silently skipped for that index — the post-write check inside
+    /// <see cref="MaintainIndexesAsync"/> still runs as defense-in-depth.
+    /// <para>
+    /// Pending rows MUST already have had <c>ApplyConstraintsAsync</c> applied
+    /// (auto-increment values resolved, defaults substituted) — the encoder
+    /// works against the on-disk row payload.
+    /// </para>
+    /// </summary>
+    private async ValueTask CheckUniqueIndexesPreInsertAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string tableName,
+        IReadOnlyList<object[]> pendingRows,
+        CancellationToken cancellationToken)
+    {
+        if (pendingRows.Count == 0)
+        {
+            return;
+        }
+
+        List<UniqueIndexDescriptor> descriptors = await LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+        if (descriptors.Count == 0)
+        {
+            return;
+        }
+
+        using DataTable snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+        CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingRows, replaceAtSnapshotIndex: null);
+    }
+
+    /// <summary>
+    /// W15: pre-write unique-index validation for an update batch. The caller
+    /// supplies the table snapshot it already loaded (saving a redundant
+    /// scan) plus the per-row replacement payloads keyed by snapshot row
+    /// index.
+    /// </summary>
+    private async ValueTask CheckUniqueIndexesPreUpdateAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string tableName,
+        DataTable snapshot,
+        List<(int Index, object[] NewRow)> updates,
+        CancellationToken cancellationToken)
+    {
+        if (updates.Count == 0)
+        {
+            return;
+        }
+
+        List<UniqueIndexDescriptor> descriptors = await LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+        if (descriptors.Count == 0)
+        {
+            return;
+        }
+
+        var replaceAt = new Dictionary<int, object[]>(updates.Count);
+        foreach ((int idx, object[] newRow) in updates)
+        {
+            replaceAt[idx] = newRow;
+        }
+
+        CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingInsertRows: Array.Empty<object[]>(), replaceAtSnapshotIndex: replaceAt);
+    }
+
+    /// <summary>
+    /// W15 core: builds the post-mutation effective row set (snapshot rows
+    /// optionally replaced at <paramref name="replaceAtSnapshotIndex"/> plus
+    /// <paramref name="pendingInsertRows"/> appended), encodes the composite
+    /// key per unique index, and detects any collision. Throws
+    /// <see cref="InvalidOperationException"/> on first violation.
+    /// </summary>
+    private void CheckUniqueIndexesCore(
+        string tableName,
+        List<UniqueIndexDescriptor> descriptors,
+        DataTable snapshot,
+        IReadOnlyList<object[]> pendingInsertRows,
+        Dictionary<int, object[]>? replaceAtSnapshotIndex)
+    {
+        int snapshotRowCount = snapshot.Rows.Count;
+        int pendingCount = pendingInsertRows.Count;
+        int totalRows = snapshotRowCount + pendingCount;
+
+        foreach (UniqueIndexDescriptor descriptor in descriptors)
+        {
+            // Compute canonical numeric scale across (non-replaced snapshot
+            // rows) + (replacement rows) + (pending insert rows). Mirrors the
+            // post-write computation in MaintainIndexesAsync.
+            int[] numericTargetScales = new int[descriptor.KeyColumns.Count];
+            for (int k = 0; k < descriptor.KeyColumns.Count; k++)
+            {
+                if (descriptor.KeyColumns[k].Col.Type == T_NUMERIC)
+                {
+                    int kSnap = descriptor.KeyColumns[k].SnapIdx;
+                    int max = 0;
+                    for (int r = 0; r < snapshotRowCount; r++)
+                    {
+                        object cell;
+                        if (replaceAtSnapshotIndex != null && replaceAtSnapshotIndex.TryGetValue(r, out object[]? rep))
+                        {
+                            cell = kSnap < rep.Length ? rep[kSnap] : DBNull.Value;
+                        }
+                        else
+                        {
+                            cell = snapshot.Rows[r][kSnap];
+                        }
+
+                        if (cell is null or DBNull)
+                        {
+                            continue;
+                        }
+
+                        decimal dv = Convert.ToDecimal(cell, CultureInfo.InvariantCulture);
+                        int s = (decimal.GetBits(dv)[3] >> 16) & 0x7F;
+                        if (s > max)
+                        {
+                            max = s;
+                        }
+                    }
+
+                    foreach (object[] pendingRow in pendingInsertRows)
+                    {
+                        if (kSnap >= pendingRow.Length)
+                        {
+                            continue;
+                        }
+
+                        object cell = pendingRow[kSnap];
+                        if (cell is null or DBNull)
+                        {
+                            continue;
+                        }
+
+                        decimal dv = Convert.ToDecimal(cell, CultureInfo.InvariantCulture);
+                        int s = (decimal.GetBits(dv)[3] >> 16) & 0x7F;
+                        if (s > max)
+                        {
+                            max = s;
+                        }
+                    }
+
+                    numericTargetScales[k] = max;
+                }
+                else
+                {
+                    numericTargetScales[k] = -1;
+                }
+            }
+
+            // Encode every effective row's key. Collect into a HashSet keyed
+            // by composite key bytes; first collision triggers the throw.
+            var seen = new HashSet<byte[]>(ByteArrayEqualityComparer.Instance);
+            bool encoderRejected = false;
+
+            for (int r = 0; r < snapshotRowCount; r++)
+            {
+                object[] effectiveRow;
+                if (replaceAtSnapshotIndex != null && replaceAtSnapshotIndex.TryGetValue(r, out object[]? rep))
+                {
+                    effectiveRow = rep;
+                }
+                else
+                {
+                    effectiveRow = snapshot.Rows[r].ItemArray;
+                }
+
+                byte[]? key = EncodeCompositeKeyForUniqueCheck(descriptor, effectiveRow, numericTargetScales);
+                if (key is null)
+                {
+                    encoderRejected = true;
+                    break;
+                }
+
+                if (!seen.Add(key))
+                {
+                    throw new InvalidOperationException(
+                        $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. " +
+                        "The conflict was detected before any row was written; the table is unchanged.");
+                }
+            }
+
+            if (encoderRejected)
+            {
+                continue;
+            }
+
+            for (int p = 0; p < pendingCount; p++)
+            {
+                byte[]? key = EncodeCompositeKeyForUniqueCheck(descriptor, pendingInsertRows[p], numericTargetScales);
+                if (key is null)
+                {
+                    encoderRejected = true;
+                    break;
+                }
+
+                if (!seen.Add(key))
+                {
+                    throw new InvalidOperationException(
+                        $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. " +
+                        "The conflict was detected before any row was written; the table is unchanged.");
+                }
+            }
+
+            // encoderRejected on pending rows: silently skip — the post-write
+            // check in MaintainIndexesAsync still runs.
+            _ = totalRows;
+        }
+    }
+
+    private sealed record UniqueIndexDescriptor(int RealIdxNum, string Name, IReadOnlyList<(ColumnInfo Col, int SnapIdx, bool Ascending)> KeyColumns);
+
+    private sealed class ByteArrayEqualityComparer : IEqualityComparer<byte[]>
+    {
+        public static readonly ByteArrayEqualityComparer Instance = new();
+
+        public bool Equals(byte[]? x, byte[]? y)
+        {
+            if (ReferenceEquals(x, y))
+            {
+                return true;
+            }
+
+            if (x is null || y is null || x.Length != y.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < x.Length; i++)
+            {
+                if (x[i] != y[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public int GetHashCode(byte[] obj)
+        {
+            // FNV-1a 32-bit. Keys are typically short (< 64 bytes); this is
+            // not a hot path so a SIMD/unsafe variant would be over-spec.
+            unchecked
+            {
+                int hash = (int)2166136261u;
+                for (int i = 0; i < obj.Length; i++)
+                {
+                    hash = (hash ^ obj[i]) * 16777619;
+                }
+
+                return hash;
+            }
+        }
     }
 
     private async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
