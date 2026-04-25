@@ -625,19 +625,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 var result = new List<IndexDefinition>(existingIndexes.Count);
                 foreach (IndexMetadata idx in existingIndexes)
                 {
-                    // Forward Normal (single-column) and PrimaryKey (1..N column)
-                    // indexes; FK forwarding is W9 territory.
+                    // Forward Normal (W11: 1..N column) and PrimaryKey
+                    // (1..N column) indexes; FK forwarding is W9 territory.
                     if (idx.Kind != IndexKind.Normal && idx.Kind != IndexKind.PrimaryKey)
                     {
                         continue;
                     }
 
-                    if (idx.Kind == IndexKind.Normal && idx.Columns.Count != 1)
-                    {
-                        continue;
-                    }
-
                     var remappedCols = new List<string>(idx.Columns.Count);
+                    var descendingCols = new List<string>();
                     bool allSurvive = true;
                     foreach (IndexColumnReference ic in idx.Columns)
                     {
@@ -653,6 +649,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         }
 
                         remappedCols.Add(remapped);
+                        if (!ic.IsAscending)
+                        {
+                            descendingCols.Add(remapped);
+                        }
                     }
 
                     if (!allSurvive)
@@ -662,11 +662,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                     if (idx.Kind == IndexKind.PrimaryKey)
                     {
-                        result.Add(new IndexDefinition(idx.Name, remappedCols) { IsPrimaryKey = true });
+                        result.Add(new IndexDefinition(idx.Name, remappedCols)
+                        {
+                            IsPrimaryKey = true,
+                            DescendingColumns = descendingCols,
+                        });
                     }
                     else
                     {
-                        result.Add(new IndexDefinition(idx.Name, remappedCols[0]));
+                        result.Add(new IndexDefinition(idx.Name, remappedCols)
+                        {
+                            IsUnique = idx.IsUnique,
+                            DescendingColumns = descendingCols,
+                        });
                     }
                 }
 
@@ -3653,11 +3661,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            if (idx.Kind == IndexKind.Normal && idx.Columns.Count != 1)
-            {
-                continue;
-            }
-
             bool allSurvive = true;
             foreach (IndexColumnReference ic in idx.Columns)
             {
@@ -3673,19 +3676,32 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
+            var pkCols = new string[idx.Columns.Count];
+            var descendingCols = new List<string>();
+            for (int i = 0; i < idx.Columns.Count; i++)
+            {
+                pkCols[i] = idx.Columns[i].Name;
+                if (!idx.Columns[i].IsAscending)
+                {
+                    descendingCols.Add(idx.Columns[i].Name);
+                }
+            }
+
             if (idx.Kind == IndexKind.PrimaryKey)
             {
-                var pkCols = new string[idx.Columns.Count];
-                for (int i = 0; i < idx.Columns.Count; i++)
+                result.Add(new IndexDefinition(idx.Name, pkCols)
                 {
-                    pkCols[i] = idx.Columns[i].Name;
-                }
-
-                result.Add(new IndexDefinition(idx.Name, pkCols) { IsPrimaryKey = true });
+                    IsPrimaryKey = true,
+                    DescendingColumns = descendingCols,
+                });
             }
             else
             {
-                result.Add(new IndexDefinition(idx.Name, idx.Columns[0].Name));
+                result.Add(new IndexDefinition(idx.Name, pkCols)
+                {
+                    IsUnique = idx.IsUnique,
+                    DescendingColumns = descendingCols,
+                });
             }
         }
 
@@ -4141,14 +4157,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 int phys = realIdxPhysStart + (i * realIdxPhysSz);
 
                 // col_map: 10 × { col_num(2), col_order(1) }. First N slots = our
-                // key columns (ascending), remaining slots filled with 0xFFFF.
+                // key columns (per-column ascending/descending per W11), remaining
+                // slots filled with 0xFFFF.
                 for (int slot = 0; slot < 10; slot++)
                 {
                     int so = phys + 4 + (slot * 3);
                     if (slot < ri.ColumnNumbers.Count)
                     {
                         Wu16(page, so, ri.ColumnNumbers[slot]);
-                        page[so + 2] = 0x01; // ascending
+
+                        // 0x01 ascending, 0x02 descending — descending byte taken
+                        // from Jackcess IndexImpl; not yet probe-verified.
+                        page[so + 2] = ri.Ascending[slot] ? (byte)0x01 : (byte)0x02;
                     }
                     else
                     {
@@ -4164,6 +4184,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // emitted). Per the §3.1 empirical correction, real Access
                 // fixtures emit flags = 0x00 even for PK indexes — uniqueness
                 // is signalled by index_type = 0x01 below, not the flag bit.
+                // W11: non-PK unique indexes set flags bit 0x01 explicitly.
+                if (ri.IsUnique && !ri.IsPrimaryKey)
+                {
+                    page[phys + 42] = 0x01;
+                }
+
                 firstDpOffsets[i] = phys + 4 + 30 + 4;
 
                 // ── Logical-index entry (Jet4: 28 bytes) ────────────────────
@@ -4340,11 +4366,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 throw new NotSupportedException($"IndexDefinition '{def.Name}' has {def.Columns.Count} columns; the JET col_map supports at most 10.");
             }
 
-            if (!def.IsPrimaryKey && def.Columns.Count != 1)
-            {
-                throw new NotSupportedException($"IndexDefinition '{def.Name}' must reference exactly one column (multi-column non-PK indexes are not supported).");
-            }
-
+            // W11 (2026-04-25): multi-column non-PK indexes are now accepted.
+            // The W1-era restriction (single column when not IsPrimaryKey)
+            // has been lifted; the W5 maintenance loop encodes per-column
+            // and concatenates to form the composite key.
             if (def.IsPrimaryKey)
             {
                 if (sawPk)
@@ -4374,7 +4399,50 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 colNums[k] = column.ColNum;
             }
 
-            result.Add(new ResolvedIndex(def.Name, colNums, def.IsPrimaryKey));
+            // W11: per-column ascending direction. DescendingColumns is a
+            // case-insensitive subset of Columns; any entry that does not
+            // appear in Columns is rejected.
+            bool[] ascending = new bool[def.Columns.Count];
+            for (int k = 0; k < ascending.Length; k++)
+            {
+                ascending[k] = true;
+            }
+
+            if (def.DescendingColumns is { Count: > 0 } descendingList)
+            {
+                foreach (string descName in descendingList)
+                {
+                    if (string.IsNullOrEmpty(descName))
+                    {
+                        throw new ArgumentException($"IndexDefinition '{def.Name}' has an empty entry in DescendingColumns.", nameof(indexes));
+                    }
+
+                    int matchIndex = -1;
+                    for (int k = 0; k < def.Columns.Count; k++)
+                    {
+                        if (string.Equals(def.Columns[k], descName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            matchIndex = k;
+                            break;
+                        }
+                    }
+
+                    if (matchIndex < 0)
+                    {
+                        throw new ArgumentException(
+                            $"IndexDefinition '{def.Name}' lists '{descName}' in DescendingColumns but the column is not in Columns.",
+                            nameof(indexes));
+                    }
+
+                    ascending[matchIndex] = false;
+                }
+            }
+
+            // PKs are implicitly unique (signalled by index_type=0x01, not the
+            // flag bit per §3.1). User-set IsUnique on a PK is silently subsumed.
+            bool isUnique = def.IsPrimaryKey || def.IsUnique;
+
+            result.Add(new ResolvedIndex(def.Name, colNums, ascending, def.IsPrimaryKey, isUnique));
         }
 
         return result;
@@ -6494,6 +6562,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         const int RealIdxPhysSz = 52; // Jet4/ACE only; gated above.
+        const int LogIdxEntrySz = 28; // Jet4/ACE only.
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
         int namePos = colStart + (numCols * _colDescSz);
         for (int i = 0; i < numCols; i++)
@@ -6505,12 +6574,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int realIdxDescStart = namePos;
+        int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
 
-        // For each real-index slot referenced by a logical index, recover the key
-        // column number (col_map slot 0; W1/W2 emits exactly one column for normal
-        // indexes, but W8 may emit multi-column for PK — those are skipped below)
-        // and the byte offset of that real-idx's first_dp field.
-        var realIdxToKey = new Dictionary<int, (int ColumnNumber, int FirstDpOffset)>();
+        // W11: per-real-idx, decode every populated col_map slot to recover the
+        // full (column, direction) list, the first_dp byte offset, and the unique
+        // flag bit (real-idx flags & 0x01). PK uniqueness is signalled by the
+        // logical-idx index_type discriminator below, not the flag bit.
+        var realIdxByNum = new Dictionary<int, RealIdxEntry>();
         for (int ri = 0; ri < numRealIdx; ri++)
         {
             int phys = realIdxDescStart + (ri * RealIdxPhysSz);
@@ -6519,29 +6589,52 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 break;
             }
 
-            int keyColNum = Ru16(tdefBuffer, phys + 4);
-            if (keyColNum == 0xFFFF)
+            var keyCols = new List<(int ColNum, bool Ascending)>(10);
+            for (int slot = 0; slot < 10; slot++)
+            {
+                int so = phys + 4 + (slot * 3);
+                int cn = Ru16(tdefBuffer, so);
+                if (cn == 0xFFFF)
+                {
+                    continue;
+                }
+
+                byte order = tdefBuffer[so + 2];
+                keyCols.Add((cn, order != 0x02));
+            }
+
+            if (keyCols.Count == 0)
             {
                 continue;
             }
 
-            // Multi-column index? slot 1's col_num is not 0xFFFF. Skip rebuild —
-            // IndexKeyEncoder does not yet concatenate multi-column keys
-            // (that lands with W7 / a multi-column W5). The leaf goes stale
-            // until Microsoft Access rebuilds it on Compact & Repair.
-            int slot1ColNum = Ru16(tdefBuffer, phys + 4 + 3);
-            if (slot1ColNum != 0xFFFF)
-            {
-                continue;
-            }
-
-            // first_dp offset: unknown(4) + col_map(30) + used_pages(4).
-            realIdxToKey[ri] = (keyColNum, phys + 4 + 30 + 4);
+            byte flagsByte = tdefBuffer[phys + 42];
+            realIdxByNum[ri] = new RealIdxEntry(keyCols, phys + 4 + 30 + 4, (flagsByte & 0x01) != 0);
         }
 
-        if (realIdxToKey.Count == 0)
+        if (realIdxByNum.Count == 0)
         {
             return;
+        }
+
+        // Walk logical-idx entries to discover whether any logical idx pointing at
+        // a given real-idx is a primary key (index_type = 0x01) — that promotes
+        // the real-idx to unique even when the flags byte is 0x00 (per §3.1).
+        for (int li = 0; li < numIdx; li++)
+        {
+            int entryStart = logIdxStart + (li * LogIdxEntrySz);
+            if (entryStart + LogIdxEntrySz > tdefBuffer.Length)
+            {
+                break;
+            }
+
+            int realIdxNum = Ri32(tdefBuffer, entryStart + 8);
+            byte indexType = tdefBuffer[entryStart + 23];
+            if (indexType == (byte)IndexKind.PrimaryKey
+                && realIdxByNum.TryGetValue(realIdxNum, out RealIdxEntry rie))
+            {
+                realIdxByNum[realIdxNum] = rie with { IsUnique = true };
+            }
         }
 
         // Build column ordinal lookup so we can find each key column's value in the
@@ -6559,17 +6652,29 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int rowCount = Math.Min(snapshot.Rows.Count, locations.Count);
 
         bool tdefDirty = false;
-        foreach (KeyValuePair<int, (int ColumnNumber, int FirstDpOffset)> kvp in realIdxToKey)
+        foreach (KeyValuePair<int, RealIdxEntry> kvp in realIdxByNum)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            ColumnInfo? keyCol = tableDef.Columns.Find(c => c.ColNum == kvp.Value.ColumnNumber);
-            if (keyCol == null)
+            RealIdxEntry rie = kvp.Value;
+
+            // Resolve every key column up front; if any column is missing from the
+            // snapshot (deleted-column gap), skip rebuild for this index.
+            var keyColInfos = new List<(ColumnInfo Col, int SnapIdx, bool Ascending)>(rie.KeyColumns.Count);
+            bool resolveFailed = false;
+            foreach ((int colNum, bool ascending) in rie.KeyColumns)
             {
-                continue;
+                ColumnInfo? col = tableDef.Columns.Find(c => c.ColNum == colNum);
+                if (col is null || !snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
+                {
+                    resolveFailed = true;
+                    break;
+                }
+
+                keyColInfos.Add((col, snapIdx, ascending));
             }
 
-            if (!snapshotIndexByColNum.TryGetValue(kvp.Value.ColumnNumber, out int snapIdx))
+            if (resolveFailed)
             {
                 continue;
             }
@@ -6578,23 +6683,37 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             bool encoderRejected = false;
             for (int r = 0; r < rowCount; r++)
             {
-                object cell = snapshot.Rows[r][snapIdx];
-                object? value = cell is DBNull ? null : cell;
-                byte[] encoded;
+                byte[][] perColumn = new byte[keyColInfos.Count][];
+                int totalLen = 0;
                 try
                 {
-                    encoded = IndexKeyEncoder.EncodeEntry(keyCol.Type, value, ascending: true);
+                    for (int k = 0; k < keyColInfos.Count; k++)
+                    {
+                        (ColumnInfo col, int snapIdx, bool ascending) = keyColInfos[k];
+                        object cell = snapshot.Rows[r][snapIdx];
+                        object? value = cell is DBNull ? null : cell;
+                        perColumn[k] = IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
+                        totalLen += perColumn[k].Length;
+                    }
                 }
                 catch (NotSupportedException)
                 {
-                    // Unsupported key type for this column (text, GUID, numeric,
-                    // attachment, etc.). Leave first_dp pointing at the existing
-                    // (now-stale) leaf — same behaviour as before W5 shipped.
+                    // Unsupported key type for one of the columns. Leave first_dp
+                    // pointing at the existing (now-stale) leaf — same behaviour
+                    // as before W5 shipped.
                     encoderRejected = true;
                     break;
                 }
 
-                entries.Add((encoded, locations[r].PageNumber, (byte)locations[r].RowIndex));
+                byte[] composite = new byte[totalLen];
+                int offset = 0;
+                for (int k = 0; k < perColumn.Length; k++)
+                {
+                    Buffer.BlockCopy(perColumn[k], 0, composite, offset, perColumn[k].Length);
+                    offset += perColumn[k].Length;
+                }
+
+                entries.Add((composite, locations[r].PageNumber, (byte)locations[r].RowIndex));
             }
 
             if (encoderRejected)
@@ -6603,6 +6722,25 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             entries.Sort(static (a, b) => CompareKeyBytes(a.Key, b.Key));
+
+            // W11: unique-violation detection. Note this is a post-write check —
+            // the offending row has already been persisted by the time we get
+            // here, so throwing leaves the table in a state where the row exists
+            // but the index is stale. The caller is expected to delete the
+            // duplicate row (or restore from a backup) before continuing.
+            if (rie.IsUnique)
+            {
+                for (int e = 1; e < entries.Count; e++)
+                {
+                    if (CompareKeyBytes(entries[e - 1].Key, entries[e].Key) == 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"Unique index violation on table '{tableName}': duplicate key detected after row mutation. " +
+                            "The duplicate row has been written but the index B-tree was not rebuilt; " +
+                            "remove one of the offending rows and retry the operation.");
+                    }
+                }
+            }
 
             var leafEntries = new List<IndexLeafPageBuilder.LeafEntry>(entries.Count);
             foreach ((byte[] key, long page, byte row) in entries)
@@ -6626,6 +6764,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             await WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    private record struct RealIdxEntry(IReadOnlyList<(int ColNum, bool Ascending)> KeyColumns, int FirstDpOffset, bool IsUnique);
 
     private static int CompareKeyBytes(byte[] a, byte[] b)
     {
@@ -6714,17 +6854,30 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private readonly struct ResolvedIndex
     {
-        public ResolvedIndex(string name, IReadOnlyList<int> columnNumbers, bool isPrimaryKey)
+        public ResolvedIndex(string name, IReadOnlyList<int> columnNumbers, IReadOnlyList<bool> ascending, bool isPrimaryKey, bool isUnique)
         {
             Name = name;
             ColumnNumbers = columnNumbers;
+            Ascending = ascending;
             IsPrimaryKey = isPrimaryKey;
+            IsUnique = isUnique;
         }
 
         public string Name { get; }
 
         public IReadOnlyList<int> ColumnNumbers { get; }
 
+        /// <summary>Gets the per-column sort direction (parallel to <see cref="ColumnNumbers"/>).</summary>
+        public IReadOnlyList<bool> Ascending { get; }
+
         public bool IsPrimaryKey { get; }
+
+        /// <summary>
+        /// Gets a value indicating whether this index enforces uniqueness on its
+        /// key columns. Primary keys are implicitly unique; for them this
+        /// returns <see langword="true"/> regardless of the user-supplied
+        /// <see cref="IndexDefinition.IsUnique"/>.
+        /// </summary>
+        public bool IsUnique { get; }
     }
 }

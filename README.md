@@ -640,12 +640,12 @@ Wrong or missing passwords throw `UnauthorizedAccessException`. Corrupt or non-J
 The writer covers the common create / insert / update / delete path. The items below are **not yet implemented** and are the most likely places to hit a wall.
 
 ### Indexes
-- **Only single-column, non-unique, ascending indexes are maintained.** Multi-column, unique, and descending indexes are not emitted as live B-trees. Jet3 (`.mdb` Access 97) rejects `IndexDefinition` entirely.
-- **Indexable key types are limited.** Live leaf maintenance is supported for `Byte`, `Integer`, `Long Integer`, `Currency`, `Single`, `Double`, `Date/Time`, and `Text` containing only ASCII letters/digits. Other types (`GUID`, `Decimal`, `OLE`, `MEMO`, attachment, complex) and text with spaces/punctuation/non-ASCII round-trip as schema only — Access rebuilds the leaf on Compact & Repair.
+- **Live B-tree maintenance covers single- and multi-column indexes, ascending or descending, optionally unique.** Jet3 (`.mdb` Access 97) rejects `IndexDefinition` entirely.
+- **Indexable key types are limited.** Live leaf maintenance is supported for `Byte`, `Integer`, `Long Integer`, `Currency`, `Single`, `Double`, `Date/Time`, and `Text` containing only ASCII letters/digits. Other types (`GUID`, `Decimal`, `OLE`, `MEMO`, attachment, complex) and text with spaces/punctuation/non-ASCII round-trip as schema only — Access rebuilds the leaf on Compact & Repair. If *any* column in a multi-column index is unsupported, the whole index falls through to the schema-only path.
 - **No incremental B-tree maintenance.** Each insert/update/delete rebuilds the entire B-tree (no prefix compression, no `tail_page` chain). Cost scales with row count.
+- **Unique enforcement is post-write.** A duplicate row is persisted to disk before the bulk-rebuild detects the violation and throws `InvalidOperationException`; the caller must delete one of the offending rows manually before continuing. The index B-tree is left stale until the duplicate is removed.
 
 ### Primary & foreign keys
-- **Multi-column primary keys ship schema only** (single-column PKs are maintained live).
 - **No relationship deletion or rename.**
 - **TDEF must fit on one page** after FK entries are appended, otherwise `NotSupportedException`.
 - **RI enforcement uses an O(N) parent scan** (no index seek). Parent-key sets are cached per `InsertRowsAsync` call.

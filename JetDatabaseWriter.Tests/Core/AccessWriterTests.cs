@@ -129,7 +129,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
-        var rows = Enumerable.Range(0, 5).Select(_ => BuildDummyRow(columns));
+        var rows = Enumerable.Range(0, 5).Select(i => BuildDummyRow(columns, seed: 1000 + (i * 100)));
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         int inserted = await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
@@ -147,7 +147,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         long originalCount = await cachedReader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
         var columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
-        var rows = Enumerable.Range(0, 3).Select(_ => BuildDummyRow(columns)).ToList();
+        var rows = Enumerable.Range(0, 3).Select(i => BuildDummyRow(columns, seed: 2000 + (i * 100))).ToList();
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
@@ -1551,44 +1551,47 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     // ── Helpers ────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Builds a dummy row with plausible values for each column type.
+    /// Builds a dummy row with plausible values for each column type. The
+    /// optional <paramref name="seed"/> varies the values per row so that
+    /// bulk-insert tests against fixtures with unique indexes do not trip
+    /// the W11 unique-violation detection.
     /// </summary>
-    private static object[] BuildDummyRow(List<ColumnMetadata> columns)
+    private static object[] BuildDummyRow(List<ColumnMetadata> columns, int seed = 0)
     {
         var values = new object[columns.Count];
         for (int i = 0; i < columns.Count; i++)
         {
-            values[i] = GetDummyValue(columns[i].ClrType);
+            values[i] = GetDummyValue(columns[i].ClrType, seed + i);
         }
 
         return values;
     }
 
-    private static object GetDummyValue(Type clrType)
+    private static object GetDummyValue(Type clrType, int seed = 0)
     {
         if (clrType == typeof(string))
         {
-            return "TestWrite";
+            return $"TestWrite{seed}";
         }
 
         if (clrType == typeof(int))
         {
-            return 999;
+            return 999 + seed;
         }
 
         if (clrType == typeof(short))
         {
-            return (short)99;
+            return (short)(99 + seed);
         }
 
         if (clrType == typeof(long))
         {
-            return 99999L;
+            return 99999L + seed;
         }
 
         if (clrType == typeof(byte))
         {
-            return (byte)1;
+            return (byte)(1 + (seed & 0x7F));
         }
 
         if (clrType == typeof(bool))

@@ -23,14 +23,21 @@ using System.Collections.Generic;
 /// Constraints (enforced at <c>CreateTableAsync</c> time):
 /// </para>
 /// <list type="bullet">
-///   <item><description>Non-PK indexes must be single-column.</description></item>
-///   <item><description>Non-unique unless <see cref="IsPrimaryKey"/> is set (PK is implicitly unique).</description></item>
-///   <item><description>Ascending only.</description></item>
+///   <item><description>At most ten columns per index (the JET <c>col_map</c> width).</description></item>
 ///   <item><description>At most one PK per table.</description></item>
 ///   <item><description>PK key columns are forced non-nullable on the emitted TDEF.</description></item>
 ///   <item><description>No foreign-key or relationship semantics (W9 territory).</description></item>
 ///   <item><description>Jet4 / ACE only — Jet3 (<c>.mdb</c> Access 97) databases reject any non-empty index list with <see cref="System.NotSupportedException"/>.</description></item>
+///   <item><description>Every entry in <see cref="DescendingColumns"/> must also appear in <see cref="Columns"/> (case-insensitive).</description></item>
 /// </list>
+/// <para>
+/// W11 (2026-04-25) lifted the W1-era "non-PK indexes must be single column" /
+/// "ascending only" / "non-unique only" restrictions: <see cref="IsUnique"/>
+/// emits the real-idx <c>flags</c> bit <c>0x01</c> (W5 maintenance also throws
+/// on duplicate keys after the bulk B-tree rebuild), <see cref="DescendingColumns"/>
+/// emits <c>col_order = 0x02</c> in the matching col_map slots, and multi-column
+/// non-PK indexes are now accepted and maintained live.
+/// </para>
 /// </remarks>
 public sealed record IndexDefinition
 {
@@ -48,9 +55,9 @@ public sealed record IndexDefinition
 
     /// <summary>
     /// Initializes a new instance of the <see cref="IndexDefinition"/> class
-    /// referencing one or more columns. The multi-column form is supported
-    /// only when <see cref="IsPrimaryKey"/> is also set; non-PK multi-column
-    /// indexes are rejected by <c>CreateTableAsync</c>.
+    /// referencing one or more columns. Multi-column non-PK indexes are
+    /// supported as of W11 (2026-04-25); see the type-level remarks for the
+    /// emitted layout and the live B-tree maintenance contract.
     /// </summary>
     /// <param name="name">The logical-index name.</param>
     /// <param name="columns">The columns that make up the index key, in key order. Must contain at least one entry.</param>
@@ -85,8 +92,7 @@ public sealed record IndexDefinition
 
     /// <summary>
     /// Gets the column names that make up the index key, in key order.
-    /// Non-PK indexes always contain exactly one entry; PK indexes may
-    /// contain up to ten (the JET <c>col_map</c> width).
+    /// May contain up to ten entries (the JET <c>col_map</c> width).
     /// </summary>
     public IReadOnlyList<string> Columns { get; }
 
@@ -97,4 +103,36 @@ public sealed record IndexDefinition
     /// columns to be non-nullable on the emitted TDEF.
     /// </summary>
     public bool IsPrimaryKey { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether this index enforces uniqueness. When
+    /// <see langword="true"/> and <see cref="IsPrimaryKey"/> is
+    /// <see langword="false"/>, the writer emits the real-idx <c>flags</c>
+    /// bit <c>0x01</c> on the matching physical descriptor (§3.1) and the W5
+    /// bulk-rebuild path throws <see cref="System.InvalidOperationException"/>
+    /// when two live rows produce the same encoded key. Implicitly true for
+    /// primary-key indexes — PKs signal uniqueness via the logical-idx
+    /// <c>index_type = 0x01</c> discriminator and Access leaves the
+    /// real-idx <c>flags</c> byte at <c>0x00</c> (§3.1 probe note); setting
+    /// this property in addition to <see cref="IsPrimaryKey"/> has no extra
+    /// effect.
+    /// </summary>
+    public bool IsUnique { get; init; }
+
+    /// <summary>
+    /// Gets the subset of <see cref="Columns"/> that should be sorted
+    /// descending in the index. Each entry must match a name in
+    /// <see cref="Columns"/> case-insensitively. Columns not listed here are
+    /// emitted with <c>col_order = 0x01</c> (ascending); listed columns are
+    /// emitted with <c>col_order = 0x02</c>. Defaults to an empty list.
+    /// </summary>
+    /// <remarks>
+    /// The descending byte value (<c>0x02</c>) follows Jackcess
+    /// (<c>com.healthmarketscience.jackcess.impl.IndexImpl</c>); the
+    /// in-repo format-probe corpus contains no descending fixtures, so the
+    /// value has not been independently re-verified against an
+    /// Access-authored database. Defer production use until that round-trip
+    /// has been performed by hand (see design doc §8).
+    /// </remarks>
+    public IReadOnlyList<string> DescendingColumns { get; init; } = System.Array.Empty<string>();
 }

@@ -13,9 +13,10 @@ using Xunit;
 /// W8 round-trip tests for primary-key emission.
 /// <para>
 /// PK is emitted as a logical-index entry with <c>index_type = 0x01</c> and
-/// is implicitly unique. Single-column PKs participate in the W5 B-tree
-/// rebuild; multi-column PKs ship the schema only (W5 maintenance skips
-/// multi-column rebuild — see the design doc §7 W8).
+/// is implicitly unique. As of W11 (2026-04-25) multi-column PKs also
+/// participate in the W5 bulk B-tree rebuild via the composite-key
+/// concatenation path, provided every key column's type is supported by
+/// <c>IndexKeyEncoder</c>.
 /// </para>
 /// </summary>
 public sealed class PrimaryKeyWriterTests
@@ -319,12 +320,15 @@ public sealed class PrimaryKeyWriterTests
     }
 
     [Fact]
-    public async Task IndexDefinition_RejectsMultiColumn_WhenNotPrimaryKey()
+    public async Task IndexDefinition_AcceptsMultiColumn_WhenNotPrimaryKey()
     {
+        // W11 (2026-04-25): the W1-era restriction has been lifted; multi-column
+        // non-PK indexes are now accepted and emitted (live B-tree maintenance
+        // applies when every key column type is supported by IndexKeyEncoder).
         await using var stream = await CreateFreshAccdbStreamAsync();
-        await using var writer = await OpenWriterAsync(stream);
 
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        await using (var writer = await OpenWriterAsync(stream))
+        {
             await writer.CreateTableAsync(
                 "T",
                 new[]
@@ -333,7 +337,14 @@ public sealed class PrimaryKeyWriterTests
                     new ColumnDefinition("B", typeof(int)),
                 },
                 new[] { new IndexDefinition("IX_AB", CompositeAB) },
-                TestContext.Current.CancellationToken));
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        var indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
+        IndexMetadata ix = Assert.Single(indexes);
+        Assert.Equal(IndexKind.Normal, ix.Kind);
+        Assert.Equal(CompositeAB, ix.Columns.Select(c => c.Name).ToArray());
     }
 
     [Fact]
