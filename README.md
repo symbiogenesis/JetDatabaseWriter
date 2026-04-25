@@ -663,6 +663,9 @@ The writer covers the common create / insert / update / delete path. The items b
 ### Forms, reports, macros, queries, VBA
 - Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.
 
+### SQL and ODBC
+- **No SQL parser, query engine, or ODBC driver.** This library is a managed reader/writer over the JET on-disk format, not a database engine. There is no equivalent of mdbtools' `mdb-sql` or its ODBC driver, and there are no plans to add one. Filter, project, and join through LINQ over `Rows(...)` / `Rows<T>(...)` instead. This is also why the upstream mdbtools `test_sql.sh` cases (`SELECT ... LIMIT`, `WHERE`, `LIKE`) and the `mdb-queries` / `mdb-schema --dialect postgres` parity tests are intentionally absent from the conformance suite — they exercise surfaces this library does not provide.
+
 ### Concurrency
 - **No byte-range locking and no populated `.ldb` slots.** Microsoft Access uses page-level byte-range locks via `LockFileEx` plus 64-byte machine-name / SID entries in the lockfile; this library implements neither. Concurrent writers against the same file (including Access opening it while a writer is active) will corrupt it. Keep `RespectExistingLockFile = true` (default) and `FileShare.Read` / `FileShare.None` on the writer to let the OS block other openers.
 - **No transactions or rollback.** A crashed write leaves the file in whatever partially-flushed state the page cache had reached.
