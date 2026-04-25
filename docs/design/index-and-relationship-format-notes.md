@@ -243,237 +243,21 @@ The per-phase summaries in the W-table above carry the public-surface delta and 
 - **W9b FK-entry forwarding through schema evolution.** `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` use the copy-and-swap path that only forwards user-declared `IndexDefinition` records; W9b FK logical-idx entries are dropped from rewritten TDEFs. The `MSysRelationships` rows survive, and Access regenerates the per-TDEF entries on the next Compact & Repair pass.
 - **W10 composite-key normalisation** (`AccessWriter.BuildCompositeKey`): strings are upper-cased via `ToUpperInvariant`; `Guid` is N-format hex; `byte[]` is Base64; `DateTime` is `ToUniversalTime().Ticks`; `IConvertible` numerics route through `decimal` so cross-width values compare equal. A null component makes the whole composite key null and the row is allowed without a parent lookup.
 - **W10 caveats:** O(N) parent-snapshot scan per relationship per call (no index seek); no SET NULL / SET DEFAULT cascade actions; no transaction or rollback; no FK enforcement on `RewriteTableAsync`; no relationship deletion or rename API.
+- **W11 unique enforcement is post-write.** `MaintainIndexesAsync` runs after the row is persisted; a unique-violation throw leaves the duplicate row on disk with a stale B-tree until the caller deletes one of the offending rows. Pre-write transactional unique enforcement is deferred.
+- **W11 `col_order = 0x02`** (descending) is the Jackcess `IndexImpl` convention. The format-probe corpus contains no descending indexes; rerun the probe against a fixture that exercises descending indexes before relying on the byte value in production.
+- **W11 silently falls through** the W5 stale-leaf path whenever any column in a composite key is unsupported by `IndexKeyEncoder` (text outside General Legacy, GUID, numeric, attachment, etc.) — same model as the single-column W5 path.
 
-## 8. Validation strategy
+### 7.3 W11 — what shipped (2026-04-25)
 
-- `IndexDefinition(string name, string columnName)` — single-column constructor; `Columns` is fixed at length 1.
-- `CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken ct)` — new overload. The original 3-arg overload is now a thin wrapper that passes `Array.Empty<IndexDefinition>()`.
-
-What the writer emits into the new TDEF page (Jet4/ACE):
-
-- `num_idx` (4 bytes at `_tdNumCols + 2`) = `indexes.Count`.
-- `num_real_idx` (4 bytes at `_tdNumRealIdx`) = `indexes.Count` — W1 issues **one real-idx per logical-idx**, no sharing (§3.3 sharing is a W9-era optimization).
-- Leading real-idx entry block (`numRealIdx × 12` bytes Jet4) — left zeroed; mdbtools labels every field there `unknown`.
-- Per index, the 52-byte real-idx physical descriptor (§3.1) with:
-  - `col_map` slot 0 = `(col_num, 0x01)` (ascending), slots 1–9 = `(0xFFFF, 0x00)`.
-  - `used_pages = 0`, `first_dp` patched by W3 to point at the empty leaf page allocated per index in `CreateTableAsync`.
-  - `flags = 0x00`, trailing 9 bytes zeroed.
-- Per index, the 28-byte logical-idx entry (§3.2) with `index_num = i`, `index_num2 = i`, `rel_idx_num = 0xFFFFFFFF`, `index_type = 0x00` (Normal), cascade flags 0.
-- Logical-idx name list (UTF-16 LE length-prefixed, same encoding as column names).
-- `tdef_len` (offset 8) updated to span the full block including the new index sections.
-
-W1 explicit constraints (enforced by `ResolveIndexes`):
-
-- Single column per index. `IndexDefinition.Columns.Count != 1` throws `NotSupportedException`.
-- Unknown column name throws `ArgumentException`.
-- Duplicate index names (case-insensitive) throw `ArgumentException`.
-- Jet3 (`.mdb` Access 97) with non-empty `indexes` throws `NotSupportedException`. Jet3 logical-idx layout differs (20 bytes vs. 28) and is not exercised by the existing test fixtures.
-- W1 does **not** set `IsUnique`, `IgnoreNulls`, `IsRequired`, ascending/descending control, or PK/FK/cascade fields. Round-tripped indexes always read back as `Kind = Normal`, `IsUnique = false`, `IsForeignKey = false`.
-
-Validation actually performed for W1:
-
-- ✅ In-repo round-trip: writer → `ListIndexesAsync` (7 tests in `JetDatabaseWriter.Tests/Core/IndexWriterTests.cs`).
-- See §8 for the outstanding Microsoft Access compact-and-repair validation gap that applies uniformly to all writer phases.
-
-### 7.2 W2 + W3 — what shipped (2026-04-24)
-
-Internal additions (no public API surface — these are foundational and exercised through `CreateTableAsync`):
-
-- `JetDatabaseWriter.IndexKeyEncoder` (W2): `static byte[] EncodeEntry(byte columnType, object? value, bool ascending = true)`. Returns the entry-flag byte (`0x7F`/`0x80` non-null, `0x00`/`0xFF` null per §4.3) followed by the encoded key bytes (per §5). Supports `T_BYTE` (0x02), `T_INT` (0x03), `T_LONG` (0x04), `T_MONEY` (0x05), `T_FLOAT` (0x06), `T_DOUBLE` (0x07), `T_DATETIME` (0x08). All other column types — including `T_GUID`, `T_NUMERIC`, `T_BOOL`, `T_TEXT`, `T_MEMO`, `T_OLE`, `T_BINARY`, `T_ATTACHMENT`, `T_COMPLEX`, `T_DATETIMEEXT` — throw `NotSupportedException`. Descending order is computed as the ones-complement of the ascending encoding (the convention HACKING.md documents for descending text indexes; preserves order for the numeric encodings as well).
-- `JetDatabaseWriter.IndexLeafPageBuilder` (W3): `static byte[] BuildJet4LeafPage(int pageSize, long parentTdefPage, IReadOnlyList<LeafEntry> entries)`. Emits the §4.1 page header, §4.2 bitmask (Jet4 offsets `0x1B`/`0x1E0`), and §4.3 entry records. `pref_len` is always 0 (no prefix compression). `tail_page` is always 0. The intermediate-page child-pointer field is not emitted (W4 territory). Throws `ArgumentOutOfRangeException` if the entries do not fit on a single page — that is the explicit "you need W4" signal.
-
-Wiring inside `AccessWriter.CreateTableAsync`:
-
-1. Build the TDEF page (W1 logic, but `BuildTDefPageWithIndexOffsets` now also returns the byte offset of each real-idx `first_dp` field).
-2. Append the TDEF page → `tdefPageNumber`.
-3. For each resolved index:
-   1. Build an **empty** leaf page with `parent_page = tdefPageNumber`.
-   2. Append the leaf page → `leafPageNumber`.
-   3. Patch `first_dp = leafPageNumber` into the in-memory TDEF buffer.
-4. Re-flush the TDEF page so the patched `first_dp` values land on disk.
-
-The leaf is empty because `CreateTableAsync` runs against an empty table. Subsequent `InsertRowsAsync` / `UpdateRowsAsync` / `DeleteRowsAsync` / `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` calls **do not** maintain the leaf — that is W5 territory. As soon as the table mutates, the index goes stale until Microsoft Access rebuilds it on the next Compact & Repair pass.
-
-W2/W3 explicit constraints:
-
-- All W1 constraints carry over unchanged (single-column, non-unique, ascending, Jet4/ACE only, etc.).
-- The encoder rejects unsupported column types. A user who declares `IndexDefinition("IX_Name", "Name")` on a `Text` column will currently still succeed at `CreateTableAsync` time because the emitted leaf is empty (the encoder is never called for an entry); the encoder will reject any future insert-time call once W5 lands. This is intentional — W2/W3 ship the foundation without changing the public contract beyond what W1 already provided.
-- `pref_len` (prefix compression) is always 0. Reading a W3-produced leaf with prefix compression interpreted will still work; the optimization will arrive with W4.
-
-Validation actually performed for W2 + W3:
-
-- ✅ In-repo unit tests for the encoder (17 tests, ascending/descending ordering for every supported type, including IEEE-754 sign handling, 24-bit data-page packing, BCD-style currency scaling).
-- ✅ In-repo unit tests for the leaf builder (5 tests, header bytes, bitmask bit positions, capacity overflow).
-- ✅ In-repo round-trip tests via `CreateTableAsync` (existing `IndexWriterTests` plus new `CreateTable_WithIndex_EmitsLeafPageWithMatchingParent` and `CreateTable_WithMultipleIndexes_EmitsOneLeafPagePerIndex`). 1362 tests total, all passing.
-- See §8 for the outstanding Microsoft Access compact-and-repair validation gap. The leaf pages produced by W3 are empty placeholders — Access must accept them as valid leafs and rebuild on next compact, but this has not been verified against a real Access install.
-
-### 7.3 W9a — what shipped (2026-04-25)
-
-Public surface added on `IAccessWriter` / `AccessWriter`:
-
-- `RelationshipDefinition(name, primaryTable, primaryColumn, foreignTable, foreignColumn)` — single-column constructor.
-- `RelationshipDefinition(name, primaryTable, IReadOnlyList<string> primaryColumns, foreignTable, IReadOnlyList<string> foreignColumns)` — composite constructor; both column lists must have the same length.
-- Init-only properties: `EnforceReferentialIntegrity` (default `true`), `CascadeUpdates`, `CascadeDeletes`.
-- `IAccessWriter.CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken ct)`.
-
-Reader-side change (necessary to make the round-trip tests work without exposing a brand-new system-table API): `AccessReader.ResolveTableAsync` now falls through to a `MSysObjects` system-table scan when the user-table cache misses. As a side effect, `ReadDataTableAsync("MSysRelationships")` (and any other system table) now returns the populated table instead of an empty placeholder. This is a benign behaviour expansion — no existing test depended on the old empty-placeholder return.
-
-What the writer emits per `CreateRelationshipAsync` call:
-
-- One row per FK column in `MSysRelationships`. Per-row column values follow the §6 / appendix layout:
-  - `ccolumn` = total column count for this relationship (same value on every row of the same relationship).
-  - `icolumn` = 0..N-1 (zero-based position of this column within the relationship).
-  - `grbit` = `EnforceReferentialIntegrity` ? `0` : `0x00000002` (`NO_REFERENTIAL_INTEGRITY`), OR-ed with `0x00000100` (`CASCADE_UPDATES`) when `CascadeUpdates`, OR-ed with `0x00001000` (`CASCADE_DELETES`) when `CascadeDeletes`. Bit values taken from Jackcess `com.healthmarketscience.jackcess.impl.RelationshipImpl`. **Not** independently re-verified against Access-authored fixtures; the format-probe appendix does not yet decode `grbit` semantics.
-  - `szObject` = foreign (FK side) table name.
-  - `szColumn` = foreign-key column name.
-  - `szReferencedObject` = primary (PK side) table name.
-  - `szReferencedColumn` = primary-key column name.
-  - `szRelationship` = relationship name (same on every row of the same relationship).
-
-W9a explicit constraints (enforced by `CreateRelationshipAsync`):
-
-- Both referenced tables must exist as user tables in this database. `InvalidOperationException` if not.
-- Every named column must exist on its table (case-insensitive). `ArgumentException` if not.
-- `PrimaryColumns.Count` must equal `ForeignColumns.Count` and be ≥ 1 (enforced in the model constructor).
-- The relationship name must not duplicate any existing `szRelationship` value in `MSysRelationships` (case-insensitive). `InvalidOperationException` if it does.
-- The database must already contain a `MSysRelationships` table. Databases freshly created by `AccessWriter.CreateDatabaseAsync` do **not** include this catalog table; `NotSupportedException` is thrown.
-
-What W9a does **not** do:
-
-- **No per-TDEF FK logical-idx entries.** ~~W9a writes only the `MSysRelationships` catalog row.~~ **Superseded by W9b (§7.4) — the per-TDEF FK entries on both sides ship as part of the same `CreateRelationshipAsync` call (Jet4/ACE only).** The Microsoft Access GUI Relationships designer reads the catalog row; the JET engine reads the per-TDEF entries to enforce referential integrity at runtime. (FK enforcement at write time from this library remains W10 territory.)
-- **No real-idx sharing optimisation (§3.3) in W9a.** ~~Even if a future W9b emits per-TDEF FK entries, it should reuse an existing user-created index whose `col_map` matches the FK columns instead of allocating a fresh real-idx slot.~~ **Done in W9b (§7.4).**
-- **No `MSysRelationships` deletion / rename API.** Once written, relationships are permanent until the user opens the file in Access and deletes them through the GUI.
-- **No `.mdb` re-probe of the `MSysRelationships` column layout.** The 8-column ACCDB schema in `format-probe-appendix-index.md` happens to match what the existing reader and writer produce against `.mdb` files in the test corpus — every test in `RelationshipWriterTests` runs against `NorthwindTraders.accdb`, but the system-table-resolution change in `ResolveTableAsync` is format-agnostic. A formal `.mdb` `MSysRelationships` column-level probe is still listed as a prerequisite for any future W9b work.
-
-Validation actually performed for W9a:
-
-- ✅ In-repo round-trip tests in `JetDatabaseWriter.Tests/Core/RelationshipWriterTests.cs` (9 tests): single-column FK, multi-column FK with one row per column, `grbit` flag encoding for `CascadeUpdates` + `CascadeDeletes` + `!EnforceReferentialIntegrity`, duplicate-name rejection, unknown-table rejection, unknown-column rejection, fresh-DB-without-`MSysRelationships` rejection, plus 2 model-constructor tests for arity and emptiness.
-- ✅ Existing pinned `LimitationsTests.SchemaEvolution_IAccessWriter_DoesNotExposeIndexOrConstraintApis` updated to reflect the lifted "no relationship method" restriction (the new `CreateRelationshipAsync` method matches `"Relationship"` so the old assertion would fail).
-- ✅ Existing pinned `LimitationsTests.SchemaEvolution_FreshlyCreatedTable_HasNoUserDefinedIndexEntries` still passes — `CreateTableAsync` itself does not write `MSysRelationships` rows; only an explicit `CreateRelationshipAsync` call does.
-- ✅ Full test suite: 1871 tests passing (1862 prior + 9 new).
-- See §8 for the outstanding Microsoft Access compact-and-repair validation gap. The `grbit` flag bit values in particular (taken from Jackcess) need to be byte-compared against an Access-authored fixture before merge to production.
-
-### 7.4 W9b — what shipped (2026-04-25)
-
-Public surface unchanged from W9a — the same `CreateRelationshipAsync(RelationshipDefinition, CancellationToken)` entry point now also mutates both PK-side and FK-side TDEFs to append per-table FK logical-idx entries. No new model fields, no new method signatures.
-
-What the writer additionally emits per `CreateRelationshipAsync` call (Jet4/ACE only — Jet3 falls through to W9a-only behaviour because the 20-byte Jet3 logical-idx layout is not implemented):
-
-- **One 28-byte logical-idx entry on each side's TDEF** with the §3.2 layout: `index_num` = next sequential, `index_num2` = the real-idx slot on this side, `rel_tbl_type` = `0x01`, `rel_idx_num` = the real-idx slot on the *other* table, `rel_tbl_page` = the other table's TDEF page number, `index_type` = `0x02` (FK), trailing 4 bytes zeroed.
-- **Cascade flag bytes (`cascade_ups`, `cascade_dels`) only on the FK side.** The PK side carries `0x00` for both. (Cascade is a property of the FK column behaviour when the parent is mutated, not a property of the parent row.)
-- **Real-idx sharing per §3.3.** Before allocating a new real-idx slot on either side, the emitter walks the existing real-idx physical-descriptor block and reuses any slot whose `col_map` matches the relationship's column list exactly (in declaration order). The empirical Companies-table fixture (5 logical FKs sharing real-idx #4) shows this is the normal Access-on-Windows pattern.
-- **New 52-byte real-idx physical descriptor only when no covering slot exists.** The new descriptor's `col_map` slots 0..N-1 hold the relationship's column numbers (with `col_order = 0x01` ascending), remaining slots filled with `0xFFFF`. `flags = 0x00` (matches §3.1). `first_dp` is patched to point at a freshly-appended empty leaf page (`page_type = 0x04` per W3).
-- **One 12-byte real-idx skip slot prepended** to the leading `numRealIdx × 12` block when allocating, plus all subsequent TDEF sections (column descriptors, column names, real-idx physical descriptors, logical-idx entries, logical-idx names, variable-trailing block) shifted to absorb the growth. `tdef_len` at offset 8 is updated to the new total.
-- **Unique logical-idx name** within the destination TDEF: the relationship name is used as-is when free, otherwise `_1` / `_2` / … is appended. For self-referential relationships the FK-side name is suffixed with `_FK` to avoid colliding with the PK-side name on the same TDEF.
-
-Header counts updated on each mutated TDEF: `num_idx` += 1; `num_real_idx` += 1 only when a new slot is allocated (sharing leaves the count unchanged).
-
-W9b explicit constraints (enforced by the emitter):
-
-- **Jet4 / ACE only.** Jet3 (`.mdb` Access 97) `CreateRelationshipAsync` falls through to W9a-only behaviour — the per-TDEF entries are silently skipped because the 20-byte Jet3 logical-idx layout differs and is not implemented. The W9a `MSysRelationships` rows still ship.
-- **Single-page TDEFs only.** If either side's TDEF spans multiple pages (TDEF page chain via `next_pg`) the emitter throws `NotSupportedException`. In practice, tables created by `CreateTableAsync` always fit in one page; multi-page chains arise only in tables imported from very wide Access-authored files.
-- **Single-page growth budget.** If the additions would push the TDEF beyond `_pgSz` bytes, the emitter throws `NotSupportedException`. (No multi-page TDEF growth.)
-
-What W9b does **not** do:
-
-- **No incremental B-tree maintenance for the new FK leaf.** The newly-allocated leaf page is empty. The W5 maintenance path (`MaintainIndexesAsync`) will rebuild it on the next mutation if (a) the FK column's type is supported by `IndexKeyEncoder` (`Byte`/`Integer`/`Long Integer`/`Currency`/`Single`/`Double`/`Date/Time`) and (b) the FK is single-column (multi-column W9b real-idx slots are skipped by the W5 enumeration loop because slot 1's `col_num != 0xFFFF`). Indexes that share an existing real-idx slot benefit from whatever maintenance that slot already receives.
-- **No FK enforcement at write time.** The library has no SQL engine; no insert/update/delete operation validates parent presence or cascades children. That is W10 territory.
-- **No `MSysRelationships` deletion / rename.** Same as W9a.
-- **No FK-entry forwarding through schema evolution.** `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` use the existing copy-and-swap path that only forwards user-declared `IndexDefinition` records. Any W9b FK logical-idx entry on a table that is rewritten will be dropped from that table's TDEF (the `MSysRelationships` rows still survive because they live in their own table). Microsoft Access regenerates the TDEF entries on the next Compact & Repair pass from the surviving `MSysRelationships` rows.
-- **No `.mdb` `MSysRelationships` column-level probe.** Unchanged from the W9a status — `.mdb` `MSysRelationships` row emission still works (the 8-column ACCDB schema happens to match the `.mdb` shape for W9a's purposes), but the W9b per-TDEF emission is gated on `_format != Jet3Mdb` independently.
-
-Validation actually performed for W9b:
-
-- ✅ In-repo round-trip tests in `JetDatabaseWriter.Tests/Core/RelationshipWriterTests.cs` (5 new W9b tests): single-column FK with both-sides `Kind = ForeignKey` and cross-referenced `RelatedTablePage`, cascade flags emitted only on the FK side, multi-column FK with `Columns` round-trip on both sides, real-idx sharing when the PK side already has an explicit primary-key index (PK and FK logical-idx entries share the same `RealIndexNumber`), self-referential FK producing two distinct logical-idx names on the same TDEF.
-- ✅ Existing 9 W9a tests still pass unchanged.
-- ✅ Existing pinned `LimitationsTests.SchemaEvolution_IAccessWriter_DoesNotExposeIndexOrConstraintApis` still passes (no public method-name change).
-- ✅ Existing pinned `LimitationsTests.SchemaEvolution_FreshlyCreatedTable_HasNoUserDefinedIndexEntries` still passes (`CreateTableAsync` alone does not invoke `EmitFkPerTdefEntriesAsync`; only `CreateRelationshipAsync` does).
-- ✅ Full test suite: 1876 tests passing (1871 prior + 5 new).
-- See §8 for the outstanding Microsoft Access compact-and-repair validation gap. W9b's empirical risk surface is larger than W9a's: each call mutates two TDEFs in place; the 52-byte real-idx descriptor and 28-byte logical-idx entry layouts come from the §3.1 / §3.2 appendix and Jackcess `IndexImpl`, but `rel_tbl_type = 0x01` and the `cascade_ups` / `cascade_dels` byte placement come from the appendix probe of `NorthwindTraders.accdb` and have not been independently re-verified against an Access-authored fixture that the user opened, modified, and saved. Defer production use until that round-trip has been verified by hand.
-
-### 7.5 W10 — what shipped (2026-04-25)
-
-Public surface: unchanged. The runtime FK enforcement is a pure behaviour change inside the existing `InsertRowAsync` / `InsertRowsAsync` / `UpdateRowsAsync` / `DeleteRowsAsync` methods. No new public types or methods.
-
-What the writer enforces, per public mutation call:
-
-- **`InsertRowAsync` / `InsertRowsAsync` (object\[\] and generic POCO).** Loads every enforced relationship (`MSysRelationships.grbit & 0x00000002 == 0`). For every relationship whose foreign side is the destination table, builds a composite-key string from the row's FK columns; if the tuple contains a null component the row is allowed (Access semantics for unset FKs); otherwise the parent table snapshot is loaded once per relationship per call and the tuple must hit the parent-key set. Bulk inserts share a single `FkContext` across rows; self-referential inserts augment the cached parent-key set after each successful insert so a later row in the same call can satisfy a FK that points at an earlier row.
-- **`UpdateRowsAsync`.** Builds the new-row payload for every matching row up front (no disk pages mutated yet). For every enforced relationship whose foreign side is the destination table, runs the same parent-presence check on the new payload. For every enforced relationship whose primary side is the destination table, if any of the relationship's PK columns is being updated, gathers `(oldKey, newPkValues)` per matching row and either cascades the new key to dependent child rows (`CascadeUpdates`) or throws `InvalidOperationException` when at least one child references the old key (`!CascadeUpdates`). The disk mutations (`MarkRowDeletedAsync` + `InsertRowDataAsync`) only happen after every check has passed.
-- **`DeleteRowsAsync`.** Builds the list of matching rows up front. For every enforced relationship whose primary side is the destination table, gathers the deleted PK tuples and either cascades the delete to dependent child rows (`CascadeDeletes`) or throws when at least one child references one of the deleted keys (`!CascadeDeletes`). Cascade-delete recurses through the foreign side's own outgoing relationships up to a recursion depth of 64 (constant `CascadeMaxDepth` in `AccessWriter.cs`); pathological cycles throw `InvalidOperationException`.
-
-Composite-key normalisation (`AccessWriter.BuildCompositeKey` / `AppendNormalized`):
-
-- `string` is upper-cased via `ToUpperInvariant` (matches JET case-insensitive equality).
-- `Guid` is encoded as N-format hex.
-- `byte[]` is Base64.
-- `DateTime` is normalised to `ToUniversalTime().Ticks`.
-- `IConvertible` numerics are normalised through `decimal` so cross-width values (e.g. user passes `int 5` against a `long` parent column) compare equal.
-- A null component in the FK tuple makes the whole composite key null and the row is allowed without a parent lookup.
-
-W10 explicit constraints:
-
-- Each enforcement call performs an **O(N) scan** of the parent table snapshot (no index seek). Bulk inserts pay the snapshot cost once per relationship per call.
-- Cascade-delete and cascade-update **do not** participate in the W5 maintenance hooks recursively — they call `MarkRowDeletedAsync` / `InsertRowDataAsync` directly and invoke `MaintainIndexesAsync` once per child table at the end of the cascade for that table. This matches the bulk-rebuild strategy in W5.
-- A relationship with `EnforceReferentialIntegrity = false` (W9a `grbit` bit `0x00000002`) is silently excluded from the enforced set. Such relationships still ship their `MSysRelationships` row and per-TDEF FK entries (W9a / W9b).
-- Cascade chains are capped at recursion depth 64 (`CascadeMaxDepth`). Cycles that would exceed this depth throw `InvalidOperationException`.
-- The library still has no SQL engine. Enforcement is purely a row-by-row check inside `AccessWriter`; queries against the file from Microsoft Access or any other tool are not affected.
-
-What W10 does **not** do:
-
-- **No relationship deletion or rename API.** Enforcement reads whatever relationships are currently in `MSysRelationships`; there is no public way to remove one short of editing the file in Microsoft Access.
-- **No SET NULL / SET DEFAULT cascade actions.** Access supports only CASCADE / RESTRICT semantics, and neither do we.
-- **No transaction or rollback.** A cascade-delete that fails mid-way leaves the file in whatever partially-flushed state the page cache had reached. Same as every other writer phase.
-- **No FK enforcement on `RewriteTableAsync`** (the copy-and-swap path used by `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`). Schema evolution is treated as a privileged operation; the user is expected to keep their FK columns intact across renames or run their own consistency check after.
-- **Microsoft Access compact-and-repair smoke validation.** Same gap as every other writer phase (see §8).
-
-Validation actually performed for W10:
-
-- ✅ In-repo round-trip tests in `JetDatabaseWriter.Tests/Core/ForeignKeyEnforcementTests.cs` (11 tests): single-column insert reject + accept, null-FK insert allowed, `EnforceReferentialIntegrity=false` allows any value, bulk-insert self-referential rows where later rows depend on earlier ones, FK-side update rejects new value with no parent, PK-side delete with and without cascade, PK-side update with and without cascade, multi-column FK enforcement.
-- ✅ All 14 prior W9a/W9b round-trip tests still pass (none of them inserted into FK tables after declaring relationships).
-- ✅ Existing pinned `LimitationsTests.SchemaEvolution_IAccessWriter_DoesNotExposeIndexOrConstraintApis` still passes (W10 added no public method names — all changes are inside existing `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync`).
-- ✅ Full test suite: 1887 tests passing (1876 prior + 11 new).
-- See §8 for the outstanding Microsoft Access compact-and-repair validation gap. W10's empirical risk surface is small: it does not change any on-disk byte layout. The risk is purely behavioural — a relationship with `EnforceReferentialIntegrity=false` (or no relationships at all) gives byte-identical output to W9b.
-
-### 7.6 W11 — what shipped (2026-04-25)
+Kept as a brief reference because W11 lifted the W1 single-column-non-PK restriction, which is widely cited.
 
 Public surface added on `IndexDefinition`:
 
-- `IsUnique` (init-only `bool`, default `false`) — emits the real-idx `flags` bit `0x01` (§3.1) on the matching physical descriptor when set on a non-PK index. PK indexes still carry `flags = 0x00` because uniqueness is signalled by the logical-idx `index_type = 0x01` discriminator (probe-confirmed §3.1 note); setting `IsUnique` on a PK is silently subsumed.
-- `DescendingColumns` (init-only `IReadOnlyList<string>`, default empty) — case-insensitive subset of `Columns`. Each listed entry's matching col_map slot is emitted with `col_order = 0x02` (Jackcess `IndexImpl` convention; the format-probe corpus contains no descending fixtures, so the byte value has not been independently re-verified). Entries that do not match any name in `Columns` throw `ArgumentException` at `CreateTableAsync` time.
-- The W1-era restriction "non-PK indexes must be single column" is lifted. `IndexDefinition` now accepts up to 10 columns regardless of `IsPrimaryKey` (the JET col_map width). Duplicate names within a single index, unknown column references, and over-10-column declarations still throw the existing `ArgumentException` / `NotSupportedException`.
+- `IsUnique` (init-only `bool`, default `false`) — emits real-idx `flags` bit `0x01` (§3.1) on non-PK indexes. PK indexes still carry `flags = 0x00`; the `IsUnique` setter is silently subsumed because PK uniqueness is signalled by the logical-idx `index_type = 0x01` discriminator.
+- `DescendingColumns` (init-only `IReadOnlyList<string>`, default empty) — case-insensitive subset of `Columns`. Each listed entry's col_map slot is emitted with `col_order = 0x02`; entries that don't match any name in `Columns` throw `ArgumentException` at `CreateTableAsync` time.
+- The W1-era restriction "non-PK indexes must be single column" is lifted. `IndexDefinition` now accepts up to 10 columns regardless of `IsPrimaryKey`.
 
-Internal changes inside `AccessWriter`:
-
-- `ResolvedIndex` now carries `IReadOnlyList<bool> Ascending` (parallel to `ColumnNumbers`) and `bool IsUnique` in addition to the existing `Name` / `ColumnNumbers` / `IsPrimaryKey`.
-- `ResolveIndexes` validates `DescendingColumns ⊆ Columns` (case-insensitive), populates the per-column ascending array, and short-circuits the W1 "single column for non-PK" branch.
-- `BuildTDefPageWithIndexOffsets` writes `0x01`/`0x02` per col_map slot (was hardcoded `0x01` ascending) and writes `flags = 0x01` at `phys + 42` when `IsUnique && !IsPrimaryKey`.
-- `MaintainIndexesAsync` was rewritten to:
-  - Read every populated col_map slot per real-idx (decoding the per-slot direction from the `col_order` byte).
-  - Walk the logical-idx entries and promote any real-idx referenced by a PK logical idx (`index_type = 0x01`) to `IsUnique = true` so PK uniqueness is enforced even with the §3.1 `flags = 0x00` byte pattern.
-  - Build a composite key per row by concatenating `IndexKeyEncoder.EncodeEntry(col.Type, value, ascending)` for each slot.
-  - After sorting, scan adjacent pairs for byte-equality when the index is unique and throw `InvalidOperationException` with a "remove the duplicate row and retry" message.
-- The two `projectIndexes` callbacks used by `RewriteTableAsync` (column rename + add/drop column copy-and-swap) now forward `IsUnique` (from `IndexMetadata.IsUnique`) and `DescendingColumns` (from any `IndexColumnReference` whose `IsAscending == false`) for both Normal and PrimaryKey indexes, including the previously-dropped multi-column Normal case.
-
-W11 explicit constraints:
-
-- **Post-write unique enforcement.** `MaintainIndexesAsync` runs after the row data has already been persisted to disk. A unique-violation throw therefore leaves the duplicate row written but the index B-tree stale until the caller deletes one of the offending rows. The exception message states this explicitly. Pre-write transactional unique enforcement (the W10-style gate) is deferred — it would require building the new candidate row's encoded key and seeking the existing leaf page chain before writing the row, which is a significantly larger change.
-- **Descending text indexes still fall through silently** when the W7 General Legacy text encoder rejects an out-of-range character (space, punctuation, non-ASCII). The fall-through is unchanged from W5: the leaf goes stale until Compact & Repair. Same applies to multi-column composite keys where any one column's type is unsupported by `IndexKeyEncoder` (GUID, numeric, attachment, etc.).
-- **`col_order = 0x02` byte value** for descending is the Jackcess `IndexImpl` convention and has not been independently re-verified against an Access-authored fixture. The format-probe corpus contains no descending indexes; rerun the probe against a fixture that exercises descending indexes before relying on the byte value in production.
-
-What W11 does **not** do:
-
-- **No pre-write unique enforcement.** The unique check is post-write per the constraint above.
-- **No prefix compression / `tail_page` chain.** Inherited from W4 — multi-column composite keys are full-width every entry.
-- **No incremental B-tree maintenance.** Each insert/update/delete still rebuilds the entire B-tree per index.
-- **No general 1033v1 text encoding** (still W7 territory; descending-text indexes remain a partial feature).
-
-Validation actually performed for W11:
-
-- ✅ In-repo round-trip tests in `JetDatabaseWriter.Tests/Core/IndexWriterAdvancedTests.cs` (11 tests): unique flag round-trip, multi-column non-PK round-trip, descending single-column emits `col_order = 0x02`, mixed asc/desc multi-column round-trip, `DescendingColumns` referencing unknown column throws `ArgumentException`, unique single-column duplicate insert throws `InvalidOperationException`, unique non-duplicate inserts succeed (3-entry leaf rebuilt), multi-column index bulk insert rebuilds 4-entry leaf, unique multi-column duplicate composite key throws, multi-column index survives `AddColumnAsync`, descending index survives `RenameColumnAsync`.
-- ✅ Existing `PrimaryKeyWriterTests.IndexDefinition_RejectsMultiColumn_WhenNotPrimaryKey` was renamed to `IndexDefinition_AcceptsMultiColumn_WhenNotPrimaryKey` and now asserts the lifted-restriction success path. All other prior `IndexWriterTests` / `IndexMaintenanceTests` / `IndexMetadataTests` / `PrimaryKeyWriterTests` / `RelationshipWriterTests` / `ForeignKeyEnforcementTests` / `LimitationsTests` (86 tests in the index area) still pass unchanged.
-- ✅ `AccessWriterTests.InsertRows_*` tests against fixtures with built-in unique indexes (e.g. `users` in some `.mdb` fixtures) needed `BuildDummyRow` to vary values per row so the new unique enforcement does not trip on identical dummy rows. The W11 detection itself is correct — the prior tests were quietly relying on the silent-skip behaviour.
-- ✅ Full test suite: 1941 tests passing (1930 prior + 11 new).
-- See §8 for the outstanding Microsoft Access compact-and-repair validation gap. W11 expands the on-disk byte surface in two places: the `flags` byte at real-idx `phys + 42` (now `0x01` for non-PK unique indexes) and the `col_order` byte in each col_map slot (now `0x02` for descending). Both byte placements are taken from §3.1 of this doc + Jackcess `IndexImpl`; neither has been round-tripped through a real Access install. Defer production use until that round-trip has been verified by hand.
+Validation: 11 round-trip tests in `IndexWriterAdvancedTests`. See §8 for the standing Microsoft Access compact-and-repair validation gap. W11 expands the on-disk byte surface in two places (the `flags` byte at real-idx `phys + 42` and the `col_order` byte in each col_map slot); both byte placements come from §3.1 + Jackcess `IndexImpl`.
 
 ## 8. Validation strategy
 
@@ -485,7 +269,7 @@ Every writer phase landing on disk format MUST be validated against:
 
 A PR that ships with only synthetic round-trip tests and no Access verification note **must not** be merged.
 
-> **Outstanding gap (applies to every shipped phase: W1–W5, W8, W9a, W9b):** automated Microsoft Access compact-and-repair validation is not yet wired up. Each shipped phase has been round-trip-tested in this repo against the reader path, but no test rig opens the produced files in a real Access install. Phase-specific risk notes are listed in the §7 subsections; do not ship index/PK/FK output to production users until step (2) above has been performed by hand for that phase.
+> **Outstanding gap (applies to every shipped phase: W1–W5, W7, W8, W9a, W9b, W10, W11):** automated Microsoft Access compact-and-repair validation is not yet wired up. Each shipped phase has been round-trip-tested in this repo against the reader path, but no test rig opens the produced files in a real Access install. Phase-specific risk notes are listed in the §7 subsections; do not ship index/PK/FK output to production users until step (2) above has been performed by hand for that phase.
 
 ## 9. References
 
