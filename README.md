@@ -637,22 +637,27 @@ Wrong or missing passwords throw `UnauthorizedAccessException`. Corrupt or non-J
 
 ## Limitations
 
-The writer targets the most common create / insert / update / delete scenarios. The following are **not** supported today:
+The writer covers the common create / insert / update / delete path. The items below are **not yet implemented** and are the most likely places to hit a wall.
 
 ### Indexes
-- **Single-column, non-unique, ascending only.** Multi-column, unique, and descending indexes are not supported. Jet3 (`.mdb` Access 97) rejects `IndexDefinition` entirely.
-- **Indexable key types:** `Byte`, `Integer`, `Long Integer`, `Currency`, `Single`, `Double`, `Date/Time`, plus `Text` whose values contain **only digits (0–9) and ASCII letters (A–Z, a–z)** (case-insensitive General Legacy encoding). Text values containing spaces, punctuation, accented or non-ASCII characters silently skip rebuild and the leaf goes stale until Access rebuilds it on Compact & Repair. Indexes declared on `GUID`, `Decimal`, `OLE`, `MEMO`, attachment, or complex columns round-trip as schema only — the B-tree leaf is not maintained on mutation.
-- **Bulk rebuild on every mutation.** No incremental B-tree maintenance, no prefix compression, no `tail_page` chain — each insert/update/delete rebuilds the entire B-tree. Cost scales with row count per write.
+- **Only single-column, non-unique, ascending indexes are maintained.** Multi-column, unique, and descending indexes are not emitted as live B-trees. Jet3 (`.mdb` Access 97) rejects `IndexDefinition` entirely.
+- **Indexable key types are limited.** Live leaf maintenance is supported for `Byte`, `Integer`, `Long Integer`, `Currency`, `Single`, `Double`, `Date/Time`, and `Text` containing only ASCII letters/digits. Other types (`GUID`, `Decimal`, `OLE`, `MEMO`, attachment, complex) and text with spaces/punctuation/non-ASCII round-trip as schema only — Access rebuilds the leaf on Compact & Repair.
+- **No incremental B-tree maintenance.** Each insert/update/delete rebuilds the entire B-tree (no prefix compression, no `tail_page` chain). Cost scales with row count.
 
 ### Primary & foreign keys
-- **Multi-column primary keys ship schema only.** Single-column PKs are maintained on every mutation; multi-column PKs require a Compact & Repair in Access to populate the leaf.
-- **Runtime referential-integrity is enforced** when a relationship is created with `EnforceReferentialIntegrity = true` (the default): `InsertRowAsync` / `UpdateRowsAsync` reject child rows whose foreign-key tuple has no matching parent (a tuple containing any `DBNull` is allowed). `DeleteRowsAsync` and PK-changing `UpdateRowsAsync` either cascade to dependent child rows when `CascadeDeletes` / `CascadeUpdates` is set or reject the operation otherwise. Enforcement is opt-out per relationship — set `EnforceReferentialIntegrity = false` to recreate the historical "schema only" behaviour. Cascade chains are limited to a recursion depth of 64 to guard against pathological cyclic relationships. Each enforcement call performs an O(N) scan of the parent table snapshot (no index seek), and parent-key sets are cached for the duration of a single `InsertRowsAsync` call so bulk inserts pay the snapshot cost once.
+- **Multi-column primary keys ship schema only** (single-column PKs are maintained live).
 - **No relationship deletion or rename.**
 - **TDEF must fit on one page** after FK entries are appended, otherwise `NotSupportedException`.
-- **Validation gap.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not yet been round-tripped through Microsoft Access on Windows for a Compact & Repair smoke test. Defer production use until that has been verified by hand.
+- **RI enforcement uses an O(N) parent scan** (no index seek). Parent-key sets are cached per `InsertRowsAsync` call.
+- **Not yet validated end-to-end through Microsoft Access.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not been round-tripped through a Compact & Repair pass on Windows.
 
 ### Specialized column kinds
-- **Attachment & multi-value (complex) columns — schema, row-level inserts, cascade-on-delete.** `CreateTableAsync` accepts `ColumnDefinition` entries with `IsAttachment = true` or `IsMultiValue = true` (Phase C3, ACE `.accdb` only): the parent column descriptor, hidden flat child table, and `MSysComplexColumns` row are emitted. Phase C4 (2026-04-25) adds `AccessWriter.AddAttachmentAsync` / `AddMultiValueItemAsync` for inserting payloads into an existing parent row, plus `AccessReader.GetAttachmentsAsync` / `GetMultiValueItemsAsync` for spec-compliant retrieval. The wrapper format follows MS-ACCDB §3.1 (4-byte LE typeFlag + dataLen + extension + payload, with raw-deflate compression skipped for already-compressed extensions like `jpg`/`zip`/`mp3`). Phase C5 (2026-04-25) adds **cascade-on-delete**: `DeleteRowsAsync` on a parent row (and FK cascade-deletes that reach a parent row) automatically removes the matching rows from each complex column's hidden flat child table by joining on the parent's `ConceptualTableID` slot. What's still missing: `DropTableAsync` cascade for the hidden flat tables (Phase C6), and the per-flat-table primary-key / foreign-key indexes Microsoft Access expects (a Compact & Repair pass in Access is required to rebuild them). Attachment payloads are limited to ≤256 bytes per file due to the writer's inline-OLE cap (no LVAL chain emission yet). `ComplexTypeObjectID` is set to `0` because the `MSysComplexType_*` template tables are not yet scaffolded. Tables that already contain attachment columns when opened cannot be passed through `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`.
+- **Attachment / multi-value (complex) columns — partial.** Schema creation, row-level inserts, spec-compliant reads, and cascade-on-delete from the parent row work for ACE `.accdb`. Still missing:
+  - `DropTableAsync` cascade for the hidden flat child tables.
+  - Per-flat-table PK/FK indexes Access expects (Compact & Repair rebuilds them).
+  - LVAL chain emission for attachment payloads — current cap is ~256 bytes per file (inline-OLE limit).
+  - `MSysComplexType_*` template tables (`ComplexTypeObjectID` is written as `0`).
+  - `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` on tables that already contain attachment columns.
 - **No calculated columns** (Access 2010+ expression columns).
 - **No hyperlink semantics.** Hyperlink fields round-trip as plain MEMO text; the `#display#address#subaddress#` structure is not parsed or emitted.
 
@@ -660,7 +665,7 @@ The writer targets the most common create / insert / update / delete scenarios. 
 - Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.
 
 ### Concurrency
-- **No byte-range locking and no populated `.ldb` slots.** Microsoft Access uses page-level byte-range locks via `LockFileEx` plus 64-byte machine-name / SID entries in the lockfile; this library implements neither. Concurrent writers against the same file (including Microsoft Access opening the file while a writer is active) will corrupt it. Open with `RespectExistingLockFile = true` (default) and keep `FileShare.Read` / `FileShare.None` on the writer to let the OS block other openers.
+- **No byte-range locking and no populated `.ldb` slots.** Microsoft Access uses page-level byte-range locks via `LockFileEx` plus 64-byte machine-name / SID entries in the lockfile; this library implements neither. Concurrent writers against the same file (including Access opening it while a writer is active) will corrupt it. Keep `RespectExistingLockFile = true` (default) and `FileShare.Read` / `FileShare.None` on the writer to let the OS block other openers.
 - **No transactions or rollback.** A crashed write leaves the file in whatever partially-flushed state the page cache had reached.
 
 ---
