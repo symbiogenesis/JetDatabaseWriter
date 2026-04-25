@@ -463,8 +463,9 @@ public sealed class LimitationsTests : IDisposable
     public void SpecializedColumns_AttachmentApi_IsRowLevelOnly()
     {
         // Phase C4 (2026-04-25) shipped row-level AddAttachmentAsync /
-        // GetAttachmentsAsync APIs. The remaining limitation is the writer's
-        // 256-byte inline-OLE cap, which restricts attachment payload size.
+        // GetAttachmentsAsync APIs; Phase C8 (2026-04-25) lifted the 256-byte
+        // inline-OLE cap by routing oversized attachment payloads through
+        // freshly-allocated LVAL data pages.
         Assert.NotNull(typeof(IAccessWriter).GetMethod("AddAttachmentAsync"));
         Assert.NotNull(typeof(IAccessReader).GetMethod("GetAttachmentsAsync"));
     }
