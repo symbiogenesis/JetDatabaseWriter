@@ -641,7 +641,7 @@ The writer covers the common create / insert / update / delete path. The items b
 
 ### Indexes
 - **Live B-tree maintenance covers single- and multi-column indexes, ascending or descending, optionally unique.** Jet3 (`.mdb` Access 97) rejects `IndexDefinition` entirely.
-- **Indexable key types are limited.** Live leaf maintenance is supported for `Byte`, `Integer`, `Long Integer`, `Currency`, `Single`, `Double`, `Date/Time`, `GUID`, and `Text` containing only ASCII letters/digits. Other types (`Decimal`, `OLE`, `MEMO`, attachment, complex) and text with spaces/punctuation/non-ASCII round-trip as schema only — Access rebuilds the leaf on Compact & Repair. If *any* column in a multi-column index is unsupported, the whole index falls through to the schema-only path.
+- **Indexable key types are limited.** Live leaf maintenance is supported for `Byte`, `Integer`, `Long Integer`, `Currency`, `Single`, `Double`, `Date/Time`, `GUID`, `Decimal`, and `Text` containing only ASCII letters/digits. Other types (`OLE`, `MEMO`, attachment, complex) and text with spaces/punctuation/non-ASCII round-trip as schema only — Access rebuilds the leaf on Compact & Repair. If *any* column in a multi-column index is unsupported, the whole index falls through to the schema-only path.
 - **No incremental B-tree maintenance.** Each insert/update/delete rebuilds the entire B-tree (no prefix compression, no `tail_page` chain). Cost scales with row count.
 - **Unique enforcement is post-write.** A duplicate row is persisted to disk before the bulk-rebuild detects the violation and throws `InvalidOperationException`; the caller must delete one of the offending rows manually before continuing. The index B-tree is left stale until the duplicate is removed.
 

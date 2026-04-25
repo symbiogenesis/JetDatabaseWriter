@@ -366,6 +366,62 @@ public sealed class IndexWriterAdvancedTests
             await writer.InsertRowAsync("T", new object[] { dup }, ct));
     }
 
+    [Fact]
+    public async Task DecimalIndex_BulkInsert_RebuildsLeafWithExpectedEntryCount()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                new[] { new ColumnDefinition("Amount", typeof(decimal)) },
+                new[] { new IndexDefinition("IX_Amount", "Amount") },
+                ct);
+
+            await writer.InsertRowsAsync(
+                "T",
+                new[]
+                {
+                    new object[] { -1000.50m },
+                    new object[] { 0m },
+                    new object[] { 1m },
+                    new object[] { 1.50m },
+                    new object[] { 1000m },
+                },
+                ct);
+        }
+
+        // W13: Decimal-keyed index now participates in the W5 bulk-rebuild path.
+        // Before W13 this would have stayed at the empty W3 placeholder leaf
+        // (entry count = 1, the implicit first entry).
+        Assert.Equal(5, FindMaxLeafEntryCount(stream.ToArray()));
+    }
+
+    [Fact]
+    public async Task UniqueDecimalIndex_DuplicateInsert_Throws()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using var writer = await OpenWriterAsync(stream);
+
+        await writer.CreateTableAsync(
+            "T",
+            new[] { new ColumnDefinition("Amount", typeof(decimal)) },
+            new[] { new IndexDefinition("UQ_Amount", "Amount") { IsUnique = true } },
+            ct);
+
+        // 1.50 and 1.5 normalise to the same numeric value; they must collide
+        // under the W13 target-scale normalisation.
+        await writer.InsertRowAsync("T", new object[] { 1.50m }, ct);
+        await writer.InsertRowAsync("T", new object[] { 2m }, ct);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await writer.InsertRowAsync("T", new object[] { 1.5m }, ct));
+    }
+
     // --- helpers (page scanning) ---------------------------------------------
 
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter;
 
 using System;
 using System.Globalization;
+using System.Numerics;
 
 /// <summary>
 /// JET index sort-key encoder for fixed-width numeric and date/time column types
@@ -294,6 +295,176 @@ internal static class IndexKeyEncoder
 
         result[18] = ascending ? (byte)0x08 : unchecked((byte)~0x08);
         return result;
+    }
+
+    /// <summary>
+    /// W13 — Decimal (<c>T_NUMERIC = 0x10</c>) sort-key encoding via the Jackcess
+    /// <c>FixedPointColumnDescriptor</c> / <c>LegacyFixedPointColumnDescriptor</c>
+    /// layout. Produces the entry-flag byte (0x7F ascending non-null / 0x80
+    /// descending non-null / 0x00 / 0xFF for null) followed by 17 bytes:
+    /// 1 sign byte + 16-byte big-endian unsigned mantissa.
+    /// <para>
+    /// All values within a single index rebuild MUST be encoded with the same
+    /// <paramref name="targetScale"/> to be byte-comparable. Callers should
+    /// scan the snapshot to find the maximum natural scale present and pass it
+    /// here. Values whose natural scale is less than <paramref name="targetScale"/>
+    /// are multiplied by <c>10^(targetScale - naturalScale)</c> via
+    /// <see cref="BigInteger"/> arithmetic; values whose mantissa exceeds the
+    /// 16-byte (128-bit unsigned) field after scaling throw
+    /// <see cref="NotSupportedException"/>, which the W5 maintenance loop
+    /// catches to fall through to the stale-leaf path.
+    /// </para>
+    /// <para>
+    /// Twiddling rules (per Jackcess <c>handleNegationAndOrder</c>) — the
+    /// 17-byte payload is constructed with byte 0 = sign byte (0x80 negative,
+    /// 0x00 positive) and bytes 1..16 = big-endian mantissa, then mutated:
+    /// <list type="bullet">
+    /// <item><description><b>Legacy</b> (Jet4 <c>.mdb</c>, V2000–V2003): if
+    /// (<c>negative == ascending</c>) flip all 17 bytes; then set byte 0 to
+    /// 0x00 (negative) or 0xFF (positive).</description></item>
+    /// <item><description><b>New-style</b> (ACCDB, V2007+): set byte 0 to 0xFF;
+    /// then if (<c>negative == ascending</c>) flip all 17 bytes.</description></item>
+    /// </list>
+    /// The flag-byte prefix is added unflipped (0x7F asc / 0x80 desc).
+    /// </para>
+    /// <para>
+    /// <b>Validation gap:</b> the format-probe corpus does not contain a
+    /// NUMERIC-keyed index leaf; these byte sequences come directly from
+    /// Jackcess and have not been independently verified against an
+    /// Access-authored fixture. See
+    /// <c>docs/design/index-and-relationship-format-notes.md</c> §8.
+    /// </para>
+    /// </summary>
+    public static byte[] EncodeNumericEntry(object? value, bool ascending, int targetScale, bool legacy)
+    {
+        bool isNull = value is null || value is DBNull;
+        if (isNull)
+        {
+            return new[] { ascending ? FlagAscendingNull : FlagDescendingNull };
+        }
+
+        decimal d = ToDecimal(value!);
+        int[] bits = decimal.GetBits(d);
+        int flags = bits[3];
+        bool negative = (flags & unchecked((int)0x80000000)) != 0;
+        int scale = (flags >> 16) & 0x7F;
+
+        if (targetScale < 0 || targetScale > 28)
+        {
+            throw new ArgumentOutOfRangeException(nameof(targetScale), targetScale, "targetScale must be in [0, 28].");
+        }
+
+        if (targetScale < scale)
+        {
+            throw new ArgumentException(
+                $"targetScale ({targetScale}) must be >= the value's natural scale ({scale}).",
+                nameof(targetScale));
+        }
+
+        // Build BigInteger from the unsigned 96-bit mantissa.
+        byte[] leMantissa = new byte[13]; // 12 data bytes + trailing zero ensures positive sign in BigInteger.
+        WriteInt32Le(leMantissa, 0, bits[0]);
+        WriteInt32Le(leMantissa, 4, bits[1]);
+        WriteInt32Le(leMantissa, 8, bits[2]);
+        BigInteger mag = new BigInteger(leMantissa);
+
+        if (targetScale > scale)
+        {
+            mag *= BigInteger.Pow(10, targetScale - scale);
+        }
+
+        // Encode mag as big-endian 16-byte unsigned. BigInteger.ToByteArray returns
+        // little-endian two's-complement; mag is non-negative here so we just need
+        // to drop any trailing zero sign-byte before reversing.
+        byte[] magLe = mag.ToByteArray();
+        int magLen = magLe.Length;
+        while (magLen > 0 && magLe[magLen - 1] == 0)
+        {
+            magLen--;
+        }
+
+        if (magLen > 16)
+        {
+            throw new NotSupportedException(
+                $"Numeric index key mantissa requires {magLen} bytes after rescale to {targetScale} digits, " +
+                "which exceeds the 16-byte (128-bit) NUMERIC field. Use a smaller target scale or a smaller value.");
+        }
+
+        byte[] valueBytes = new byte[17];
+        valueBytes[0] = negative ? (byte)0x80 : (byte)0x00;
+        for (int i = 0; i < magLen; i++)
+        {
+            valueBytes[1 + (16 - 1 - i)] = magLe[i];
+        }
+
+        // Apply Jackcess byte-twiddling rules (see XML doc above).
+        if (legacy)
+        {
+            if (negative == ascending)
+            {
+                FlipBytes(valueBytes);
+            }
+
+            valueBytes[0] = negative ? (byte)0x00 : (byte)0xFF;
+        }
+        else
+        {
+            valueBytes[0] = 0xFF;
+            if (negative == ascending)
+            {
+                FlipBytes(valueBytes);
+            }
+        }
+
+        byte[] result = new byte[18];
+        result[0] = ascending ? FlagAscendingNonNull : FlagDescendingNonNull;
+        Buffer.BlockCopy(valueBytes, 0, result, 1, 17);
+        return result;
+    }
+
+    /// <summary>
+    /// Returns the maximum natural scale (decimal places) across the supplied
+    /// values. Null and <see cref="DBNull"/> are skipped. Used by
+    /// <see cref="EncodeNumericEntry"/> callers to compute a per-rebuild
+    /// canonical <c>targetScale</c>.
+    /// </summary>
+    public static int ComputeMaxNumericScale(System.Collections.Generic.IEnumerable<object?> values)
+    {
+        Guard.NotNull(values, nameof(values));
+        int max = 0;
+        foreach (object? v in values)
+        {
+            if (v is null || v is DBNull)
+            {
+                continue;
+            }
+
+            decimal d = ToDecimal(v);
+            int scale = (decimal.GetBits(d)[3] >> 16) & 0x7F;
+            if (scale > max)
+            {
+                max = scale;
+            }
+        }
+
+        return max;
+    }
+
+    private static void FlipBytes(byte[] arr)
+    {
+        for (int i = 0; i < arr.Length; i++)
+        {
+            arr[i] = unchecked((byte)~arr[i]);
+        }
+    }
+
+    private static void WriteInt32Le(byte[] dest, int offset, int value)
+    {
+        uint u = unchecked((uint)value);
+        dest[offset] = (byte)(u & 0xFF);
+        dest[offset + 1] = (byte)((u >> 8) & 0xFF);
+        dest[offset + 2] = (byte)((u >> 16) & 0xFF);
+        dest[offset + 3] = (byte)((u >> 24) & 0xFF);
     }
 
     /// <summary>
