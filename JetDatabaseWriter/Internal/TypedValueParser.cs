@@ -75,18 +75,37 @@ internal static class TypedValueParser
 #if NET5_0_OR_GREATER
         if (!hexString.Contains('-'))
         {
-            return Convert.FromHexString(hexString);
+            try
+            {
+                return Convert.FromHexString(hexString);
+            }
+            catch (FormatException)
+            {
+                // OLE / memo decoders surface diagnostic strings like
+                // "(OLE chain error: ...)" or "(memo on LVAL page)" when the
+                // long-value chain cannot be walked. These are not real binary
+                // payloads; surface them as empty byte arrays so callers can
+                // distinguish "no data decoded" from a parse failure.
+                return [];
+            }
         }
 #endif
 
         // Fallback: dash-separated format ("XX-XX-XX-XX")
-        string[] hexValues = hexString.Split('-', StringSplitOptions.RemoveEmptyEntries);
-        byte[] bytes = new byte[hexValues.Length];
-        for (int i = 0; i < hexValues.Length; i++)
+        try
         {
-            bytes[i] = Convert.ToByte(hexValues[i], 16);
-        }
+            string[] hexValues = hexString.Split('-', StringSplitOptions.RemoveEmptyEntries);
+            byte[] bytes = new byte[hexValues.Length];
+            for (int i = 0; i < hexValues.Length; i++)
+            {
+                bytes[i] = Convert.ToByte(hexValues[i], 16);
+            }
 
-        return bytes;
+            return bytes;
+        }
+        catch (FormatException)
+        {
+            return [];
+        }
     }
 }

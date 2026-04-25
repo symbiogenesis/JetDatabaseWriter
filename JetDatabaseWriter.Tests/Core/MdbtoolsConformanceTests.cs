@@ -31,9 +31,15 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     // ── nwind.mdb (Jet4 / Access 2000 .mdb) ───────────────────────────────────
 
     /// <summary>Mirror of <c>mdb-tables nwind.mdb</c> from mdbtools' test_script.sh.</summary>
+    /// <remarks>
+    /// The mdbtools nwind.mdb fixture is a stripped-down Northwind that retains
+    /// only "Order Details", "Orders", "Products", "Shippers" and "Umsätze"
+    /// as user tables (verified by hand-decoding MSysObjects). Names like
+    /// "Customers"/"Employees"/"Suppliers" appear only as Forms/Macros there.
+    /// </remarks>
     /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
-    public async Task Nwind_ListTables_IncludesCustomersAndUmsätze()
+    public async Task Nwind_ListTables_IncludesOrdersAndUmsätze()
     {
         if (!File.Exists(TestDatabases.MdbtoolsNwind))
         {
@@ -44,7 +50,7 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
-        Assert.Contains("Customers", tables);
+        Assert.Contains("Orders", tables);
         Assert.Contains("Umsätze", tables);
     }
 
@@ -90,12 +96,14 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     }
 
     /// <summary>
-    /// Mirror of <c>select * from Customers LIMIT 10</c> in mdbtestdata/sql/nwind.sql — the
-    /// reader can return at least 10 rows from the Customers table via the LINQ surface.
+    /// Mirror of <c>select * from Orders LIMIT 10</c> — the reader returns at
+    /// least 10 rows via the LINQ surface. (mdbtestdata/sql/nwind.sql targets
+    /// Customers, but the bundled nwind.mdb has Customers only as Forms; Orders
+    /// is the closest analogue.)
     /// </summary>
     /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
-    public async Task Nwind_Customers_TakeTen_ReturnsTenRows()
+    public async Task Nwind_Orders_TakeTen_ReturnsTenRows()
     {
         if (!File.Exists(TestDatabases.MdbtoolsNwind))
         {
@@ -103,7 +111,7 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
-        var rows = await reader.Rows("Customers", cancellationToken: TestContext.Current.CancellationToken)
+        var rows = await reader.Rows("Orders", cancellationToken: TestContext.Current.CancellationToken)
             .Take(10)
             .ToListAsync(TestContext.Current.CancellationToken);
 
@@ -111,13 +119,14 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     }
 
     /// <summary>
-    /// Mirror of <c>select * from Customers WHERE City = 'Helsinki'</c> in
-    /// mdbtestdata/sql/nwind.sql — the LINQ surface produces a non-empty result
-    /// for the same predicate.
+    /// Predicate scan over an existing user table — the LINQ surface produces a
+    /// non-empty result for at least one ShipCountry value present in Orders.
+    /// (mdbtestdata/sql/nwind.sql tests City='Helsinki' on Customers; Customers
+    /// is not present as a table in the bundled fixture.)
     /// </summary>
     /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
-    public async Task Nwind_Customers_WhereCityHelsinki_ReturnsNonEmpty()
+    public async Task Nwind_Orders_WhereShipCountryFinland_ReturnsNonEmpty()
     {
         if (!File.Exists(TestDatabases.MdbtoolsNwind))
         {
@@ -125,24 +134,25 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
-        var meta = await reader.GetColumnMetadataAsync("Customers", TestContext.Current.CancellationToken);
-        int cityOrdinal = meta.Select((c, i) => (c, i)).First(t => t.c.Name == "City").i;
+        var meta = await reader.GetColumnMetadataAsync("Orders", TestContext.Current.CancellationToken);
+        int shipCountryOrdinal = meta.Select((c, i) => (c, i)).First(t => t.c.Name == "ShipCountry").i;
 
-        var matches = await reader.Rows("Customers", cancellationToken: TestContext.Current.CancellationToken)
-            .Where(row => row[cityOrdinal] is string s && s == "Helsinki")
+        var matches = await reader.Rows("Orders", cancellationToken: TestContext.Current.CancellationToken)
+            .Where(row => row[shipCountryOrdinal] is string s && s == "Finland")
             .ToListAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(matches);
     }
 
     /// <summary>
-    /// Mirror of <c>select * from Customers WHERE CompanyName LIKE 'Océ%'</c> in
-    /// mdbtestdata/sql/nwind.sql — a non-ASCII prefix predicate via LINQ matches
-    /// at least one row, exercising the codepage decoder on the Customers table.
+    /// Non-ASCII predicate scan — exercises the codepage decoder against a
+    /// table whose name itself contains a non-ASCII character (Umsätze).
+    /// (mdbtestdata/sql/nwind.sql tests CompanyName LIKE 'Océ%' on Customers;
+    /// Customers is not present as a table in the bundled fixture.)
     /// </summary>
     /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
-    public async Task Nwind_Customers_WhereCompanyStartsWithOcé_ReturnsNonEmpty()
+    public async Task Nwind_Umsätze_NonAsciiTableName_StreamsAtLeastOneRow()
     {
         if (!File.Exists(TestDatabases.MdbtoolsNwind))
         {
@@ -150,14 +160,11 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
-        var meta = await reader.GetColumnMetadataAsync("Customers", TestContext.Current.CancellationToken);
-        int companyOrdinal = meta.Select((c, i) => (c, i)).First(t => t.c.Name == "CompanyName").i;
-
-        var matches = await reader.Rows("Customers", cancellationToken: TestContext.Current.CancellationToken)
-            .Where(row => row[companyOrdinal] is string s && s.StartsWith("Océ", System.StringComparison.Ordinal))
+        var first = await reader.Rows("Umsätze", cancellationToken: TestContext.Current.CancellationToken)
+            .Take(1)
             .ToListAsync(TestContext.Current.CancellationToken);
 
-        Assert.NotEmpty(matches);
+        Assert.NotEmpty(first);
     }
 
     /// <summary>Mirror of <c>mdb-ver nwind.mdb</c> from mdbtools' test_script.sh — surfaces a non-empty version string.</summary>

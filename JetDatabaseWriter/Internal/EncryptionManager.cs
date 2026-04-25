@@ -95,6 +95,49 @@ internal static class EncryptionManager
         return null;
     }
 
+    // Constant RC4 key Microsoft Access applies to header bytes [0x18 .. 0x18+126]
+    // (Jet3) or [0x18 .. 0x18+128] (Jet4/ACE) at file write time. The same key
+    // unscrambles the bytes again at read time. mdbtools applies it
+    // unconditionally in mdb_handle_from_stream (src/libmdb/file.c).
+    private static readonly byte[] HeaderRc4Key = [0xC7, 0xDA, 0x39, 0x6B];
+
+    /// <summary>
+    /// Reads the database codepage from a raw, freshly-loaded page-0 header.
+    /// The codepage word at offset 0x3C is scrambled by the constant-key RC4
+    /// stream Microsoft Access applies to the header, so this helper
+    /// descrambles a local copy of the relevant byte range before returning the
+    /// codepage value.
+    /// Returns 0 when the header does not carry a recognizable codepage, in
+    /// which case callers should fall back to a sensible default (1252).
+    /// </summary>
+    public static int DecodeHeaderCodePage(byte[] hdr, DatabaseFormat format)
+    {
+        if (hdr is null || hdr.Length < 0x3E)
+        {
+            return 0;
+        }
+
+        int rc4Length = format == DatabaseFormat.Jet3Mdb ? 126 : 128;
+        if (hdr.Length < 0x18 + rc4Length)
+        {
+            rc4Length = hdr.Length - 0x18;
+        }
+
+        byte[] copy = new byte[rc4Length];
+        Buffer.BlockCopy(hdr, 0x18, copy, 0, rc4Length);
+        Rc4Transform(copy, 0, rc4Length, HeaderRc4Key);
+
+        // Codepage lives at hdr[0x3C..0x3D]; in the descrambled copy that is at
+        // offset 0x3C - 0x18 = 0x24.
+        const int CodePageOffsetInCopy = 0x3C - 0x18;
+        if (copy.Length < CodePageOffsetInCopy + 2)
+        {
+            return 0;
+        }
+
+        return copy[CodePageOffsetInCopy] | (copy[CodePageOffsetInCopy + 1] << 8);
+    }
+
     /// <summary>
     /// Inspects the database header for Jet4 / ACCDB-legacy / ACCDB-AES encryption
     /// flags, verifies the supplied password where required, and returns the

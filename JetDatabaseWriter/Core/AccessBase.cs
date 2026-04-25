@@ -122,12 +122,15 @@ public abstract class AccessBase : IAccessBase
 
         _pageKeys.Jet3XorMask = EncryptionManager.GetJet3PageMask(_format, hdr);
 
-        // Offset 0x3C (Jet4) or 0x3A (Jet3): sort order / code page ID
-        // Common: 1033=en-US(1252), 1049=ru(1251), 1041=ja(932)
-        int cpOffset = _format != DatabaseFormat.Jet3Mdb ? 0x3C : 0x3A;
-        int sortOrder = (hdr.Length > cpOffset + 1) ? Ru16(hdr, cpOffset) : 0;
-        _codePage = (sortOrder >> 8) & 0xFF;
-        if (_codePage == 0)
+        // Codepage / sort order: stored as a UInt16 at hdr[0x3C], scrambled by
+        // the constant-key RC4 stream Microsoft Access applies to header bytes
+        // [0x18 .. 0x18+126/128]. EncryptionManager.DecodeHeaderCodePage handles
+        // the descrambling so we recover the real codepage (e.g. 1252) instead
+        // of a corrupted byte. ACE / ACCDB stores text as UTF-16 in user data
+        // so the codepage there is largely cosmetic, but Jet3 .mdb files (and
+        // Jet4 catalog names) need it correct to round-trip non-ASCII names.
+        _codePage = EncryptionManager.DecodeHeaderCodePage(hdr, _format);
+        if (_codePage <= 0)
         {
             _codePage = 1252;  // default to Windows-1252 if unknown
         }
