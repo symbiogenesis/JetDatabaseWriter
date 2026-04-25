@@ -199,6 +199,62 @@ public interface IAccessWriter : IAccessBase
     ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Asynchronously deletes a foreign-key relationship previously created with
+    /// <see cref="CreateRelationshipAsync(RelationshipDefinition, CancellationToken)"/>.
+    /// Removes every row in <c>MSysRelationships</c> whose <c>szRelationship</c> matches
+    /// <paramref name="relationshipName"/> (case-insensitive) and, on Jet4 / ACE
+    /// (<c>.accdb</c>) databases, removes the corresponding per-TDEF foreign-key
+    /// logical-index entries on both the PK-side and FK-side TDEFs so the next
+    /// reader observes the relationship gone immediately (without waiting for a
+    /// Microsoft Access Compact &amp; Repair pass).
+    /// </summary>
+    /// <param name="relationshipName">Case-insensitive relationship name as supplied to
+    /// <see cref="CreateRelationshipAsync(RelationshipDefinition, CancellationToken)"/>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="System.NotSupportedException">
+    /// Thrown when the database does not contain a <c>MSysRelationships</c> table.
+    /// </exception>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when no relationship named <paramref name="relationshipName"/> exists.
+    /// </exception>
+    /// <remarks>
+    /// W14 limitations: the orphaned real-index slot whose backing leaf was created
+    /// for the FK is left in place on the TDEF; Microsoft Access reclaims the
+    /// disconnected slot during Compact &amp; Repair. The library does not roll back
+    /// runtime cascade-update / cascade-delete enforcement that ran inside the
+    /// same call before the drop.
+    /// </remarks>
+    ValueTask DropRelationshipAsync(string relationshipName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asynchronously renames a foreign-key relationship previously created with
+    /// <see cref="CreateRelationshipAsync(RelationshipDefinition, CancellationToken)"/>.
+    /// Updates the <c>szRelationship</c> column of every matching row in
+    /// <c>MSysRelationships</c> (case-insensitive lookup on
+    /// <paramref name="oldName"/>). The per-TDEF foreign-key logical-index name
+    /// cookies are left at their original value; Microsoft Access reads the
+    /// canonical name from the catalog and regenerates the cookies on the next
+    /// Compact &amp; Repair pass.
+    /// </summary>
+    /// <param name="oldName">Case-insensitive existing relationship name.</param>
+    /// <param name="newName">New relationship name. Must not match any existing
+    /// relationship (case-insensitive).</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="System.NotSupportedException">
+    /// Thrown when the database does not contain a <c>MSysRelationships</c> table.
+    /// </exception>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when no relationship named <paramref name="oldName"/> exists,
+    /// or when a relationship named <paramref name="newName"/> already exists.
+    /// </exception>
+    /// <exception cref="System.ArgumentException">
+    /// Thrown when <paramref name="newName"/> is null or empty.
+    /// </exception>
+    ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Asynchronously appends one file to a parent row's Access 2007+ Attachment
     /// column. Locates the parent row by composite primary-key tuple, lazily
     /// allocates a per-row <c>ConceptualTableID</c>, patches the parent row's

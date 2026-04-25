@@ -641,13 +641,14 @@ The writer covers the common create / insert / update / delete path. The items b
 
 ### Indexes
 - **Live B-tree maintenance covers single- and multi-column indexes, ascending or descending, optionally unique.** Jet3 (`.mdb` Access 97) rejects `IndexDefinition` entirely.
-- **Indexable key types are limited.** Live leaf maintenance is supported for `Byte`, `Integer`, `Long Integer`, `Currency`, `Single`, `Double`, `Date/Time`, and `Text` containing only ASCII letters/digits. Other types (`GUID`, `Decimal`, `OLE`, `MEMO`, attachment, complex) and text with spaces/punctuation/non-ASCII round-trip as schema only — Access rebuilds the leaf on Compact & Repair. If *any* column in a multi-column index is unsupported, the whole index falls through to the schema-only path.
+- **Indexable key types are limited.** Live leaf maintenance is supported for `Byte`, `Integer`, `Long Integer`, `Currency`, `Single`, `Double`, `Date/Time`, `GUID`, and `Text` containing only ASCII letters/digits. Other types (`Decimal`, `OLE`, `MEMO`, attachment, complex) and text with spaces/punctuation/non-ASCII round-trip as schema only — Access rebuilds the leaf on Compact & Repair. If *any* column in a multi-column index is unsupported, the whole index falls through to the schema-only path.
 - **No incremental B-tree maintenance.** Each insert/update/delete rebuilds the entire B-tree (no prefix compression, no `tail_page` chain). Cost scales with row count.
 - **Unique enforcement is post-write.** A duplicate row is persisted to disk before the bulk-rebuild detects the violation and throws `InvalidOperationException`; the caller must delete one of the offending rows manually before continuing. The index B-tree is left stale until the duplicate is removed.
 
 ### Primary & foreign keys
-- **No relationship deletion or rename.**
 - **TDEF must fit on one page** after FK entries are appended, otherwise `NotSupportedException`.
+- **`DropRelationshipAsync` leaves the orphaned real-idx slot in place.** Catalog rows and FK logical-idx entries are removed from both side TDEFs, so the relationship disappears from `ListIndexesAsync` and the writer immediately. Microsoft Access reclaims the unused real-idx slot during the next Compact & Repair pass.
+- **`RenameRelationshipAsync` does not update TDEF logical-idx name cookies.** Catalog rows are rewritten with the new name; per-TDEF FK logical-idx names stay at the original value. Access regenerates them from the catalog row on the next Compact & Repair pass.
 - **RI enforcement uses an O(N) parent scan** (no index seek). Parent-key sets are cached per `InsertRowsAsync` call.
 - **Not yet validated end-to-end through Microsoft Access.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not been round-tripped through a Compact & Repair pass on Windows.
 

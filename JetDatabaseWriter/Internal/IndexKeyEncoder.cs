@@ -16,9 +16,15 @@ using System.Globalization;
 /// encoding documented in HACKING.md (digits and ASCII letters only;
 /// any character outside <c>0-9 / A-Z / a-z</c> throws
 /// <see cref="NotSupportedException"/>, which the W5 maintenance loop
-/// catches to leave the index leaf untouched). MEMO, OLE, BINARY, GUID,
-/// NUMERIC, complex, and DATETIMEEXT are still deferred (no clean
-/// HACKING.md spec for any of them).
+/// catches to leave the index leaf untouched). W12 adds <c>T_GUID (0x0F)</c>
+/// using the Jackcess "general binary entry" wrapping (16-byte big-endian
+/// payload packed into 9-byte length-suffixed segments; ascending leaves
+/// data bytes intact and intermediate length bytes at <c>0x09</c> with the
+/// final length byte at the actual segment length, descending bit-flips
+/// every data byte and the FINAL length byte but leaves intermediate length
+/// bytes at <c>0x09</c>). MEMO, OLE, BINARY, NUMERIC, complex, and
+/// DATETIMEEXT are still deferred (no clean HACKING.md spec for any of
+/// them).
 /// </para>
 /// <para>
 /// The encoded layout is one flag byte (0x7F asc / 0x80 desc for non-null,
@@ -56,6 +62,7 @@ internal static class IndexKeyEncoder
     private const byte T_DOUBLE = 0x07;
     private const byte T_DATETIME = 0x08;
     private const byte T_TEXT = 0x0A;
+    private const byte T_GUID = 0x0F;
 
     // Entry flag bytes — see §4.3.
     internal const byte FlagAscendingNonNull = 0x7F;
@@ -87,6 +94,17 @@ internal static class IndexKeyEncoder
         if (isNull)
         {
             return new[] { ascending ? FlagAscendingNull : FlagDescendingNull };
+        }
+
+        // GUID uses the Jackcess "general binary entry" wrapping where
+        // intermediate length bytes (0x09) are NOT bit-flipped on descending —
+        // only the data bytes and the FINAL length byte are flipped. This
+        // differs from the simple "ones-complement the whole entry" rule used
+        // by the fixed-width numeric / IEEE / text encodings, so emit it
+        // directly here instead of routing through the post-loop bulk flip.
+        if (columnType == T_GUID)
+        {
+            return EncodeGuidEntry(value!, ascending);
         }
 
         byte[] key = EncodeKey(columnType, value!);
@@ -152,7 +170,7 @@ internal static class IndexKeyEncoder
             default:
                 throw new NotSupportedException(
                     $"Index key encoding for column type 0x{columnType:X2} is not supported in this writer phase. " +
-                    "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, TEXT (digits + ASCII letters only).");
+                    "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, GUID, TEXT (digits + ASCII letters only).");
         }
     }
 
@@ -202,6 +220,77 @@ internal static class IndexKeyEncoder
         }
 
         // result[text.Length] is the implicit 0x00 terminator (default value).
+        return result;
+    }
+
+    /// <summary>
+    /// W12 — GUID sort-key encoding via the Jackcess "general binary entry"
+    /// wrapping. The 16 raw GUID bytes are taken in <b>display</b> order
+    /// (i.e. <c>byte 3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15</c>
+    /// of the in-row storage layout) so lexicographic byte comparison matches
+    /// the canonical hyphenated string ordering Access uses. The bytes are
+    /// then packed into 9-byte segments, each containing 8 data bytes plus a
+    /// trailing length byte: <c>0x09</c> for intermediate segments (signalling
+    /// "more data follows") and the actual valid-byte count for the final
+    /// segment (always <c>0x08</c> for 16-byte GUIDs).
+    /// <para>
+    /// Ascending: <c>7F | d0..d7 | 09 | d8..d15 | 08</c>.
+    /// Descending: <c>80 | ~d0..~d7 | 09 | ~d8..~d15 | F7</c> — note the
+    /// intermediate <c>0x09</c> is NOT flipped (per Jackcess
+    /// <c>writeGeneralBinaryEntry</c>) but the final length byte is.
+    /// </para>
+    /// <para>
+    /// The format-probe corpus does not contain a GUID-keyed index leaf;
+    /// these byte sequences come from Jackcess <c>IndexData.writeGeneralBinaryEntry</c>
+    /// and have not been independently verified against an Access-authored
+    /// fixture. See <c>docs/design/index-and-relationship-format-notes.md</c> §8.
+    /// </para>
+    /// </summary>
+    private static byte[] EncodeGuidEntry(object value, bool ascending)
+    {
+        Guid g = value switch
+        {
+            Guid guid => guid,
+            string s => Guid.Parse(s),
+            byte[] bytes when bytes.Length == 16 => new Guid(bytes),
+            _ => throw new ArgumentException(
+                $"Cannot coerce value of type {value.GetType().Name} to System.Guid for index key encoding.",
+                nameof(value)),
+        };
+
+        // .NET Guid.ToByteArray() matches Jet GUID storage: the first three
+        // groups are little-endian, the trailing 8 bytes are raw. Reorder to
+        // display (big-endian) order so byte comparisons match canonical
+        // string ordering.
+        byte[] storage = g.ToByteArray();
+        byte[] display = new byte[16]
+        {
+            storage[3], storage[2], storage[1], storage[0],
+            storage[5], storage[4],
+            storage[7], storage[6],
+            storage[8], storage[9], storage[10], storage[11],
+            storage[12], storage[13], storage[14], storage[15],
+        };
+
+        // Layout: flag(1) + segment1(8 data + 1 len=0x09) + segment2(8 data + 1 len=0x08) = 19 bytes.
+        byte[] result = new byte[19];
+        result[0] = ascending ? FlagAscendingNonNull : FlagDescendingNonNull;
+
+        // Segment 1: bytes 0..7 + intermediate length byte 0x09.
+        for (int i = 0; i < 8; i++)
+        {
+            result[1 + i] = ascending ? display[i] : unchecked((byte)~display[i]);
+        }
+
+        result[9] = 0x09; // intermediate length byte — NOT flipped on descending.
+
+        // Segment 2 (final): bytes 8..15 + final length byte 0x08.
+        for (int i = 0; i < 8; i++)
+        {
+            result[10 + i] = ascending ? display[8 + i] : unchecked((byte)~display[8 + i]);
+        }
+
+        result[18] = ascending ? (byte)0x08 : unchecked((byte)~0x08);
         return result;
     }
 

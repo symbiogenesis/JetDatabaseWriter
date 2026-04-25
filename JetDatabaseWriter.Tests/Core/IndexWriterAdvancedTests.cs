@@ -311,6 +311,61 @@ public sealed class IndexWriterAdvancedTests
         Assert.False(col.IsAscending);
     }
 
+    // --- W12: GUID-keyed index live B-tree maintenance ------------------------
+
+    [Fact]
+    public async Task GuidIndex_BulkInsert_RebuildsLeafWithExpectedEntryCount()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                new[] { new ColumnDefinition("Id", typeof(Guid)) },
+                new[] { new IndexDefinition("IX_Id", "Id") },
+                ct);
+
+            await writer.InsertRowsAsync(
+                "T",
+                new[]
+                {
+                    new object[] { Guid.Parse("00000000-0000-0000-0000-000000000001") },
+                    new object[] { Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF") },
+                    new object[] { Guid.Parse("11111111-2222-3333-4444-555555555555") },
+                },
+                ct);
+        }
+
+        // W12: GUID-keyed index now participates in the W5 bulk-rebuild path.
+        // Before W12 this would have stayed at the empty W3 placeholder leaf
+        // (entry count = 1, the implicit first entry).
+        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+    }
+
+    [Fact]
+    public async Task UniqueGuidIndex_DuplicateInsert_Throws()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using var writer = await OpenWriterAsync(stream);
+
+        await writer.CreateTableAsync(
+            "T",
+            new[] { new ColumnDefinition("Id", typeof(Guid)) },
+            new[] { new IndexDefinition("UQ_Id", "Id") { IsUnique = true } },
+            ct);
+
+        var dup = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        await writer.InsertRowAsync("T", new object[] { dup }, ct);
+        await writer.InsertRowAsync("T", new object[] { Guid.NewGuid() }, ct);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await writer.InsertRowAsync("T", new object[] { dup }, ct));
+    }
+
     // --- helpers (page scanning) ---------------------------------------------
 
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
