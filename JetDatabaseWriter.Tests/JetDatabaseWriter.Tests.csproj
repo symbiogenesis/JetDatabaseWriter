@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="Databases\*.mdb;Databases\*.accdb" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Databases\**\*.mdb;Databases\**\*.accdb" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
