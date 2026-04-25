@@ -455,7 +455,7 @@ public abstract class AccessBase : IAccessBase
 
     // ── Fixed-column string decoding ─────────────────────────────────
 
-    private protected static string ReadFixedString(byte[] row, int start, byte type, int size)
+    internal static string ReadFixedString(byte[] row, int start, byte type, int size)
     {
         try
         {

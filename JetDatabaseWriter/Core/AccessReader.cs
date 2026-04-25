@@ -13,7 +13,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Internal;
 
-#pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
 #pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API
 
 /// <summary>
