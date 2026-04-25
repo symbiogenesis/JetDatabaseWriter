@@ -183,12 +183,93 @@ public sealed class IndexKeyEncoderTests
     }
 
     [Theory]
-    [InlineData(T_TEXT)]
     [InlineData(T_GUID)]
     [InlineData(T_NUMERIC)]
     public void UnsupportedColumnType_Throws(byte columnType)
     {
         Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(columnType, 1, ascending: true));
+    }
+
+    // ── W7: General Legacy text encoding (digits + ASCII letters only) ──
+
+    [Fact]
+    public void Text_EmptyString_EmitsFlagAndTerminator()
+    {
+        // §5: text key terminator is 0x00 (or 0xFF when negated for descending).
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, string.Empty, ascending: true);
+        Assert.Equal(new byte[] { 0x7F, 0x00 }, encoded);
+    }
+
+    [Fact]
+    public void Text_Digits_MapTo56Through5F()
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, "0123456789", ascending: true);
+        Assert.Equal(
+            new byte[] { 0x7F, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x00 },
+            encoded);
+    }
+
+    [Fact]
+    public void Text_UpperAndLowerLetters_MapToSameRange60Through79()
+    {
+        // Case-insensitive per HACKING.md §5.
+        byte[] upper = IndexKeyEncoder.EncodeEntry(T_TEXT, "ABCXYZ", ascending: true);
+        byte[] lower = IndexKeyEncoder.EncodeEntry(T_TEXT, "abcxyz", ascending: true);
+        Assert.Equal(upper, lower);
+        Assert.Equal(
+            new byte[] { 0x7F, 0x60, 0x61, 0x62, 0x77, 0x78, 0x79, 0x00 },
+            upper);
+    }
+
+    [Fact]
+    public void Text_Ordering_DigitsSortBeforeLetters()
+    {
+        string[] values = { string.Empty, "0", "1", "9", "A", "AB", "AC", "B", "Z", "ZZ" };
+        byte[][] encoded = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++)
+        {
+            encoded[i] = IndexKeyEncoder.EncodeEntry(T_TEXT, values[i], ascending: true);
+        }
+
+        for (int i = 1; i < encoded.Length; i++)
+        {
+            Assert.True(
+                CompareLex(encoded[i - 1], encoded[i]) < 0,
+                $"Ascending order violated between '{values[i - 1]}' and '{values[i]}'.");
+        }
+    }
+
+    [Fact]
+    public void Text_Descending_IsOnesComplementOfAscending()
+    {
+        byte[] asc = IndexKeyEncoder.EncodeEntry(T_TEXT, "AB12", ascending: true);
+        byte[] desc = IndexKeyEncoder.EncodeEntry(T_TEXT, "AB12", ascending: false);
+        Assert.Equal(asc.Length, desc.Length);
+        for (int i = 0; i < asc.Length; i++)
+        {
+            Assert.Equal(unchecked((byte)~asc[i]), desc[i]);
+        }
+
+        // Terminator becomes 0xFF after ones-complement.
+        Assert.Equal(0xFF, desc[^1]);
+    }
+
+    [Fact]
+    public void Text_Null_EmitsSingleFlagByte()
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, value: null, ascending: true);
+        Assert.Equal(new byte[] { 0x00 }, encoded);
+    }
+
+    [Theory]
+    [InlineData(" ")] // space
+    [InlineData("a b")] // contains space
+    [InlineData("hello!")] // punctuation
+    [InlineData("caf\u00E9")] // non-ASCII (é)
+    [InlineData("_underscore")]
+    public void Text_UnsupportedCharacter_Throws(string value)
+    {
+        Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(T_TEXT, value, ascending: true));
     }
 
     private static int CompareLex(byte[] a, byte[] b)

@@ -618,7 +618,7 @@ The writer targets the most common create / insert / update / delete scenarios. 
 
 ### Indexes
 - **Single-column, non-unique, ascending only.** Multi-column, unique, and descending indexes are not supported. Jet3 (`.mdb` Access 97) rejects `IndexDefinition` entirely.
-- **Indexable key types:** `Byte`, `Integer`, `Long Integer`, `Currency`, `Single`, `Double`, `Date/Time`. Indexes declared on `Text`, `GUID`, `Decimal`, `OLE`, `MEMO`, attachment, or complex columns round-trip as schema only — the B-tree leaf is not maintained on mutation and goes stale until Access rebuilds it on Compact & Repair.
+- **Indexable key types:** `Byte`, `Integer`, `Long Integer`, `Currency`, `Single`, `Double`, `Date/Time`, plus `Text` whose values contain **only digits (0–9) and ASCII letters (A–Z, a–z)** (case-insensitive General Legacy encoding). Text values containing spaces, punctuation, accented or non-ASCII characters silently skip rebuild and the leaf goes stale until Access rebuilds it on Compact & Repair. Indexes declared on `GUID`, `Decimal`, `OLE`, `MEMO`, attachment, or complex columns round-trip as schema only — the B-tree leaf is not maintained on mutation.
 - **Bulk rebuild on every mutation.** No incremental B-tree maintenance, no prefix compression, no `tail_page` chain — each insert/update/delete rebuilds the entire B-tree. Cost scales with row count per write.
 
 ### Primary & foreign keys

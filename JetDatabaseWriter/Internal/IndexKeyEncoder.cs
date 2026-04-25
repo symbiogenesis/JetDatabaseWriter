@@ -11,9 +11,14 @@ using System.Globalization;
 /// <para>
 /// Supported column types in W2: <c>T_BYTE (0x02)</c>, <c>T_INT (0x03)</c>,
 /// <c>T_LONG (0x04)</c>, <c>T_MONEY (0x05)</c>, <c>T_FLOAT (0x06)</c>,
-/// <c>T_DOUBLE (0x07)</c>, <c>T_DATETIME (0x08)</c>. Text, MEMO, OLE, BINARY,
-/// GUID, NUMERIC, complex, and DATETIMEEXT are deferred to later writer
-/// phases (W7 for text; the rest have not been spec'd yet).
+/// <c>T_DOUBLE (0x07)</c>, <c>T_DATETIME (0x08)</c>. W7 added partial
+/// support for <c>T_TEXT (0x0A)</c> using the "General Legacy"
+/// encoding documented in HACKING.md (digits and ASCII letters only;
+/// any character outside <c>0-9 / A-Z / a-z</c> throws
+/// <see cref="NotSupportedException"/>, which the W5 maintenance loop
+/// catches to leave the index leaf untouched). MEMO, OLE, BINARY, GUID,
+/// NUMERIC, complex, and DATETIMEEXT are still deferred (no clean
+/// HACKING.md spec for any of them).
 /// </para>
 /// <para>
 /// The encoded layout is one flag byte (0x7F asc / 0x80 desc for non-null,
@@ -50,6 +55,7 @@ internal static class IndexKeyEncoder
     private const byte T_FLOAT = 0x06;
     private const byte T_DOUBLE = 0x07;
     private const byte T_DATETIME = 0x08;
+    private const byte T_TEXT = 0x0A;
 
     // Entry flag bytes — see §4.3.
     internal const byte FlagAscendingNonNull = 0x7F;
@@ -137,14 +143,66 @@ internal static class IndexKeyEncoder
                     return EncodeIeeeBigEndian(BitConverter.GetBytes(dt.ToOADate()));
                 }
 
+            case T_TEXT:
+                return EncodeGeneralLegacyText(ToText(value));
+
             case T_BOOL:
                 throw new NotSupportedException("BOOL columns are stored in the row null mask, not in index key bytes.");
 
             default:
                 throw new NotSupportedException(
                     $"Index key encoding for column type 0x{columnType:X2} is not supported in this writer phase. " +
-                    "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME.");
+                    "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, TEXT (digits + ASCII letters only).");
         }
+    }
+
+    /// <summary>
+    /// W7 — "General Legacy" text sort-key encoding (Access 2000–2007 default,
+    /// Access 2010+ legacy fallback). Per HACKING.md §5 the documented mapping
+    /// is <c>0–9 → 0x56–0x5F</c> and <c>A–Z / a–z → 0x60–0x79</c> (case-
+    /// insensitive). The encoded key is terminated by a single <c>0x00</c>
+    /// byte (or <c>0xFF</c> after the descending ones-complement applied by
+    /// the caller).
+    /// <para>
+    /// Characters outside the documented range (space, punctuation, non-ASCII)
+    /// throw <see cref="NotSupportedException"/>. The full Access encoding
+    /// covers secondary case/accent weights and locale-specific mappings that
+    /// HACKING.md does not specify; emitting fabricated bytes for those
+    /// characters could produce a leaf that Microsoft Access would reject as
+    /// corrupt, so we strictly fail closed and let the W5 maintenance loop
+    /// fall through to the existing "leaf goes stale until Compact &amp; Repair"
+    /// behaviour for the unsupported rows.
+    /// </para>
+    /// </summary>
+    private static byte[] EncodeGeneralLegacyText(string text)
+    {
+        byte[] result = new byte[text.Length + 1];
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c >= '0' && c <= '9')
+            {
+                result[i] = (byte)(0x56 + (c - '0'));
+            }
+            else if (c >= 'A' && c <= 'Z')
+            {
+                result[i] = (byte)(0x60 + (c - 'A'));
+            }
+            else if (c >= 'a' && c <= 'z')
+            {
+                result[i] = (byte)(0x60 + (c - 'a'));
+            }
+            else
+            {
+                throw new NotSupportedException(
+                    $"Text index sort-key encoding (W7) supports only digits (0-9) and ASCII letters (A-Z, a-z). " +
+                    $"Character '{c}' (U+{(int)c:X4}) at offset {i} is outside that range; " +
+                    "the full \"General Legacy\" encoding for spaces, punctuation, and non-ASCII characters is not yet implemented.");
+            }
+        }
+
+        // result[text.Length] is the implicit 0x00 terminator (default value).
+        return result;
     }
 
     /// <summary>
@@ -266,5 +324,12 @@ internal static class IndexKeyEncoder
         DateTime dt => dt,
         DateTimeOffset dto => dto.UtcDateTime,
         _ => Convert.ToDateTime(value, CultureInfo.InvariantCulture),
+    };
+
+    private static string ToText(object value) => value switch
+    {
+        string s => s,
+        char c => c.ToString(),
+        _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty,
     };
 }

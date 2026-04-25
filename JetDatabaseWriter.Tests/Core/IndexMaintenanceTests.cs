@@ -245,6 +245,70 @@ public sealed class IndexMaintenanceTests
         Assert.Equal("IX_Id", indexes[0].Name);
     }
 
+    [Fact]
+    public async Task InsertRows_TextIndex_GeneralLegacyKeys_RebuildsLeaf()
+    {
+        // W7: text indexes whose values are limited to digits + ASCII letters
+        // are now maintained on insert via the General Legacy sort-key encoder.
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                new[] { new ColumnDefinition("Code", typeof(string), maxLength: 32) },
+                new[] { new IndexDefinition("IX_Code", "Code") },
+                ct);
+
+            await writer.InsertRowsAsync(
+                "T",
+                new[]
+                {
+                    new object[] { "B" },
+                    new object[] { "A" },
+                    new object[] { "C" },
+                },
+                ct);
+        }
+
+        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+    }
+
+    [Fact]
+    public async Task InsertRows_TextIndex_UnsupportedCharacter_LeavesLeafStale()
+    {
+        // W7 fail-closed: any character outside the General Legacy range
+        // (here a space) makes the encoder throw NotSupportedException, and
+        // the W5 maintenance loop swallows it to leave the original empty
+        // placeholder leaf in place. We verify the inserts succeed and the
+        // visible leafs all show the implicit single-entry count.
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                new[] { new ColumnDefinition("Code", typeof(string), maxLength: 32) },
+                new[] { new IndexDefinition("IX_Code", "Code") },
+                ct);
+
+            await writer.InsertRowsAsync(
+                "T",
+                new[]
+                {
+                    new object[] { "Hello world" },
+                    new object[] { "Foo Bar" },
+                },
+                ct);
+        }
+
+        // Maintenance was skipped, so no leaf has more than the implicit first
+        // entry — the placeholder remains, hence MAX == 1.
+        Assert.Equal(1, FindMaxLeafEntryCount(stream.ToArray()));
+    }
+
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
     {
         // §4.2: one implicit first entry, plus one bit per subsequent entry
