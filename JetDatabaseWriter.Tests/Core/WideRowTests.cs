@@ -12,28 +12,22 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Tests for overflow rows — rows whose payload exceeds the space available
-/// on a single data page and must span multiple pages.
-///
-/// Overflow pointer rows (offset bit 0x4000) are followed to the target
-/// page/row to read the actual data, rather than being skipped like
-/// deleted rows (0x8000). A Jet4 data page is 4096 bytes; rows larger than
-/// ~3800 bytes will trigger overflow or LVAL usage.
+/// Round-trip tests for tables with wide rows (multiple max-length text
+/// columns). These exercise the row-pointer / data-page code path on
+/// payloads close to but under the Jet4 single-page threshold; they do not
+/// themselves assert overflow-page allocation. True LVAL/overflow paths
+/// are covered by the LVAL and complex-column test suites.
 /// </summary>
-public sealed class OverflowRowTests(DatabaseCache db) : IClassFixture<DatabaseCache>
+public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task OverflowRows_LargeRowData_IsReadableBack(string path)
+    public async Task WideRows_RoundTrip_ReturnsAllRows(string path)
     {
-        // Arrange — create a table whose rows are large enough that the JET
-        // engine may need to overflow them across pages.
-        // A Jet4 data page is 4096 bytes.  With overhead, a row payload > ~3800 bytes
-        // should force overflow or LVAL usage.
         await using var ms = await CopyToStreamAsync(path);
         if (!IsJet4(ms))
         {
-            return; // overflow handling only applies to Jet4/ACE
+            return; // wide-row layout under test only applies to Jet4/ACE
         }
 
         string tableName = $"Overflow_{Guid.NewGuid():N}"[..20];
@@ -46,8 +40,7 @@ public sealed class OverflowRowTests(DatabaseCache db) : IClassFixture<DatabaseC
             new("BigText4", typeof(string), maxLength: 255),
         };
 
-        // Each row: 4 bytes int + 4×510 bytes UCS-2 ≈ 2044 bytes
-        // Fill the page to capacity so later rows may overflow
+        // Each row: 4 bytes int + 4×510 bytes UCS-2 ≈ 2044 bytes.
         const int rowCount = 20;
         var rows = Enumerable.Range(1, rowCount).Select(i => new object[]
         {
@@ -64,17 +57,15 @@ public sealed class OverflowRowTests(DatabaseCache db) : IClassFixture<DatabaseC
             await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
-        // Act — read back all rows
         await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
         DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
 
-        // Assert — every inserted row should be returned, including any that overflow
         Assert.Equal(rowCount, dt.Rows.Count);
     }
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task OverflowRows_GetRealRowCount_IncludesOverflowRows(string path)
+    public async Task WideRows_GetRealRowCount_MatchesInsertCount(string path)
     {
         await using var ms = await CopyToStreamAsync(path);
         if (!IsJet4(ms))
@@ -110,7 +101,7 @@ public sealed class OverflowRowTests(DatabaseCache db) : IClassFixture<DatabaseC
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task OverflowRows_StreamRows_YieldsAllRows(string path)
+    public async Task WideRows_StreamRows_YieldsAllRows(string path)
     {
         await using var ms = await CopyToStreamAsync(path);
         if (!IsJet4(ms))
@@ -148,9 +139,9 @@ public sealed class OverflowRowTests(DatabaseCache db) : IClassFixture<DatabaseC
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task OverflowRows_LargeRowContent_IsPreserved(string path)
+    public async Task WideRows_CellValues_AreRoundTripped(string path)
     {
-        // Verify that the actual cell values survive an overflow round-trip
+        // Verify that the actual cell values survive a wide-row round-trip.
         await using var ms = await CopyToStreamAsync(path);
         if (!IsJet4(ms))
         {
