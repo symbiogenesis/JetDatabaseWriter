@@ -1817,6 +1817,530 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     // ════════════════════════════════════════════════════════════════
+    // W14 — Drop / Rename relationship
+    // ════════════════════════════════════════════════════════════════
+    //
+    // Reverses CreateRelationshipAsync (W9a + W9b):
+    //   • DropRelationshipAsync removes every MSysRelationships row whose
+    //     szRelationship matches and (Jet4/ACE) removes the matching FK
+    //     logical-idx entry from each side's TDEF. The orphaned real-idx
+    //     slot is left in place — Microsoft Access reclaims it on Compact
+    //     & Repair, and ListIndexesAsync iterates by num_idx so it stops
+    //     surfacing the FK immediately.
+    //   • RenameRelationshipAsync rewrites the szRelationship column on
+    //     every matching MSysRelationships row (read all 8 columns, mark
+    //     deleted, re-insert with the new name and updateTDefRowCount=false).
+    //     The TDEF logical-idx name cookies are left at the old name —
+    //     Access regenerates them from the catalog row on the next Compact
+    //     & Repair pass.
+
+    /// <summary>
+    /// Snapshot of one MSysRelationships row. <c>RowValues</c> mirrors the
+    /// MSysRelationships column order so it can be passed directly to
+    /// <see cref="InsertRowDataAsync"/> on the re-insert path used by
+    /// <see cref="RenameRelationshipAsync"/>.
+    /// </summary>
+    private sealed record RelationshipRowSnapshot(
+        RowLocation Location,
+        string SzRelationship,
+        string SzObject,
+        string SzReferencedObject,
+        string SzColumn,
+        string SzReferencedColumn,
+        int IColumn,
+        int CColumn,
+        int Grbit,
+        object[] RowValues);
+
+    /// <inheritdoc />
+    public async ValueTask DropRelationshipAsync(string relationshipName, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(relationshipName, nameof(relationshipName));
+        Guard.ThrowIfDisposed(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        long msysRelTdefPage = await FindSystemTableTdefPageAsync("MSysRelationships", cancellationToken).ConfigureAwait(false);
+        if (msysRelTdefPage <= 0)
+        {
+            throw new NotSupportedException(
+                "The database does not contain a 'MSysRelationships' table; nothing to drop.");
+        }
+
+        TableDef msysRelDef = await ReadRequiredTableDefAsync(msysRelTdefPage, "MSysRelationships", cancellationToken).ConfigureAwait(false);
+        List<RelationshipRowSnapshot> matches = await CollectRelationshipRowsAsync(
+            msysRelTdefPage,
+            msysRelDef,
+            r => string.Equals(r, relationshipName, StringComparison.OrdinalIgnoreCase),
+            cancellationToken).ConfigureAwait(false);
+
+        if (matches.Count == 0)
+        {
+            throw new InvalidOperationException($"No relationship named '{relationshipName}' was found.");
+        }
+
+        // Group by (PK table, FK table) pair so we can rebuild each side's
+        // FK column list once. CreateRelationshipAsync emits N rows (one per
+        // FK column pair) all sharing szObject / szReferencedObject; group
+        // anyway so a malformed catalog with mixed pairs (which we did not
+        // emit, but might exist) is handled gracefully.
+        var byTablePair = new Dictionary<(string Pk, string Fk), List<RelationshipRowSnapshot>>(
+            new TablePairComparer());
+        foreach (RelationshipRowSnapshot row in matches)
+        {
+            (string Pk, string Fk) key = (row.SzReferencedObject, row.SzObject);
+            if (!byTablePair.TryGetValue(key, out List<RelationshipRowSnapshot>? group))
+            {
+                group = new List<RelationshipRowSnapshot>();
+                byTablePair[key] = group;
+            }
+
+            group.Add(row);
+        }
+
+        // Jet4/ACE only — Jet3 never received the per-TDEF FK logical-idx entries.
+        if (_format != DatabaseFormat.Jet3Mdb)
+        {
+            foreach (KeyValuePair<(string Pk, string Fk), List<RelationshipRowSnapshot>> pair in byTablePair)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                CatalogEntry? pkEntry = await GetCatalogEntryAsync(pair.Key.Pk, cancellationToken).ConfigureAwait(false);
+                CatalogEntry? fkEntry = await GetCatalogEntryAsync(pair.Key.Fk, cancellationToken).ConfigureAwait(false);
+                if (pkEntry == null || fkEntry == null)
+                {
+                    // Catalog row references a missing table — skip TDEF cleanup
+                    // (the catalog row is still removed below).
+                    continue;
+                }
+
+                TableDef pkDef = await ReadRequiredTableDefAsync(pkEntry.TDefPage, pair.Key.Pk, cancellationToken).ConfigureAwait(false);
+                TableDef fkDef = await ReadRequiredTableDefAsync(fkEntry.TDefPage, pair.Key.Fk, cancellationToken).ConfigureAwait(false);
+
+                // Reconstruct the FK column list in icolumn order, then resolve
+                // to col_num for col_map matching.
+                var ordered = new List<RelationshipRowSnapshot>(pair.Value);
+                ordered.Sort((a, b) => a.IColumn.CompareTo(b.IColumn));
+                var pkColNames = new string[ordered.Count];
+                var fkColNames = new string[ordered.Count];
+                for (int i = 0; i < ordered.Count; i++)
+                {
+                    pkColNames[i] = ordered[i].SzReferencedColumn;
+                    fkColNames[i] = ordered[i].SzColumn;
+                }
+
+                int[] pkColNums = ResolveColNumsOrEmpty(pkDef, pkColNames);
+                int[] fkColNums = ResolveColNumsOrEmpty(fkDef, fkColNames);
+                if (pkColNums.Length == 0 || fkColNums.Length == 0)
+                {
+                    continue;
+                }
+
+                // Remove the matching FK logical-idx entry from each side.
+                // Self-referential relationships (PK and FK on same TDEF) need
+                // both removals to target distinct entries — pass the column
+                // list to disambiguate.
+                _ = await TryRemoveFkLogicalIdxEntryAsync(pkEntry.TDefPage, pkColNums, fkEntry.TDefPage, cancellationToken).ConfigureAwait(false);
+                _ = await TryRemoveFkLogicalIdxEntryAsync(fkEntry.TDefPage, fkColNums, pkEntry.TDefPage, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        // Mark catalog rows deleted and adjust the row count.
+        foreach (RelationshipRowSnapshot row in matches)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await MarkRowDeletedAsync(row.Location.PageNumber, row.Location.RowIndex, cancellationToken).ConfigureAwait(false);
+        }
+
+        await AdjustTDefRowCountAsync(msysRelTdefPage, -matches.Count, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(oldName, nameof(oldName));
+        Guard.NotNullOrEmpty(newName, nameof(newName));
+        Guard.ThrowIfDisposed(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase))
+        {
+            return; // No-op; matches Microsoft Access' designer behaviour.
+        }
+
+        long msysRelTdefPage = await FindSystemTableTdefPageAsync("MSysRelationships", cancellationToken).ConfigureAwait(false);
+        if (msysRelTdefPage <= 0)
+        {
+            throw new NotSupportedException(
+                "The database does not contain a 'MSysRelationships' table; nothing to rename.");
+        }
+
+        TableDef msysRelDef = await ReadRequiredTableDefAsync(msysRelTdefPage, "MSysRelationships", cancellationToken).ConfigureAwait(false);
+
+        // Reject collision with an existing name (case-insensitive).
+        HashSet<string> existing = await ReadExistingRelationshipNamesAsync(msysRelTdefPage, msysRelDef, cancellationToken).ConfigureAwait(false);
+        if (existing.Contains(newName))
+        {
+            throw new InvalidOperationException($"A relationship named '{newName}' already exists.");
+        }
+
+        List<RelationshipRowSnapshot> matches = await CollectRelationshipRowsAsync(
+            msysRelTdefPage,
+            msysRelDef,
+            r => string.Equals(r, oldName, StringComparison.OrdinalIgnoreCase),
+            cancellationToken).ConfigureAwait(false);
+
+        if (matches.Count == 0)
+        {
+            throw new InvalidOperationException($"No relationship named '{oldName}' was found.");
+        }
+
+        int szRelIdx = FindColumnIndex(msysRelDef, "szRelationship");
+        if (szRelIdx < 0)
+        {
+            throw new InvalidOperationException("MSysRelationships does not expose a 'szRelationship' column.");
+        }
+
+        foreach (RelationshipRowSnapshot row in matches)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            object[] rowValues = (object[])row.RowValues.Clone();
+            rowValues[szRelIdx] = newName;
+
+            await MarkRowDeletedAsync(row.Location.PageNumber, row.Location.RowIndex, cancellationToken).ConfigureAwait(false);
+            await InsertRowDataAsync(msysRelTdefPage, msysRelDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Walks every live row in <c>MSysRelationships</c>, materialising each
+    /// row whose <c>szRelationship</c> satisfies <paramref name="namePredicate"/>
+    /// into a <see cref="RelationshipRowSnapshot"/> (location + all 8 column
+    /// values in MSysRelationships column order).
+    /// </summary>
+    private async ValueTask<List<RelationshipRowSnapshot>> CollectRelationshipRowsAsync(
+        long msysRelTdefPage,
+        TableDef msysRelDef,
+        Func<string, bool> namePredicate,
+        CancellationToken cancellationToken)
+    {
+        var results = new List<RelationshipRowSnapshot>();
+        ColumnInfo? nameCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "szRelationship", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? objCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "szObject", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? refObjCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "szReferencedObject", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? colCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "szColumn", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? refColCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "szReferencedColumn", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? icolCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "icolumn", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? ccolCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "ccolumn", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? grbitCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "grbit", StringComparison.OrdinalIgnoreCase));
+        if (nameCol == null || objCol == null || refObjCol == null || colCol == null
+            || refColCol == null || icolCol == null || ccolCol == null || grbitCol == null)
+        {
+            return results;
+        }
+
+        long total = _stream.Length / _pgSz;
+        for (long pageNumber = 3; pageNumber < total; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != 0x01)
+                {
+                    continue;
+                }
+
+                if (Ri32(page, _dpTDefOff) != msysRelTdefPage)
+                {
+                    continue;
+                }
+
+                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
+                {
+                    string name = ReadColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    if (string.IsNullOrEmpty(name) || !namePredicate(name))
+                    {
+                        continue;
+                    }
+
+                    var values = new object[msysRelDef.Columns.Count];
+                    for (int c = 0; c < values.Length; c++)
+                    {
+                        ColumnInfo col = msysRelDef.Columns[c];
+                        string raw = ReadColumnValue(page, row.RowStart, row.RowSize, col);
+                        values[c] = string.IsNullOrEmpty(raw)
+                            ? DBNull.Value
+                            : col.Type switch
+                            {
+                                T_LONG => (object)ParseInt32(raw),
+                                T_INT => (object)(short)ParseInt32(raw),
+                                T_BYTE => (object)(byte)ParseInt32(raw),
+                                _ => raw,
+                            };
+                    }
+
+                    results.Add(new RelationshipRowSnapshot(
+                        row,
+                        name,
+                        ReadColumnValue(page, row.RowStart, row.RowSize, objCol),
+                        ReadColumnValue(page, row.RowStart, row.RowSize, refObjCol),
+                        ReadColumnValue(page, row.RowStart, row.RowSize, colCol),
+                        ReadColumnValue(page, row.RowStart, row.RowSize, refColCol),
+                        ParseInt32(ReadColumnValue(page, row.RowStart, row.RowSize, icolCol)),
+                        ParseInt32(ReadColumnValue(page, row.RowStart, row.RowSize, ccolCol)),
+                        ParseInt32(ReadColumnValue(page, row.RowStart, row.RowSize, grbitCol)),
+                        values));
+                }
+            }
+            finally
+            {
+                ReturnPage(page);
+            }
+        }
+
+        return results;
+    }
+
+    private static int[] ResolveColNumsOrEmpty(TableDef def, string[] columnNames)
+    {
+        var result = new int[columnNames.Length];
+        for (int i = 0; i < columnNames.Length; i++)
+        {
+            int idx = FindColumnIndex(def, columnNames[i]);
+            if (idx < 0)
+            {
+                return Array.Empty<int>();
+            }
+
+            result[i] = def.Columns[idx].ColNum;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Locates and removes the FK logical-idx entry on <paramref name="tdefPage"/>
+    /// whose backing real-idx col_map exactly covers <paramref name="columnNumbers"/>
+    /// (in declaration order) AND whose <c>rel_tbl_page</c> equals
+    /// <paramref name="otherTdefPage"/>. Returns <see langword="true"/> when an
+    /// entry was removed; <see langword="false"/> when no matching entry exists
+    /// (already removed, or never created — Jet3 path, or out-of-band catalog).
+    /// </summary>
+    private async ValueTask<bool> TryRemoveFkLogicalIdxEntryAsync(
+        long tdefPage,
+        int[] columnNumbers,
+        long otherTdefPage,
+        CancellationToken cancellationToken)
+    {
+        byte[] pageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] td;
+        try
+        {
+            td = (byte[])pageBytes.Clone();
+        }
+        finally
+        {
+            ReturnPage(pageBytes);
+        }
+
+        if (td[0] != 0x02 || Ru32(td, 4) != 0)
+        {
+            // Multi-page TDEF — out of scope for in-place mutation, same
+            // contract as W9b emission.
+            return false;
+        }
+
+        int numCols = Ru16(td, _tdNumCols);
+        int numIdx = Ri32(td, _tdNumCols + 2);
+        int numRealIdx = Ri32(td, _tdNumRealIdx);
+        if (numCols < 0 || numCols > 4096
+            || numIdx <= 0 || numIdx > 1000
+            || numRealIdx <= 0 || numRealIdx > 1000)
+        {
+            return false;
+        }
+
+        const int RealIdxPhysSz = 52;
+        const int LogIdxEntrySz = 28;
+
+        int realIdxDescStart = LocateRealIdxDescStart(td, numCols, numRealIdx);
+        if (realIdxDescStart < 0)
+        {
+            return false;
+        }
+
+        int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
+        int logIdxNamesStart = logIdxStart + (numIdx * LogIdxEntrySz);
+        int logIdxNamesLen = MeasureLogicalIdxNamesLength(td, logIdxNamesStart, numIdx);
+        if (logIdxNamesLen < 0)
+        {
+            return false;
+        }
+
+        // Locate the matching logical-idx entry. Iterate in order so we can
+        // also locate its name by walking the names list to the same index.
+        int matchEntryIdx = -1;
+        for (int li = 0; li < numIdx; li++)
+        {
+            int e = logIdxStart + (li * LogIdxEntrySz);
+            byte indexType = td[e + 23];
+            if (indexType != 0x02)
+            {
+                continue;
+            }
+
+            int relTblPage = Ri32(td, e + 17);
+            if (relTblPage != otherTdefPage)
+            {
+                continue;
+            }
+
+            int realIdxNum = Ri32(td, e + 8);
+            if (realIdxNum < 0 || realIdxNum >= numRealIdx)
+            {
+                continue;
+            }
+
+            int phys = realIdxDescStart + (realIdxNum * RealIdxPhysSz);
+            if (!RealIdxColMapMatches(td, phys, columnNumbers))
+            {
+                continue;
+            }
+
+            matchEntryIdx = li;
+            break;
+        }
+
+        if (matchEntryIdx < 0)
+        {
+            return false;
+        }
+
+        // Find the byte offset and length of the corresponding name (variable
+        // length). Walk the names list to position matchEntryIdx.
+        int namePos = logIdxNamesStart;
+        int removedNameStart = -1;
+        int removedNameLen = 0;
+        for (int i = 0; i < numIdx; i++)
+        {
+            int before = namePos;
+            if (ReadColumnName(td, ref namePos, out _) < 0)
+            {
+                return false;
+            }
+
+            if (i == matchEntryIdx)
+            {
+                removedNameStart = before;
+                removedNameLen = namePos - before;
+                break;
+            }
+        }
+
+        if (removedNameStart < 0)
+        {
+            return false;
+        }
+
+        // Compute trailing block bounds (mirror of W9b EmitFkLogicalIdxAsync).
+        int trailingStart = logIdxNamesStart + logIdxNamesLen;
+        int storedTdefLen = Ri32(td, 8);
+        int currentEnd = storedTdefLen + 8;
+        if (currentEnd < trailingStart)
+        {
+            currentEnd = trailingStart;
+        }
+
+        int trailingLen = currentEnd - trailingStart;
+        if (trailingLen < 0 || trailingStart + trailingLen > td.Length)
+        {
+            return false;
+        }
+
+        // Build the rewritten page: copy [0..removedEntryStart], skip 28 bytes,
+        // copy [removedEntryEnd..removedNameStart], skip nameLen bytes, copy
+        // remainder up to currentEnd. Bytes after currentEnd are page padding
+        // (typically zero) and do not need to be preserved.
+        var newTd = new byte[_pgSz];
+        int removedEntryStart = logIdxStart + (matchEntryIdx * LogIdxEntrySz);
+        int removedEntryEnd = removedEntryStart + LogIdxEntrySz;
+
+        // Region 1: page header + tdef block + real-idx skip + col descs +
+        // col names + real-idx physical descs + logical-idx entries before
+        // the removed one.
+        Buffer.BlockCopy(td, 0, newTd, 0, removedEntryStart);
+
+        // Region 2: logical-idx entries after the removed one.
+        int afterEntriesLen = (logIdxStart + (numIdx * LogIdxEntrySz)) - removedEntryEnd;
+        Buffer.BlockCopy(td, removedEntryEnd, newTd, removedEntryStart, afterEntriesLen);
+
+        // Region 3: logical-idx names before the removed one.
+        int newNamesStart = removedEntryStart + afterEntriesLen;
+        int namesBeforeLen = removedNameStart - logIdxNamesStart;
+        Buffer.BlockCopy(td, logIdxNamesStart, newTd, newNamesStart, namesBeforeLen);
+
+        // Region 4: logical-idx names after the removed one.
+        int newRemovedNameStart = newNamesStart + namesBeforeLen;
+        int namesAfterLen = (logIdxNamesStart + logIdxNamesLen) - (removedNameStart + removedNameLen);
+        Buffer.BlockCopy(td, removedNameStart + removedNameLen, newTd, newRemovedNameStart, namesAfterLen);
+
+        // Region 5: trailing variable-length-column block (unchanged).
+        int newTrailingStart = newRemovedNameStart + namesAfterLen;
+        if (trailingLen > 0)
+        {
+            Buffer.BlockCopy(td, trailingStart, newTd, newTrailingStart, trailingLen);
+        }
+
+        // Update header counts.
+        Wi32(newTd, _tdNumCols + 2, numIdx - 1);
+        Wi32(newTd, 8, newTrailingStart + trailingLen - 8);
+
+        await WritePageAsync(tdefPage, newTd, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private static bool RealIdxColMapMatches(byte[] td, int phys, int[] columnNumbers)
+    {
+        if (phys + 52 > td.Length)
+        {
+            return false;
+        }
+
+        for (int slot = 0; slot < 10; slot++)
+        {
+            int so = phys + 4 + (slot * 3);
+            int cn = Ru16(td, so);
+            if (slot < columnNumbers.Length)
+            {
+                if (cn != columnNumbers[slot])
+                {
+                    return false;
+                }
+            }
+            else if (cn != 0xFFFF)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private sealed class TablePairComparer : IEqualityComparer<(string Pk, string Fk)>
+    {
+        public bool Equals((string Pk, string Fk) x, (string Pk, string Fk) y) =>
+            string.Equals(x.Pk, y.Pk, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(x.Fk, y.Fk, StringComparison.OrdinalIgnoreCase);
+
+        public int GetHashCode((string Pk, string Fk) obj) =>
+            HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Pk),
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Fk));
+    }
+
+    // ════════════════════════════════════════════════════════════════
     // W10 — Foreign-key runtime enforcement on Insert / Update / Delete
     // ════════════════════════════════════════════════════════════════
     //
