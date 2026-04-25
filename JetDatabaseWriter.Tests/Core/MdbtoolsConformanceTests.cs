@@ -70,6 +70,27 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
         Assert.True(count > 0, "Umsätze should have at least one row.");
     }
 
+    /// <summary>
+    /// Mirror of <c>mdb-prop nwind.mdb "Umsätze"</c> from mdbtools' test_script.sh —
+    /// the persisted column-property block (<c>MSysObjects.LvProp</c>) for every column
+    /// dumps without throwing. mdb-prop only checks for an exit-zero, so we assert the
+    /// equivalent: the per-column property fields exposed on <see cref="ColumnMetadata"/>
+    /// (Description, DefaultValueExpression, ValidationRule, ValidationText) are
+    /// reachable for every column in the target table.
+    /// </summary>
+    /// <returns>A task that completes when the assertion has run.</returns>
+    [Fact]
+    public async Task Nwind_Umsätze_DumpsColumnPropertiesWithoutError()
+    {
+        if (!File.Exists(TestDatabases.MdbtoolsNwind))
+        {
+            return;
+        }
+
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
+        await AssertColumnPropertiesDumpAsync(reader, "Umsätze");
+    }
+
     /// <summary>Mirror of <c>mdb-json nwind.mdb "Umsätze"</c> from mdbtools' test_script.sh — every row decodes without throwing.</summary>
     /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
@@ -237,6 +258,23 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
         Assert.True(count > 0, "Asset Items should have at least one row.");
     }
 
+    /// <summary>
+    /// Mirror of <c>mdb-prop ASampleDatabase.accdb "Asset Items"</c> from mdbtools'
+    /// test_script.sh — the persisted column-property block dumps without throwing.
+    /// </summary>
+    /// <returns>A task that completes when the assertion has run.</returns>
+    [Fact]
+    public async Task ASampleDatabase_AssetItems_DumpsColumnPropertiesWithoutError()
+    {
+        if (!File.Exists(TestDatabases.MdbtoolsASampleDatabase))
+        {
+            return;
+        }
+
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsASampleDatabase, TestContext.Current.CancellationToken);
+        await AssertColumnPropertiesDumpAsync(reader, "Asset Items");
+    }
+
     /// <summary>Mirror of <c>mdb-json ASampleDatabase.accdb "Asset Items"</c> — every row decodes without throwing.</summary>
     /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
@@ -399,6 +437,24 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     }
 
     // ── shared helpers ────────────────────────────────────────────────────────
+
+    private static async ValueTask AssertColumnPropertiesDumpAsync(AccessReader reader, string tableName)
+    {
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        Assert.NotEmpty(meta);
+
+        foreach (ColumnMetadata col in meta)
+        {
+            // Touch every persisted-property field. Reaching them without a throw is
+            // the conformance contract — mdb-prop just exits zero on a successful dump.
+            _ = col.Description;
+            _ = col.DefaultValueExpression;
+            _ = col.ValidationRuleExpression;
+            _ = col.ValidationText;
+            Assert.False(string.IsNullOrEmpty(col.Name));
+            Assert.False(string.IsNullOrEmpty(col.TypeName));
+        }
+    }
 
     private async ValueTask AssertEveryTableStreamsAsync(string path)
     {
