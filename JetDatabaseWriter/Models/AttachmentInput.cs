@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 
 /// <summary>
 /// Payload supplied to
@@ -15,7 +16,7 @@ using System;
 public sealed record AttachmentInput
 {
     /// <summary>
-    /// Initializes a new <see cref="AttachmentInput"/>.
+    /// Initializes a new instance of the <see cref="AttachmentInput"/> class.
     /// </summary>
     /// <param name="fileName">Display file name (with extension); non-empty.</param>
     /// <param name="fileData">Raw file bytes (uncompressed); non-null.</param>
@@ -34,6 +35,7 @@ public sealed record AttachmentInput
     public string FileName { get; }
 
     /// <summary>Gets the raw, uncompressed payload bytes.</summary>
+    [SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "Attachment payload is binary by definition; mirrors public byte[] surface elsewhere in the writer API.")]
     public byte[] FileData { get; }
 
     /// <summary>
@@ -43,6 +45,7 @@ public sealed record AttachmentInput
     public string? FileType { get; init; }
 
     /// <summary>Gets the optional source URL persisted in the flat-table <c>FileURL</c> column.</summary>
+    [SuppressMessage("Design", "CA1056:URI-like properties should not be strings", Justification = "Mirrors the underlying Access flat-table column type, which is a free-text MEMO.")]
     public string? FileURL { get; init; }
 
     /// <summary>

@@ -461,27 +461,22 @@ public sealed class LimitationsTests : IDisposable
     // ── Specialized column kinds ──────────────────────────────────────
 
     [Fact]
-    public void SpecializedColumns_NoPublicAttachmentApi()
+    public void SpecializedColumns_AttachmentApi_IsRowLevelOnly()
     {
-        // Phase C2 (2026-04-25) added the descriptor-only ColumnDefinition.IsAttachment
-        // declaration surface. Phase C3 — hidden flat-table emission and the row-level
-        // AddAttachmentAsync API — is still pending; CreateTableAsync rejects user-declared
-        // attachment columns until then. Continue to assert that no AccessWriter method
-        // accepts attachment data.
-        AssertNoMethodMatching(typeof(IAccessWriter), "Attachment");
-        AssertNoMethodMatching(typeof(AccessWriter), "Attachment");
+        // Phase C4 (2026-04-25) shipped row-level AddAttachmentAsync /
+        // GetAttachmentsAsync APIs. The remaining limitation is the writer's
+        // 256-byte inline-OLE cap, which restricts attachment payload size.
+        Assert.NotNull(typeof(IAccessWriter).GetMethod("AddAttachmentAsync"));
+        Assert.NotNull(typeof(IAccessReader).GetMethod("GetAttachmentsAsync"));
     }
 
     [Fact]
-    public void SpecializedColumns_NoPublicMultiValueApi()
+    public void SpecializedColumns_MultiValueApi_IsRowLevelOnly()
     {
-        // Same pattern as SpecializedColumns_NoPublicAttachmentApi: the C2 declaration
-        // surface (ColumnDefinition.IsMultiValue / .MultiValueElementType) exists, but
-        // there is no AccessWriter method to add multi-value items to a row yet.
-        AssertNoMethodMatching(typeof(IAccessWriter), "MultiValue");
-        AssertNoMethodMatching(typeof(IAccessWriter), "Complex");
-        AssertNoMethodMatching(typeof(AccessWriter), "MultiValue");
-        AssertNoMethodMatching(typeof(AccessWriter), "Complex");
+        // Phase C4 (2026-04-25) shipped row-level AddMultiValueItemAsync /
+        // GetMultiValueItemsAsync APIs alongside the C2 descriptor surface.
+        Assert.NotNull(typeof(IAccessWriter).GetMethod("AddMultiValueItemAsync"));
+        Assert.NotNull(typeof(IAccessReader).GetMethod("GetMultiValueItemsAsync"));
     }
 
     [Fact]

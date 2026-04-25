@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 
 /// <summary>
 /// One attachment row decoded from the hidden flat child table of an
@@ -29,11 +30,13 @@ public sealed record AttachmentRecord
     public string FileType { get; init; } = string.Empty;
 
     /// <summary>Gets the optional source URL from the flat table's <c>FileURL</c> column.</summary>
+    [SuppressMessage("Design", "CA1056:URI-like properties should not be strings", Justification = "Mirrors the underlying Access flat-table column type, which is a free-text MEMO.")]
     public string? FileURL { get; init; }
 
     /// <summary>Gets the timestamp from the flat table's <c>FileTimeStamp</c> column.</summary>
     public DateTime? FileTimeStamp { get; init; }
 
     /// <summary>Gets the decoded raw file bytes (wrapper removed, deflate decompressed).</summary>
+    [SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "Attachment payload is binary by definition; mirrors public byte[] surface elsewhere in the reader API.")]
     public byte[] FileData { get; init; } = Array.Empty<byte>();
 }
