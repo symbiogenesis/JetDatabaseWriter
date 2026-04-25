@@ -1,0 +1,12 @@
+All files in this directory tree (Databases/Jackcess/) were obtained from
+the Jackcess project (https://github.com/jahlborn/jackcess), licensed
+under the Apache License, Version 2.0.
+
+  Source URL pattern:
+    https://raw.githubusercontent.com/jahlborn/jackcess/master/src/test/data/<subdir>/<filename>
+
+  This directory is a full mirror of the upstream src/test/data/ layout.
+
+Copyright James Ahlborn and contributors.
+Licensed under the Apache License, Version 2.0.
+See https://www.apache.org/licenses/LICENSE-2.0
