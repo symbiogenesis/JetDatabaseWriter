@@ -1016,6 +1016,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
         }
 
+        // ── C5 — cascade flat-child rows for any complex columns on the
+        // parent BEFORE we mark the parent rows deleted (we need to read
+        // the parent's ConceptualTableID slots while the rows are still
+        // live).
+        if (matchingIndices.Count > 0)
+        {
+            var parentLocs = new List<RowLocation>(matchingIndices.Count);
+            foreach (int i in matchingIndices)
+            {
+                parentLocs.Add(locations[i]);
+            }
+
+            await CascadeDeleteComplexChildrenAsync(tableDef, parentLocs, cancellationToken).ConfigureAwait(false);
+        }
+
         int deleted = 0;
         foreach (int i in matchingIndices)
         {
@@ -2292,6 +2307,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             {
                 await EnforceFkOnPrimaryDeleteAsync(rel.ForeignTable, kvp.Value, ctx, depth + 1, cancellationToken).ConfigureAwait(false);
             }
+
+            // C5: cascade complex flat-child rows for the child rows we are
+            // about to delete. Must precede MarkRowDeletedAsync so the
+            // ConceptualTableID slots are still readable.
+            var cascadeLocs = new List<RowLocation>(matchingRowIndices.Count);
+            foreach (int rIdx in matchingRowIndices)
+            {
+                cascadeLocs.Add(locations[rIdx]);
+            }
+
+            await CascadeDeleteComplexChildrenAsync(childDef, cascadeLocs, cancellationToken).ConfigureAwait(false);
 
             // Now delete the child rows.
             int deleted = 0;
@@ -5113,6 +5139,207 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         return fileName.Substring(dot + 1).ToLowerInvariant();
+    }
+
+    // ── C5 — Cascade-on-delete for complex (Attachment / MultiValue) columns ──
+    // See docs/design/complex-columns-format-notes.md §4.3 (C5).
+    //
+    // Whenever a parent row containing a complex column slot is deleted, the
+    // associated rows in the hidden flat child table (joined via the parent's
+    // 4-byte ConceptualTableID slot) must also be deleted. Without this pass
+    // the flat table accumulates orphaned rows, breaks referential integrity
+    // expected by Microsoft Access, and may cause Compact &amp; Repair to flag
+    // the file.
+
+    /// <summary>
+    /// Cascades a pending delete of <paramref name="deletedParentLocations"/>
+    /// rows in <paramref name="parentDef"/> to the hidden flat child tables
+    /// of every Attachment / MultiValue column on the parent. Must be called
+    /// BEFORE the parent rows are marked deleted, since the per-row
+    /// <c>ConceptualTableID</c> slot value is needed to identify which flat
+    /// rows to delete.
+    /// </summary>
+    /// <remarks>
+    /// Per-flat-table cost is O(P) where P is the database page count
+    /// (full sequential scan, no index seek). Multiple complex columns on
+    /// the same parent perform one scan each. This matches the existing
+    /// W10 cascade-delete cost profile and the C4 ConceptualTableID
+    /// allocator.
+    /// </remarks>
+    private async ValueTask CascadeDeleteComplexChildrenAsync(
+        TableDef parentDef,
+        IReadOnlyList<RowLocation> deletedParentLocations,
+        CancellationToken cancellationToken)
+    {
+        if (deletedParentLocations.Count == 0)
+        {
+            return;
+        }
+
+        // Identify complex columns on the parent.
+        var complexCols = new List<ColumnInfo>();
+        foreach (ColumnInfo col in parentDef.Columns)
+        {
+            if (col.Type == T_ATTACHMENT || col.Type == T_COMPLEX)
+            {
+                complexCols.Add(col);
+            }
+        }
+
+        if (complexCols.Count == 0)
+        {
+            return;
+        }
+
+        // Resolve each complex column to its flat-table TDEF page (skip
+        // any column whose MSysComplexColumns row is missing — same
+        // tolerance as the C4 row-add path).
+        var flatPagesByCol = new Dictionary<int, long>(complexCols.Count);
+        foreach (ColumnInfo col in complexCols)
+        {
+            long flatPg = await ResolveFlatTableTdefPageAsync(col.Name, col.Misc, cancellationToken).ConfigureAwait(false);
+            if (flatPg > 0)
+            {
+                flatPagesByCol[col.ColNum] = flatPg;
+            }
+        }
+
+        if (flatPagesByCol.Count == 0)
+        {
+            return;
+        }
+
+        // Read each parent row to collect the live ConceptualTableID per
+        // complex column. Rows whose complex slot is null contribute
+        // nothing to cascade.
+        var idsByCol = new Dictionary<int, HashSet<int>>(complexCols.Count);
+        foreach (ColumnInfo col in complexCols)
+        {
+            if (flatPagesByCol.ContainsKey(col.ColNum))
+            {
+                idsByCol[col.ColNum] = new HashSet<int>();
+            }
+        }
+
+        foreach (RowLocation loc in deletedParentLocations)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageAsync(loc.PageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                int numCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, loc.RowStart) : page[loc.RowStart];
+                int nullMaskSz = (numCols + 7) / 8;
+                int nullMaskPos = loc.RowSize - nullMaskSz;
+
+                foreach (ColumnInfo col in complexCols)
+                {
+                    if (!idsByCol.TryGetValue(col.ColNum, out HashSet<int>? ids))
+                    {
+                        continue;
+                    }
+
+                    int byteOff = nullMaskPos + (col.ColNum / 8);
+                    int bitOff = col.ColNum % 8;
+                    bool slotSet = byteOff < loc.RowSize
+                        && (page[loc.RowStart + byteOff] & (1 << bitOff)) != 0;
+                    if (!slotSet)
+                    {
+                        continue;
+                    }
+
+                    int slotOff = loc.RowStart + _numColsFldSz + col.FixedOff;
+                    if (slotOff + 4 > loc.RowStart + loc.RowSize)
+                    {
+                        continue;
+                    }
+
+                    int ctid = Ri32(page, slotOff);
+                    if (ctid > 0)
+                    {
+                        _ = ids.Add(ctid);
+                    }
+                }
+            }
+            finally
+            {
+                ReturnPage(page);
+            }
+        }
+
+        // For each complex column with collected IDs, scan the flat
+        // child table once and delete every row whose FK back-reference
+        // is in the set. Adjust the flat TDEF row count once.
+        foreach (ColumnInfo col in complexCols)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!flatPagesByCol.TryGetValue(col.ColNum, out long flatTdefPage))
+            {
+                continue;
+            }
+
+            HashSet<int> ids = idsByCol[col.ColNum];
+            if (ids.Count == 0)
+            {
+                continue;
+            }
+
+            TableDef flatDef = await ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
+            ColumnInfo? fkCol = flatDef.Columns.Find(c => c.Type == T_LONG && c.Name.StartsWith('_'))
+                ?? flatDef.Columns.Find(c => c.Type == T_LONG);
+            if (fkCol == null)
+            {
+                continue;
+            }
+
+            int deletedFromFlat = 0;
+            long total = _stream.Length / _pgSz;
+            for (long pageNumber = 3; pageNumber < total; pageNumber++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var rowsToDelete = new List<int>();
+                byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (page[0] != 0x01)
+                    {
+                        continue;
+                    }
+
+                    if (Ri32(page, _dpTDefOff) != flatTdefPage)
+                    {
+                        continue;
+                    }
+
+                    foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
+                    {
+                        string fkText = ReadColumnValue(page, row.RowStart, row.RowSize, fkCol);
+                        if (int.TryParse(fkText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int fk)
+                            && ids.Contains(fk))
+                        {
+                            rowsToDelete.Add(row.RowIndex);
+                        }
+                    }
+                }
+                finally
+                {
+                    ReturnPage(page);
+                }
+
+                foreach (int rowIdx in rowsToDelete)
+                {
+                    await MarkRowDeletedAsync(pageNumber, rowIdx, cancellationToken).ConfigureAwait(false);
+                    deletedFromFlat++;
+                }
+            }
+
+            if (deletedFromFlat > 0)
+            {
+                await AdjustTDefRowCountAsync(flatTdefPage, -deletedFromFlat, cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>

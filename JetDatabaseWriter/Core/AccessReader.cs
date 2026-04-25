@@ -1747,25 +1747,32 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // Resolve complex-field attachments using preloaded complex data (keyed by col ordinal).
             // The variable slot holds a marker "__CX:<complex_id>__" encoding the FK
             // that joins this row to the hidden flat data table.
-            if ((col.Type == T_COMPLEX || col.Type == T_ATTACHMENT) &&
-                complexData != null &&
-                complexData.TryGetValue(i, out Dictionary<int, byte[]>? colData))
+            if (col.Type == T_COMPLEX || col.Type == T_ATTACHMENT)
             {
-                // Extract complex_id from marker string (e.g. "__CX:1__" → 1).
-                int complexId = ExtractComplexId(raw);
-                if (complexId <= 0)
+                if (complexData != null &&
+                    complexData.TryGetValue(i, out Dictionary<int, byte[]>? colData))
                 {
-                    // Fallback: use the parent row's AutoNumber ID.
-                    complexId = ExtractParentId(row, columns);
+                    // Extract complex_id from marker string (e.g. "__CX:1__" → 1).
+                    int complexId = ExtractComplexId(raw);
+                    if (complexId <= 0)
+                    {
+                        // Fallback: use the parent row's AutoNumber ID.
+                        complexId = ExtractParentId(row, columns);
+                    }
+
+                    if (complexId > 0 && colData.TryGetValue(complexId, out byte[]? attachBytes) &&
+                        attachBytes != null && attachBytes.Length > 0)
+                    {
+                        typedRow[i] = attachBytes;
+                        continue;
+                    }
                 }
 
-                if (complexId > 0 && colData.TryGetValue(complexId, out byte[]? attachBytes) &&
-                    attachBytes != null && attachBytes.Length > 0)
-                {
-                    typedRow[i] = attachBytes;
-                    continue;
-                }
-
+                // Complex slot with no resolvable child data (e.g. multi-value
+                // columns whose flat-table loader is not wired through, or
+                // attachment slots whose ConceptualTableID has no live flat
+                // rows). Surface as DBNull rather than attempting to parse the
+                // "__CX:N__" marker as the column's nominal byte[] CLR type.
                 typedRow[i] = DBNull.Value;
                 continue;
             }
