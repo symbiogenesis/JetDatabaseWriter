@@ -125,6 +125,31 @@ public interface IAccessReader : IAccessBase
     ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Returns every attachment row stored in the hidden flat child table backing
+    /// the Access 2007+ Attachment column <paramref name="columnName"/> on
+    /// <paramref name="tableName"/>. Each result is decoded per
+    /// <c>docs/design/complex-columns-format-notes.md</c> §3 — wrapper stripped
+    /// and (when present) deflate decompression applied to <c>FileData</c>.
+    /// </summary>
+    /// <param name="tableName">Parent table name (case-insensitive).</param>
+    /// <param name="columnName">Attachment column name (case-insensitive).</param>
+    /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
+    /// <returns>One <see cref="AttachmentRecord"/> per flat-table row. Empty when the column is unknown, has no rows, or is not an Attachment column.</returns>
+    ValueTask<IReadOnlyList<AttachmentRecord>> GetAttachmentsAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns every value stored in the hidden flat child table backing the
+    /// Access 2007+ Multi-Value column <paramref name="columnName"/> on
+    /// <paramref name="tableName"/>, paired with the parent row's
+    /// <c>ConceptualTableID</c> so callers can group items by parent.
+    /// </summary>
+    /// <param name="tableName">Parent table name (case-insensitive).</param>
+    /// <param name="columnName">Multi-Value column name (case-insensitive).</param>
+    /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
+    /// <returns>Tuples of (ConceptualTableId, value) where value is typed via the flat-table value column. Empty when the column is unknown or has no rows.</returns>
+    ValueTask<IReadOnlyList<(int ConceptualTableId, object? Value)>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Reads the entire table into a DataTable with properly typed columns asynchronously.
     /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
     /// </summary>
