@@ -1548,13 +1548,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             return col.Type switch
             {
-                T_BYTE => row[start].ToString(System.Globalization.CultureInfo.InvariantCulture),
-                T_INT => ((short)Ru16(row, start)).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                T_LONG => Ri32(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                T_FLOAT => BitConverter.ToSingle(row, start).ToString("G", System.Globalization.CultureInfo.InvariantCulture),
-                T_DOUBLE => BitConverter.ToDouble(row, start).ToString("G", System.Globalization.CultureInfo.InvariantCulture),
+                T_BYTE => row[start].ToString(CultureInfo.InvariantCulture),
+                T_INT => ((short)Ru16(row, start)).ToString(CultureInfo.InvariantCulture),
+                T_LONG => Ri32(row, start).ToString(CultureInfo.InvariantCulture),
+                T_FLOAT => BitConverter.ToSingle(row, start).ToString("G", CultureInfo.InvariantCulture),
+                T_DOUBLE => BitConverter.ToDouble(row, start).ToString("G", CultureInfo.InvariantCulture),
                 T_DATETIME => OaDateToString(BitConverter.ToDouble(row, start)),
-                T_MONEY => (BitConverter.ToInt64(row, start) / 10000.0m).ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+                T_MONEY => (BitConverter.ToInt64(row, start) / 10000.0m).ToString("F4", CultureInfo.InvariantCulture),
                 T_NUMERIC => ReadNumeric(row, start),
                 T_GUID => ReadGuid(row, start),
                 T_COMPLEX or T_ATTACHMENT when sz >= 4 => $"__CX:{Ri32(row, start)}__",
@@ -1664,7 +1664,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         try
         {
-            return DateTime.FromOADate(oaDate).ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+            return DateTime.FromOADate(oaDate).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
         }
         catch (ArgumentException)
         {
@@ -1700,7 +1700,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         try
         {
-            return new decimal((int)lo, (int)mid, (int)hi, neg, scale).ToString("G", System.Globalization.CultureInfo.InvariantCulture);
+            return new decimal((int)lo, (int)mid, (int)hi, neg, scale).ToString("G", CultureInfo.InvariantCulture);
         }
         catch (OverflowException ex)
         {
@@ -1718,7 +1718,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         // First three groups are stored little-endian in the Jet format
         return string.Format(
-            System.Globalization.CultureInfo.InvariantCulture,
+            CultureInfo.InvariantCulture,
             "{{{0:X2}{1:X2}{2:X2}{3:X2}-{4:X2}{5:X2}-{6:X2}{7:X2}-{8:X2}{9:X2}-{10:X2}{11:X2}{12:X2}{13:X2}{14:X2}{15:X2}}}",
             b[start + 3],
             b[start + 2],
@@ -2274,15 +2274,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     return string.Empty;
 
                 case T_BYTE:
-                    return len >= 1 ? row[start].ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                    return len >= 1 ? row[start].ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_INT:
-                    return len >= 2 ? ((short)Ru16(row, start)).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                    return len >= 2 ? ((short)Ru16(row, start)).ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_LONG:
-                    return len >= 4 ? Ri32(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                    return len >= 4 ? Ri32(row, start).ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_FLOAT:
-                    return len >= 4 ? BitConverter.ToSingle(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                    return len >= 4 ? BitConverter.ToSingle(row, start).ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_DOUBLE:
-                    return len >= 8 ? BitConverter.ToDouble(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                    return len >= 8 ? BitConverter.ToDouble(row, start).ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_DATETIME:
                 case T_MONEY:
                     return len >= 8 ? ReadFixed(row, start, col, 8) : string.Empty;

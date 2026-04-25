@@ -297,7 +297,7 @@ internal static class TestDatabases
         // AccessReader.OpenAsync directly.
         if (options is null && string.Equals(path, AesEncrypted, StringComparison.OrdinalIgnoreCase))
         {
-            options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword) };
+            options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString(AesEncryptedPassword) };
         }
 
         return AccessReader.OpenAsync(path, options, cancellationToken);

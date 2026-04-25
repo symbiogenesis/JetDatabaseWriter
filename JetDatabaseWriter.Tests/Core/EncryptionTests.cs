@@ -561,7 +561,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         BitConverter.GetBytes(dbKey).CopyTo(input, 0);
         BitConverter.GetBytes(pageNumber).CopyTo(input, 4);
 
-        byte[] hash = System.Security.Cryptography.MD5.HashData(input);
+        byte[] hash = MD5.HashData(input);
 
         // Use first 4 bytes as the RC4 key (per Jet4 spec)
         return hash[..4];

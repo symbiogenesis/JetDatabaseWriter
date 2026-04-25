@@ -3857,7 +3857,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return leftDbNull && rightDbNull;
         }
 
-        return object.Equals(left, right);
+        return Equals(left, right);
     }
 
     private static byte TypeCodeFromDefinition(ColumnDefinition column)
