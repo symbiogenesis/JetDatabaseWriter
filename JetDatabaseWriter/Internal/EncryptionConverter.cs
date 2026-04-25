@@ -24,9 +24,6 @@ internal static class EncryptionConverter
     private const int Jet4PageSize = 4096;
     private const int HeaderLength = 0x80;
 
-    private static readonly byte[] CfbMagic =
-        [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
-
     /// <summary>
     /// Reads <paramref name="source"/>, applies any active decryption, and
     /// returns a fully-plaintext copy of the database (no encryption flags,
@@ -272,7 +269,7 @@ internal static class EncryptionConverter
         // header so the reader / writer detect the legacy AES path. The
         // rest of the ACCDB header (including code page, format byte at
         // 0x14, and the password-area we just wrote) survives intact.
-        Buffer.BlockCopy(CfbMagic, 0, result, 0, CfbMagic.Length);
+        CompoundFileReader.CfbSignature.CopyTo(result);
 
         byte[] aesKey = DeriveAesPageKey(password);
         var keys = new EncryptionManager.PageDecryptionKeys { AesPageKey = aesKey };

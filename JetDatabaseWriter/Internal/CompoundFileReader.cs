@@ -24,14 +24,20 @@ internal static class CompoundFileReader
     private const uint FatSectMin = 0xFFFFFFFAu; // entries >= this are reserved markers
 
     /// <summary>
+    /// Gets the 8-byte OLE / Microsoft Compound File Binary (CFB / OLE2) signature
+    /// that appears at offset 0 of every compound document.
+    /// </summary>
+    internal static ReadOnlySpan<byte> CfbSignature =>
+        [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+
+    /// <summary>
     /// Returns true when the leading bytes match the OLE compound file magic.
     /// </summary>
     /// <param name="header">Buffer holding at least 8 bytes from offset 0.</param>
     public static bool HasCompoundFileMagic(byte[] header)
     {
         return header != null && header.Length >= 8 &&
-            header[0] == 0xD0 && header[1] == 0xCF && header[2] == 0x11 && header[3] == 0xE0 &&
-            header[4] == 0xA1 && header[5] == 0xB1 && header[6] == 0x1A && header[7] == 0xE1;
+            header.AsSpan(0, 8).SequenceEqual(CfbSignature);
     }
 
     /// <summary>

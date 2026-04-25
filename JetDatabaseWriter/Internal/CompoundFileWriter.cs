@@ -35,9 +35,6 @@ internal static class CompoundFileWriter
     private const uint FatSect = 0xFFFFFFFDu;
     private const int MaxHeaderDifatEntries = 109;
 
-    private static readonly byte[] CfbMagic =
-        [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
-
     /// <summary>
     /// Builds an in-memory CFB v4 compound document containing the supplied
     /// top-level streams, in the order provided. Stream names must be ≤ 31
@@ -218,7 +215,7 @@ internal static class CompoundFileWriter
     {
         Span<byte> h = file.AsSpan(0, 512);
 
-        CfbMagic.CopyTo(h);
+        CompoundFileReader.CfbSignature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18, 2), 0x003E);  // minor version
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A, 2), 0x0004);  // major version (v4 = 4096-byte sectors)
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C, 2), 0xFFFE);  // little-endian byte order
