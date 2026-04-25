@@ -7,8 +7,6 @@
 
 Pure-managed .NET library for reading and writing Microsoft Access JET databases — no OleDB, ODBC, or ACE/Jet driver installation required.
 
-> See [CHANGELOG.md](CHANGELOG.md) and the [migration guide](#migration-from-v1) for breaking changes from v1.
-
 ---
 
 ## Features
@@ -25,13 +23,13 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Page cache** | 256-page LRU cache (~1 MB, configurable) |
 | ✅ **Generic POCO mapping** | `ReadTable<T>()`, `Rows<T>()`, `InsertRow<T>()` — no manual casting |
 | ✅ **LINQ-friendly streaming** | `reader.Rows<T>("...").Where(...).Take(...).ToListAsync(ct)` — standard async LINQ over `IAsyncEnumerable<T>` |
-| ✅ **Progress reporting** | `IProgress<int>` callbacks on all long operations |
+| ✅ **Progress reporting** | `IProgress<long>` row callbacks; `IProgress<TableProgress>` per-table callbacks for whole-database reads |
 | ✅ **Non-Western text** | Code page auto-detected from the database header |
 | ✅ **OLE Objects** | Detects embedded JPEG, PNG, PDF, ZIP, DOC, RTF |
 | ✅ **Write support** | Create databases, Create/drop tables, insert/update/delete rows (Jet3/Jet4/ACE) |
 | ✅ **Encryption & passwords** | Jet3 page-level XOR, Jet4 `.mdb` RC4, legacy password-only `.accdb` (`;pwd=`), AES-128 page-encrypted Access 2007+ `.accdb` (CFB-wrapped), and Office Crypto API ECMA-376 "Agile" (SHA-512 PBKDF + AES-CBC) used by Access 2010 SP1+ / Microsoft 365 |
 | ✅ **Linked tables** | Read source paths / foreign names via `ListLinkedTablesAsync()`; create Access (type 4) and ODBC (type 6) links via `CreateLinkedTableAsync` / `CreateLinkedOdbcTableAsync` |
-| ✅ **Foreign-key relationships** | Read existing relationships via `ListIndexesAsync` (`Kind = ForeignKey`); create via `CreateRelationshipAsync` — `MSysRelationships` catalog rows (W9a) + per-TDEF FK logical-index entries on both sides with real-idx sharing (W9b, Jet4/ACE only); **runtime referential-integrity enforcement** on `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync`, including cascade-update and cascade-delete (W10) |
+| ✅ **Foreign-key relationships** | Read existing relationships via `ListIndexesAsync` (`Kind = ForeignKey`); create via `CreateRelationshipAsync` — `MSysRelationships` catalog rows + per-TDEF FK logical-index entries on both sides (Jet4/ACE only); **runtime referential-integrity enforcement** on `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync`, including cascade-update and cascade-delete |
 | ✅ **Complex fields** | Attachment and multi-value columns resolved via `MSysComplexColumns` FK lookup |
 | ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on disposal (opt-out) |
 
@@ -49,15 +47,13 @@ Install-Package JetDatabaseWriter
 
 ### NuGet target compatibility
 
-`JetDatabaseWriter` targets **`netstandard2.1`**, which is consumed by the following .NET surfaces:
+`JetDatabaseWriter` multi-targets **`netstandard2.1`** and **`net10.0`**. The `net10.0` asset is selected automatically on .NET 10+ consumers; the `netstandard2.1` asset covers everything else:
 
 | Consumer | Minimum version |
 |----------|----------------|
+| .NET | 10 (preferred), 9, 8, 7, 6, 5 |
 | .NET Core | 3.0 |
-| .NET | 5 / 6 / 7 / 8 / 9 |
 | Mono | 6.4 |
-| Xamarin.iOS | 12.16 |
-| Xamarin.Android | 10.0 |
 | Unity | 2021.2+ |
 
 ---
@@ -147,7 +143,7 @@ Property names are matched to column headers **case-insensitively**. Unmatched p
 ### Typed DataTable
 
 ```csharp
-DataTable? dt = await reader.ReadDataTableAsync("Products", cancellationToken: cancellationToken);
+DataTable dt = await reader.ReadDataTableAsync("Products", cancellationToken: cancellationToken);
 // dt.Columns["ProductID"].DataType    == typeof(int)
 // dt.Columns["UnitPrice"].DataType    == typeof(decimal)
 // dt.Columns["Discontinued"].DataType == typeof(bool)
@@ -194,7 +190,7 @@ foreach (ComplexColumnInfo c in complex)
 
 Returns an empty list for tables without complex columns and for older Jet3 / Jet4 (`.mdb`) files.
 
-#### Reading and writing complex column rows (Phase C4)
+#### Reading and writing complex column rows
 
 For ACE `.accdb` files, attachments and multi-value items can be inserted into an existing parent row and read back via spec-compliant APIs:
 
@@ -234,7 +230,7 @@ string firstCell = preview.Rows[0][0].ToString();
 ### Generic streaming — recommended
 
 ```csharp
-var progress = new Progress<int>(n => Console.Write($"\r{n:N0} rows"));
+var progress = new Progress<long>(n => Console.Write($"\r{n:N0} rows"));
 
 await foreach (Product p in reader.Rows<Product>("Products", progress))
     Console.WriteLine($"{p.ProductName}: {p.UnitPrice:C}");
@@ -304,8 +300,8 @@ await using var reader = await AccessReader.OpenAsync("database.mdb", cancellati
 
 List<Order>                   orders = await reader.ReadTableAsync<Order>("Orders", 50, cts.Token);
 List<string>                  tables = await reader.ListTablesAsync(cts.Token);
-DataTable?                    dt     = await reader.ReadDataTableAsync("Orders", cancellationToken: cts.Token);
-DataTable                     str    = await reader.ReadTableAsStringsAsync("Orders", 50, cts.Token);
+DataTable                     dt     = await reader.ReadDataTableAsync("Orders", cancellationToken: cts.Token);
+DataTable                     str    = await reader.ReadTableAsStringsAsync("Orders", maxRows: 50, cancellationToken: cts.Token);
 DatabaseStatistics            stats  = await reader.GetStatisticsAsync(cts.Token);
 Dictionary<string, DataTable> all    = await reader.ReadAllTablesAsync(cancellationToken: cts.Token);
 Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync(cancellationToken: cts.Token);
@@ -313,19 +309,12 @@ Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync(
 
 All async APIs return `ValueTask<T>` and can be awaited directly. Reader/writer instances also implement `IAsyncDisposable`, so prefer `await using`.
 
----
-
-## Bulk Operations
+`ReadAllTablesAsync` and `ReadAllTablesAsStringsAsync` accept a `Progress<TableProgress>` callback that fires once per table:
 
 ```csharp
-// Typed columns
 Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(
     new Progress<TableProgress>(p => Console.WriteLine($"Reading {p.TableName} ({p.TableIndex + 1}/{p.TableCount})...")),
     cancellationToken);
-
-// String columns (compatibility)
-Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync(
-    cancellationToken: cancellationToken);
 ```
 
 ---
@@ -464,7 +453,9 @@ await writer.CreateLinkedOdbcTableAsync(
 
 ### Foreign-key relationships
 
-Declare a relationship between two existing tables. The library appends one row per FK column to the `MSysRelationships` system table (the source Access reads to populate the Relationships designer) **and** emits a per-table FK logical-index entry on both the PK-side and FK-side TDEFs (Jet4/ACE only — Jet3 `.mdb` files get only the catalog rows). Existing real-idx slots are reused when their `col_map` already covers the FK columns; otherwise a new real-idx slot plus an empty leaf page are appended on each side. **Runtime referential integrity is enforced on `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync`** for any relationship created with `EnforceReferentialIntegrity = true` (the default); `CascadeUpdates` / `CascadeDeletes` honour the cascade flags. See the Limitations section for the full contract.
+Declare a relationship between two existing tables. The library appends one row per FK column to the `MSysRelationships` catalog (which Microsoft Access reads to populate the Relationships designer) and, on Jet4 / ACE databases, emits the matching per-TDEF foreign-key logical-index entries on both sides so the relationship is visible to readers immediately. Jet3 `.mdb` files get only the catalog rows.
+
+**Runtime referential integrity is enforced on `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync`** for any relationship created with `EnforceReferentialIntegrity = true` (the default); `CascadeUpdates` and `CascadeDeletes` honour the cascade flags. See the Limitations section for caveats.
 
 ```csharp
 // Single-column FK
@@ -496,9 +487,6 @@ await writer.CreateRelationshipAsync(new RelationshipDefinition(
 ## Statistics & Metadata
 
 ```csharp
-foreach (ColumnMetadata col in await reader.GetColumnMetadataAsync("Orders", cancellationToken))
-    Console.WriteLine($"{col.Ordinal}. {col.Name} — {col.TypeName} ({col.ClrType.Name})");
-
 // Table-level stats (single catalog scan)
 foreach (TableStat ts in await reader.GetTableStatsAsync(cancellationToken))
     Console.WriteLine($"{ts.Name}: {ts.RowCount:N0} rows, {ts.ColumnCount} cols");
@@ -583,9 +571,9 @@ var options = new AccessReaderOptions("secretPassword")
     ParallelPageReadsEnabled = true,   // parallel I/O (default: false)
     DiagnosticsEnabled       = false,  // verbose logging (default: false)
     ValidateOnOpen           = true,   // format check on open (default: true)
-    FileAccess               = FileAccess.Read,   // default
-    FileShare                = FileShare.Read,    // default: others may read, writes blocked
-    // FileShare             = FileShare.ReadWrite // use when Access has the file open
+    FileAccess               = FileAccess.Read,        // default
+    FileShare                = FileShare.ReadWrite,    // default: tolerate Access also having the file open
+    // FileShare             = FileShare.Read,         // tighten to read-only sharing if you don't need that
     UseLockFile              = true,   // create .ldb/.laccdb lockfile (default: true)
     LinkedSourcePathAllowlist = new[] { @"C:\TrustedLinkedDatabases" },
     LinkedSourcePathValidator = (link, fullPath) => !link.IsOdbc,
@@ -605,7 +593,7 @@ await using var writer = await AccessWriter.OpenAsync("database.mdb", writerOpti
 ## Error Handling
 
 ```csharp
-try { var dt = await reader.ReadTableAsync("Orders"); }
+try { var dt = await reader.ReadDataTableAsync("Orders"); }
 catch (FileNotFoundException)   { /* file missing */ }
 catch (UnauthorizedAccessException) { /* no password provided, or wrong password */ }
 catch (InvalidDataException)    { /* corrupt or non-JET file */ }
