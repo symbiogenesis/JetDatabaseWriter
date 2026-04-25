@@ -20,7 +20,7 @@ Access 2007 introduced three "complex column" kinds. All three are stored the sa
 
 The discrimination between attachment / multi-value / version-history is **not** done by the column-type byte. It is done by the linked flat table's schema and/or the value of `MSysComplexColumns.ComplexTypeObjectID` (which points at one of the `MSysComplexType_*` template tables — see [appendix](format-probe-appendix-complex.md)).
 
-The reader implements all three kinds. Writer support has shipped through phase C6 — see §4.2.
+The reader implements all three kinds. Writer support has shipped through phase C8 — see §4.2.
 
 ## 2. On-disk layout
 
@@ -167,10 +167,11 @@ The reader (see §1) implements `T_ATTACHMENT` / `T_COMPLEX` column-type recogni
 | **C1** | Empty-DB scaffold: add `MSysComplexColumns` to `BuildEmptyDatabase`. | ✅ Shipped. ACCDB only. Helper: `AccessWriter.CreateMSysComplexColumnsAsync` (called from `ScaffoldSystemTablesAsync`). Catalog row carries `MSysObjects.Flags = 0x80000000` and is excluded from `ListTablesAsync`. Tests: `ComplexColumnsWriterTests`. |
 | **C2** | `ColumnDefinition.IsAttachment` / `IsMultiValue` declaration surface + `ColumnInfo.Misc` round-trip in TDEF emission (the `0x07` bitmask, the 4-byte `misc` ComplexID slot, `col_len = 4`). | ✅ Shipped. Public init-only props on `ColumnDefinition`. Descriptor offset `_colMiscOff` = 11 (Jet4/ACE). Tests: `ComplexColumnsWriterTests`. |
 | **C3** | `CreateTableAsync` emits the hidden flat child table, allocates a fresh `ComplexID`, writes the `MSysComplexColumns` row, and patches the parent descriptor. | ✅ Shipped. Helper: `CreateTableInternalAsync`. Flat table named `f_<32-hex>_<userColumnName>`, `MSysObjects.Flags = 0x800A0000`. C3 originally shipped without the per-flat PK/FK indexes — those landed in C7 (§4.4). `ComplexTypeObjectID = 0` is still written and `AddColumnAsync` of a brand-new complex column on an existing table remains pending (would need `RewriteTableAsync` plumbing). |
-| **C4** | Per-kind row APIs (`AddAttachmentAsync`, `AddMultiValueItemAsync`) and attachment payload encode (§3). | ✅ Shipped. Helpers: `AccessWriter.AddAttachmentAsync` / `AddMultiValueItemAsync`, `AttachmentWrapper`. Reader-side: `AccessReader.GetAttachmentsAsync` / `GetMultiValueItemsAsync`. **Limit:** `MaxInlineOleBytes = 256` caps attachment payload size until LVAL chain emission lands. |
+| **C4** | Per-kind row APIs (`AddAttachmentAsync`, `AddMultiValueItemAsync`) and attachment payload encode (§3). | ✅ Shipped. Helpers: `AccessWriter.AddAttachmentAsync` / `AddMultiValueItemAsync`, `AttachmentWrapper`. Reader-side: `AccessReader.GetAttachmentsAsync` / `GetMultiValueItemsAsync`. C4 originally capped attachment payloads at ~256 bytes (inline-OLE limit); Phase C8 lifted that cap by pushing oversized payloads onto LVAL data pages. |
 | **C5** | Cascade flat-table rows on parent delete. | ✅ Shipped. Helper: `CascadeDeleteComplexChildrenAsync`, called from `DeleteRowsAsync` and the W10 `EnforceFkOnPrimaryDeleteAsync` cascade path. Cost: one O(P) flat-table scan per (parent table × complex column). Tests: `ComplexColumnsCascadeDeleteTests`. |
 | **C6** | `DropTableAsync` cascade for hidden flat tables and `MSysComplexColumns` rows. | ✅ Shipped. Helper: `DropComplexChildrenForTableAsync`, called from `DropTableAsync`. Removes `MSysComplexColumns` and `MSysObjects` catalog rows for each child flat table; orphaned data pages are reclaimed by Access on the next Compact & Repair (same model used by W5). |
 | **C7** | Per-flat-table indexes Access expects: autoincrement scalar PK column, primary key on the scalar, normal index on the FK back-reference, and (attachment only) a composite secondary index on (FK, FileName). Lifts the C3 "no PK / no autoincrement / no FK back-reference index" caveat. | ✅ Shipped. Helper: `BuildFlatTableSchema` (returns `(ColumnDefinition[], IndexDefinition[])`) wired through `EmitComplexColumnArtifactsAsync` and reused by `AddComplexItemCoreAsync` via `ApplyConstraintsAsync` so the autoincrement scalar PK is seeded per insert. See §4.3. |
+| **C8** | LVAL chain emission for oversized MEMO / OLE / Attachment payloads. Lifts the inline-only `MaxInlineMemoBytes = 1024` and `MaxInlineOleBytes = 256` caps. | ✅ Shipped. Helpers: `PreEncodeLongValuesAsync`, `EncodeAsLvalChainAsync`, `BuildSingleLvalPageBuffer`, `BuildChainLvalPageBuffer` on `AccessWriter`. Pre-encode pass runs once at the top of `InsertRowDataLocAsync`: any `T_OLE` / `T_MEMO` value whose encoded payload exceeds the inline cap is staged onto freshly-appended LVAL data pages (single-page bitmask `0x40` for sub-page payloads; chained bitmask `0x00` with one row per page, walked in reverse so each predecessor row carries its successor's `lval_dp` pointer) and the in-row value is replaced with a `PreEncodedLongValue` sentinel that the encoders splice through verbatim. Upper limit is the on-disk 24-bit LVAL length field (`MaxLvalPayloadBytes = 16 MiB - 1`). LVAL pages are emitted as page-type `0x01` with `tdef_page = 0`, matching the format the existing `AccessReader.LocateLvalRowAsync` / `ReadLvalChainAsync` decoders accept. See §4.5. |
 
 ### 4.3 C7 flat-table schema
 
@@ -187,6 +188,50 @@ C7 caveats:
 - **`ComplexTypeObjectID = 0`** is unchanged — populating it would require a future `MSysComplexType_*` template-table phase.
 - **`AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` on tables that already contain complex columns** is unchanged — still `NotSupportedException` territory.
 - **Byte-level layout** is taken from the appendix probe of `f_A3DF50CFC033433899AF0AC1A4CF4171_Attachments` (column ordering, index names / kinds / column lists, scalar PK column name, autoincrement bit) and the Jackcess-derived multi-value extrapolation; the per-flat-table layout has not been round-tripped through a real Access install — see [`index-and-relationship-format-notes.md` §8](index-and-relationship-format-notes.md#8-validation-strategy).
+
+### 4.5 C8 LVAL chain emission
+
+Phase C8 lifts the inline cap that limited C4 attachment payloads to ~256 bytes. The pre-encode pass `AccessWriter.PreEncodeLongValuesAsync` runs at the top of `InsertRowDataLocAsync` and only fires for `T_OLE` / `T_MEMO` columns whose encoded payload exceeds the in-row inline cap (`MaxInlineOleBytes = 256`, `MaxInlineMemoBytes = 1024`). Smaller values keep the existing inline path (`WrapInlineLongValue`, bitmask `0x80`) unchanged.
+
+12-byte LVAL header layout (matches `AccessReader.ReadLongValueAsync`):
+
+```
++--------+--------+--------+--------+
+| memo_len (24 LE)         | bitmask|   bytes 0..3
++--------+--------+--------+--------+
+| lval_dp (32 LE)                   |   bytes 4..7  ((page<<8) | row_index)
++--------+--------+--------+--------+
+| reserved (32, zero)               |   bytes 8..11
++--------+--------+--------+--------+
+```
+
+`bitmask` values produced by C8:
+
+- `0x80` — inline (small payloads; bytes 4..11 zero, payload follows the header in the row body).
+- `0x40` — single LVAL page. `lval_dp` points at one row on a freshly-appended LVAL data page; the row body **is** the payload (no next-pointer prefix).
+- `0x00` — chained LVAL pages. `lval_dp` points at the first chained row, whose first 4 bytes are the next-pointer (LE `(page<<8)|row`), followed by that page's chunk of the payload. The terminal row's next-pointer is `0`.
+
+LVAL page layout (one row per page, written by `BuildSingleLvalPageBuffer` / `BuildChainLvalPageBuffer`):
+
+- `page_type = 0x01` (data page; the reader does not treat type `0x05` LVAL pages, so this matches the on-disk reader contract).
+- `tdef_page = 0` (LVAL pages are not owned by a TDEF).
+- `num_rows = 1`, single row offset entry pointing at the row body that occupies the tail of the page.
+- Free-space field at offset 2 reflects the unused middle of the page.
+
+Allocation order for the chained form is **reverse**: `EncodeAsLvalChainAsync` appends the *last* chunk's page first (next-pointer `= 0`), then walks backwards so each newly-appended page can carry its successor's `lval_dp` as its row-prefix next-pointer. The header's `lval_dp` ends up pointing at whatever page was appended *last* (the highest page number, holding the *first* chunk).
+
+Chunking math:
+
+- One row per LVAL page. The row offset table costs 2 bytes for the single offset slot.
+- Single-page row max = `pgSize − dpRowsStart − 2` (Jet4/ACE: `4096 − 14 − 2 = 4080` bytes payload).
+- Chain row max = single-page row max − 4 (the in-row next-pointer prefix).
+
+C8 caveats:
+
+- **Upper limit is `MaxLvalPayloadBytes = (1 << 24) − 1`** (~16 MiB) per single MEMO / OLE / Attachment value, set by the on-disk 24-bit `memo_len` field. Larger payloads throw `JetLimitationException`.
+- **No LVAL page reuse on update/delete**: `UpdateRowsAsync` rewrites the row through `InsertRowDataAsync` and re-allocates a fresh LVAL chain; the old LVAL pages stay on disk and are reclaimed by Access on the next Compact & Repair pass (same model used by the W5 stale-leaf path).
+- **System-table OLE columns (`MSysObjects.LvProp` / `LvModule` / `LvExtra`) keep the 256-byte inline cap.** Internal system-table writes bypass the pre-encode hook because the property blobs the writer emits today are well under the inline limit; lifting the cap there would require routing every system-table writer through `InsertRowDataLocAsync`.
+- **Validation gap.** Round-trip through this library's reader is verified in `JetDatabaseWriter.Tests/Core/ComplexColumnsLvalChainTests.cs` (single-page form, chained form, deflate-compressed text payload). Microsoft Access compact-and-repair validation is still pending — see [`index-and-relationship-format-notes.md` §8](index-and-relationship-format-notes.md#8-validation-strategy).
 
 ## 5. Validation strategy
 

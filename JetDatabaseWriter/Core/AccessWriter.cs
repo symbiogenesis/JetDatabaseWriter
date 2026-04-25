@@ -27,6 +27,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private const int TDefRowCountOffset = 16;
 
     /// <summary>
+    /// Maximum payload size for a MEMO / OLE / Attachment value. The on-disk
+    /// LVAL header dedicates a 24-bit field to the total length, so values
+    /// strictly larger than 16,777,215 bytes cannot be addressed regardless
+    /// of the chosen storage form (inline / single-page / chained).
+    /// </summary>
+    private const int MaxLvalPayloadBytes = (1 << 24) - 1;
+
+    /// <summary>
     /// Maximum number of rows a single JET data page may hold. JET row IDs
     /// encode the per-page row index as a single byte, so a page can address
     /// at most 256 row slots; Jackcess caps at 255 and we follow suit so the
@@ -3989,6 +3997,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private static byte[]? EncodeOleValue(object value)
     {
+        // C8: when the row pre-encode pass has already pushed an oversized
+        // payload to LVAL pages, the sentinel carries the finished 12-byte
+        // header and we just splice it through.
+        if (value is PreEncodedLongValue pre)
+        {
+            return pre.HeaderBytes;
+        }
+
         byte[]? data = value as byte[];
         if (data == null)
         {
@@ -4001,6 +4017,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             data = Encoding.UTF8.GetBytes(stringValue);
         }
 
+        // Anything larger than the inline cap should have been routed through
+        // the LVAL pre-encode pass already; reaching here means the caller is
+        // bypassing InsertRowDataLocAsync's hook (e.g. internal system-table
+        // writes), in which case the cap still applies.
         if (data.Length > MaxInlineOleBytes)
         {
             throw new JetLimitationException($"OLE value is {data.Length} bytes, which exceeds the inline limit of {MaxInlineOleBytes} bytes.");
@@ -4239,6 +4259,192 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         buffer[3] = 0x80;
         Buffer.BlockCopy(data, 0, buffer, 12, data.Length);
         return buffer;
+    }
+
+    // ── C8 — LVAL chain emission for oversized MEMO / OLE / Attachment payloads ──
+    // The 12-byte LVAL header (read by AccessReader.ReadLongValueAsync) is:
+    //   [memo_len: 3 bytes LE][bitmask: 1 byte][lval_dp: 4 bytes LE][unknown: 4 bytes]
+    // bitmask values:
+    //   0x80 — inline (data follows the 12-byte header in the row body)
+    //   0x40 — single LVAL page (payload occupies one LVAL row at lval_dp)
+    //   0x00 — chained LVAL pages ([next_lval_dp(4 LE)][chunk_bytes] per row, terminator next_lval_dp = 0)
+    // lval_dp encoding: ((page_number << 8) | row_index_within_page).
+
+    /// <summary>
+    /// Sentinel produced by <see cref="PreEncodeLongValuesAsync"/>. The wrapped
+    /// 12-byte LVAL header already references LVAL pages allocated earlier in
+    /// the row-insert pipeline, so <see cref="EncodeOleValue"/> /
+    /// <see cref="EncodeVariableValue"/> just splice <see cref="HeaderBytes"/>
+    /// straight into the row body without any further encoding.
+    /// </summary>
+    private sealed class PreEncodedLongValue
+    {
+        public PreEncodedLongValue(byte[] headerBytes)
+        {
+            HeaderBytes = headerBytes;
+        }
+
+        public byte[] HeaderBytes { get; }
+    }
+
+    /// <summary>
+    /// Pre-encode pass for <see cref="InsertRowDataLocAsync"/>: any MEMO / OLE
+    /// value whose payload exceeds the inline cap is written to one or more
+    /// freshly-appended LVAL data pages here, and the in-row value is replaced
+    /// with a <see cref="PreEncodedLongValue"/> sentinel carrying the matching
+    /// 12-byte header. Returns the same array reference when no large payloads
+    /// were found and a defensively-cloned array otherwise so the caller's
+    /// original <c>values</c> stays untouched.
+    /// </summary>
+    private async ValueTask<object[]> PreEncodeLongValuesAsync(TableDef tableDef, object[] values, CancellationToken cancellationToken)
+    {
+        object[]? result = null;
+        for (int i = 0; i < tableDef.Columns.Count; i++)
+        {
+            ColumnInfo col = tableDef.Columns[i];
+            if (col.IsFixed || (col.Type != T_OLE && col.Type != T_MEMO))
+            {
+                continue;
+            }
+
+            object value = values[i];
+            if (value is null or DBNull or PreEncodedLongValue)
+            {
+                continue;
+            }
+
+            byte[]? data;
+            int inlineCap;
+            if (col.Type == T_OLE)
+            {
+                data = value as byte[];
+                if (data == null)
+                {
+                    continue;
+                }
+
+                inlineCap = MaxInlineOleBytes;
+            }
+            else
+            {
+                string? text = value as string ?? Convert.ToString(value, CultureInfo.InvariantCulture);
+                if (string.IsNullOrEmpty(text))
+                {
+                    continue;
+                }
+
+                data = _format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(text) : _ansiEncoding.GetBytes(text);
+                inlineCap = MaxInlineMemoBytes;
+            }
+
+            if (data.Length <= inlineCap)
+            {
+                continue;
+            }
+
+            byte[] header = await EncodeAsLvalChainAsync(data, cancellationToken).ConfigureAwait(false);
+            result ??= (object[])values.Clone();
+            result[i] = new PreEncodedLongValue(header);
+        }
+
+        return result ?? values;
+    }
+
+    /// <summary>
+    /// Allocates one (single-page LVAL, bitmask <c>0x40</c>) or many (chained
+    /// LVAL pages, bitmask <c>0x00</c>) LVAL data pages for a payload that is
+    /// too large for the inline form, returning the resulting 12-byte LVAL
+    /// header. Pages are appended in reverse so each predecessor row can hold
+    /// its successor's <c>lval_dp</c> pointer.
+    /// </summary>
+    private async ValueTask<byte[]> EncodeAsLvalChainAsync(byte[] data, CancellationToken cancellationToken)
+    {
+        if (data.Length > MaxLvalPayloadBytes)
+        {
+            throw new JetLimitationException(
+                $"Long value is {data.Length} bytes, which exceeds the JET 24-bit LVAL length limit of {MaxLvalPayloadBytes} bytes.");
+        }
+
+        // One row per LVAL page. The row table costs 2 bytes for a single offset.
+        int singleRowMax = _pgSz - _dpRowsStart - 2;
+        int chainRowMax = singleRowMax - 4; // first 4 bytes of each chained row are the next-pointer
+
+        var header = new byte[12];
+        WriteUInt24(header, 0, data.Length);
+
+        if (data.Length <= singleRowMax)
+        {
+            byte[] page = BuildSingleLvalPageBuffer(data);
+            long pageNumber = await AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+            header[3] = 0x40;
+            uint lvalDp = unchecked((uint)((pageNumber << 8) | 0));
+            Wi32(header, 4, (int)lvalDp);
+            return header;
+        }
+
+        // Chunk size for chained rows. Allocating in reverse means each newly
+        // appended page's row carries the previously-appended page's lval_dp
+        // as its [next_dp] prefix.
+        int chunkCount = (data.Length + chainRowMax - 1) / chainRowMax;
+        uint nextDp = 0;
+        for (int i = chunkCount - 1; i >= 0; i--)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int chunkStart = i * chainRowMax;
+            int chunkLen = Math.Min(chainRowMax, data.Length - chunkStart);
+            byte[] page = BuildChainLvalPageBuffer(data, chunkStart, chunkLen, nextDp);
+            long pageNumber = await AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+            nextDp = unchecked((uint)((pageNumber << 8) | 0));
+        }
+
+        header[3] = 0x00;
+        Wi32(header, 4, (int)nextDp);
+        return header;
+    }
+
+    /// <summary>
+    /// Builds a single-row LVAL data page (bitmask <c>0x40</c> form): the row
+    /// body is the entire payload with no next-pointer prefix.
+    /// </summary>
+    private byte[] BuildSingleLvalPageBuffer(byte[] payload)
+    {
+        byte[] page = new byte[_pgSz];
+        page[0] = 0x01; // page_type = data page (the reader treats LVAL pages as type 0x01 with tdef_page = 0)
+        page[1] = 0x01;
+        Wi32(page, _dpTDefOff, 0);
+        Wu16(page, _dpNumRows, 1);
+
+        int rowStart = _pgSz - payload.Length;
+        Buffer.BlockCopy(payload, 0, page, rowStart, payload.Length);
+        Wu16(page, _dpRowsStart, rowStart);
+
+        int freeSpace = rowStart - (_dpRowsStart + 2);
+        Wu16(page, 2, freeSpace);
+        return page;
+    }
+
+    /// <summary>
+    /// Builds a single-row LVAL data page in chained form (bitmask <c>0x00</c>):
+    /// the first 4 bytes of the row are the next-row pointer (<c>page&lt;&lt;8 | row</c>,
+    /// little-endian; <c>0</c> on the terminal page) and the remainder is the chunk payload.
+    /// </summary>
+    private byte[] BuildChainLvalPageBuffer(byte[] data, int offset, int length, uint nextDp)
+    {
+        byte[] page = new byte[_pgSz];
+        page[0] = 0x01;
+        page[1] = 0x01;
+        Wi32(page, _dpTDefOff, 0);
+        Wu16(page, _dpNumRows, 1);
+
+        int rowLen = 4 + length;
+        int rowStart = _pgSz - rowLen;
+        Wi32(page, rowStart, (int)nextDp);
+        Buffer.BlockCopy(data, offset, page, rowStart + 4, length);
+        Wu16(page, _dpRowsStart, rowStart);
+
+        int freeSpace = rowStart - (_dpRowsStart + 2);
+        Wu16(page, 2, freeSpace);
+        return page;
     }
 
     private static FileStream CreateStream(string path)
@@ -6582,6 +6788,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 nameof(values));
         }
 
+        // C8 \u2014 push any oversized MEMO / OLE / Attachment payload to LVAL pages
+        // before serializing the row. The pre-encode pass appends LVAL pages to
+        // the file and rewrites the matching slot in `values` with a
+        // PreEncodedLongValue sentinel carrying the finished 12-byte header.
+        values = await PreEncodeLongValuesAsync(tableDef, values, cancellationToken).ConfigureAwait(false);
+
         byte[] rowBytes = SerializeRow(tableDef, values);
         PageInsertTarget target = await FindInsertTargetAsync(tdefPage, rowBytes.Length, cancellationToken).ConfigureAwait(false);
         int rowIndex;
@@ -6943,6 +7155,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             case T_BINARY:
                 return EncodeBinaryValue(value, column.Size);
             case T_MEMO:
+                if (value is PreEncodedLongValue preMemo)
+                {
+                    return preMemo.HeaderBytes;
+                }
+
                 return EncodeMemoValue(Convert.ToString(value, CultureInfo.InvariantCulture));
             case T_OLE:
                 return EncodeOleValue(value);

@@ -215,7 +215,7 @@ IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("
 IReadOnlyList<(int ConceptualTableId, object? Value)> tags = await reader.GetMultiValueItemsAsync("Tags", "Items", cancellationToken);
 ```
 
-The parent-row predicate must match exactly one row (zero or multiple matches throw `InvalidOperationException`). Attachment payloads are wrapped per MS-ACCDB §3.1 (4-byte typeFlag + dataLen + extension + payload, with raw-deflate compression skipped for already-compressed extensions). Payload size is capped at ~256 bytes per file by the writer's inline-OLE limitation.
+The parent-row predicate must match exactly one row (zero or multiple matches throw `InvalidOperationException`). Attachment payloads are wrapped per MS-ACCDB §3.1 (4-byte typeFlag + dataLen + extension + payload, with raw-deflate compression skipped for already-compressed extensions). Payloads larger than the 256-byte inline-OLE cap are pushed onto freshly-allocated LVAL data pages (single-page or chained form) and reassembled by the reader; the upper limit is the 24-bit on-disk LVAL length field (~16 MB per file).
 
 ### String DataTable — compatibility
 
@@ -653,8 +653,7 @@ The writer covers the common create / insert / update / delete path. The items b
 - **Not yet validated end-to-end through Microsoft Access.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not been round-tripped through a Compact & Repair pass on Windows.
 
 ### Specialized column kinds
-- **Attachment / multi-value (complex) columns — partial.** Schema creation (with the per-flat-table primary-key, FK back-reference, and (attachment-only) composite secondary index Access expects), row-level inserts, spec-compliant reads, cascade-on-delete from the parent row, and `DropTableAsync` cascade for the hidden flat child tables work for ACE `.accdb`. Still missing:
-  - LVAL chain emission for attachment payloads — current cap is ~256 bytes per file (inline-OLE limit).
+- **Attachment / multi-value (complex) columns — partial.** Schema creation (with the per-flat-table primary-key, FK back-reference, and (attachment-only) composite secondary index Access expects), row-level inserts, spec-compliant reads (including LVAL-chained payloads up to ~16 MB), cascade-on-delete from the parent row, and `DropTableAsync` cascade for the hidden flat child tables work for ACE `.accdb`. Still missing:
   - `MSysComplexType_*` template tables (`ComplexTypeObjectID` is written as `0`).
   - `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` on tables that already contain attachment columns.
 - **No calculated columns** (Access 2010+ expression columns).

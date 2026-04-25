@@ -951,8 +951,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     }
 
     [Fact]
-    public async Task InsertRow_MemoOverLimit_ThrowsJetLimitationException()
+    public async Task InsertRow_MemoOverInlineLimit_RoundTripsViaLvalChain()
     {
+        // C8: MEMO payloads larger than MaxInlineMemoBytes are pushed to LVAL
+        // pages instead of throwing. Round-trip a 513-char Chinese-glyph string
+        // (= 1026 UTF-16 bytes; Jet4 cannot compress non-Latin-1 to 1 byte/char,
+        // so the encoded payload exceeds the 1024-byte inline cap and forces
+        // the writer onto the LVAL path).
         string path = TestDatabases.NorthwindTraders;
         if (!File.Exists(path))
         {
@@ -968,20 +973,28 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             new("Content", typeof(string)), // MEMO
         };
 
-        // 513 Unicode chars = 1026 bytes > MaxInlineMemoBytes.
-        // Use a non-Latin-1 character so the writer cannot compress to 1 byte/char.
         string memoValue = new('\u4E2D', 513);
 
-        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, memoValue], TestContext.Current.CancellationToken);
+        }
 
-        await Assert.ThrowsAsync<JetLimitationException>(async () =>
-            await writer.InsertRowAsync(tableName, [1, memoValue], TestContext.Current.CancellationToken));
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
+        {
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+            Assert.Equal(1, dt.Rows.Count);
+            Assert.Equal(memoValue, dt.Rows[0]["Content"]);
+        }
     }
 
     [Fact]
-    public async Task InsertRow_OleBytesOverLimit_ThrowsJetLimitationException()
+    public async Task InsertRow_OleBytesOverInlineLimit_RoundTripsViaLvalChain()
     {
+        // C8: OLE payloads larger than MaxInlineOleBytes are pushed to LVAL
+        // pages instead of throwing. 4096 bytes spans multiple chained LVAL
+        // rows for a 4 KB page.
         string path = TestDatabases.NorthwindTraders;
         if (!File.Exists(path))
         {
@@ -997,13 +1010,37 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             new("Blob", typeof(byte[])), // OLE
         };
 
-        byte[] oversized = new byte[257]; // > MaxInlineOleBytes (256)
+        byte[] oversized = new byte[4096];
+        for (int i = 0; i < oversized.Length; i++)
+        {
+            oversized[i] = (byte)(i & 0xFF);
+        }
 
-        await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, oversized], TestContext.Current.CancellationToken);
+        }
 
-        await Assert.ThrowsAsync<JetLimitationException>(async () =>
-            await writer.InsertRowAsync(tableName, [1, oversized], TestContext.Current.CancellationToken));
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
+        {
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+            Assert.Equal(1, dt.Rows.Count);
+            object cell = dt.Rows[0]["Blob"];
+
+            // The reader normalises decoded OLE payloads into either a base64
+            // data: URL string (for LVAL forms whose decoded bytes are not a
+            // recognised OLE wrapper) or raw byte[] when no decode happened.
+            // Both shapes are acceptable round-trips of the input bytes.
+            byte[] roundTripped = cell switch
+            {
+                byte[] raw => raw,
+                string s when s.StartsWith("data:application/octet-stream;base64,", StringComparison.Ordinal)
+                    => Convert.FromBase64String(s.Substring("data:application/octet-stream;base64,".Length)),
+                _ => throw new InvalidOperationException($"Unexpected OLE cell shape: {cell.GetType().FullName}"),
+            };
+            Assert.Equal(oversized, roundTripped);
+        }
     }
 
     [Fact]
