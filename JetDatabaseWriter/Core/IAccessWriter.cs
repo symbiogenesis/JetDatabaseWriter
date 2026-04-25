@@ -170,4 +170,31 @@ public interface IAccessWriter : IAccessBase
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     ValueTask CreateLinkedOdbcTableAsync(string linkedTableName, string connectionString, string foreignTableName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asynchronously creates a foreign-key relationship between two existing user tables
+    /// by appending one row per FK column to the <c>MSysRelationships</c> system table.
+    /// The relationship is visible in the Microsoft Access Relationships designer; runtime
+    /// enforcement of referential integrity is performed by Microsoft Access (after
+    /// Compact &amp; Repair regenerates the per-TDEF FK index entries), not by this library.
+    /// </summary>
+    /// <param name="relationship">The relationship to create. Both referenced tables and
+    /// every named column must already exist; <see cref="RelationshipDefinition.Name"/>
+    /// must not duplicate any existing relationship.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="System.NotSupportedException">
+    /// Thrown when the database does not contain a <c>MSysRelationships</c> table —
+    /// e.g. databases freshly created by <c>AccessWriter.CreateDatabaseAsync</c> do not
+    /// include this catalog table. Open an Access-authored fixture or copy one before
+    /// declaring relationships.
+    /// </exception>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when a referenced table does not exist or when a relationship with the
+    /// same name already exists in the database.
+    /// </exception>
+    /// <exception cref="System.ArgumentException">
+    /// Thrown when a referenced column does not exist on its table.
+    /// </exception>
+    ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken = default);
 }

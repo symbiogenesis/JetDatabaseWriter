@@ -905,6 +905,727 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     // ════════════════════════════════════════════════════════════════
+    // Foreign-key relationships (W9a — MSysRelationships row emission)
+    // ════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Asynchronously creates a foreign-key relationship between two existing user
+    /// tables by appending one row per FK column to the <c>MSysRelationships</c>
+    /// system table. See
+    /// <see cref="IAccessWriter.CreateRelationshipAsync(RelationshipDefinition, CancellationToken)"/>
+    /// for the full contract.
+    /// </summary>
+    /// <param name="relationship">The relationship to create.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <remarks>
+    /// W9a (per <c>docs/design/index-and-relationship-format-notes.md</c> §7) emits
+    /// only the catalog rows that the Microsoft Access Relationships designer reads.
+    /// The per-TDEF FK logical-index entries (<c>index_type = 0x02</c>,
+    /// <c>rel_idx_num</c>, <c>rel_tbl_page</c>) that drive runtime referential-
+    /// integrity enforcement by the JET engine are not written; Microsoft Access
+    /// regenerates them on the next Compact &amp; Repair pass.
+    /// </remarks>
+    public async ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(relationship, nameof(relationship));
+        Guard.NotNullOrEmpty(relationship.Name, "relationship.Name");
+        Guard.NotNullOrEmpty(relationship.PrimaryTable, "relationship.PrimaryTable");
+        Guard.NotNullOrEmpty(relationship.ForeignTable, "relationship.ForeignTable");
+        Guard.ThrowIfDisposed(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Validate referenced user tables exist.
+        CatalogEntry primaryEntry = await GetRequiredCatalogEntryAsync(relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+        CatalogEntry foreignEntry = await GetRequiredCatalogEntryAsync(relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+
+        // Validate referenced columns exist on each table.
+        TableDef primaryDef = await ReadRequiredTableDefAsync(primaryEntry.TDefPage, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+        TableDef foreignDef = await ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+
+        for (int i = 0; i < relationship.PrimaryColumns.Count; i++)
+        {
+            if (FindColumnIndex(primaryDef, relationship.PrimaryColumns[i]) < 0)
+            {
+                throw new ArgumentException(
+                    $"Column '{relationship.PrimaryColumns[i]}' was not found on table '{relationship.PrimaryTable}'.",
+                    nameof(relationship));
+            }
+
+            if (FindColumnIndex(foreignDef, relationship.ForeignColumns[i]) < 0)
+            {
+                throw new ArgumentException(
+                    $"Column '{relationship.ForeignColumns[i]}' was not found on table '{relationship.ForeignTable}'.",
+                    nameof(relationship));
+            }
+        }
+
+        // Locate MSysRelationships (system table — not in the user-table cache).
+        long msysRelTdefPage = await FindSystemTableTdefPageAsync("MSysRelationships", cancellationToken).ConfigureAwait(false);
+        if (msysRelTdefPage <= 0)
+        {
+            throw new NotSupportedException(
+                "The database does not contain a 'MSysRelationships' table. Databases freshly created by " +
+                "AccessWriter.CreateDatabaseAsync do not include this catalog table; open or copy an " +
+                "Access-authored database before calling CreateRelationshipAsync.");
+        }
+
+        TableDef msysRelDef = await ReadRequiredTableDefAsync(msysRelTdefPage, "MSysRelationships", cancellationToken).ConfigureAwait(false);
+
+        // Reject duplicate relationship names (case-insensitive).
+        HashSet<string> existingNames = await ReadExistingRelationshipNamesAsync(msysRelTdefPage, msysRelDef, cancellationToken).ConfigureAwait(false);
+        if (existingNames.Contains(relationship.Name))
+        {
+            throw new InvalidOperationException($"A relationship named '{relationship.Name}' already exists.");
+        }
+
+        // grbit flag bits — values per Jackcess com.healthmarketscience.jackcess.impl.RelationshipImpl.
+        // (These are not yet documented in the format-probe appendix; W9b empirical verification pending.)
+        const uint NoRefIntegrityFlag = 0x00000002;
+        const uint CascadeUpdatesFlag = 0x00000100;
+        const uint CascadeDeletesFlag = 0x00001000;
+
+        uint grbit = 0;
+        if (!relationship.EnforceReferentialIntegrity)
+        {
+            grbit |= NoRefIntegrityFlag;
+        }
+
+        if (relationship.CascadeUpdates)
+        {
+            grbit |= CascadeUpdatesFlag;
+        }
+
+        if (relationship.CascadeDeletes)
+        {
+            grbit |= CascadeDeletesFlag;
+        }
+
+        int ccolumn = relationship.PrimaryColumns.Count;
+        int grbitInt = unchecked((int)grbit);
+
+        // One row per FK column pair (per appendix §"MSysRelationships — TDEF page 5").
+        for (int i = 0; i < ccolumn; i++)
+        {
+            var values = new object[msysRelDef.Columns.Count];
+            for (int c = 0; c < values.Length; c++)
+            {
+                values[c] = DBNull.Value;
+            }
+
+            SetValue(msysRelDef, values, "ccolumn", ccolumn);
+            SetValue(msysRelDef, values, "grbit", grbitInt);
+            SetValue(msysRelDef, values, "icolumn", i);
+            SetValue(msysRelDef, values, "szColumn", relationship.ForeignColumns[i]);
+            SetValue(msysRelDef, values, "szObject", relationship.ForeignTable);
+            SetValue(msysRelDef, values, "szReferencedColumn", relationship.PrimaryColumns[i]);
+            SetValue(msysRelDef, values, "szReferencedObject", relationship.PrimaryTable);
+            SetValue(msysRelDef, values, "szRelationship", relationship.Name);
+
+            await InsertRowDataAsync(msysRelTdefPage, msysRelDef, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        // ── W9b: per-TDEF FK logical-idx entries ────────────────────────────
+        // Adds index_type=0x02 logical-idx entries on both PK-side and FK-side
+        // TDEFs with cross-referenced rel_idx_num / rel_tbl_page so the JET
+        // engine can locate the partner table without waiting for Microsoft
+        // Access Compact & Repair to regenerate them from the MSysRelationships
+        // rows above. See docs/design/index-and-relationship-format-notes.md
+        // §7 W9b. Jet3 uses a different (20-byte) logical-idx layout that this
+        // library does not yet exercise — skip silently to keep the W9a row
+        // emission working on .mdb (Access 97) databases.
+        if (_format != DatabaseFormat.Jet3Mdb)
+        {
+            await EmitFkPerTdefEntriesAsync(
+                relationship,
+                primaryEntry.TDefPage,
+                primaryDef,
+                foreignEntry.TDefPage,
+                foreignDef,
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // W9b — per-TDEF FK logical-idx entries (Jet4 / ACE only)
+    // ════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Pre-computed real-idx slot information for one side of a relationship.
+    /// </summary>
+    private readonly record struct FkSidePlan(int RealIdxNum, bool AllocatesNewRealIdx, long NewLeafPageNumber)
+    {
+        // RealIdxNum:           real-idx slot index used for index_num2 on this side.
+        // AllocatesNewRealIdx:  true when a new real-idx slot must be appended.
+        // NewLeafPageNumber:    pre-allocated empty leaf page (set when AllocatesNewRealIdx).
+        public FkSidePlan WithLeafPage(long page) => this with { NewLeafPageNumber = page };
+    }
+
+    /// <summary>
+    /// Orchestrates the two-side W9b emission: pre-computes both sides' target
+    /// real-idx slots (sharing where possible), allocates empty leaf pages for
+    /// any newly-allocated real-idx slots, then mutates each TDEF in place to
+    /// append its FK logical-idx entry. Operates on single-page TDEFs only;
+    /// throws <see cref="NotSupportedException"/> if either TDEF is multi-page
+    /// or would overflow a single page after growth.
+    /// </summary>
+    private async ValueTask EmitFkPerTdefEntriesAsync(
+        RelationshipDefinition relationship,
+        long primaryTdefPage,
+        TableDef primaryDef,
+        long foreignTdefPage,
+        TableDef foreignDef,
+        CancellationToken cancellationToken)
+    {
+        // Resolve column numbers (deleted-column gaps mean ColNum != ordinal).
+        var pkColNums = new int[relationship.PrimaryColumns.Count];
+        var fkColNums = new int[relationship.ForeignColumns.Count];
+        for (int i = 0; i < relationship.PrimaryColumns.Count; i++)
+        {
+            int pkIdx = FindColumnIndex(primaryDef, relationship.PrimaryColumns[i]);
+            int fkIdx = FindColumnIndex(foreignDef, relationship.ForeignColumns[i]);
+            pkColNums[i] = primaryDef.Columns[pkIdx].ColNum;
+            fkColNums[i] = foreignDef.Columns[fkIdx].ColNum;
+        }
+
+        // Read both TDEF pages and decide each side's real-idx slot.
+        (FkSidePlan pkPlan, List<string> pkExistingNames) = await PrepareFkSideAsync(primaryTdefPage, pkColNums, cancellationToken).ConfigureAwait(false);
+        (FkSidePlan fkPlan, List<string> fkExistingNames) = await PrepareFkSideAsync(foreignTdefPage, fkColNums, cancellationToken).ConfigureAwait(false);
+
+        // Allocate empty leaf pages for any newly-allocated real-idx slots.
+        // Both leaf pages are appended before any TDEF mutation so the page
+        // numbers are stable for the cross-referenced first_dp values.
+        if (pkPlan.AllocatesNewRealIdx)
+        {
+            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(_pgSz, primaryTdefPage, Array.Empty<IndexLeafPageBuilder.LeafEntry>());
+            long lp = await AppendPageAsync(leaf, cancellationToken).ConfigureAwait(false);
+            pkPlan = pkPlan.WithLeafPage(lp);
+        }
+
+        if (fkPlan.AllocatesNewRealIdx)
+        {
+            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(_pgSz, foreignTdefPage, Array.Empty<IndexLeafPageBuilder.LeafEntry>());
+            long lp = await AppendPageAsync(leaf, cancellationToken).ConfigureAwait(false);
+            fkPlan = fkPlan.WithLeafPage(lp);
+        }
+
+        byte cascadeUpsByte = (byte)(relationship.CascadeUpdates ? 1 : 0);
+        byte cascadeDelsByte = (byte)(relationship.CascadeDeletes ? 1 : 0);
+
+        // Choose unique-within-tdef logical-idx names. The PK side uses the
+        // relationship name; the FK side appends "_FK" to disambiguate when
+        // both endpoints land on the same table (self-referential).
+        string pkName = MakeUniqueLogicalIdxName(relationship.Name, pkExistingNames);
+        string fkName = MakeUniqueLogicalIdxName(
+            primaryTdefPage == foreignTdefPage ? relationship.Name + "_FK" : relationship.Name,
+            fkExistingNames);
+
+        // Emit both sides. PK side carries no cascade flags (cascade is an
+        // FK-side property — Access only checks them when modifying the parent
+        // and looking up children).
+        await EmitFkLogicalIdxAsync(
+            primaryTdefPage,
+            pkColNums,
+            pkName,
+            realIdxNumThisSide: pkPlan.RealIdxNum,
+            allocateNewRealIdx: pkPlan.AllocatesNewRealIdx,
+            preAllocatedLeafPage: pkPlan.NewLeafPageNumber,
+            relIdxNumOtherSide: fkPlan.RealIdxNum,
+            relTblPageOther: foreignTdefPage,
+            cascadeUps: 0,
+            cascadeDels: 0,
+            cancellationToken).ConfigureAwait(false);
+
+        await EmitFkLogicalIdxAsync(
+            foreignTdefPage,
+            fkColNums,
+            fkName,
+            realIdxNumThisSide: fkPlan.RealIdxNum,
+            allocateNewRealIdx: fkPlan.AllocatesNewRealIdx,
+            preAllocatedLeafPage: fkPlan.NewLeafPageNumber,
+            relIdxNumOtherSide: pkPlan.RealIdxNum,
+            relTblPageOther: primaryTdefPage,
+            cascadeUps: cascadeUpsByte,
+            cascadeDels: cascadeDelsByte,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reads one side's TDEF page, walks the col-name and idx-name sections,
+    /// detects any existing real-idx that already covers <paramref name="columnNumbers"/>
+    /// (sharing per §3.3), and returns the resulting plan plus the existing
+    /// logical-idx-name list (used to avoid name collisions on the new entry).
+    /// </summary>
+    private async ValueTask<(FkSidePlan Plan, List<string> ExistingNames)> PrepareFkSideAsync(
+        long tdefPage,
+        int[] columnNumbers,
+        CancellationToken cancellationToken)
+    {
+        byte[] page = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (page[0] != 0x02)
+            {
+                throw new InvalidOperationException($"W9b: page {tdefPage} is not a TDEF page.");
+            }
+
+            if (Ru32(page, 4) != 0)
+            {
+                throw new NotSupportedException(
+                    $"W9b: TDEF at page {tdefPage} spans multiple pages; in-place FK index emission is not supported on multi-page TDEFs.");
+            }
+
+            int numCols = Ru16(page, _tdNumCols);
+            int numIdx = Ri32(page, _tdNumCols + 2);
+            int numRealIdx = Ri32(page, _tdNumRealIdx);
+            if (numCols < 0 || numCols > 4096)
+            {
+                numCols = 0;
+            }
+
+            if (numIdx < 0 || numIdx > 1000)
+            {
+                numIdx = 0;
+            }
+
+            if (numRealIdx < 0 || numRealIdx > 1000)
+            {
+                numRealIdx = 0;
+            }
+
+            int realIdxDescStart = LocateRealIdxDescStart(page, numCols, numRealIdx);
+            if (realIdxDescStart < 0)
+            {
+                throw new InvalidOperationException("W9b: unable to walk TDEF column-name section.");
+            }
+
+            int sharedSlot = FindCoveringRealIdx(page, columnNumbers, realIdxDescStart, numRealIdx);
+
+            int logIdxStart = realIdxDescStart + (numRealIdx * 52);
+            int logIdxNamesStart = logIdxStart + (numIdx * 28);
+            List<string> existingNames = ReadLogicalIdxNames(page, logIdxNamesStart, numIdx);
+
+            FkSidePlan plan = sharedSlot >= 0
+                ? new FkSidePlan(sharedSlot, false, 0)
+                : new FkSidePlan(numRealIdx, true, 0);
+
+            return (plan, existingNames);
+        }
+        finally
+        {
+            ReturnPage(page);
+        }
+    }
+
+    /// <summary>
+    /// W9b: appends one FK logical-idx entry (and optionally a new real-idx
+    /// physical descriptor) to the TDEF at <paramref name="tdefPage"/>. The
+    /// TDEF must fit on a single page after the addition.
+    /// </summary>
+    private async ValueTask EmitFkLogicalIdxAsync(
+        long tdefPage,
+        int[] columnNumbers,
+        string indexName,
+        int realIdxNumThisSide,
+        bool allocateNewRealIdx,
+        long preAllocatedLeafPage,
+        int relIdxNumOtherSide,
+        long relTblPageOther,
+        byte cascadeUps,
+        byte cascadeDels,
+        CancellationToken cancellationToken)
+    {
+        byte[] pageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] td;
+        try
+        {
+            td = (byte[])pageBytes.Clone();
+        }
+        finally
+        {
+            ReturnPage(pageBytes);
+        }
+
+        if (td[0] != 0x02 || Ru32(td, 4) != 0)
+        {
+            throw new NotSupportedException(
+                $"W9b: cannot mutate the TDEF at page {tdefPage} (multi-page chain or not a TDEF).");
+        }
+
+        int numCols = Ru16(td, _tdNumCols);
+        int numIdx = Ri32(td, _tdNumCols + 2);
+        int numRealIdx = Ri32(td, _tdNumRealIdx);
+        if (numCols < 0 || numCols > 4096
+            || numIdx < 0 || numIdx > 1000
+            || numRealIdx < 0 || numRealIdx > 1000)
+        {
+            throw new InvalidOperationException("W9b: TDEF reports out-of-range section counts.");
+        }
+
+        const int RealIdxPhysSz = 52;
+        const int LogIdxEntrySz = 28;
+
+        int realIdxDescStart = LocateRealIdxDescStart(td, numCols, numRealIdx);
+        if (realIdxDescStart < 0)
+        {
+            throw new InvalidOperationException("W9b: failed to walk TDEF column-name section.");
+        }
+
+        int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
+        int logIdxNamesStart = logIdxStart + (numIdx * LogIdxEntrySz);
+        int logIdxNamesLen = MeasureLogicalIdxNamesLength(td, logIdxNamesStart, numIdx);
+        if (logIdxNamesLen < 0)
+        {
+            throw new InvalidOperationException("W9b: failed to walk TDEF logical-idx-name section.");
+        }
+
+        int trailingStart = logIdxNamesStart + logIdxNamesLen;
+
+        // tdef_len at offset 8 stores (last_used_byte - 8). For Access-emitted
+        // TDEFs this includes the variable-length-column trailing block; for
+        // writer-emitted TDEFs there is no trailing block (trailingLen == 0).
+        int storedTdefLen = Ri32(td, 8);
+        int currentEnd = storedTdefLen + 8;
+        if (currentEnd < trailingStart)
+        {
+            currentEnd = trailingStart;
+        }
+
+        int trailingLen = currentEnd - trailingStart;
+        if (trailingLen < 0 || trailingStart + trailingLen > td.Length)
+        {
+            throw new InvalidOperationException("W9b: TDEF trailing block overruns page.");
+        }
+
+        byte[] nameBytes = Encoding.Unicode.GetBytes(indexName);
+        int nameRecordSize = 2 + nameBytes.Length;
+
+        int deltaRealIdxSkip = allocateNewRealIdx ? _realIdxEntrySz : 0;
+        int deltaRealIdxPhys = allocateNewRealIdx ? RealIdxPhysSz : 0;
+        int totalGrowth = deltaRealIdxSkip + deltaRealIdxPhys + LogIdxEntrySz + nameRecordSize;
+
+        if (currentEnd + totalGrowth > _pgSz)
+        {
+            throw new NotSupportedException(
+                "W9b: TDEF would exceed a single page after adding a foreign-key index entry. " +
+                "Multi-page TDEF growth is not supported.");
+        }
+
+        // Build the rewritten page.
+        var newTd = new byte[_pgSz];
+        Buffer.BlockCopy(td, 0, newTd, 0, _tdBlockEnd);
+
+        // Real-idx skip block (existing slots, unchanged content).
+        int oldRealIdxSkipLen = numRealIdx * _realIdxEntrySz;
+        Buffer.BlockCopy(td, _tdBlockEnd, newTd, _tdBlockEnd, oldRealIdxSkipLen);
+        int newRealIdxSkipEnd = _tdBlockEnd + oldRealIdxSkipLen + deltaRealIdxSkip;
+
+        // Column descriptors.
+        int oldColStart = _tdBlockEnd + oldRealIdxSkipLen;
+        int colDescBlockLen = numCols * _colDescSz;
+        Buffer.BlockCopy(td, oldColStart, newTd, newRealIdxSkipEnd, colDescBlockLen);
+
+        // Column names (variable length).
+        int oldColNamesStart = oldColStart + colDescBlockLen;
+        int colNamesLen = realIdxDescStart - oldColNamesStart;
+        int newColNamesStart = newRealIdxSkipEnd + colDescBlockLen;
+        Buffer.BlockCopy(td, oldColNamesStart, newTd, newColNamesStart, colNamesLen);
+
+        // Real-idx physical descriptors (existing slots).
+        int newRealIdxDescStart = newColNamesStart + colNamesLen;
+        int oldRealIdxPhysLen = numRealIdx * RealIdxPhysSz;
+        Buffer.BlockCopy(td, realIdxDescStart, newTd, newRealIdxDescStart, oldRealIdxPhysLen);
+
+        // Append a new real-idx physical descriptor when allocating a new slot.
+        if (allocateNewRealIdx)
+        {
+            int phys = newRealIdxDescStart + oldRealIdxPhysLen;
+
+            // bytes 0..3   unknown(4) — Jackcess emits a per-tdef cookie; zero
+            //              also round-trips through this library's reader and
+            //              through Microsoft Access (probe shows the cookie is
+            //              not interpreted by either parser).
+            // bytes 4..33  col_map: 10 × {col_num(2), col_order(1)}
+            for (int slot = 0; slot < 10; slot++)
+            {
+                int so = phys + 4 + (slot * 3);
+                if (slot < columnNumbers.Length)
+                {
+                    Wu16(newTd, so, columnNumbers[slot]);
+                    newTd[so + 2] = 0x01; // ascending
+                }
+                else
+                {
+                    Wu16(newTd, so, 0xFFFF);
+                    newTd[so + 2] = 0x00;
+                }
+            }
+
+            // bytes 34..37 used_pages = 0 (no usage bitmap emitted)
+            // bytes 38..41 first_dp = preAllocatedLeafPage
+            Wi32(newTd, phys + 38, checked((int)preAllocatedLeafPage));
+
+            // bytes 42 flags = 0; bytes 43..51 unknown = 0
+        }
+
+        // Logical-idx entries (existing).
+        int newLogIdxStart = newRealIdxDescStart + oldRealIdxPhysLen + deltaRealIdxPhys;
+        int oldLogIdxLen = numIdx * LogIdxEntrySz;
+        Buffer.BlockCopy(td, logIdxStart, newTd, newLogIdxStart, oldLogIdxLen);
+
+        // Append the new FK logical-idx entry.
+        // bytes 0..3   unknown(4) — Jackcess emits a per-tdef cookie; zero is
+        //              consistent with this library's existing W1/W3/W8 emit.
+        // bytes 24..27 trailing(4) = 0
+        int newLogEntry = newLogIdxStart + oldLogIdxLen;
+        Wi32(newTd, newLogEntry + 4, numIdx);                  // index_num (next sequential)
+        Wi32(newTd, newLogEntry + 8, realIdxNumThisSide);      // index_num2
+        newTd[newLogEntry + 12] = 0x01;                        // rel_tbl_type — empirical: 0x01 on FK entries (appendix §"Companies")
+        Wi32(newTd, newLogEntry + 13, relIdxNumOtherSide);     // rel_idx_num — slot on the OTHER table
+        Wi32(newTd, newLogEntry + 17, checked((int)relTblPageOther)); // rel_tbl_page
+        newTd[newLogEntry + 21] = cascadeUps;
+        newTd[newLogEntry + 22] = cascadeDels;
+        newTd[newLogEntry + 23] = 0x02;                        // index_type = FK
+
+        // Logical-idx names (existing).
+        int newLogIdxNamesStart = newLogEntry + LogIdxEntrySz;
+        Buffer.BlockCopy(td, logIdxNamesStart, newTd, newLogIdxNamesStart, logIdxNamesLen);
+
+        // Append the new logical-idx name (UTF-16 length-prefixed).
+        int newNameOffset = newLogIdxNamesStart + logIdxNamesLen;
+        Wu16(newTd, newNameOffset, nameBytes.Length);
+        Buffer.BlockCopy(nameBytes, 0, newTd, newNameOffset + 2, nameBytes.Length);
+
+        // Trailing variable-length-column block (Access-emitted TDEFs only).
+        int newTrailingStart = newNameOffset + nameRecordSize;
+        if (trailingLen > 0)
+        {
+            Buffer.BlockCopy(td, trailingStart, newTd, newTrailingStart, trailingLen);
+        }
+
+        // Update header counts.
+        Wi32(newTd, _tdNumCols + 2, numIdx + 1);
+        if (allocateNewRealIdx)
+        {
+            Wi32(newTd, _tdNumRealIdx, numRealIdx + 1);
+        }
+
+        // tdef_len at offset 8 = (newEnd - 8). The page header (8 bytes) is
+        // not counted in tdef_len, matching BuildTDefPageWithIndexOffsets.
+        Wi32(newTd, 8, newTrailingStart + trailingLen - 8);
+
+        await WritePageAsync(tdefPage, newTd, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Walks past column descriptors and column names to return the byte
+    /// offset of the real-index physical-descriptor section start, or -1
+    /// when the column-name walk fails.
+    /// </summary>
+    private int LocateRealIdxDescStart(byte[] td, int numCols, int numRealIdx)
+    {
+        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
+        int pos = colStart + (numCols * _colDescSz);
+        for (int i = 0; i < numCols; i++)
+        {
+            if (ReadColumnName(td, ref pos, out _) < 0)
+            {
+                return -1;
+            }
+        }
+
+        return pos;
+    }
+
+    /// <summary>
+    /// Returns the byte length of the existing logical-idx-name section, or
+    /// -1 if the walk fails.
+    /// </summary>
+    private int MeasureLogicalIdxNamesLength(byte[] td, int logIdxNamesStart, int numIdx)
+    {
+        int pos = logIdxNamesStart;
+        for (int i = 0; i < numIdx; i++)
+        {
+            if (ReadColumnName(td, ref pos, out _) < 0)
+            {
+                return -1;
+            }
+        }
+
+        return pos - logIdxNamesStart;
+    }
+
+    /// <summary>
+    /// Materializes the existing logical-idx-name list (used to avoid name
+    /// collisions when appending a new W9b entry).
+    /// </summary>
+    private List<string> ReadLogicalIdxNames(byte[] td, int logIdxNamesStart, int numIdx)
+    {
+        var list = new List<string>(numIdx);
+        int pos = logIdxNamesStart;
+        for (int i = 0; i < numIdx; i++)
+        {
+            if (ReadColumnName(td, ref pos, out string n) < 0)
+            {
+                break;
+            }
+
+            list.Add(n);
+        }
+
+        return list;
+    }
+
+    /// <summary>
+    /// W9b §3.3 sharing: returns the existing real-idx slot whose col_map
+    /// matches <paramref name="columnNumbers"/> exactly (in declaration
+    /// order); -1 when no covering real-idx exists. Jet4 col_map is fixed at
+    /// 10 slots × {col_num(2), col_order(1)}.
+    /// </summary>
+    private int FindCoveringRealIdx(byte[] td, int[] columnNumbers, int realIdxDescStart, int numRealIdx)
+    {
+        const int RealIdxPhysSz = 52;
+        for (int ri = 0; ri < numRealIdx; ri++)
+        {
+            int phys = realIdxDescStart + (ri * RealIdxPhysSz);
+            if (phys + RealIdxPhysSz > td.Length)
+            {
+                break;
+            }
+
+            bool match = true;
+            for (int slot = 0; slot < 10; slot++)
+            {
+                int so = phys + 4 + (slot * 3);
+                int cn = Ru16(td, so);
+                if (slot < columnNumbers.Length)
+                {
+                    if (cn != columnNumbers[slot])
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+                else
+                {
+                    if (cn != 0xFFFF)
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+            }
+
+            if (match)
+            {
+                return ri;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Returns <paramref name="baseName"/> if no entry in <paramref name="existing"/>
+    /// already uses it (case-insensitive); otherwise appends "_1", "_2", … until
+    /// an unused name is found.
+    /// </summary>
+    private static string MakeUniqueLogicalIdxName(string baseName, IReadOnlyList<string> existing)
+    {
+        var taken = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
+        if (!taken.Contains(baseName))
+        {
+            return baseName;
+        }
+
+        for (int i = 1; i < int.MaxValue; i++)
+        {
+            string candidate = baseName + "_" + i.ToString(CultureInfo.InvariantCulture);
+            if (!taken.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return baseName;
+    }
+
+    /// <summary>
+    /// Locates a system or user table's TDEF page number by name (case-insensitive)
+    /// by scanning every <c>MSysObjects</c> row. Returns <c>0</c> when not found.
+    /// </summary>
+    private async ValueTask<long> FindSystemTableTdefPageAsync(string tableName, CancellationToken cancellationToken)
+    {
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (msys == null)
+        {
+            return 0;
+        }
+
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in rows)
+        {
+            if (row.ObjectType == OBJ_TABLE
+                && row.TDefPage > 0
+                && string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                return row.TDefPage;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Reads the distinct values of <c>szRelationship</c> from every live row in the
+    /// <c>MSysRelationships</c> table. Used to enforce relationship-name uniqueness.
+    /// </summary>
+    private async ValueTask<HashSet<string>> ReadExistingRelationshipNamesAsync(long msysRelTdefPage, TableDef msysRelDef, CancellationToken cancellationToken)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        ColumnInfo nameCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "szRelationship", StringComparison.OrdinalIgnoreCase));
+        if (nameCol == null)
+        {
+            return names;
+        }
+
+        long total = _stream.Length / _pgSz;
+        for (long pageNumber = 3; pageNumber < total; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != 0x01)
+                {
+                    continue;
+                }
+
+                if (Ri32(page, _dpTDefOff) != msysRelTdefPage)
+                {
+                    continue;
+                }
+
+                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
+                {
+                    string name = ReadColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        _ = names.Add(name);
+                    }
+                }
+            }
+            finally
+            {
+                ReturnPage(page);
+            }
+        }
+
+        return names;
+    }
+
+    // ════════════════════════════════════════════════════════════════
     // Encryption mutation: change password / encrypt / decrypt
     // ════════════════════════════════════════════════════════════════
 

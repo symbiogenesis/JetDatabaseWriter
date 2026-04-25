@@ -31,6 +31,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Write support** | Create databases, Create/drop tables, insert/update/delete rows (Jet3/Jet4/ACE) |
 | ✅ **Encryption & passwords** | Jet3 page-level XOR, Jet4 `.mdb` RC4, legacy password-only `.accdb` (`;pwd=`), AES-128 page-encrypted Access 2007+ `.accdb` (CFB-wrapped), and Office Crypto API ECMA-376 "Agile" (SHA-512 PBKDF + AES-CBC) used by Access 2010 SP1+ / Microsoft 365 |
 | ✅ **Linked tables** | Read source paths / foreign names via `ListLinkedTablesAsync()`; create Access (type 4) and ODBC (type 6) links via `CreateLinkedTableAsync` / `CreateLinkedOdbcTableAsync` |
+| ✅ **Foreign-key relationships** | Read existing relationships via `ListIndexesAsync` (`Kind = ForeignKey`); create via `CreateRelationshipAsync` — `MSysRelationships` catalog rows (W9a) + per-TDEF FK logical-index entries on both sides with real-idx sharing (W9b, Jet4/ACE only); runtime referential-integrity enforcement at write time deferred to Microsoft Access |
 | ✅ **Complex fields** | Attachment and multi-value columns resolved via `MSysComplexColumns` FK lookup |
 | ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on disposal (opt-out) |
 
@@ -438,6 +439,35 @@ await writer.CreateLinkedOdbcTableAsync(
 
 > The library only writes the catalog metadata. It does not open the ODBC source itself — reading an ODBC-linked table from this library is not supported. Use `ListLinkedTablesAsync()` to enumerate linked entries.
 
+### Foreign-key relationships
+
+Declare a relationship between two existing tables. The library appends one row per FK column to the `MSysRelationships` system table (the source Access reads to populate the Relationships designer) **and** emits a per-table FK logical-index entry on both the PK-side and FK-side TDEFs (Jet4/ACE only — Jet3 `.mdb` files get only the catalog rows). Existing real-idx slots are reused when their `col_map` already covers the FK columns; otherwise a new real-idx slot plus an empty leaf page are appended on each side. The library does not enforce referential integrity at write time — see the Limitations section for the full contract.
+
+```csharp
+// Single-column FK
+await writer.CreateRelationshipAsync(new RelationshipDefinition(
+    name:           "FK_Orders_Customers",
+    primaryTable:   "Customers",   // PK side  — szReferencedObject
+    primaryColumn:  "CustomerID",
+    foreignTable:   "Orders",      // FK side  — szObject
+    foreignColumn:  "CustomerID")
+{
+    EnforceReferentialIntegrity = true,   // default
+    CascadeUpdates              = false,
+    CascadeDeletes              = false,
+});
+
+// Multi-column FK
+await writer.CreateRelationshipAsync(new RelationshipDefinition(
+    name:           "FK_OrderItems_Orders",
+    primaryTable:   "Orders",
+    primaryColumns: new[] { "OrderID", "Region" },
+    foreignTable:   "OrderItems",
+    foreignColumns: new[] { "OrderID", "Region" }));
+```
+
+> Requires a database that already contains the `MSysRelationships` catalog table — every Access-authored `.mdb` / `.accdb` does, but databases freshly created by `AccessWriter.CreateDatabaseAsync` do not. Open or copy an Access-authored fixture first, or `CreateRelationshipAsync` throws `NotSupportedException`.
+
 ---
 
 ## Statistics & Metadata
@@ -588,7 +618,11 @@ The writer is intentionally focused on the most common create / insert / update 
 
 ### Schema evolution
 - **Primary keys: single- and multi-column.** Declare PKs either via `new ColumnDefinition(...) { IsPrimaryKey = true }` (one or more columns; PK is named `"PrimaryKey"` and follows column declaration order) or via an explicit `new IndexDefinition("PK_Name", new[] { "ColA", "ColB" }) { IsPrimaryKey = true }` passed in the index list. PK key columns are forced non-nullable on the emitted TDEF (`FLAG_NULL_ALLOWED 0x02` cleared) and the logical-index entry is emitted with `index_type = 0x01`. Single-column PKs participate in the W5 bulk B-tree rebuild on every mutation; **multi-column PKs ship the schema only** — the leaf is empty at create time and is not maintained on subsequent inserts/updates/deletes (Microsoft Access rebuilds it on Compact & Repair). At most one PK per table; mixing the column-flag shortcut with an explicit PK `IndexDefinition` throws `ArgumentException`. PKs round-trip through `ListIndexesAsync` as `Kind = PrimaryKey`. Per the format-probe appendix, real Access fixtures emit `flags = 0x00` on the PK real-idx descriptor — uniqueness is implied by `index_type = 0x01`, not by the `0x01` flag bit, so `IndexMetadata.IsUnique` reads back `false` for PKs (use `Kind == PrimaryKey` instead).
-- **No foreign-key or relationship creation.** `MSysRelationships` entries are not written, and FK flags are not emitted on the TDEF. (Reader-side: existing index, PK, and FK schema is exposed via `ListIndexesAsync`.)
+- **Foreign-key relationships: catalog rows + per-TDEF FK index entries ("schema-W9a + W9b").** `CreateRelationshipAsync(RelationshipDefinition, CT)` appends one row per FK column to the `MSysRelationships` system table **and** emits a per-table FK logical-index entry on both the PK-side and FK-side TDEFs (Jet4/ACE only — Jet3 `.mdb` files get the `MSysRelationships` rows but not the per-TDEF entries). Single- and multi-column relationships are supported, with optional `EnforceReferentialIntegrity` (default `true` — clears the `NO_REFERENTIAL_INTEGRITY 0x02` `grbit` bit), `CascadeUpdates` (`0x100` on the catalog row, `cascade_ups = 0x01` on the FK-side TDEF entry), and `CascadeDeletes` (`0x1000` / `cascade_dels = 0x01`) flags. The relationship is visible in the Microsoft Access Relationships designer.
+  - **Per-TDEF emission details (W9b).** Each FK logical-idx entry has `index_type = 0x02`, `rel_tbl_type = 0x01`, `rel_idx_num` pointing at the matching real-idx slot on the *other* table, and `rel_tbl_page` pointing at the other table's TDEF page. Sharing per format §3.3: the emitter reuses an existing real-idx slot whose `col_map` already covers the FK columns (e.g. an existing primary-key real-idx on the PK side); only when no covering slot exists does it allocate a new 52-byte real-idx physical descriptor with a freshly-appended empty leaf page (`page_type = 0x04`). PK side carries no cascade flags (cascade is an FK-side property).
+  - **What is not written.** No engine-level RI enforcement at this library's `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync` time (the library has no SQL engine — see W10 below), no `MSysRelationships` row deletion, no relationship-name renames, no FK-entry forwarding through `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` (those use a copy-and-swap path that only carries forward user-declared `IndexDefinition` records; surviving `MSysRelationships` rows let Access regenerate the entries on Compact & Repair). Multi-page TDEF growth is not supported — both PK-side and FK-side TDEFs must fit on a single page after the FK entry is appended, otherwise `NotSupportedException`.
+  - **Precondition.** The database must already contain a `MSysRelationships` table. Databases freshly created by `AccessWriter.CreateDatabaseAsync` do not include this catalog table — open or copy an Access-authored database before declaring relationships, or `CreateRelationshipAsync` throws `NotSupportedException`. (Every non-encrypted Access fixture in the test corpus contains `MSysRelationships`; this is the universal Access-on-Windows shape.)
+  - **Validation gap.** Files produced by `CreateRelationshipAsync` have not yet been opened in Microsoft Access on Windows for a Compact & Repair smoke test. The W9b per-TDEF byte layout is taken from the format-probe appendix (`NorthwindTraders.accdb`) and Jackcess `IndexImpl`; the `grbit` bit values are taken from Jackcess `RelationshipImpl`. Neither has been independently re-verified against an Access-authored fixture that the user opened, modified, and saved. Defer production use until that round-trip has been verified by hand.
 - **Index creation: schema + bulk leaf rebuild on every mutation ("schema-W1 + W2/W3 + W5").** `CreateTableAsync` accepts an optional `IReadOnlyList<IndexDefinition>` that declares logical indexes on the new table.
   - **What is written.** The TDEF index sections (real-index physical descriptor, logical-index entry, logical-index name) are emitted, and one B-tree leaf page (`page_type = 0x04`) is appended per index with its page number patched into the matching real-index `first_dp` field. The leaf is empty at table-creation time and is rebuilt in bulk via `IndexBTreeBuilder` on every subsequent `InsertRowAsync` / `InsertRowsAsync` / `UpdateRowsAsync` / `DeleteRowsAsync` and through the copy-and-swap path used by `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`. Old leaf pages are orphaned (Microsoft Access reclaims them on Compact & Repair).
   - **What is not written.** No prefix compression, no `tail_page` chain, no incremental B-tree maintenance (each mutation rebuilds the entire B-tree, so cost scales with row count per write), and no `MSysIndexes` / `MSysIndexColumns` / `MSysRelationships` rows.

@@ -1927,6 +1927,21 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
         }
 
+        // Fall back to a system-table lookup (MSysObjects, MSysRelationships, etc.).
+        // GetUserTablesAsync filters out rows whose Flags carry SYSTABLE_MASK, so
+        // a name match against the catalog scan is needed for those.
+        long sysPage = await FindSystemTablePageAsync(
+            n => string.Equals(n, tableName, StringComparison.OrdinalIgnoreCase),
+            cancellationToken).ConfigureAwait(false);
+        if (sysPage > 0)
+        {
+            TableDef? sysTd = await ReadTableDefAsync(sysPage, cancellationToken).ConfigureAwait(false);
+            if (sysTd != null && sysTd.Columns.Count > 0)
+            {
+                return (new CatalogEntry(tableName, sysPage), sysTd);
+            }
+        }
+
         return null;
     }
 

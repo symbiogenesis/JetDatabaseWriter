@@ -173,15 +173,18 @@ public sealed class LimitationsTests : IDisposable
     [Fact]
     public void SchemaEvolution_IAccessWriter_DoesNotExposeIndexOrConstraintApis()
     {
-        // README: "No index, primary-key, foreign-key, or relationship creation."
+        // README: "No index, primary-key, or foreign-key/cascade enforcement creation."
+        // W8 lifted PK creation; W9a lifted MSysRelationships row emission via
+        // CreateRelationshipAsync. The remaining pinned restrictions: no methods
+        // exposing "Index" or "PrimaryKey" or "ForeignKey" — those concepts are
+        // configured via property-bearing model types (IndexDefinition,
+        // RelationshipDefinition), not via methods on the writer itself.
         AssertNoMethodMatching(typeof(IAccessWriter), "Index");
         AssertNoMethodMatching(typeof(IAccessWriter), "PrimaryKey");
         AssertNoMethodMatching(typeof(IAccessWriter), "ForeignKey");
-        AssertNoMethodMatching(typeof(IAccessWriter), "Relationship");
         AssertNoMethodMatching(typeof(AccessWriter), "Index");
         AssertNoMethodMatching(typeof(AccessWriter), "PrimaryKey");
         AssertNoMethodMatching(typeof(AccessWriter), "ForeignKey");
-        AssertNoMethodMatching(typeof(AccessWriter), "Relationship");
     }
 
     [Fact]
