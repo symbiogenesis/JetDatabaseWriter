@@ -15,6 +15,9 @@ using Xunit;
 /// </summary>
 internal static class TestDatabases
 {
+    /// <summary>The password required to open <see cref="AesEncrypted"/>.</summary>
+    public const string AesEncryptedPassword = "secret";
+
     // ── In-repo (project-owned) databases ────────────────────────────
 
     public static readonly string NorthwindTraders =
@@ -36,13 +39,12 @@ internal static class TestDatabases
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "ComplexFields.accdb");
 
     /// <summary>
-    /// ACCDB created by Access 16 CompactDatabase with password "secret".
+    /// ACCDB created by Access 16 CompactDatabase with password.
     /// Header byte 0x62 = 0x07 (bits 0/1/2 set); version = 0x03 (Access 2010 format).
     /// The reader detects this as requiring a password (ACCDB AES check fires).
     /// Data pages are in ACE native format; password is stored via ACE internal scheme
-    /// (not the Jet4 XOR scheme), so DecodeJet4Password does not return "secret".
-    /// Once ACCDB AES/ACE password verification is implemented, opening with "secret"
-    /// should succeed.
+    /// (not the Jet4 XOR scheme). Opening with password via
+    /// <see cref="OpenAsync"/> succeeds (handled automatically by that helper).
     /// </summary>
     public static readonly string AesEncrypted =
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "AesEncrypted.accdb");
@@ -269,8 +271,19 @@ internal static class TestDatabases
     public static string? SkipIfMissing(string path) =>
         File.Exists(path) ? null : $"Test database not found: {path}";
 
-    public static ValueTask<AccessReader> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default) =>
-        AccessReader.OpenAsync(path, options, cancellationToken);
+    public static ValueTask<AccessReader> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        // Auto-supply the known password for the encrypted fixture so MemberData-driven
+        // tests (e.g. AllExisting) can open it without each test having to know the
+        // password. Callers that want to test the password path explicitly should call
+        // AccessReader.OpenAsync directly.
+        if (options is null && string.Equals(path, AesEncrypted, StringComparison.OrdinalIgnoreCase))
+        {
+            options = new AccessReaderOptions { Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword) };
+        }
+
+        return AccessReader.OpenAsync(path, options, cancellationToken);
+    }
 
     /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
     internal static bool IsReadable(string path) =>

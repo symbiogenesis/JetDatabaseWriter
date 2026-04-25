@@ -252,7 +252,6 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         // but flat per-page AES-128-ECB beneath) are now writable in place: the
         // existing PrepareEncryptedPageForWrite pipeline re-encrypts every page
         // we flush. Verify a round-trip by inserting a row and reading it back.
-        const string Password = "secret";
         const string TableName = "AesWriteRoundTrip";
 
         byte[] data = await CloneFileAsync(TestDatabases.NorthwindTraders);
@@ -262,7 +261,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         var options = new AccessWriterOptions
         {
             UseLockFile = false,
-            Password = SecureStringTestHelper.FromString(Password),
+            Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         };
 
         await using (var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken))
@@ -624,8 +623,8 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         // Write CFB magic
         Buffer.BlockCopy(cfbMagic, 0, data, 0, cfbMagic.Length);
 
-        // Encode password "secret" at offset 0x42 using the Jet4/ACCDB XOR scheme
-        byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes("secret");
+        // Encode password at offset 0x42 using the Jet4/ACCDB XOR scheme
+        byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(TestDatabases.AesEncryptedPassword);
         var encoded = new byte[40];
         for (int i = 0; i < 40; i++)
         {
@@ -636,8 +635,8 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Buffer.BlockCopy(encoded, 0, data, 0x42, 40);
 
         // AES-encrypt all data pages (pages 1+) using the same key derivation
-        // as the reader: SHA256("secret")[0..16].
-        byte[] aesKey = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("secret"))[..16];
+        // as the reader: SHA256(TestDatabases.AesEncryptedPassword)[0..16].
+        byte[] aesKey = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(TestDatabases.AesEncryptedPassword))[..16];
 
         const int pageSize = 4096;
         for (int page = 1; page * pageSize < data.Length; page++)

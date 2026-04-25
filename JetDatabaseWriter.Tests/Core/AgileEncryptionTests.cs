@@ -40,10 +40,6 @@ using Xunit;
 /// </summary>
 public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
-    private const string Password = "secret";
-
-    private static readonly string InnerSource = TestDatabases.ComplexFields;
-
     // ═══════════════════════════════════════════════════════════════════
     // 1. PASSWORD ENFORCEMENT — Agile-encrypted file requires a password
     // ═══════════════════════════════════════════════════════════════════
@@ -106,7 +102,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     {
         // Compare the table list of the Agile-decrypted fixture against the
         // original unencrypted source — they must match exactly.
-        var sourceReader = await db.GetReaderAsync(InnerSource, TestContext.Current.CancellationToken);
+        var sourceReader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
         List<string> expected = (await sourceReader.ListTablesAsync(TestContext.Current.CancellationToken))
             .OrderBy(t => t, StringComparer.Ordinal)
             .ToList();
@@ -179,7 +175,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     [Fact]
     public async Task Agile_RowCounts_MatchUnencryptedSource()
     {
-        var sourceReader = await db.GetReaderAsync(InnerSource, TestContext.Current.CancellationToken);
+        var sourceReader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
         List<TableStat> expected = await sourceReader.GetTableStatsAsync(TestContext.Current.CancellationToken);
 
         byte[] data = await BuildAgileEncryptedFixtureAsync();
@@ -220,9 +216,9 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
         // PBKDF, block-key constants, or hashing chain breaks this test.
         var p = AgileEncryptionFixtureBuilder.DeterministicParameters();
 
-        byte[] verifierInput = AgileEncryptionFixtureBuilder.DecryptVerifierHashInput(p, Password);
+        byte[] verifierInput = AgileEncryptionFixtureBuilder.DecryptVerifierHashInput(p, TestDatabases.AesEncryptedPassword);
         byte[] expectedHash = System.Security.Cryptography.SHA512.HashData(verifierInput);
-        byte[] storedHash = AgileEncryptionFixtureBuilder.DecryptVerifierHashValue(p, Password);
+        byte[] storedHash = AgileEncryptionFixtureBuilder.DecryptVerifierHashValue(p, TestDatabases.AesEncryptedPassword);
 
         Assert.Equal(expectedHash, storedHash);
     }
@@ -251,7 +247,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             var writerOptions = new AccessWriterOptions
             {
                 UseLockFile = false,
-                Password = SecureStringTestHelper.FromString(Password),
+                Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
             };
 
             await using (var writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
@@ -296,13 +292,13 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
 
     private static AccessReaderOptions CorrectPasswordOptions() => new()
     {
-        Password = SecureStringTestHelper.FromString(Password),
+        Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         UseLockFile = false,
     };
 
     private async Task<byte[]> BuildAgileEncryptedFixtureAsync()
     {
-        byte[] inner = await db.GetFileAsync(InnerSource, TestContext.Current.CancellationToken);
-        return AgileEncryptionFixtureBuilder.Build(inner, Password);
+        byte[] inner = await db.GetFileAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
+        return AgileEncryptionFixtureBuilder.Build(inner, TestDatabases.AesEncryptedPassword);
     }
 }

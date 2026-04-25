@@ -29,7 +29,6 @@ using Xunit;
 /// </summary>
 public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
-    private const string Password = "secret";
     private const int Jet4PageSize = 4096;
 
     // ═══════════════════════════════════════════════════════════════════
@@ -44,7 +43,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringTestHelper.FromString(Password),
+            Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -70,7 +69,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringTestHelper.FromString(Password),
+            Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -93,7 +92,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringTestHelper.FromString(Password),
+            Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -122,7 +121,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringTestHelper.FromString(Password),
+            Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -148,7 +147,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringTestHelper.FromString(Password),
+            Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -175,7 +174,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringTestHelper.FromString(Password),
+            Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -198,7 +197,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringTestHelper.FromString(Password),
+            Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -225,7 +224,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringTestHelper.FromString(Password),
+            Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -246,7 +245,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringTestHelper.FromString(Password),
+            Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -336,14 +335,14 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] cfbMagic = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
         Buffer.BlockCopy(cfbMagic, 0, data, 0, cfbMagic.Length);
 
-        // 2. Encode password "secret" at offset 0x42 using the Jet4 XOR scheme
-        //    so that DecodeJet4Password(hdr) returns "secret".
-        EncodeJet4Password(data, Password);
+        // 2. Encode password at offset 0x42 using the Jet4 XOR scheme
+        //    so that DecodeJet4Password(hdr) returns the same password.
+        EncodeJet4Password(data, TestDatabases.AesEncryptedPassword);
 
         // 3. AES-encrypt all data pages (pages 1+). Page 0 (the header) is left
         //    unencrypted because the reader needs it to detect the format and
         //    verify the password before decryption begins.
-        byte[] aesKey = DeriveSimpleAesKey(Password);
+        byte[] aesKey = DeriveSimpleAesKey(TestDatabases.AesEncryptedPassword);
         byte[] iv = new byte[16]; // zero IV for deterministic fixture
         for (int page = 1; page * Jet4PageSize < data.Length; page++)
         {

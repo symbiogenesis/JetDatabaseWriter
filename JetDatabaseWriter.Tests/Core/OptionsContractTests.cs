@@ -24,21 +24,21 @@ public sealed class OptionsContractTests
     [Fact]
     public void AccessReaderOptions_PlainTextConstructor_ConvertsToSecureString()
     {
-        var options = new AccessReaderOptions("secret");
+        var options = new AccessReaderOptions(TestDatabases.AesEncryptedPassword);
 
         Assert.NotNull(options.Password);
         Assert.True(options.Password!.IsReadOnly());
-        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, "secret"));
+        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, TestDatabases.AesEncryptedPassword));
     }
 
     [Fact]
     public void AccessWriterOptions_PlainTextConstructor_ConvertsToSecureString()
     {
-        var options = new AccessWriterOptions("secret");
+        var options = new AccessWriterOptions(TestDatabases.AesEncryptedPassword);
 
         Assert.NotNull(options.Password);
         Assert.True(options.Password!.IsReadOnly());
-        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, "secret"));
+        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, TestDatabases.AesEncryptedPassword));
     }
 
     [Fact]
@@ -72,19 +72,19 @@ public sealed class OptionsContractTests
     [Fact]
     public void AccessReaderOptions_PlainTextConstructor_AllowsObjectInitializer()
     {
-        var options = new AccessReaderOptions("secret") { PageCacheSize = 123 };
+        var options = new AccessReaderOptions(TestDatabases.AesEncryptedPassword) { PageCacheSize = 123 };
 
         Assert.Equal(123, options.PageCacheSize);
-        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, "secret"));
+        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, TestDatabases.AesEncryptedPassword));
     }
 
     [Fact]
     public void AccessWriterOptions_PlainTextConstructor_AllowsObjectInitializer()
     {
-        var options = new AccessWriterOptions("secret") { UseLockFile = false, RespectExistingLockFile = false };
+        var options = new AccessWriterOptions(TestDatabases.AesEncryptedPassword) { UseLockFile = false, RespectExistingLockFile = false };
 
         Assert.False(options.UseLockFile);
         Assert.False(options.RespectExistingLockFile);
-        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, "secret"));
+        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, TestDatabases.AesEncryptedPassword));
     }
 }

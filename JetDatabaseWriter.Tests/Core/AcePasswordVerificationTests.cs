@@ -24,13 +24,13 @@ using Xunit;
 /// (ver ≥ 2) and verifies the password using the ACE internal scheme. Opening
 /// without a password, or with the wrong password, throws
 /// <see cref="UnauthorizedAccessException"/>; opening with the correct password
-/// ("secret") succeeds and returns data.
+/// succeeds and returns data.
 /// </summary>
 public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     private static readonly AccessReaderOptions CorrectPasswordOptions = new()
     {
-        Password = SecureStringTestHelper.FromString("secret"),
+        Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         UseLockFile = false,
     };
 
@@ -84,7 +84,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
     [Fact]
     public async Task AccdbPassword_OpenWithCorrectPassword_Succeeds()
     {
-        // The correct password ("secret") should open the database without error.
+        // The correct password should open the database without error.
         var reader = await db.GetReaderAsync(TestDatabases.AesEncrypted, CorrectPasswordOptions, TestContext.Current.CancellationToken);
         await reader.ListTablesAsync(TestContext.Current.CancellationToken);
     }
