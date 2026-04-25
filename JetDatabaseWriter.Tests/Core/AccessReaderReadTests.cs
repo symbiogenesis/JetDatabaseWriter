@@ -259,9 +259,9 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        var reported = new List<long>();
+        var reported = new System.Collections.Concurrent.ConcurrentQueue<long>();
 
-        _ = await reader.ReadDataTableAsync(table, progress: new Progress<long>(reported.Add), cancellationToken: TestContext.Current.CancellationToken);
+        _ = await reader.ReadDataTableAsync(table, progress: new Progress<long>(reported.Enqueue), cancellationToken: TestContext.Current.CancellationToken);
 
         // Every reported value should be non-negative; ForEach handles zero callbacks gracefully
         foreach (long v in reported)

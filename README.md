@@ -652,8 +652,7 @@ The writer covers the common create / insert / update / delete path. The items b
 - **Not yet validated end-to-end through Microsoft Access.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not been round-tripped through a Compact & Repair pass on Windows.
 
 ### Specialized column kinds
-- **Attachment / multi-value (complex) columns — partial.** Schema creation, row-level inserts, spec-compliant reads, cascade-on-delete from the parent row, and `DropTableAsync` cascade for the hidden flat child tables work for ACE `.accdb`. Still missing:
-  - Per-flat-table PK/FK indexes Access expects (Compact & Repair rebuilds them).
+- **Attachment / multi-value (complex) columns — partial.** Schema creation (with the per-flat-table primary-key, FK back-reference, and (attachment-only) composite secondary index Access expects), row-level inserts, spec-compliant reads, cascade-on-delete from the parent row, and `DropTableAsync` cascade for the hidden flat child tables work for ACE `.accdb`. Still missing:
   - LVAL chain emission for attachment payloads — current cap is ~256 bytes per file (inline-OLE limit).
   - `MSysComplexType_*` template tables (`ComplexTypeObjectID` is written as `0`).
   - `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` on tables that already contain attachment columns.
