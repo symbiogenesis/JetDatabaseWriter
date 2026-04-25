@@ -31,7 +31,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Write support** | Create databases, Create/drop tables, insert/update/delete rows (Jet3/Jet4/ACE) |
 | ✅ **Encryption & passwords** | Jet3 page-level XOR, Jet4 `.mdb` RC4, legacy password-only `.accdb` (`;pwd=`), AES-128 page-encrypted Access 2007+ `.accdb` (CFB-wrapped), and Office Crypto API ECMA-376 "Agile" (SHA-512 PBKDF + AES-CBC) used by Access 2010 SP1+ / Microsoft 365 |
 | ✅ **Linked tables** | Read source paths / foreign names via `ListLinkedTablesAsync()`; create Access (type 4) and ODBC (type 6) links via `CreateLinkedTableAsync` / `CreateLinkedOdbcTableAsync` |
-| ✅ **Foreign-key relationships** | Read existing relationships via `ListIndexesAsync` (`Kind = ForeignKey`); create via `CreateRelationshipAsync` — `MSysRelationships` catalog rows (W9a) + per-TDEF FK logical-index entries on both sides with real-idx sharing (W9b, Jet4/ACE only); runtime referential-integrity enforcement at write time deferred to Microsoft Access |
+| ✅ **Foreign-key relationships** | Read existing relationships via `ListIndexesAsync` (`Kind = ForeignKey`); create via `CreateRelationshipAsync` — `MSysRelationships` catalog rows (W9a) + per-TDEF FK logical-index entries on both sides with real-idx sharing (W9b, Jet4/ACE only); **runtime referential-integrity enforcement** on `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync`, including cascade-update and cascade-delete (W10) |
 | ✅ **Complex fields** | Attachment and multi-value columns resolved via `MSysComplexColumns` FK lookup |
 | ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on disposal (opt-out) |
 
@@ -441,7 +441,7 @@ await writer.CreateLinkedOdbcTableAsync(
 
 ### Foreign-key relationships
 
-Declare a relationship between two existing tables. The library appends one row per FK column to the `MSysRelationships` system table (the source Access reads to populate the Relationships designer) **and** emits a per-table FK logical-index entry on both the PK-side and FK-side TDEFs (Jet4/ACE only — Jet3 `.mdb` files get only the catalog rows). Existing real-idx slots are reused when their `col_map` already covers the FK columns; otherwise a new real-idx slot plus an empty leaf page are appended on each side. The library does not enforce referential integrity at write time — see the Limitations section for the full contract.
+Declare a relationship between two existing tables. The library appends one row per FK column to the `MSysRelationships` system table (the source Access reads to populate the Relationships designer) **and** emits a per-table FK logical-index entry on both the PK-side and FK-side TDEFs (Jet4/ACE only — Jet3 `.mdb` files get only the catalog rows). Existing real-idx slots are reused when their `col_map` already covers the FK columns; otherwise a new real-idx slot plus an empty leaf page are appended on each side. **Runtime referential integrity is enforced on `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync`** for any relationship created with `EnforceReferentialIntegrity = true` (the default); `CascadeUpdates` / `CascadeDeletes` honour the cascade flags. See the Limitations section for the full contract.
 
 ```csharp
 // Single-column FK
@@ -623,7 +623,7 @@ The writer targets the most common create / insert / update / delete scenarios. 
 
 ### Primary & foreign keys
 - **Multi-column primary keys ship schema only.** Single-column PKs are maintained on every mutation; multi-column PKs require a Compact & Repair in Access to populate the leaf.
-- **No engine-level referential-integrity enforcement.** `CreateRelationshipAsync` writes the catalog row and per-TDEF FK index entries, but `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync` do not validate FK constraints or perform cascade actions at write time. Access enforces them when the file is opened there.
+- **Runtime referential-integrity is enforced** when a relationship is created with `EnforceReferentialIntegrity = true` (the default): `InsertRowAsync` / `UpdateRowsAsync` reject child rows whose foreign-key tuple has no matching parent (a tuple containing any `DBNull` is allowed). `DeleteRowsAsync` and PK-changing `UpdateRowsAsync` either cascade to dependent child rows when `CascadeDeletes` / `CascadeUpdates` is set or reject the operation otherwise. Enforcement is opt-out per relationship — set `EnforceReferentialIntegrity = false` to recreate the historical "schema only" behaviour. Cascade chains are limited to a recursion depth of 64 to guard against pathological cyclic relationships. Each enforcement call performs an O(N) scan of the parent table snapshot (no index seek), and parent-key sets are cached for the duration of a single `InsertRowsAsync` call so bulk inserts pay the snapshot cost once.
 - **No relationship deletion or rename.**
 - **TDEF must fit on one page** after FK entries are appended, otherwise `NotSupportedException`.
 - **Validation gap.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not yet been round-tripped through Microsoft Access on Windows for a Compact & Repair smoke test. Defer production use until that has been verified by hand.

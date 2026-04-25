@@ -26,6 +26,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private const int MaxInlineOleBytes = 256;
     private const int TDefRowCountOffset = 16;
 
+    /// <summary>
+    /// Maximum recursion depth for cascade-delete / cascade-update chains (W10).
+    /// Guards against pathological self-referential cycles. Real-world Access
+    /// schemas almost never exceed depth 3.
+    /// </summary>
+    private const int CascadeMaxDepth = 64;
+
     private readonly SecureString? _password;
     private readonly bool _useLockFile;
     private readonly bool _respectExistingLockFile;
@@ -608,7 +615,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
         await ApplyConstraintsAsync(tableName, tableDef, values, cancellationToken).ConfigureAwait(false);
+
+        IReadOnlyList<FkRelationship> rels = await GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
+        if (fkCtx != null)
+        {
+            await EnforceFkOnInsertAsync(tableName, tableDef, values, fkCtx, cancellationToken).ConfigureAwait(false);
+        }
+
         await InsertRowDataAsync(entry.TDefPage, tableDef, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        if (fkCtx != null)
+        {
+            AugmentParentSetsAfterInsert(tableName, tableDef, values, fkCtx);
+        }
+
         await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
     }
 
@@ -622,6 +643,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<FkRelationship> rels = await GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
         int inserted = 0;
 
         foreach (object[] row in rows)
@@ -629,7 +652,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             cancellationToken.ThrowIfCancellationRequested();
             Guard.NotNull(row, nameof(rows));
             await ApplyConstraintsAsync(tableName, tableDef, row, cancellationToken).ConfigureAwait(false);
+            if (fkCtx != null)
+            {
+                await EnforceFkOnInsertAsync(tableName, tableDef, row, fkCtx, cancellationToken).ConfigureAwait(false);
+            }
+
             await InsertRowDataAsync(entry.TDefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (fkCtx != null)
+            {
+                AugmentParentSetsAfterInsert(tableName, tableDef, row, fkCtx);
+            }
+
             inserted++;
         }
 
@@ -656,7 +689,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var index = RowMapper<T>.BuildIndex(headers);
         object[] mappedRow = RowMapper<T>.ToRow(item, index);
         await ApplyConstraintsAsync(tableName, tableDef, mappedRow, cancellationToken).ConfigureAwait(false);
+
+        IReadOnlyList<FkRelationship> relsT = await GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtxT = relsT.Count > 0 ? new FkContext(relsT) : null;
+        if (fkCtxT != null)
+        {
+            await EnforceFkOnInsertAsync(tableName, tableDef, mappedRow, fkCtxT, cancellationToken).ConfigureAwait(false);
+        }
+
         await InsertRowDataAsync(entry.TDefPage, tableDef, mappedRow, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (fkCtxT != null)
+        {
+            AugmentParentSetsAfterInsert(tableName, tableDef, mappedRow, fkCtxT);
+        }
+
         await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
     }
 
@@ -673,6 +719,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
         var headers = tableDef.Columns.ConvertAll(c => c.Name);
         var index = RowMapper<T>.BuildIndex(headers);
+        IReadOnlyList<FkRelationship> rels = await GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
         int inserted = 0;
 
         foreach (T item in items)
@@ -681,7 +729,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             Guard.NotNull(item, nameof(items));
             object[] mappedRow = RowMapper<T>.ToRow(item, index);
             await ApplyConstraintsAsync(tableName, tableDef, mappedRow, cancellationToken).ConfigureAwait(false);
+            if (fkCtx != null)
+            {
+                await EnforceFkOnInsertAsync(tableName, tableDef, mappedRow, fkCtx, cancellationToken).ConfigureAwait(false);
+            }
+
             await InsertRowDataAsync(entry.TDefPage, tableDef, mappedRow, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (fkCtx != null)
+            {
+                AugmentParentSetsAfterInsert(tableName, tableDef, mappedRow, fkCtx);
+            }
+
             inserted++;
         }
 
@@ -731,8 +789,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         List<RowLocation> locations = await GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         int total = Math.Min(snapshot.Rows.Count, locations.Count);
-        int updated = 0;
 
+        // ── W10 — FK enforcement ────────────────────────────────────────
+        // Build the list of new-row payloads up front so we can validate FK
+        // constraints (FK-side parent presence, PK-side cascade-or-reject)
+        // before mutating any disk page.
+        IReadOnlyList<FkRelationship> rels = await GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
+
+        var pendingNewRows = new List<(int Index, object[] NewRow)>();
         for (int i = 0; i < total; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -749,6 +814,67 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 rowValues[update.Key] = update.Value ?? DBNull.Value;
             }
 
+            pendingNewRows.Add((i, rowValues));
+        }
+
+        if (fkCtx != null && pendingNewRows.Count > 0)
+        {
+            // FK-side: every updated row must (still) satisfy any FK constraint
+            // whose foreign side is THIS table.
+            foreach ((_, object[] newRow) in pendingNewRows)
+            {
+                await EnforceFkOnInsertAsync(tableName, tableDef, newRow, fkCtx, cancellationToken).ConfigureAwait(false);
+            }
+
+            // PK-side: if any of the updated columns belongs to a PK referenced
+            // by a child table, gather (oldKey, newPkValues) pairs per affected
+            // row and let EnforceFkOnPrimaryUpdateAsync cascade or reject.
+            var changes = new List<(string? OldKey, object[] NewPkValues)>(pendingNewRows.Count);
+            foreach (FkRelationship rel in rels)
+            {
+                if (!string.Equals(rel.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var pkIdx = new int[rel.PrimaryColumns.Count];
+                bool ok = true;
+                bool anyPkUpdated = false;
+                for (int i = 0; i < rel.PrimaryColumns.Count; i++)
+                {
+                    pkIdx[i] = FindColumnIndex(tableDef, rel.PrimaryColumns[i]);
+                    if (pkIdx[i] < 0)
+                    {
+                        ok = false;
+                        break;
+                    }
+
+                    if (updateIndexes.ContainsKey(pkIdx[i]))
+                    {
+                        anyPkUpdated = true;
+                    }
+                }
+
+                if (!ok || !anyPkUpdated)
+                {
+                    continue;
+                }
+
+                changes.Clear();
+                foreach ((int rowIdx, object[] newRow) in pendingNewRows)
+                {
+                    string? oldKey = BuildCompositeKey(snapshot.Rows[rowIdx].ItemArray, pkIdx);
+                    changes.Add((oldKey, newRow));
+                }
+
+                await EnforceFkOnPrimaryUpdateAsync(tableName, changes, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        int updated = 0;
+        foreach ((int i, object[] rowValues) in pendingNewRows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             await MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, cancellationToken).ConfigureAwait(false);
             await InsertRowDataAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
             updated++;
@@ -782,18 +908,65 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         List<RowLocation> locations = await GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         int total = Math.Min(snapshot.Rows.Count, locations.Count);
-        int deleted = 0;
 
+        // ── W10 — FK enforcement ────────────────────────────────────────
+        // Identify the rows we are about to delete; if any FK relationship
+        // names this table as the primary side, capture the deleted PK
+        // tuples and let EnforceFkOnPrimaryDeleteAsync cascade-delete
+        // dependent child rows (or throw when cascade is disabled).
+        var matchingIndices = new List<int>();
         for (int i = 0; i < total; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
             object currentValue = snapshot.Rows[i][predicateIndex];
-            if (!ValuesEqual(currentValue, predicateValue))
+            if (ValuesEqual(currentValue, predicateValue))
             {
-                continue;
+                matchingIndices.Add(i);
             }
+        }
 
+        IReadOnlyList<FkRelationship> rels = await GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        if (rels.Count > 0 && matchingIndices.Count > 0)
+        {
+            var fkCtx = new FkContext(rels);
+            foreach (FkRelationship rel in rels)
+            {
+                if (!string.Equals(rel.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var pkIdx = new int[rel.PrimaryColumns.Count];
+                bool ok = true;
+                for (int i = 0; i < rel.PrimaryColumns.Count; i++)
+                {
+                    pkIdx[i] = FindColumnIndex(tableDef, rel.PrimaryColumns[i]);
+                    if (pkIdx[i] < 0)
+                    {
+                        ok = false;
+                        break;
+                    }
+                }
+
+                if (!ok)
+                {
+                    continue;
+                }
+
+                var deletedKeys = new List<string?>(matchingIndices.Count);
+                foreach (int rowIdx in matchingIndices)
+                {
+                    deletedKeys.Add(BuildCompositeKey(snapshot.Rows[rowIdx].ItemArray, pkIdx));
+                }
+
+                await EnforceFkOnPrimaryDeleteAsync(tableName, deletedKeys, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        int deleted = 0;
+        foreach (int i in matchingIndices)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             await MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, cancellationToken).ConfigureAwait(false);
             deleted++;
         }
@@ -1548,6 +1721,677 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         return baseName;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // W10 — Foreign-key runtime enforcement on Insert / Update / Delete
+    // ════════════════════════════════════════════════════════════════
+    //
+    // Honors the EnforceReferentialIntegrity / CascadeUpdates / CascadeDeletes
+    // flags that were emitted into MSysRelationships.grbit by W9a. When a
+    // relationship has EnforceReferentialIntegrity=false the row simply does
+    // not enter the enforced-set returned by GetEnforcedRelationshipsAsync.
+    //
+    // Enforcement strategy is intentionally simple — there is no SQL engine
+    // and no index seek; every check scans the relevant table snapshot once
+    // per public mutation call (NOT once per row). For bulk InsertRowsAsync
+    // the parent-key set is built lazily on first FK violation check and
+    // reused across all rows in the same call. Self-referential inserts
+    // augment the cached set after each successful insert so a row that
+    // satisfies its own FK can be inserted.
+    //
+    // See docs/design/index-and-relationship-format-notes.md §7 W10.
+
+    /// <summary>
+    /// In-memory representation of a single enforced foreign-key relationship,
+    /// aggregated from one or more <c>MSysRelationships</c> rows (one per
+    /// FK column). Only relationships with the
+    /// <c>NO_REFERENTIAL_INTEGRITY</c> grbit flag clear are returned.
+    /// </summary>
+    private sealed record FkRelationship(
+        string Name,
+        string PrimaryTable,
+        IReadOnlyList<string> PrimaryColumns,
+        string ForeignTable,
+        IReadOnlyList<string> ForeignColumns,
+        bool CascadeUpdates,
+        bool CascadeDeletes);
+
+    /// <summary>
+    /// Per-call enforcement context: snapshot of every enforced relationship
+    /// plus a lazy cache of parent-PK key sets keyed by relationship name.
+    /// One context lives for the duration of a single public mutation call
+    /// (Insert/Update/Delete) so the parent snapshot of a given table is
+    /// loaded at most once per call even when many rows need checking.
+    /// </summary>
+    private sealed class FkContext
+    {
+        public FkContext(IReadOnlyList<FkRelationship> all)
+        {
+            this.All = all;
+        }
+
+        public IReadOnlyList<FkRelationship> All { get; }
+
+        public Dictionary<string, HashSet<string>> ParentKeySets { get; }
+            = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Loads every enforced foreign-key relationship from the
+    /// <c>MSysRelationships</c> system table. Returns an empty list when the
+    /// database does not contain that table or contains no enforced rows.
+    /// </summary>
+    private async ValueTask<IReadOnlyList<FkRelationship>> GetEnforcedRelationshipsAsync(CancellationToken cancellationToken)
+    {
+        long pg = await FindSystemTableTdefPageAsync("MSysRelationships", cancellationToken).ConfigureAwait(false);
+        if (pg == 0)
+        {
+            return Array.Empty<FkRelationship>();
+        }
+
+        DataTable t = await ReadTableSnapshotAsync("MSysRelationships", cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!t.Columns.Contains("szRelationship"))
+            {
+                return Array.Empty<FkRelationship>();
+            }
+
+            var groups = new Dictionary<string, List<DataRow>>(StringComparer.OrdinalIgnoreCase);
+            foreach (DataRow r in t.Rows)
+            {
+                object nm = r["szRelationship"];
+                if (nm == DBNull.Value)
+                {
+                    continue;
+                }
+
+                string name = nm.ToString() ?? string.Empty;
+                if (name.Length == 0)
+                {
+                    continue;
+                }
+
+                if (!groups.TryGetValue(name, out List<DataRow>? list))
+                {
+                    list = new List<DataRow>();
+                    groups[name] = list;
+                }
+
+                list.Add(r);
+            }
+
+            var result = new List<FkRelationship>(groups.Count);
+            foreach (KeyValuePair<string, List<DataRow>> kvp in groups)
+            {
+                List<DataRow> rows = kvp.Value;
+                rows.Sort((a, b) => Convert.ToInt32(a["icolumn"], CultureInfo.InvariantCulture)
+                    .CompareTo(Convert.ToInt32(b["icolumn"], CultureInfo.InvariantCulture)));
+
+                DataRow head = rows[0];
+                int grbit = Convert.ToInt32(head["grbit"], CultureInfo.InvariantCulture);
+
+                // grbit bits per W9a (Jackcess RelationshipImpl):
+                //   0x00000002 NO_REFERENTIAL_INTEGRITY
+                //   0x00000100 CASCADE_UPDATES
+                //   0x00001000 CASCADE_DELETES
+                bool enforce = (grbit & 0x00000002) == 0;
+                if (!enforce)
+                {
+                    continue;
+                }
+
+                bool cascadeUpdates = (grbit & 0x00000100) != 0;
+                bool cascadeDeletes = (grbit & 0x00001000) != 0;
+
+                string primaryTable = head["szReferencedObject"]?.ToString() ?? string.Empty;
+                string foreignTable = head["szObject"]?.ToString() ?? string.Empty;
+                if (primaryTable.Length == 0 || foreignTable.Length == 0)
+                {
+                    continue;
+                }
+
+                var pk = new string[rows.Count];
+                var fk = new string[rows.Count];
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    pk[i] = rows[i]["szReferencedColumn"]?.ToString() ?? string.Empty;
+                    fk[i] = rows[i]["szColumn"]?.ToString() ?? string.Empty;
+                }
+
+                result.Add(new FkRelationship(kvp.Key, primaryTable, pk, foreignTable, fk, cascadeUpdates, cascadeDeletes));
+            }
+
+            return result;
+        }
+        finally
+        {
+            t.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Builds a canonical, type-tolerant string key from <paramref name="row"/>
+    /// for the columns listed in <paramref name="columnIndexes"/>. Returns
+    /// <see langword="null"/> when any component is <see cref="DBNull"/> /
+    /// <see langword="null"/> — Access treats a partial-null FK tuple as
+    /// unconstrained (the row is allowed even if no parent matches).
+    /// </summary>
+    private static string? BuildCompositeKey(object?[] row, int[] columnIndexes)
+    {
+        var sb = new StringBuilder();
+        for (int i = 0; i < columnIndexes.Length; i++)
+        {
+            int idx = columnIndexes[i];
+            if (idx < 0 || idx >= row.Length)
+            {
+                return null;
+            }
+
+            object? v = row[idx];
+            if (v == null || v is DBNull)
+            {
+                return null;
+            }
+
+            sb.Append('|');
+            AppendNormalized(sb, v);
+        }
+
+        return sb.ToString();
+    }
+
+    private static void AppendNormalized(StringBuilder sb, object value)
+    {
+        switch (value)
+        {
+            case string s:
+                // Access string equality is case-insensitive in JET — match that.
+                sb.Append('S').Append(':').Append(s.ToUpperInvariant());
+                break;
+            case Guid g:
+                sb.Append('G').Append(':').Append(g.ToString("N"));
+                break;
+            case byte[] b:
+                sb.Append('B').Append(':').Append(Convert.ToBase64String(b));
+                break;
+            case DateTime dt:
+                sb.Append('D').Append(':').Append(dt.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture));
+                break;
+            case bool bl:
+                sb.Append('?').Append(':').Append(bl ? '1' : '0');
+                break;
+            case IConvertible c:
+                // Numeric-ish: normalize through decimal for cross-width equality
+                // (e.g. user passes int 5 against a long parent column).
+                try
+                {
+                    decimal d = c.ToDecimal(CultureInfo.InvariantCulture);
+                    sb.Append('N').Append(':').Append(d.ToString(CultureInfo.InvariantCulture));
+                }
+                catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is OverflowException)
+                {
+                    sb.Append('X').Append(':').Append(value.ToString() ?? string.Empty);
+                }
+
+                break;
+            default:
+                sb.Append('X').Append(':').Append(value.ToString() ?? string.Empty);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Lazily builds (and caches inside <paramref name="ctx"/>) the set of
+    /// composite-key strings for every row currently in <paramref name="rel"/>'s
+    /// primary table. A relationship with a missing parent column or a missing
+    /// parent table yields an empty set so all FK inserts will be rejected.
+    /// </summary>
+    private async ValueTask<HashSet<string>> GetParentKeySetAsync(FkRelationship rel, FkContext ctx, CancellationToken cancellationToken)
+    {
+        if (ctx.ParentKeySets.TryGetValue(rel.Name, out HashSet<string>? cached))
+        {
+            return cached;
+        }
+
+        var set = new HashSet<string>(StringComparer.Ordinal);
+
+        DataTable parent;
+        try
+        {
+            parent = await ReadTableSnapshotAsync(rel.PrimaryTable, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException)
+        {
+            ctx.ParentKeySets[rel.Name] = set;
+            return set;
+        }
+
+        try
+        {
+            var idx = new int[rel.PrimaryColumns.Count];
+            bool ok = true;
+            for (int i = 0; i < rel.PrimaryColumns.Count; i++)
+            {
+                idx[i] = parent.Columns.IndexOf(rel.PrimaryColumns[i]);
+                if (idx[i] < 0)
+                {
+                    ok = false;
+                    break;
+                }
+            }
+
+            if (ok)
+            {
+                foreach (DataRow row in parent.Rows)
+                {
+                    string? k = BuildCompositeKey(row.ItemArray, idx);
+                    if (k != null)
+                    {
+                        _ = set.Add(k);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            parent.Dispose();
+        }
+
+        ctx.ParentKeySets[rel.Name] = set;
+        return set;
+    }
+
+    /// <summary>
+    /// Validates that every enforced FK whose foreign-side table is
+    /// <paramref name="foreignTable"/> is satisfied by <paramref name="values"/>.
+    /// Throws <see cref="InvalidOperationException"/> on the first violation.
+    /// A FK column tuple containing any null component is allowed (Access
+    /// permits unset FKs unless the column itself is required).
+    /// </summary>
+    private async ValueTask EnforceFkOnInsertAsync(string foreignTable, TableDef foreignDef, object[] values, FkContext ctx, CancellationToken cancellationToken)
+    {
+        foreach (FkRelationship rel in ctx.All)
+        {
+            if (!string.Equals(rel.ForeignTable, foreignTable, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var fkIdx = new int[rel.ForeignColumns.Count];
+            bool ok = true;
+            for (int i = 0; i < rel.ForeignColumns.Count; i++)
+            {
+                fkIdx[i] = FindColumnIndex(foreignDef, rel.ForeignColumns[i]);
+                if (fkIdx[i] < 0)
+                {
+                    ok = false;
+                    break;
+                }
+            }
+
+            if (!ok)
+            {
+                continue;
+            }
+
+            string? key = BuildCompositeKey(values, fkIdx);
+            if (key == null)
+            {
+                continue;
+            }
+
+            HashSet<string> parentKeys = await GetParentKeySetAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
+            if (!parentKeys.Contains(key))
+            {
+                throw new InvalidOperationException(
+                    $"INSERT into '{foreignTable}' violates foreign-key constraint '{rel.Name}': " +
+                    $"no matching row in '{rel.PrimaryTable}' for the supplied {string.Join(", ", rel.ForeignColumns)} value(s).");
+            }
+        }
+    }
+
+    /// <summary>
+    /// After a successful insert, augments any cached parent-key sets that
+    /// reference <paramref name="primaryTable"/> with the row's PK tuple so
+    /// subsequent inserts within the same call (self-references and bulk
+    /// inserts where one row supplies the parent for the next) succeed.
+    /// </summary>
+    private static void AugmentParentSetsAfterInsert(string primaryTable, TableDef tableDef, object[] insertedValues, FkContext ctx)
+    {
+        foreach (FkRelationship rel in ctx.All)
+        {
+            if (!string.Equals(rel.PrimaryTable, primaryTable, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!ctx.ParentKeySets.TryGetValue(rel.Name, out HashSet<string>? set))
+            {
+                continue;
+            }
+
+            var pkIdx = new int[rel.PrimaryColumns.Count];
+            bool ok = true;
+            for (int i = 0; i < rel.PrimaryColumns.Count; i++)
+            {
+                pkIdx[i] = FindColumnIndex(tableDef, rel.PrimaryColumns[i]);
+                if (pkIdx[i] < 0)
+                {
+                    ok = false;
+                    break;
+                }
+            }
+
+            if (!ok)
+            {
+                continue;
+            }
+
+            string? key = BuildCompositeKey(insertedValues, pkIdx);
+            if (key != null)
+            {
+                _ = set.Add(key);
+            }
+        }
+    }
+
+    /// <summary>
+    /// For each enforced FK whose primary side is <paramref name="primaryTable"/>,
+    /// inspects the rows currently being deleted (by their PK tuples in
+    /// <paramref name="deletedKeys"/>) and either cascades the delete to the
+    /// child table when <see cref="FkRelationship.CascadeDeletes"/> is set, or
+    /// throws when child rows still reference one of the deleted PK tuples.
+    /// </summary>
+    private async ValueTask EnforceFkOnPrimaryDeleteAsync(
+        string primaryTable,
+        IReadOnlyList<string?> deletedKeys,
+        FkContext ctx,
+        int depth,
+        CancellationToken cancellationToken)
+    {
+        if (depth > CascadeMaxDepth)
+        {
+            throw new InvalidOperationException(
+                $"Foreign-key cascade depth exceeded {CascadeMaxDepth}. Possible cyclic relationship.");
+        }
+
+        foreach (FkRelationship rel in ctx.All)
+        {
+            if (!string.Equals(rel.PrimaryTable, primaryTable, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // Find child rows referencing any of the deleted PK tuples.
+            CatalogEntry childEntry = await GetRequiredCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            TableDef childDef = await ReadRequiredTableDefAsync(childEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+
+            var fkIdx = new int[rel.ForeignColumns.Count];
+            bool ok = true;
+            for (int i = 0; i < rel.ForeignColumns.Count; i++)
+            {
+                fkIdx[i] = FindColumnIndex(childDef, rel.ForeignColumns[i]);
+                if (fkIdx[i] < 0)
+                {
+                    ok = false;
+                    break;
+                }
+            }
+
+            if (!ok)
+            {
+                continue;
+            }
+
+            using DataTable childSnap = await ReadTableSnapshotAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            List<RowLocation> locations = await GetLiveRowLocationsAsync(childEntry.TDefPage, cancellationToken).ConfigureAwait(false);
+            int total = Math.Min(childSnap.Rows.Count, locations.Count);
+
+            var deletedSet = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string? k in deletedKeys)
+            {
+                if (k != null)
+                {
+                    _ = deletedSet.Add(k);
+                }
+            }
+
+            var matchingRowIndices = new List<int>();
+            var matchingChildKeys = new List<string?>();
+            for (int i = 0; i < total; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string? childKey = BuildCompositeKey(childSnap.Rows[i].ItemArray, fkIdx);
+                if (childKey == null)
+                {
+                    continue;
+                }
+
+                if (deletedSet.Contains(childKey))
+                {
+                    matchingRowIndices.Add(i);
+
+                    // If this child is itself referenced by grandchildren, we need
+                    // to recurse with the GRANDCHILD's PK tuples — i.e. the child
+                    // row's own PK values (per any further relationship). Build
+                    // the grandchild-side key (= this row's PK columns) on demand
+                    // as we recurse below.
+                    matchingChildKeys.Add(childKey);
+                }
+            }
+
+            if (matchingRowIndices.Count == 0)
+            {
+                continue;
+            }
+
+            if (!rel.CascadeDeletes)
+            {
+                throw new InvalidOperationException(
+                    $"DELETE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': " +
+                    $"{matchingRowIndices.Count} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.");
+            }
+
+            // Capture the child rows' OWN PK tuples (per every relationship
+            // whose primary side is the child table) before we delete them so
+            // grandchildren can be cascaded recursively.
+            var childPkSnapshots = new Dictionary<string, List<string?>>(StringComparer.OrdinalIgnoreCase);
+            foreach (FkRelationship grandRel in ctx.All)
+            {
+                if (!string.Equals(grandRel.PrimaryTable, rel.ForeignTable, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var pkIdx = new int[grandRel.PrimaryColumns.Count];
+                bool pkOk = true;
+                for (int i = 0; i < grandRel.PrimaryColumns.Count; i++)
+                {
+                    pkIdx[i] = FindColumnIndex(childDef, grandRel.PrimaryColumns[i]);
+                    if (pkIdx[i] < 0)
+                    {
+                        pkOk = false;
+                        break;
+                    }
+                }
+
+                if (!pkOk)
+                {
+                    continue;
+                }
+
+                var keys = new List<string?>(matchingRowIndices.Count);
+                foreach (int rIdx in matchingRowIndices)
+                {
+                    keys.Add(BuildCompositeKey(childSnap.Rows[rIdx].ItemArray, pkIdx));
+                }
+
+                childPkSnapshots[grandRel.Name] = keys;
+            }
+
+            // Recurse for grandchildren BEFORE we delete this level so the
+            // grandchild-side enforcement can still see the parent rows
+            // (it uses table snapshots independent of our pending deletes,
+            // but cascading bottom-up keeps the state consistent on disk).
+            foreach (KeyValuePair<string, List<string?>> kvp in childPkSnapshots)
+            {
+                await EnforceFkOnPrimaryDeleteAsync(rel.ForeignTable, kvp.Value, ctx, depth + 1, cancellationToken).ConfigureAwait(false);
+            }
+
+            // Now delete the child rows.
+            int deleted = 0;
+            foreach (int rIdx in matchingRowIndices)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await MarkRowDeletedAsync(locations[rIdx].PageNumber, locations[rIdx].RowIndex, cancellationToken).ConfigureAwait(false);
+                deleted++;
+            }
+
+            if (deleted > 0)
+            {
+                await AdjustTDefRowCountAsync(childEntry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
+                await MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// For each enforced FK whose primary side is <paramref name="primaryTable"/>,
+    /// when a row's PK tuple is changing from <c>oldKey</c> to <c>newKey</c>,
+    /// either propagates the change to dependent child rows (cascade-update)
+    /// or rejects the update when child rows reference the old key and
+    /// cascade-update is not enabled.
+    /// </summary>
+    private async ValueTask EnforceFkOnPrimaryUpdateAsync(
+        string primaryTable,
+        IReadOnlyList<(string? OldKey, object[] NewPkValues)> changes,
+        FkContext ctx,
+        int depth,
+        CancellationToken cancellationToken)
+    {
+        if (depth > CascadeMaxDepth)
+        {
+            throw new InvalidOperationException(
+                $"Foreign-key cascade depth exceeded {CascadeMaxDepth}. Possible cyclic relationship.");
+        }
+
+        foreach (FkRelationship rel in ctx.All)
+        {
+            if (!string.Equals(rel.PrimaryTable, primaryTable, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            CatalogEntry childEntry = await GetRequiredCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            TableDef childDef = await ReadRequiredTableDefAsync(childEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+
+            // Map this relationship's PK column ordinals on the PRIMARY-side def too
+            // (we need to extract the new PK tuple from NewPkValues which is in
+            // primary-table column order).
+            // Caller passed NewPkValues already in primary table column order;
+            // we still need to slice out just the PK columns of THIS rel.
+            CatalogEntry primaryEntry = await GetRequiredCatalogEntryAsync(primaryTable, cancellationToken).ConfigureAwait(false);
+            TableDef primaryDef = await ReadRequiredTableDefAsync(primaryEntry.TDefPage, primaryTable, cancellationToken).ConfigureAwait(false);
+            var primaryPkIdx = new int[rel.PrimaryColumns.Count];
+            var fkIdx = new int[rel.ForeignColumns.Count];
+            bool ok = true;
+            for (int i = 0; i < rel.PrimaryColumns.Count; i++)
+            {
+                primaryPkIdx[i] = FindColumnIndex(primaryDef, rel.PrimaryColumns[i]);
+                fkIdx[i] = FindColumnIndex(childDef, rel.ForeignColumns[i]);
+                if (primaryPkIdx[i] < 0 || fkIdx[i] < 0)
+                {
+                    ok = false;
+                    break;
+                }
+            }
+
+            if (!ok)
+            {
+                continue;
+            }
+
+            // Build (oldKey -> newPkObjects) map for changes whose PK actually moves.
+            var movingChanges = new Dictionary<string, object[]>(StringComparer.Ordinal);
+            foreach ((string? oldKey, object[] newPkValues) in changes)
+            {
+                if (oldKey == null)
+                {
+                    continue;
+                }
+
+                string? newKey = BuildCompositeKey(newPkValues, primaryPkIdx);
+                if (newKey == null || string.Equals(newKey, oldKey, StringComparison.Ordinal))
+                {
+                    // Either new tuple is null (will fail other constraints) or
+                    // unchanged — no dependents to touch.
+                    continue;
+                }
+
+                var newPkSubset = new object[rel.PrimaryColumns.Count];
+                for (int i = 0; i < rel.PrimaryColumns.Count; i++)
+                {
+                    newPkSubset[i] = newPkValues[primaryPkIdx[i]];
+                }
+
+                movingChanges[oldKey] = newPkSubset;
+            }
+
+            if (movingChanges.Count == 0)
+            {
+                continue;
+            }
+
+            using DataTable childSnap = await ReadTableSnapshotAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            List<RowLocation> locations = await GetLiveRowLocationsAsync(childEntry.TDefPage, cancellationToken).ConfigureAwait(false);
+            int total = Math.Min(childSnap.Rows.Count, locations.Count);
+
+            // Find affected child rows.
+            var affectedIndices = new List<int>();
+            var affectedOldKeys = new List<string>();
+            for (int i = 0; i < total; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string? childKey = BuildCompositeKey(childSnap.Rows[i].ItemArray, fkIdx);
+                if (childKey != null && movingChanges.ContainsKey(childKey))
+                {
+                    affectedIndices.Add(i);
+                    affectedOldKeys.Add(childKey);
+                }
+            }
+
+            if (affectedIndices.Count == 0)
+            {
+                continue;
+            }
+
+            if (!rel.CascadeUpdates)
+            {
+                throw new InvalidOperationException(
+                    $"UPDATE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': " +
+                    $"{affectedIndices.Count} dependent row(s) in '{rel.ForeignTable}' reference the old key(s) and cascade-update is not enabled.");
+            }
+
+            // Cascade — rewrite each affected row with the new FK values.
+            for (int ai = 0; ai < affectedIndices.Count; ai++)
+            {
+                int rIdx = affectedIndices[ai];
+                object[] newPkSubset = movingChanges[affectedOldKeys[ai]];
+                object[] rowValues = childSnap.Rows[rIdx].ItemArray;
+
+                for (int j = 0; j < rel.ForeignColumns.Count; j++)
+                {
+                    rowValues[fkIdx[j]] = newPkSubset[j] ?? DBNull.Value;
+                }
+
+                await MarkRowDeletedAsync(locations[rIdx].PageNumber, locations[rIdx].RowIndex, cancellationToken).ConfigureAwait(false);
+                await InsertRowDataAsync(childEntry.TDefPage, childDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+
+            await MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
