@@ -19,13 +19,14 @@ Use the `runTests` tool when possible. When invoking the CLI manually, prefer th
 
 | Goal | Command |
 |---|---|
-| Run one fully-qualified test method | `dotnet test --project JetDatabaseWriter.Tests --filter-method "JetDatabaseWriter.Tests.Core.AccessReaderTests.ReadTable_ReturnsRows"` |
-| Run all tests in a class | `dotnet test --project JetDatabaseWriter.Tests --filter-class "JetDatabaseWriter.Tests.Core.AccessReaderTests"` |
+| Run one fully-qualified test method | `dotnet test --project JetDatabaseWriter.Tests --filter-method "JetDatabaseWriter.Tests.Core.AccessReaderCoreTests.ListTables_WhenDatabaseHasTables_ReturnsNonEmptyList"` |
+| Run all tests in a class | `dotnet test --project JetDatabaseWriter.Tests --filter-class "JetDatabaseWriter.Tests.Core.AccessReaderCoreTests"` |
 | Run all tests in a namespace | `dotnet test --project JetDatabaseWriter.Tests --filter-namespace "JetDatabaseWriter.Tests.Internal"` |
-| Run by trait | `dotnet test --project JetDatabaseWriter.Tests --filter-trait "Category=Encryption"` |
-| Exclude a class / method / namespace / trait | `--filter-not-class`, `--filter-not-method`, `--filter-not-namespace`, `--filter-not-trait` |
+| Exclude a class / method / namespace | `--filter-not-class`, `--filter-not-method`, `--filter-not-namespace` |
 | Stop on first failure | `--stop-on-fail on` |
 | List the available switches | `dotnet test --project JetDatabaseWriter.Tests -?` |
+
+> The repo does not currently use xUnit `[Trait]` attributes, so `--filter-trait` / `--filter-not-trait` have nothing to match. They remain available if traits are added later.
 
 Notes:
 - Multiple values are space-separated after a single switch: `--filter-class Foo Bar` (not repeated like xUnit v2).
