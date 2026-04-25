@@ -197,4 +197,54 @@ public interface IAccessWriter : IAccessBase
     /// Thrown when a referenced column does not exist on its table.
     /// </exception>
     ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asynchronously appends one file to a parent row's Access 2007+ Attachment
+    /// column. Locates the parent row by composite primary-key tuple, lazily
+    /// allocates a per-row <c>ConceptualTableID</c>, patches the parent row's
+    /// complex-column slot with that ID, and inserts a row into the hidden flat
+    /// child table carrying the wrapper-encoded payload (per
+    /// <c>docs/design/complex-columns-format-notes.md</c> §3).
+    /// </summary>
+    /// <param name="tableName">Parent table name (case-insensitive).</param>
+    /// <param name="columnName">Name of the Attachment column on <paramref name="tableName"/>.</param>
+    /// <param name="parentRowKey">
+    /// Column-name -> value pairs identifying exactly one live row in
+    /// <paramref name="tableName"/>. The dictionary may name any subset of columns
+    /// sufficient to uniquely match a row; matching is case-insensitive on both
+    /// column name and string value.
+    /// </param>
+    /// <param name="attachment">The file payload to attach.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="System.NotSupportedException">
+    /// Thrown when the database is not ACE (.accdb) or when the named column is
+    /// not a declared Attachment column.
+    /// </exception>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when no row, or more than one row, matches <paramref name="parentRowKey"/>.
+    /// </exception>
+    ValueTask AddAttachmentAsync(string tableName, string columnName, IReadOnlyDictionary<string, object> parentRowKey, AttachmentInput attachment, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asynchronously appends one value to a parent row's Access 2007+ Multi-Value
+    /// column. Locates the parent row by composite primary-key tuple, lazily
+    /// allocates a per-row <c>ConceptualTableID</c>, patches the parent row's
+    /// complex-column slot with that ID, and inserts a row into the hidden flat
+    /// child table whose <c>value</c> column carries <paramref name="value"/>.
+    /// </summary>
+    /// <param name="tableName">Parent table name (case-insensitive).</param>
+    /// <param name="columnName">Name of the Multi-Value column on <paramref name="tableName"/>.</param>
+    /// <param name="parentRowKey">Column-name -> value pairs identifying exactly one live row.</param>
+    /// <param name="value">Element value, assignment-compatible with the column's <c>MultiValueElementType</c>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="System.NotSupportedException">
+    /// Thrown when the database is not ACE (.accdb) or when the named column is
+    /// not a declared Multi-Value column.
+    /// </exception>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when no row, or more than one row, matches <paramref name="parentRowKey"/>.
+    /// </exception>
+    ValueTask AddMultiValueItemAsync(string tableName, string columnName, IReadOnlyDictionary<string, object> parentRowKey, object value, CancellationToken cancellationToken = default);
 }

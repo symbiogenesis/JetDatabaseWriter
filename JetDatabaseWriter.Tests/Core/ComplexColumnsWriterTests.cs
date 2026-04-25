@@ -130,12 +130,11 @@ public sealed class ComplexColumnsWriterTests
     }
 
     [Fact]
-    public async Task CreateTableAsync_AttachmentColumn_ThrowsNotSupportedUntilC3()
+    public async Task CreateTableAsync_AttachmentColumn_C3_RoundTripsViaGetComplexColumns()
     {
         var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-
-        var ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
             await writer.CreateTableAsync(
                 "Documents",
                 new[]
@@ -143,18 +142,27 @@ public sealed class ComplexColumnsWriterTests
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
                 },
-                TestContext.Current.CancellationToken));
+                TestContext.Current.CancellationToken);
+        }
 
-        Assert.Contains("C3", ex.Message, StringComparison.Ordinal);
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+
+        var info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+        var attachment = Assert.Single(info);
+        Assert.Equal("Files", attachment.ColumnName);
+        Assert.True(attachment.ComplexId > 0);
+        Assert.True(attachment.FlatTableId > 0);
+        Assert.StartsWith("f_", attachment.FlatTableName, StringComparison.Ordinal);
+        Assert.EndsWith("_Files", attachment.FlatTableName, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task CreateTableAsync_MultiValueColumn_ThrowsNotSupportedUntilC3()
+    public async Task CreateTableAsync_MultiValueColumn_C3_RoundTripsViaGetComplexColumns()
     {
         var ms = new MemoryStream();
-        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-
-        var ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
             await writer.CreateTableAsync(
                 "Things",
                 new[]
@@ -166,9 +174,91 @@ public sealed class ComplexColumnsWriterTests
                         MultiValueElementType = typeof(string),
                     },
                 },
+                TestContext.Current.CancellationToken);
+        }
+
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+
+        var info = await reader.GetComplexColumnsAsync("Things", TestContext.Current.CancellationToken);
+        var mv = Assert.Single(info);
+        Assert.Equal("Tags", mv.ColumnName);
+        Assert.True(mv.ComplexId > 0);
+        Assert.True(mv.FlatTableId > 0);
+    }
+
+    [Fact]
+    public async Task CreateTableAsync_AttachmentColumn_C3_RejectedOnJet4Mdb()
+    {
+        var ms = new MemoryStream();
+        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet4Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+
+        var ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await writer.CreateTableAsync(
+                "Documents",
+                new[]
+                {
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+                },
                 TestContext.Current.CancellationToken));
 
-        Assert.Contains("C3", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(".accdb", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateTableAsync_MultiValueColumn_C3_RejectsMissingElementType()
+    {
+        var ms = new MemoryStream();
+        await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.CreateTableAsync(
+                "Bad",
+                new[]
+                {
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Tags", typeof(object)) { IsMultiValue = true },
+                },
+                TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task CreateTableAsync_AttachmentColumn_C3_HiddenFlatTablePresent()
+    {
+        // The hidden flat child table must carry MSysObjects.Flags = 0x800A0000 so
+        // it is excluded from the user-table listing but reachable via direct lookup.
+        var ms = new MemoryStream();
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "Documents",
+                new[]
+                {
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+                },
+                TestContext.Current.CancellationToken);
+        }
+
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+
+        var userTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("Documents", userTables, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain(userTables, t => t.StartsWith("f_", StringComparison.Ordinal));
+
+        // The flat table has the per-kind value columns from the design doc §2.4.1.
+        var info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+        var attachment = Assert.Single(info);
+        var flatMeta = await reader.GetColumnMetadataAsync(attachment.FlatTableName, TestContext.Current.CancellationToken);
+        var names = flatMeta.Select(m => m.Name).ToArray();
+        Assert.Contains("FileURL", names);
+        Assert.Contains("FileName", names);
+        Assert.Contains("FileType", names);
+        Assert.Contains("FileFlags", names);
+        Assert.Contains("FileTimeStamp", names);
+        Assert.Contains("FileData", names);
     }
 
     [Fact]
