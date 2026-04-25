@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Text;
 
@@ -80,7 +81,7 @@ internal sealed class ColumnPropertyBlock
             return null;
         }
 
-        uint magic = ReadUInt32(blob, 0);
+        uint magic = BinaryPrimitives.ReadUInt32LittleEndian(blob.AsSpan(0));
         if (magic != MagicMr2 && magic != MagicKkd)
         {
             return null;
@@ -98,8 +99,8 @@ internal sealed class ColumnPropertyBlock
         int pos = 4;
         while (pos + 6 <= blob.Length)
         {
-            uint chunkLen = ReadUInt32(blob, pos);
-            var chunkType = (ColumnPropertyChunkType)ReadUInt16(blob, pos + 4);
+            uint chunkLen = BinaryPrimitives.ReadUInt32LittleEndian(blob.AsSpan(pos));
+            var chunkType = (ColumnPropertyChunkType)BinaryPrimitives.ReadUInt16LittleEndian(blob.AsSpan(pos + 4));
 
             if (chunkLen < 6 || pos + chunkLen > (uint)blob.Length)
             {
@@ -171,7 +172,7 @@ internal sealed class ColumnPropertyBlock
         int end = start + length;
         while (pos + 2 <= end)
         {
-            int nameLen = ReadUInt16(blob, pos);
+            int nameLen = BinaryPrimitives.ReadUInt16LittleEndian(blob.AsSpan(pos));
             pos += 2;
             if (nameLen < 0 || pos + nameLen > end)
             {
@@ -208,7 +209,7 @@ internal sealed class ColumnPropertyBlock
 
         int pos = start + 4;
         int end = start + length;
-        int targetNameLen = ReadUInt16(blob, pos);
+        int targetNameLen = BinaryPrimitives.ReadUInt16LittleEndian(blob.AsSpan(pos));
         pos += 2;
         if (pos + targetNameLen > end)
         {
@@ -222,7 +223,7 @@ internal sealed class ColumnPropertyBlock
         var entries = new List<ColumnPropertyEntry>();
         while (pos + 8 <= end)
         {
-            int entryLen = ReadUInt16(blob, pos);
+            int entryLen = BinaryPrimitives.ReadUInt16LittleEndian(blob.AsSpan(pos));
             if (entryLen < 8 || pos + entryLen > end)
             {
                 break;
@@ -230,8 +231,8 @@ internal sealed class ColumnPropertyBlock
 
             byte ddlFlag = blob[pos + 2];
             byte dataType = blob[pos + 3];
-            int nameIndex = ReadUInt16(blob, pos + 4);
-            int valueLen = ReadUInt16(blob, pos + 6);
+            int nameIndex = BinaryPrimitives.ReadUInt16LittleEndian(blob.AsSpan(pos + 4));
+            int valueLen = BinaryPrimitives.ReadUInt16LittleEndian(blob.AsSpan(pos + 6));
 
             if (8 + valueLen > entryLen || nameIndex >= nameTable.Count)
             {
@@ -252,13 +253,4 @@ internal sealed class ColumnPropertyBlock
 
         return new ColumnPropertyTarget(targetName, chunkType, entries);
     }
-
-    private static ushort ReadUInt16(byte[] buf, int offset) =>
-        (ushort)(buf[offset] | (buf[offset + 1] << 8));
-
-    private static uint ReadUInt32(byte[] buf, int offset) => unchecked(
-        (uint)buf[offset]
-        | ((uint)buf[offset + 1] << 8)
-        | ((uint)buf[offset + 2] << 16)
-        | ((uint)buf[offset + 3] << 24));
 }

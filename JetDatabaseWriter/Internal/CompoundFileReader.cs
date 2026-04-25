@@ -76,9 +76,9 @@ internal static class CompoundFileReader
 
     private static CfbHeader ParseHeader(byte[] header)
     {
-        ushort majorVersion = ReadUInt16Le(header, 0x1A);
-        ushort sectorShift = ReadUInt16Le(header, 0x1E);
-        ushort miniSectorShift = ReadUInt16Le(header, 0x20);
+        ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(0x1A));
+        ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(0x1E));
+        ushort miniSectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(0x20));
 
         if (sectorShift != 9 && sectorShift != 12)
         {
@@ -94,13 +94,13 @@ internal static class CompoundFileReader
         return new CfbHeader(
             SectorSize: 1 << sectorShift,
             MiniSectorSize: 1 << miniSectorShift,
-            NumFatSectors: ReadUInt32Le(header, 0x2C),
-            FirstDirSector: ReadUInt32Le(header, 0x30),
-            MiniStreamCutoff: ReadUInt32Le(header, 0x38),
-            FirstMiniFatSector: ReadUInt32Le(header, 0x3C),
-            NumMiniFatSectors: ReadUInt32Le(header, 0x40),
-            FirstDifatSector: ReadUInt32Le(header, 0x44),
-            NumDifatSectors: ReadUInt32Le(header, 0x48));
+            NumFatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x2C)),
+            FirstDirSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x30)),
+            MiniStreamCutoff: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x38)),
+            FirstMiniFatSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x3C)),
+            NumMiniFatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x40)),
+            FirstDifatSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x44)),
+            NumDifatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x48)));
     }
 
     private static async ValueTask<uint[]> BuildFatAsync(
@@ -116,7 +116,7 @@ internal static class CompoundFileReader
         int headerDifatCount = Math.Min(109, (int)hdr.NumFatSectors);
         for (int i = 0; i < headerDifatCount; i++)
         {
-            uint entry = ReadUInt32Le(header, 0x4C + (i * 4));
+            uint entry = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x4C + (i * 4)));
             if (entry < FatSectMin)
             {
                 fatSectorIds.Add(entry);
@@ -131,14 +131,14 @@ internal static class CompoundFileReader
             await ReadSectorIntoAsync(stream, difatSector, scratch, hdr.SectorSize, cancellationToken).ConfigureAwait(false);
             for (int i = 0; i < entriesPerDifatSector; i++)
             {
-                uint entry = ReadUInt32Le(scratch, i * 4);
+                uint entry = BinaryPrimitives.ReadUInt32LittleEndian(scratch.AsSpan(i * 4));
                 if (entry < FatSectMin && fatSectorIds.Count < (int)hdr.NumFatSectors)
                 {
                     fatSectorIds.Add(entry);
                 }
             }
 
-            difatSector = ReadUInt32Le(scratch, hdr.SectorSize - 4);
+            difatSector = BinaryPrimitives.ReadUInt32LittleEndian(scratch.AsSpan(hdr.SectorSize - 4));
             difatSectorsRead++;
         }
 
@@ -151,7 +151,7 @@ internal static class CompoundFileReader
             int baseIndex = i * entriesPerSector;
             for (int j = 0; j < entriesPerSector; j++)
             {
-                fat[baseIndex + j] = ReadUInt32Le(scratch, j * 4);
+                fat[baseIndex + j] = BinaryPrimitives.ReadUInt32LittleEndian(scratch.AsSpan(j * 4));
             }
         }
 
@@ -174,7 +174,7 @@ internal static class CompoundFileReader
         var miniFat = new uint[count];
         for (int i = 0; i < count; i++)
         {
-            miniFat[i] = ReadUInt32Le(miniFatBytes, i * 4);
+            miniFat[i] = BinaryPrimitives.ReadUInt32LittleEndian(miniFatBytes.AsSpan(i * 4));
         }
 
         return miniFat;
@@ -188,8 +188,8 @@ internal static class CompoundFileReader
         CancellationToken cancellationToken)
     {
         // Root entry holds the start sector + size of the mini stream.
-        uint rootStart = ReadUInt32Le(directory, 0x74);
-        long rootSize = ReadUInt32Le(directory, 0x78) | ((long)ReadUInt32Le(directory, 0x7C) << 32);
+        uint rootStart = BinaryPrimitives.ReadUInt32LittleEndian(directory.AsSpan(0x74));
+        long rootSize = BinaryPrimitives.ReadUInt32LittleEndian(directory.AsSpan(0x78)) | ((long)BinaryPrimitives.ReadUInt32LittleEndian(directory.AsSpan(0x7C)) << 32);
 
         if (rootStart == EndOfChain || rootStart == FreeSect || rootSize <= 0)
         {
@@ -425,20 +425,6 @@ internal static class CompoundFileReader
             }
 
             read += got;
-        }
-    }
-
-    private static ushort ReadUInt16Le(byte[] buf, int offset) =>
-        (ushort)(buf[offset] | (buf[offset + 1] << 8));
-
-    private static uint ReadUInt32Le(byte[] buf, int offset)
-    {
-        unchecked
-        {
-            return buf[offset]
-                | ((uint)buf[offset + 1] << 8)
-                | ((uint)buf[offset + 2] << 16)
-                | ((uint)buf[offset + 3] << 24);
         }
     }
 
