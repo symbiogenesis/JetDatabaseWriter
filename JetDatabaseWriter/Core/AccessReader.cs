@@ -2189,23 +2189,50 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        int varLenPos = nullMaskPos - _varLenFldSz;
-        if (varLenPos < _numColsFldSz)
+        // Tables with zero variable-length columns omit the var-length
+        // metadata entirely (no varLen byte, no jump bytes, no var-offset
+        // table, no EOD marker). The row layout is just numCols + fixed
+        // data + nullMask. Skip directly to fixed-column extraction.
+        bool hasVarCols = false;
+        for (int ci = 0; ci < td.Columns.Count; ci++)
         {
-            return null;
+            if (!td.Columns[ci].IsFixed)
+            {
+                hasVarCols = true;
+                break;
+            }
         }
 
-        int varLen = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
-        int jumpSz = _format != DatabaseFormat.Jet3Mdb ? 0 : (rowSize / 256);
-
-        int varTableStart = varLenPos - jumpSz - (varLen * _varEntrySz);
-        int eodPos = varTableStart - _eodFldSz;
-        if (eodPos < _numColsFldSz)
+        int varLen;
+        int varTableStart;
+        int eod;
+        if (!hasVarCols)
         {
-            return null;
+            varLen = 0;
+            varTableStart = nullMaskPos;
+            eod = nullMaskPos;
+        }
+        else
+        {
+            int varLenPos = nullMaskPos - _varLenFldSz;
+            if (varLenPos < _numColsFldSz)
+            {
+                return null;
+            }
+
+            varLen = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
+            int jumpSz = _format != DatabaseFormat.Jet3Mdb ? 0 : (rowSize / 256);
+
+            varTableStart = varLenPos - jumpSz - (varLen * _varEntrySz);
+            int eodPos = varTableStart - _eodFldSz;
+            if (eodPos < _numColsFldSz)
+            {
+                return null;
+            }
+
+            eod = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + eodPos) : page[rowStart + eodPos];
         }
 
-        int eod = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + eodPos) : page[rowStart + eodPos];
         var result = new List<string>(td.Columns.Count);
 
         for (int i = 0; i < td.Columns.Count; i++)
@@ -2879,21 +2906,26 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     return LvalChainResult.Failure(loc.Error!);
                 }
 
-                if (loc.Size < 8)
+                if (loc.Size < 4)
                 {
-                    return LvalChainResult.Failure($"rowSize {loc.Size} < 8");
+                    return LvalChainResult.Failure($"rowSize {loc.Size} < 4");
                 }
 
+                // LVAL chain row layout (mdbtools): [next_page_row(4)][data...].
+                // The chunk length is implicit in the row size, NOT a separate
+                // length field. Reading bytes 4..8 as length corrupts both the
+                // payload and the length, often producing huge values that then
+                // overflow when cast/added.
                 currentDp = Ru32(loc.Page, loc.Start);
-                int dataLen = (int)Ru32(loc.Page, loc.Start + 4);
-                int availableData = Math.Min(dataLen, loc.Size - 8);
+                int availableData = loc.Size - 4;
+                int wantData = Math.Min(availableData, maxLen - totalLen);
 
-                if (availableData > 0 && loc.Start + 8 + availableData <= _pgSz)
+                if (wantData > 0 && loc.Start + 4 + wantData <= _pgSz)
                 {
-                    var chunk = new byte[availableData];
-                    Buffer.BlockCopy(loc.Page, loc.Start + 8, chunk, 0, availableData);
+                    var chunk = new byte[wantData];
+                    Buffer.BlockCopy(loc.Page, loc.Start + 4, chunk, 0, wantData);
                     chunks.Add(chunk);
-                    totalLen += availableData;
+                    totalLen += wantData;
                 }
             }
         }
