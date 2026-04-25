@@ -7652,6 +7652,45 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
+            // W13: pre-pass to compute the per-column canonical scale for any
+            // T_NUMERIC key column. All snapshot values must be encoded with
+            // the same scale to be byte-comparable (Jackcess uses the column's
+            // declared scale; we don't track it in ColumnInfo, so we use the
+            // max natural scale present in the snapshot). Non-numeric columns
+            // get -1 as a sentinel.
+            int[] numericTargetScales = new int[keyColInfos.Count];
+            for (int k = 0; k < keyColInfos.Count; k++)
+            {
+                if (keyColInfos[k].Col.Type == T_NUMERIC)
+                {
+                    int kSnap = keyColInfos[k].SnapIdx;
+                    int max = 0;
+                    for (int r = 0; r < rowCount; r++)
+                    {
+                        object cell = snapshot.Rows[r][kSnap];
+                        if (cell is DBNull)
+                        {
+                            continue;
+                        }
+
+                        decimal dv = Convert.ToDecimal(cell, CultureInfo.InvariantCulture);
+                        int s = (decimal.GetBits(dv)[3] >> 16) & 0x7F;
+                        if (s > max)
+                        {
+                            max = s;
+                        }
+                    }
+
+                    numericTargetScales[k] = max;
+                }
+                else
+                {
+                    numericTargetScales[k] = -1;
+                }
+            }
+
+            bool legacyNumeric = _format == DatabaseFormat.Jet4Mdb;
+
             var entries = new List<(byte[] Key, long Page, byte Row)>(rowCount);
             bool encoderRejected = false;
             for (int r = 0; r < rowCount; r++)
@@ -7665,7 +7704,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         (ColumnInfo col, int snapIdx, bool ascending) = keyColInfos[k];
                         object cell = snapshot.Rows[r][snapIdx];
                         object? value = cell is DBNull ? null : cell;
-                        perColumn[k] = IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
+                        perColumn[k] = col.Type == T_NUMERIC
+                            ? IndexKeyEncoder.EncodeNumericEntry(value, ascending, numericTargetScales[k], legacyNumeric)
+                            : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
                         totalLen += perColumn[k].Length;
                     }
                 }

@@ -381,6 +381,187 @@ public sealed class IndexKeyEncoderTests
         Assert.Equal(fromGuid, fromString);
     }
 
+    // ── W13: T_NUMERIC (Decimal) ────────────────────────────────────────
+
+    [Fact]
+    public void Numeric_Null_Ascending_EmitsSingleZeroFlagByte()
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeNumericEntry(value: null, ascending: true, targetScale: 0, legacy: false);
+        Assert.Equal(new byte[] { 0x00 }, encoded);
+    }
+
+    [Fact]
+    public void Numeric_Zero_Ascending_NewStyle_HasFFSignByteAndZeroMantissa()
+    {
+        // New-style: byte 0 = 0xFF; pos+asc → no flip → result FF + 16 zero bytes.
+        byte[] encoded = IndexKeyEncoder.EncodeNumericEntry(0m, ascending: true, targetScale: 0, legacy: false);
+        Assert.Equal(18, encoded.Length);
+        Assert.Equal(0x7F, encoded[0]); // ascending non-null flag.
+        Assert.Equal(0xFF, encoded[1]);
+        for (int i = 2; i < 18; i++)
+        {
+            Assert.Equal(0x00, encoded[i]);
+        }
+    }
+
+    [Fact]
+    public void Numeric_PositiveOne_Ascending_NewStyle_MantissaIsBigEndianOne()
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeNumericEntry(1m, ascending: true, targetScale: 0, legacy: false);
+        Assert.Equal(0x7F, encoded[0]);
+        Assert.Equal(0xFF, encoded[1]);
+
+        // 16-byte BE mantissa = ...00 01.
+        for (int i = 2; i < 17; i++)
+        {
+            Assert.Equal(0x00, encoded[i]);
+        }
+
+        Assert.Equal(0x01, encoded[17]);
+    }
+
+    [Fact]
+    public void Numeric_NegativeOne_Ascending_NewStyle_FlipsAllSeventeenBytes()
+    {
+        // New-style + neg + asc: byte0=0xFF then flip all 17 → 00 + 0xFF...0xFE.
+        byte[] encoded = IndexKeyEncoder.EncodeNumericEntry(-1m, ascending: true, targetScale: 0, legacy: false);
+        Assert.Equal(0x7F, encoded[0]);
+        Assert.Equal(0x00, encoded[1]);
+        for (int i = 2; i < 17; i++)
+        {
+            Assert.Equal(0xFF, encoded[i]);
+        }
+
+        Assert.Equal(0xFE, encoded[17]);
+    }
+
+    [Fact]
+    public void Numeric_PositiveOne_Ascending_Legacy_MatchesNewStyle()
+    {
+        // For (asc, pos) the legacy and new-style outputs are identical.
+        byte[] newStyle = IndexKeyEncoder.EncodeNumericEntry(1m, ascending: true, targetScale: 0, legacy: false);
+        byte[] legacy = IndexKeyEncoder.EncodeNumericEntry(1m, ascending: true, targetScale: 0, legacy: true);
+        Assert.Equal(newStyle, legacy);
+    }
+
+    [Fact]
+    public void Numeric_NegativeOne_Descending_Legacy_DiffersFromNewStyle()
+    {
+        // (desc, neg) is the case where legacy and new-style diverge:
+        // legacy → 00 + raw mantissa; new-style → FF + raw mantissa.
+        byte[] legacy = IndexKeyEncoder.EncodeNumericEntry(-1m, ascending: false, targetScale: 0, legacy: true);
+        byte[] newStyle = IndexKeyEncoder.EncodeNumericEntry(-1m, ascending: false, targetScale: 0, legacy: false);
+        Assert.Equal(0x00, legacy[1]);
+        Assert.Equal(0xFF, newStyle[1]);
+    }
+
+    [Fact]
+    public void Numeric_Ascending_Ordering_IsLexicographic_NewStyle()
+    {
+        decimal[] values = { -1000m, -1.5m, -1m, -0.01m, 0m, 0.01m, 1m, 1.5m, 1000m };
+        const int targetScale = 2;
+        byte[][] encoded = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++)
+        {
+            encoded[i] = IndexKeyEncoder.EncodeNumericEntry(values[i], ascending: true, targetScale, legacy: false);
+        }
+
+        for (int i = 1; i < encoded.Length; i++)
+        {
+            Assert.True(
+                CompareLex(encoded[i - 1], encoded[i]) < 0,
+                $"Ascending order violated between {values[i - 1]} and {values[i]}.");
+        }
+    }
+
+    [Fact]
+    public void Numeric_Descending_Ordering_IsReverseLexicographic_NewStyle()
+    {
+        decimal[] values = { -1000m, -1m, 0m, 1m, 1000m };
+        const int targetScale = 0;
+        byte[][] encoded = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++)
+        {
+            encoded[i] = IndexKeyEncoder.EncodeNumericEntry(values[i], ascending: false, targetScale, legacy: false);
+        }
+
+        for (int i = 1; i < encoded.Length; i++)
+        {
+            Assert.True(
+                CompareLex(encoded[i - 1], encoded[i]) > 0,
+                $"Descending order violated between {values[i - 1]} and {values[i]}.");
+        }
+    }
+
+    [Fact]
+    public void Numeric_Descending_Ordering_SameSign_IsReverseLexicographic_Legacy()
+    {
+        // Legacy fixed-point indexes have a known cross-sign ordering bug (MS KB
+        // 837148; cited by Jackcess) — descending leaves negatives before
+        // positives in lex order regardless of magnitude. Validate strict
+        // descending order WITHIN a single sign instead.
+        decimal[] positives = { 1m, 10m, 1000m };
+        byte[][] encPos = new byte[positives.Length][];
+        for (int i = 0; i < positives.Length; i++)
+        {
+            encPos[i] = IndexKeyEncoder.EncodeNumericEntry(positives[i], ascending: false, targetScale: 0, legacy: true);
+        }
+
+        for (int i = 1; i < encPos.Length; i++)
+        {
+            Assert.True(
+                CompareLex(encPos[i - 1], encPos[i]) > 0,
+                $"Legacy descending order violated between {positives[i - 1]} and {positives[i]}.");
+        }
+    }
+
+    [Fact]
+    public void Numeric_TargetScaleNormalization_OneEqualsOnePointZeroZero()
+    {
+        // 1 and 1.00 represent the same numeric value; encoded with the same
+        // target scale they must produce identical byte sequences.
+        byte[] one = IndexKeyEncoder.EncodeNumericEntry(1m, ascending: true, targetScale: 2, legacy: false);
+        byte[] oneHundredHundredths = IndexKeyEncoder.EncodeNumericEntry(1.00m, ascending: true, targetScale: 2, legacy: false);
+        Assert.Equal(one, oneHundredHundredths);
+    }
+
+    [Fact]
+    public void Numeric_TargetScaleSmallerThanNatural_Throws()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            IndexKeyEncoder.EncodeNumericEntry(1.50m, ascending: true, targetScale: 0, legacy: false));
+    }
+
+    [Fact]
+    public void Numeric_OverflowsSixteenByteMantissa_Throws()
+    {
+        // BigInteger pow: 10^28 = 32 digits ≈ 13 bytes; multiply by ~10^10 mantissa
+        // pushes it beyond 16 bytes after rescaling to scale 28.
+        // 79228162514264337593543950335 (29 digits, scale 0).
+        // Re-encoding at scale 28 needs 29+28 = 57 digits, well beyond 128 bits.
+        decimal big = decimal.MaxValue;
+        Assert.Throws<NotSupportedException>(() =>
+            IndexKeyEncoder.EncodeNumericEntry(big, ascending: true, targetScale: 28, legacy: false));
+    }
+
+    [Fact]
+    public void Numeric_ComputeMaxNumericScale_ReturnsHighestScaleAcrossValues()
+    {
+        var values = new object?[] { 1m, 1.5m, null, 1.50m, 0.001m, DBNull.Value };
+        Assert.Equal(3, IndexKeyEncoder.ComputeMaxNumericScale(values));
+    }
+
+    [Fact]
+    public void Numeric_AcceptsBoxedNumericTypes()
+    {
+        // Integer and double inputs route through the existing ToDecimal helper.
+        byte[] fromDecimal = IndexKeyEncoder.EncodeNumericEntry(42m, ascending: true, targetScale: 0, legacy: false);
+        byte[] fromInt = IndexKeyEncoder.EncodeNumericEntry(42, ascending: true, targetScale: 0, legacy: false);
+        byte[] fromDouble = IndexKeyEncoder.EncodeNumericEntry(42.0, ascending: true, targetScale: 0, legacy: false);
+        Assert.Equal(fromDecimal, fromInt);
+        Assert.Equal(fromDecimal, fromDouble);
+    }
+
     private static int CompareLex(byte[] a, byte[] b)
     {
         int n = Math.Min(a.Length, b.Length);
