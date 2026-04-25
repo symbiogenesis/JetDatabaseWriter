@@ -474,7 +474,7 @@ public abstract class AccessBase : IAccessBase
                 case T_DATETIME:
                     return DateTime.FromOADate(BitConverter.ToDouble(row, start)).ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
                 case T_MONEY:
-                    return (BitConverter.ToInt64(row, start) / 10000.0m).ToString("F4", System.Globalization.CultureInfo.InvariantCulture);
+                    return decimal.FromOACurrency(BitConverter.ToInt64(row, start)).ToString("F4", System.Globalization.CultureInfo.InvariantCulture);
                 case T_GUID:
                     return new Guid(ReadGuidBytes(row, start)).ToString("B");
                 case T_NUMERIC:

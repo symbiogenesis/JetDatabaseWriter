@@ -6740,8 +6740,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         T_FLOAT => BitConverter.GetBytes(Convert.ToSingle(value, CultureInfo.InvariantCulture)),
         T_DOUBLE => BitConverter.GetBytes(Convert.ToDouble(value, CultureInfo.InvariantCulture)),
         T_DATETIME => BitConverter.GetBytes(Convert.ToDateTime(value, CultureInfo.InvariantCulture).ToOADate()),
-        T_MONEY => BitConverter.GetBytes(decimal.ToInt64(decimal.Round(
-            Convert.ToDecimal(value, CultureInfo.InvariantCulture) * 10000m, 0, MidpointRounding.AwayFromZero))),
+        T_MONEY => BitConverter.GetBytes(decimal.ToOACurrency(Convert.ToDecimal(value, CultureInfo.InvariantCulture))),
         T_NUMERIC => EncodeNumericValue(Convert.ToDecimal(value, CultureInfo.InvariantCulture)),
         T_GUID => (value is Guid g ? g : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!)).ToByteArray(),
         _ => null,

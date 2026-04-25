@@ -143,9 +143,11 @@ internal static class IndexKeyEncoder
 
             case T_MONEY:
                 {
-                    // Currency is stored as int64 = decimal × 10000.
-                    decimal d = ToDecimal(value);
-                    long scaled = decimal.ToInt64(decimal.Round(d * 10000m, 0, MidpointRounding.AwayFromZero));
+                    // Currency is stored as int64 = decimal × 10000 (OLE Automation
+                    // currency encoding); decimal.ToOACurrency applies the
+                    // banker's-rounding policy specified by the OLE Automation
+                    // type-conversion rules that VBA's CCur() also uses.
+                    long scaled = decimal.ToOACurrency(ToDecimal(value));
                     return EncodeSignedBigEndian(scaled, 8);
                 }
 
