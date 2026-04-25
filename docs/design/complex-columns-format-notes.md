@@ -1,7 +1,6 @@
 # Design notes: Complex columns (Attachment, Multi-value) — write path
 
 **Status:** Research / not implemented
-**Owner:** TBD
 **Related limitations:** [`README.md` §"Limitations"](../../README.md):
 - "No attachment columns. Reading attachments via the `MSysComplexColumns` FK lookup is supported, but `CreateTableAsync` cannot declare an Attachment column, and there is no API to add files to one."
 - "No multi-value (complex) columns. Same restriction — readable, not writable."
@@ -63,7 +62,7 @@ Because `bitmask = 0x07`, the column is treated as a fixed-length 4-byte column 
 | `ConceptualTableID` | `T_LONG` (fixed_off=8) | Per-table cursor source. The next value is taken from the parent TDEF's `ct_autonum` field (TDEF block offset 28). Each parent row's 4-byte payload is one `ConceptualTableID` value, joining the parent row to its child rows. |
 | `FlatTableID` | `T_LONG` (fixed_off=4) | `MSysObjects.Id` of the hidden child ("flat") table. |
 
-**Critical correction from earlier draft:** the `ParentTable` and `ParentColumn` columns I listed previously **do not exist**. The parent reference is implicit: it is recovered by scanning every user TDEF for a complex column whose `misc`+`misc_ext` 4-byte slot equals `ComplexID`. The reader (`AccessReader.BuildComplexColumnDataAsync`) already does this scan.
+There is **no** `ParentTable` / `ParentColumn` column in `MSysComplexColumns`. The parent reference is implicit: it is recovered by scanning every user TDEF for a complex column whose `misc`+`misc_ext` 4-byte slot equals `ComplexID`. The reader (`AccessReader.BuildComplexColumnDataAsync`) already does this scan.
 
 `MSysComplexColumns` is **not** created today by [`AccessWriter.BuildEmptyDatabase`](../../JetDatabaseWriter/Core/AccessWriter.cs). Implementation must add it to the empty-DB scaffold (with the same hidden/system flag bits Access uses — the appendix shows `Flags = 0x80000000`).
 
