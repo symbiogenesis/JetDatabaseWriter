@@ -2168,31 +2168,26 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        int numCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
-        if (numCols == 0)
+        // Pre-parse numCols just for the schema-evolution sanity check; the full
+        // layout parse repeats this read but the cost is negligible.
+        int rawNumCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
+        if (rawNumCols == 0)
         {
             return null;
         }
 
-        if (td.HasDeletedColumns && numCols > td.Columns.Count)
+        if (td.HasDeletedColumns && rawNumCols > td.Columns.Count)
         {
             throw new JetLimitationException(
-                $"Row has {numCols} columns but current schema has {td.Columns.Count} with deleted-column gaps. " +
+                $"Row has {rawNumCols} columns but current schema has {td.Columns.Count} with deleted-column gaps. " +
                 "This row predates schema changes and data may be misaligned. " +
                 "Solution: Compact & Repair the database in Microsoft Access to rebuild all rows.");
         }
 
-        int nullMaskSz = (numCols + 7) / 8;
-        int nullMaskPos = rowSize - nullMaskSz;
-        if (nullMaskPos < _numColsFldSz)
-        {
-            return null;
-        }
-
         // Tables with zero variable-length columns omit the var-length
         // metadata entirely (no varLen byte, no jump bytes, no var-offset
-        // table, no EOD marker). The row layout is just numCols + fixed
-        // data + nullMask. Skip directly to fixed-column extraction.
+        // table, no EOD marker). Detect that and let the layout parser skip
+        // the var-area read.
         bool hasVarCols = false;
         for (int ci = 0; ci < td.Columns.Count; ci++)
         {
@@ -2203,34 +2198,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
         }
 
-        int varLen;
-        int varTableStart;
-        int eod;
-        if (!hasVarCols)
+        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarCols, out RowLayout layout))
         {
-            varLen = 0;
-            varTableStart = nullMaskPos;
-            eod = nullMaskPos;
-        }
-        else
-        {
-            int varLenPos = nullMaskPos - _varLenFldSz;
-            if (varLenPos < _numColsFldSz)
-            {
-                return null;
-            }
-
-            varLen = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
-            int jumpSz = _format != DatabaseFormat.Jet3Mdb ? 0 : (rowSize / 256);
-
-            varTableStart = varLenPos - jumpSz - (varLen * _varEntrySz);
-            int eodPos = varTableStart - _eodFldSz;
-            if (eodPos < _numColsFldSz)
-            {
-                return null;
-            }
-
-            eod = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + eodPos) : page[rowStart + eodPos];
+            return null;
         }
 
         var result = new List<string>(td.Columns.Count);
@@ -2240,79 +2210,31 @@ public sealed class AccessReader : AccessBase, IAccessReader
             cancellationToken.ThrowIfCancellationRequested();
 
             ColumnInfo col = td.Columns[i];
-            bool nullBit = false;
-            if (col.ColNum < numCols)
-            {
-                int mByte = nullMaskPos + (col.ColNum / 8);
-                int mBit = col.ColNum % 8;
-                if (mByte < rowSize)
-                {
-                    nullBit = (page[rowStart + mByte] & (1 << mBit)) != 0;
-                }
-            }
+            ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, col);
 
-            if (col.Type == T_BOOL)
+            switch (slice.Kind)
             {
-                result.Add(nullBit ? "True" : "False");
-                continue;
-            }
+                case ColumnSliceKind.Bool:
+                    result.Add(slice.BoolValue ? "True" : "False");
+                    break;
 
-            if (col.ColNum >= numCols || !nullBit)
-            {
-                result.Add(string.Empty);
-                continue;
-            }
-
-            if (col.IsFixed)
-            {
-                int start = _numColsFldSz + col.FixedOff;
-                int sz = FixedSize(col.Type, col.Size);
-                if (sz == 0 || start + sz > rowSize)
-                {
+                case ColumnSliceKind.Null:
+                case ColumnSliceKind.Empty:
                     result.Add(string.Empty);
-                    continue;
-                }
+                    break;
 
-                result.Add(ReadFixed(page, rowStart + start, col, sz));
-            }
-            else
-            {
-                if (col.VarIdx >= varLen)
-                {
+                case ColumnSliceKind.Fixed:
+                    result.Add(ReadFixed(page, rowStart + slice.DataStart, col, slice.DataLen));
+                    break;
+
+                case ColumnSliceKind.Var:
+                    string value = await ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false);
+                    result.Add(value);
+                    break;
+
+                default:
                     result.Add(string.Empty);
-                    continue;
-                }
-
-                int entryPos = varTableStart + ((varLen - 1 - col.VarIdx) * _varEntrySz);
-                if (entryPos < 0 || entryPos + _varEntrySz > rowSize)
-                {
-                    result.Add(string.Empty);
-                    continue;
-                }
-
-                int varOff = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + entryPos) : page[rowStart + entryPos];
-
-                int varEnd;
-                if (col.VarIdx + 1 < varLen)
-                {
-                    int nextEntry = varTableStart + ((varLen - 2 - col.VarIdx) * _varEntrySz);
-                    varEnd = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + nextEntry) : page[rowStart + nextEntry];
-                }
-                else
-                {
-                    varEnd = eod;
-                }
-
-                int dataStart = varOff;
-                int dataLen = varEnd - varOff;
-                if (dataLen < 0 || dataStart < 0 || dataStart + dataLen > rowSize)
-                {
-                    result.Add(string.Empty);
-                    continue;
-                }
-
-                string value = await ReadVarAsync(page, rowStart + dataStart, dataLen, col, cancellationToken).ConfigureAwait(false);
-                result.Add(value);
+                    break;
             }
         }
 

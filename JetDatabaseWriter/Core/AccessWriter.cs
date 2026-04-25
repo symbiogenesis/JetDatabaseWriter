@@ -6989,104 +6989,42 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return string.Empty;
         }
 
-        int numCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
-        if (numCols == 0)
+        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout))
         {
             return string.Empty;
         }
 
-        int nullMaskSz = (numCols + 7) / 8;
-        int nullMaskPos = rowSize - nullMaskSz;
-        if (nullMaskPos < _numColsFldSz)
+        ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, column);
+        switch (slice.Kind)
         {
-            return string.Empty;
-        }
+            case ColumnSliceKind.Bool:
+                return slice.BoolValue ? "True" : "False";
 
-        int varLenPos = nullMaskPos - _varLenFldSz;
-        if (varLenPos < _numColsFldSz)
-        {
-            return string.Empty;
-        }
-
-        int varLen = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
-        int jumpSize = _format != DatabaseFormat.Jet3Mdb ? 0 : rowSize / 256;
-        int varTableStart = varLenPos - jumpSize - (varLen * _varEntrySz);
-        int eodPos = varTableStart - _eodFldSz;
-        if (eodPos < _numColsFldSz)
-        {
-            return string.Empty;
-        }
-
-        int eod = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + eodPos) : page[rowStart + eodPos];
-        bool nullBit = false;
-        if (column.ColNum < numCols)
-        {
-            int mByte = nullMaskPos + (column.ColNum / 8);
-            int mBit = column.ColNum % 8;
-            if (mByte < rowSize)
-            {
-                nullBit = (page[rowStart + mByte] & (1 << mBit)) != 0;
-            }
-        }
-
-        if (column.Type == T_BOOL)
-        {
-            return nullBit ? "True" : "False";
-        }
-
-        if (column.ColNum >= numCols || !nullBit)
-        {
-            return string.Empty;
-        }
-
-        if (column.IsFixed)
-        {
-            int start = _numColsFldSz + column.FixedOff;
-            int size = FixedSize(column.Type, column.Size);
-            if (size == 0 || start + size > rowSize)
-            {
+            case ColumnSliceKind.Null:
+            case ColumnSliceKind.Empty:
                 return string.Empty;
-            }
 
-            return ReadFixedString(page, rowStart + start, column.Type, size);
-        }
+            case ColumnSliceKind.Fixed:
+                return ReadFixedString(page, rowStart + slice.DataStart, column.Type, slice.DataLen);
 
-        if (column.VarIdx >= varLen)
-        {
-            return string.Empty;
-        }
+            case ColumnSliceKind.Var:
+                if (slice.DataLen <= 0)
+                {
+                    return string.Empty;
+                }
 
-        int entryPos = varTableStart + ((varLen - 1 - column.VarIdx) * _varEntrySz);
-        if (entryPos < 0 || entryPos + _varEntrySz > rowSize)
-        {
-            return string.Empty;
-        }
+                switch (column.Type)
+                {
+                    case T_TEXT:
+                        return _format != DatabaseFormat.Jet3Mdb
+                            ? DecodeJet4Text(page, rowStart + slice.DataStart, slice.DataLen)
+                            : _ansiEncoding.GetString(page, rowStart + slice.DataStart, slice.DataLen);
+                    case T_BINARY:
+                        return BitConverter.ToString(page, rowStart + slice.DataStart, slice.DataLen);
+                    default:
+                        return string.Empty;
+                }
 
-        int varOff = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + entryPos) : page[rowStart + entryPos];
-        int varEnd;
-        if (column.VarIdx + 1 < varLen)
-        {
-            int nextEntry = varTableStart + ((varLen - 2 - column.VarIdx) * _varEntrySz);
-            varEnd = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + nextEntry) : page[rowStart + nextEntry];
-        }
-        else
-        {
-            varEnd = eod;
-        }
-
-        int dataStart = varOff;
-        int dataLen = varEnd - varOff;
-        if (dataLen <= 0 || dataStart < 0 || dataStart + dataLen > rowSize)
-        {
-            return string.Empty;
-        }
-
-        switch (column.Type)
-        {
-            case T_TEXT:
-                return _format != DatabaseFormat.Jet3Mdb ? DecodeJet4Text(page, rowStart + dataStart, dataLen) : _ansiEncoding.GetString(page, rowStart + dataStart, dataLen);
-            case T_BINARY:
-                return BitConverter.ToString(page, rowStart + dataStart, dataLen);
             default:
                 return string.Empty;
         }

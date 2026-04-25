@@ -918,9 +918,190 @@ public abstract class AccessBase : IAccessBase
         }
     }
 
+    // ── Row layout decoding (shared by AccessReader.CrackRowAsync and AccessWriter.ReadColumnValue) ────
+
+    /// <summary>
+    /// Parses the row-trailer metadata (numCols, null-mask position, var-table
+    /// position and EOD pointer) for a row at <paramref name="rowStart"/>.
+    /// Returns <see langword="false"/> when the row is too small or otherwise
+    /// malformed; on success <paramref name="layout"/> is populated and can be
+    /// passed to <see cref="ResolveColumnSlice"/> for any column.
+    /// </summary>
+    /// <param name="page">Data page containing the row.</param>
+    /// <param name="rowStart">Offset of the row within <paramref name="page"/>.</param>
+    /// <param name="rowSize">Total size of the row in bytes.</param>
+    /// <param name="hasVarColumns">When <see langword="false"/>, the var-length
+    /// metadata is assumed to be omitted entirely (no varLen byte, no jump
+    /// bytes, no var-offset table, no EOD marker) — which is how Jet lays out
+    /// rows for tables with zero variable-length columns.</param>
+    /// <param name="layout">Receives the parsed layout on success.</param>
+    private protected bool TryParseRowLayout(byte[] page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
+    {
+        layout = default;
+        if (rowSize < _numColsFldSz)
+        {
+            return false;
+        }
+
+        int numCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
+        if (numCols == 0)
+        {
+            return false;
+        }
+
+        int nullMaskSz = (numCols + 7) / 8;
+        int nullMaskPos = rowSize - nullMaskSz;
+        if (nullMaskPos < _numColsFldSz)
+        {
+            return false;
+        }
+
+        int varLen;
+        int varTableStart;
+        int eod;
+        if (!hasVarColumns)
+        {
+            varLen = 0;
+            varTableStart = nullMaskPos;
+            eod = nullMaskPos;
+        }
+        else
+        {
+            int varLenPos = nullMaskPos - _varLenFldSz;
+            if (varLenPos < _numColsFldSz)
+            {
+                return false;
+            }
+
+            varLen = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
+            int jumpSz = _format != DatabaseFormat.Jet3Mdb ? 0 : (rowSize / 256);
+            varTableStart = varLenPos - jumpSz - (varLen * _varEntrySz);
+            int eodPos = varTableStart - _eodFldSz;
+            if (eodPos < _numColsFldSz)
+            {
+                return false;
+            }
+
+            eod = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + eodPos) : page[rowStart + eodPos];
+        }
+
+        layout = new RowLayout(numCols, nullMaskPos, varLen, varTableStart, eod);
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves the per-column data slice (or null/bool/empty marker) for
+    /// <paramref name="col"/> within a row whose layout has been parsed by
+    /// <see cref="TryParseRowLayout"/>.
+    /// </summary>
+    private protected ColumnSlice ResolveColumnSlice(byte[] page, int rowStart, int rowSize, in RowLayout layout, ColumnInfo col)
+    {
+        bool nullBit = false;
+        if (col.ColNum < layout.NumCols)
+        {
+            int mByte = layout.NullMaskPos + (col.ColNum / 8);
+            int mBit = col.ColNum % 8;
+            if (mByte < rowSize)
+            {
+                nullBit = (page[rowStart + mByte] & (1 << mBit)) != 0;
+            }
+        }
+
+        if (col.Type == T_BOOL)
+        {
+            return new ColumnSlice(ColumnSliceKind.Bool, 0, 0, nullBit);
+        }
+
+        if (col.ColNum >= layout.NumCols || !nullBit)
+        {
+            return new ColumnSlice(ColumnSliceKind.Null, 0, 0, false);
+        }
+
+        if (col.IsFixed)
+        {
+            int start = _numColsFldSz + col.FixedOff;
+            int sz = FixedSize(col.Type, col.Size);
+            if (sz == 0 || start + sz > rowSize)
+            {
+                return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
+            }
+
+            return new ColumnSlice(ColumnSliceKind.Fixed, start, sz, false);
+        }
+
+        if (col.VarIdx >= layout.VarLen)
+        {
+            return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
+        }
+
+        int entryPos = layout.VarTableStart + ((layout.VarLen - 1 - col.VarIdx) * _varEntrySz);
+        if (entryPos < 0 || entryPos + _varEntrySz > rowSize)
+        {
+            return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
+        }
+
+        int varOff = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + entryPos) : page[rowStart + entryPos];
+
+        int varEnd;
+        if (col.VarIdx + 1 < layout.VarLen)
+        {
+            int nextEntry = layout.VarTableStart + ((layout.VarLen - 2 - col.VarIdx) * _varEntrySz);
+            varEnd = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + nextEntry) : page[rowStart + nextEntry];
+        }
+        else
+        {
+            varEnd = layout.Eod;
+        }
+
+        int dataStart = varOff;
+        int dataLen = varEnd - varOff;
+        if (dataLen < 0 || dataStart < 0 || dataStart + dataLen > rowSize)
+        {
+            return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
+        }
+
+        return new ColumnSlice(ColumnSliceKind.Var, dataStart, dataLen, false);
+    }
+
     // ── Inner types ──────────────────────────────────────────────────
 
     private protected readonly record struct RowBound(int RowIndex, int RowStart, int RowSize);
 
     private protected sealed record CatalogEntry(string Name, long TDefPage);
+
+    /// <summary>Parsed row-trailer metadata — see <see cref="TryParseRowLayout"/>.</summary>
+    private protected readonly record struct RowLayout(
+        int NumCols,
+        int NullMaskPos,
+        int VarLen,
+        int VarTableStart,
+        int Eod);
+
+    /// <summary>Classification returned by <see cref="ResolveColumnSlice"/>.</summary>
+    private protected enum ColumnSliceKind
+    {
+        /// <summary>Column is missing/empty/out-of-bounds — caller should emit empty/default.</summary>
+        Empty,
+
+        /// <summary>Column is null (null-mask bit unset, or column index ≥ row's numCols).</summary>
+        Null,
+
+        /// <summary>Boolean column: <see cref="ColumnSlice.BoolValue"/> holds the null-mask bit.</summary>
+        Bool,
+
+        /// <summary>Fixed-width column: <see cref="ColumnSlice.DataStart"/>/<see cref="ColumnSlice.DataLen"/>
+        /// are valid (relative to the row start).</summary>
+        Fixed,
+
+        /// <summary>Variable-width column: <see cref="ColumnSlice.DataStart"/>/<see cref="ColumnSlice.DataLen"/>
+        /// are valid (relative to the row start); <c>DataLen</c> may be 0.</summary>
+        Var,
+    }
+
+    /// <summary>Per-column slice produced by <see cref="ResolveColumnSlice"/>.</summary>
+    private protected readonly record struct ColumnSlice(
+        ColumnSliceKind Kind,
+        int DataStart,
+        int DataLen,
+        bool BoolValue);
 }
