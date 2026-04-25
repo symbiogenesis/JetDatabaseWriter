@@ -16,6 +16,17 @@ internal sealed class ColumnInfo
 
     public string Name { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Gets or sets the 4-byte value at descriptor-relative offset 11 (Jet4/ACE)
+    /// of the TDEF column descriptor — the <c>misc</c> / <c>misc_ext</c> slot.
+    /// For complex columns (<c>T_ATTACHMENT</c> / <c>T_COMPLEX</c>) this carries
+    /// the <c>ComplexID</c> that joins the parent column to its
+    /// <c>MSysComplexColumns</c> row and (transitively) to the hidden flat child
+    /// table. Zero for non-complex columns.
+    /// See <c>docs/design/complex-columns-format-notes.md</c> §2.1.
+    /// </summary>
+    public int Misc { get; set; }
+
     // The FLAG_FIXED bit (0x01) in the TDEF column descriptor determines whether
     // a column's data is stored in the fixed or variable area of the row.
     // For most "inherently fixed" types (BOOL, LONG, DOUBLE, etc.) the bit is set,

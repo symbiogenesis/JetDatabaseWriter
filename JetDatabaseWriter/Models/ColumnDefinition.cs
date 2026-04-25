@@ -114,4 +114,60 @@ public sealed record ColumnDefinition
     /// <see cref="System.ArgumentException"/>.
     /// </summary>
     public bool IsPrimaryKey { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether this column is an Access 2007+ Attachment
+    /// column (JET <c>T_ATTACHMENT = 0x11</c>). Backed on disk by a hidden flat
+    /// child table containing one row per attached file. ACE (.accdb) only.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Phase C2: declaring an attachment column establishes the parent TDEF
+    /// column descriptor (<c>col_type = 0x11</c>, <c>col_len = 4</c>, bitmask
+    /// <c>0x07</c>, 4-byte <c>misc</c> slot for the <c>ComplexID</c>). The
+    /// hidden flat child table and the <c>MSysComplexColumns</c> catalog row
+    /// are not yet emitted (Phase C3); calling
+    /// <see cref="IAccessWriter.CreateTableAsync(string, System.Collections.Generic.IReadOnlyList{ColumnDefinition}, System.Threading.CancellationToken)"/>
+    /// with an attachment column currently throws
+    /// <see cref="System.NotSupportedException"/>.
+    /// </para>
+    /// <para>
+    /// Existing attachment columns read from an Access-authored database are
+    /// preserved through <c>AddColumnAsync</c> / <c>DropColumnAsync</c> /
+    /// <c>RenameColumnAsync</c>.
+    /// </para>
+    /// </remarks>
+    public bool IsAttachment { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether this column is an Access 2007+ Multi-Value
+    /// (complex) column (JET <c>T_COMPLEX = 0x12</c>). Stores zero or more values
+    /// of <see cref="MultiValueElementType"/> per parent row in a hidden flat
+    /// child table. ACE (.accdb) only.
+    /// </summary>
+    /// <remarks>
+    /// Phase C2: same descriptor-only emission path as <see cref="IsAttachment"/>
+    /// — the hidden flat child table and <c>MSysComplexColumns</c> row are
+    /// Phase C3. Existing multi-value columns survive
+    /// <c>AddColumnAsync</c> / <c>DropColumnAsync</c> / <c>RenameColumnAsync</c>.
+    /// </remarks>
+    public bool IsMultiValue { get; init; }
+
+    /// <summary>
+    /// Gets the CLR element type stored in a multi-value column (e.g.
+    /// <c>typeof(string)</c>, <c>typeof(int)</c>). Required when
+    /// <see cref="IsMultiValue"/> is <see langword="true"/>; ignored otherwise.
+    /// </summary>
+    public Type? MultiValueElementType { get; init; }
+
+    /// <summary>
+    /// Gets the per-database <c>ComplexID</c> recovered from the parent TDEF
+    /// column descriptor's <c>misc</c> slot. Internal — set only when round-tripping
+    /// an existing complex column through the schema-evolution path so the
+    /// rewritten TDEF carries the same ID and continues to join to its
+    /// <c>MSysComplexColumns</c> row + hidden flat table. New complex columns
+    /// declared by the user via <see cref="IsAttachment"/> / <see cref="IsMultiValue"/>
+    /// leave this at <c>0</c>; Phase C3 will populate it on table creation.
+    /// </summary>
+    internal int ComplexId { get; init; }
 }

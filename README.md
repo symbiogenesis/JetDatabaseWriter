@@ -629,8 +629,8 @@ The writer targets the most common create / insert / update / delete scenarios. 
 - **Validation gap.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not yet been round-tripped through Microsoft Access on Windows for a Compact & Repair smoke test. Defer production use until that has been verified by hand.
 
 ### Specialized column kinds
-- **No attachment columns on write.** Reading is supported; `CreateTableAsync` cannot declare an Attachment column and there is no API to add files to one. (Attachment payload Deflate-compression on write is also unimplemented.)
-- **No multi-value (complex) columns on write.** Readable, not writable.
+- **No attachment columns on write.** Reading is supported; the new `ColumnDefinition.IsAttachment` declaration surface (Phase C2) lays the groundwork, but `CreateTableAsync` still throws `NotSupportedException` because the hidden flat child table and `MSysComplexColumns` row emission (Phase C3) is not yet implemented. Tables that already contain attachment columns when opened cannot be passed through `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`. (Attachment payload Deflate-compression on write is also unimplemented.)
+- **No multi-value (complex) columns on write.** Same status as attachments: `ColumnDefinition.IsMultiValue` / `MultiValueElementType` exist for forward-compatibility but `CreateTableAsync` rejects them.
 - **No calculated columns** (Access 2010+ expression columns).
 - **No hyperlink semantics.** Hyperlink fields round-trip as plain MEMO text; the `#display#address#subaddress#` structure is not parsed or emitted.
 
