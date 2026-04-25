@@ -4661,12 +4661,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ColumnDefinition col = columns[alloc.ColumnIndex];
 
             string flatTableName = BuildFlatTableName(col.Name);
-            ColumnDefinition[] flatCols = BuildFlatTableSchema(parentTableName, col);
+            (ColumnDefinition[] flatCols, IndexDefinition[] flatIndexes) =
+                BuildFlatTableSchema(parentTableName, col);
 
             long flatTdefPage = await CreateTableInternalAsync(
                 flatTableName,
                 flatCols,
-                indexes: Array.Empty<IndexDefinition>(),
+                indexes: flatIndexes,
                 catalogFlags: 0x800A0000U,
                 cancellationToken).ConfigureAwait(false);
 
@@ -4694,37 +4695,79 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Builds the flat-table column list per the per-kind schemas in the design doc §2.4.
-    /// MVP: no PK, no autoincrement, no indexes — just the FK back-reference column plus
-    /// the per-kind value columns. The FK column carries the parent row's
-    /// <c>ConceptualTableID</c> value at insert time (Phase C4).
+    /// Builds the flat-table column list and the system-managed indexes per
+    /// the per-kind schemas in the design doc §2.4 / §4.2 (Phase C7).
     /// </summary>
-    private static ColumnDefinition[] BuildFlatTableSchema(string parentTableName, ColumnDefinition parentColumn)
+    /// <remarks>
+    /// <para>
+    /// Two LONG columns participate in the back-reference plumbing:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description><c>_&lt;userColumnName&gt;</c> — FK back-reference holding the parent row's <c>ConceptualTableID</c>.</description></item>
+    ///   <item><description><c>&lt;parentTable&gt;_&lt;userColumnName&gt;</c> — autoincrement scalar PK used by Access internally.</description></item>
+    /// </list>
+    /// <para>
+    /// Naming and column ordering match
+    /// <c>format-probe-appendix-complex.md</c> for the attachment case
+    /// (<c>f_A3DF50CFC033433899AF0AC1A4CF4171_Attachments</c>): the
+    /// kind-specific value columns first, then the autoincrement scalar PK,
+    /// then the FK back-reference. Three indexes ship with the attachment
+    /// table — primary key on the scalar (<c>MSysComplexPKIndex</c>), a
+    /// normal index on the FK back-reference (named after the FK column),
+    /// and a normal composite index on (FK, FileName) called
+    /// <c>IdxFKPrimaryScalar</c> per the appendix.
+    /// </para>
+    /// <para>
+    /// The multi-value variant has no empirical fixture; the conservative
+    /// schema mirrors the attachment pattern minus the composite
+    /// <c>IdxFKPrimaryScalar</c> (the value column may be a non-indexable
+    /// type such as MEMO).
+    /// </para>
+    /// </remarks>
+    private static (ColumnDefinition[] Columns, IndexDefinition[] Indexes) BuildFlatTableSchema(
+        string parentTableName,
+        ColumnDefinition parentColumn)
     {
-        // FK back-reference. Naming follows the appendix probe: `_<userColumnName>` for
-        // the FK to the parent's ConceptualTableID. This name is what Access uses
-        // empirically in fixtures like ComplexFields.accdb.
-        var fk = new ColumnDefinition($"_{parentColumn.Name}", typeof(int));
+        string fkName = $"_{parentColumn.Name}";
+        string scalarName = $"{parentTableName}_{parentColumn.Name}";
+        var fk = new ColumnDefinition(fkName, typeof(int));
+        var scalar = new ColumnDefinition(scalarName, typeof(int)) { IsAutoIncrement = true };
 
         if (parentColumn.IsAttachment)
         {
-            return new[]
+            ColumnDefinition[] cols =
             {
-                fk,
-                new ColumnDefinition("FileURL", typeof(string)) { /* MEMO via no maxLength */ },
-                new ColumnDefinition("FileName", typeof(string), maxLength: 255),
-                new ColumnDefinition("FileType", typeof(string), maxLength: 255),
-                new ColumnDefinition("FileFlags", typeof(int)),
-                new ColumnDefinition("FileTimeStamp", typeof(DateTime)),
                 new ColumnDefinition("FileData", typeof(byte[])),
+                new ColumnDefinition("FileFlags", typeof(int)),
+                new ColumnDefinition("FileName", typeof(string), maxLength: 255),
+                new ColumnDefinition("FileTimeStamp", typeof(DateTime)),
+                new ColumnDefinition("FileType", typeof(string), maxLength: 255),
+                new ColumnDefinition("FileURL", typeof(string)) /* MEMO via no maxLength */,
+                scalar,
+                fk,
             };
+
+            IndexDefinition[] indexes =
+            {
+                new IndexDefinition("MSysComplexPKIndex", scalarName) { IsPrimaryKey = true },
+                new IndexDefinition(fkName, fkName),
+                new IndexDefinition("IdxFKPrimaryScalar", new[] { fkName, "FileName" }),
+            };
+
+            return (cols, indexes);
         }
 
         // MultiValue: a single `value` column whose CLR type is the user-declared element type.
         Type elementType = parentColumn.MultiValueElementType
             ?? throw new InvalidOperationException("MultiValueElementType must be set on a multi-value column.");
         var valueCol = new ColumnDefinition("value", elementType, maxLength: parentColumn.MaxLength);
-        return new[] { fk, valueCol };
+        ColumnDefinition[] mvCols = { valueCol, scalar, fk };
+        IndexDefinition[] mvIndexes =
+        {
+            new IndexDefinition("MSysComplexPKIndex", scalarName) { IsPrimaryKey = true },
+            new IndexDefinition(fkName, fkName),
+        };
+        return (mvCols, mvIndexes);
     }
 
     /// <summary>
@@ -4893,7 +4936,42 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ? BuildAttachmentFlatRow(flatDef, conceptualTableId, (AttachmentInput)payload)
             : BuildMultiValueFlatRow(flatDef, conceptualTableId, payload);
 
+        // C7: the flat table now carries an autoincrement scalar PK column.
+        // ApplyConstraintsAsync hydrates the constraint registry from the
+        // persisted FLAG_AUTO_LONG bit and seeds the next value from the
+        // existing rows so AddAttachmentAsync / AddMultiValueItemAsync stay
+        // a single-call surface.
+        string flatTableName = await ResolveFlatTableNameAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
+        await ApplyConstraintsAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
+
         await InsertRowDataAsync(flatTdefPage, flatDef, flatValues, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Resolves a hidden flat-child-table TDEF page back to its
+    /// <c>MSysObjects.Name</c>. Used by <see cref="AddComplexItemCoreAsync"/>
+    /// to drive <see cref="ApplyConstraintsAsync"/> for the autoincrement
+    /// scalar PK column emitted by Phase C7.
+    /// </summary>
+    private async ValueTask<string> ResolveFlatTableNameAsync(long flatTdefPage, CancellationToken cancellationToken)
+    {
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (msys == null)
+        {
+            throw new InvalidOperationException("MSysObjects catalog table is missing.");
+        }
+
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in rows)
+        {
+            if (row.TDefPage == flatTdefPage)
+            {
+                return row.Name;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"No MSysObjects row was found for flat-child TDEF page {flatTdefPage}.");
     }
 
     /// <summary>
