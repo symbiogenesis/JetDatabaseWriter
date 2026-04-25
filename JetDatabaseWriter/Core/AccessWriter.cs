@@ -3634,6 +3634,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     nameof(defs));
             }
 
+            if (c.IsAutoIncrement && (c.ClrType == typeof(byte) || c.ClrType == typeof(long)))
+            {
+                // Jet's FLAG_AUTO_LONG only persists Int16/Int32 counters; tinyint and BigInt
+                // ("Large Number") autonumber columns require schema bits the writer does not
+                // emit yet. Reject up-front so callers get a typed signal instead of a corrupt
+                // schema on first insert.
+                throw new NotSupportedException(
+                    $"Column '{c.Name}': IsAutoIncrement is only supported for Int16 and Int32; '{c.ClrType}' is not supported.");
+            }
+
             list.Add(c);
         }
 

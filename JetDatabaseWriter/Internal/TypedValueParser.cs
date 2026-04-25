@@ -59,6 +59,18 @@ internal static class TypedValueParser
             return [];
         }
 
+        // OLE Object payloads are surfaced as RFC-2397 base64 data URLs by
+        // AccessReader.DecodeLongValue (any MIME type, e.g. image/jpeg,
+        // image/png, application/octet-stream); round-trip them back to raw bytes.
+        if (hexString.StartsWith("data:", StringComparison.Ordinal))
+        {
+            int comma = hexString.IndexOf(',', StringComparison.Ordinal);
+            if (comma > 0 && hexString.AsSpan(0, comma).IndexOf(";base64".AsSpan(), StringComparison.Ordinal) >= 0)
+            {
+                return Convert.FromBase64String(hexString[(comma + 1)..]);
+            }
+        }
+
         // Try to use Convert.FromHexString if input is a plain hex string (no dashes)
 #if NET5_0_OR_GREATER
         if (!hexString.Contains('-'))

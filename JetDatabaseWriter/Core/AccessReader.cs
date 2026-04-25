@@ -1535,6 +1535,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         T_DATETIME => typeof(DateTime),
         T_GUID => typeof(Guid),
         T_NUMERIC => typeof(decimal),
+        T_BINARY => typeof(byte[]),
+        T_OLE => typeof(byte[]),
         T_ATTACHMENT => typeof(byte[]),
         T_COMPLEX => typeof(byte[]),
         _ => typeof(string),
