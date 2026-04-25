@@ -448,6 +448,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         int deleted = 0;
         List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        var droppedTdefPages = new List<long>();
         foreach (CatalogRow row in rows)
         {
             if (!string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
@@ -465,6 +466,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
+            if (row.TDefPage > 0)
+            {
+                droppedTdefPages.Add(row.TDefPage);
+            }
+
             await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
             deleted++;
         }
@@ -472,6 +478,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (deleted == 0)
         {
             throw new InvalidOperationException($"Table '{tableName}' does not exist.");
+        }
+
+        // Phase C6 — cascade: drop the hidden flat child tables and the
+        // matching MSysComplexColumns rows for any complex (Attachment /
+        // MultiValue) columns on the dropped parent. Done after the
+        // parent's catalog row has been marked deleted because the
+        // parent's TDEF page itself remains readable (the TDEF lives on
+        // its own page; only the MSysObjects entry is removed).
+        foreach (long parentTdefPage in droppedTdefPages)
+        {
+            await DropComplexChildrenForTableAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
         }
 
         UnregisterConstraints(tableName);
@@ -5338,6 +5355,152 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             if (deletedFromFlat > 0)
             {
                 await AdjustTDefRowCountAsync(flatTdefPage, -deletedFromFlat, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Phase C6 — when dropping a parent table, also drop the hidden flat
+    /// child tables backing each Attachment / MultiValue column on the
+    /// parent and remove the corresponding rows from
+    /// <c>MSysComplexColumns</c>. Tolerates missing
+    /// <c>MSysComplexColumns</c> (Jet3 / Jet4 / fresh writer-created
+    /// ACCDB without the system table) and missing catalog rows for a
+    /// flat table (already removed) by silently skipping.
+    /// </summary>
+    private async ValueTask DropComplexChildrenForTableAsync(long parentTdefPage, CancellationToken cancellationToken)
+    {
+        TableDef? parentDef = await ReadTableDefAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
+        if (parentDef == null)
+        {
+            return;
+        }
+
+        var complexCols = new List<ColumnInfo>();
+        foreach (ColumnInfo col in parentDef.Columns)
+        {
+            if (col.Type == T_ATTACHMENT || col.Type == T_COMPLEX)
+            {
+                complexCols.Add(col);
+            }
+        }
+
+        if (complexCols.Count == 0)
+        {
+            return;
+        }
+
+        long msysCxPg = await FindSystemTableTdefPageAsync("MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        if (msysCxPg == 0)
+        {
+            return;
+        }
+
+        TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        ColumnInfo nameCol = msysCxDef.Columns.Find(c => string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo flatIdCol = msysCxDef.Columns.Find(c => string.Equals(c.Name, "FlatTableID", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo cxIdCol = msysCxDef.Columns.Find(c => string.Equals(c.Name, "ComplexID", StringComparison.OrdinalIgnoreCase));
+        if (nameCol == null || flatIdCol == null || cxIdCol == null)
+        {
+            return;
+        }
+
+        var lookup = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
+        foreach (ColumnInfo col in complexCols)
+        {
+            if (!lookup.TryGetValue(col.Name, out HashSet<int>? ids))
+            {
+                ids = new HashSet<int>();
+                lookup[col.Name] = ids;
+            }
+
+            _ = ids.Add(col.Misc);
+        }
+
+        var flatTdefPages = new HashSet<long>();
+        var cxRowsToDelete = new List<(long PageNumber, int RowIndex)>();
+
+        long total = _stream.Length / _pgSz;
+        for (long pageNumber = 3; pageNumber < total; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != 0x01)
+                {
+                    continue;
+                }
+
+                if (Ri32(page, _dpTDefOff) != msysCxPg)
+                {
+                    continue;
+                }
+
+                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
+                {
+                    string rowName = ReadColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    string idText = ReadColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
+                    if (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid))
+                    {
+                        continue;
+                    }
+
+                    if (!lookup.TryGetValue(rowName, out HashSet<int>? expectedIds) || !expectedIds.Contains(rid))
+                    {
+                        continue;
+                    }
+
+                    string flatText = ReadColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
+                    if (long.TryParse(flatText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long flatId))
+                    {
+                        _ = flatTdefPages.Add(flatId & 0x00FFFFFFL);
+                    }
+
+                    cxRowsToDelete.Add((row.PageNumber, row.RowIndex));
+                }
+            }
+            finally
+            {
+                ReturnPage(page);
+            }
+        }
+
+        foreach ((long pg, int ri) in cxRowsToDelete)
+        {
+            await MarkRowDeletedAsync(pg, ri, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (cxRowsToDelete.Count > 0)
+        {
+            await AdjustTDefRowCountAsync(msysCxPg, -cxRowsToDelete.Count, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (flatTdefPages.Count == 0)
+        {
+            return;
+        }
+
+        // Drop the hidden flat-table catalog rows (system-flag tables —
+        // public DropTableAsync would skip them).
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (msys == null)
+        {
+            return;
+        }
+
+        List<CatalogRow> catalog = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in catalog)
+        {
+            if (row.ObjectType != OBJ_TABLE)
+            {
+                continue;
+            }
+
+            if (flatTdefPages.Contains(row.TDefPage))
+            {
+                await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
             }
         }
     }

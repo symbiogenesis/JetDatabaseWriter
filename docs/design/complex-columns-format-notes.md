@@ -1,13 +1,8 @@
 # Design notes: Complex columns (Attachment, Multi-value) — write path
 
-**Status:** C1 + C2 + C3 + C4 + C5 implemented (2026-04-25). C6 pending.
-**Related limitations:** [`README.md` §"Limitations"](../../README.md):
-- "Attachment & multi-value (complex) columns — schema, row-level inserts, cascade-on-delete. `CreateTableAsync` accepts the declarations and emits the hidden flat child table + `MSysComplexColumns` row (C3); `AddAttachmentAsync` / `AddMultiValueItemAsync` insert payloads into existing parent rows with spec-compliant wrapper encoding (C4); `DeleteRowsAsync` cascades the parent's complex slot to the flat child table (C5). `DropTableAsync` cascade (C6) is still pending; attachments are limited to ≤256 bytes by the writer's inline-OLE cap."
-- "Attachment payloads are not Deflate-compressed."
-
+**Status:** All shipped phases listed in §4.2; outstanding work tracked in the same table.
 **Empirical appendix:** [`format-probe-appendix-complex.md`](format-probe-appendix-complex.md) — annotated hex dumps of `MSysComplexColumns`, every `MSysComplexType_*` template table, an attachment-bearing parent table (`Documents`), and the hidden flat tables from `ComplexFields.accdb`. Regenerate via `dotnet run --project JetDatabaseWriter.FormatProbe`.
-
-**Validation requirement:** identical to [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md): every PR must round-trip through Microsoft Access on Windows (open + compact + re-open + Design View inspection) before merge.
+**Validation requirement:** see [`index-and-relationship-format-notes.md` §8](index-and-relationship-format-notes.md#8-validation-strategy).
 
 > ⚠️ Reverse-engineered notes. mdbtools documents complex columns only superficially. The authoritative open-source reference is [Jackcess](https://github.com/jahlborn/jackcess) (Java, Apache-2.0) — specifically `com.healthmarketscience.jackcess.impl.complex.*`. Field names and offsets in this document are derived from Jackcess source and the existing reader code in this repo (`AccessReader.BuildComplexColumnDataAsync`, `DecodeAttachmentFileData`).
 
@@ -25,12 +20,7 @@ Access 2007 introduced three "complex column" kinds. All three are stored the sa
 
 The discrimination between attachment / multi-value / version-history is **not** done by the column-type byte. It is done by the linked flat table's schema and/or the value of `MSysComplexColumns.ComplexTypeObjectID` (which points at one of the `MSysComplexType_*` template tables — see [appendix](format-probe-appendix-complex.md)).
 
-The reader already implements all three kinds. Writer support is being added in phases (see §4.3); C1 (empty-DB scaffold) and C2 (declaration surface + parent TDEF emission plumbing) shipped on 2026-04-25.
-
-The pinned tests in `JetDatabaseWriter.Tests/Core/LimitationsTests.cs` were updated for C2:
-
-- `SpecializedColumns_NoPublicAttachmentApi` — still asserts no `Attachment`-named method exists on `IAccessWriter` / `AccessWriter`, but no longer rejects `ColumnDefinition.IsAttachment`.
-- `SpecializedColumns_NoPublicMultiValueApi` — same pattern for multi-value.
+The reader implements all three kinds. Writer support has shipped through phase C6 — see §4.2.
 
 ## 2. On-disk layout
 
@@ -84,7 +74,7 @@ The flat table also requires:
 - A **primary key** (the autonumber column) — needs the index-creation foundation in [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md).
 - A **non-unique index** on the FK column — same.
 
-> **Implementation tip:** rather than synthesizing a flat-table schema from scratch, copy the schema of the corresponding `MSysComplexType_*` template table and add the extra `_<userColName>` suffix. The templates exist in every fresh ACCDB precisely so that complex-column writers don't have to derive the schema by hand.
+> **Future improvement:** rather than synthesizing a flat-table schema from scratch, a future phase could copy the schema of the corresponding `MSysComplexType_*` template table and add the extra `_<userColName>` suffix. The shipped C3 MVP synthesizes from scratch (no PK, no autoincrement, `ComplexTypeObjectID = 0`) and relies on Access's Compact & Repair pass to fill the gaps.
 
 ### 2.4 Per-kind flat-table schemas
 
@@ -113,15 +103,7 @@ If the flat table on disk has columns whose names don't match these exactly, Jac
 | (FK) | `T_LONG` | |
 | `value` | varies | Whatever element type the user declared (text, long, etc.). |
 
-The user-facing API on `ColumnDefinition` would need a way to specify the element type. Suggested shape:
-
-```csharp
-new ColumnDefinition("Tags", typeof(IList<string>))
-{
-    MultiValueElementType = typeof(string),
-    MaxLength = 50, // applies to the inner value column
-}
-```
+The shipped declaration surface is the `ColumnDefinition.IsMultiValue` init-only property (see §4.2 C2 row); the inner value column inherits the `ColumnDefinition`'s declared type and length.
 
 #### 2.4.3 Version history (`T_COMPLEX = 0x12`, `MSysComplexColumns.Type = 2`)
 
@@ -172,40 +154,26 @@ Match case-insensitively against `FileType` (which Jackcess lowercases on store)
 
 > The compression flag is `0x01 = zlib-deflate`. The existing reader uses `System.IO.Compression.DeflateStream`, which does **raw deflate** (no zlib header). The reader works against fixtures, so raw deflate is correct — Jackcess's "zlib" comment in the field name is a misnomer.
 
-## 4. Required reader/writer changes
+## 4. Reader / writer phases
 
-### 4.1 Reader (already done)
+### 4.1 Reader
 
-- ✅ `T_ATTACHMENT` / `T_COMPLEX` column-type recognition
-- ✅ `MSysComplexColumns` join (`BuildComplexColumnDataAsync`)
-- ✅ Attachment payload decode (raw + deflate; `DecodeAttachmentFileData`)
+The reader (see §1) implements `T_ATTACHMENT` / `T_COMPLEX` column-type recognition, the `MSysComplexColumns` join (`BuildComplexColumnDataAsync`), and attachment payload decode (raw + deflate; `DecodeAttachmentFileData`). Schema metadata is exposed via `IAccessReader.GetComplexColumnsAsync`; typed item enumeration is exposed via `GetAttachmentsAsync` / `GetMultiValueItemsAsync` (see §4.2 C4).
 
-### 4.2 Reader (additions needed for writer round-trip)
-
-- ✅ **Implemented (2026-04-24):** `IAccessReader.GetComplexColumnsAsync(string tableName, CT)` returns `IReadOnlyList<ComplexColumnInfo>` per parent-column metadata (ColumnName, ComplexId, Kind, FlatTableName, FlatTableId, ConceptualTableId, ComplexTypeObjectId, ComplexTypeName) — joins parent TDEF column descriptors with `MSysComplexColumns` and resolves flat-table / template names via `MSysObjects`. Tests in `JetDatabaseWriter.Tests/Core/ComplexColumnInfoTests.cs`.
-- `IAccessReader.GetAttachmentsAsync(string tableName, string columnName, IReadOnlyDictionary<string,object> rowKey, CT)` — typed alternative to the current "decode opaque byte[]" surface. Still TODO.
-
-### 4.3 Writer (new)
+### 4.2 Writer
 
 | Phase | Scope | Status |
 |---|---|---|
-| **C1** | Empty-DB scaffold: add `MSysComplexColumns` to `BuildEmptyDatabase`. | ✅ **Implemented (2026-04-25).** `AccessWriter.ScaffoldSystemTablesAsync` runs after `OpenAsync` inside `CreateDatabaseAsync` and invokes `CreateMSysComplexColumnsAsync` for ACCDB databases with the full 17-column catalog schema. The system table carries `MSysObjects.Flags = 0x80000000` and is excluded from `ListTablesAsync`. 4 round-trip tests in `JetDatabaseWriter.Tests/Core/ComplexColumnsWriterTests.cs`. |
-| **C2** | `ColumnDefinition.IsAttachment` / `IsMultiValue` (+ `MultiValueElementType`) declaration surface + `ColumnInfo` round-trip in TDEF emission (the `0x07` bitmask, the 4-byte `misc` ComplexID slot, `col_len = 4`). | ✅ **Implemented (2026-04-25).** Public init-only properties on `ColumnDefinition`. New `ColumnInfo.Misc` field carries the 4-byte ComplexID and is populated by the reader path (`AccessBase.ReadTableDef`) and emitted by the writer path (`BuildTDefPageWithIndexOffsets`) at descriptor-relative offset `_colMiscOff` (=11 on Jet4/ACE). `BuildTableDefinition` honours `IsAttachment` / `IsMultiValue` by emitting `T_ATTACHMENT` / `T_COMPLEX` with `Flags = 0x07` and `col_len = 4`. **`CreateTableAsync` rejects user-declared complex columns with `NotSupportedException`** until C3 lands the hidden flat child table + `MSysComplexColumns` row emission — emitting only the parent descriptor would produce a file Microsoft Access could not open. The schema-evolution path (`RewriteTableAsync` via `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`) still throws on tables that contain complex columns; the descriptor-byte round-trip is preserved by `ColumnInfo.Misc` plumbing alone (used by the W9b in-place TDEF mutator). 6 round-trip tests in `JetDatabaseWriter.Tests/Core/ComplexColumnsWriterTests.cs`. |
-| **C3** | `CreateTableAsync` + `AddColumnAsync` paths: when emitting a complex column, also create the hidden flat table (with PK + FK + per-kind value columns), reserve a fresh ConceptualTableID, write the `MSysComplexColumns` row, and write the parent column descriptor. | ✅ **Implemented (2026-04-25, MVP).** `CreateTableAsync` no longer throws on user-declared `IsAttachment` / `IsMultiValue` columns. For each complex column, the writer (a) allocates a fresh `ComplexID` (= `ConceptualTableID`) by scanning `MSysComplexColumns`, (b) creates the hidden flat child table named `f_<32-hex>_<userColumnName>` with `MSysObjects.Flags = 0x800A0000` via the new `CreateTableInternalAsync` helper, (c) inserts an `MSysComplexColumns` row joining the parent's `ComplexID` to the flat table's TDEF page, and (d) flows the `ComplexID` back into the parent TDEF descriptor's `misc` slot via the C2 plumbing. **MVP scope:** the flat table is emitted with the FK back-reference column (`_<userColumnName>`) plus the per-kind value columns from §2.4 — there is no PK, no autoincrement, no FK back-reference index, and `ComplexTypeObjectID` is `0`. This round-trips through this library's reader (`GetComplexColumnsAsync`); Microsoft Access compatibility requires a Compact & Repair pass to rebuild the missing indexes. `AddColumnAsync` for a brand-new complex column is still pending (it would need to flow through `RewriteTableAsync`). 4 round-trip tests added to `JetDatabaseWriter.Tests/Core/ComplexColumnsWriterTests.cs`. |
-| **C4** | Writer methods for attachment payload encode (§3) and the per-kind row APIs: `AddAttachmentAsync(string table, rowKey, AttachmentInput)`, `AddMultiValueItemAsync(string table, rowKey, object value)`. | ✅ Implemented (2026-04-25). `AccessWriter.AddAttachmentAsync` / `AddMultiValueItemAsync` perform an in-place 4-byte patch of the parent row's complex-column slot (lazy `ConceptualTableID` allocation via `max(FK)+1` scan of the flat child table), then `InsertRowDataAsync` into the flat table. `AttachmentWrapper` encodes/decodes the MS-ACCDB §3.1 payload format (4-byte LE typeFlag + dataLen + extLen + UCS-2 NUL-terminated extension + raw deflate payload, with a `COMPRESSED_FORMATS` skip-list matching Jackcess). `AccessReader.GetAttachmentsAsync` / `GetMultiValueItemsAsync` provide the read-side surface (the legacy heuristic 1-byte typeFlag decoder used by `ReadDataTableAsync` is left intact for fixture compatibility). **Limitation:** writer's `MaxInlineOleBytes=256` caps attachment payload size until LVAL chain emission lands. |
-| **C5** | Cascade on parent delete: the flat-table rows that join to a deleted parent must also be deleted. Index-driven delete needs the index foundation — without indexes, we'd be doing a full child-table scan per parent delete. | ✅ **Implemented (2026-04-25).** `AccessWriter.CascadeDeleteComplexChildrenAsync` runs from both `DeleteRowsAsync` and `EnforceFkOnPrimaryDeleteAsync` (W10 cascade-delete) BEFORE the parent rows are marked deleted. For each Attachment / MultiValue column on the parent, it (a) collects the live `ConceptualTableID` from the parent's complex slot (skipping rows whose null-bit is unset), (b) resolves the flat-table TDEF page via the existing `ResolveFlatTableTdefPageAsync`, (c) scans the flat table once per column, marking every row whose FK back-reference (`_<column>` Long col) is in the collected set deleted, and (d) calls `AdjustTDefRowCountAsync(-N)` on the flat TDEF. Cost is O(P) page scan per (parent table × complex column) pair — same profile as the W10 cascade-delete. 4 round-trip tests in `JetDatabaseWriter.Tests/Core/ComplexColumnsCascadeDeleteTests.cs`. **Reader fix included:** `AccessReader.ConvertRowToTyped` now surfaces a complex-column slot whose flat-table data could not be loaded (e.g. multi-value columns, since `LoadAttachmentDataAsync` is attachment-specific) as `DBNull.Value` instead of attempting to parse the `__CX:N__` marker as the column's nominal `byte[]` CLR type. |
-| **C6** | `DropTableAsync` cascade: when dropping a parent table, also drop its hidden flat tables and remove `MSysComplexColumns` rows. | Pending. |
+| **C1** | Empty-DB scaffold: add `MSysComplexColumns` to `BuildEmptyDatabase`. | ✅ Shipped. ACCDB only. Helper: `AccessWriter.CreateMSysComplexColumnsAsync` (called from `ScaffoldSystemTablesAsync`). Catalog row carries `MSysObjects.Flags = 0x80000000` and is excluded from `ListTablesAsync`. Tests: `ComplexColumnsWriterTests`. |
+| **C2** | `ColumnDefinition.IsAttachment` / `IsMultiValue` declaration surface + `ColumnInfo.Misc` round-trip in TDEF emission (the `0x07` bitmask, the 4-byte `misc` ComplexID slot, `col_len = 4`). | ✅ Shipped. Public init-only props on `ColumnDefinition`. Descriptor offset `_colMiscOff` = 11 (Jet4/ACE). Tests: `ComplexColumnsWriterTests`. |
+| **C3** | `CreateTableAsync` emits the hidden flat child table, allocates a fresh `ComplexID`, writes the `MSysComplexColumns` row, and patches the parent descriptor. | ✅ Shipped (MVP). Helper: `CreateTableInternalAsync`. Flat table named `f_<32-hex>_<userColumnName>`, `MSysObjects.Flags = 0x800A0000`. **MVP limits:** no PK, no autoincrement, no FK back-reference index, `ComplexTypeObjectID = 0` — Access rebuilds the missing indexes on Compact & Repair. `AddColumnAsync` of a brand-new complex column is still pending (would need `RewriteTableAsync` plumbing). |
+| **C4** | Per-kind row APIs (`AddAttachmentAsync`, `AddMultiValueItemAsync`) and attachment payload encode (§3). | ✅ Shipped. Helpers: `AccessWriter.AddAttachmentAsync` / `AddMultiValueItemAsync`, `AttachmentWrapper`. Reader-side: `AccessReader.GetAttachmentsAsync` / `GetMultiValueItemsAsync`. **Limit:** `MaxInlineOleBytes = 256` caps attachment payload size until LVAL chain emission lands. |
+| **C5** | Cascade flat-table rows on parent delete. | ✅ Shipped. Helper: `CascadeDeleteComplexChildrenAsync`, called from `DeleteRowsAsync` and the W10 `EnforceFkOnPrimaryDeleteAsync` cascade path. Cost: one O(P) flat-table scan per (parent table × complex column). Tests: `ComplexColumnsCascadeDeleteTests`. |
+| **C6** | `DropTableAsync` cascade for hidden flat tables and `MSysComplexColumns` rows. | ✅ Shipped. Helper: `DropComplexChildrenForTableAsync`, called from `DropTableAsync`. Removes `MSysComplexColumns` and `MSysObjects` catalog rows for each child flat table; orphaned data pages are reclaimed by Access on the next Compact & Repair (same model used by W5). |
 
-### 4.4 Hard prerequisites from the index foundation
+### 4.3 Index-foundation prerequisites (historical)
 
-Phases C2–C6 cannot ship until the index foundation in [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) reaches at least:
-
-- W1 (`IndexDefinition` + TDEF emission) — for the autonumber PK on the flat table ✅ shipped
-- W3 (leaf-page emitter) — same, so the PK / FK indexes have real B-tree leafs and survive Access's compact/repair pass ✅ shipped
-- W8 (PK API) — needed to declare the autonumber column as a primary key on the flat table ✅ shipped (2026-04-25); single-column PKs participate in W5 maintenance, multi-column PKs ship the schema only
-- W9 (FK + `MSysRelationships`) — needed for the FK back-reference from each flat-table row to its parent (still pending)
-
-> Note on W6 (`MSysIndexes` / `MSysIndexColumns`): these tables are absent from modern ACCDB ([index doc §6](index-and-relationship-format-notes.md#6-msysindexes--msysindexcolumns--msysrelationships-catalog-tables)), so for ACCDB output the flat table's index metadata lives entirely in its own TDEF. Complex columns themselves are an Access 2007+ (ACCDB) feature, so even if Jet3/Jet4 `.mdb` turns out to need W6 for ordinary indexes, that requirement does not propagate here.
+The shipped MVP relies on Access's Compact & Repair pass to fill in the per-flat-table PK / FK indexes Access expects. A future iteration that emits those indexes itself would build on the index foundation in [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md): W1, W3, W8 (all shipped) and a flat-table FK back-reference (W9). Complex columns are an Access 2007+ (ACCDB) feature, so the W6 (`MSysIndexes`) question does not apply here — see [index doc §6](index-and-relationship-format-notes.md#6-msysindexes--msysindexcolumns--msysrelationships-catalog-tables).
 
 ## 5. Validation strategy
 
