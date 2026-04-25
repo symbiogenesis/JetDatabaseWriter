@@ -250,7 +250,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         try
         {
-            return await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
+            AccessWriter writer = await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
+            await ScaffoldSystemTablesAsync(writer, format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+            return writer;
         }
         catch
         {
@@ -308,7 +310,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         stream.Position = 0;
 
-        return await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
+        AccessWriter writer = await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
+        await ScaffoldSystemTablesAsync(writer, format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+        return writer;
     }
 
     /// <inheritdoc/>
@@ -344,6 +348,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (await GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) != null)
         {
             throw new InvalidOperationException($"Table '{tableName}' already exists.");
+        }
+
+        // Phase C2 user-facing gate: a column declared as Attachment or MultiValue by
+        // the caller has ComplexId = 0 (the round-trip preservation path on
+        // RewriteTableAsync sets a non-zero ComplexId from the original TDEF). Emitting
+        // a parent column descriptor without a matching MSysComplexColumns row and
+        // hidden flat child table would produce a file Microsoft Access cannot open;
+        // refuse such columns until Phase C3 ships the flat-table emission.
+        for (int i = 0; i < columns.Count; i++)
+        {
+            ColumnDefinition def = columns[i];
+            if ((def.IsAttachment || def.IsMultiValue) && def.ComplexId == 0)
+            {
+                throw new NotSupportedException(
+                    $"Column '{def.Name}': declaring an Attachment or MultiValue column on CreateTableAsync requires Phase C3 (hidden flat-table emission), which is not yet implemented. See docs/design/complex-columns-format-notes.md §4.3.");
+            }
         }
 
         TableDef tableDef = BuildTableDefinition(columns, _format);
@@ -3224,6 +3244,25 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private static byte TypeCodeFromDefinition(ColumnDefinition column)
     {
+        // Complex columns (Phase C2): Attachment and Multi-value have dedicated
+        // type codes and override the CLR-driven mapping. The user picks one
+        // explicitly via IsAttachment / IsMultiValue; declaring both is rejected
+        // here so the writer never emits ambiguous descriptors.
+        if (column.IsAttachment && column.IsMultiValue)
+        {
+            throw new ArgumentException($"Column '{column.Name}' cannot be both Attachment and MultiValue.", nameof(column));
+        }
+
+        if (column.IsAttachment)
+        {
+            return T_ATTACHMENT;
+        }
+
+        if (column.IsMultiValue)
+        {
+            return T_COMPLEX;
+        }
+
         Type clrType = column.ClrType;
 
         switch (Type.GetTypeCode(clrType))
@@ -3292,20 +3331,34 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // IsNullable and IsAutoIncrement are persisted here so that constraints
             // declared on CreateTableAsync survive across writer instances and can be
             // rebuilt from the TDEF when the database is reopened.
-            byte flags = 0;
-            if (!variable)
+            //
+            // Complex columns (T_ATTACHMENT / T_COMPLEX) override these heuristics:
+            // mdbtools documents the bitmask as "always exactly 0x07" regardless of
+            // the underlying meaning. The 4-byte fixed-area payload carries the
+            // ConceptualTableID joining the parent row to its hidden flat child rows.
+            byte flags;
+            bool isComplex = type == T_ATTACHMENT || type == T_COMPLEX;
+            if (isComplex)
             {
-                flags |= 0x01;
+                flags = 0x07;
             }
-
-            if (definition.IsNullable)
+            else
             {
-                flags |= 0x02;
-            }
+                flags = 0;
+                if (!variable)
+                {
+                    flags |= 0x01;
+                }
 
-            if (definition.IsAutoIncrement)
-            {
-                flags |= 0x04;
+                if (definition.IsNullable)
+                {
+                    flags |= 0x02;
+                }
+
+                if (definition.IsAutoIncrement)
+                {
+                    flags |= 0x04;
+                }
             }
 
             var column = new ColumnInfo
@@ -3317,6 +3370,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 FixedOff = variable ? 0 : fixedOffset,
                 Size = size,
                 Flags = flags,
+                Misc = isComplex ? definition.ComplexId : 0,
             };
 
             result.Columns.Add(column);
@@ -3363,6 +3417,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return format != DatabaseFormat.Jet3Mdb ? Math.Max(2, charLen * 2) : charLen;
             case T_BINARY:
                 return maxLength > 0 ? maxLength : 255;
+            case T_ATTACHMENT:
+            case T_COMPLEX:
+                // Complex columns store a 4-byte ConceptualTableID payload per
+                // parent row (the ComplexID joins to MSysComplexColumns and the
+                // hidden flat child table). See complex-columns-format-notes.md §2.1.
+                return 4;
             default:
                 return 0;
         }
@@ -3654,7 +3714,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return tableDef;
     }
 
-    private async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, CancellationToken cancellationToken = default)
+    private ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, CancellationToken cancellationToken = default)
+        => InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags: 0, cancellationToken);
+
+    private async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
     {
         TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
         var values = new object[msys.Columns.Count];
@@ -3671,7 +3734,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         SetValue(msys, values, "Type", (short)OBJ_TABLE);
         SetValue(msys, values, "DateCreate", now);
         SetValue(msys, values, "DateUpdate", now);
-        SetValue(msys, values, "Flags", 0);
+        SetValue(msys, values, "Flags", unchecked((int)catalogFlags));
 
         // LvProp is the OLE/LongBinary cell carrying per-column persisted properties
         // (DefaultValue, ValidationRule, ValidationText, Description). Only emitted on
@@ -3855,7 +3918,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             case T_OLE: baseDef = new ColumnDefinition(column.Name, typeof(byte[])); break;
             case T_ATTACHMENT:
             case T_COMPLEX:
-                throw new NotSupportedException($"Column '{column.Name}' has a complex type (attachment / multi-value) that cannot be rewritten by AddColumnAsync / DropColumnAsync / RenameColumnAsync.");
+                // Phase C2 deliberately stops short of rewriting tables that contain
+                // complex columns. The parent TDEF descriptor round-trips correctly
+                // (ColumnInfo.Misc preserves the ComplexID; BuildTableDefinition
+                // re-emits 0x07 / col_len = 4), but the user-visible row data for
+                // attachment / multi-value columns flows through the long-value
+                // decode path and cannot be replayed without the hidden flat child
+                // table maintenance hooks (Phase C5 / C6). Keep the historical
+                // restriction until those phases ship.
+                throw new NotSupportedException($"Column '{column.Name}' has a complex type (attachment / multi-value) that cannot be rewritten by AddColumnAsync / DropColumnAsync / RenameColumnAsync. See docs/design/complex-columns-format-notes.md §4.3 (Phase C5 / C6).");
             default:
                 throw new NotSupportedException($"Column '{column.Name}' has unsupported type code 0x{column.Type:X2}.");
         }
@@ -3934,6 +4005,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             page[o + _colFlagsOff] = col.Flags;
             Wu16(page, o + _colFixedOff, col.FixedOff);
             Wu16(page, o + _colSzOff, col.Size);
+
+            // Complex columns (T_ATTACHMENT / T_COMPLEX) carry the 4-byte ComplexID
+            // at descriptor-relative offset _colMiscOff (=11 on Jet4/ACE). Round-tripped
+            // through reader → writer so existing complex columns survive
+            // RewriteTableAsync (AddColumn / DropColumn / RenameColumn). For new
+            // complex columns declared via ColumnDefinition.AsAttachment() /
+            // .AsMultiValue(), CreateTableAsync supplies Misc = 0 today and throws
+            // before reaching disk because the corresponding flat table + MSysComplexColumns
+            // row are not yet emitted (see complex-columns-format-notes.md C3).
+            if (col.Type == T_ATTACHMENT || col.Type == T_COMPLEX)
+            {
+                Wi32(page, o + _colMiscOff, col.Misc);
+            }
 
             byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : _ansiEncoding.GetBytes(col.Name);
             if (namePos + nameLenSize + nameBytes.Length > page.Length)
@@ -4218,6 +4302,63 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Phase C1: scaffold mandatory ACCDB system tables (currently
+    /// <c>MSysComplexColumns</c>) into a freshly-created database. Called
+    /// from <see cref="CreateDatabaseAsync(string, DatabaseFormat, AccessWriterOptions?, CancellationToken)"/>
+    /// after the bare 3-page empty database has been opened. ACCDB only —
+    /// complex columns are an Access 2007+ feature absent from Jet3/Jet4
+    /// <c>.mdb</c>. Skipped on the slim 9-column legacy catalog schema
+    /// (<see cref="AccessWriterOptions.WriteFullCatalogSchema"/> = <c>false</c>)
+    /// because that mode targets backward-compatible byte hashing and must
+    /// not introduce additional pages.
+    /// </summary>
+    private static async ValueTask ScaffoldSystemTablesAsync(AccessWriter writer, DatabaseFormat format, bool fullCatalogSchema, CancellationToken cancellationToken)
+    {
+        if (format != DatabaseFormat.AceAccdb || !fullCatalogSchema)
+        {
+            return;
+        }
+
+        await writer.CreateMSysComplexColumnsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Creates the empty <c>MSysComplexColumns</c> system table (Phase C1).
+    /// Schema verified against <c>ComplexFields.accdb</c> (see
+    /// <c>docs/design/format-probe-appendix-complex.md</c> and
+    /// <c>docs/design/complex-columns-format-notes.md</c> §2.2): four
+    /// <c>T_LONG</c> columns (<c>ComplexTypeObjectID</c>, <c>FlatTableID</c>,
+    /// <c>ConceptualTableID</c>, <c>ComplexID</c>) plus a <c>ColumnName</c>
+    /// <c>T_TEXT(510)</c> variable column. The catalog row carries flag
+    /// <c>0x80000000</c> (system / hidden) so the table is excluded from
+    /// <c>GetUserTablesAsync</c>.
+    /// </summary>
+    private async ValueTask CreateMSysComplexColumnsAsync(CancellationToken cancellationToken)
+    {
+        var columns = new[]
+        {
+            new ColumnDefinition("ColumnName", typeof(string), maxLength: 255),
+            new ColumnDefinition("ComplexTypeObjectID", typeof(int)),
+            new ColumnDefinition("FlatTableID", typeof(int)),
+            new ColumnDefinition("ConceptualTableID", typeof(int)),
+            new ColumnDefinition("ComplexID", typeof(int)),
+        };
+
+        TableDef tableDef = BuildTableDefinition(columns, _format);
+        (byte[] tdefPage, _) = BuildTDefPageWithIndexOffsets(tableDef, Array.Empty<ResolvedIndex>());
+        long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+
+        await InsertCatalogEntryAsync(
+            "MSysComplexColumns",
+            tdefPageNumber,
+            lvProp: null,
+            catalogFlags: 0x80000000U,
+            cancellationToken).ConfigureAwait(false);
+
+        InvalidateCatalogCache();
     }
 
     /// <summary>

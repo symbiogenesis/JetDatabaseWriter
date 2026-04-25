@@ -621,9 +621,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
 
-        // Jet4/ACE: misc bytes occupy descriptor-relative offsets 11..14 (between offset_V and offset_F).
-        const int Jet4MiscOffset = 11;
-
         var byComplexId = new Dictionary<int, (string Name, byte Type)>();
         for (int i = 0; i < numCols; i++)
         {
@@ -639,7 +636,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            int complexId = Ri32(td, o + Jet4MiscOffset);
+            int complexId = Ri32(td, o + _colMiscOff);
             if (complexId <= 0)
             {
                 continue;

@@ -207,10 +207,13 @@ public sealed class LimitationsTests : IDisposable
             "DefaultValue",
             "DefaultValueExpression",
             "Description",
+            "IsAttachment",
             "IsAutoIncrement",
+            "IsMultiValue",
             "IsNullable",
             "IsPrimaryKey",
             "MaxLength",
+            "MultiValueElementType",
             "Name",
             "ValidationRule",
             "ValidationRuleExpression",
@@ -460,23 +463,25 @@ public sealed class LimitationsTests : IDisposable
     [Fact]
     public void SpecializedColumns_NoPublicAttachmentApi()
     {
-        // README: "No attachment columns. … CreateTableAsync cannot declare an Attachment column,
-        //          and there is no API to add files to one."
+        // Phase C2 (2026-04-25) added the descriptor-only ColumnDefinition.IsAttachment
+        // declaration surface. Phase C3 — hidden flat-table emission and the row-level
+        // AddAttachmentAsync API — is still pending; CreateTableAsync rejects user-declared
+        // attachment columns until then. Continue to assert that no AccessWriter method
+        // accepts attachment data.
         AssertNoMethodMatching(typeof(IAccessWriter), "Attachment");
         AssertNoMethodMatching(typeof(AccessWriter), "Attachment");
-        AssertNoMemberMatching(typeof(ColumnDefinition), "Attachment");
     }
 
     [Fact]
     public void SpecializedColumns_NoPublicMultiValueApi()
     {
-        // README: "No multi-value (complex) columns."
+        // Same pattern as SpecializedColumns_NoPublicAttachmentApi: the C2 declaration
+        // surface (ColumnDefinition.IsMultiValue / .MultiValueElementType) exists, but
+        // there is no AccessWriter method to add multi-value items to a row yet.
         AssertNoMethodMatching(typeof(IAccessWriter), "MultiValue");
         AssertNoMethodMatching(typeof(IAccessWriter), "Complex");
         AssertNoMethodMatching(typeof(AccessWriter), "MultiValue");
         AssertNoMethodMatching(typeof(AccessWriter), "Complex");
-        AssertNoMemberMatching(typeof(ColumnDefinition), "MultiValue");
-        AssertNoMemberMatching(typeof(ColumnDefinition), "Complex");
     }
 
     [Fact]

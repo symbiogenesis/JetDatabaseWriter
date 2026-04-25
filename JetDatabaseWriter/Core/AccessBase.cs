@@ -64,6 +64,7 @@ public abstract class AccessBase : IAccessBase
     private protected readonly int _colSzOff;     // col_len
     private protected readonly int _colFlagsOff;  // bitmask
     private protected readonly int _colNumOff;    // col_num (includes deleted)
+    private protected readonly int _colMiscOff;   // misc/misc_ext (4 bytes) — carries ComplexID for T_ATTACHMENT/T_COMPLEX (see complex-columns-format-notes.md §2.1)
 
     // Per-real-index entry size (skipped during column parsing)
     private protected readonly int _realIdxEntrySz;
@@ -167,6 +168,7 @@ public abstract class AccessBase : IAccessBase
             _colSzOff = 23;   // col_len   (2)
             _colFlagsOff = 15;   // bitmask   (1): 1+4+2+2+2+2+2
             _colNumOff = 5;   // col_num   (2)
+            _colMiscOff = 11;   // misc      (4): 1+4+2+2+2 — carries ComplexID for complex columns
 
             _realIdxEntrySz = 12;
             _numColsFldSz = 2;
@@ -195,6 +197,7 @@ public abstract class AccessBase : IAccessBase
             _colSzOff = 16;   // col_len   (2)
             _colFlagsOff = 13;   // bitmask   (1)
             _colNumOff = 1;   // col_num   (2)
+            _colMiscOff = 7;    // misc      (4) — Jet3 has no complex columns; included for layout symmetry
 
             _realIdxEntrySz = 8;
             _numColsFldSz = 1;
@@ -676,6 +679,7 @@ public abstract class AccessBase : IAccessBase
                 FixedOff = Ru16(td, o + _colFixedOff),
                 Size = Ru16(td, o + _colSzOff),
                 Flags = td[o + _colFlagsOff],
+                Misc = Ri32(td, o + _colMiscOff),
             });
         }
 
