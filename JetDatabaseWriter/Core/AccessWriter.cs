@@ -5340,8 +5340,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         AttachmentInput attachment,
         CancellationToken cancellationToken = default)
     {
+#if NET6_0_OR_GREATER
         ArgumentNullException.ThrowIfNull(parentRowKey);
         ArgumentNullException.ThrowIfNull(attachment);
+#else
+        if (parentRowKey is null)
+        {
+            throw new ArgumentNullException(nameof(parentRowKey));
+        }
+
+        if (attachment is null)
+        {
+            throw new ArgumentNullException(nameof(attachment));
+        }
+#endif
         return AddComplexItemCoreAsync(tableName, columnName, parentRowKey, attachment, expectAttachment: true, cancellationToken);
     }
 
@@ -5353,7 +5365,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         object value,
         CancellationToken cancellationToken = default)
     {
+#if NET6_0_OR_GREATER
         ArgumentNullException.ThrowIfNull(parentRowKey);
+#else
+        if (parentRowKey is null)
+        {
+            throw new ArgumentNullException(nameof(parentRowKey));
+        }
+#endif
         return AddComplexItemCoreAsync(tableName, columnName, parentRowKey, value, expectAttachment: false, cancellationToken);
     }
 

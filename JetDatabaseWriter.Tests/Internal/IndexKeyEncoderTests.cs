@@ -183,7 +183,6 @@ public sealed class IndexKeyEncoderTests
     }
 
     [Theory]
-    [InlineData(T_GUID)]
     [InlineData(T_NUMERIC)]
     public void UnsupportedColumnType_Throws(byte columnType)
     {
@@ -270,6 +269,116 @@ public sealed class IndexKeyEncoderTests
     public void Text_UnsupportedCharacter_Throws(string value)
     {
         Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(T_TEXT, value, ascending: true));
+    }
+
+    // ── W12: GUID encoding via Jackcess "general binary entry" wrapping ──
+
+    [Fact]
+    public void Guid_Null_EmitsSingleFlagByte()
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_GUID, value: null, ascending: true);
+        Assert.Equal(new byte[] { 0x00 }, encoded);
+    }
+
+    [Fact]
+    public void Guid_Ascending_HasExpectedLayout()
+    {
+        // GUID display bytes 00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF.
+        // Storage layout (Guid.ToByteArray): 33 22 11 00 55 44 77 66 88..FF.
+        var g = Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF");
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_GUID, g, ascending: true);
+
+        Assert.Equal(19, encoded.Length);
+        Assert.Equal(0x7F, encoded[0]); // ascending flag
+        Assert.Equal(0x09, encoded[9]); // intermediate length byte
+        Assert.Equal(0x08, encoded[18]); // final length byte (8 valid bytes)
+
+        Assert.Equal(
+            new byte[]
+            {
+                0x7F,
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                0x09,
+                0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+                0x08,
+            },
+            encoded);
+    }
+
+    [Fact]
+    public void Guid_Descending_FlipsDataAndFinalLengthButNotIntermediate()
+    {
+        var g = Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF");
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_GUID, g, ascending: false);
+
+        Assert.Equal(19, encoded.Length);
+        Assert.Equal(0x80, encoded[0]); // descending flag (NOT 0x80 = ~0x7F via post-flip — emitted directly)
+        Assert.Equal(0x09, encoded[9]); // intermediate length byte stays unflipped
+        Assert.Equal((byte)0xF7, encoded[18]); // final length byte IS flipped → ~0x08 = 0xF7
+
+        // Data bytes are bit-flipped.
+        Assert.Equal(unchecked((byte)~0x00), encoded[1]);
+        Assert.Equal(unchecked((byte)~0x11), encoded[2]);
+        Assert.Equal(unchecked((byte)~0xFF), encoded[17]);
+    }
+
+    [Fact]
+    public void Guid_Ordering_IsLexicographic_Ascending()
+    {
+        Guid[] values =
+        {
+            Guid.Parse("00000000-0000-0000-0000-000000000000"),
+            Guid.Parse("00000000-0000-0000-0000-000000000001"),
+            Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF"),
+            Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFE"),
+            Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"),
+        };
+
+        byte[][] encoded = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++)
+        {
+            encoded[i] = IndexKeyEncoder.EncodeEntry(T_GUID, values[i], ascending: true);
+        }
+
+        for (int i = 1; i < encoded.Length; i++)
+        {
+            Assert.True(
+                CompareLex(encoded[i - 1], encoded[i]) < 0,
+                $"Ascending order violated between {values[i - 1]} and {values[i]}.");
+        }
+    }
+
+    [Fact]
+    public void Guid_Ordering_IsReverseOfAscending_Descending()
+    {
+        Guid[] values =
+        {
+            Guid.Parse("00000000-0000-0000-0000-000000000000"),
+            Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF"),
+            Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"),
+        };
+
+        byte[][] encoded = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++)
+        {
+            encoded[i] = IndexKeyEncoder.EncodeEntry(T_GUID, values[i], ascending: false);
+        }
+
+        for (int i = 1; i < encoded.Length; i++)
+        {
+            Assert.True(
+                CompareLex(encoded[i - 1], encoded[i]) > 0,
+                $"Descending order violated between {values[i - 1]} and {values[i]}.");
+        }
+    }
+
+    [Fact]
+    public void Guid_AcceptsStringInput()
+    {
+        var g = Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF");
+        byte[] fromGuid = IndexKeyEncoder.EncodeEntry(T_GUID, g, ascending: true);
+        byte[] fromString = IndexKeyEncoder.EncodeEntry(T_GUID, "00112233-4455-6677-8899-AABBCCDDEEFF", ascending: true);
+        Assert.Equal(fromGuid, fromString);
     }
 
     private static int CompareLex(byte[] a, byte[] b)

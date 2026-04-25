@@ -74,6 +74,24 @@ internal static class TestDatabases
     public static string JackcessRoot =>
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "Jackcess");
 
+    // ── mdbtools fixtures (Databases/mdbtools/) ──────────────────────
+    // Mirrored from https://github.com/mdbtools/mdbtestdata/tree/master/data.
+    // Used to provide a cross-implementation conformance signal — i.e. that
+    // this library can read every fixture mdbtools' own test suite reads.
+    // See Databases/mdbtools/THIRD-PARTY-NOTICES.txt for provenance.
+
+    private static string Mt(string fileName) =>
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "mdbtools", fileName);
+
+    /// <summary>Northwind sample from mdbtestdata; Jet 4 .mdb. Contains the German-named "Umsätze" table mdbtools uses for codepage tests.</summary>
+    public static readonly string MdbtoolsNwind = Mt("nwind.mdb");
+
+    /// <summary>Asset-tracking sample ACCDB from mdbtestdata. Contains the "Asset Items" table and the "qryCostsSummedByOwner" stored query.</summary>
+    public static readonly string MdbtoolsASampleDatabase = Mt("ASampleDatabase.accdb");
+
+    /// <summary>Small database created to regression-test mdbtools' date parser.</summary>
+    public static readonly string MdbtoolsDateTestDatabase = Mt("DateTestDatabase.mdb");
+
     // Root-level Jackcess fixtures
     public static readonly string AdoxJet4 = Jc("adox_jet4.mdb");
     public static readonly string LinkeeTest = Jc("linkeeTest.accdb");

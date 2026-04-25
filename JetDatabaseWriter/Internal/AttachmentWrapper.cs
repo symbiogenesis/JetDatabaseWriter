@@ -33,7 +33,14 @@ internal static class AttachmentWrapper
     /// <param name="payload">Raw uncompressed file bytes.</param>
     public static byte[] Encode(string fileExtension, byte[] payload)
     {
+#if NET6_0_OR_GREATER
         ArgumentNullException.ThrowIfNull(payload);
+#else
+        if (payload is null)
+        {
+            throw new ArgumentNullException(nameof(payload));
+        }
+#endif
 
         fileExtension ??= string.Empty;
         bool compress = ShouldCompress(fileExtension);

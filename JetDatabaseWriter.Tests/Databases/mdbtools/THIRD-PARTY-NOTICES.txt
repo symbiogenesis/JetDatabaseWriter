@@ -1,0 +1,33 @@
+mdbtools test fixtures
+======================
+
+The .mdb / .accdb files in this directory are mirrored from the
+mdbtools/mdbtestdata repository:
+
+    https://github.com/mdbtools/mdbtestdata/tree/master/data
+
+Files:
+
+  nwind.mdb              — Northwind sample (Jet 4 / Access 2000+).
+                            Notable: contains a German-named table "Umsätze"
+                            used by mdbtools' codepage decoding tests.
+
+  ASampleDatabase.accdb  — Asset-tracking sample (ACE / Access 2007+).
+                            Notable: table "Asset Items"; named query
+                            "qryCostsSummedByOwner".
+
+  DateTestDatabase.mdb   — Tiny database created specifically to regression-test
+                            mdbtools' date column parser.
+
+These files are stored separately by the upstream project for FLOSS / licensing
+reasons. The mdbtestdata README states only:
+
+    "Test files for MDB Tools found on the Internet."
+
+They are reproduced here under the same fair-use rationale that the upstream
+project relies on (research / interoperability testing of a documented file
+format). They are not part of any shipped artefact and are excluded from the
+NuGet package; they live solely under JetDatabaseWriter.Tests/.
+
+If you are an author of one of these files and want it removed, please open an
+issue on https://github.com/diegoripera/JetDatabaseWriter.

@@ -69,8 +69,20 @@ public sealed record RelationshipDefinition
         string foreignTable,
         IReadOnlyList<string> foreignColumns)
     {
+#if NET6_0_OR_GREATER
         ArgumentNullException.ThrowIfNull(primaryColumns);
         ArgumentNullException.ThrowIfNull(foreignColumns);
+#else
+        if (primaryColumns is null)
+        {
+            throw new ArgumentNullException(nameof(primaryColumns));
+        }
+
+        if (foreignColumns is null)
+        {
+            throw new ArgumentNullException(nameof(foreignColumns));
+        }
+#endif
 
         if (primaryColumns.Count == 0)
         {
