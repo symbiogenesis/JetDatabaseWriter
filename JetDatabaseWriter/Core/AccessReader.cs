@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -654,6 +655,190 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return await JoinComplexColumnsAsync(byComplexId, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask<IReadOnlyList<AttachmentRecord>> GetAttachmentsAsync(string tableName, string columnName, CancellationToken cancellationToken = default)
+    {
+        Guard.ThrowIfDisposed(_disposed, this);
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNullOrEmpty(columnName, nameof(columnName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        IReadOnlyList<ComplexColumnInfo> complex = await GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ComplexColumnInfo? info = null;
+        foreach (ComplexColumnInfo c in complex)
+        {
+            if (string.Equals(c.ColumnName, columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                info = c;
+                break;
+            }
+        }
+
+        if (info == null || string.IsNullOrEmpty(info.FlatTableName))
+        {
+            return [];
+        }
+
+        DataTable flat = await ReadDataTableAsync(info.FlatTableName, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (flat.Rows.Count == 0)
+        {
+            return [];
+        }
+
+        int idxFk = FindFlatLongFkIndex(flat);
+        int idxFileURL = flat.Columns.IndexOf("FileURL");
+        int idxFileName = flat.Columns.IndexOf("FileName");
+        int idxFileType = flat.Columns.IndexOf("FileType");
+        int idxFileTime = flat.Columns.IndexOf("FileTimeStamp");
+        int idxFileData = flat.Columns.IndexOf("FileData");
+
+        var result = new List<AttachmentRecord>(flat.Rows.Count);
+        foreach (DataRow r in flat.Rows)
+        {
+            int fk = idxFk >= 0 && r[idxFk] is not DBNull ? Convert.ToInt32(r[idxFk], CultureInfo.InvariantCulture) : 0;
+            byte[] rawData = ExtractOleBytes(idxFileData >= 0 ? r[idxFileData] : null);
+            byte[] decoded = rawData;
+            string ext = idxFileType >= 0 && r[idxFileType] is not DBNull ? Convert.ToString(r[idxFileType], CultureInfo.InvariantCulture) ?? string.Empty : string.Empty;
+            if (rawData.Length > 0 && AttachmentWrapper.TryDecode(rawData, out string decodedExt, out byte[] payload))
+            {
+                decoded = payload;
+                if (string.IsNullOrEmpty(ext))
+                {
+                    ext = decodedExt;
+                }
+            }
+
+            result.Add(new AttachmentRecord
+            {
+                ConceptualTableId = fk,
+                FileName = idxFileName >= 0 && r[idxFileName] is not DBNull ? Convert.ToString(r[idxFileName], CultureInfo.InvariantCulture) ?? string.Empty : string.Empty,
+                FileType = ext,
+                FileURL = idxFileURL >= 0 && r[idxFileURL] is not DBNull ? Convert.ToString(r[idxFileURL], CultureInfo.InvariantCulture) : null,
+                FileTimeStamp = idxFileTime >= 0 && r[idxFileTime] is DateTime dt ? dt : null,
+                FileData = decoded,
+            });
+        }
+
+        return result;
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask<IReadOnlyList<(int ConceptualTableId, object? Value)>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default)
+    {
+        Guard.ThrowIfDisposed(_disposed, this);
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNullOrEmpty(columnName, nameof(columnName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        IReadOnlyList<ComplexColumnInfo> complex = await GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ComplexColumnInfo? info = null;
+        foreach (ComplexColumnInfo c in complex)
+        {
+            if (string.Equals(c.ColumnName, columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                info = c;
+                break;
+            }
+        }
+
+        if (info == null || string.IsNullOrEmpty(info.FlatTableName))
+        {
+            return [];
+        }
+
+        DataTable flat = await ReadDataTableAsync(info.FlatTableName, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (flat.Rows.Count == 0)
+        {
+            return [];
+        }
+
+        int idxFk = FindFlatLongFkIndex(flat);
+        int idxValue = flat.Columns.IndexOf("value");
+        if (idxValue < 0)
+        {
+            // Fallback: first non-FK column.
+            for (int i = 0; i < flat.Columns.Count; i++)
+            {
+                if (i != idxFk)
+                {
+                    idxValue = i;
+                    break;
+                }
+            }
+        }
+
+        var result = new List<(int, object?)>(flat.Rows.Count);
+        foreach (DataRow r in flat.Rows)
+        {
+            int fk = idxFk >= 0 && r[idxFk] is not DBNull ? Convert.ToInt32(r[idxFk], CultureInfo.InvariantCulture) : 0;
+            object? value = idxValue >= 0 && r[idxValue] is not DBNull ? r[idxValue] : null;
+            result.Add((fk, value));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Coerces an OLE column cell to its raw bytes. <see cref="ReadDataTableAsync"/>
+    /// surfaces OLE values either as a byte array (when the typed reader can recover
+    /// them directly) or as <c>"data:...;base64,..."</c> data-URI strings; both
+    /// shapes are handled here.
+    /// </summary>
+    private static byte[] ExtractOleBytes(object? cell)
+    {
+        if (cell is null or DBNull)
+        {
+            return [];
+        }
+
+        if (cell is byte[] b)
+        {
+            return b;
+        }
+
+        if (cell is string s && s.StartsWith("data:", StringComparison.Ordinal))
+        {
+            int comma = s.IndexOf(',', StringComparison.Ordinal);
+            if (comma >= 0 && comma + 1 < s.Length)
+            {
+                try
+                {
+                    return Convert.FromBase64String(s.Substring(comma + 1));
+                }
+                catch (FormatException)
+                {
+                    return [];
+                }
+            }
+        }
+
+        return [];
+    }
+
+    private static int FindFlatLongFkIndex(DataTable flat)
+    {
+        // Prefer the conventional `_<userColumnName>` FK column (C3 emitter
+        // and Access-authored fixtures both use this naming).
+        for (int i = 0; i < flat.Columns.Count; i++)
+        {
+            DataColumn c = flat.Columns[i];
+            if (c.DataType == typeof(int) && c.ColumnName.StartsWith('_'))
+            {
+                return i;
+            }
+        }
+
+        for (int i = 0; i < flat.Columns.Count; i++)
+        {
+            if (flat.Columns[i].DataType == typeof(int))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private static ComplexColumnKind ClassifyComplexKind(string complexTypeName)

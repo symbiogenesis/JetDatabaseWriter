@@ -194,6 +194,29 @@ foreach (ComplexColumnInfo c in complex)
 
 Returns an empty list for tables without complex columns and for older Jet3 / Jet4 (`.mdb`) files.
 
+#### Reading and writing complex column rows (Phase C4)
+
+For ACE `.accdb` files, attachments and multi-value items can be inserted into an existing parent row and read back via spec-compliant APIs:
+
+```csharp
+// Insert an attachment into the row whose Id = 1
+await writer.AddAttachmentAsync(
+    "Documents",
+    "Files",
+    new Dictionary<string, object> { ["Id"] = 1 },
+    new AttachmentInput("notes.txt", File.ReadAllBytes("notes.txt")),
+    cancellationToken);
+
+// Insert a multi-value tag item
+await writer.AddMultiValueItemAsync("Tags", "Items", new Dictionary<string, object> { ["Id"] = 1 }, "red", cancellationToken);
+
+// Read back
+IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("Documents", "Files", cancellationToken);
+IReadOnlyList<(int ConceptualTableId, object? Value)> tags = await reader.GetMultiValueItemsAsync("Tags", "Items", cancellationToken);
+```
+
+The parent-row predicate must match exactly one row (zero or multiple matches throw `InvalidOperationException`). Attachment payloads are wrapped per MS-ACCDB §3.1 (4-byte typeFlag + dataLen + extension + payload, with raw-deflate compression skipped for already-compressed extensions). Payload size is capped at ~256 bytes per file by the writer's inline-OLE limitation.
+
 ### String DataTable — compatibility
 
 ```csharp
@@ -629,7 +652,7 @@ The writer targets the most common create / insert / update / delete scenarios. 
 - **Validation gap.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not yet been round-tripped through Microsoft Access on Windows for a Compact & Repair smoke test. Defer production use until that has been verified by hand.
 
 ### Specialized column kinds
-- **Attachment & multi-value (complex) columns — schema only.** `CreateTableAsync` now accepts `ColumnDefinition` entries with `IsAttachment = true` or `IsMultiValue = true` (Phase C3, ACE `.accdb` only): the parent column descriptor, hidden flat child table, and `MSysComplexColumns` row are emitted so files round-trip through this library's reader (`GetComplexColumnsAsync`). What's still missing: row-level APIs to add attachment payloads or multi-value items (Phase C4), cascade-on-delete from the parent (Phase C5), `DropTableAsync` cascade for the hidden flat tables (Phase C6), and the per-flat-table primary-key / foreign-key indexes Microsoft Access expects (a Compact & Repair pass in Access is required to rebuild them). `ComplexTypeObjectID` is set to `0` because the `MSysComplexType_*` template tables are not yet scaffolded. Tables that already contain attachment columns when opened cannot be passed through `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`.
+- **Attachment & multi-value (complex) columns — schema + row-level inserts.** `CreateTableAsync` accepts `ColumnDefinition` entries with `IsAttachment = true` or `IsMultiValue = true` (Phase C3, ACE `.accdb` only): the parent column descriptor, hidden flat child table, and `MSysComplexColumns` row are emitted. Phase C4 (2026-04-25) adds `AccessWriter.AddAttachmentAsync` / `AddMultiValueItemAsync` for inserting payloads into an existing parent row, plus `AccessReader.GetAttachmentsAsync` / `GetMultiValueItemsAsync` for spec-compliant retrieval. The wrapper format follows MS-ACCDB §3.1 (4-byte LE typeFlag + dataLen + extension + payload, with raw-deflate compression skipped for already-compressed extensions like `jpg`/`zip`/`mp3`). What's still missing: cascade-on-delete from the parent (Phase C5), `DropTableAsync` cascade for the hidden flat tables (Phase C6), and the per-flat-table primary-key / foreign-key indexes Microsoft Access expects (a Compact & Repair pass in Access is required to rebuild them). Attachment payloads are limited to ≤256 bytes per file due to the writer's inline-OLE cap (no LVAL chain emission yet). `ComplexTypeObjectID` is set to `0` because the `MSysComplexType_*` template tables are not yet scaffolded. Tables that already contain attachment columns when opened cannot be passed through `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`.
 - **No calculated columns** (Access 2010+ expression columns).
 - **No hyperlink semantics.** Hyperlink fields round-trip as plain MEMO text; the `#display#address#subaddress#` structure is not parsed or emitted.
 

@@ -33,10 +33,7 @@ internal static class AttachmentWrapper
     /// <param name="payload">Raw uncompressed file bytes.</param>
     public static byte[] Encode(string fileExtension, byte[] payload)
     {
-        if (payload == null)
-        {
-            throw new ArgumentNullException(nameof(payload));
-        }
+        ArgumentNullException.ThrowIfNull(payload);
 
         fileExtension ??= string.Empty;
         bool compress = ShouldCompress(fileExtension);
@@ -94,7 +91,7 @@ internal static class AttachmentWrapper
             return false;
         }
 
-        if (dataLen == 0 || (long)dataLen > wrapped.Length - 8L)
+        if (dataLen == 0 || dataLen > (uint)(wrapped.Length - 8))
         {
             return false;
         }
@@ -124,7 +121,7 @@ internal static class AttachmentWrapper
 
         uint headerLen = BinaryPrimitives.ReadUInt32LittleEndian(content.AsSpan(0, 4));
         uint extLen = BinaryPrimitives.ReadUInt32LittleEndian(content.AsSpan(8, 4));
-        if (headerLen < 12 || headerLen > content.Length || (long)12 + extLen > headerLen)
+        if (headerLen < 12 || headerLen > content.Length || 12 + extLen > headerLen)
         {
             return false;
         }
