@@ -284,7 +284,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         var readerOptions = new AccessReaderOptions
         {
             UseLockFile = false,
-            Password = SecureStringTestHelper.FromString(Password),
+            Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
         };
         await using var reader = await AccessReader.OpenAsync(temp, readerOptions, TestContext.Current.CancellationToken);
         DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;

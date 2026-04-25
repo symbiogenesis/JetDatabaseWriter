@@ -322,6 +322,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new ArgumentException("At least one column is required", nameof(columns));
         }
 
+        // W8: pre-process column-level IsPrimaryKey shortcut. Synthesize one
+        // composite PK IndexDefinition (named "PrimaryKey") from columns
+        // marked IsPrimaryKey=true, in declaration order, and force those
+        // columns to IsNullable=false on the emitted TDEF. Mixing the
+        // shortcut with an explicit PK IndexDefinition is rejected.
+        (columns, indexes) = ApplyPrimaryKeyShortcut(columns, indexes);
+
         if (indexes.Count > 0 && _format == DatabaseFormat.Jet3Mdb)
         {
             throw new NotSupportedException("Index emission is only supported for Jet4 (.mdb) and ACE (.accdb) databases.");
@@ -541,22 +548,49 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 var result = new List<IndexDefinition>(existingIndexes.Count);
                 foreach (IndexMetadata idx in existingIndexes)
                 {
-                    if (idx.Kind != IndexKind.Normal || idx.Columns.Count != 1)
+                    // Forward Normal (single-column) and PrimaryKey (1..N column)
+                    // indexes; FK forwarding is W9 territory.
+                    if (idx.Kind != IndexKind.Normal && idx.Kind != IndexKind.PrimaryKey)
                     {
                         continue;
                     }
 
-                    string keyColumn = idx.Columns[0].Name;
-                    string remapped = string.Equals(keyColumn, oldColumnName, StringComparison.OrdinalIgnoreCase)
-                        ? newColumnName
-                        : keyColumn;
-
-                    if (string.IsNullOrEmpty(remapped) || !newColumnNames.Contains(remapped))
+                    if (idx.Kind == IndexKind.Normal && idx.Columns.Count != 1)
                     {
                         continue;
                     }
 
-                    result.Add(new IndexDefinition(idx.Name, remapped));
+                    var remappedCols = new List<string>(idx.Columns.Count);
+                    bool allSurvive = true;
+                    foreach (IndexColumnReference ic in idx.Columns)
+                    {
+                        string keyColumn = ic.Name;
+                        string remapped = string.Equals(keyColumn, oldColumnName, StringComparison.OrdinalIgnoreCase)
+                            ? newColumnName
+                            : keyColumn;
+
+                        if (string.IsNullOrEmpty(remapped) || !newColumnNames.Contains(remapped))
+                        {
+                            allSurvive = false;
+                            break;
+                        }
+
+                        remappedCols.Add(remapped);
+                    }
+
+                    if (!allSurvive)
+                    {
+                        continue;
+                    }
+
+                    if (idx.Kind == IndexKind.PrimaryKey)
+                    {
+                        result.Add(new IndexDefinition(idx.Name, remappedCols) { IsPrimaryKey = true });
+                    }
+                    else
+                    {
+                        result.Add(new IndexDefinition(idx.Name, remappedCols[0]));
+                    }
                 }
 
                 return result;
@@ -1892,9 +1926,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <summary>
     /// Default index-projection strategy used by <see cref="RewriteTableAsync"/>
     /// when no caller-specific projection is supplied. Forwards every existing
-    /// single-column normal index whose key column still exists (case-insensitive
-    /// name match) in the rebuilt schema. PK / FK / multi-column indexes are not
-    /// emitted today (W8/W9 territory) so they are filtered out unconditionally.
+    /// normal or primary-key index whose key columns all still exist
+    /// (case-insensitive name match) in the rebuilt schema. Non-PK indexes
+    /// must be single-column (multi-column non-PK indexes are not supported).
+    /// FK indexes are not forwarded today (W9 territory).
     /// </summary>
     private static List<IndexDefinition> DefaultIndexProjection(IReadOnlyList<IndexMetadata> existing, IReadOnlyList<ColumnDefinition> newDefs)
     {
@@ -1907,23 +1942,50 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         foreach (IndexMetadata idx in existing)
         {
-            if (idx.Kind != IndexKind.Normal)
+            if (idx.Kind != IndexKind.Normal && idx.Kind != IndexKind.PrimaryKey)
             {
                 continue;
             }
 
-            if (idx.Columns.Count != 1)
+            if (idx.Columns.Count == 0)
             {
                 continue;
             }
 
-            string keyColumn = idx.Columns[0].Name;
-            if (string.IsNullOrEmpty(keyColumn) || !newColumnNames.Contains(keyColumn))
+            if (idx.Kind == IndexKind.Normal && idx.Columns.Count != 1)
             {
                 continue;
             }
 
-            result.Add(new IndexDefinition(idx.Name, keyColumn));
+            bool allSurvive = true;
+            foreach (IndexColumnReference ic in idx.Columns)
+            {
+                if (string.IsNullOrEmpty(ic.Name) || !newColumnNames.Contains(ic.Name))
+                {
+                    allSurvive = false;
+                    break;
+                }
+            }
+
+            if (!allSurvive)
+            {
+                continue;
+            }
+
+            if (idx.Kind == IndexKind.PrimaryKey)
+            {
+                var pkCols = new string[idx.Columns.Count];
+                for (int i = 0; i < idx.Columns.Count; i++)
+                {
+                    pkCols[i] = idx.Columns[i].Name;
+                }
+
+                result.Add(new IndexDefinition(idx.Name, pkCols) { IsPrimaryKey = true });
+            }
+            else
+            {
+                result.Add(new IndexDefinition(idx.Name, idx.Columns[0].Name));
+            }
         }
 
         return result;
@@ -2353,13 +2415,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // §3.1: unknown(4) + col_map(30) + used_pages(4) + first_dp(4) + flags(1) + unknown(9).
                 int phys = realIdxPhysStart + (i * realIdxPhysSz);
 
-                // col_map: 10 × { col_num(2), col_order(1) }. Slot 0 = our column, rest = 0xFFFF.
+                // col_map: 10 × { col_num(2), col_order(1) }. First N slots = our
+                // key columns (ascending), remaining slots filled with 0xFFFF.
                 for (int slot = 0; slot < 10; slot++)
                 {
                     int so = phys + 4 + (slot * 3);
-                    if (slot == 0)
+                    if (slot < ri.ColumnNumbers.Count)
                     {
-                        Wu16(page, so, ri.ColumnNumber);
+                        Wu16(page, so, ri.ColumnNumbers[slot]);
                         page[so + 2] = 0x01; // ascending
                     }
                     else
@@ -2372,7 +2435,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // used_pages (4 bytes) at phys + 34, first_dp (4 bytes) at phys + 38,
                 // flags (1) at phys + 42, trailing 9 bytes at phys + 43..51 — all
                 // start zero. The caller patches first_dp after appending the
-                // leaf page (W3); used_pages remains 0 (no usage bitmap is emitted).
+                // leaf page (W3); used_pages remains 0 (no usage bitmap is
+                // emitted). Per the §3.1 empirical correction, real Access
+                // fixtures emit flags = 0x00 even for PK indexes — uniqueness
+                // is signalled by index_type = 0x01 below, not the flag bit.
                 firstDpOffsets[i] = phys + 4 + 30 + 4;
 
                 // ── Logical-index entry (Jet4: 28 bytes) ────────────────────
@@ -2384,8 +2450,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 Wi32(page, log + 8, i);                  // index_num2 (one real per logical)
                 Wi32(page, log + 13, -1);                // rel_idx_num = 0xFFFFFFFF (not a FK)
 
-                // index_type: Normal index (PK/FK emission would set 0x01 / 0x02 here).
-                page[log + 23] = (byte)IndexKind.Normal;
+                // index_type: 0x01 for PK (W8), 0x00 for normal. FK (0x02) is W9.
+                page[log + 23] = (byte)(ri.IsPrimaryKey ? IndexKind.PrimaryKey : IndexKind.Normal);
             }
 
             // Logical-index names — same length-prefix encoding as column names.
@@ -2419,6 +2485,102 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return (page, firstDpOffsets);
     }
 
+    /// <summary>
+    /// W8: synthesizes a primary-key <see cref="IndexDefinition"/> from any
+    /// <see cref="ColumnDefinition.IsPrimaryKey"/> flags set on the supplied
+    /// columns and forces those columns to <see cref="ColumnDefinition.IsNullable"/>
+    /// = <c>false</c> on the returned column list (the JET TDEF flag bit
+    /// <c>FLAG_NULL_ALLOWED 0x02</c> is cleared, matching Access semantics
+    /// for PK columns). Mixing the column-level shortcut with an explicit
+    /// PK <see cref="IndexDefinition"/> in the same call throws
+    /// <see cref="ArgumentException"/>.
+    /// </summary>
+    private static (IReadOnlyList<ColumnDefinition> Columns, IReadOnlyList<IndexDefinition> Indexes) ApplyPrimaryKeyShortcut(
+        IReadOnlyList<ColumnDefinition> columns,
+        IReadOnlyList<IndexDefinition> indexes)
+    {
+        bool anyColumnPk = false;
+        foreach (ColumnDefinition c in columns)
+        {
+            if (c.IsPrimaryKey)
+            {
+                anyColumnPk = true;
+                break;
+            }
+        }
+
+        bool anyIndexPk = false;
+        foreach (IndexDefinition idx in indexes)
+        {
+            if (idx.IsPrimaryKey)
+            {
+                anyIndexPk = true;
+                break;
+            }
+        }
+
+        if (anyColumnPk && anyIndexPk)
+        {
+            throw new ArgumentException(
+                "Primary key declared both via ColumnDefinition.IsPrimaryKey and an explicit IndexDefinition.IsPrimaryKey. Use one or the other.");
+        }
+
+        // Force PK key columns (whether declared via column flag OR an explicit
+        // PK IndexDefinition) to non-nullable on the emitted TDEF.
+        HashSet<string>? pkColumnNames = null;
+        if (anyColumnPk)
+        {
+            pkColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var pkColList = new List<string>();
+            foreach (ColumnDefinition c in columns)
+            {
+                if (c.IsPrimaryKey)
+                {
+                    pkColumnNames.Add(c.Name);
+                    pkColList.Add(c.Name);
+                }
+            }
+
+            var newIndexes = new List<IndexDefinition>(indexes.Count + 1);
+            newIndexes.AddRange(indexes);
+            newIndexes.Add(new IndexDefinition("PrimaryKey", pkColList) { IsPrimaryKey = true });
+            indexes = newIndexes;
+        }
+        else if (anyIndexPk)
+        {
+            pkColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (IndexDefinition idx in indexes)
+            {
+                if (idx.IsPrimaryKey)
+                {
+                    foreach (string col in idx.Columns)
+                    {
+                        pkColumnNames.Add(col);
+                    }
+                }
+            }
+        }
+
+        if (pkColumnNames is not null)
+        {
+            var newCols = new ColumnDefinition[columns.Count];
+            for (int i = 0; i < columns.Count; i++)
+            {
+                ColumnDefinition c = columns[i];
+                if (pkColumnNames.Contains(c.Name) && c.IsNullable)
+                {
+                    c = c with { IsNullable = false };
+                }
+
+                newCols[i] = c;
+            }
+
+            columns = newCols;
+        }
+
+        return (columns, indexes);
+    }
+
     private IReadOnlyList<ResolvedIndex> ResolveIndexes(IReadOnlyList<IndexDefinition> indexes, TableDef tableDef)
     {
         if (indexes.Count == 0)
@@ -2428,6 +2590,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         var result = new List<ResolvedIndex>(indexes.Count);
         var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool sawPk = false;
         for (int i = 0; i < indexes.Count; i++)
         {
             IndexDefinition def = indexes[i];
@@ -2441,19 +2604,52 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 throw new ArgumentException($"Duplicate index name '{def.Name}'.", nameof(indexes));
             }
 
-            if (def.Columns.Count != 1)
+            if (def.Columns.Count == 0)
             {
-                throw new NotSupportedException($"IndexDefinition '{def.Name}' must reference exactly one column (multi-column indexes are not supported in this phase).");
+                throw new ArgumentException($"IndexDefinition '{def.Name}' must reference at least one column.", nameof(indexes));
             }
 
-            string columnName = def.Columns[0];
-            ColumnInfo? column = tableDef.Columns.Find(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
-            if (column is null)
+            // The JET col_map carries up to 10 columns per index (§3.1).
+            if (def.Columns.Count > 10)
             {
-                throw new ArgumentException($"IndexDefinition '{def.Name}' references unknown column '{columnName}'.", nameof(indexes));
+                throw new NotSupportedException($"IndexDefinition '{def.Name}' has {def.Columns.Count} columns; the JET col_map supports at most 10.");
             }
 
-            result.Add(new ResolvedIndex(def.Name, column.ColNum));
+            if (!def.IsPrimaryKey && def.Columns.Count != 1)
+            {
+                throw new NotSupportedException($"IndexDefinition '{def.Name}' must reference exactly one column (multi-column non-PK indexes are not supported).");
+            }
+
+            if (def.IsPrimaryKey)
+            {
+                if (sawPk)
+                {
+                    throw new ArgumentException("Only one primary-key index is permitted per table.", nameof(indexes));
+                }
+
+                sawPk = true;
+            }
+
+            var seenCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var colNums = new int[def.Columns.Count];
+            for (int k = 0; k < def.Columns.Count; k++)
+            {
+                string columnName = def.Columns[k];
+                if (!seenCols.Add(columnName))
+                {
+                    throw new ArgumentException($"IndexDefinition '{def.Name}' references column '{columnName}' more than once.", nameof(indexes));
+                }
+
+                ColumnInfo? column = tableDef.Columns.Find(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+                if (column is null)
+                {
+                    throw new ArgumentException($"IndexDefinition '{def.Name}' references unknown column '{columnName}'.", nameof(indexes));
+                }
+
+                colNums[k] = column.ColNum;
+            }
+
+            result.Add(new ResolvedIndex(def.Name, colNums, def.IsPrimaryKey));
         }
 
         return result;
@@ -3461,7 +3657,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int realIdxDescStart = namePos;
 
         // For each real-index slot referenced by a logical index, recover the key
-        // column number (col_map slot 0; W1/W2 emits exactly one column per index)
+        // column number (col_map slot 0; W1/W2 emits exactly one column for normal
+        // indexes, but W8 may emit multi-column for PK — those are skipped below)
         // and the byte offset of that real-idx's first_dp field.
         var realIdxToKey = new Dictionary<int, (int ColumnNumber, int FirstDpOffset)>();
         for (int ri = 0; ri < numRealIdx; ri++)
@@ -3474,6 +3671,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             int keyColNum = Ru16(tdefBuffer, phys + 4);
             if (keyColNum == 0xFFFF)
+            {
+                continue;
+            }
+
+            // Multi-column index? slot 1's col_num is not 0xFFFF. Skip rebuild —
+            // IndexKeyEncoder does not yet concatenate multi-column keys
+            // (that lands with W7 / a multi-column W5). The leaf goes stale
+            // until Microsoft Access rebuilds it on Compact & Repair.
+            int slot1ColNum = Ru16(tdefBuffer, phys + 4 + 3);
+            if (slot1ColNum != 0xFFFF)
             {
                 continue;
             }
@@ -3657,14 +3864,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private readonly struct ResolvedIndex
     {
-        public ResolvedIndex(string name, int columnNumber)
+        public ResolvedIndex(string name, IReadOnlyList<int> columnNumbers, bool isPrimaryKey)
         {
             Name = name;
-            ColumnNumber = columnNumber;
+            ColumnNumbers = columnNumbers;
+            IsPrimaryKey = isPrimaryKey;
         }
 
         public string Name { get; }
 
-        public int ColumnNumber { get; }
+        public IReadOnlyList<int> ColumnNumbers { get; }
+
+        public bool IsPrimaryKey { get; }
     }
 }

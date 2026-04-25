@@ -202,9 +202,10 @@ Match case-insensitively against `FileType` (which Jackcess lowercases on store)
 
 Phases C2–C6 cannot ship until the index foundation in [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) reaches at least:
 
-- W1 (`IndexDefinition` + TDEF emission) — for the autonumber PK on the flat table
-- W3 (leaf-page emitter) — same, so the PK / FK indexes have real B-tree leafs and survive Access's compact/repair pass
-- W8 (PK API) — needed to declare the autonumber column as a primary key on the flat table
+- W1 (`IndexDefinition` + TDEF emission) — for the autonumber PK on the flat table ✅ shipped
+- W3 (leaf-page emitter) — same, so the PK / FK indexes have real B-tree leafs and survive Access's compact/repair pass ✅ shipped
+- W8 (PK API) — needed to declare the autonumber column as a primary key on the flat table ✅ shipped (2026-04-25); single-column PKs participate in W5 maintenance, multi-column PKs ship the schema only
+- W9 (FK + `MSysRelationships`) — needed for the FK back-reference from each flat-table row to its parent (still pending)
 
 > Note on W6 (`MSysIndexes` / `MSysIndexColumns`): these tables are absent from modern ACCDB ([index doc §6](index-and-relationship-format-notes.md#6-msysindexes--msysindexcolumns--msysrelationships-catalog-tables)), so for ACCDB output the flat table's index metadata lives entirely in its own TDEF. Complex columns themselves are an Access 2007+ (ACCDB) feature, so even if Jet3/Jet4 `.mdb` turns out to need W6 for ordinary indexes, that requirement does not propagate here.
 

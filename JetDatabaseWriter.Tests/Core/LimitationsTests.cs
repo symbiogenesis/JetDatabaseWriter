@@ -190,7 +190,8 @@ public sealed class LimitationsTests : IDisposable
         // Lifted limitation: ColumnDefinition exposes IsNullable, DefaultValue,
         // IsAutoIncrement, and ValidationRule on top of Name/ClrType/MaxLength,
         // plus four persisted properties (DefaultValueExpression, ValidationRuleExpression,
-        // ValidationText, Description) round-tripped through MSysObjects.LvProp.
+        // ValidationText, Description) round-tripped through MSysObjects.LvProp,
+        // and (W8) IsPrimaryKey as a shortcut for synthesizing a PK IndexDefinition.
         var publicProps = typeof(ColumnDefinition)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Select(p => p.Name)
@@ -205,6 +206,7 @@ public sealed class LimitationsTests : IDisposable
             "Description",
             "IsAutoIncrement",
             "IsNullable",
+            "IsPrimaryKey",
             "MaxLength",
             "Name",
             "ValidationRule",
