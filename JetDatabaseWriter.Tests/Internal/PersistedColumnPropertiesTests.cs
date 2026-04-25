@@ -242,7 +242,7 @@ public sealed class PersistedColumnPropertiesTests
     }
 
     [Fact]
-    public async Task DropColumnAsync_PreservesRemainingLvProp_DropsTargetForRemovedColumn()
+    public async Task DropColumnAsync_RemovesDroppedColumnLvProp_PreservesOthers()
     {
         var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(

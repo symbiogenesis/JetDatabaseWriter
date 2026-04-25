@@ -299,12 +299,10 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
     // 3. JET4 RC4 PAGE DECRYPTION
     // ═══════════════════════════════════════════════════════════════════
     //
-    // Current state: the password is verified against the stored hash,
-    // but actual RC4 decryption of data pages is not performed.
-    // When implemented, the reader should:
-    //   - Derive the RC4 key from the database key (header offset 0x3E)
-    //   - Decrypt each page (except page 0) using RC4 with the page-number-derived key
-    //   - Return correct, readable data from encrypted databases
+    // The reader derives the RC4 key from the database key (header offset 0x3E)
+    // and decrypts each page (except page 0) with a page-number-derived key.
+    // These tests encrypt a known database in memory and verify the reader
+    // returns the original rows when the correct password is supplied.
 
     [Fact]
     public async Task Rc4Decryption_EncryptedJet4_ReadTable_ReturnsDecryptedRows()

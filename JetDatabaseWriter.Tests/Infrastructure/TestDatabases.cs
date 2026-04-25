@@ -76,8 +76,8 @@ internal static class TestDatabases
 
     // ── mdbtools fixtures (Databases/mdbtools/) ──────────────────────
     // Mirrored from https://github.com/mdbtools/mdbtestdata/tree/master/data.
-    // Used to provide a cross-implementation conformance signal — i.e. that
-    // this library can read every fixture mdbtools' own test suite reads.
+    // Provides a cross-implementation conformance signal — i.e. that this
+    // library can read every fixture mdbtools' own test suite reads.
     // See Databases/mdbtools/THIRD-PARTY-NOTICES.txt for provenance.
 
     private static string Mt(string fileName) =>

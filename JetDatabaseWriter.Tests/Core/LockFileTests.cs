@@ -266,7 +266,7 @@ public sealed class LockFileTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task Writer_DisposeTwice_WithLockFile_DoesNotThrow(string path)
+    public async Task Writer_DisposeTwice_WithoutLockFile_DoesNotThrow(string path)
     {
         string temp = CopyToTemp(path);
         var options = new AccessWriterOptions { UseLockFile = false };

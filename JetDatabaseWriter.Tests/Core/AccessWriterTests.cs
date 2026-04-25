@@ -122,7 +122,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task InsertRows_MultiplRows_ReturnsCorrectInsertCount(string path)
+    public async Task InsertRows_MultipleRows_ReturnsCorrectInsertCount(string path)
     {
         var temp = await CopyToStreamAsync(path);
         var cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
@@ -496,7 +496,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         var temp = await CopyToStreamAsync(path);
         string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
 
-        // Create then drop
+        // Round-trip: create → verify → drop → verify
         var columns = new List<ColumnDefinition>
         {
             new("Id", typeof(int)),
@@ -507,19 +507,16 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
         }
 
-        // Verify it exists
         await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
             Assert.Contains(newTableName, await reader.ListTablesAsync(TestContext.Current.CancellationToken));
         }
 
-        // Drop it
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.DropTableAsync(newTableName, TestContext.Current.CancellationToken);
         }
 
-        // Verify it's gone
         await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
             Assert.DoesNotContain(newTableName, await reader.ListTablesAsync(TestContext.Current.CancellationToken));
@@ -1310,13 +1307,11 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             new("Value", typeof(string), maxLength: 50),
         };
 
-        // Create
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
         }
 
-        // Drop
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.DropTableAsync(tableName, TestContext.Current.CancellationToken);

@@ -20,8 +20,8 @@ using Xunit;
 /// that wiring.
 /// <para>
 /// These tests do <em>not</em> assert any seek / lookup behaviour — the leaf is
-/// empty at table-creation time and is not maintained by subsequent inserts
-/// (W5 is not yet implemented).
+/// empty at table-creation time. Index maintenance on subsequent inserts is
+/// covered by <c>IndexMaintenanceTests</c> and <c>IndexWriterAdvancedTests</c>.
 /// See <c>docs/design/index-and-relationship-format-notes.md</c>.
 /// </para>
 /// </summary>
@@ -169,8 +169,7 @@ public sealed class IndexWriterTests
     [Fact]
     public async Task CreateTable_WithIndex_DataInsertsAndReadsBack()
     {
-        // W1 doesn't emit leaf pages, but the heap data path must not be perturbed
-        // by the new TDEF index sections.
+        // The heap data path must not be perturbed by the TDEF index sections.
         await using var stream = await CreateFreshAccdbStreamAsync();
         const string TableName = "Idx_Data";
 
