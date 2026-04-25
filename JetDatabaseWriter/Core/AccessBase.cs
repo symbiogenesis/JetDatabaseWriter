@@ -479,6 +479,9 @@ public abstract class AccessBase : IAccessBase
                     return new Guid(ReadGuidBytes(row, start)).ToString("B");
                 case T_NUMERIC:
                     return ReadNumericString(row, start);
+                case T_COMPLEX:
+                case T_ATTACHMENT:
+                    return size >= 4 ? $"__CX:{Ri32(row, start)}__" : string.Empty;
                 default:
                     return BitConverter.ToString(row, start, Math.Min(size, 8));
             }

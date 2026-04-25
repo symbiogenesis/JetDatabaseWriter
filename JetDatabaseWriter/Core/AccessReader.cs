@@ -1542,39 +1542,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private static string ReadFixed(byte[] row, int start, ColumnInfo col, int sz)
     {
-        try
-        {
-            return col.Type switch
-            {
-                T_BYTE => row[start].ToString(CultureInfo.InvariantCulture),
-                T_INT => ((short)Ru16(row, start)).ToString(CultureInfo.InvariantCulture),
-                T_LONG => Ri32(row, start).ToString(CultureInfo.InvariantCulture),
-                T_FLOAT => BitConverter.ToSingle(row, start).ToString("G", CultureInfo.InvariantCulture),
-                T_DOUBLE => BitConverter.ToDouble(row, start).ToString("G", CultureInfo.InvariantCulture),
-                T_DATETIME => OaDateToString(BitConverter.ToDouble(row, start)),
-                T_MONEY => (BitConverter.ToInt64(row, start) / 10000.0m).ToString("F4", CultureInfo.InvariantCulture),
-                T_NUMERIC => ReadNumeric(row, start),
-                T_GUID => ReadGuid(row, start),
-                T_COMPLEX or T_ATTACHMENT when sz >= 4 => $"__CX:{Ri32(row, start)}__",
-                _ => BitConverter.ToString(row, start, Math.Min(sz, 8)),
-            };
-        }
-        catch (JetLimitationException)
-        {
-            throw;
-        }
-        catch (ArgumentException)
-        {
-            return string.Empty;
-        }
-        catch (OverflowException)
-        {
-            return string.Empty;
-        }
-        catch (IndexOutOfRangeException)
-        {
-            return string.Empty;
-        }
+        // T_NUMERIC overflow / scale>28 is surfaced as JetLimitationException on
+        // the reader path (callers rely on this contract). The shared
+        // AccessBase.ReadFixedString silently returns empty in those cases, so
+        // dispatch T_NUMERIC to the reader-local copy.
+        return col.Type == T_NUMERIC
+            ? ReadNumeric(row, start)
+            : ReadFixedString(row, start, col.Type, sz);
     }
 
     /// <summary>
@@ -1658,18 +1632,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return null;
     }
 
-    private static string OaDateToString(double oaDate)
-    {
-        try
-        {
-            return DateTime.FromOADate(oaDate).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-        }
-        catch (ArgumentException)
-        {
-            return string.Empty;
-        }
-    }
-
     /// <summary>
     /// Reads a Jet NUMERIC (17 bytes):
     ///   [precision(1)][scale(1)][sign(1)][pad(1)][96-bit LE integer: lo(4)+mid(4)+hi(4)]
@@ -1705,35 +1667,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             throw new JetLimitationException(
                 $"T_NUMERIC value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})", ex);
         }
-    }
-
-    private static string ReadGuid(byte[] b, int start)
-    {
-        if (start + 16 > b.Length)
-        {
-            return string.Empty;
-        }
-
-        // First three groups are stored little-endian in the Jet format
-        return string.Format(
-            CultureInfo.InvariantCulture,
-            "{{{0:X2}{1:X2}{2:X2}{3:X2}-{4:X2}{5:X2}-{6:X2}{7:X2}-{8:X2}{9:X2}-{10:X2}{11:X2}{12:X2}{13:X2}{14:X2}{15:X2}}}",
-            b[start + 3],
-            b[start + 2],
-            b[start + 1],
-            b[start],
-            b[start + 5],
-            b[start + 4],
-            b[start + 7],
-            b[start + 6],
-            b[start + 8],
-            b[start + 9],
-            b[start + 10],
-            b[start + 11],
-            b[start + 12],
-            b[start + 13],
-            b[start + 14],
-            b[start + 15]);
     }
 
     private static object[] ConvertRowToTyped(List<string> row, List<ColumnInfo> columns, string? tableName = null, Dictionary<int, Dictionary<int, byte[]>>? complexData = null, bool strictParsing = true)
