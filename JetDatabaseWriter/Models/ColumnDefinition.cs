@@ -100,4 +100,18 @@ public sealed record ColumnDefinition
     /// <c>MSysObjects.LvProp</c>.
     /// </summary>
     public string? Description { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether this column participates in the table's
+    /// primary key. Setting this on one or more columns of a
+    /// <c>CreateTableAsync</c> call is shorthand for synthesizing a single
+    /// composite <see cref="IndexDefinition"/> named <c>"PrimaryKey"</c> with
+    /// <see cref="IndexDefinition.IsPrimaryKey"/> set to <c>true</c>, in
+    /// declaration order. PK columns are forced non-nullable on the emitted
+    /// TDEF (any <see cref="IsNullable"/> = <c>true</c> is overridden).
+    /// Mixing this shortcut with an explicit PK <see cref="IndexDefinition"/>
+    /// in the same <c>CreateTableAsync</c> call throws
+    /// <see cref="System.ArgumentException"/>.
+    /// </summary>
+    public bool IsPrimaryKey { get; init; }
 }
