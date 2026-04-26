@@ -1,72 +1,64 @@
 namespace JetDatabaseWriter.Tests;
 
-using System.Security;
+using System;
 using Xunit;
 
 public sealed class AccessOptionsPasswordTests
 {
     [Fact]
-    public void AccessReaderOptions_Password_DefaultsToNull()
+    public void AccessReaderOptions_Password_DefaultsToEmpty()
     {
         var options = new AccessReaderOptions();
 
-        Assert.Null(options.Password);
+        Assert.True(options.Password.IsEmpty);
     }
 
     [Fact]
-    public void AccessWriterOptions_Password_DefaultsToNull()
+    public void AccessWriterOptions_Password_DefaultsToEmpty()
     {
         var options = new AccessWriterOptions();
 
-        Assert.Null(options.Password);
+        Assert.True(options.Password.IsEmpty);
     }
 
     [Fact]
-    public void AccessReaderOptions_PlainTextConstructor_ConvertsToSecureString()
+    public void AccessReaderOptions_PlainTextConstructor_StoresPassword()
     {
         var options = new AccessReaderOptions(TestDatabases.AesEncryptedPassword);
 
-        Assert.NotNull(options.Password);
-        Assert.True(options.Password!.IsReadOnly());
-        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, TestDatabases.AesEncryptedPassword));
+        Assert.Equal(TestDatabases.AesEncryptedPassword, options.Password.ToString());
     }
 
     [Fact]
-    public void AccessWriterOptions_PlainTextConstructor_ConvertsToSecureString()
+    public void AccessWriterOptions_PlainTextConstructor_StoresPassword()
     {
         var options = new AccessWriterOptions(TestDatabases.AesEncryptedPassword);
 
-        Assert.NotNull(options.Password);
-        Assert.True(options.Password!.IsReadOnly());
-        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, TestDatabases.AesEncryptedPassword));
+        Assert.Equal(TestDatabases.AesEncryptedPassword, options.Password.ToString());
     }
 
     [Fact]
-    public void AccessReaderOptions_Password_InitCopiesAsReadOnly()
+    public void AccessReaderOptions_PlainTextConstructor_NullProducesEmpty()
     {
-        var source = new SecureString();
-        source.AppendChar('s');
+        var options = new AccessReaderOptions((string?)null);
 
-        var options = new AccessReaderOptions { Password = source };
-
-        Assert.NotNull(options.Password);
-        Assert.NotSame(source, options.Password);
-        Assert.True(options.Password!.IsReadOnly());
-        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, "s"));
+        Assert.True(options.Password.IsEmpty);
     }
 
     [Fact]
-    public void AccessWriterOptions_Password_InitCopiesAsReadOnly()
+    public void AccessReaderOptions_Password_InitFromMemory()
     {
-        var source = new SecureString();
-        source.AppendChar('x');
+        var options = new AccessReaderOptions { Password = "s".AsMemory() };
 
-        var options = new AccessWriterOptions { Password = source };
+        Assert.Equal("s", options.Password.ToString());
+    }
 
-        Assert.NotNull(options.Password);
-        Assert.NotSame(source, options.Password);
-        Assert.True(options.Password!.IsReadOnly());
-        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, "x"));
+    [Fact]
+    public void AccessWriterOptions_Password_InitFromMemory()
+    {
+        var options = new AccessWriterOptions { Password = "x".AsMemory() };
+
+        Assert.Equal("x", options.Password.ToString());
     }
 
     [Fact]
@@ -75,7 +67,7 @@ public sealed class AccessOptionsPasswordTests
         var options = new AccessReaderOptions(TestDatabases.AesEncryptedPassword) { PageCacheSize = 123 };
 
         Assert.Equal(123, options.PageCacheSize);
-        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, TestDatabases.AesEncryptedPassword));
+        Assert.Equal(TestDatabases.AesEncryptedPassword, options.Password.ToString());
     }
 
     [Fact]
@@ -85,6 +77,6 @@ public sealed class AccessOptionsPasswordTests
 
         Assert.False(options.UseLockFile);
         Assert.False(options.RespectExistingLockFile);
-        Assert.True(SecureStringUtilities.EqualsPlainText(options.Password, TestDatabases.AesEncryptedPassword));
+        Assert.Equal(TestDatabases.AesEncryptedPassword, options.Password.ToString());
     }
 }

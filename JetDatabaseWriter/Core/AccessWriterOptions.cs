@@ -1,14 +1,12 @@
 namespace JetDatabaseWriter;
 
-using System.Security;
+using System;
 
 /// <summary>
 /// Configuration options for opening a JET database with <see cref="AccessWriter"/>.
 /// </summary>
 public sealed class AccessWriterOptions : IAccessOptions
 {
-    private SecureString? _password;
-
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessWriterOptions"/> class.
     /// </summary>
@@ -18,28 +16,18 @@ public sealed class AccessWriterOptions : IAccessOptions
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessWriterOptions"/> class using a plain-text password.
-    /// The password is converted to a read-only <see cref="SecureString"/>.
     /// </summary>
     /// <param name="plainTextPassword">The plain-text password. Null means no password.</param>
     public AccessWriterOptions(string? plainTextPassword)
     {
-        _password = SecureStringUtilities.FromPlainText(plainTextPassword);
+        Password = plainTextPassword.AsMemory();
     }
 
     /// <summary>
     /// Gets the password for opening password-protected databases.
-    /// A read-only copy is stored during initialization.
     /// When specified, it is propagated to internal reader operations used by the writer.
     /// </summary>
-    public SecureString? Password
-    {
-        get => _password;
-        init
-        {
-            _password?.Dispose();
-            _password = SecureStringUtilities.CopyAsReadOnly(value);
-        }
-    }
+    public ReadOnlyMemory<char> Password { get; init; }
 
     /// <summary>
     /// Gets a value indicating whether a lockfile (.ldb / .laccdb) is created

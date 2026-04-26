@@ -252,7 +252,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         var options = new AccessReaderOptions
         {
             UseLockFile = false,
-            Password = password == null ? null : SecureStringUtilities.FromPlainText(password),
+            Password = password.AsMemory(),
         };
         await using var reader = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
         return await reader.ListTablesAsync(TestContext.Current.CancellationToken);
@@ -268,7 +268,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         var options = new AccessReaderOptions
         {
             UseLockFile = false,
-            Password = password == null ? null : SecureStringUtilities.FromPlainText(password),
+            Password = password.AsMemory(),
         };
         await using var reader = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadDataTableAsync(tables[0], maxRows: 5, cancellationToken: TestContext.Current.CancellationToken)
@@ -281,7 +281,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         var options = new AccessReaderOptions
         {
             UseLockFile = false,
-            Password = SecureStringUtilities.FromPlainText(wrongPassword),
+            Password = wrongPassword.AsMemory(),
         };
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken));

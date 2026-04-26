@@ -1,6 +1,6 @@
 namespace JetDatabaseWriter;
 
-using System.Security;
+using System;
 
 /// <summary>
 /// Shared options used when opening Access databases.
@@ -15,7 +15,7 @@ public interface IAccessOptions
 
     /// <summary>
     /// Gets the password for opening password-protected databases.
-    /// When null or empty, no password is supplied.
+    /// Empty (the default) means no password is supplied.
     /// </summary>
-    SecureString? Password { get; }
+    ReadOnlyMemory<char> Password { get; }
 }

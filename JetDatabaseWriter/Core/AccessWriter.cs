@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
 using System.IO;
-using System.Security;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -50,7 +49,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private const int CascadeMaxDepth = 64;
 
-    private readonly SecureString? _password;
+    private readonly ReadOnlyMemory<char> _password;
     private readonly bool _useLockFile;
     private readonly bool _respectExistingLockFile;
     private readonly ReaderWriterLockSlim _stateLock = new(LockRecursionPolicy.NoRecursion);
@@ -80,7 +79,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         string path,
         Stream stream,
         byte[] header,
-        SecureString? password,
+        ReadOnlyMemory<char> password,
         bool useLockFile,
         bool respectExistingLockFile,
         Stream? outerEncryptedStream = null,
@@ -88,7 +87,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         bool isAgileEncryptedRewrap = false)
         : base(stream, header, path)
     {
-        _password = SecureStringUtilities.CopyAsReadOnly(password);
+        _password = password;
         _useLockFile = useLockFile && !string.IsNullOrEmpty(path);
         _respectExistingLockFile = respectExistingLockFile;
         _outerEncryptedStream = outerEncryptedStream;
@@ -3493,44 +3492,37 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         bool requireSourceEncrypted,
         CancellationToken cancellationToken)
     {
-        SecureString? oldSecure = SecureStringUtilities.FromPlainText(oldPassword);
-        SecureString? newSecure = SecureStringUtilities.FromPlainText(newPassword);
-        try
+        ReadOnlyMemory<char> oldPwd = oldPassword.AsMemory();
+        ReadOnlyMemory<char> newPwd = newPassword.AsMemory();
+
+        // Peek the format up front so EncryptAsync / DecryptAsync /
+        // ChangePasswordAsync produce a clear InvalidOperationException
+        // (instead of an UnauthorizedAccessException from the decrypt
+        // step) when the source file is in the wrong state for the
+        // requested operation.
+        long origPos = source.Position;
+        AccessEncryptionFormat detectedFormat = await DetectEncryptionFormatAsync(source, cancellationToken).ConfigureAwait(false);
+        _ = source.Seek(origPos, SeekOrigin.Begin);
+
+        if (requireSourceEncrypted && detectedFormat == AccessEncryptionFormat.None)
         {
-            // Peek the format up front so EncryptAsync / DecryptAsync /
-            // ChangePasswordAsync produce a clear InvalidOperationException
-            // (instead of an UnauthorizedAccessException from the decrypt
-            // step) when the source file is in the wrong state for the
-            // requested operation.
-            long origPos = source.Position;
-            AccessEncryptionFormat detectedFormat = await DetectEncryptionFormatAsync(source, cancellationToken).ConfigureAwait(false);
-            _ = source.Seek(origPos, SeekOrigin.Begin);
-
-            if (requireSourceEncrypted && detectedFormat == AccessEncryptionFormat.None)
-            {
-                throw new InvalidOperationException(
-                    "The source database is not encrypted. Use EncryptAsync to add a password.");
-            }
-
-            if (!requireSourceEncrypted && detectedFormat != AccessEncryptionFormat.None)
-            {
-                throw new InvalidOperationException(
-                    $"The source database is already encrypted ({detectedFormat}). Use ChangePasswordAsync or DecryptAsync.");
-            }
-
-            (byte[] plaintext, AccessEncryptionFormat sourceFormat) = await EncryptionConverter
-                .ReadDecryptedAsync(source, oldSecure, cancellationToken)
-                .ConfigureAwait(false);
-
-            // Default target = same as source when caller didn't override.
-            AccessEncryptionFormat effectiveTarget = targetFormat ?? sourceFormat;
-            return EncryptionConverter.ApplyEncryption(plaintext, effectiveTarget, newSecure);
+            throw new InvalidOperationException(
+                "The source database is not encrypted. Use EncryptAsync to add a password.");
         }
-        finally
+
+        if (!requireSourceEncrypted && detectedFormat != AccessEncryptionFormat.None)
         {
-            oldSecure?.Dispose();
-            newSecure?.Dispose();
+            throw new InvalidOperationException(
+                $"The source database is already encrypted ({detectedFormat}). Use ChangePasswordAsync or DecryptAsync.");
         }
+
+        (byte[] plaintext, AccessEncryptionFormat sourceFormat) = await EncryptionConverter
+            .ReadDecryptedAsync(source, oldPwd, cancellationToken)
+            .ConfigureAwait(false);
+
+        // Default target = same as source when caller didn't override.
+        AccessEncryptionFormat effectiveTarget = targetFormat ?? sourceFormat;
+        return EncryptionConverter.ApplyEncryption(plaintext, effectiveTarget, newPwd);
     }
 
     /// <inheritdoc/>
@@ -3549,7 +3541,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // For Agile-encrypted databases the underlying _stream is an in-memory
         // copy of the *decrypted* ACCDB. Re-encrypt it before tearing down so
         // the user's outer encrypted stream/file ends up with all writes.
-        if (_isAgileEncryptedRewrap && _outerEncryptedStream != null && _password != null)
+        if (_isAgileEncryptedRewrap && _outerEncryptedStream != null && !_password.IsEmpty)
         {
             try
             {
@@ -3564,7 +3556,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
         }
 
-        _password?.Dispose();
         _stateLock.Dispose();
 
         await base.DisposeAsync().ConfigureAwait(false);
@@ -3585,7 +3576,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         byte[] inner = memory.ToArray();
 
         (byte[] encryptionInfo, byte[] encryptedPackage) =
-            OfficeCryptoAgile.Encrypt(inner, _password!);
+            OfficeCryptoAgile.Encrypt(inner, _password.Span);
 
         byte[] cfb = CompoundFileWriter.Build(new[]
         {

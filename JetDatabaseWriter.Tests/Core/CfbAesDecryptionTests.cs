@@ -43,7 +43,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringUtilities.FromPlainText(TestDatabases.AesEncryptedPassword),
+            Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -69,7 +69,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringUtilities.FromPlainText(TestDatabases.AesEncryptedPassword),
+            Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -92,7 +92,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringUtilities.FromPlainText(TestDatabases.AesEncryptedPassword),
+            Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -121,7 +121,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringUtilities.FromPlainText(TestDatabases.AesEncryptedPassword),
+            Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -147,7 +147,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringUtilities.FromPlainText(TestDatabases.AesEncryptedPassword),
+            Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -174,7 +174,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringUtilities.FromPlainText(TestDatabases.AesEncryptedPassword),
+            Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -197,7 +197,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringUtilities.FromPlainText(TestDatabases.AesEncryptedPassword),
+            Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -224,7 +224,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringUtilities.FromPlainText(TestDatabases.AesEncryptedPassword),
+            Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         };
 
         await using var ms = new MemoryStream(data, writable: false);
@@ -245,7 +245,7 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         byte[] data = await CreateAesEncryptedAccdbAsync();
         var options = new AccessReaderOptions
         {
-            Password = SecureStringUtilities.FromPlainText(TestDatabases.AesEncryptedPassword),
+            Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         };
 
         await using var ms = new MemoryStream(data, writable: false);

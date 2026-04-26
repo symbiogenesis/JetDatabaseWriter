@@ -1431,8 +1431,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         try
         {
-            _linkedSourceOpenOptions.Password?.Dispose();
-
             if (_useLockFile)
             {
                 LockFileManager.Delete(_path, nameof(AccessReader));

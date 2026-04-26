@@ -4,7 +4,6 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
-using System.Security;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -35,7 +34,7 @@ internal static class EncryptionConverter
     /// </summary>
     public static async ValueTask<(byte[] Plaintext, AccessEncryptionFormat SourceFormat)> ReadDecryptedAsync(
         Stream source,
-        SecureString? password,
+        ReadOnlyMemory<char> password,
         CancellationToken cancellationToken)
     {
         Guard.NotNull(source, nameof(source));
@@ -56,7 +55,7 @@ internal static class EncryptionConverter
             if (agileInner != null)
             {
                 using var innerStream = new MemoryStream(agileInner, writable: false);
-                (byte[] inner, _) = await ReadDecryptedAsync(innerStream, password: null, cancellationToken).ConfigureAwait(false);
+                (byte[] inner, _) = await ReadDecryptedAsync(innerStream, password: default, cancellationToken).ConfigureAwait(false);
                 return (inner, AccessEncryptionFormat.AccdbAgile);
             }
 
@@ -82,7 +81,7 @@ internal static class EncryptionConverter
     public static byte[] ApplyEncryption(
         byte[] plaintext,
         AccessEncryptionFormat targetFormat,
-        SecureString? targetPassword)
+        ReadOnlyMemory<char> targetPassword)
     {
         Guard.NotNull(plaintext, nameof(plaintext));
         if (plaintext.Length < HeaderLength)
@@ -121,7 +120,7 @@ internal static class EncryptionConverter
                 break;
         }
 
-        if (SecureStringUtilities.IsNullOrEmpty(targetPassword))
+        if (targetPassword.IsEmpty)
         {
             throw new ArgumentException(
                 "A non-empty password is required to apply encryption.",
@@ -130,10 +129,10 @@ internal static class EncryptionConverter
 
         return targetFormat switch
         {
-            AccessEncryptionFormat.Jet4Rc4 => BuildJet4Rc4(plaintext, pageSize, targetPassword!),
-            AccessEncryptionFormat.AccdbLegacyPassword => BuildAccdbLegacy(plaintext, targetPassword!),
-            AccessEncryptionFormat.AccdbAesCfbWrapped => BuildAccdbAesCfbWrapped(plaintext, pageSize, targetPassword!),
-            AccessEncryptionFormat.AccdbAgile => BuildAccdbAgile(plaintext, targetPassword!),
+            AccessEncryptionFormat.Jet4Rc4 => BuildJet4Rc4(plaintext, pageSize, targetPassword.Span),
+            AccessEncryptionFormat.AccdbLegacyPassword => BuildAccdbLegacy(plaintext, targetPassword.Span),
+            AccessEncryptionFormat.AccdbAesCfbWrapped => BuildAccdbAesCfbWrapped(plaintext, pageSize, targetPassword.Span),
+            AccessEncryptionFormat.AccdbAgile => BuildAccdbAgile(plaintext, targetPassword.Span),
             _ => throw new NotSupportedException($"Unhandled target encryption format: {targetFormat}."),
         };
     }
@@ -167,7 +166,7 @@ internal static class EncryptionConverter
     private static async ValueTask<byte[]> ReadFlatDecryptedAsync(
         Stream source,
         byte[] header,
-        SecureString? password,
+        ReadOnlyMemory<char> password,
         bool isLegacyAesCfb,
         CancellationToken cancellationToken)
     {
@@ -223,7 +222,7 @@ internal static class EncryptionConverter
         return result;
     }
 
-    private static byte[] BuildJet4Rc4(byte[] plaintext, int pageSize, SecureString password)
+    private static byte[] BuildJet4Rc4(byte[] plaintext, int pageSize, ReadOnlySpan<char> password)
     {
         byte[] result = (byte[])plaintext.Clone();
 
@@ -246,7 +245,7 @@ internal static class EncryptionConverter
         return result;
     }
 
-    private static byte[] BuildAccdbLegacy(byte[] plaintext, SecureString password)
+    private static byte[] BuildAccdbLegacy(byte[] plaintext, ReadOnlySpan<char> password)
     {
         byte[] result = (byte[])plaintext.Clone();
         EncodeJet4StylePassword(result, password, useAccdbLegacyMask: true);
@@ -258,7 +257,7 @@ internal static class EncryptionConverter
         return result;
     }
 
-    private static byte[] BuildAccdbAesCfbWrapped(byte[] plaintext, int pageSize, SecureString password)
+    private static byte[] BuildAccdbAesCfbWrapped(byte[] plaintext, int pageSize, ReadOnlySpan<char> password)
     {
         byte[] result = (byte[])plaintext.Clone();
 
@@ -278,7 +277,7 @@ internal static class EncryptionConverter
         return result;
     }
 
-    private static byte[] BuildAccdbAgile(byte[] plaintext, SecureString password)
+    private static byte[] BuildAccdbAgile(byte[] plaintext, ReadOnlySpan<char> password)
     {
         // Agile wraps a clean (unencrypted) inner ACCDB. The plaintext bytes
         // we have are already in that shape — pass them through
@@ -363,14 +362,11 @@ internal static class EncryptionConverter
     /// The encoding is the inverse of <see cref="EncryptionManager"/>'s
     /// <c>DecodeJet4Password</c> / <c>DecodeAccdbPassword</c>.
     /// </summary>
-    private static void EncodeJet4StylePassword(byte[] header, SecureString password, bool useAccdbLegacyMask)
+    private static void EncodeJet4StylePassword(byte[] header, ReadOnlySpan<char> password, bool useAccdbLegacyMask)
     {
         ReadOnlySpan<byte> mask = useAccdbLegacyMask
             ? EncryptionManager.AccdbLegacyPasswordMaskForWrite
             : EncryptionManager.Jet4PasswordMaskForWrite;
-
-        // Convert password to UTF-16LE bytes (max 20 chars => 40 bytes).
-        string plain = SecureStringUtilities.ToPlainText(password) ?? string.Empty;
 
         // The 40-byte password area at 0x42 overlaps the encryption flag at
         // hdr[0x62] (offset 32 inside the area). The flag is rewritten after
@@ -379,45 +375,60 @@ internal static class EncryptionConverter
         // the password (UTF-16LE) plus its NUL terminator must fit in
         // bytes 0..31 — i.e. at most 15 characters.
         const int MaxPasswordLength = 15;
-        if (plain.Length > MaxPasswordLength)
+        if (password.Length > MaxPasswordLength)
         {
             throw new JetLimitationException(
-                $"Password is too long for this database format: {plain.Length} characters (maximum {MaxPasswordLength}). " +
+                $"Password is too long for this database format: {password.Length} characters (maximum {MaxPasswordLength}). " +
                 "Jet4 RC4, ACCDB legacy ';pwd=', and ACCDB AES CFB-wrapped formats all store the password in a fixed " +
                 "40-byte header area whose 32nd byte is reused by the encryption flag, restricting the password to " +
                 $"{MaxPasswordLength} UTF-16 characters. Use AccessEncryptionFormat.AccdbAgile for longer passwords.");
         }
 
-        byte[] pwd16 = System.Text.Encoding.Unicode.GetBytes(plain);
-        byte[] padded = new byte[40];
-        Buffer.BlockCopy(pwd16, 0, padded, 0, Math.Min(pwd16.Length, padded.Length));
+        Span<byte> padded = stackalloc byte[40];
+        if (!password.IsEmpty)
+        {
+            // Remaining bytes are already zero from stackalloc.
+            _ = System.Text.Encoding.Unicode.GetBytes(password, padded);
+        }
 
         for (int i = 0; i < 40; i++)
         {
             header[0x42 + i] = (byte)(padded[i] ^ mask[i] ^ header[0x72 + (i % 4)]);
         }
 
-        Array.Clear(padded, 0, padded.Length);
-        Array.Clear(pwd16, 0, pwd16.Length);
+        padded.Clear();
     }
 
     /// <summary>SHA-256(password)[..16] — matches <c>EncryptionManager.DeriveAesPageKey</c>.</summary>
-    private static byte[] DeriveAesPageKey(SecureString password)
+    private static byte[] DeriveAesPageKey(ReadOnlySpan<char> password)
     {
-        string plain = SecureStringUtilities.ToPlainText(password) ?? string.Empty;
-        byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(plain);
+        int maxBytes = System.Text.Encoding.UTF8.GetMaxByteCount(password.Length);
+        Span<byte> stackBuf = stackalloc byte[256];
+        byte[]? rented = maxBytes > stackBuf.Length ? new byte[maxBytes] : null;
+        Span<byte> utf8 = rented ?? stackBuf;
         try
         {
+            int utf8Len = System.Text.Encoding.UTF8.GetBytes(password, utf8);
             using var sha = SHA256.Create();
-            byte[] hash = sha.ComputeHash(utf8);
+            Span<byte> hash = stackalloc byte[32];
+            if (!sha.TryComputeHash(utf8.Slice(0, utf8Len), hash, out _))
+            {
+                throw new CryptographicException("SHA-256 hash computation failed.");
+            }
+
+            utf8.Slice(0, utf8Len).Clear();
+
             byte[] key = new byte[16];
-            Buffer.BlockCopy(hash, 0, key, 0, 16);
-            Array.Clear(hash, 0, hash.Length);
+            hash.Slice(0, 16).CopyTo(key);
+            hash.Clear();
             return key;
         }
         finally
         {
-            Array.Clear(utf8, 0, utf8.Length);
+            if (rented != null)
+            {
+                Array.Clear(rented, 0, rented.Length);
+            }
         }
     }
 

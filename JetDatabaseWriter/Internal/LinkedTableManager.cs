@@ -65,7 +65,7 @@ internal static class LinkedTableManager
             StrictParsing = options.StrictParsing,
             FileAccess = options.FileAccess,
             FileShare = options.FileShare,
-            Password = SecureStringUtilities.CopyAsReadOnly(options.Password),
+            Password = options.Password,
             UseLockFile = options.UseLockFile,
             LinkedSourcePathAllowlist = normalizedAllowlist,
             LinkedSourcePathValidator = linkedSourcePathValidator,
