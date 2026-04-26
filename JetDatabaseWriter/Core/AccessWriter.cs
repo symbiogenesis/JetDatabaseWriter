@@ -2053,14 +2053,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         CancellationToken cancellationToken)
     {
         var results = new List<RelationshipRowSnapshot>();
-        ColumnInfo? nameCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "szRelationship", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo? objCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "szObject", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo? refObjCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "szReferencedObject", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo? colCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "szColumn", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo? refColCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "szReferencedColumn", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo? icolCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "icolumn", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo? ccolCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "ccolumn", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo? grbitCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "grbit", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? nameCol = FindColumn(msysRelDef, "szRelationship");
+        ColumnInfo? objCol = FindColumn(msysRelDef, "szObject");
+        ColumnInfo? refObjCol = FindColumn(msysRelDef, "szReferencedObject");
+        ColumnInfo? colCol = FindColumn(msysRelDef, "szColumn");
+        ColumnInfo? refColCol = FindColumn(msysRelDef, "szReferencedColumn");
+        ColumnInfo? icolCol = FindColumn(msysRelDef, "icolumn");
+        ColumnInfo? ccolCol = FindColumn(msysRelDef, "ccolumn");
+        ColumnInfo? grbitCol = FindColumn(msysRelDef, "grbit");
         if (nameCol == null || objCol == null || refObjCol == null || colCol == null
             || refColCol == null || icolCol == null || ccolCol == null || grbitCol == null)
         {
@@ -3070,7 +3070,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private async ValueTask<HashSet<string>> ReadExistingRelationshipNamesAsync(long msysRelTdefPage, TableDef msysRelDef, CancellationToken cancellationToken)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        ColumnInfo nameCol = msysRelDef.Columns.Find(c => string.Equals(c.Name, "szRelationship", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? nameCol = FindColumn(msysRelDef, "szRelationship");
         if (nameCol == null)
         {
             return names;
@@ -4089,6 +4089,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private static int FindColumnIndex(TableDef tableDef, string columnName)
     {
         return tableDef.Columns.FindIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static ColumnInfo? FindColumn(TableDef tableDef, string columnName)
+    {
+        return tableDef.Columns.Find(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
     }
 
     private static void SetValue(TableDef tableDef, object[] values, string columnName, object value)
@@ -5343,11 +5348,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     throw new ArgumentException($"IndexDefinition '{def.Name}' references column '{columnName}' more than once.", nameof(indexes));
                 }
 
-                ColumnInfo? column = tableDef.Columns.Find(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
-                if (column is null)
-                {
-                    throw new ArgumentException($"IndexDefinition '{def.Name}' references unknown column '{columnName}'.", nameof(indexes));
-                }
+                ColumnInfo column = FindColumn(tableDef, columnName)
+                    ?? throw new ArgumentException($"IndexDefinition '{def.Name}' references unknown column '{columnName}'.", nameof(indexes));
 
                 colNums[k] = column.ColNum;
             }
@@ -5662,8 +5664,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private async ValueTask<int> GetNextComplexIdAsync(long msysComplexPg, CancellationToken cancellationToken)
     {
         TableDef msysComplex = await ReadRequiredTableDefAsync(msysComplexPg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
-        ColumnInfo idCol = msysComplex.Columns.Find(c => string.Equals(c.Name, "ComplexID", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo ctIdCol = msysComplex.Columns.Find(c => string.Equals(c.Name, "ConceptualTableID", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? idCol = FindColumn(msysComplex, "ComplexID");
+        ColumnInfo? ctIdCol = FindColumn(msysComplex, "ConceptualTableID");
 
         int maxId = 0;
         long total = _stream.Length / _pgSz;
@@ -5972,7 +5974,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         CatalogEntry parentEntry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef parentDef = await ReadRequiredTableDefAsync(parentEntry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
 
-        ColumnInfo complexCol = parentDef.Columns.Find(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase))
+        ColumnInfo complexCol = FindColumn(parentDef, columnName)
             ?? throw new ArgumentException($"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName));
 
         bool isAttachmentCol = complexCol.Type == T_ATTACHMENT;
@@ -6098,9 +6100,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         TableDef msys = await ReadRequiredTableDefAsync(msysPg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
-        ColumnInfo nameCol = msys.Columns.Find(c => string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo flatIdCol = msys.Columns.Find(c => string.Equals(c.Name, "FlatTableID", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo complexIdCol = msys.Columns.Find(c => string.Equals(c.Name, "ComplexID", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? nameCol = FindColumn(msys, "ColumnName");
+        ColumnInfo? flatIdCol = FindColumn(msys, "FlatTableID");
+        ColumnInfo? complexIdCol = FindColumn(msys, "ComplexID");
         if (nameCol == null || flatIdCol == null || complexIdCol == null)
         {
             return 0;
@@ -6694,9 +6696,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
-        ColumnInfo nameCol = msysCxDef.Columns.Find(c => string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo flatIdCol = msysCxDef.Columns.Find(c => string.Equals(c.Name, "FlatTableID", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo cxIdCol = msysCxDef.Columns.Find(c => string.Equals(c.Name, "ComplexID", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? nameCol = FindColumn(msysCxDef, "ColumnName");
+        ColumnInfo? flatIdCol = FindColumn(msysCxDef, "FlatTableID");
+        ColumnInfo? cxIdCol = FindColumn(msysCxDef, "ComplexID");
         if (nameCol == null || flatIdCol == null || cxIdCol == null)
         {
             return;
@@ -6809,8 +6811,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
-        ColumnInfo nameCol = msysCxDef.Columns.Find(c => string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo cxIdCol = msysCxDef.Columns.Find(c => string.Equals(c.Name, "ComplexID", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? nameCol = FindColumn(msysCxDef, "ColumnName");
+        ColumnInfo? cxIdCol = FindColumn(msysCxDef, "ComplexID");
         if (nameCol == null || cxIdCol == null)
         {
             return;
@@ -6915,9 +6917,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
-        ColumnInfo nameCol = msysCxDef.Columns.Find(c => string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo flatIdCol = msysCxDef.Columns.Find(c => string.Equals(c.Name, "FlatTableID", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo cxIdCol = msysCxDef.Columns.Find(c => string.Equals(c.Name, "ComplexID", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? nameCol = FindColumn(msysCxDef, "ColumnName");
+        ColumnInfo? flatIdCol = FindColumn(msysCxDef, "FlatTableID");
+        ColumnInfo? cxIdCol = FindColumn(msysCxDef, "ComplexID");
         if (nameCol == null || flatIdCol == null || cxIdCol == null)
         {
             return;
@@ -7843,10 +7845,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
     {
-        ColumnInfo idColumn = msys.Columns.Find(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo nameColumn = msys.Columns.Find(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo typeColumn = msys.Columns.Find(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
-        ColumnInfo flagsColumn = msys.Columns.Find(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
+        ColumnInfo? idColumn = FindColumn(msys, "Id");
+        ColumnInfo? nameColumn = FindColumn(msys, "Name");
+        ColumnInfo? typeColumn = FindColumn(msys, "Type");
+        ColumnInfo? flagsColumn = FindColumn(msys, "Flags");
         if (nameColumn == null || typeColumn == null)
         {
             return [];
@@ -7879,8 +7881,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     RowIndex = row.RowIndex,
                     Name = ReadColumnValue(page, row.RowStart, row.RowSize, nameColumn),
                     ObjectType = ParseInt32(ReadColumnValue(page, row.RowStart, row.RowSize, typeColumn)),
-                    Flags = ParseInt64(ReadColumnValue(page, row.RowStart, row.RowSize, flagsColumn)),
-                    TDefPage = ParseInt64(ReadColumnValue(page, row.RowStart, row.RowSize, idColumn)) & 0x00FFFFFFL,
+                    Flags = ParseInt64(ReadColumnValue(page, row.RowStart, row.RowSize, flagsColumn!)),
+                    TDefPage = ParseInt64(ReadColumnValue(page, row.RowStart, row.RowSize, idColumn!)) & 0x00FFFFFFL,
                 });
             }
 
