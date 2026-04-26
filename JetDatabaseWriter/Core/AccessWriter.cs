@@ -2102,9 +2102,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                             ? DBNull.Value
                             : col.Type switch
                             {
-                                T_LONG => (object)ParseInt32(raw),
-                                T_INT => (object)(short)ParseInt32(raw),
-                                T_BYTE => (object)(byte)ParseInt32(raw),
+                                T_LONG => ParseInt32(raw),
+                                T_INT => (short)ParseInt32(raw),
+                                T_BYTE => (byte)ParseInt32(raw),
                                 _ => raw,
                             };
                     }
@@ -6853,7 +6853,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     for (int i = 0; i < values.Length; i++)
                     {
                         string text = ReadColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);
-                        values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : (object)text;
+                        values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
                     }
 
                     SetValue(msysCxDef, values, "ColumnName", newColumnName);
