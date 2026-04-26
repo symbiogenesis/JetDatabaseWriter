@@ -51,9 +51,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private readonly object _catalogLock = new();
     private readonly bool _useLockFile;
     private readonly bool _strictParsing;
-    private readonly Func<LinkedTableInfo, string, bool>? _linkedSourcePathValidator;
-    private readonly string[] _linkedSourcePathAllowlist;
-    private readonly AccessReaderOptions _linkedSourceOpenOptions;
     private volatile List<CatalogEntry>? _catalogCache;
     private volatile LruCache<long, byte[]>? _pageCache;
     private long _cacheHits;
@@ -74,10 +71,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         _useLockFile = options.UseLockFile && !string.IsNullOrEmpty(path);
         _strictParsing = options.StrictParsing;
-        _linkedSourcePathValidator = options.LinkedSourcePathValidator;
-        _linkedSourcePathAllowlist = LinkedTableManager.NormalizeAllowlist(options.LinkedSourcePathAllowlist, path);
-        _linkedSourceOpenOptions = LinkedTableManager.CreateLinkedSourceOpenOptions(options, _linkedSourcePathAllowlist, _linkedSourcePathValidator);
-        var password = _linkedSourceOpenOptions.Password;
+        LinkedSourcePathValidator = options.LinkedSourcePathValidator;
+        LinkedSourcePathAllowlist = LinkedTableManager.NormalizeAllowlist(options.LinkedSourcePathAllowlist, path);
+        LinkedSourceOpenOptions = LinkedTableManager.CreateLinkedSourceOpenOptions(options, LinkedSourcePathAllowlist, LinkedSourcePathValidator);
+        var password = LinkedSourceOpenOptions.Password;
 
         DiagnosticsEnabled = options.DiagnosticsEnabled;
         PageCacheSize = options.PageCacheSize;
@@ -123,13 +120,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     internal string HostDatabasePath => _path;
 
     /// <summary>Gets the cached options used to re-open linked-source databases referenced by this reader.</summary>
-    internal AccessReaderOptions LinkedSourceOpenOptions => _linkedSourceOpenOptions;
+    internal AccessReaderOptions LinkedSourceOpenOptions { get; }
 
     /// <summary>Gets the normalized allowlist of directories that linked-source paths must reside under (empty allows any directory).</summary>
-    internal string[] LinkedSourcePathAllowlist => _linkedSourcePathAllowlist;
+    internal string[] LinkedSourcePathAllowlist { get; }
 
     /// <summary>Gets the optional callback that approves linked-source paths before opening.</summary>
-    internal Func<LinkedTableInfo, string, bool>? LinkedSourcePathValidator => _linkedSourcePathValidator;
+    internal Func<LinkedTableInfo, string, bool>? LinkedSourcePathValidator { get; }
 
     /// <summary>
     /// Asynchronously opens a JET database file and returns a new <see cref="AccessReader"/> instance.
