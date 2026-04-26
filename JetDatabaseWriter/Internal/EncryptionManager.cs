@@ -3,9 +3,6 @@ namespace JetDatabaseWriter.Internal;
 using System;
 using System.Buffers.Binary;
 using System.IO;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -150,7 +147,7 @@ internal static class EncryptionManager
         byte[] hdr,
         DatabaseFormat format,
         bool isCompoundFileEncrypted,
-        SecureString? password)
+        ReadOnlyMemory<char> password)
     {
         uint? rc4DbKey = null;
         byte[]? aesPageKey = null;
@@ -171,7 +168,7 @@ internal static class EncryptionManager
             //   0x03 = RC4 + password
             if (encFlag >= 0x01 && encFlag <= 0x03)
             {
-                if (SecureStringUtilities.IsNullOrEmpty(password))
+                if (password.IsEmpty)
                 {
                     throw new UnauthorizedAccessException(
                         "This database is encrypted or password-protected. " +
@@ -180,7 +177,7 @@ internal static class EncryptionManager
                 }
 
                 string storedPassword = DecodeJet4Password(hdr);
-                if (!SecureStringUtilities.EqualsPlainText(password, storedPassword))
+                if (!password.Span.SequenceEqual(storedPassword.AsSpan()))
                 {
                     throw new UnauthorizedAccessException(
                         "The provided password is incorrect for this database.");
@@ -202,7 +199,7 @@ internal static class EncryptionManager
             byte encFlag = hdr[0x62];
             if (encFlag == 0x07)
             {
-                if (SecureStringUtilities.IsNullOrEmpty(password))
+                if (password.IsEmpty)
                 {
                     throw new UnauthorizedAccessException(
                         "This database is password-protected. " +
@@ -210,7 +207,7 @@ internal static class EncryptionManager
                 }
 
                 string storedPassword = DecodeAccdbPassword(hdr);
-                if (!SecureStringUtilities.EqualsPlainText(password, storedPassword))
+                if (!password.Span.SequenceEqual(storedPassword.AsSpan()))
                 {
                     throw new UnauthorizedAccessException(
                         "The provided password is incorrect for this database.");
@@ -222,7 +219,7 @@ internal static class EncryptionManager
         // header by the synthetic legacy path).
         if (isCompoundFileEncrypted)
         {
-            if (SecureStringUtilities.IsNullOrEmpty(password))
+            if (password.IsEmpty)
             {
                 throw new UnauthorizedAccessException(
                     "This .accdb file is encrypted with Access 2007+ AES encryption. " +
@@ -232,13 +229,13 @@ internal static class EncryptionManager
 
             // ACCDB uses the same XOR scheme as Jet4 for the header password area.
             string storedPassword = DecodeJet4Password(hdr);
-            if (!SecureStringUtilities.EqualsPlainText(password, storedPassword))
+            if (!password.Span.SequenceEqual(storedPassword.AsSpan()))
             {
                 throw new UnauthorizedAccessException(
                     "The provided password is incorrect for this database.");
             }
 
-            aesPageKey = DeriveAesPageKey(password!);
+            aesPageKey = DeriveAesPageKey(password.Span);
         }
 
         return (rc4DbKey, aesPageKey);
@@ -255,7 +252,7 @@ internal static class EncryptionManager
     public static async ValueTask<byte[]?> TryDecryptAgileCompoundFileAsync(
         Stream stream,
         byte[] header,
-        SecureString? password,
+        ReadOnlyMemory<char> password,
         CancellationToken cancellationToken)
     {
         if (!CompoundFileReader.HasCompoundFileMagic(header))
@@ -285,7 +282,7 @@ internal static class EncryptionManager
             return null;
         }
 
-        if (SecureStringUtilities.IsNullOrEmpty(password))
+        if (password.IsEmpty)
         {
             throw new UnauthorizedAccessException(
                 "This .accdb file is encrypted with Office Crypto API 'Agile' encryption. " +
@@ -293,7 +290,7 @@ internal static class EncryptionManager
                 "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
         }
 
-        return OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, password!);
+        return OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, password.Span);
     }
 
     /// <summary>
@@ -488,63 +485,17 @@ internal static class EncryptionManager
     }
 
     /// <summary>
-    /// Derives a 128-bit AES key from a <see cref="SecureString"/> password
-    /// using SHA-256 (truncated to 16 bytes).
+    /// Derives a 128-bit AES key from a password using SHA-256 (truncated to 16 bytes).
     /// </summary>
-    private static byte[] DeriveAesPageKey(SecureString password)
+    private static byte[] DeriveAesPageKey(ReadOnlySpan<char> password)
     {
-        IntPtr ptr = IntPtr.Zero;
+        int maxBytes = Encoding.UTF8.GetMaxByteCount(password.Length);
+        Span<byte> stackBuf = stackalloc byte[256];
+        byte[]? rented = maxBytes > stackBuf.Length ? new byte[maxBytes] : null;
+        Span<byte> utf8 = rented ?? stackBuf;
         try
         {
-            ptr = Marshal.SecureStringToGlobalAllocUnicode(password);
-            int charCount = password.Length;
-
-            // Single-pass: read chars from unmanaged memory and encode to UTF-8
-            // directly, eliminating the intermediate char buffer and a separate
-            // Encoding.UTF8.GetBytes pass.
-            Span<byte> utf8 = stackalloc byte[charCount * 3];
-            int utf8Len = 0;
-
-            // Batch-read 4 chars (8 bytes) per Marshal call to reduce P/Invoke overhead.
-            int i = 0;
-            for (; i + 3 < charCount; i += 4)
-            {
-                long val = Marshal.ReadInt64(ptr, i * 2);
-                char c0 = (char)(val & 0xFFFF);
-                char c1 = (char)((val >> 16) & 0xFFFF);
-                char c2 = (char)((val >> 32) & 0xFFFF);
-                char c3 = (char)((val >> 48) & 0xFFFF);
-
-                // Fast path: all 4 chars are ASCII — skip per-char branching.
-                if ((c0 | c1 | c2 | c3) < 0x80)
-                {
-                    utf8[utf8Len] = (byte)c0;
-                    utf8[utf8Len + 1] = (byte)c1;
-                    utf8[utf8Len + 2] = (byte)c2;
-                    utf8[utf8Len + 3] = (byte)c3;
-                    utf8Len += 4;
-                }
-                else
-                {
-                    Utf8EncodeChar(c0, utf8, ref utf8Len);
-                    Utf8EncodeChar(c1, utf8, ref utf8Len);
-                    Utf8EncodeChar(c2, utf8, ref utf8Len);
-                    Utf8EncodeChar(c3, utf8, ref utf8Len);
-                }
-            }
-
-            for (; i < charCount; i++)
-            {
-                char c = (char)Marshal.ReadInt16(ptr, i * 2);
-                if (c < 0x80)
-                {
-                    utf8[utf8Len++] = (byte)c;
-                }
-                else
-                {
-                    Utf8EncodeChar(c, utf8, ref utf8Len);
-                }
-            }
+            int utf8Len = Encoding.UTF8.GetBytes(password, utf8);
 
             Span<byte> hash = stackalloc byte[32];
             using var sha = SHA256.Create();
@@ -553,40 +504,19 @@ internal static class EncryptionManager
                 throw new CryptographicException("SHA-256 hash computation failed.");
             }
 
-            utf8[..utf8Len].Clear();
+            utf8.Slice(0, utf8Len).Clear();
 
             byte[] key = new byte[16];
-            hash[..16].CopyTo(key);
+            hash.Slice(0, 16).CopyTo(key);
             hash.Clear();
             return key; // AES-128
         }
         finally
         {
-            if (ptr != IntPtr.Zero)
+            if (rented != null)
             {
-                Marshal.ZeroFreeGlobalAllocUnicode(ptr);
+                Array.Clear(rented, 0, rented.Length);
             }
-        }
-    }
-
-    /// <summary>Encodes a single BMP character as UTF-8 into the destination span.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void Utf8EncodeChar(char c, Span<byte> buf, ref int pos)
-    {
-        if (c < 0x80)
-        {
-            buf[pos++] = (byte)c;
-        }
-        else if (c < 0x800)
-        {
-            buf[pos++] = (byte)(0xC0 | (c >> 6));
-            buf[pos++] = (byte)(0x80 | (c & 0x3F));
-        }
-        else
-        {
-            buf[pos++] = (byte)(0xE0 | (c >> 12));
-            buf[pos++] = (byte)(0x80 | ((c >> 6) & 0x3F));
-            buf[pos++] = (byte)(0x80 | (c & 0x3F));
         }
     }
 

@@ -68,7 +68,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
         await using var ms = new MemoryStream(data, writable: false);
         var options = new AccessReaderOptions
         {
-            Password = SecureStringUtilities.FromPlainText("definitely_wrong"),
+            Password = "definitely_wrong".AsMemory(),
             UseLockFile = false,
         };
 
@@ -247,7 +247,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             var writerOptions = new AccessWriterOptions
             {
                 UseLockFile = false,
-                Password = SecureStringUtilities.FromPlainText(TestDatabases.AesEncryptedPassword),
+                Password = TestDatabases.AesEncryptedPassword.AsMemory(),
             };
 
             await using (var writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
@@ -292,7 +292,7 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
 
     private static AccessReaderOptions CorrectPasswordOptions() => new()
     {
-        Password = SecureStringUtilities.FromPlainText(TestDatabases.AesEncryptedPassword),
+        Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         UseLockFile = false,
     };
 

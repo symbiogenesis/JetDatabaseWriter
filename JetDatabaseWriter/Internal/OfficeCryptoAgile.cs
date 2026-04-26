@@ -3,8 +3,6 @@ namespace JetDatabaseWriter;
 using System;
 using System.Buffers.Binary;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml;
@@ -75,7 +73,7 @@ internal static class OfficeCryptoAgile
     /// <see cref="UnauthorizedAccessException"/> when the password fails
     /// verification.
     /// </summary>
-    public static byte[] Decrypt(byte[] encryptionInfo, byte[] encryptedPackage, SecureString password)
+    public static byte[] Decrypt(byte[] encryptionInfo, byte[] encryptedPackage, ReadOnlySpan<char> password)
     {
         Guard.NotNull(encryptionInfo, nameof(encryptionInfo));
         Guard.NotNull(encryptedPackage, nameof(encryptedPackage));
@@ -87,7 +85,7 @@ internal static class OfficeCryptoAgile
         }
 
         AgileDescriptor descriptor = ParseDescriptor(encryptionInfo);
-        byte[] passwordUtf16 = SecureStringToUtf16(password);
+        byte[] passwordUtf16 = PasswordToUtf16(password);
         try
         {
             byte[] intermediateKey = ResolvePassword(descriptor, passwordUtf16);
@@ -107,12 +105,11 @@ internal static class OfficeCryptoAgile
     /// </summary>
     public static (byte[] EncryptionInfo, byte[] EncryptedPackage) Encrypt(
         byte[] innerPackage,
-        SecureString password)
+        ReadOnlySpan<char> password)
     {
         Guard.NotNull(innerPackage, nameof(innerPackage));
-        Guard.NotNull(password, nameof(password));
 
-        byte[] passwordUtf16 = SecureStringToUtf16(password);
+        byte[] passwordUtf16 = PasswordToUtf16(password);
         try
         {
             // Fresh random material on every encrypt: salts and the
@@ -488,28 +485,16 @@ internal static class OfficeCryptoAgile
     // Misc helpers
     // ════════════════════════════════════════════════════════════════
 
-    private static byte[] SecureStringToUtf16(SecureString password)
+    private static byte[] PasswordToUtf16(ReadOnlySpan<char> password)
     {
-        if (password == null || password.Length == 0)
+        if (password.IsEmpty)
         {
             return [];
         }
 
-        IntPtr ptr = IntPtr.Zero;
-        try
-        {
-            ptr = Marshal.SecureStringToGlobalAllocUnicode(password);
-            byte[] bytes = new byte[password.Length * 2];
-            Marshal.Copy(ptr, bytes, 0, bytes.Length);
-            return bytes;
-        }
-        finally
-        {
-            if (ptr != IntPtr.Zero)
-            {
-                Marshal.ZeroFreeGlobalAllocUnicode(ptr);
-            }
-        }
+        byte[] bytes = new byte[password.Length * 2];
+        Encoding.Unicode.GetBytes(password, bytes);
+        return bytes;
     }
 
     private static byte[] Truncate(byte[] source, int length)

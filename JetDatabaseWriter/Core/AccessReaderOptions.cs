@@ -3,15 +3,12 @@ namespace JetDatabaseWriter;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Security;
 
 /// <summary>
 /// Configuration options for opening a JET database with <see cref="AccessReader"/>.
 /// </summary>
 public sealed class AccessReaderOptions : IAccessOptions
 {
-    private SecureString? _password;
-
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessReaderOptions"/> class.
     /// </summary>
@@ -21,12 +18,11 @@ public sealed class AccessReaderOptions : IAccessOptions
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessReaderOptions"/> class using a plain-text password.
-    /// The password is converted to a read-only <see cref="SecureString"/>.
     /// </summary>
     /// <param name="plainTextPassword">The plain-text password. Null means no password.</param>
     public AccessReaderOptions(string? plainTextPassword)
     {
-        _password = SecureStringUtilities.FromPlainText(plainTextPassword);
+        Password = plainTextPassword.AsMemory();
     }
 
     /// <summary>Gets the maximum number of pages to keep in cache. 0 = unlimited, -1 = disabled. Default: 256 (1 MB for 4K pages).</summary>
@@ -60,19 +56,10 @@ public sealed class AccessReaderOptions : IAccessOptions
 
     /// <summary>
     /// Gets the password for opening encrypted databases.
-    /// A read-only copy is stored during initialization.
-    /// When null or empty, no decryption is attempted.
+    /// Empty (the default) means no decryption is attempted.
     /// Supports Jet3 (XOR), Jet4 (RC4), and ACCDB (AES) encryption.
     /// </summary>
-    public SecureString? Password
-    {
-        get => _password;
-        init
-        {
-            _password?.Dispose();
-            _password = SecureStringUtilities.CopyAsReadOnly(value);
-        }
-    }
+    public ReadOnlyMemory<char> Password { get; init; }
 
     /// <summary>
     /// Gets a value indicating whether a lockfile (.ldb / .laccdb) is created
