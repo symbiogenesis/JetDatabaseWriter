@@ -630,7 +630,7 @@ The items below are **not yet implemented** and are the most likely places to hi
 ### Indexes
 - **Jet3 (`.mdb` Access 97) rejects `IndexDefinition` entirely.**
 - **Indexable key types are limited.** Live leaf maintenance is unsupported for `OLE`, `MEMO`, attachment, complex columns, and text containing spaces/punctuation/non-ASCII — these round-trip as schema only and Access rebuilds the leaf on Compact & Repair. If *any* column in a multi-column index is unsupported, the whole index falls through to the schema-only path.
-- **No incremental B-tree maintenance.** Each insert/update/delete rebuilds the entire B-tree. Cost scales with row count.
+- **No incremental B-tree maintenance.** Each insert/update/delete rebuilds the entire B-tree (no `tail_page` chain, no delta updates). Cost scales with row count. Emitted leaf and intermediate pages do use shared-prefix compression (`pref_len > 0`), so the on-disk footprint is competitive with Access-authored output.
 
 ### Primary & foreign keys
 - **TDEF must fit on one page** after FK entries are appended, otherwise `NotSupportedException`.

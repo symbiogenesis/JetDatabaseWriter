@@ -153,7 +153,8 @@ internal static class IndexBTreeBuilder
                 leafGroups[i],
                 prevPage: prev,
                 nextPage: next,
-                tailPage: 0);
+                tailPage: 0,
+                enablePrefixCompression: true);
             pages.Add(leaf);
         }
 
@@ -292,7 +293,12 @@ internal static class IndexBTreeBuilder
         Wi32(page, 8, checked((int)prevPage));
         Wi32(page, 12, checked((int)nextPage));
         Wi32(page, 16, 0);   // tail_page
-        Wu16(page, 20, 0);   // pref_len = 0
+
+        // §4.4 prefix compression on intermediate pages: hoist the longest
+        // shared encoded-key prefix into the header and strip it from every
+        // entry beyond the first.
+        int prefLen = ComputeIntermediatePrefixLength(entries);
+        Wu16(page, 20, prefLen);
 
         int payloadCursor = IndexLeafPageBuilder.Jet4FirstEntryOffset;
         int payloadLimit = pageSize;
@@ -301,7 +307,9 @@ internal static class IndexBTreeBuilder
         {
             IntermediateEntry e = entries[i];
             byte[] key = e.Summary.EncodedKey;
-            int entryLen = key.Length + 4 + 4;
+            int keyOffset = i == 0 ? 0 : prefLen;
+            int keyLen = key.Length - keyOffset;
+            int entryLen = keyLen + 4 + 4;
             int entryStart = payloadCursor;
 
             if (entryStart + entryLen > payloadLimit)
@@ -309,11 +317,11 @@ internal static class IndexBTreeBuilder
                 throw new ArgumentOutOfRangeException(nameof(entries), "Intermediate page overflow (internal error).");
             }
 
-            Buffer.BlockCopy(key, 0, page, entryStart, key.Length);
+            Buffer.BlockCopy(key, keyOffset, page, entryStart, keyLen);
 
             // 3-byte BE data page + 1-byte data row (summary of last child entry).
             long dp = e.Summary.DataPage;
-            int rpOff = entryStart + key.Length;
+            int rpOff = entryStart + keyLen;
             page[rpOff + 0] = (byte)((dp >> 16) & 0xFF);
             page[rpOff + 1] = (byte)((dp >> 8) & 0xFF);
             page[rpOff + 2] = (byte)(dp & 0xFF);
@@ -353,6 +361,36 @@ internal static class IndexBTreeBuilder
 
         Wu16(page, 2, payloadLimit - payloadCursor); // free_space
         return page;
+    }
+
+    private static int ComputeIntermediatePrefixLength(IReadOnlyList<IntermediateEntry> entries)
+    {
+        if (entries.Count < 2)
+        {
+            return 0;
+        }
+
+        byte[] first = entries[0].Summary.EncodedKey;
+        int prefixLen = first.Length;
+        for (int i = 1; i < entries.Count && prefixLen > 0; i++)
+        {
+            byte[] other = entries[i].Summary.EncodedKey;
+            int max = Math.Min(prefixLen, other.Length);
+            int j = 0;
+            while (j < max && first[j] == other[j])
+            {
+                j++;
+            }
+
+            prefixLen = j;
+        }
+
+        if (prefixLen > 0xFFFF)
+        {
+            prefixLen = 0xFFFF;
+        }
+
+        return prefixLen;
     }
 
     private static void Wu16(byte[] b, int o, int value)

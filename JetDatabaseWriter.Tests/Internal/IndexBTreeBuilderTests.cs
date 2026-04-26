@@ -111,19 +111,80 @@ public sealed class IndexBTreeBuilderTests
 
         byte[] intermediate = r.Pages[3];
 
-        // First intermediate entry begins at 0x1E0 and consists of:
-        // 200-byte key + 3-byte BE data_page + 1-byte data_row + 4-byte child_page.
-        // Child page (4-byte LE) at offset 0x1E0 + 200 + 4.
-        int firstChildOffset = FirstEntryOffset + 200 + 4;
+        // Intermediate entries summarise the last leaf entry of each child:
+        // i = 16 (leaf 0), i = 33 (leaf 1), i = 39 (leaf 2). Bytes [0] and
+        // [2..199] are all zero across the three summaries; only byte [1]
+        // differs. Prefix compression hoists the leading 0x00 (1 byte) into
+        // pref_len, so subsequent entries strip 1 byte from the front.
+        int prefLen = ReadU16(intermediate, 20);
+        Assert.Equal(1, prefLen);
+
+        // Entry 0 (full): key (200) + 3-byte BE data_page + 1-byte data_row + 4-byte child_page.
+        int entry0KeyLen = 200;
+        int entry0Stride = entry0KeyLen + 4 + 4;
+        int firstChildOffset = FirstEntryOffset + entry0KeyLen + 4;
         Assert.Equal(FirstPage + 0, ReadI32(intermediate, firstChildOffset));
 
-        // Second entry starts immediately after (entry stride = 200 + 8 = 208).
-        int secondChildOffset = firstChildOffset + 208;
+        // Entry 1 (compressed): key (200 - prefLen) + 4 + 4.
+        int compressedKeyLen = 200 - prefLen;
+        int compressedStride = compressedKeyLen + 4 + 4;
+        int entry1Start = FirstEntryOffset + entry0Stride;
+        int secondChildOffset = entry1Start + compressedKeyLen + 4;
         Assert.Equal(FirstPage + 1, ReadI32(intermediate, secondChildOffset));
 
-        // Third entry.
-        int thirdChildOffset = secondChildOffset + 208;
+        int entry2Start = entry1Start + compressedStride;
+        int thirdChildOffset = entry2Start + compressedKeyLen + 4;
         Assert.Equal(FirstPage + 2, ReadI32(intermediate, thirdChildOffset));
+    }
+
+    [Fact]
+    public void Build_LeavesEmitPrefixCompression_WhenEntriesShareLeadingBytes()
+    {
+        // Encoded T_LONG keys all share the leading 0x7F flag + 0x80 sign-flipped
+        // high bytes (values 1..3 → bytes [0x7F 0x80 0x00 0x00 0x01..0x03]).
+        // Common byte prefix is 4 bytes.
+        var entries = new List<IndexLeafPageBuilder.LeafEntry>();
+        for (int i = 1; i <= 3; i++)
+        {
+            byte[] key = IndexKeyEncoder.EncodeEntry(0x04, i, ascending: true);
+            entries.Add(new IndexLeafPageBuilder.LeafEntry(key, dataPage: 1, dataRow: (byte)i));
+        }
+
+        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
+
+        Assert.Single(r.Pages);
+        byte[] leaf = r.Pages[0];
+        Assert.Equal(0x04, leaf[0]);
+
+        // pref_len at offset 20 should be 4 (the shared 0x7F 0x80 0x00 0x00 prefix).
+        Assert.Equal(4, ReadU16(leaf, 20));
+
+        // First entry: full 5-byte key + 4-byte rowptr at 0x1E0 (stride 9).
+        // Entry 1 at offset 9, entry 2 at offset 14 — both compressed to 1 + 4 bytes.
+        // Bitmask: byte 1 carries bits 1 (0x02) and 6 (0x40) → 0x42.
+        const int Jet4BitmaskOffset = 0x1B;
+        Assert.Equal(0x42, leaf[Jet4BitmaskOffset + 1]);
+
+        // Verify entry[1] starts at 0x1E0 + 9 and contains the suffix byte 0x02 (i=2).
+        Assert.Equal(0x02, leaf[FirstEntryOffset + 9]);
+    }
+
+    [Fact]
+    public void Build_NoSharedPrefix_LeavesPrefLenAtZero()
+    {
+        // Two entries that diverge at byte 0 → no shared prefix.
+        var k1 = new byte[] { 0x10, 0x20 };
+        var k2 = new byte[] { 0x30, 0x40 };
+        var entries = new List<IndexLeafPageBuilder.LeafEntry>
+        {
+            new IndexLeafPageBuilder.LeafEntry(k1, 1, 0),
+            new IndexLeafPageBuilder.LeafEntry(k2, 1, 1),
+        };
+
+        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
+
+        Assert.Single(r.Pages);
+        Assert.Equal(0, ReadU16(r.Pages[0], 20));
     }
 
     [Fact]
@@ -167,6 +228,8 @@ public sealed class IndexBTreeBuilderTests
         Assert.Equal(0x03, r.Pages[expectedTotal - 1][0]);
         Assert.Equal(FirstPage + expectedTotal - 1, r.RootPageNumber);
     }
+
+    private static int ReadU16(byte[] b, int o) => b[o] | (b[o + 1] << 8);
 
     private static int ReadI32(byte[] b, int o) =>
         b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24);

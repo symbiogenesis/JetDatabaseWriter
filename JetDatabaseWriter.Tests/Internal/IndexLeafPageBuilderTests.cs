@@ -121,6 +121,106 @@ public sealed class IndexLeafPageBuilderTests
         Assert.Throws<ArgumentOutOfRangeException>(() => IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, 100, entries));
     }
 
+    [Fact]
+    public void PrefixCompressionDisabled_PrefLenIsZero()
+    {
+        // Default overload (no enablePrefixCompression flag) keeps pref_len = 0
+        // even when entries share leading bytes — preserves the W3 byte layout
+        // for callers that haven't opted in.
+        byte[] k1 = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
+        byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);
+        var entries = new[]
+        {
+            new IndexLeafPageBuilder.LeafEntry(k1, 1, 0),
+            new IndexLeafPageBuilder.LeafEntry(k2, 1, 1),
+        };
+
+        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, parentTdefPage: 100, entries);
+
+        Assert.Equal(0, ReadU16(page, 20));
+    }
+
+    [Fact]
+    public void PrefixCompressionEnabled_HoistsSharedPrefix_AndStripsItFromTrailingEntries()
+    {
+        // T_LONG ascending encoding for 1, 2, 3 produces 5-byte keys whose
+        // first 4 bytes are identical (0x7F flag + 0x80 sign-flipped MSB +
+        // two 0x00 bytes). Compressed entries beyond the first carry only the
+        // single trailing differing byte.
+        byte[] k1 = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
+        byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);
+        byte[] k3 = IndexKeyEncoder.EncodeEntry(0x04, 3, ascending: true);
+        var entries = new[]
+        {
+            new IndexLeafPageBuilder.LeafEntry(k1, 1, 0),
+            new IndexLeafPageBuilder.LeafEntry(k2, 1, 1),
+            new IndexLeafPageBuilder.LeafEntry(k3, 1, 2),
+        };
+
+        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(
+            PageSize,
+            parentTdefPage: 100,
+            entries,
+            prevPage: 0,
+            nextPage: 0,
+            tailPage: 0,
+            enablePrefixCompression: true);
+
+        Assert.Equal(4, ReadU16(page, 20));
+
+        // First entry is whole: 5-byte key + 4-byte rowptr at 0x1E0.
+        for (int i = 0; i < 5; i++)
+        {
+            Assert.Equal(k1[i], page[0x1E0 + i]);
+        }
+
+        // Entry 1 starts at 0x1E0 + 9 (5 + 4) and consists of the single
+        // suffix byte (0x02) + 4-byte rowptr.
+        const int Entry1Start = 0x1E0 + 9;
+        Assert.Equal(0x02, page[Entry1Start]);
+
+        // Entry 2 starts at 0x1E0 + 9 + 5 (1 byte key + 4 byte rowptr).
+        const int Entry2Start = Entry1Start + 5;
+        Assert.Equal(0x03, page[Entry2Start]);
+
+        // Bitmask: bit at offset 9 (entry 1) and offset 14 (entry 2).
+        // Byte 1, bits 1 and 6 → 0b0100_0010.
+        Assert.Equal(0b0100_0010, page[0x1B + 1]);
+
+        // Free space reflects the tighter packing: header consumed +
+        // (5+4) + (1+4) + (1+4) = 19 bytes from the entry area.
+        Assert.Equal(PageSize - 0x1E0 - 19, ReadU16(page, 2));
+    }
+
+    [Fact]
+    public void PrefixCompressionEnabled_SingleEntry_LeavesPrefLenAtZero()
+    {
+        byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 7, ascending: true);
+        var entries = new[] { new IndexLeafPageBuilder.LeafEntry(key, 1, 0) };
+
+        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(
+            PageSize, 100, entries, 0, 0, 0, enablePrefixCompression: true);
+
+        Assert.Equal(0, ReadU16(page, 20));
+    }
+
+    [Fact]
+    public void PrefixCompressionEnabled_NoCommonPrefix_LeavesPrefLenAtZero()
+    {
+        byte[] k1 = new byte[] { 0x10, 0x20 };
+        byte[] k2 = new byte[] { 0x30, 0x40 };
+        var entries = new[]
+        {
+            new IndexLeafPageBuilder.LeafEntry(k1, 1, 0),
+            new IndexLeafPageBuilder.LeafEntry(k2, 1, 1),
+        };
+
+        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(
+            PageSize, 100, entries, 0, 0, 0, enablePrefixCompression: true);
+
+        Assert.Equal(0, ReadU16(page, 20));
+    }
+
     private static int ReadU16(byte[] b, int o) => b[o] | (b[o + 1] << 8);
 
     private static int ReadI32(byte[] b, int o) =>
