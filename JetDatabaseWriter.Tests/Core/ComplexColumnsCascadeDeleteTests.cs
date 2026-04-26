@@ -10,11 +10,11 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Phase C5 tests — cascade-on-delete for complex (Attachment / MultiValue)
-/// columns. When a parent row is removed via
-/// <see cref="IAccessWriter.DeleteRowsAsync"/> (directly or through an FK
-/// cascade), its associated rows in the hidden flat child table must also
-/// be removed. See <c>docs/design/complex-columns-format-notes.md</c> §4.3.
+/// Cascade-on-delete for complex (Attachment / MultiValue) columns. When a
+/// parent row is removed via <see cref="IAccessWriter.DeleteRowsAsync"/>
+/// (directly or through an FK cascade), its associated rows in the hidden
+/// flat child table must also be removed. See
+/// <c>docs/design/complex-columns-format-notes.md</c> §4.3.
 /// </summary>
 public sealed class ComplexColumnsCascadeDeleteTests
 {
@@ -219,7 +219,8 @@ public sealed class ComplexColumnsCascadeDeleteTests
     {
         // Build: Customers (PK CustId) <- 1:N - Documents (FK CustId, complex Files)
         // Cascade-delete a Customer; the Document(s) for that customer cascade-
-        // delete via W10, and their attachment rows in turn cascade-delete via C5.
+        // delete via the FK cascade, and their attachment rows in turn cascade-
+        // delete via the complex-column cascade.
         var ms = new MemoryStream();
 
         // Bootstrap from an Access-authored fixture so MSysRelationships exists.

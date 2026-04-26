@@ -192,12 +192,9 @@ public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<D
     public async Task ComplexFields_Attachment_Row1_FileNameIsHelloTxt()
     {
         // The fixture was created with "hello.txt" as the attachment filename on row 1.
-        // When decoded via the MSysCM_ table lookup, the filename must be recoverable.
-        // The expected return type is byte[] containing the raw attachment sub-record,
-        // from which the library (or caller) can extract the FileName.
-        //
-        // For now the test asserts the raw decoded bytes contain the UTF-16 or UTF-8
-        // bytes of "hello.txt", as a proxy for correct filename resolution.
+        // The decoded byte[] is the raw attachment sub-record; this test asserts
+        // the bytes contain the UTF-16 or UTF-8 form of "hello.txt" as a proxy
+        // for correct filename resolution.
         var reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
         List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(DocumentsTable, TestContext.Current.CancellationToken);
         int attachIdx = meta.FindIndex(c => c.Name.Equals(AttachmentsColumn, StringComparison.OrdinalIgnoreCase));

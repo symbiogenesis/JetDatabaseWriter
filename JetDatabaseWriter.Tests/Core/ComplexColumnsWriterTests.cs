@@ -9,19 +9,17 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Tests for the Phase C1 + C2 complex-columns writer surface
+/// Tests for the complex-columns writer surface
 /// (see <c>docs/design/complex-columns-format-notes.md</c>).
 /// <list type="bullet">
-///   <item>C1: <c>MSysComplexColumns</c> system table is scaffolded into every fresh ACCDB.</item>
-///   <item>C2: <see cref="ColumnDefinition.IsAttachment"/> / <see cref="ColumnDefinition.IsMultiValue"/>
-///         declarations are recognized; <c>CreateTableAsync</c> rejects them with
-///         <see cref="NotSupportedException"/> until C3 lands the hidden flat-table
-///         emission path.</item>
+///   <item><c>MSysComplexColumns</c> system table is scaffolded into every fresh ACCDB.</item>
+///   <item><see cref="ColumnDefinition.IsAttachment"/> / <see cref="ColumnDefinition.IsMultiValue"/>
+///         declarations are recognized by <c>CreateTableAsync</c>.</item>
 /// </list>
 /// </summary>
 public sealed class ComplexColumnsWriterTests
 {
-    // ── C1: MSysComplexColumns scaffold ────────────────────────────────────────
+    // ── MSysComplexColumns scaffold ────────────────────────────────────────────
 
     [Fact]
     public async Task CreateDatabaseAsync_AceAccdb_FullCatalog_EmitsMSysComplexColumns()
@@ -95,7 +93,7 @@ public sealed class ComplexColumnsWriterTests
         Assert.Empty(meta);
     }
 
-    // ── C2: ColumnDefinition declaration surface ───────────────────────────────
+    // ── ColumnDefinition declaration surface ───────────────────────────────────
 
     [Fact]
     public void ColumnDefinition_Defaults_AreNonComplex()

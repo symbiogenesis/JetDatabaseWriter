@@ -13,7 +13,7 @@ using Xunit;
 /// Round-trip tests for <see cref="IAccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, System.Threading.CancellationToken)"/>:
 /// emit single-column non-unique ascending logical indexes into the new table's
 /// TDEF page chain, and confirm they are surfaced by
-/// <see cref="IAccessReader.ListIndexesAsync"/>. The W3 follow-up also appends
+/// <see cref="IAccessReader.ListIndexesAsync"/>. The build also appends
 /// one empty B-tree leaf page (<c>page_type = 0x04</c>) per index and patches
 /// the leaf's page number into the matching real-index <c>first_dp</c> field;
 /// the last two tests in this class scan the on-disk byte stream to confirm
@@ -99,7 +99,7 @@ public sealed class IndexWriterTests
         Assert.All(indexes, i => Assert.Equal(IndexKind.Normal, i.Kind));
         Assert.All(indexes, i => Assert.Single(i.Columns));
 
-        // W1 emits one real-idx per logical-idx (no sharing).
+        // One real-idx is emitted per logical-idx (no sharing).
         var realIdxNumbers = indexes.Select(i => i.RealIndexNumber).ToHashSet();
         Assert.Equal(indexes.Count, realIdxNumbers.Count);
 
@@ -246,7 +246,7 @@ public sealed class IndexWriterTests
     [Fact]
     public async Task CreateTable_WithIndex_EmitsLeafPageWithMatchingParent()
     {
-        // W3: a single empty leaf page (page_type=0x04) is appended per index,
+        // A single empty leaf page (page_type=0x04) is appended per index,
         // and its page number is patched into the real-idx physical descriptor's
         // first_dp field. We don't have a public API to read first_dp directly,
         // but we can verify by scanning the file for leaf pages and checking

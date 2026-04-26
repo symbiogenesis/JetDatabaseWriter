@@ -6,7 +6,7 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Unit tests for <see cref="IndexLeafPageBuilder"/> (W3). The Jet4 / ACE
+/// Unit tests for <see cref="IndexLeafPageBuilder"/>. The Jet4 / ACE
 /// leaf-page layout is described in
 /// <c>docs/design/index-and-relationship-format-notes.md</c> §4.1 (page header),
 /// §4.2 (entry-start bitmask), and §4.3 (per-entry record).

@@ -13,9 +13,6 @@ using Xunit;
 /// <see cref="IAccessReader.Rows{T}(string, System.IProgress{long}?, System.Threading.CancellationToken)"/> /
 /// <see cref="IAccessReader.RowsAsStrings(string, System.IProgress{long}?, System.Threading.CancellationToken)"/>
 /// surface composed with the standard <see cref="System.Linq.AsyncEnumerable"/> operators.
-///
-/// Replaces the prior <c>TableQuery</c> / <c>Query()</c> tests that were removed when
-/// the obsolete fluent-query API was deleted.
 /// </summary>
 public class RowsAsyncLinqTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

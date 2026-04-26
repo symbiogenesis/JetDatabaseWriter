@@ -9,11 +9,11 @@ using System.Threading.Tasks;
 using Xunit;
 
 /// <summary>
-/// W14 — round-trip tests for <see cref="AccessWriter.DropRelationshipAsync"/>
+/// Round-trip tests for <see cref="AccessWriter.DropRelationshipAsync"/>
 /// and <see cref="AccessWriter.RenameRelationshipAsync"/>. Each test starts
 /// from a copy of <c>NorthwindTraders.accdb</c> (which has the
 /// <c>MSysRelationships</c> system table), creates two scratch tables and a
-/// relationship via W9a/W9b, and then exercises the new mutation API.
+/// relationship, and then exercises the mutation API.
 /// </summary>
 public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

@@ -173,11 +173,12 @@ public sealed class LimitationsTests : IDisposable
     public void SchemaEvolution_IAccessWriter_DoesNotExposeIndexOrConstraintApis()
     {
         // README: "No index, primary-key, or foreign-key/cascade enforcement creation."
-        // W8 lifted PK creation; W9a lifted MSysRelationships row emission via
-        // CreateRelationshipAsync. The remaining pinned restrictions: no methods
-        // exposing "Index" or "PrimaryKey" or "ForeignKey" — those concepts are
-        // configured via property-bearing model types (IndexDefinition,
-        // RelationshipDefinition), not via methods on the writer itself.
+        // PK creation and MSysRelationships row emission via
+        // CreateRelationshipAsync have been lifted. The remaining pinned
+        // restrictions: no methods exposing "Index" or "PrimaryKey" or
+        // "ForeignKey" — those concepts are configured via property-bearing
+        // model types (IndexDefinition, RelationshipDefinition), not via
+        // methods on the writer itself.
         AssertNoMethodMatching(typeof(IAccessWriter), "Index");
         AssertNoMethodMatching(typeof(IAccessWriter), "PrimaryKey");
         AssertNoMethodMatching(typeof(IAccessWriter), "ForeignKey");
@@ -193,7 +194,7 @@ public sealed class LimitationsTests : IDisposable
         // IsAutoIncrement, and ValidationRule on top of Name/ClrType/MaxLength,
         // plus four persisted properties (DefaultValueExpression, ValidationRuleExpression,
         // ValidationText, Description) round-tripped through MSysObjects.LvProp,
-        // and (W8) IsPrimaryKey as a shortcut for synthesizing a PK IndexDefinition.
+        // and IsPrimaryKey as a shortcut for synthesizing a PK IndexDefinition.
         var publicProps = typeof(ColumnDefinition)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Select(p => p.Name)
@@ -462,10 +463,9 @@ public sealed class LimitationsTests : IDisposable
     [Fact]
     public void SpecializedColumns_AttachmentApi_IsRowLevelOnly()
     {
-        // Phase C4 (2026-04-25) shipped row-level AddAttachmentAsync /
-        // GetAttachmentsAsync APIs; Phase C8 (2026-04-25) lifted the 256-byte
-        // inline-OLE cap by routing oversized attachment payloads through
-        // freshly-allocated LVAL data pages.
+        // The library ships row-level AddAttachmentAsync / GetAttachmentsAsync
+        // APIs, and oversized attachment payloads are routed through
+        // freshly-allocated LVAL data pages rather than the 256-byte inline cap.
         Assert.NotNull(typeof(IAccessWriter).GetMethod("AddAttachmentAsync"));
         Assert.NotNull(typeof(IAccessReader).GetMethod("GetAttachmentsAsync"));
     }
@@ -473,8 +473,8 @@ public sealed class LimitationsTests : IDisposable
     [Fact]
     public void SpecializedColumns_MultiValueApi_IsRowLevelOnly()
     {
-        // Phase C4 (2026-04-25) shipped row-level AddMultiValueItemAsync /
-        // GetMultiValueItemsAsync APIs alongside the C2 descriptor surface.
+        // The library ships row-level AddMultiValueItemAsync /
+        // GetMultiValueItemsAsync APIs alongside the multi-value descriptor surface.
         Assert.NotNull(typeof(IAccessWriter).GetMethod("AddMultiValueItemAsync"));
         Assert.NotNull(typeof(IAccessReader).GetMethod("GetMultiValueItemsAsync"));
     }

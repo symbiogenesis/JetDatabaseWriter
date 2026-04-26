@@ -12,10 +12,10 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Phase C6 tests — when <see cref="IAccessWriter.DropTableAsync"/> drops a
-/// parent table that has Attachment / MultiValue columns, the hidden flat
-/// child tables and the corresponding <c>MSysComplexColumns</c> rows must be
-/// removed too. See <c>docs/design/complex-columns-format-notes.md</c> §4.3.
+/// When <see cref="IAccessWriter.DropTableAsync"/> drops a parent table
+/// that has Attachment / MultiValue columns, the hidden flat child tables
+/// and the corresponding <c>MSysComplexColumns</c> rows must be removed
+/// too. See <c>docs/design/complex-columns-format-notes.md</c> §4.3.
 /// </summary>
 public sealed class ComplexColumnsDropTableTests
 {
@@ -161,7 +161,7 @@ public sealed class ComplexColumnsDropTableTests
     [Fact]
     public async Task DropTableAsync_OnTableWithoutComplexColumns_StillSucceeds()
     {
-        // Regression: the C6 cascade must be a silent no-op for ordinary tables.
+        // Regression: the cascade must be a silent no-op for ordinary tables.
         var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(

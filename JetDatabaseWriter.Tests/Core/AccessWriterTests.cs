@@ -953,7 +953,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [Fact]
     public async Task InsertRow_MemoOverInlineLimit_RoundTripsViaLvalChain()
     {
-        // C8: MEMO payloads larger than MaxInlineMemoBytes are pushed to LVAL
+        // MEMO payloads larger than MaxInlineMemoBytes are pushed to LVAL
         // pages instead of throwing. Round-trip a 513-char Chinese-glyph string
         // (= 1026 UTF-16 bytes; Jet4 cannot compress non-Latin-1 to 1 byte/char,
         // so the encoded payload exceeds the 1024-byte inline cap and forces
@@ -992,7 +992,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     [Fact]
     public async Task InsertRow_OleBytesOverInlineLimit_RoundTripsViaLvalChain()
     {
-        // C8: OLE payloads larger than MaxInlineOleBytes are pushed to LVAL
+        // OLE payloads larger than MaxInlineOleBytes are pushed to LVAL
         // pages instead of throwing. 4096 bytes spans multiple chained LVAL
         // rows for a 4 KB page.
         string path = TestDatabases.NorthwindTraders;
@@ -1586,7 +1586,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// Builds a dummy row with plausible values for each column type. The
     /// optional <paramref name="seed"/> varies the values per row so that
     /// bulk-insert tests against fixtures with unique indexes do not trip
-    /// the W11 unique-violation detection.
+    /// the unique-violation detection.
     /// </summary>
     private static object[] BuildDummyRow(List<ColumnMetadata> columns, int seed = 0)
     {

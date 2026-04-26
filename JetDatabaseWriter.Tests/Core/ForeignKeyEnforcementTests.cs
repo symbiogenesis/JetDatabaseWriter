@@ -9,12 +9,12 @@ using System.Threading.Tasks;
 using Xunit;
 
 /// <summary>
-/// W10 — runtime foreign-key enforcement on Insert / Update / Delete.
+/// Runtime foreign-key enforcement on Insert / Update / Delete.
 /// Each test creates a parent / child pair, declares a relationship via
 /// <see cref="AccessWriter.CreateRelationshipAsync"/>, and exercises the
-/// enforcement / cascade behaviour the W10 phase added to
-/// <c>InsertRowAsync</c>, <c>InsertRowsAsync</c>, <c>UpdateRowsAsync</c>,
-/// and <c>DeleteRowsAsync</c>.
+/// enforcement / cascade behaviour on <c>InsertRowAsync</c>,
+/// <c>InsertRowsAsync</c>, <c>UpdateRowsAsync</c>, and
+/// <c>DeleteRowsAsync</c>.
 /// </summary>
 public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

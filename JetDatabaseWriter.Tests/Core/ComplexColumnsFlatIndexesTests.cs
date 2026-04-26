@@ -10,9 +10,8 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Tests for Phase C7 — per-flat-table PK / FK indexes that the previous C3
-/// MVP relied on Microsoft Access to rebuild on Compact &amp; Repair. The
-/// attachment flat-table layout is verified against
+/// Tests for per-flat-table PK / FK indexes. The attachment flat-table
+/// layout is verified against
 /// <c>format-probe-appendix-complex.md</c>
 /// (the <c>f_A3DF50CFC033433899AF0AC1A4CF4171_Attachments</c> probe of
 /// <c>ComplexFields.accdb</c>); the multi-value layout mirrors that pattern
@@ -102,7 +101,7 @@ public sealed class ComplexColumnsFlatIndexesTests
     [Fact]
     public async Task AddAttachment_FillsAutoincrementScalar_AndSurvivesRoundTrip()
     {
-        // The C7 schema introduces a NOT-NULL autoincrement column. The
+        // The flat-table schema introduces a NOT-NULL autoincrement column. The
         // AddAttachmentAsync path must hydrate the constraint from the
         // FLAG_AUTO_LONG bit and seed the next value from existing rows so
         // multiple attachments per parent get distinct scalar PKs.

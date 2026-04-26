@@ -6,7 +6,7 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Unit tests for <see cref="IndexBTreeBuilder"/> (W4). Verifies B-tree leaf
+/// Unit tests for <see cref="IndexBTreeBuilder"/>. Verifies B-tree leaf
 /// splitting, sibling chains, and intermediate (<c>0x03</c>) page emission.
 /// Page format references in
 /// <c>docs/design/index-and-relationship-format-notes.md</c> §4.1–4.3.

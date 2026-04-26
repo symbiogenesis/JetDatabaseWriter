@@ -6,7 +6,7 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Unit tests for <see cref="IndexKeyEncoder"/> (W2). The assertions verify
+/// Unit tests for <see cref="IndexKeyEncoder"/>. The assertions verify
 /// the encoder produces the byte sequences described in
 /// <c>docs/design/index-and-relationship-format-notes.md</c> §4.3 (entry flag
 /// byte) and §5 (per-type sort-key encoding), and that lexicographic byte
@@ -189,7 +189,7 @@ public sealed class IndexKeyEncoderTests
         Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(columnType, 1, ascending: true));
     }
 
-    // ── W7: General Legacy text encoding (digits + ASCII letters only) ──
+    // ── General Legacy text encoding (digits + ASCII letters only) ──
 
     [Fact]
     public void Text_EmptyString_EmitsFlagAndTerminator()
@@ -271,7 +271,7 @@ public sealed class IndexKeyEncoderTests
         Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(T_TEXT, value, ascending: true));
     }
 
-    // ── W12: GUID encoding via Jackcess "general binary entry" wrapping ──
+    // ── GUID encoding via Jackcess "general binary entry" wrapping ──
 
     [Fact]
     public void Guid_Null_EmitsSingleFlagByte()
@@ -381,7 +381,7 @@ public sealed class IndexKeyEncoderTests
         Assert.Equal(fromGuid, fromString);
     }
 
-    // ── W13: T_NUMERIC (Decimal) ────────────────────────────────────────
+    // ── T_NUMERIC (Decimal) ────────────────────────────────────────
 
     [Fact]
     public void Numeric_Null_Ascending_EmitsSingleZeroFlagByte()

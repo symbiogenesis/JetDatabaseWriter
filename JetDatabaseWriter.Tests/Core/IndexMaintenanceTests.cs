@@ -8,7 +8,7 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// W5 round-trip tests for the index B-tree maintenance hooks added to
+/// Round-trip tests for the index B-tree maintenance hooks on
 /// <see cref="IAccessWriter.InsertRowAsync(string, object[], System.Threading.CancellationToken)"/>,
 /// <see cref="IAccessWriter.InsertRowsAsync(string, System.Collections.Generic.IEnumerable{object[]}, System.Threading.CancellationToken)"/>,
 /// <see cref="IAccessWriter.UpdateRowsAsync"/>,
@@ -247,8 +247,8 @@ public sealed class IndexMaintenanceTests
     [Fact]
     public async Task InsertRows_TextIndex_GeneralLegacyKeys_RebuildsLeaf()
     {
-        // W7: text indexes whose values are limited to digits + ASCII letters
-        // are now maintained on insert via the General Legacy sort-key encoder.
+        // Text indexes whose values are limited to digits + ASCII letters
+        // are maintained on insert via the General Legacy sort-key encoder.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 
@@ -277,9 +277,9 @@ public sealed class IndexMaintenanceTests
     [Fact]
     public async Task InsertRows_TextIndex_UnsupportedCharacter_LeavesLeafStale()
     {
-        // W7 fail-closed: any character outside the General Legacy range
+        // Fail-closed: any character outside the General Legacy range
         // (here a space) makes the encoder throw NotSupportedException, and
-        // the W5 maintenance loop swallows it to leave the original empty
+        // the maintenance loop swallows it to leave the original empty
         // placeholder leaf in place. We verify the inserts succeed and the
         // visible leafs all show the implicit single-entry count.
         await using var stream = await CreateFreshAccdbStreamAsync();

@@ -11,12 +11,9 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// W15 (2026-04-25) round-trip tests for pre-write unique-index enforcement.
-/// Before W15, a duplicate row was persisted to disk and the violation surfaced
-/// only after the post-write bulk B-tree rebuild — the row was rolled back via
-/// <c>RollbackInsertedRowsAsync</c>, but the catch path was deferred and the
-/// caller-facing error message claimed the row was still on disk. W15 hoists
-/// the check to BEFORE the row is encoded and written.
+/// Round-trip tests for pre-write unique-index enforcement: the duplicate
+/// check runs BEFORE the row is encoded and written, so the row never hits
+/// disk and the caller-facing error message reflects that.
 /// </summary>
 public sealed class PreWriteUniqueEnforcementTests
 {
@@ -42,9 +39,8 @@ public sealed class PreWriteUniqueEnforcementTests
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.InsertRowAsync("T", [1], ct));
 
-        // W15: error message must indicate the conflict was caught BEFORE the
-        // row hit disk. The legacy post-write message contained "row has been
-        // written"; the W15 message contains "before any row was written".
+        // Error message must indicate the conflict was caught BEFORE the
+        // row hit disk: it should contain "before any row was written".
         Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
 
         // Table should still contain exactly the two rows successfully inserted.

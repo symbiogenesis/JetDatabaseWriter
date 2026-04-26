@@ -10,13 +10,13 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// W11 (2026-04-25) round-trip tests for the lifted single-column /
-/// non-unique / ascending-only restrictions on <see cref="IndexDefinition"/>:
+/// Round-trip tests for multi-column / unique / descending
+/// <see cref="IndexDefinition"/> emission:
 /// <list type="bullet">
 ///   <item><description>Multi-column non-PK indexes round-trip through <see cref="IAccessReader.ListIndexesAsync"/>.</description></item>
 ///   <item><description><see cref="IndexDefinition.IsUnique"/> emits the real-idx <c>flags</c> bit <c>0x01</c> (§3.1) and is surfaced as <see cref="IndexMetadata.IsUnique"/>.</description></item>
 ///   <item><description><see cref="IndexDefinition.DescendingColumns"/> emits <c>col_order = 0x02</c> in the matching col_map slots and is surfaced as <see cref="IndexColumnReference.IsAscending"/> = <see langword="false"/>.</description></item>
-///   <item><description>The W5 bulk-rebuild path now concatenates per-column encoded keys (and respects per-column direction) for multi-column indexes.</description></item>
+///   <item><description>The bulk-rebuild path concatenates per-column encoded keys (and respects per-column direction) for multi-column indexes.</description></item>
 ///   <item><description>Inserting a duplicate row into a unique index throws <see cref="InvalidOperationException"/>.</description></item>
 /// </list>
 /// </summary>
@@ -229,7 +229,7 @@ public sealed class IndexWriterAdvancedTests
                 ct);
         }
 
-        // Multi-column composite key concatenation through the W5 maintenance
+        // Multi-column composite key concatenation through the maintenance
         // path should rebuild a single leaf with 4 entries.
         Assert.Equal(4, FindMaxLeafEntryCount(stream.ToArray()));
     }
@@ -311,7 +311,7 @@ public sealed class IndexWriterAdvancedTests
         Assert.False(col.IsAscending);
     }
 
-    // --- W12: GUID-keyed index live B-tree maintenance ------------------------
+    // --- GUID-keyed index live B-tree maintenance ----------------------------
 
     [Fact]
     public async Task GuidIndex_BulkInsert_RebuildsLeafWithExpectedEntryCount()
@@ -338,9 +338,7 @@ public sealed class IndexWriterAdvancedTests
                 ct);
         }
 
-        // W12: GUID-keyed index now participates in the W5 bulk-rebuild path.
-        // Before W12 this would have stayed at the empty W3 placeholder leaf
-        // (entry count = 1, the implicit first entry).
+        // GUID-keyed index participates in the bulk-rebuild path.
         Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
     }
 
@@ -393,9 +391,7 @@ public sealed class IndexWriterAdvancedTests
                 ct);
         }
 
-        // W13: Decimal-keyed index now participates in the W5 bulk-rebuild path.
-        // Before W13 this would have stayed at the empty W3 placeholder leaf
-        // (entry count = 1, the implicit first entry).
+        // Decimal-keyed index participates in the bulk-rebuild path.
         Assert.Equal(5, FindMaxLeafEntryCount(stream.ToArray()));
     }
 
@@ -414,7 +410,7 @@ public sealed class IndexWriterAdvancedTests
             ct);
 
         // 1.50 and 1.5 normalise to the same numeric value; they must collide
-        // under the W13 target-scale normalisation.
+        // under the target-scale normalisation.
         await writer.InsertRowAsync("T", new object[] { 1.50m }, ct);
         await writer.InsertRowAsync("T", new object[] { 2m }, ct);
 

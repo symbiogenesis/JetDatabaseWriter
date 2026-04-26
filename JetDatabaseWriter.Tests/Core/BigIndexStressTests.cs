@@ -14,7 +14,7 @@ using Xunit;
 /// Mirrors of high-value Jackcess writer tests that previously had no
 /// counterpart in this suite (see <c>BigIndexTest</c>, <c>IndexTest.testConstraintViolation</c>,
 /// and <c>IndexTest.testAutoNumberRecover</c> in the Jackcess source). Each
-/// test exercises a code path the existing W5/W11 round-trip suite does not
+/// test exercises a code path the existing round-trip suite does not
 /// reach:
 /// <list type="bullet">
 ///   <item><description>A bulk insert large enough to force a multi-level B-tree (intermediate index pages, not just a single leaf).</description></item>
@@ -29,9 +29,9 @@ public sealed class BigIndexStressTests
     private const int LeafFirstEntryOffset = 0x1E0;
 
     /// <summary>
-    /// Bulk-inserts enough unique integer keys to force the W5 rebuild to
-    /// emit at least one intermediate (non-leaf) index page in addition to
-    /// the leafs. Verifies the data round-trips through
+    /// Bulk-inserts enough unique integer keys to force the B-tree rebuild
+    /// to emit at least one intermediate (non-leaf) index page in addition
+    /// to the leafs. Verifies the data round-trips through
     /// <see cref="AccessReader.ReadDataTableAsync"/>.
     /// </summary>
     /// <remarks>
@@ -42,15 +42,6 @@ public sealed class BigIndexStressTests
     /// the same scenario at 2000 rows over text keys.
     /// </remarks>
     /// <returns>A task representing the asynchronous test operation.</returns>
-    /// <remarks>
-    /// Originally reproduced an <see cref="OverflowException"/> in the W5
-    /// maintenance path: with no per-page row cap, fixed-int rows packed
-    /// past 255 per data page and the <c>(byte)RowIndex</c> cast in
-    /// <c>AccessWriter.MaintainIndexesAsync</c> overflowed under
-    /// <c>&lt;CheckForOverflowUnderflow&gt;true</c>. Fixed in 2026-04-25
-    /// by capping <c>CanInsertRow</c> at 255 rows per data page (matching
-    /// Jackcess <c>MAX_NUM_ROWS_ON_DATA_PAGE</c>).
-    /// </remarks>
     [Fact]
     public async Task BulkInsert_UniqueIntIndex_ManyRows_ProducesMultiLevelBTree()
     {
@@ -141,7 +132,7 @@ public sealed class BigIndexStressTests
     /// auto-increment value must <b>not</b> skip the rejected row's slot.
     /// </summary>
     /// <remarks>
-    /// The Jackcess test rejects via a unique-index violation, but our W11
+    /// The Jackcess test rejects via a unique-index violation, but our
     /// uniqueness check is a post-write check (the offending row is already
     /// committed by the time the index rebuild detects the duplicate, see
     /// <c>AccessWriter.MaintainIndexesAsync</c>'s <c>IsUnique</c> branch).

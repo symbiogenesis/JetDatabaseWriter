@@ -10,13 +10,12 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// W8 round-trip tests for primary-key emission.
+/// Round-trip tests for primary-key emission.
 /// <para>
 /// PK is emitted as a logical-index entry with <c>index_type = 0x01</c> and
-/// is implicitly unique. As of W11 (2026-04-25) multi-column PKs also
-/// participate in the W5 bulk B-tree rebuild via the composite-key
-/// concatenation path, provided every key column's type is supported by
-/// <c>IndexKeyEncoder</c>.
+/// is implicitly unique. Multi-column PKs participate in the bulk B-tree
+/// rebuild via the composite-key concatenation path, provided every key
+/// column's type is supported by <c>IndexKeyEncoder</c>.
 /// </para>
 /// </summary>
 public sealed class PrimaryKeyWriterTests
@@ -234,7 +233,7 @@ public sealed class PrimaryKeyWriterTests
         }
 
         // PK leaf was rebuilt in bulk → most-recent leaf reports 3 entries
-        // (W5 maintenance applies to single-column PKs the same as normal IXes).
+        // (maintenance applies to single-column PKs the same as normal IXes).
         Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
     }
 
@@ -322,9 +321,9 @@ public sealed class PrimaryKeyWriterTests
     [Fact]
     public async Task IndexDefinition_AcceptsMultiColumn_WhenNotPrimaryKey()
     {
-        // W11 (2026-04-25): the W1-era restriction has been lifted; multi-column
-        // non-PK indexes are now accepted and emitted (live B-tree maintenance
-        // applies when every key column type is supported by IndexKeyEncoder).
+        // Multi-column non-PK indexes are accepted and emitted (live B-tree
+        // maintenance applies when every key column type is supported by
+        // IndexKeyEncoder).
         await using var stream = await CreateFreshAccdbStreamAsync();
 
         await using (var writer = await OpenWriterAsync(stream))

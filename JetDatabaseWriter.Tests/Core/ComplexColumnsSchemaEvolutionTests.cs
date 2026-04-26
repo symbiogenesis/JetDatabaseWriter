@@ -13,12 +13,12 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Phase C9 round-trip tests — schema evolution
+/// Round-trip tests — schema evolution
 /// (<see cref="IAccessWriter.AddColumnAsync"/> /
 /// <see cref="IAccessWriter.DropColumnAsync"/> /
 /// <see cref="IAccessWriter.RenameColumnAsync"/>) on parent tables that
 /// already contain Attachment / MultiValue columns. See
-/// <c>docs/design/complex-columns-format-notes.md</c> §4.2 (Phase C9).
+/// <c>docs/design/complex-columns-format-notes.md</c> §4.2.
 /// </summary>
 public sealed class ComplexColumnsSchemaEvolutionTests
 {
