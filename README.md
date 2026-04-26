@@ -625,25 +625,23 @@ Wrong or missing passwords throw `UnauthorizedAccessException`. Corrupt or non-J
 
 ## Limitations
 
-The writer covers the common create / insert / update / delete path. The items below are **not yet implemented** and are the most likely places to hit a wall.
+The items below are **not yet implemented** and are the most likely places to hit a wall.
 
 ### Indexes
-- **Live B-tree maintenance covers single- and multi-column indexes, ascending or descending, optionally unique.** Jet3 (`.mdb` Access 97) rejects `IndexDefinition` entirely.
-- **Indexable key types are limited.** Live leaf maintenance is supported for `Byte`, `Integer`, `Long Integer`, `Currency`, `Single`, `Double`, `Date/Time`, `GUID`, `Decimal`, and `Text` containing only ASCII letters/digits. Other types (`OLE`, `MEMO`, attachment, complex) and text with spaces/punctuation/non-ASCII round-trip as schema only — Access rebuilds the leaf on Compact & Repair. If *any* column in a multi-column index is unsupported, the whole index falls through to the schema-only path.
-- **No incremental B-tree maintenance.** Each insert/update/delete rebuilds the entire B-tree (no prefix compression, no `tail_page` chain). Cost scales with row count.
-- **Unique enforcement is pre-write.** Duplicate keys are detected before any row is encoded onto disk; the offending insert/update throws `InvalidOperationException` and the table is left exactly as it was. Multi-column composite keys, primary keys, and explicit `IndexDefinition.IsUnique` indexes all participate. Indexes whose key column type the encoder cannot handle (text outside General Legacy, attachment, etc.) are silently excluded from the pre-write check, and any duplicate that slips through still surfaces from the post-write bulk B-tree rebuild as a defense-in-depth check.
+- **Jet3 (`.mdb` Access 97) rejects `IndexDefinition` entirely.**
+- **Indexable key types are limited.** Live leaf maintenance is unsupported for `OLE`, `MEMO`, attachment, complex columns, and text containing spaces/punctuation/non-ASCII — these round-trip as schema only and Access rebuilds the leaf on Compact & Repair. If *any* column in a multi-column index is unsupported, the whole index falls through to the schema-only path.
+- **No incremental B-tree maintenance.** Each insert/update/delete rebuilds the entire B-tree. Cost scales with row count.
 
 ### Primary & foreign keys
 - **TDEF must fit on one page** after FK entries are appended, otherwise `NotSupportedException`.
-- **`DropRelationshipAsync` leaves the orphaned real-idx slot in place.** Catalog rows and FK logical-idx entries are removed from both side TDEFs, so the relationship disappears from `ListIndexesAsync` and the writer immediately. Microsoft Access reclaims the unused real-idx slot during the next Compact & Repair pass.
-- **`RenameRelationshipAsync` does not update TDEF logical-idx name cookies.** Catalog rows are rewritten with the new name; per-TDEF FK logical-idx names stay at the original value. Access regenerates them from the catalog row on the next Compact & Repair pass.
-- **RI enforcement uses an O(N) parent scan** (no index seek). Parent-key sets are cached per `InsertRowsAsync` call.
+- **`DropRelationshipAsync` leaves the orphaned real-idx slot in place.** Reclaimed by Access on the next Compact & Repair pass.
+- **`RenameRelationshipAsync` does not update TDEF logical-idx name cookies.** Access regenerates them from the catalog row on the next Compact & Repair pass.
+- **RI enforcement uses an O(N) parent scan** (no index seek).
 - **Not yet validated end-to-end through Microsoft Access.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not been round-tripped through a Compact & Repair pass on Windows.
 
 ### Specialized column kinds
-- **Attachment / multi-value (complex) columns — partial.** Schema creation (with the per-flat-table primary-key, FK back-reference, and (attachment-only) composite secondary index Access expects), row-level inserts, spec-compliant reads (including LVAL-chained payloads up to ~16 MB), cascade-on-delete from the parent row, `DropTableAsync` cascade for the hidden flat child tables, and `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` on tables that already contain attachment / multi-value columns work for ACE `.accdb`. Fresh ACCDBs created by `CreateDatabaseAsync` also include the nine `MSysComplexType_*` template tables and `MSysComplexColumns.ComplexTypeObjectID` references the matching template id. Still missing:
-  - Renaming a complex column does not rename its hidden flat-table catalog entry (`f_<hex>_<oldColumnName>` stays); Access reconciles cosmetically on the next Compact & Repair pass. The `MSysComplexColumns.ColumnName` field is updated correctly so the reader join under the new name works immediately.
-  - Files opened in-place that lack the `MSysComplexType_*` templates (slim-catalog ACCDBs and pre-C10 writer-authored files) fall back to `ComplexTypeObjectID = 0`; the field is not retroactively patched on open.
+- **Renaming a complex column does not rename its hidden flat-table catalog entry** (`f_<hex>_<oldColumnName>` stays). Access reconciles cosmetically on the next Compact & Repair pass.
+- **Files opened in-place that lack the `MSysComplexType_*` templates** (slim-catalog ACCDBs and pre-C10 writer-authored files) fall back to `ComplexTypeObjectID = 0`; the field is not retroactively patched on open.
 - **No calculated columns** (Access 2010+ expression columns).
 - **No hyperlink semantics.** Hyperlink fields round-trip as plain MEMO text; the `#display#address#subaddress#` structure is not parsed or emitted.
 
