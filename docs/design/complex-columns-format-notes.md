@@ -10,13 +10,13 @@
 
 ## 1. Background
 
-Access 2007 introduced three "complex column" kinds. All three are stored the same way: a 4-byte per-row "ConceptualTableID" pseudo-foreign-key in the parent row, pointing into a hidden child ("flat") table that holds the actual values.
+Access 2007 introduced three "complex column" kinds. All three are stored the same way: a 4-byte per-row "ConceptualTableID" pseudo-foreign-key in the parent row, pointing into a hidden child ("flat") table that holds the actual values. **All three kinds share the column-type byte `0x12` (`COMPLEX_TYPE`)** — confirmed both by Jackcess `DataType.java` and by our format-probe across the entire test corpus (no on-disk fixture in `JetDatabaseWriter.Tests/Databases/` carries `0x11` on a complex column). The `T_ATTACHMENT = 0x11` constant in `AccessBase.cs` is vestigial: per Jackcess `0x11` is `UNKNOWN_11`, an alternative OLE type used only by `MSysAccessObjects` (fixed length 3992). The writer's IsAttachment-→-`0x11` mapping in `MapToJetType` does not match Access's own emission and is a known divergence to fix.
 
-| Kind | Column type byte (per probe) | Storage in child table |
-|---|---|---|
-| Attachment | **`0x12` (T_COMPLEX)** in `ComplexFields.accdb` — see appendix `Documents.Attachments`. The `0x11` (T_ATTACHMENT) constant in `AccessBase.cs` may be vestigial; the probe has not yet observed it on disk. | One row per attached file. Columns: `FileURL`, `FileName`, `FileType`, `FileFlags`, `FileTimeStamp`, `FileData`. |
-| Multi-value | `T_COMPLEX = 0x12` | One row per value. Columns: a single value column whose type matches the user-declared element type. |
-| Version history | `T_COMPLEX = 0x12` | One row per historical edit. Columns: `value` (memo), `version` (datetime). Only meaningful on memo columns flagged "Append Only" in Access. |
+| Kind | Storage in child table |
+|---|---|
+| Attachment | One row per attached file. Columns: `FileURL`, `FileName`, `FileType`, `FileFlags`, `FileTimeStamp`, `FileData`. |
+| Multi-value | One row per value. Columns: a single value column whose type matches the user-declared element type. |
+| Version history | One row per historical edit. Columns: `value` (memo), `version` (datetime). Only meaningful on memo columns flagged "Append Only" in Access. |
 
 The discrimination between attachment / multi-value / version-history is **not** done by the column-type byte. It is done by the linked flat table's schema and/or the value of `MSysComplexColumns.ComplexTypeObjectID` (which points at one of the `MSysComplexType_*` template tables — see [appendix](format-probe-appendix-complex.md)).
 
@@ -30,14 +30,12 @@ Inside the parent table's TDEF column descriptor block (25 bytes per col on Jet4
 
 | Field | Value |
 |---|---|
-| `col_type` | `0x11` (attachment) or `0x12` (multi-value / version-history) |
+| `col_type` | `0x12` (`COMPLEX_TYPE`) for all three kinds — attachment, multi-value, and version-history. See §1 for the `0x11` writer divergence. |
 | `col_len` | `4` |
 | `bitmask` | `0x07` (always — per mdbtools "always have the flag byte set to exactly 0x07") |
 | `misc` | The 4-byte **ComplexID** (called "complexid" in mdbtools), stored at the `misc` offset. This is the same value as the `ConceptualTableID` written into `MSysComplexColumns`. |
 
 Because `bitmask = 0x07`, the column is treated as a fixed-length 4-byte column for row-layout purposes. The 4-byte payload in each data row is the **ConceptualTableID** that joins this row to its child rows in the flat table.
-
-> In existing reader code, see `AccessReader.cs` near the `T_COMPLEX or T_ATTACHMENT when sz >= 4 => $"__CX:{Ri32(row, start)}__"` placeholder — that `Ri32` is reading this 4-byte ConceptualTableID.
 
 ### 2.2 `MSysComplexColumns` catalog table
 
@@ -76,7 +74,7 @@ The flat table also requires:
 
 ### 2.4 Per-kind flat-table schemas
 
-#### 2.4.1 Attachment (`T_ATTACHMENT = 0x11`, `MSysComplexColumns.Type = 4`)
+#### 2.4.1 Attachment (`MSysComplexColumns.Type = 4`, on-disk `col_type = 0x12`)
 
 Per Jackcess [`AttachmentColumnInfoImpl`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/complex/AttachmentColumnInfoImpl.java):
 
@@ -93,7 +91,7 @@ Per Jackcess [`AttachmentColumnInfoImpl`](https://github.com/jahlborn/jackcess/b
 
 If the flat table on disk has columns whose names don't match these exactly, Jackcess assigns by type/order: the LONG column is `FileFlags`; the SHORT_DATE_TIME column is `FileTimeStamp`; the OLE column is `FileData`; the MEMO column is `FileUrl`; the first TEXT column is `FileName`; the second TEXT column is `FileType`. We should write canonical names, but the reader path should be tolerant.
 
-#### 2.4.2 Multi-value (`T_COMPLEX = 0x12`, `MSysComplexColumns.Type = 3`)
+#### 2.4.2 Multi-value (`MSysComplexColumns.Type = 3`, on-disk `col_type = 0x12`)
 
 | Flat-table column | Jet type | Notes |
 |---|---|---|
@@ -103,7 +101,7 @@ If the flat table on disk has columns whose names don't match these exactly, Jac
 
 The shipped declaration surface is the `ColumnDefinition.IsMultiValue` init-only property (see §4.2 C2 row); the inner value column inherits the `ColumnDefinition`'s declared type and length.
 
-#### 2.4.3 Version history (`T_COMPLEX = 0x12`, `MSysComplexColumns.Type = 2`)
+#### 2.4.3 Version history (`MSysComplexColumns.Type = 2`, on-disk `col_type = 0x12`)
 
 | Flat-table column | Jet type | Notes |
 |---|---|---|
@@ -164,8 +162,8 @@ The reader (see §1) implements `T_ATTACHMENT` / `T_COMPLEX` column-type recogni
 |---|---|---|
 | **C1** | Empty-DB scaffold: add `MSysComplexColumns` to `BuildEmptyDatabase`. | ✅ Shipped. ACCDB only. Helper: `AccessWriter.CreateMSysComplexColumnsAsync` (called from `ScaffoldSystemTablesAsync`). Catalog row carries `MSysObjects.Flags = 0x80000000` and is excluded from `ListTablesAsync`. Tests: `ComplexColumnsWriterTests`. |
 | **C2** | `ColumnDefinition.IsAttachment` / `IsMultiValue` declaration surface + `ColumnInfo.Misc` round-trip in TDEF emission (the `0x07` bitmask, the 4-byte `misc` ComplexID slot, `col_len = 4`). | ✅ Shipped. Public init-only props on `ColumnDefinition`. Descriptor offset `_colMiscOff` = 11 (Jet4/ACE). Tests: `ComplexColumnsWriterTests`. |
-| **C3** | `CreateTableAsync` emits the hidden flat child table, allocates a fresh `ComplexID`, writes the `MSysComplexColumns` row, and patches the parent descriptor. | ✅ Shipped. Helper: `CreateTableInternalAsync`. Flat table named `f_<32-hex>_<userColumnName>`, `MSysObjects.Flags = 0x800A0000`. C3 originally shipped without the per-flat PK/FK indexes — those landed in C7 (§4.3). C3 originally wrote `ComplexTypeObjectID = 0`; C10 (§4.6) populates it with a real template id. |
-| **C4** | Per-kind row APIs (`AddAttachmentAsync`, `AddMultiValueItemAsync`) and attachment payload encode (§3). | ✅ Shipped. Helpers: `AccessWriter.AddAttachmentAsync` / `AddMultiValueItemAsync`, `AttachmentWrapper`. Reader-side: `AccessReader.GetAttachmentsAsync` / `GetMultiValueItemsAsync`. C4 originally capped attachment payloads at ~256 bytes (inline-OLE limit); Phase C8 lifted that cap by pushing oversized payloads onto LVAL data pages. |
+| **C3** | `CreateTableAsync` emits the hidden flat child table, allocates a fresh `ComplexID`, writes the `MSysComplexColumns` row, and patches the parent descriptor. | ✅ Shipped. Helper: `CreateTableInternalAsync`. Flat table named `f_<32-hex>_<userColumnName>`, `MSysObjects.Flags = 0x800A0000`. Per-flat PK/FK indexes are emitted by C7 (§4.3); `ComplexTypeObjectID` is populated by C10 (§4.6). |
+| **C4** | Per-kind row APIs (`AddAttachmentAsync`, `AddMultiValueItemAsync`) and attachment payload encode (§3). | ✅ Shipped. Helpers: `AccessWriter.AddAttachmentAsync` / `AddMultiValueItemAsync`, `AttachmentWrapper`. Reader-side: `AccessReader.GetAttachmentsAsync` / `GetMultiValueItemsAsync`. Inline-OLE 256-byte cap was lifted by C8 — oversized payloads now ride on LVAL data pages. |
 | **C5** | Cascade flat-table rows on parent delete. | ✅ Shipped. Helper: `CascadeDeleteComplexChildrenAsync`, called from `DeleteRowsAsync` and the W10 `EnforceFkOnPrimaryDeleteAsync` cascade path. Cost: one O(P) flat-table scan per (parent table × complex column). Tests: `ComplexColumnsCascadeDeleteTests`. |
 | **C6** | `DropTableAsync` cascade for hidden flat tables and `MSysComplexColumns` rows. | ✅ Shipped. Helper: `DropComplexChildrenForTableAsync`, called from `DropTableAsync`. Removes `MSysComplexColumns` and `MSysObjects` catalog rows for each child flat table; orphaned data pages are reclaimed by Access on the next Compact & Repair (same model used by W5). |
 | **C7** | Per-flat-table indexes Access expects: autoincrement scalar PK column, primary key on the scalar, normal index on the FK back-reference, and (attachment only) a composite secondary index on (FK, FileName). Lifts the C3 "no PK / no autoincrement / no FK back-reference index" caveat. | ✅ Shipped. Helper: `BuildFlatTableSchema` (returns `(ColumnDefinition[], IndexDefinition[])`) wired through `EmitComplexColumnArtifactsAsync` and reused by `AddComplexItemCoreAsync` via `ApplyConstraintsAsync` so the autoincrement scalar PK is seeded per insert. See §4.3. |
@@ -298,7 +296,7 @@ Same as the index doc, with one addition specific to attachments:
 
 ## 6. References
 
-- [mdbtools HACKING.md](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md) — complex-column flag byte (`0x07`) and `T_COMPLEX = 0x12` / `T_ATTACHMENT = 0x11` type bytes; complexid in `misc` field
+- [mdbtools HACKING.md](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md) — complex-column flag byte (`0x07`) and complexid in `misc` field. (HACKING.md attributes type byte `0x11` to attachment, but per Jackcess `DataType.java` and our format-probe corpus Access uses `0x12` / `COMPLEX_TYPE` for **all** complex columns — see §1.)
 - [Jackcess `AttachmentColumnInfoImpl.java`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/complex/AttachmentColumnInfoImpl.java) — wrapper-header encoder/decoder, COMPRESSED_FORMATS skip-list
 - [Jackcess `ComplexColumnInfoImpl.java`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/complex/ComplexColumnInfoImpl.java) — flat-table protocol (PK + FK columns, `diffFlatColumns`)
 - [Jackcess `ComplexDataType.java`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/complex/ComplexDataType.java) — type-discriminator integer values

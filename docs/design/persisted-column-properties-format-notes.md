@@ -41,8 +41,7 @@ The first chunk after the magic. Provides the dictionary of property names refer
 Payload is a sequence of length-prefixed strings until the chunk payload is consumed:
 
 ```
-0       2       nameLen     uint16   bytes of UTF-16LE name (Jet4)
-                                     (Jet3 may use uint8 — TODO verify)
+0       2       nameLen     uint16   bytes of name (mdbtools uses uint16 for both Jet3 and Jet4)
 2       ...     name        UTF-16LE bytes (Jet4) / database codepage (Jet3)
 ```
 
@@ -55,14 +54,15 @@ One per target. The first property block in the blob describes the *table* itsel
 Payload layout (`chunkLen − 6` bytes total):
 
 ```
-0       2       innerLen      uint16   purpose unclear; mdbtools reads then ignores it
-2       2       reserved      uint16   purpose unclear; mdbtools reads then ignores
+0       4       innerRecLen   uint32   total bytes of this property-block payload (= chunkLen − 6).
+                                       mdbtools reads only the lo-16 bits as int16 and skips the hi-16,
+                                       which is equivalent to a uint32 read since these blocks never exceed 64 KiB.
 4       2       targetNameLen uint16   bytes of UTF-16LE target name
 6       ...     targetName    UTF-16LE bytes (Jet4) / codepage bytes (Jet3)
 N       ...     entries       sequence of property entries until payload exhausted
 ```
 
-> mdbtools' read does `pos += 4; name_len = get_int16(pos); pos += 2`. The first 4 bytes are read as `record_len` then skipped — function unclear without further reconnaissance. Treat as opaque on read; preserve verbatim on round-trip.
+Writer parity: emit `innerRecLen = chunkLen − 6` and the rest verbatim; reader treats the first 4 bytes as opaque on round-trip.
 
 ### 2.5 Property entry
 
@@ -99,8 +99,8 @@ For the four properties we care about in this PR series, the dataType is always 
 
 ## 4. Property-block subtype variation
 
-mdbtools accepts chunk types `0x00`, `0x01`, and `0x02` as property blocks (treats all three identically). Hypothesis: subtype distinguishes table vs column vs index property blocks.
+mdbtools accepts chunk types `0x00`, `0x01`, and `0x02` as property blocks and treats all three identically. The subtype likely distinguishes table vs column vs index property blocks, but neither mdbtools nor Jackcess depends on the distinction.
 
 This library:
 - **Reads:** accepts all three chunk subtypes as property blocks; unknown chunk types are preserved as opaque bytes for round-trip.
-- **Writes:** emits `0x00` exclusively. Revisit if a fixture surfaces Access requiring a specific subtype per target kind.
+- **Writes:** emits `0x00` exclusively. Round-trip tests against Access-authored fixtures pass without per-target-kind subtype emission.

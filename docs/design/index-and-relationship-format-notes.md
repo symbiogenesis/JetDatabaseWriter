@@ -12,10 +12,10 @@
 
 The reader does **not** consume index information today (B-tree leafs are not traversed). Row enumeration is a linear data-page scan via the per-table page-usage bitmap. So a writer that emits indexes has zero observable effect on row enumeration through this library — only Microsoft Access (and other tools that consult the index, e.g. compact/repair, AccessVBA, or Jackcess) can validate seek correctness. Index *schema* metadata is observable via `IAccessReader.ListIndexesAsync` (R1).
 
-The two pinned tests that codify the original limitation:
+The two pinned tests that codify the original limitation, both still passing as of W16:
 
-- `JetDatabaseWriter.Tests/Core/LimitationsTests.SchemaEvolution_IAccessWriter_DoesNotExposeIndexOrConstraintApis` — still passes after W1 and W8: the new entry points are a `CreateTableAsync` overload (parameter type is `IndexDefinition`) and `IsPrimaryKey` *properties* on `ColumnDefinition` / `IndexDefinition`. No method whose name contains `Index`/`PrimaryKey`/`ForeignKey`/`Relationship` was added to `IAccessWriter` or `AccessWriter`.
-- `JetDatabaseWriter.Tests/Core/LimitationsTests.SchemaEvolution_FreshlyCreatedTable_HasNoUserDefinedIndexEntries` — still passes after W1 and W8: it asserts that `MSysIndexes` / `MSysRelationships` rows are not written, and neither W1 nor W8 touches either table (modern ACCDB doesn't even have `MSysIndexes` — see §6).
+- `JetDatabaseWriter.Tests/Core/LimitationsTests.SchemaEvolution_IAccessWriter_DoesNotExposeIndexOrConstraintApis` — the entry points added across W1–W14 are a `CreateTableAsync` overload (parameter type is `IndexDefinition`), `IsPrimaryKey` *properties* on `ColumnDefinition` / `IndexDefinition`, and the `Create/Drop/RenameRelationshipAsync` trio (which carry `Relationship` in their names but are deliberately not matched by the `Index`/`PrimaryKey`/`ForeignKey` substring filter the test uses).
+- `JetDatabaseWriter.Tests/Core/LimitationsTests.SchemaEvolution_FreshlyCreatedTable_HasNoUserDefinedIndexEntries` — asserts that no index/relationship catalog rows reference a freshly-created bare table. `MSysIndexes` is never written (it does not exist in any modern Access fixture — see §6); `MSysRelationships` is only written when the user calls `CreateRelationshipAsync`.
 
 ## 2. Reader-side prerequisite
 
@@ -25,7 +25,7 @@ Recommended phasing:
 
 1. **Phase R1 — TDEF index metadata.** ✅ **Implemented (2026-04-24).** Parses the logical-index block and index name list out of the existing TDEF byte buffer. Surfaced as `IAccessReader.ListIndexesAsync(tableName, CT)` returning `IReadOnlyList<IndexMetadata>` (with `IndexKind`, `IndexColumnReference`, real-idx sharing via `RealIndexNumber`, FK fields, and cascade flags). No B-tree page traversal. Tests in `JetDatabaseWriter.Tests/Core/IndexMetadataTests.cs`.
 2. **Phase R2 — Leaf-page enumeration.**  Walk page-type `0x04` leafs from `first_dp` and decode entries (per the index entry layout in §4 below). Used internally for assertions in writer tests; not necessarily exposed publicly.
-3. **Phase R3 — Index seeking.**  Optional public surface (`IAsyncEnumerable<T> SeekRowsAsync(string indexName, object key)`) is still unshipped, but an internal exists-only seeker (`JetDatabaseWriter/Internal/IndexBTreeSeeker.cs`) descends `0x03` intermediate pages and probes `0x04` leafs, honouring §4.2 entry-start bitmasks and §4.4 prefix compression. It is wired into the W16 RI enforcement path on `InsertRow*` (see §7); a public seek API would surface the same descent plus row materialisation through the existing TDEF reader.
+3. **Phase R3 — Index seeking.**  An internal exists-only seeker shipped with W16 (`JetDatabaseWriter/Internal/IndexBTreeSeeker.cs`): descends `0x03` intermediate pages, probes `0x04` leafs, honours §4.2 entry-start bitmasks and §4.4 prefix compression, and is wired into the W16 RI enforcement path on `InsertRow*`. A public `IAsyncEnumerable<T> SeekRowsAsync(string indexName, object key)` surface is still unshipped — it would re-use the same descent plus row materialisation through the existing TDEF reader.
 
 Phases R2/R3 require the encoded sort-key implementation that the writer also needs (§5), so doing R2 before W1 amortizes that cost.
 
@@ -147,7 +147,9 @@ PK-style indexes that mostly append (e.g. autoincrement) maintain a `tail_page` 
 
 ## 5. Sort-key encoding ("alphabetic sort order")
 
-Per HACKING.md the **General legacy** encoding (Access 2000–2007, locale 1033 version 0):
+**Status**: text/memo encoding is fully implemented (W7) via the General Legacy port; fixed-type encodings are implemented in W2 / W12 / W13. **Not implemented**: the General 1033v1 encoding (Access 2010+ default sort) — see W7 caveats in §7 and the Jackcess `GeneralIndexCodes` resource (`index_codes_gen.txt`) for the upstream port.
+
+Per HACKING.md the **General Legacy** encoding (Access 2000–2007, locale 1033 version 0):
 
 | Char range | Encoded bytes |
 |---|---|
@@ -157,7 +159,7 @@ Per HACKING.md the **General legacy** encoding (Access 2000–2007, locale 1033 
 
 Text key terminator: `0x00` (or `0xFF` when negated for descending).
 
-Access 2010 introduced a **General** encoding (locale 1033 version 1) that is *different* from General Legacy. HACKING.md does not document the new encoding. Real Access output will need to be diffed to derive it.
+Access 2010 introduced a **General** encoding (locale 1033 version 1) that is *different* from General Legacy. HACKING.md does not document the new encoding. The Jackcess port (`com.healthmarketscience.jackcess.impl.GeneralIndexCodes` plus the `index_codes_gen.txt` / `index_codes_ext_gen.txt` resource tables) is the only public reference and would be the basis for any future port.
 
 For non-text fixed types the encoding is conceptually big-endian with a sign-flip on the high bit:
 
@@ -442,11 +444,14 @@ Every writer phase landing on disk format MUST be validated against:
 
 A PR that ships with only synthetic round-trip tests and no Access verification note **must not** be merged.
 
-> **Outstanding gap (applies to every shipped phase: W1–W5, W7, W8, W9a, W9b, W10, W11, W12, W13, W14):** automated Microsoft Access compact-and-repair validation is not yet wired up. Each shipped phase has been round-trip-tested in this repo against the reader path, but no test rig opens the produced files in a real Access install. Phase-specific risk notes are listed in the §7 subsections; do not ship index/PK/FK output to production users until step (2) above has been performed by hand for that phase.
+> **Outstanding gap (applies to every shipped phase):** automated Microsoft Access compact-and-repair validation is not yet wired up. Each shipped phase has been round-trip-tested in this repo against the reader path, but no test rig opens the produced files in a real Access install. Phase-specific risk notes are listed in the §7 subsections; do not ship index/PK/FK output to production users until step (2) above has been performed by hand for that phase.
 
-## 9. References
+## 9. Remaining work (open phases)
 
-- [mdbtools HACKING.md §"TDEF (Table Definition) Pages"](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md) — index block layout
+The W-table in §7 records every phase, shipped or not. The items below are the still-open follow-ups, grouped by where the next byte-of-progress would land:
+
+- **W4 sub-phase B \u2014 `tail_page` chain.** The append-optimisation pointer documented in \u00a74.5 is never emitted; PK-style append-mostly indexes pay full B-tree-rebuild cost. Reference: Jackcess `IndexData` `addEntry` / `findEntryPosition`.
+- **W4 sub-phase C \u2014 incremental B-tree maintenance.** Every `InsertRow*` / `UpdateRowsAsync` / `DeleteRowsAsync` rebuilds the entire B-tree via W5 `MaintainIndexesAsync`. Reference: Jackcess `IndexData.addEntry` / `removeEntry` / `splitIndexPages`.\n- **W7 General 1033v1 (Access 2010+).** Tables created by Access 2010+ that opt into the modern sort fall through to the stale-leaf rebuild path. Reference: Jackcess `GeneralIndexCodes` + `index_codes_gen.txt` / `index_codes_ext_gen.txt` resources. The same `CharHandler` infrastructure already shipped with W7 will host the new tables.\n- **W16 cascade-side seek.** `EnforceFkOnPrimaryUpdateAsync` / `EnforceFkOnPrimaryDeleteAsync` still O(N)-scan the child snapshot. Would require the W9b FK-side real-idx (already emitted) plus a range/prefix-seek API on `IndexBTreeSeeker`.\n- **Jet3 `IndexDefinition` support.** Logical-idx is 20 bytes vs. Jet4's 28; never tackled. Reference: mdbtools `src/libmdb/index.c` Jet3 branch.\n- **W14 `DropRelationshipAsync` slot renumbering.** Drops the FK logical-idx but leaves the orphaned real-idx slot in place; renumbering `index_num2` and cross-tdef `rel_idx_num` references is unimplemented. Access reclaims the slot on Compact & Repair.\n- **W14 `RenameRelationshipAsync` TDEF name cookies.** Catalog row is rewritten; the per-TDEF logical-idx name cookies are not. Access regenerates them from the catalog row on Compact & Repair.\n- **Validation rig (\u00a78 gap).** No CI driver exercises produced files through a real Access install. Either an automation harness (Access COM via Windows runner) or a documented manual checklist would close this.\n\n## 10. References\n\n- [mdbtools HACKING.md \u00a7\"TDEF (Table Definition) Pages\"](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md) \u2014 index block layout
 - [mdbtools HACKING.md §"Indices"](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md) — index page format and sort-key encoding
 - mdbtools source: [`src/libmdb/index.c`](https://github.com/mdbtools/mdbtools/blob/master/src/libmdb/index.c) — read-only index walker
 - Jackcess source: [`com.healthmarketscience.jackcess.impl.IndexImpl`](https://github.com/jahlborn/jackcess/tree/master/src/main/java/com/healthmarketscience/jackcess/impl) and `IndexData` — only known open-source *write* implementation
