@@ -31,7 +31,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
 {
     private static readonly AccessReaderOptions CorrectPasswordOptions = new()
     {
-        Password = SecureStringTestHelper.FromString(TestDatabases.AesEncryptedPassword),
+        Password = SecureStringUtilities.FromPlainText(TestDatabases.AesEncryptedPassword),
         UseLockFile = false,
     };
 
@@ -56,7 +56,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
         // Providing an incorrect password must produce a clear error, not silent data corruption.
         var options = new AccessReaderOptions
         {
-            Password = SecureStringTestHelper.FromString("definitely_wrong"),
+            Password = SecureStringUtilities.FromPlainText("definitely_wrong"),
             UseLockFile = false,
         };
 
@@ -70,7 +70,7 @@ public sealed class AcePasswordVerificationTests(DatabaseCache db) : IClassFixtu
         // An empty-string password is not the same as no password — it should still fail.
         var options = new AccessReaderOptions
         {
-            Password = SecureStringTestHelper.FromString(string.Empty),
+            Password = SecureStringUtilities.FromPlainText(string.Empty),
             UseLockFile = false,
         };
 
