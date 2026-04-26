@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Internal;
 
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -135,7 +136,7 @@ internal static class EncryptionManager
             return 0;
         }
 
-        return copy[CodePageOffsetInCopy] | (copy[CodePageOffsetInCopy + 1] << 8);
+        return BinaryPrimitives.ReadUInt16LittleEndian(copy.AsSpan(CodePageOffsetInCopy, 2));
     }
 
     /// <summary>
@@ -187,7 +188,7 @@ internal static class EncryptionManager
 
                 if ((encFlag & 0x02) != 0)
                 {
-                    rc4DbKey = BitConverter.ToUInt32(hdr, 0x3E);
+                    rc4DbKey = BinaryPrimitives.ReadUInt32LittleEndian(hdr.AsSpan(0x3E, 4));
                 }
             }
         }
@@ -380,8 +381,8 @@ internal static class EncryptionManager
     private static byte[] DeriveRc4PageKey(uint dbKey, uint pageNumber)
     {
         byte[] input = new byte[8];
-        BitConverter.GetBytes(dbKey).CopyTo(input, 0);
-        BitConverter.GetBytes(pageNumber).CopyTo(input, 4);
+        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(0, 4), dbKey);
+        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4, 4), pageNumber);
         using var md5 = MD5.Create();
         byte[] hash = md5.ComputeHash(input);
         byte[] key = new byte[4];

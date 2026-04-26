@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 
 /// <summary>
@@ -393,17 +394,9 @@ internal static class IndexBTreeBuilder
         return prefixLen;
     }
 
-    private static void Wu16(byte[] b, int o, int value)
-    {
-        b[o + 0] = (byte)(value & 0xFF);
-        b[o + 1] = (byte)((value >> 8) & 0xFF);
-    }
+    private static void Wu16(byte[] b, int o, int value) =>
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(o, 2), (ushort)value);
 
-    private static void Wi32(byte[] b, int o, int value)
-    {
-        b[o + 0] = (byte)(value & 0xFF);
-        b[o + 1] = (byte)((value >> 8) & 0xFF);
-        b[o + 2] = (byte)((value >> 16) & 0xFF);
-        b[o + 3] = (byte)((value >> 24) & 0xFF);
-    }
+    private static void Wi32(byte[] b, int o, int value) =>
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(o, 4), value);
 }

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter;
 
 using System;
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -274,26 +275,19 @@ public abstract class AccessBase : IAccessBase
     }
 
     private protected static ushort Ru16(byte[] b, int o) =>
-        (ushort)(b[o] | (b[o + 1] << 8));
+        BinaryPrimitives.ReadUInt16LittleEndian(b.AsSpan(o, 2));
 
     private protected static int Ri32(byte[] b, int o) =>
-        b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24);
+        BinaryPrimitives.ReadInt32LittleEndian(b.AsSpan(o, 4));
 
-    private protected static uint Ru32(byte[] b, int o) => (uint)Ri32(b, o);
+    private protected static uint Ru32(byte[] b, int o) =>
+        BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(o, 4));
 
-    private protected static void Wu16(byte[] b, int o, int value)
-    {
-        b[o] = (byte)(value & 0xFF);
-        b[o + 1] = (byte)((value >> 8) & 0xFF);
-    }
+    private protected static void Wu16(byte[] b, int o, int value) =>
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(o, 2), (ushort)value);
 
-    private protected static void Wi32(byte[] b, int o, int value)
-    {
-        b[o] = (byte)(value & 0xFF);
-        b[o + 1] = (byte)((value >> 8) & 0xFF);
-        b[o + 2] = (byte)((value >> 16) & 0xFF);
-        b[o + 3] = (byte)((value >> 24) & 0xFF);
-    }
+    private protected static void Wi32(byte[] b, int o, int value) =>
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(o, 4), value);
 
     private protected static void WriteUInt24(byte[] b, int o, int value)
     {

@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -167,35 +168,38 @@ internal sealed class ColumnPropertyBlockBuilder
         }
 
         using var ms = new MemoryStream();
+        using var bw = new BinaryWriter(ms, Encoding.Unicode, leaveOpen: true);
 
         // Magic
         byte[] magic = isJet3
             ? [(byte)'K', (byte)'K', (byte)'D', 0x00]
             : [(byte)'M', (byte)'R', (byte)'2', 0x00];
-        ms.Write(magic, 0, 4);
+        bw.Write(magic);
 
         // Name-pool chunk (always first; mdbtools requires it before property blocks).
-        WriteChunk(ms, ColumnPropertyChunkType.NamePool, BuildNamePoolPayload(nameOrder, stringEncoding));
+        WriteChunk(bw, ColumnPropertyChunkType.NamePool, BuildNamePoolPayload(nameOrder, stringEncoding));
 
         // Property-block chunks.
         foreach (TargetBuilder t in Targets)
         {
-            WriteChunk(ms, t.ChunkType, BuildPropertyBlockPayload(t, nameToIndex, stringEncoding));
+            WriteChunk(bw, t.ChunkType, BuildPropertyBlockPayload(t, nameToIndex, stringEncoding));
         }
 
         // Unknown chunks (preserved verbatim — re-emit at the end so they don't shadow
         // the name pool the parser depends on).
         foreach (ColumnPropertyUnknownChunk u in UnknownChunks)
         {
-            WriteChunk(ms, (ColumnPropertyChunkType)u.ChunkType, u.Payload);
+            WriteChunk(bw, (ColumnPropertyChunkType)u.ChunkType, u.Payload);
         }
 
+        bw.Flush();
         return ms.ToArray();
     }
 
     private static byte[] BuildNamePoolPayload(List<string> names, Encoding encoding)
     {
         using var ms = new MemoryStream();
+        using var bw = new BinaryWriter(ms, Encoding.Unicode, leaveOpen: true);
         foreach (string n in names)
         {
             byte[] bytes = encoding.GetBytes(n);
@@ -204,10 +208,11 @@ internal sealed class ColumnPropertyBlockBuilder
                 throw new InvalidOperationException($"Property name '{n}' encodes to {bytes.Length} bytes, exceeding the uint16 length limit.");
             }
 
-            WriteUInt16(ms, (ushort)bytes.Length);
-            ms.Write(bytes, 0, bytes.Length);
+            bw.Write((ushort)bytes.Length);
+            bw.Write(bytes);
         }
 
+        bw.Flush();
         return ms.ToArray();
     }
 
@@ -217,11 +222,12 @@ internal sealed class ColumnPropertyBlockBuilder
         Encoding encoding)
     {
         using var ms = new MemoryStream();
+        using var bw = new BinaryWriter(ms, Encoding.Unicode, leaveOpen: true);
 
         // Inner header — first 4 bytes are opaque per mdbtools (read & discarded).
         // Convention used here: write the payload's eventual total byte count for
         // forward debuggability; the parser ignores it.
-        WriteUInt32(ms, 0u); // placeholder; patched at the end below.
+        bw.Write(0u); // placeholder; patched at the end below.
 
         byte[] nameBytes = encoding.GetBytes(target.Name);
         if (nameBytes.Length > ushort.MaxValue)
@@ -229,8 +235,8 @@ internal sealed class ColumnPropertyBlockBuilder
             throw new InvalidOperationException($"Property target name '{target.Name}' encodes to {nameBytes.Length} bytes, exceeding the uint16 length limit.");
         }
 
-        WriteUInt16(ms, (ushort)nameBytes.Length);
-        ms.Write(nameBytes, 0, nameBytes.Length);
+        bw.Write((ushort)nameBytes.Length);
+        bw.Write(nameBytes);
 
         foreach (EntryBuilder e in target.Entries)
         {
@@ -246,25 +252,23 @@ internal sealed class ColumnPropertyBlockBuilder
                 throw new InvalidOperationException($"Property entry '{e.Name}' value is {valueLen} bytes; max supported is {ushort.MaxValue - 8}.");
             }
 
-            WriteUInt16(ms, (ushort)entryLen);
-            ms.WriteByte(e.DdlFlag);
-            ms.WriteByte(e.DataType);
-            WriteUInt16(ms, nameIndex);
-            WriteUInt16(ms, (ushort)valueLen);
-            ms.Write(e.Value, 0, valueLen);
+            bw.Write((ushort)entryLen);
+            bw.Write(e.DdlFlag);
+            bw.Write(e.DataType);
+            bw.Write(nameIndex);
+            bw.Write((ushort)valueLen);
+            bw.Write(e.Value);
         }
 
+        bw.Flush();
         byte[] payload = ms.ToArray();
 
         // Patch the leading uint32 with the payload byte count (cosmetic; ignored on read).
-        payload[0] = (byte)(payload.Length & 0xFF);
-        payload[1] = (byte)((payload.Length >> 8) & 0xFF);
-        payload[2] = (byte)((payload.Length >> 16) & 0xFF);
-        payload[3] = (byte)((payload.Length >> 24) & 0xFF);
+        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(0, 4), (uint)payload.Length);
         return payload;
     }
 
-    private static void WriteChunk(MemoryStream ms, ColumnPropertyChunkType chunkType, byte[] payload)
+    private static void WriteChunk(BinaryWriter bw, ColumnPropertyChunkType chunkType, byte[] payload)
     {
         long chunkLen = 6L + payload.Length;
         if (chunkLen > uint.MaxValue)
@@ -272,23 +276,9 @@ internal sealed class ColumnPropertyBlockBuilder
             throw new InvalidOperationException($"Property chunk would be {chunkLen} bytes, exceeding the uint32 length limit.");
         }
 
-        WriteUInt32(ms, (uint)chunkLen);
-        WriteUInt16(ms, (ushort)chunkType);
-        ms.Write(payload, 0, payload.Length);
-    }
-
-    private static void WriteUInt16(MemoryStream ms, ushort v)
-    {
-        ms.WriteByte((byte)(v & 0xFF));
-        ms.WriteByte((byte)((v >> 8) & 0xFF));
-    }
-
-    private static void WriteUInt32(MemoryStream ms, uint v)
-    {
-        ms.WriteByte((byte)(v & 0xFF));
-        ms.WriteByte((byte)((v >> 8) & 0xFF));
-        ms.WriteByte((byte)((v >> 16) & 0xFF));
-        ms.WriteByte((byte)((v >> 24) & 0xFF));
+        bw.Write((uint)chunkLen);
+        bw.Write((ushort)chunkType);
+        bw.Write(payload);
     }
 
     /// <summary>Mutable builder for a single property target (table or column).</summary>

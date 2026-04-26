@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security;
@@ -61,10 +62,9 @@ internal static class OfficeCryptoAgile
             return false;
         }
 
-        ushort major = (ushort)(encryptionInfo[0] | (encryptionInfo[1] << 8));
-        ushort minor = (ushort)(encryptionInfo[2] | (encryptionInfo[3] << 8));
-        uint flags = (uint)(encryptionInfo[4] | (encryptionInfo[5] << 8) |
-            (encryptionInfo[6] << 16) | (encryptionInfo[7] << 24));
+        ushort major = BinaryPrimitives.ReadUInt16LittleEndian(encryptionInfo.AsSpan(0, 2));
+        ushort minor = BinaryPrimitives.ReadUInt16LittleEndian(encryptionInfo.AsSpan(2, 2));
+        uint flags = BinaryPrimitives.ReadUInt32LittleEndian(encryptionInfo.AsSpan(4, 4));
 
         // Agile = (4, 4) with AgileEncryption flag (0x40) set.
         return major == 4 && minor == 4 && (flags & 0x40) != 0;
@@ -343,13 +343,7 @@ internal static class OfficeCryptoAgile
         byte[] iter = new byte[4 + h.Length];
         for (int i = 0; i < spinCount; i++)
         {
-            unchecked
-            {
-                iter[0] = (byte)i;
-                iter[1] = (byte)(i >> 8);
-                iter[2] = (byte)(i >> 16);
-                iter[3] = (byte)(i >> 24);
-            }
+            BinaryPrimitives.WriteInt32LittleEndian(iter.AsSpan(0, 4), i);
 
             Buffer.BlockCopy(h, 0, iter, 4, h.Length);
             h = sha.ComputeHash(iter);
@@ -386,15 +380,7 @@ internal static class OfficeCryptoAgile
             throw new InvalidDataException("EncryptedPackage stream is too small (missing size prefix).");
         }
 
-        long decryptedSize =
-            encryptedPackage[0] |
-            ((long)encryptedPackage[1] << 8) |
-            ((long)encryptedPackage[2] << 16) |
-            ((long)encryptedPackage[3] << 24) |
-            ((long)encryptedPackage[4] << 32) |
-            ((long)encryptedPackage[5] << 40) |
-            ((long)encryptedPackage[6] << 48) |
-            ((long)encryptedPackage[7] << 56);
+        long decryptedSize = BinaryPrimitives.ReadInt64LittleEndian(encryptedPackage.AsSpan(0, 8));
 
         if (decryptedSize < 0 || decryptedSize > int.MaxValue)
         {
@@ -439,13 +425,7 @@ internal static class OfficeCryptoAgile
     {
         byte[] data = new byte[keyDataSalt.Length + 4];
         Buffer.BlockCopy(keyDataSalt, 0, data, 0, keyDataSalt.Length);
-        unchecked
-        {
-            data[keyDataSalt.Length] = (byte)segmentIndex;
-            data[keyDataSalt.Length + 1] = (byte)(segmentIndex >> 8);
-            data[keyDataSalt.Length + 2] = (byte)(segmentIndex >> 16);
-            data[keyDataSalt.Length + 3] = (byte)(segmentIndex >> 24);
-        }
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(keyDataSalt.Length, 4), segmentIndex);
 
         byte[] hash;
         using (var sha = SHA512.Create())
@@ -585,13 +565,7 @@ internal static class OfficeCryptoAgile
         byte[] iter = new byte[4 + h.Length];
         for (int i = 0; i < EncryptSpinCount; i++)
         {
-            unchecked
-            {
-                iter[0] = (byte)i;
-                iter[1] = (byte)(i >> 8);
-                iter[2] = (byte)(i >> 16);
-                iter[3] = (byte)(i >> 24);
-            }
+            BinaryPrimitives.WriteInt32LittleEndian(iter.AsSpan(0, 4), i);
 
             Buffer.BlockCopy(h, 0, iter, 4, h.Length);
             h = sha.ComputeHash(iter);

@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Internal;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Security;
@@ -229,7 +230,7 @@ internal static class EncryptionConverter
         // Generate a random 32-bit RC4 db key.
         byte[] dbKeyBytes = new byte[4];
         RandomNumberGenerator.Fill(dbKeyBytes);
-        uint dbKey = BitConverter.ToUInt32(dbKeyBytes, 0);
+        uint dbKey = BinaryPrimitives.ReadUInt32LittleEndian(dbKeyBytes);
 
         Buffer.BlockCopy(dbKeyBytes, 0, result, 0x3E, 4);
         EncodeJet4StylePassword(result, password, useAccdbLegacyMask: false);
