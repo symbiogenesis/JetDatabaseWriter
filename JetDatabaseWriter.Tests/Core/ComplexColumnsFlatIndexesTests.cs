@@ -69,11 +69,10 @@ public sealed class ComplexColumnsFlatIndexesTests
         {
             await writer.CreateTableAsync(
                 "Tags",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Items", typeof(object), maxLength: 50) { IsMultiValue = true, MultiValueElementType = typeof(string) },
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -110,30 +109,29 @@ public sealed class ComplexColumnsFlatIndexesTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 "Documents",
-                new object[] { 1, DBNull.Value },
+                [1, DBNull.Value],
                 TestContext.Current.CancellationToken);
 
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
                 new Dictionary<string, object> { ["Id"] = 1 },
-                new AttachmentInput("a.txt", new byte[] { 1, 2, 3 }),
+                new AttachmentInput("a.txt", [1, 2, 3]),
                 TestContext.Current.CancellationToken);
 
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
                 new Dictionary<string, object> { ["Id"] = 1 },
-                new AttachmentInput("b.txt", new byte[] { 4, 5, 6 }),
+                new AttachmentInput("b.txt", [4, 5, 6]),
                 TestContext.Current.CancellationToken);
         }
 
@@ -168,11 +166,10 @@ public sealed class ComplexColumnsFlatIndexesTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 

@@ -49,7 +49,7 @@ public sealed record RelationshipDefinition
     /// <param name="foreignTable">The name of the child (FK side) table — written to the <c>szObject</c> column.</param>
     /// <param name="foreignColumn">The name of the foreign-key column on the child table — written to <c>szColumn</c>.</param>
     public RelationshipDefinition(string name, string primaryTable, string primaryColumn, string foreignTable, string foreignColumn)
-        : this(name, primaryTable, new[] { primaryColumn }, foreignTable, new[] { foreignColumn })
+        : this(name, primaryTable, [primaryColumn], foreignTable, [foreignColumn])
     {
     }
 

@@ -24,8 +24,8 @@ public sealed class PrimaryKeyWriterTests
     private const int LeafBitmaskOffset = 0x1B;
     private const int LeafFirstEntryOffset = 0x1E0;
 
-    private static readonly string[] CompositeOrderLine = { "OrderId", "LineNo" };
-    private static readonly string[] CompositeAB = { "A", "B" };
+    private static readonly string[] CompositeOrderLine = ["OrderId", "LineNo"];
+    private static readonly string[] CompositeAB = ["A", "B"];
 
     [Fact]
     public async Task CreateTable_WithSingleColumnPrimaryKey_ViaIndexDefinition_RoundTrips()
@@ -37,12 +37,11 @@ public sealed class PrimaryKeyWriterTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
-                },
-                new[] { new IndexDefinition("PK_Pk_Single", "Id") { IsPrimaryKey = true } },
+                ],
+                [new IndexDefinition("PK_Pk_Single", "Id") { IsPrimaryKey = true }],
                 TestContext.Current.CancellationToken);
         }
 
@@ -67,11 +66,10 @@ public sealed class PrimaryKeyWriterTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -95,16 +93,14 @@ public sealed class PrimaryKeyWriterTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("OrderId", typeof(int)),
                     new ColumnDefinition("LineNo", typeof(int)),
                     new ColumnDefinition("Sku", typeof(string), maxLength: 20),
-                },
-                new[]
-                {
+                ],
+                [
                     new IndexDefinition("PK_Order", CompositeOrderLine) { IsPrimaryKey = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -130,12 +126,11 @@ public sealed class PrimaryKeyWriterTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("OrderId", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("LineNo", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("Sku", typeof(string), maxLength: 20),
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -156,14 +151,13 @@ public sealed class PrimaryKeyWriterTests
 
         await using (var writer = await OpenWriterAsync(stream))
         {
+            // Default IsNullable=true on the Id column; the PK shortcut must override it to false.
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
-                    // Default IsNullable=true; PK shortcut must override to false.
+                [
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -185,16 +179,14 @@ public sealed class PrimaryKeyWriterTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Score", typeof(int)),
-                },
-                new IndexDefinition[]
-                {
+                ],
+                [
                     new("IX_Score", "Score"),
                     new("PK_Id", "Id") { IsPrimaryKey = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -218,17 +210,16 @@ public sealed class PrimaryKeyWriterTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true } },
+                [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }],
                 ct);
 
             await writer.InsertRowsAsync(
                 "T",
-                new[]
-                {
+                [
                     new object[] { 5 },
-                    new object[] { 1 },
-                    new object[] { 3 },
-                },
+                    [1],
+                    [3],
+                ],
                 ct);
         }
 
@@ -247,14 +238,13 @@ public sealed class PrimaryKeyWriterTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
-                },
+                ],
                 ct);
 
-            await writer.InsertRowsAsync("T", new[] { new object[] { 1, "a" }, new object[] { 2, "b" } }, ct);
+            await writer.InsertRowsAsync("T", [new object[] { 1, "a" }, [2, "b"]], ct);
             await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), ct);
         }
 
@@ -275,16 +265,14 @@ public sealed class PrimaryKeyWriterTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[]
-                {
+                [
                     new ColumnDefinition("OrderId", typeof(int)),
                     new ColumnDefinition("LineNo", typeof(int)),
                     new ColumnDefinition("Sku", typeof(string), maxLength: 20),
-                },
-                new[]
-                {
+                ],
+                [
                     new IndexDefinition("PK_Order", CompositeOrderLine) { IsPrimaryKey = true },
-                },
+                ],
                 ct);
 
             await writer.DropColumnAsync("T", "LineNo", ct);
@@ -305,7 +293,7 @@ public sealed class PrimaryKeyWriterTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true } },
+                [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }],
                 ct);
 
             await writer.RenameColumnAsync("T", "Id", "Identifier", ct);
@@ -330,12 +318,11 @@ public sealed class PrimaryKeyWriterTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[]
-                {
+                [
                     new ColumnDefinition("A", typeof(int)),
                     new ColumnDefinition("B", typeof(int)),
-                },
-                new[] { new IndexDefinition("IX_AB", CompositeAB) },
+                ],
+                [new IndexDefinition("IX_AB", CompositeAB)],
                 TestContext.Current.CancellationToken);
         }
 
@@ -355,16 +342,14 @@ public sealed class PrimaryKeyWriterTests
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
                 "T",
-                new[]
-                {
+                [
                     new ColumnDefinition("A", typeof(int)),
                     new ColumnDefinition("B", typeof(int)),
-                },
-                new[]
-                {
+                ],
+                [
                     new IndexDefinition("PK_A", "A") { IsPrimaryKey = true },
                     new IndexDefinition("PK_B", "B") { IsPrimaryKey = true },
-                },
+                ],
                 TestContext.Current.CancellationToken));
     }
 
@@ -377,12 +362,11 @@ public sealed class PrimaryKeyWriterTests
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
                 "T",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("B", typeof(int)),
-                },
-                new[] { new IndexDefinition("PK_B", "B") { IsPrimaryKey = true } },
+                ],
+                [new IndexDefinition("PK_B", "B") { IsPrimaryKey = true }],
                 TestContext.Current.CancellationToken));
     }
 

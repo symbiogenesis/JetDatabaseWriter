@@ -58,17 +58,16 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Title", typeof(string), maxLength: 100),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 "Documents",
-                new object[] { 1, "doc one", DBNull.Value },
+                [1, "doc one", DBNull.Value],
                 TestContext.Current.CancellationToken);
 
             await writer.AddAttachmentAsync(
@@ -153,17 +152,16 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Title", typeof(string), maxLength: 100),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 "Documents",
-                new object[] { 1, "doc one", DBNull.Value },
+                [1, "doc one", DBNull.Value],
                 TestContext.Current.CancellationToken);
 
             await writer.AddAttachmentAsync(
@@ -230,20 +228,19 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         {
             await writer.CreateTableAsync(
                 "Tags",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Labels", typeof(object))
                     {
                         IsMultiValue = true,
                         MultiValueElementType = typeof(int),
                     },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 "Tags",
-                new object[] { 1, DBNull.Value },
+                [1, DBNull.Value],
                 TestContext.Current.CancellationToken);
 
             await writer.AddMultiValueItemAsync(
@@ -322,16 +319,15 @@ public sealed class ComplexColumnsSchemaEvolutionTests
 
         await writer.CreateTableAsync(
             "Documents",
-            new[]
-            {
+            [
                 new ColumnDefinition("Id", typeof(int)),
                 new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-            },
+            ],
             TestContext.Current.CancellationToken);
 
         await writer.InsertRowAsync(
             "Documents",
-            new object[] { 1, DBNull.Value },
+            [1, DBNull.Value],
             TestContext.Current.CancellationToken);
 
         await writer.AddAttachmentAsync(

@@ -73,16 +73,15 @@ public sealed class ComplexColumnsRowApiTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 "Documents",
-                new object[] { 1, DBNull.Value },
+                [1, DBNull.Value],
                 TestContext.Current.CancellationToken);
 
             byte[] payload = Encoding.UTF8.GetBytes("hello attachments");
@@ -118,16 +117,15 @@ public sealed class ComplexColumnsRowApiTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 "Documents",
-                new object[] { 1, DBNull.Value },
+                [1, DBNull.Value],
                 TestContext.Current.CancellationToken);
 
             var key = new Dictionary<string, object> { ["Id"] = 1 };
@@ -158,16 +156,15 @@ public sealed class ComplexColumnsRowApiTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowsAsync(
                 "Documents",
-                new[] { new object[] { 1, DBNull.Value }, new object[] { 2, DBNull.Value } },
+                [new object[] { 1, DBNull.Value }, [2, DBNull.Value]],
                 TestContext.Current.CancellationToken);
 
             await writer.AddAttachmentAsync("Documents", "Files", new Dictionary<string, object> { ["Id"] = 1 }, new AttachmentInput("one.txt", Encoding.UTF8.GetBytes("one")), TestContext.Current.CancellationToken);
@@ -194,11 +191,10 @@ public sealed class ComplexColumnsRowApiTests
 
         await writer.CreateTableAsync(
             "Documents",
-            new[]
-            {
+            [
                 new ColumnDefinition("Id", typeof(int)),
                 new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-            },
+            ],
             TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -206,7 +202,7 @@ public sealed class ComplexColumnsRowApiTests
                 "Documents",
                 "Files",
                 new Dictionary<string, object> { ["Id"] = 99 },
-                new AttachmentInput("x.txt", new byte[] { 1, 2, 3 }),
+                new AttachmentInput("x.txt", [1, 2, 3]),
                 TestContext.Current.CancellationToken));
     }
 
@@ -222,25 +218,24 @@ public sealed class ComplexColumnsRowApiTests
 
         await writer.CreateTableAsync(
             "Tags",
-            new[]
-            {
+            [
                 new ColumnDefinition("Id", typeof(int)),
                 new ColumnDefinition("Labels", typeof(object))
                 {
                     IsMultiValue = true,
                     MultiValueElementType = typeof(int),
                 },
-            },
+            ],
             TestContext.Current.CancellationToken);
 
-        await writer.InsertRowAsync("Tags", new object[] { 1, DBNull.Value }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync("Tags", [1, DBNull.Value], TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.AddAttachmentAsync(
                 "Tags",
                 "Labels",
                 new Dictionary<string, object> { ["Id"] = 1 },
-                new AttachmentInput("x.txt", new byte[] { 1 }),
+                new AttachmentInput("x.txt", [1]),
                 TestContext.Current.CancellationToken));
     }
 
@@ -257,18 +252,17 @@ public sealed class ComplexColumnsRowApiTests
         {
             await writer.CreateTableAsync(
                 "Tags",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Labels", typeof(object))
                     {
                         IsMultiValue = true,
                         MultiValueElementType = typeof(int),
                     },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync("Tags", new object[] { 1, DBNull.Value }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Tags", [1, DBNull.Value], TestContext.Current.CancellationToken);
 
             var key = new Dictionary<string, object> { ["Id"] = 1 };
             await writer.AddMultiValueItemAsync("Tags", "Labels", key, 100, TestContext.Current.CancellationToken);
@@ -300,14 +294,13 @@ public sealed class ComplexColumnsRowApiTests
 
         await writer.CreateTableAsync(
             "Documents",
-            new[]
-            {
+            [
                 new ColumnDefinition("Id", typeof(int)),
                 new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-            },
+            ],
             TestContext.Current.CancellationToken);
 
-        await writer.InsertRowAsync("Documents", new object[] { 1, DBNull.Value }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync("Documents", [1, DBNull.Value], TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.AddMultiValueItemAsync(

@@ -254,16 +254,15 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             {
                 await writer.CreateTableAsync(
                     TableName,
-                    new[]
-                    {
+                    [
                         new ColumnDefinition("Id", typeof(int)),
                         new ColumnDefinition("Label", typeof(string), maxLength: 64),
-                    },
+                    ],
                     TestContext.Current.CancellationToken);
 
                 await writer.InsertRowAsync(
                     TableName,
-                    new object[] { 42, "agile-write-roundtrip" },
+                    [42, "agile-write-roundtrip"],
                     TestContext.Current.CancellationToken);
             }
 

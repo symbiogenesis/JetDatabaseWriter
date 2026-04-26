@@ -207,8 +207,8 @@ public sealed class IndexLeafPageBuilderTests
     [Fact]
     public void PrefixCompressionEnabled_NoCommonPrefix_LeavesPrefLenAtZero()
     {
-        byte[] k1 = new byte[] { 0x10, 0x20 };
-        byte[] k2 = new byte[] { 0x30, 0x40 };
+        byte[] k1 = [0x10, 0x20];
+        byte[] k2 = [0x30, 0x40];
         var entries = new[]
         {
             new IndexLeafPageBuilder.LeafEntry(k1, 1, 0),

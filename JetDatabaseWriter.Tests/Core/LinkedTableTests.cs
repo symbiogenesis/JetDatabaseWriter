@@ -473,7 +473,7 @@ public sealed class LinkedTableTests : IDisposable
 
         var options = new AccessReaderOptions
         {
-            LinkedSourcePathAllowlist = new[] { allowlistedDir },
+            LinkedSourcePathAllowlist = [allowlistedDir],
         };
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);

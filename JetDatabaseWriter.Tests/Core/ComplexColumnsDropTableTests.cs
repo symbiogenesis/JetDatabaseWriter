@@ -32,16 +32,15 @@ public sealed class ComplexColumnsDropTableTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 "Documents",
-                new object[] { 1, DBNull.Value },
+                [1, DBNull.Value],
                 TestContext.Current.CancellationToken);
 
             await writer.AddAttachmentAsync(
@@ -89,15 +88,14 @@ public sealed class ComplexColumnsDropTableTests
         {
             await writer.CreateTableAsync(
                 "Tags",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Labels", typeof(object))
                     {
                         IsMultiValue = true,
                         MultiValueElementType = typeof(int),
                     },
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -172,16 +170,15 @@ public sealed class ComplexColumnsDropTableTests
         {
             await writer.CreateTableAsync(
                 "Plain",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 "Plain",
-                new object[] { 1, "abc" },
+                [1, "abc"],
                 TestContext.Current.CancellationToken);
 
             await writer.DropTableAsync("Plain", TestContext.Current.CancellationToken);
@@ -212,11 +209,10 @@ public sealed class ComplexColumnsDropTableTests
         {
             await writer.CreateTableAsync(
                 "Plain",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.DropTableAsync("Plain", TestContext.Current.CancellationToken);

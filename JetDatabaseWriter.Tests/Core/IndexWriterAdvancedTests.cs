@@ -26,10 +26,10 @@ public sealed class IndexWriterAdvancedTests
     private const int LeafBitmaskOffset = 0x1B;
     private const int LeafFirstEntryOffset = 0x1E0;
 
-    private static readonly string[] CompositeAB = { "A", "B" };
-    private static readonly string[] DescendingB = { "B" };
-    private static readonly string[] DescendingScore = { "Score" };
-    private static readonly string[] DescendingMissing = { "B" };
+    private static readonly string[] CompositeAB = ["A", "B"];
+    private static readonly string[] DescendingB = ["B"];
+    private static readonly string[] DescendingScore = ["Score"];
+    private static readonly string[] DescendingMissing = ["B"];
 
     [Fact]
     public async Task CreateTable_WithUniqueSingleColumnIndex_RoundTripsIsUnique()
@@ -41,8 +41,8 @@ public sealed class IndexWriterAdvancedTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[] { new ColumnDefinition("Id", typeof(int)) },
-                new[] { new IndexDefinition("UQ_Id", "Id") { IsUnique = true } },
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
                 TestContext.Current.CancellationToken);
         }
 
@@ -63,12 +63,11 @@ public sealed class IndexWriterAdvancedTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("A", typeof(int)),
                     new ColumnDefinition("B", typeof(int)),
-                },
-                new[] { new IndexDefinition("IX_AB", CompositeAB) },
+                ],
+                [new IndexDefinition("IX_AB", CompositeAB)],
                 TestContext.Current.CancellationToken);
         }
 
@@ -91,8 +90,8 @@ public sealed class IndexWriterAdvancedTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[] { new ColumnDefinition("Score", typeof(int)) },
-                new[] { new IndexDefinition("IX_ScoreDesc", "Score") { DescendingColumns = DescendingScore } },
+                [new ColumnDefinition("Score", typeof(int))],
+                [new IndexDefinition("IX_ScoreDesc", "Score") { DescendingColumns = DescendingScore }],
                 TestContext.Current.CancellationToken);
         }
 
@@ -113,18 +112,16 @@ public sealed class IndexWriterAdvancedTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("A", typeof(int)),
                     new ColumnDefinition("B", typeof(int)),
-                },
-                new[]
-                {
+                ],
+                [
                     new IndexDefinition("IX_AB_Mixed", CompositeAB)
                     {
                         DescendingColumns = DescendingB,
                     },
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -145,8 +142,8 @@ public sealed class IndexWriterAdvancedTests
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("A", typeof(int)) },
-                new[] { new IndexDefinition("IX_A", "A") { DescendingColumns = DescendingMissing } },
+                [new ColumnDefinition("A", typeof(int))],
+                [new IndexDefinition("IX_A", "A") { DescendingColumns = DescendingMissing }],
                 TestContext.Current.CancellationToken));
     }
 
@@ -160,15 +157,15 @@ public sealed class IndexWriterAdvancedTests
 
         await writer.CreateTableAsync(
             "T",
-            new[] { new ColumnDefinition("Id", typeof(int)) },
-            new[] { new IndexDefinition("UQ_Id", "Id") { IsUnique = true } },
+            [new ColumnDefinition("Id", typeof(int))],
+            [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
             ct);
 
-        await writer.InsertRowAsync("T", new object[] { 1 }, ct);
-        await writer.InsertRowAsync("T", new object[] { 2 }, ct);
+        await writer.InsertRowAsync("T", [1], ct);
+        await writer.InsertRowAsync("T", [2], ct);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", new object[] { 1 }, ct));
+            await writer.InsertRowAsync("T", [1], ct));
     }
 
     [Fact]
@@ -181,18 +178,17 @@ public sealed class IndexWriterAdvancedTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Id", typeof(int)) },
-                new[] { new IndexDefinition("UQ_Id", "Id") { IsUnique = true } },
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
                 ct);
 
             await writer.InsertRowsAsync(
                 "T",
-                new[]
-                {
+                [
                     new object[] { 5 },
-                    new object[] { 1 },
-                    new object[] { 3 },
-                },
+                    [1],
+                    [3],
+                ],
                 ct);
         }
 
@@ -209,23 +205,21 @@ public sealed class IndexWriterAdvancedTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[]
-                {
+                [
                     new ColumnDefinition("A", typeof(int)),
                     new ColumnDefinition("B", typeof(int)),
-                },
-                new[] { new IndexDefinition("IX_AB", CompositeAB) },
+                ],
+                [new IndexDefinition("IX_AB", CompositeAB)],
                 ct);
 
             await writer.InsertRowsAsync(
                 "T",
-                new[]
-                {
+                [
                     new object[] { 1, 100 },
-                    new object[] { 1, 50 },
-                    new object[] { 2, 25 },
-                    new object[] { 1, 75 },
-                },
+                    [1, 50],
+                    [2, 25],
+                    [1, 75],
+                ],
                 ct);
         }
 
@@ -244,19 +238,18 @@ public sealed class IndexWriterAdvancedTests
 
         await writer.CreateTableAsync(
             "T",
-            new[]
-            {
+            [
                 new ColumnDefinition("A", typeof(int)),
                 new ColumnDefinition("B", typeof(int)),
-            },
-            new[] { new IndexDefinition("UQ_AB", CompositeAB) { IsUnique = true } },
+            ],
+            [new IndexDefinition("UQ_AB", CompositeAB) { IsUnique = true }],
             ct);
 
-        await writer.InsertRowAsync("T", new object[] { 1, 10 }, ct);
-        await writer.InsertRowAsync("T", new object[] { 1, 20 }, ct); // (1,10) ≠ (1,20) — fine
+        await writer.InsertRowAsync("T", [1, 10], ct);
+        await writer.InsertRowAsync("T", [1, 20], ct); // (1,10) ≠ (1,20) — fine
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", new object[] { 1, 10 }, ct));
+            await writer.InsertRowAsync("T", [1, 10], ct));
     }
 
     [Fact]
@@ -269,15 +262,14 @@ public sealed class IndexWriterAdvancedTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[]
-                {
+                [
                     new ColumnDefinition("A", typeof(int)),
                     new ColumnDefinition("B", typeof(int)),
-                },
-                new[] { new IndexDefinition("IX_AB", CompositeAB) { IsUnique = true } },
+                ],
+                [new IndexDefinition("IX_AB", CompositeAB) { IsUnique = true }],
                 ct);
 
-            await writer.InsertRowsAsync("T", new[] { new object[] { 1, 1 }, new object[] { 2, 2 } }, ct);
+            await writer.InsertRowsAsync("T", [new object[] { 1, 1 }, [2, 2]], ct);
             await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), ct);
         }
 
@@ -297,8 +289,8 @@ public sealed class IndexWriterAdvancedTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Score", typeof(int)) },
-                new[] { new IndexDefinition("IX_Score", "Score") { DescendingColumns = DescendingScore } },
+                [new ColumnDefinition("Score", typeof(int))],
+                [new IndexDefinition("IX_Score", "Score") { DescendingColumns = DescendingScore }],
                 ct);
 
             await writer.RenameColumnAsync("T", "Score", "Points", ct);
@@ -323,18 +315,17 @@ public sealed class IndexWriterAdvancedTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Id", typeof(Guid)) },
-                new[] { new IndexDefinition("IX_Id", "Id") },
+                [new ColumnDefinition("Id", typeof(Guid))],
+                [new IndexDefinition("IX_Id", "Id")],
                 ct);
 
             await writer.InsertRowsAsync(
                 "T",
-                new[]
-                {
+                [
                     new object[] { Guid.Parse("00000000-0000-0000-0000-000000000001") },
-                    new object[] { Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF") },
-                    new object[] { Guid.Parse("11111111-2222-3333-4444-555555555555") },
-                },
+                    [Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")],
+                    [Guid.Parse("11111111-2222-3333-4444-555555555555")],
+                ],
                 ct);
         }
 
@@ -352,16 +343,16 @@ public sealed class IndexWriterAdvancedTests
 
         await writer.CreateTableAsync(
             "T",
-            new[] { new ColumnDefinition("Id", typeof(Guid)) },
-            new[] { new IndexDefinition("UQ_Id", "Id") { IsUnique = true } },
+            [new ColumnDefinition("Id", typeof(Guid))],
+            [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
             ct);
 
         var dup = Guid.Parse("11111111-2222-3333-4444-555555555555");
-        await writer.InsertRowAsync("T", new object[] { dup }, ct);
-        await writer.InsertRowAsync("T", new object[] { Guid.NewGuid() }, ct);
+        await writer.InsertRowAsync("T", [dup], ct);
+        await writer.InsertRowAsync("T", [Guid.NewGuid()], ct);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", new object[] { dup }, ct));
+            await writer.InsertRowAsync("T", [dup], ct));
     }
 
     [Fact]
@@ -374,20 +365,19 @@ public sealed class IndexWriterAdvancedTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Amount", typeof(decimal)) },
-                new[] { new IndexDefinition("IX_Amount", "Amount") },
+                [new ColumnDefinition("Amount", typeof(decimal))],
+                [new IndexDefinition("IX_Amount", "Amount")],
                 ct);
 
             await writer.InsertRowsAsync(
                 "T",
-                new[]
-                {
+                [
                     new object[] { -1000.50m },
-                    new object[] { 0m },
-                    new object[] { 1m },
-                    new object[] { 1.50m },
-                    new object[] { 1000m },
-                },
+                    [0m],
+                    [1m],
+                    [1.50m],
+                    [1000m],
+                ],
                 ct);
         }
 
@@ -405,17 +395,17 @@ public sealed class IndexWriterAdvancedTests
 
         await writer.CreateTableAsync(
             "T",
-            new[] { new ColumnDefinition("Amount", typeof(decimal)) },
-            new[] { new IndexDefinition("UQ_Amount", "Amount") { IsUnique = true } },
+            [new ColumnDefinition("Amount", typeof(decimal))],
+            [new IndexDefinition("UQ_Amount", "Amount") { IsUnique = true }],
             ct);
 
         // 1.50 and 1.5 normalise to the same numeric value; they must collide
         // under the target-scale normalisation.
-        await writer.InsertRowAsync("T", new object[] { 1.50m }, ct);
-        await writer.InsertRowAsync("T", new object[] { 2m }, ct);
+        await writer.InsertRowAsync("T", [1.50m], ct);
+        await writer.InsertRowAsync("T", [2m], ct);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync("T", new object[] { 1.5m }, ct));
+            await writer.InsertRowAsync("T", [1.5m], ct));
     }
 
     // --- helpers (page scanning) ---------------------------------------------

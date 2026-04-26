@@ -34,7 +34,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
 
         // Parent is empty; child insert with ParentId=42 must be rejected.
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync(child, new object[] { 1, 42 }, TestContext.Current.CancellationToken));
+            await writer.InsertRowAsync(child, [1, 42], TestContext.Current.CancellationToken));
         Assert.Contains("FK_W10_Missing", ex.Message, StringComparison.Ordinal);
     }
 
@@ -49,11 +49,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(parent, new object[] { 7 }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(parent, [7], TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
                 new RelationshipDefinition("FK_W10_Ok", parent, "Id", child, "ParentId"),
                 TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(child, new object[] { 1, 7 }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(child, [1, 7], TestContext.Current.CancellationToken);
         }
 
         await using var reader = await OpenReaderAsync(temp);
@@ -75,7 +75,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.CreateRelationshipAsync(
                 new RelationshipDefinition("FK_W10_Null", parent, "Id", child, "ParentId"),
                 TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(child, new object[] { 1, DBNull.Value }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(child, [1, DBNull.Value], TestContext.Current.CancellationToken);
         }
 
         await using var reader = await OpenReaderAsync(temp);
@@ -102,7 +102,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 TestContext.Current.CancellationToken);
 
             // Parent is empty but enforcement is off → must succeed.
-            await writer.InsertRowAsync(child, new object[] { 1, 99 }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(child, [1, 99], TestContext.Current.CancellationToken);
         }
 
         await using var reader = await OpenReaderAsync(temp);
@@ -121,7 +121,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.CreateTableAsync(table, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
 
             // Pre-seed root then declare relationship.
-            await writer.InsertRowAsync(table, new object[] { 1, DBNull.Value }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [1, DBNull.Value], TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
                 new RelationshipDefinition("FK_W10_Self", table, "Id", table, "ParentId"),
                 TestContext.Current.CancellationToken);
@@ -130,11 +130,10 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             // The self-referential augmentation must let later rows see earlier ones.
             await writer.InsertRowsAsync(
                 table,
-                new[]
-                {
+                [
                     new object[] { 2, 1 },
-                    new object[] { 3, 2 },
-                },
+                    [3, 2],
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -153,11 +152,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         await using var writer = await OpenWriterAsync(temp);
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(parent, new object[] { 5 }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
         await writer.CreateRelationshipAsync(
             new RelationshipDefinition("FK_W10_UFk", parent, "Id", child, "ParentId"),
             TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(child, new object[] { 1, 5 }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(child, [1, 5], TestContext.Current.CancellationToken);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.UpdateRowsAsync(
@@ -179,11 +178,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         await using var writer = await OpenWriterAsync(temp);
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(parent, new object[] { 5 }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
         await writer.CreateRelationshipAsync(
             new RelationshipDefinition("FK_W10_DelNoCasc", parent, "Id", child, "ParentId"),
             TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(child, new object[] { 1, 5 }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(child, [1, 5], TestContext.Current.CancellationToken);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.DeleteRowsAsync(parent, "Id", 5, TestContext.Current.CancellationToken));
@@ -201,7 +200,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(parent, new object[] { 5 }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
                 new RelationshipDefinition("FK_W10_DelCasc", parent, "Id", child, "ParentId")
                 {
@@ -210,11 +209,10 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 TestContext.Current.CancellationToken);
             await writer.InsertRowsAsync(
                 child,
-                new[]
-                {
+                [
                     new object[] { 1, 5 },
-                    new object[] { 2, 5 },
-                },
+                    [2, 5],
+                ],
                 TestContext.Current.CancellationToken);
 
             int deleted = await writer.DeleteRowsAsync(parent, "Id", 5, TestContext.Current.CancellationToken);
@@ -236,11 +234,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         await using var writer = await OpenWriterAsync(temp);
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(parent, new object[] { 5 }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
         await writer.CreateRelationshipAsync(
             new RelationshipDefinition("FK_W10_UPkNoCasc", parent, "Id", child, "ParentId"),
             TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(child, new object[] { 1, 5 }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(child, [1, 5], TestContext.Current.CancellationToken);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.UpdateRowsAsync(
@@ -263,7 +261,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(parent, new object[] { 5 }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
                 new RelationshipDefinition("FK_W10_UPkCasc", parent, "Id", child, "ParentId")
                 {
@@ -272,11 +270,10 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 TestContext.Current.CancellationToken);
             await writer.InsertRowsAsync(
                 child,
-                new[]
-                {
+                [
                     new object[] { 1, 5 },
-                    new object[] { 2, 5 },
-                },
+                    [2, 5],
+                ],
                 TestContext.Current.CancellationToken);
 
             int updated = await writer.UpdateRowsAsync(
@@ -304,17 +301,17 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         await using var writer = await OpenWriterAsync(temp);
         await writer.CreateTableAsync(parent, [new("A", typeof(int)), new("B", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("RefA", typeof(int)), new("RefB", typeof(int))], TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(parent, new object[] { 1, 2 }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(parent, [1, 2], TestContext.Current.CancellationToken);
         await writer.CreateRelationshipAsync(
             new RelationshipDefinition("FK_W10_Multi", parent, ["A", "B"], child, ["RefA", "RefB"]),
             TestContext.Current.CancellationToken);
 
         // Wrong B value → reject.
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await writer.InsertRowAsync(child, new object[] { 1, 1, 99 }, TestContext.Current.CancellationToken));
+            await writer.InsertRowAsync(child, [1, 1, 99], TestContext.Current.CancellationToken));
 
         // Correct tuple → succeed.
-        await writer.InsertRowAsync(child, new object[] { 2, 1, 2 }, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(child, [2, 1, 2], TestContext.Current.CancellationToken);
     }
 
     private static string MakeTableName(string prefix) =>

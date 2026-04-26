@@ -65,16 +65,15 @@ public sealed class ComplexColumnsLvalChainTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 "Documents",
-                new object[] { 1, DBNull.Value },
+                [1, DBNull.Value],
                 TestContext.Current.CancellationToken);
 
             await writer.AddAttachmentAsync(

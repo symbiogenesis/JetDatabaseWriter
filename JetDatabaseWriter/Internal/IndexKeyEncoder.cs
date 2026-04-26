@@ -95,7 +95,7 @@ internal static class IndexKeyEncoder
         bool isNull = value is null || value is DBNull;
         if (isNull)
         {
-            return new[] { ascending ? FlagAscendingNull : FlagDescendingNull };
+            return [ascending ? FlagAscendingNull : FlagDescendingNull];
         }
 
         // GUID uses the Jackcess "general binary entry" wrapping where
@@ -135,7 +135,7 @@ internal static class IndexKeyEncoder
         {
             case T_BYTE:
                 // Access "Byte" is unsigned 0..255 — no sign bit to flip.
-                return new[] { ToByte(value) };
+                return [ToByte(value)];
 
             case T_INT:
                 return EncodeSignedBigEndian(ToInt16(value), 2);
@@ -277,14 +277,14 @@ internal static class IndexKeyEncoder
         // display (big-endian) order so byte comparisons match canonical
         // string ordering.
         byte[] storage = g.ToByteArray();
-        byte[] display = new byte[16]
-        {
+        byte[] display =
+        [
             storage[3], storage[2], storage[1], storage[0],
             storage[5], storage[4],
             storage[7], storage[6],
             storage[8], storage[9], storage[10], storage[11],
             storage[12], storage[13], storage[14], storage[15],
-        };
+        ];
 
         // Layout: flag(1) + segment1(8 data + 1 len=0x09) + segment2(8 data + 1 len=0x08) = 19 bytes.
         byte[] result = new byte[19];
@@ -351,7 +351,7 @@ internal static class IndexKeyEncoder
         bool isNull = value is null || value is DBNull;
         if (isNull)
         {
-            return new[] { ascending ? FlagAscendingNull : FlagDescendingNull };
+            return [ascending ? FlagAscendingNull : FlagDescendingNull];
         }
 
         decimal d = ToDecimal(value!);

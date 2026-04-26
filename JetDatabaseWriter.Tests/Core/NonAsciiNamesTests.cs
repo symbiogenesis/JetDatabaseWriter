@@ -45,8 +45,8 @@ public sealed class NonAsciiNamesTests
                 },
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync(TableName, new object[] { 1, "Größe" }, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(TableName, new object[] { 2, "Straße" }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(TableName, [1, "Größe"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(TableName, [2, "Straße"], TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
@@ -92,7 +92,7 @@ public sealed class NonAsciiNamesTests
                 },
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync(TableName, new object[] { 1, "Océ" }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(TableName, [1, "Océ"], TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
@@ -139,7 +139,7 @@ public sealed class NonAsciiNamesTests
                 },
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync(TableName, new object[] { 1, "山田太郎" }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(TableName, [1, "山田太郎"], TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
@@ -185,7 +185,7 @@ public sealed class NonAsciiNamesTests
 
             for (int i = 1; i <= 5; i++)
             {
-                await writer.InsertRowAsync(TableName, new object[] { i, i * 10 }, TestContext.Current.CancellationToken);
+                await writer.InsertRowAsync(TableName, [i, i * 10], TestContext.Current.CancellationToken);
             }
         }
 

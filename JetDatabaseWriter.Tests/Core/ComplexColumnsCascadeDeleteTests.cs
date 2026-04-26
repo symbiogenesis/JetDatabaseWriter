@@ -31,20 +31,18 @@ public sealed class ComplexColumnsCascadeDeleteTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowsAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new object[] { 1, DBNull.Value },
-                    new object[] { 2, DBNull.Value },
-                },
+                    [2, DBNull.Value],
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.AddAttachmentAsync(
@@ -102,24 +100,22 @@ public sealed class ComplexColumnsCascadeDeleteTests
         {
             await writer.CreateTableAsync(
                 "Tags",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Labels", typeof(object))
                     {
                         IsMultiValue = true,
                         MultiValueElementType = typeof(int),
                     },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowsAsync(
                 "Tags",
-                new[]
-                {
+                [
                     new object[] { 1, DBNull.Value },
-                    new object[] { 2, DBNull.Value },
-                },
+                    [2, DBNull.Value],
+                ],
                 TestContext.Current.CancellationToken);
 
             var k1 = new Dictionary<string, object> { ["Id"] = 1 };
@@ -167,20 +163,18 @@ public sealed class ComplexColumnsCascadeDeleteTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowsAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new object[] { 1, DBNull.Value },
-                    new object[] { 2, DBNull.Value },
-                },
+                    [2, DBNull.Value],
+                ],
                 TestContext.Current.CancellationToken);
 
             // Only parent #2 gets an attachment.
@@ -243,21 +237,19 @@ public sealed class ComplexColumnsCascadeDeleteTests
         {
             await writer.CreateTableAsync(
                 "C5_Customers",
-                new[]
-                {
+                [
                     new ColumnDefinition("CustId", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.CreateTableAsync(
                 "C5_Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("DocId", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
                     new ColumnDefinition("CustId", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.CreateRelationshipAsync(
@@ -275,20 +267,20 @@ public sealed class ComplexColumnsCascadeDeleteTests
 
             await writer.InsertRowAsync(
                 "C5_Customers",
-                new object[] { 1, "Alice" },
+                [1, "Alice"],
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(
                 "C5_Customers",
-                new object[] { 2, "Bob" },
+                [2, "Bob"],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 "C5_Documents",
-                new object[] { 100, 1, DBNull.Value },
+                [100, 1, DBNull.Value],
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(
                 "C5_Documents",
-                new object[] { 200, 2, DBNull.Value },
+                [200, 2, DBNull.Value],
                 TestContext.Current.CancellationToken);
 
             await writer.AddAttachmentAsync(

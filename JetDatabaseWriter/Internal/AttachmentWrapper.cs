@@ -157,7 +157,7 @@ internal static class AttachmentWrapper
         // UCS-2 LE, NUL-terminated. extLen counts the NUL.
         if (string.IsNullOrEmpty(ext))
         {
-            return new byte[] { 0x00, 0x00 };
+            return [0x00, 0x00];
         }
 
         byte[] raw = Encoding.Unicode.GetBytes(ext);

@@ -50,7 +50,7 @@ public sealed record IndexDefinition
     public IndexDefinition(string name, string columnName)
     {
         Name = name;
-        Columns = new[] { columnName };
+        Columns = [columnName];
     }
 
     /// <summary>

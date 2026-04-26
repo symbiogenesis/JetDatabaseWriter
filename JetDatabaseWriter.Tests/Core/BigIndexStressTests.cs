@@ -53,14 +53,14 @@ public sealed class BigIndexStressTests
         {
             await writer.CreateTableAsync(
                 "Big",
-                new[] { new ColumnDefinition("Id", typeof(int)) },
-                new[] { new IndexDefinition("UQ_Id", "Id") { IsUnique = true } },
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
                 ct);
 
             var rows = new object[RowCount][];
             for (int i = 0; i < RowCount; i++)
             {
-                rows[i] = new object[] { i + 1 };
+                rows[i] = [i + 1];
             }
 
             int inserted = await writer.InsertRowsAsync("Big", rows, ct);
@@ -109,17 +109,17 @@ public sealed class BigIndexStressTests
         await using var writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
             "T",
-            new[] { new ColumnDefinition("Id", typeof(int)) },
-            new[] { new IndexDefinition("UQ_Id", "Id") { IsUnique = true } },
+            [new ColumnDefinition("Id", typeof(int))],
+            [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
             ct);
 
         var batch = new[]
         {
             new object[] { 1 },
-            new object[] { 2 },
-            new object[] { 3 },
-            new object[] { 2 }, // duplicate
-            new object[] { 4 },
+            [2],
+            [3],
+            [2], // duplicate
+            [4],
         };
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -152,27 +152,26 @@ public sealed class BigIndexStressTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)) { IsAutoIncrement = true },
                     new ColumnDefinition("Data", typeof(string), maxLength: 50)
                     {
                         ValidationRule = v => !string.Equals(v as string, "REJECT", StringComparison.Ordinal),
                     },
-                },
+                ],
                 ct);
 
             // Two distinct values land cleanly: Id auto-assigns 1, 2.
-            await writer.InsertRowAsync("T", new object[] { DBNull.Value, "row1" }, ct);
-            await writer.InsertRowAsync("T", new object[] { DBNull.Value, "row2" }, ct);
+            await writer.InsertRowAsync("T", [DBNull.Value, "row1"], ct);
+            await writer.InsertRowAsync("T", [DBNull.Value, "row2"], ct);
 
             // The validation predicate rejects this row before any data is
             // written — the autonumber counter must NOT advance for it.
             await Assert.ThrowsAsync<ArgumentException>(async () =>
-                await writer.InsertRowAsync("T", new object[] { DBNull.Value, "REJECT" }, ct));
+                await writer.InsertRowAsync("T", [DBNull.Value, "REJECT"], ct));
 
             // Next successful insert must use Id == 3, not 4.
-            await writer.InsertRowAsync("T", new object[] { DBNull.Value, "row3" }, ct);
+            await writer.InsertRowAsync("T", [DBNull.Value, "row3"], ct);
         }
 
         await using var reader = await OpenReaderAsync(stream);
@@ -209,18 +208,17 @@ public sealed class BigIndexStressTests
         {
             await writer.CreateTableAsync(
                 "Big",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Note", typeof(string), maxLength: 32),
-                },
-                new[] { new IndexDefinition("UQ_Id", "Id") { IsUnique = true } },
+                ],
+                [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
                 ct);
 
             var rows = new object[RowCount][];
             for (int i = 0; i < RowCount; i++)
             {
-                rows[i] = new object[] { i + 1, "n" + i };
+                rows[i] = [i + 1, "n" + i];
             }
 
             await writer.InsertRowsAsync("Big", rows, ct);

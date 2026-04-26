@@ -67,7 +67,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Long_Ordering_IsLexicographic_Ascending()
     {
-        int[] values = { int.MinValue, -1000, -1, 0, 1, 1000, int.MaxValue };
+        int[] values = [int.MinValue, -1000, -1, 0, 1, 1000, int.MaxValue];
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
@@ -83,7 +83,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Int_Ordering_IsLexicographic_Ascending()
     {
-        short[] values = { short.MinValue, -1, 0, 1, short.MaxValue };
+        short[] values = [short.MinValue, -1, 0, 1, short.MaxValue];
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
@@ -121,7 +121,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Double_PositiveAndNegative_OrderCorrectly()
     {
-        double[] values = { double.NegativeInfinity, -1e10, -1.0, -double.Epsilon, 0.0, double.Epsilon, 1.0, 1e10, double.PositiveInfinity };
+        double[] values = [double.NegativeInfinity, -1e10, -1.0, -double.Epsilon, 0.0, double.Epsilon, 1.0, 1e10, double.PositiveInfinity];
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
@@ -168,7 +168,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Descending_Ordering_IsReverseOfAscending()
     {
-        int[] values = { -100, -1, 0, 1, 100 };
+        int[] values = [-100, -1, 0, 1, 100];
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
@@ -223,7 +223,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Text_Ordering_DigitsSortBeforeLetters()
     {
-        string[] values = { string.Empty, "0", "1", "9", "A", "AB", "AC", "B", "Z", "ZZ" };
+        string[] values = [string.Empty, "0", "1", "9", "A", "AB", "AC", "B", "Z", "ZZ"];
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
         {
@@ -326,13 +326,13 @@ public sealed class IndexKeyEncoderTests
     public void Guid_Ordering_IsLexicographic_Ascending()
     {
         Guid[] values =
-        {
+        [
             Guid.Parse("00000000-0000-0000-0000-000000000000"),
             Guid.Parse("00000000-0000-0000-0000-000000000001"),
             Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF"),
             Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFE"),
             Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"),
-        };
+        ];
 
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
@@ -352,11 +352,11 @@ public sealed class IndexKeyEncoderTests
     public void Guid_Ordering_IsReverseOfAscending_Descending()
     {
         Guid[] values =
-        {
+        [
             Guid.Parse("00000000-0000-0000-0000-000000000000"),
             Guid.Parse("00112233-4455-6677-8899-AABBCCDDEEFF"),
             Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"),
-        };
+        ];
 
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
@@ -458,7 +458,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Numeric_Ascending_Ordering_IsLexicographic_NewStyle()
     {
-        decimal[] values = { -1000m, -1.5m, -1m, -0.01m, 0m, 0.01m, 1m, 1.5m, 1000m };
+        decimal[] values = [-1000m, -1.5m, -1m, -0.01m, 0m, 0.01m, 1m, 1.5m, 1000m];
         const int targetScale = 2;
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
@@ -477,7 +477,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Numeric_Descending_Ordering_IsReverseLexicographic_NewStyle()
     {
-        decimal[] values = { -1000m, -1m, 0m, 1m, 1000m };
+        decimal[] values = [-1000m, -1m, 0m, 1m, 1000m];
         const int targetScale = 0;
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
@@ -500,7 +500,7 @@ public sealed class IndexKeyEncoderTests
         // 837148; cited by Jackcess) — descending leaves negatives before
         // positives in lex order regardless of magnitude. Validate strict
         // descending order WITHIN a single sign instead.
-        decimal[] positives = { 1m, 10m, 1000m };
+        decimal[] positives = [1m, 10m, 1000m];
         byte[][] encPos = new byte[positives.Length][];
         for (int i = 0; i < positives.Length; i++)
         {

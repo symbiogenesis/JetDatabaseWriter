@@ -184,16 +184,15 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Label", typeof(string), maxLength: 64),
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 TableName,
-                new object[] { 42, "encrypted-write" },
+                [42, "encrypted-write"],
                 TestContext.Current.CancellationToken);
         }
 
@@ -224,16 +223,15 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Label", typeof(string), maxLength: 64),
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 TableName,
-                new object[] { 7, "jet3-xor-write" },
+                [7, "jet3-xor-write"],
                 TestContext.Current.CancellationToken);
         }
 
@@ -269,16 +267,15 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Label", typeof(string), maxLength: 64),
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 TableName,
-                new object[] { 11, "legacy-aes-cfb-write" },
+                [11, "legacy-aes-cfb-write"],
                 TestContext.Current.CancellationToken);
         }
 

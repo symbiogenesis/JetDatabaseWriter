@@ -285,11 +285,11 @@ internal static class EncryptionConverter
         (byte[] encryptionInfo, byte[] encryptedPackage) =
             OfficeCryptoAgile.Encrypt(plaintext, password);
 
-        return CompoundFileWriter.Build(new[]
-        {
+        return CompoundFileWriter.Build(
+        [
             new KeyValuePair<string, byte[]>("EncryptionInfo", encryptionInfo),
             new KeyValuePair<string, byte[]>("EncryptedPackage", encryptedPackage),
-        });
+        ]);
     }
 
     private static void EncryptAllPages(byte[] db, int pageSize, EncryptionManager.PageDecryptionKeys keys)

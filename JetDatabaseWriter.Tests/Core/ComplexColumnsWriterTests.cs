@@ -137,11 +137,10 @@ public sealed class ComplexColumnsWriterTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -165,15 +164,14 @@ public sealed class ComplexColumnsWriterTests
         {
             await writer.CreateTableAsync(
                 "Things",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Tags", typeof(object))
                     {
                         IsMultiValue = true,
                         MultiValueElementType = typeof(string),
                     },
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -196,11 +194,10 @@ public sealed class ComplexColumnsWriterTests
         var ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken));
 
         Assert.Contains(".accdb", ex.Message, StringComparison.Ordinal);
@@ -215,11 +212,10 @@ public sealed class ComplexColumnsWriterTests
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
                 "Bad",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Tags", typeof(object)) { IsMultiValue = true },
-                },
+                ],
                 TestContext.Current.CancellationToken));
     }
 
@@ -233,11 +229,10 @@ public sealed class ComplexColumnsWriterTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -277,10 +272,9 @@ public sealed class ComplexColumnsWriterTests
 
         await writer.CreateTableAsync(
             "Plain",
-            new[]
-            {
+            [
                 new ColumnDefinition("Id", typeof(int)),
-            },
+            ],
             TestContext.Current.CancellationToken);
 
         var info = await reader.GetComplexColumnsAsync("Plain", TestContext.Current.CancellationToken);
@@ -290,7 +284,7 @@ public sealed class ComplexColumnsWriterTests
     // ── C10: MSysComplexType_* template tables ─────────────────────────────────
 
     private static readonly string[] _expectedTemplateNames =
-    {
+    [
         "MSysComplexType_UnsignedByte",
         "MSysComplexType_Short",
         "MSysComplexType_Long",
@@ -300,7 +294,7 @@ public sealed class ComplexColumnsWriterTests
         "MSysComplexType_Decimal",
         "MSysComplexType_Text",
         "MSysComplexType_Attachment",
-    };
+    ];
 
     [Fact]
     public async Task CreateDatabaseAsync_AceAccdb_FullCatalog_EmitsAllNineComplexTypeTemplates()
@@ -387,11 +381,10 @@ public sealed class ComplexColumnsWriterTests
         {
             await writer.CreateTableAsync(
                 "Documents",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -426,15 +419,14 @@ public sealed class ComplexColumnsWriterTests
         {
             await writer.CreateTableAsync(
                 "Things",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Tags", typeof(object))
                     {
                         IsMultiValue = true,
                         MultiValueElementType = typeof(string),
                     },
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 

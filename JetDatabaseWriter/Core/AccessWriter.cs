@@ -3535,11 +3535,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         (byte[] encryptionInfo, byte[] encryptedPackage) =
             OfficeCryptoAgile.Encrypt(inner, _password.Span);
 
-        byte[] cfb = CompoundFileWriter.Build(new[]
-        {
+        byte[] cfb = CompoundFileWriter.Build(
+        [
             new KeyValuePair<string, byte[]>("EncryptionInfo", encryptionInfo),
             new KeyValuePair<string, byte[]>("EncryptedPackage", encryptedPackage),
-        });
+        ]);
 
         _ = _outerEncryptedStream!.Seek(0, SeekOrigin.Begin);
         await _outerEncryptedStream.WriteAsync(cfb.AsMemory()).ConfigureAwait(false);
@@ -3841,7 +3841,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // defense-in-depth.
         try
         {
-            await CheckUniqueIndexesPreInsertAsync(tdefPage, tableDef, tableName, new[] { values }, cancellationToken).ConfigureAwait(false);
+            await CheckUniqueIndexesPreInsertAsync(tdefPage, tableDef, tableName, [values], cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -5378,26 +5378,26 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// All templates are zero-row, zero-index tables; their <c>MSysObjects.Id</c>
     /// (= TDEF page) is what <c>MSysComplexColumns.ComplexTypeObjectID</c> points at.
     /// </summary>
-    private static readonly (string Name, ColumnDefinition[] Columns)[] _complexTypeTemplates = new[]
-    {
+    private static readonly (string Name, ColumnDefinition[] Columns)[] _complexTypeTemplates =
+    [
         ("MSysComplexType_UnsignedByte", new[] { new ColumnDefinition("Value", typeof(byte)) }),
-        ("MSysComplexType_Short",        new[] { new ColumnDefinition("Value", typeof(short)) }),
-        ("MSysComplexType_Long",         new[] { new ColumnDefinition("Value", typeof(int)) }),
-        ("MSysComplexType_IEEESingle",   new[] { new ColumnDefinition("Value", typeof(float)) }),
-        ("MSysComplexType_IEEEDouble",   new[] { new ColumnDefinition("Value", typeof(double)) }),
-        ("MSysComplexType_GUID",         new[] { new ColumnDefinition("Value", typeof(Guid)) }),
-        ("MSysComplexType_Decimal",      new[] { new ColumnDefinition("Value", typeof(decimal)) }),
-        ("MSysComplexType_Text",         new[] { new ColumnDefinition("Value", typeof(string), maxLength: 255) }),
-        ("MSysComplexType_Attachment",   new[]
-        {
+        ("MSysComplexType_Short",        [new ColumnDefinition("Value", typeof(short))]),
+        ("MSysComplexType_Long",         [new ColumnDefinition("Value", typeof(int))]),
+        ("MSysComplexType_IEEESingle",   [new ColumnDefinition("Value", typeof(float))]),
+        ("MSysComplexType_IEEEDouble",   [new ColumnDefinition("Value", typeof(double))]),
+        ("MSysComplexType_GUID",         [new ColumnDefinition("Value", typeof(Guid))]),
+        ("MSysComplexType_Decimal",      [new ColumnDefinition("Value", typeof(decimal))]),
+        ("MSysComplexType_Text",         [new ColumnDefinition("Value", typeof(string), maxLength: 255)]),
+        ("MSysComplexType_Attachment",
+        [
             new ColumnDefinition("FileData",      typeof(byte[])),
             new ColumnDefinition("FileFlags",     typeof(int)),
             new ColumnDefinition("FileName",      typeof(string), maxLength: 255),
             new ColumnDefinition("FileTimeStamp", typeof(DateTime)),
             new ColumnDefinition("FileType",      typeof(string), maxLength: 255),
             new ColumnDefinition("FileURL",       typeof(string)),
-        }),
-    };
+        ]),
+    ];
 
     /// <summary>
     /// Phase C10: scaffolds the nine <c>MSysComplexType_*</c> template tables
@@ -5774,7 +5774,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (parentColumn.IsAttachment)
         {
             ColumnDefinition[] cols =
-            {
+            [
                 new ColumnDefinition("FileData", typeof(byte[])),
                 new ColumnDefinition("FileFlags", typeof(int)),
                 new ColumnDefinition("FileName", typeof(string), maxLength: 255),
@@ -5783,14 +5783,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 new ColumnDefinition("FileURL", typeof(string)) /* MEMO via no maxLength */,
                 scalar,
                 fk,
-            };
+            ];
 
             IndexDefinition[] indexes =
-            {
+            [
                 new IndexDefinition("MSysComplexPKIndex", scalarName) { IsPrimaryKey = true },
                 new IndexDefinition(fkName, fkName),
-                new IndexDefinition("IdxFKPrimaryScalar", new[] { fkName, "FileName" }),
-            };
+                new IndexDefinition("IdxFKPrimaryScalar", [fkName, "FileName"]),
+            ];
 
             return (cols, indexes);
         }
@@ -5799,12 +5799,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Type elementType = parentColumn.MultiValueElementType
             ?? throw new InvalidOperationException("MultiValueElementType must be set on a multi-value column.");
         var valueCol = new ColumnDefinition("value", elementType, maxLength: parentColumn.MaxLength);
-        ColumnDefinition[] mvCols = { valueCol, scalar, fk };
+        ColumnDefinition[] mvCols = [valueCol, scalar, fk];
         IndexDefinition[] mvIndexes =
-        {
+        [
             new IndexDefinition("MSysComplexPKIndex", scalarName) { IsPrimaryKey = true },
             new IndexDefinition(fkName, fkName),
-        };
+        ];
         return (mvCols, mvIndexes);
     }
 
@@ -8448,7 +8448,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         long tdefPage,
         TableDef tableDef,
         string tableName,
-        IReadOnlyList<object[]> pendingRows,
+        List<object[]> pendingRows,
         CancellationToken cancellationToken)
     {
         if (pendingRows.Count == 0)

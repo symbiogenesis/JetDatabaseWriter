@@ -124,8 +124,8 @@ public sealed class CreateDatabaseTests
         await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 1, "Alpha" }, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 2, "Beta" }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, "Alpha"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [2, "Beta"], TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
@@ -197,7 +197,7 @@ public sealed class CreateDatabaseTests
             await using (var writer = await AccessWriter.CreateDatabaseAsync(path, format, cancellationToken: TestContext.Current.CancellationToken))
             {
                 await writer.CreateTableAsync("T1", new List<ColumnDefinition> { new("Col", typeof(int)) }, TestContext.Current.CancellationToken);
-                await writer.InsertRowAsync("T1", new object[] { 42 }, TestContext.Current.CancellationToken);
+                await writer.InsertRowAsync("T1", [42], TestContext.Current.CancellationToken);
             }
 
             await using var reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken);
@@ -313,7 +313,7 @@ public sealed class CreateDatabaseTests
         await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, new object[] { 99, (short)7, 3.14, 1.5f, new DateTime(2025, 6, 15), true, "Hello", (byte)42 }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [99, (short)7, 3.14, 1.5f, new DateTime(2025, 6, 15), true, "Hello", (byte)42], TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;

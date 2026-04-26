@@ -27,7 +27,7 @@ using Xunit;
 /// </summary>
 public sealed class IndexWriterTests
 {
-    private static readonly string[] ExpectedIndexNames = { "IX_Name", "IX_Score", "IX_Id" };
+    private static readonly string[] ExpectedIndexNames = ["IX_Name", "IX_Score", "IX_Id"];
 
     [Fact]
     public async Task CreateTable_WithSingleIndex_RoundTripsThroughListIndexes()
@@ -40,12 +40,11 @@ public sealed class IndexWriterTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
-                },
-                new[] { new IndexDefinition(IndexName, "Name") },
+                ],
+                [new IndexDefinition(IndexName, "Name")],
                 TestContext.Current.CancellationToken);
         }
 
@@ -76,18 +75,16 @@ public sealed class IndexWriterTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Name", typeof(string), maxLength: 50),
                     new ColumnDefinition("Score", typeof(int)),
-                },
-                new[]
-                {
+                ],
+                [
                     new IndexDefinition("IX_Name", "Name"),
                     new IndexDefinition("IX_Score", "Score"),
                     new IndexDefinition("IX_Id", "Id"),
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -120,7 +117,7 @@ public sealed class IndexWriterTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[] { new ColumnDefinition("Id", typeof(int)) },
+                [new ColumnDefinition("Id", typeof(int))],
                 Array.Empty<IndexDefinition>(),
                 TestContext.Current.CancellationToken);
         }
@@ -139,8 +136,8 @@ public sealed class IndexWriterTests
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
                 "Idx_Bad",
-                new[] { new ColumnDefinition("Id", typeof(int)) },
-                new[] { new IndexDefinition("IX_Missing", "NoSuchColumn") },
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Missing", "NoSuchColumn")],
                 TestContext.Current.CancellationToken));
     }
 
@@ -153,16 +150,14 @@ public sealed class IndexWriterTests
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
                 "Idx_Dupe",
-                new[]
-                {
+                [
                     new ColumnDefinition("A", typeof(int)),
                     new ColumnDefinition("B", typeof(int)),
-                },
-                new[]
-                {
+                ],
+                [
                     new IndexDefinition("IX_Dup", "A"),
                     new IndexDefinition("IX_Dup", "B"),
-                },
+                ],
                 TestContext.Current.CancellationToken));
     }
 
@@ -177,22 +172,20 @@ public sealed class IndexWriterTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Label", typeof(string), maxLength: 32),
-                },
-                new[] { new IndexDefinition("IX_Label", "Label") },
+                ],
+                [new IndexDefinition("IX_Label", "Label")],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowsAsync(
                 TableName,
-                new[]
-                {
+                [
                     new object[] { 1, "alpha" },
-                    new object[] { 2, "beta" },
-                    new object[] { 3, "gamma" },
-                },
+                    [2, "beta"],
+                    [3, "gamma"],
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -204,9 +197,9 @@ public sealed class IndexWriterTests
         }
 
         Assert.Equal(3, rows.Count);
-        Assert.Equal(new object[] { 1, "alpha" }, rows[0]);
-        Assert.Equal(new object[] { 2, "beta" }, rows[1]);
-        Assert.Equal(new object[] { 3, "gamma" }, rows[2]);
+        Assert.Equal([1, "alpha"], rows[0]);
+        Assert.Equal([2, "beta"], rows[1]);
+        Assert.Equal([3, "gamma"], rows[2]);
     }
 
     [Fact]
@@ -221,13 +214,12 @@ public sealed class IndexWriterTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Name", typeof(string), maxLength: 40),
                     new ColumnDefinition("Score", typeof(double)),
-                },
-                new[] { new IndexDefinition("IX_Name", "Name") },
+                ],
+                [new IndexDefinition("IX_Name", "Name")],
                 TestContext.Current.CancellationToken);
         }
 
@@ -258,8 +250,8 @@ public sealed class IndexWriterTests
         {
             await writer.CreateTableAsync(
                 "Idx_Leaf_Single",
-                new[] { new ColumnDefinition("Id", typeof(int)) },
-                new[] { new IndexDefinition("IX_Id", "Id") },
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
                 TestContext.Current.CancellationToken);
         }
 
@@ -295,18 +287,16 @@ public sealed class IndexWriterTests
         {
             await writer.CreateTableAsync(
                 "Idx_Leaf_Multi",
-                new[]
-                {
+                [
                     new ColumnDefinition("A", typeof(int)),
                     new ColumnDefinition("B", typeof(int)),
                     new ColumnDefinition("C", typeof(int)),
-                },
-                new[]
-                {
+                ],
+                [
                     new IndexDefinition("IX_A", "A"),
                     new IndexDefinition("IX_B", "B"),
                     new IndexDefinition("IX_C", "C"),
-                },
+                ],
                 TestContext.Current.CancellationToken);
         }
 

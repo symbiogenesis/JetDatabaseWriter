@@ -43,18 +43,17 @@ public sealed class IndexMaintenanceTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Id", typeof(int)) },
-                new[] { new IndexDefinition("IX_Id", "Id") },
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
                 ct);
 
             await writer.InsertRowsAsync(
                 "T",
-                new[]
-                {
+                [
                     new object[] { 3 },
-                    new object[] { 1 },
-                    new object[] { 2 },
-                },
+                    [1],
+                    [2],
+                ],
                 ct);
         }
 
@@ -74,12 +73,12 @@ public sealed class IndexMaintenanceTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Id", typeof(int)) },
-                new[] { new IndexDefinition("IX_Id", "Id") },
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
                 ct);
 
-            await writer.InsertRowAsync("T", new object[] { 42 }, ct);
-            await writer.InsertRowAsync("T", new object[] { 7 }, ct);
+            await writer.InsertRowAsync("T", [42], ct);
+            await writer.InsertRowAsync("T", [7], ct);
         }
 
         Assert.Equal(2, FindMaxLeafEntryCount(stream.ToArray()));
@@ -95,22 +94,20 @@ public sealed class IndexMaintenanceTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Score", typeof(int)),
-                },
-                new[] { new IndexDefinition("IX_Score", "Score") },
+                ],
+                [new IndexDefinition("IX_Score", "Score")],
                 ct);
 
             await writer.InsertRowsAsync(
                 "T",
-                new[]
-                {
+                [
                     new object[] { 1, 10 },
-                    new object[] { 2, 20 },
-                    new object[] { 3, 30 },
-                },
+                    [2, 20],
+                    [3, 30],
+                ],
                 ct);
 
             // Update the indexed column on one row → triggers index maintenance.
@@ -138,19 +135,18 @@ public sealed class IndexMaintenanceTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Id", typeof(int)) },
-                new[] { new IndexDefinition("IX_Id", "Id") },
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
                 ct);
 
             await writer.InsertRowsAsync(
                 "T",
-                new[]
-                {
+                [
                     new object[] { 1 },
-                    new object[] { 2 },
-                    new object[] { 3 },
-                    new object[] { 4 },
-                },
+                    [2],
+                    [3],
+                    [4],
+                ],
                 ct);
 
             int deleted = await writer.DeleteRowsAsync("T", "Id", 2, ct);
@@ -172,11 +168,11 @@ public sealed class IndexMaintenanceTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Id", typeof(int)) },
-                new[] { new IndexDefinition("IX_Id", "Id") },
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
                 ct);
 
-            await writer.InsertRowsAsync("T", new[] { new object[] { 1 }, new object[] { 2 } }, ct);
+            await writer.InsertRowsAsync("T", [new object[] { 1 }, [2]], ct);
             await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), ct);
         }
 
@@ -197,11 +193,11 @@ public sealed class IndexMaintenanceTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Id", typeof(int)) },
-                new[] { new IndexDefinition("IX_Id", "Id") },
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
                 ct);
 
-            await writer.InsertRowsAsync("T", new[] { new object[] { 1 }, new object[] { 2 } }, ct);
+            await writer.InsertRowsAsync("T", [new object[] { 1 }, [2]], ct);
             await writer.RenameColumnAsync("T", "Id", "Identifier", ct);
         }
 
@@ -222,19 +218,17 @@ public sealed class IndexMaintenanceTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[]
-                {
+                [
                     new ColumnDefinition("Id", typeof(int)),
                     new ColumnDefinition("Score", typeof(int)),
-                },
-                new[]
-                {
+                ],
+                [
                     new IndexDefinition("IX_Id", "Id"),
                     new IndexDefinition("IX_Score", "Score"),
-                },
+                ],
                 ct);
 
-            await writer.InsertRowsAsync("T", new[] { new object[] { 1, 10 } }, ct);
+            await writer.InsertRowsAsync("T", [new object[] { 1, 10 }], ct);
             await writer.DropColumnAsync("T", "Score", ct);
         }
 
@@ -256,18 +250,17 @@ public sealed class IndexMaintenanceTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Code", typeof(string), maxLength: 32) },
-                new[] { new IndexDefinition("IX_Code", "Code") },
+                [new ColumnDefinition("Code", typeof(string), maxLength: 32)],
+                [new IndexDefinition("IX_Code", "Code")],
                 ct);
 
             await writer.InsertRowsAsync(
                 "T",
-                new[]
-                {
+                [
                     new object[] { "B" },
-                    new object[] { "A" },
-                    new object[] { "C" },
-                },
+                    ["A"],
+                    ["C"],
+                ],
                 ct);
         }
 
@@ -289,17 +282,16 @@ public sealed class IndexMaintenanceTests
         {
             await writer.CreateTableAsync(
                 "T",
-                new[] { new ColumnDefinition("Code", typeof(string), maxLength: 32) },
-                new[] { new IndexDefinition("IX_Code", "Code") },
+                [new ColumnDefinition("Code", typeof(string), maxLength: 32)],
+                [new IndexDefinition("IX_Code", "Code")],
                 ct);
 
             await writer.InsertRowsAsync(
                 "T",
-                new[]
-                {
+                [
                     new object[] { "Hello world" },
-                    new object[] { "Foo Bar" },
-                },
+                    ["Foo Bar"],
+                ],
                 ct);
         }
 

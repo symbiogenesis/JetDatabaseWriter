@@ -126,7 +126,7 @@ public sealed class FuzzRobustnessTests
                 {
                     await writer.InsertRowAsync(
                         "T",
-                        new object[] { i, $"row-{i}" },
+                        [i, $"row-{i}"],
                         TestContext.Current.CancellationToken);
                 }
             }
