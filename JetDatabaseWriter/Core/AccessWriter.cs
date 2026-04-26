@@ -2287,45 +2287,32 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        // Build the rewritten page: copy [0..removedEntryStart], skip 28 bytes,
-        // copy [removedEntryEnd..removedNameStart], skip nameLen bytes, copy
-        // remainder up to currentEnd. Bytes after currentEnd are page padding
-        // (typically zero) and do not need to be preserved.
-        var newTd = new byte[_pgSz];
+        // Mutate `td` in place via two left-shifts (Buffer.BlockCopy supports
+        // overlapping regions). Step 1 collapses the 28-byte logical-idx
+        // entry; step 2 collapses the variable-length name. The trailing
+        // variable-length-column block rides along with the second shift.
         int removedEntryStart = logIdxStart + (matchEntryIdx * LogIdxEntrySz);
-        int removedEntryEnd = removedEntryStart + LogIdxEntrySz;
+        int afterEntry = removedEntryStart + LogIdxEntrySz;
 
-        // Region 1: page header + tdef block + real-idx skip + col descs +
-        // col names + real-idx physical descs + logical-idx entries before
-        // the removed one.
-        Buffer.BlockCopy(td, 0, newTd, 0, removedEntryStart);
+        // Step 1 — drop the 28-byte logical-idx entry.
+        Buffer.BlockCopy(td, afterEntry, td, removedEntryStart, currentEnd - afterEntry);
+        int shiftedNameStart = removedNameStart - LogIdxEntrySz;
+        int afterName = shiftedNameStart + removedNameLen;
+        int endAfterStep1 = currentEnd - LogIdxEntrySz;
 
-        // Region 2: logical-idx entries after the removed one.
-        int afterEntriesLen = (logIdxStart + (numIdx * LogIdxEntrySz)) - removedEntryEnd;
-        Buffer.BlockCopy(td, removedEntryEnd, newTd, removedEntryStart, afterEntriesLen);
+        // Step 2 — drop the name record.
+        Buffer.BlockCopy(td, afterName, td, shiftedNameStart, endAfterStep1 - afterName);
+        int finalEnd = endAfterStep1 - removedNameLen;
 
-        // Region 3: logical-idx names before the removed one.
-        int newNamesStart = removedEntryStart + afterEntriesLen;
-        int namesBeforeLen = removedNameStart - logIdxNamesStart;
-        Buffer.BlockCopy(td, logIdxNamesStart, newTd, newNamesStart, namesBeforeLen);
-
-        // Region 4: logical-idx names after the removed one.
-        int newRemovedNameStart = newNamesStart + namesBeforeLen;
-        int namesAfterLen = (logIdxNamesStart + logIdxNamesLen) - (removedNameStart + removedNameLen);
-        Buffer.BlockCopy(td, removedNameStart + removedNameLen, newTd, newRemovedNameStart, namesAfterLen);
-
-        // Region 5: trailing variable-length-column block (unchanged).
-        int newTrailingStart = newRemovedNameStart + namesAfterLen;
-        if (trailingLen > 0)
-        {
-            Buffer.BlockCopy(td, trailingStart, newTd, newTrailingStart, trailingLen);
-        }
+        // Zero the freed tail so the on-disk page matches the prior
+        // fresh-buffer behavior (bytes past the new end are padding).
+        Array.Clear(td, finalEnd, currentEnd - finalEnd);
 
         // Update header counts.
-        Wi32(newTd, _tdNumCols + 2, numIdx - 1);
-        Wi32(newTd, 8, newTrailingStart + trailingLen - 8);
+        Wi32(td, _tdNumCols + 2, numIdx - 1);
+        Wi32(td, 8, finalEnd - 8);
 
-        await WritePageAsync(tdefPage, newTd, cancellationToken).ConfigureAwait(false);
+        await WritePageAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
