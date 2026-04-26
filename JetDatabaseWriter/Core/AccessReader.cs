@@ -1048,11 +1048,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return [];
         }
 
-        int idxColumnName = msys.Columns.FindIndex(c => string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
-        int idxComplexId = msys.Columns.FindIndex(c => string.Equals(c.Name, "ComplexID", StringComparison.OrdinalIgnoreCase));
-        int idxFlatTable = msys.Columns.FindIndex(c => string.Equals(c.Name, "FlatTableID", StringComparison.OrdinalIgnoreCase));
-        int idxConceptualTable = msys.Columns.FindIndex(c => string.Equals(c.Name, "ConceptualTableID", StringComparison.OrdinalIgnoreCase));
-        int idxComplexType = msys.Columns.FindIndex(c => string.Equals(c.Name, "ComplexTypeObjectID", StringComparison.OrdinalIgnoreCase));
+        int idxColumnName = msys.FindColumnIndex("ColumnName");
+        int idxComplexId = msys.FindColumnIndex("ComplexID");
+        int idxFlatTable = msys.FindColumnIndex("FlatTableID");
+        int idxConceptualTable = msys.FindColumnIndex("ConceptualTableID");
+        int idxComplexType = msys.FindColumnIndex("ComplexTypeObjectID");
 
         if (idxComplexId < 0)
         {
@@ -1110,8 +1110,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return map;
         }
 
-        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
-        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        int idxId = msys.FindColumnIndex("Id");
+        int idxName = msys.FindColumnIndex("Name");
         if (idxId < 0 || idxName < 0)
         {
             return map;
@@ -1883,10 +1883,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         _ = diag.AppendLine($"MSysObjects cols ({msys.Columns.Count}): " +
             string.Join(", ", msys.Columns.ConvertAll(c => $"{c.Name}[0x{c.Type:X2}]")));
 
-        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
-        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
-        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
-        int idxFlags = msys.Columns.FindIndex(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
+        int idxId = msys.FindColumnIndex("Id");
+        int idxName = msys.FindColumnIndex("Name");
+        int idxType = msys.FindColumnIndex("Type");
+        int idxFlags = msys.FindColumnIndex("Flags");
 
         if (idxName < 0 || idxType < 0)
         {
@@ -2432,9 +2432,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return 0;
         }
 
-        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
-        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
-        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
+        int idxId = msys.FindColumnIndex("Id");
+        int idxName = msys.FindColumnIndex("Name");
+        int idxType = msys.FindColumnIndex("Type");
 
         if (idxId < 0 || idxName < 0 || idxType < 0)
         {
@@ -2597,7 +2597,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
 
             string fkColName = $"{tableName}_{columnName}";
-            int idxFk = td.Columns.FindIndex(c => string.Equals(c.Name, fkColName, StringComparison.OrdinalIgnoreCase));
+            int idxFk = td.FindColumnIndex(fkColName);
             if (idxFk < 0)
             {
                 idxFk = td.Columns.FindIndex(c => c.Type == T_LONG && !c.Name.StartsWith("Idx", StringComparison.OrdinalIgnoreCase));
@@ -2608,8 +2608,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return null;
             }
 
-            int idxFileName = td.Columns.FindIndex(c => string.Equals(c.Name, "FileName", StringComparison.OrdinalIgnoreCase));
-            int idxFileData = td.Columns.FindIndex(c => string.Equals(c.Name, "FileData", StringComparison.OrdinalIgnoreCase));
+            int idxFileName = td.FindColumnIndex("FileName");
+            int idxFileData = td.FindColumnIndex("FileData");
 
             var result = new Dictionary<int, byte[]>(capacity: 32);
 

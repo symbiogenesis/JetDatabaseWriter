@@ -86,12 +86,12 @@ internal static class LinkedTableManager
             return [];
         }
 
-        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
-        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
-        int idxFlags = msys.Columns.FindIndex(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
-        int idxDatabase = msys.Columns.FindIndex(c => string.Equals(c.Name, "Database", StringComparison.OrdinalIgnoreCase));
-        int idxForeignName = msys.Columns.FindIndex(c => string.Equals(c.Name, "ForeignName", StringComparison.OrdinalIgnoreCase));
-        int idxConnect = msys.Columns.FindIndex(c => string.Equals(c.Name, "Connect", StringComparison.OrdinalIgnoreCase));
+        int idxName = msys.FindColumnIndex("Name");
+        int idxType = msys.FindColumnIndex("Type");
+        int idxFlags = msys.FindColumnIndex("Flags");
+        int idxDatabase = msys.FindColumnIndex("Database");
+        int idxForeignName = msys.FindColumnIndex("ForeignName");
+        int idxConnect = msys.FindColumnIndex("Connect");
 
         if (idxName < 0 || idxType < 0)
         {
