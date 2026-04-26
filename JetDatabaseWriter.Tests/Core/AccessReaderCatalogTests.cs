@@ -11,7 +11,7 @@ using Xunit;
 /// Tests for: ListTables, GetTableStats, GetTablesAsDataTable, GetStatistics,
 /// GetColumnMetadata, GetRealRowCount, ReadFirstTable, ReadTablePreview, Dispose.
 /// </summary>
-public class AccessReaderCoreTests(DatabaseCache db) : IClassFixture<DatabaseCache>
+public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     private static readonly int[] ValidPageSizes = [2048, 4096];
     private static readonly string[] ValidVersions = ["Jet3", "Jet4/ACE"];

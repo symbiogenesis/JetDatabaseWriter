@@ -37,7 +37,7 @@ using Xunit;
 ///   • Cell values — attachment cells are decoded by resolving the complex_id
 ///     against the hidden MSysComplexType_Attachment system table.
 /// </summary>
-public sealed class ComplexFieldFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
+public sealed class ComplexFieldsFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     private const string DocumentsTable = "Documents";
     private const string AttachmentsColumn = "Attachments";

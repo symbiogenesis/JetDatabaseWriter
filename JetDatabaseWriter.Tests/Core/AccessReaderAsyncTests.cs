@@ -7,7 +7,7 @@ using Xunit;
 
 /// <summary>
 /// Tests for async-specific behaviour (cancellation, IAsyncDisposable, idempotency).
-/// Core read operations are covered in AccessReaderCoreTests and AccessReaderReadTests.
+/// Catalog/metadata operations are covered in AccessReaderCatalogTests and table-content reads in AccessReaderReadTests.
 /// </summary>
 public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
