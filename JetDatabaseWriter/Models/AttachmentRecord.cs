@@ -38,5 +38,5 @@ public sealed record AttachmentRecord
 
     /// <summary>Gets the decoded raw file bytes (wrapper removed, deflate decompressed).</summary>
     [SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "Attachment payload is binary by definition; mirrors public byte[] surface elsewhere in the reader API.")]
-    public byte[] FileData { get; init; } = Array.Empty<byte>();
+    public byte[] FileData { get; init; } = [];
 }

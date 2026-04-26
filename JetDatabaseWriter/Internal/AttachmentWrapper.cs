@@ -85,7 +85,7 @@ internal static class AttachmentWrapper
     public static bool TryDecode(byte[] wrapped, out string fileExtension, out byte[] payload)
     {
         fileExtension = string.Empty;
-        payload = wrapped ?? Array.Empty<byte>();
+        payload = wrapped ?? [];
         if (wrapped == null || wrapped.Length < 8 + 12)
         {
             return false;
@@ -135,7 +135,7 @@ internal static class AttachmentWrapper
 
         fileExtension = DecodeExtension(content, 12, (int)extLen);
         int payloadLen = content.Length - (int)headerLen;
-        payload = payloadLen > 0 ? new byte[payloadLen] : Array.Empty<byte>();
+        payload = payloadLen > 0 ? new byte[payloadLen] : [];
         if (payloadLen > 0)
         {
             Buffer.BlockCopy(content, (int)headerLen, payload, 0, payloadLen);

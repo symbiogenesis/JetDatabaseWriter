@@ -322,6 +322,6 @@ internal sealed class ColumnPropertyBlockBuilder
         public byte DdlFlag { get; set; }
 
         /// <summary>Gets or sets the raw value bytes per <see cref="DataType"/>'s encoding.</summary>
-        public byte[] Value { get; set; } = Array.Empty<byte>();
+        public byte[] Value { get; set; } = [];
     }
 }

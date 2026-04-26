@@ -16,7 +16,7 @@ public class ColumnPropertyBlockTests
     [Fact]
     public void Parse_EmptyBlob_Returns_Null()
     {
-        Assert.Null(ColumnPropertyBlock.Parse(Array.Empty<byte>(), DatabaseFormat.Jet4Mdb));
+        Assert.Null(ColumnPropertyBlock.Parse([], DatabaseFormat.Jet4Mdb));
     }
 
     [Fact]

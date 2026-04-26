@@ -2139,7 +2139,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             int idx = def.FindColumnIndex(columnNames[i]);
             if (idx < 0)
             {
-                return Array.Empty<int>();
+                return [];
             }
 
             result[i] = def.Columns[idx].ColNum;
@@ -5082,7 +5082,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Wu16(page, _tdNumCols - 2, numVarCols);
 
         // ── Index sections (W1+W3: only Jet4/ACE supports this code path) ─────
-        int[] firstDpOffsets = numIdx > 0 ? new int[numIdx] : Array.Empty<int>();
+        int[] firstDpOffsets = numIdx > 0 ? new int[numIdx] : [];
         if (numIdx > 0)
         {
             int realIdxPhysStart = namePos;
