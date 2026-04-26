@@ -91,16 +91,29 @@ internal static class IndexBTreeBuilder
 
         int entryAreaSize = pageSize - IndexLeafPageBuilder.Jet4FirstEntryOffset;
 
-        // ── Step 1: Pack entries into leaves greedily, in input order. ────
-        // Each leaf entry occupies EncodedKey.Length + 4 bytes (3-byte BE data
-        // page + 1-byte data row). The entry-start bitmask spans the area from
+        // ── Step 1: Pack entries into leaves greedily, in input order, and
+        // remember the last entry of each leaf for the level above. Each leaf
+        // entry occupies EncodedKey.Length + 4 bytes (3-byte BE data page +
+        // 1-byte data row). The entry-start bitmask spans the area from
         // 0x1B..0x1DF — 485 bytes = 3880 bits. The largest entry stride is
         // limited by the entry area (3616 bytes on a 4096-byte page) so the
         // bitmask never overflows in practice.
-        var leafGroups = new List<List<IndexLeafPageBuilder.LeafEntry>>();
+        // ──────────────────────────────────────────────────────────────────
+        // Rough capacity estimate: assume average entry ~64 bytes ⇒
+        // entryAreaSize / 64 entries per leaf. Errs on the high side which is
+        // cheap; underestimating just causes extra resizes.
+        int estLeafCount = entries.Count == 0
+            ? 1
+            : Math.Max(1, ((entries.Count * 64) + entryAreaSize - 1) / entryAreaSize);
+
+        var leafGroups = new List<List<IndexLeafPageBuilder.LeafEntry>>(estLeafCount);
+        var leafLastEntries = new List<IndexLeafPageBuilder.LeafEntry>(estLeafCount);
         if (entries.Count == 0)
         {
-            leafGroups.Add(new List<IndexLeafPageBuilder.LeafEntry>(0));
+            leafGroups.Add([]);
+
+            // No leaf-last entry for an empty placeholder; the leafCount == 1
+            // path below short-circuits before consulting leafLastEntries.
         }
         else
         {
@@ -118,7 +131,8 @@ internal static class IndexBTreeBuilder
                 if (currentSize + entryLen > entryAreaSize)
                 {
                     leafGroups.Add(current);
-                    current = new List<IndexLeafPageBuilder.LeafEntry>();
+                    leafLastEntries.Add(current[current.Count - 1]);
+                    current = [];
                     currentSize = 0;
                 }
 
@@ -127,27 +141,25 @@ internal static class IndexBTreeBuilder
             }
 
             leafGroups.Add(current);
+            leafLastEntries.Add(current[current.Count - 1]);
         }
 
-        // ── Step 2: Assign absolute page numbers to leaves. ───────────────
+        // ── Step 2: Validate leaf page-number range. Pages are sequential
+        // starting at firstPageNumber, so we never need to materialise the
+        // per-page array — the i'th leaf lives at firstPageNumber + i.
         int leafCount = leafGroups.Count;
-        long[] leafPageNumbers = new long[leafCount];
-        for (int i = 0; i < leafCount; i++)
-        {
-            leafPageNumbers[i] = firstPageNumber + i;
-        }
-
-        if (leafPageNumbers[leafCount - 1] > 0xFFFFFF)
+        if (firstPageNumber + leafCount - 1 > 0xFFFFFF)
         {
             throw new ArgumentOutOfRangeException(nameof(firstPageNumber), "Allocated page numbers exceed the 24-bit child-pointer range.");
         }
 
         // ── Step 3: Render leaves with prev/next sibling chain. ───────────
-        var pages = new List<byte[]>(leafCount);
+        // Pre-size pages list assuming up to ~10% intermediates above the leaves.
+        var pages = new List<byte[]>(leafCount + Math.Max(1, leafCount / 10));
         for (int i = 0; i < leafCount; i++)
         {
-            long prev = i == 0 ? 0 : leafPageNumbers[i - 1];
-            long next = i == leafCount - 1 ? 0 : leafPageNumbers[i + 1];
+            long prev = i == 0 ? 0 : firstPageNumber + i - 1;
+            long next = i == leafCount - 1 ? 0 : firstPageNumber + i + 1;
             byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(
                 pageSize,
                 parentTdefPage,
@@ -162,40 +174,34 @@ internal static class IndexBTreeBuilder
         // Single leaf is its own root — no intermediates needed.
         if (leafCount == 1)
         {
-            return new BuildResult(pages, leafPageNumbers[0], firstPageNumber);
+            return new BuildResult(pages, firstPageNumber, firstPageNumber);
         }
 
         // ── Step 4: Build intermediate levels until we reach a single root.
-        // Each intermediate entry summarises the LAST leaf entry of its child
-        // and appends the 4-byte child page pointer (§4.3). An empty child has
-        // no last entry — that case is impossible here because an empty leaf
-        // can only occur when entries.Count == 0, which short-circuits at
-        // leafCount == 1.
-        long[] childPageNumbers = leafPageNumbers;
-        IReadOnlyList<IndexLeafPageBuilder.LeafEntry> childLastEntries = LastEntries(leafGroups);
+        // Each intermediate entry summarises the LAST entry of its child page
+        // and appends the 4-byte child page pointer (§4.3). The child pages
+        // of every level are themselves sequential, so we track each level
+        // as (base page, count) instead of a per-page array.
+        long childPageBase = firstPageNumber;
+        int childPageCount = leafCount;
+        IReadOnlyList<IndexLeafPageBuilder.LeafEntry> childLastEntries = leafLastEntries;
         long nextFreePage = firstPageNumber + leafCount;
 
-        while (childPageNumbers.Length > 1)
+        while (childPageCount > 1)
         {
             (List<List<IntermediateEntry>> groups, List<IndexLeafPageBuilder.LeafEntry> nextLevelLast) =
-                PackIntermediate(childPageNumbers, childLastEntries, entryAreaSize);
+                PackIntermediate(childPageBase, childPageCount, childLastEntries, entryAreaSize);
 
             int levelCount = groups.Count;
-            long[] levelPageNumbers = new long[levelCount];
-            for (int i = 0; i < levelCount; i++)
-            {
-                levelPageNumbers[i] = nextFreePage + i;
-            }
-
-            if (levelPageNumbers[levelCount - 1] > 0xFFFFFF)
+            if (nextFreePage + levelCount - 1 > 0xFFFFFF)
             {
                 throw new ArgumentOutOfRangeException(nameof(firstPageNumber), "Allocated page numbers exceed the 24-bit child-pointer range.");
             }
 
             for (int i = 0; i < levelCount; i++)
             {
-                long prev = i == 0 ? 0 : levelPageNumbers[i - 1];
-                long next = i == levelCount - 1 ? 0 : levelPageNumbers[i + 1];
+                long prev = i == 0 ? 0 : nextFreePage + i - 1;
+                long next = i == levelCount - 1 ? 0 : nextFreePage + i + 1;
                 byte[] page = BuildIntermediatePage(
                     pageSize,
                     parentTdefPage,
@@ -205,25 +211,13 @@ internal static class IndexBTreeBuilder
                 pages.Add(page);
             }
 
-            childPageNumbers = levelPageNumbers;
+            childPageBase = nextFreePage;
+            childPageCount = levelCount;
             childLastEntries = nextLevelLast;
             nextFreePage += levelCount;
         }
 
-        long rootPageNumber = childPageNumbers[0];
-        return new BuildResult(pages, rootPageNumber, firstPageNumber);
-    }
-
-    private static List<IndexLeafPageBuilder.LeafEntry> LastEntries(List<List<IndexLeafPageBuilder.LeafEntry>> groups)
-    {
-        var last = new List<IndexLeafPageBuilder.LeafEntry>(groups.Count);
-        for (int i = 0; i < groups.Count; i++)
-        {
-            List<IndexLeafPageBuilder.LeafEntry> g = groups[i];
-            last.Add(g[g.Count - 1]);
-        }
-
-        return last;
+        return new BuildResult(pages, childPageBase, firstPageNumber);
     }
 
     private readonly struct IntermediateEntry
@@ -242,18 +236,22 @@ internal static class IndexBTreeBuilder
     }
 
     private static (List<List<IntermediateEntry>> Groups, List<IndexLeafPageBuilder.LeafEntry> LastPerGroup) PackIntermediate(
-        long[] childPageNumbers,
+        long childPageBase,
+        int childPageCount,
         IReadOnlyList<IndexLeafPageBuilder.LeafEntry> childLastEntries,
         int entryAreaSize)
     {
-        var groups = new List<List<IntermediateEntry>>();
-        var lastPerGroup = new List<IndexLeafPageBuilder.LeafEntry>();
+        // Rough capacity hint: assume ~64-byte average summary key ⇒ each
+        // intermediate page holds entryAreaSize / (64 + 8) entries. Errs high.
+        int estPagesAtThisLevel = Math.Max(1, ((childPageCount * 72) + entryAreaSize - 1) / entryAreaSize);
+        var groups = new List<List<IntermediateEntry>>(estPagesAtThisLevel);
+        var lastPerGroup = new List<IndexLeafPageBuilder.LeafEntry>(estPagesAtThisLevel);
 
         var current = new List<IntermediateEntry>();
         int currentSize = 0;
-        for (int i = 0; i < childPageNumbers.Length; i++)
+        for (int i = 0; i < childPageCount; i++)
         {
-            var entry = new IntermediateEntry(childLastEntries[i], childPageNumbers[i]);
+            var entry = new IntermediateEntry(childLastEntries[i], childPageBase + i);
             int len = entry.OnDiskSize;
             if (len > entryAreaSize)
             {
@@ -264,7 +262,7 @@ internal static class IndexBTreeBuilder
             {
                 groups.Add(current);
                 lastPerGroup.Add(current[current.Count - 1].Summary);
-                current = new List<IntermediateEntry>();
+                current = [];
                 currentSize = 0;
             }
 
