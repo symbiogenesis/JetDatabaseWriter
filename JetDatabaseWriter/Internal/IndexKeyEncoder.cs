@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Numerics;
 
@@ -153,15 +154,25 @@ internal static class IndexKeyEncoder
                 }
 
             case T_FLOAT:
-                return EncodeIeeeBigEndian(BitConverter.GetBytes(ToSingle(value)));
+                {
+                    byte[] be = new byte[4];
+                    BinaryPrimitives.WriteInt32BigEndian(be, BitConverter.SingleToInt32Bits(ToSingle(value)));
+                    return TwiddleIeeeBigEndian(be);
+                }
 
             case T_DOUBLE:
-                return EncodeIeeeBigEndian(BitConverter.GetBytes(ToDouble(value)));
+                {
+                    byte[] be = new byte[8];
+                    BinaryPrimitives.WriteInt64BigEndian(be, BitConverter.DoubleToInt64Bits(ToDouble(value)));
+                    return TwiddleIeeeBigEndian(be);
+                }
 
             case T_DATETIME:
                 {
                     DateTime dt = ToDateTime(value);
-                    return EncodeIeeeBigEndian(BitConverter.GetBytes(dt.ToOADate()));
+                    byte[] be = new byte[8];
+                    BinaryPrimitives.WriteInt64BigEndian(be, BitConverter.DoubleToInt64Bits(dt.ToOADate()));
+                    return TwiddleIeeeBigEndian(be);
                 }
 
             case T_TEXT:
@@ -363,9 +374,9 @@ internal static class IndexKeyEncoder
 
         // Build BigInteger from the unsigned 96-bit mantissa.
         byte[] leMantissa = new byte[13]; // 12 data bytes + trailing zero ensures positive sign in BigInteger.
-        WriteInt32Le(leMantissa, 0, bits[0]);
-        WriteInt32Le(leMantissa, 4, bits[1]);
-        WriteInt32Le(leMantissa, 8, bits[2]);
+        BinaryPrimitives.WriteInt32LittleEndian(leMantissa.AsSpan(0, 4), bits[0]);
+        BinaryPrimitives.WriteInt32LittleEndian(leMantissa.AsSpan(4, 4), bits[1]);
+        BinaryPrimitives.WriteInt32LittleEndian(leMantissa.AsSpan(8, 4), bits[2]);
         BigInteger mag = new BigInteger(leMantissa);
 
         if (targetScale > scale)
@@ -458,15 +469,6 @@ internal static class IndexKeyEncoder
         }
     }
 
-    private static void WriteInt32Le(byte[] dest, int offset, int value)
-    {
-        uint u = unchecked((uint)value);
-        dest[offset] = (byte)(u & 0xFF);
-        dest[offset + 1] = (byte)((u >> 8) & 0xFF);
-        dest[offset + 2] = (byte)((u >> 16) & 0xFF);
-        dest[offset + 3] = (byte)((u >> 24) & 0xFF);
-    }
-
     /// <summary>
     /// Big-endian signed-integer encoding with the high bit of the most
     /// significant byte inverted, so two's-complement values sort correctly
@@ -474,32 +476,20 @@ internal static class IndexKeyEncoder
     /// </summary>
     private static byte[] EncodeSignedBigEndian(long value, int byteCount)
     {
-        byte[] result = new byte[byteCount];
-        ulong u = unchecked((ulong)value);
-        for (int i = byteCount - 1; i >= 0; i--)
-        {
-            result[i] = (byte)(u & 0xFF);
-            u >>= 8;
-        }
-
+        Span<byte> tmp = stackalloc byte[8];
+        BinaryPrimitives.WriteInt64BigEndian(tmp, value);
+        byte[] result = tmp.Slice(8 - byteCount, byteCount).ToArray();
         result[0] ^= 0x80;
         return result;
     }
 
     /// <summary>
-    /// IEEE-754 sort-key encoding: convert little-endian IEEE bytes to big-endian,
-    /// then if the original sign bit was zero (non-negative) flip the sign bit;
+    /// IEEE-754 sort-key twiddle (caller has already written the value in big-endian
+    /// IEEE byte order): if the sign bit is zero (non-negative) flip the sign bit;
     /// otherwise (negative) ones-complement every byte. Result sorts numerically.
     /// </summary>
-    private static byte[] EncodeIeeeBigEndian(byte[] littleEndianIeee)
+    private static byte[] TwiddleIeeeBigEndian(byte[] be)
     {
-        // Reverse to big-endian.
-        byte[] be = new byte[littleEndianIeee.Length];
-        for (int i = 0; i < littleEndianIeee.Length; i++)
-        {
-            be[i] = littleEndianIeee[littleEndianIeee.Length - 1 - i];
-        }
-
         if ((be[0] & 0x80) == 0)
         {
             // Non-negative: flip the sign bit to push these above the encoded negatives.
