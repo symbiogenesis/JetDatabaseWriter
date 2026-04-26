@@ -19,8 +19,8 @@ Use the `runTests` tool when possible. When invoking the CLI manually, prefer th
 
 | Goal | Command |
 |---|---|
-| Run one fully-qualified test method | `dotnet test --project JetDatabaseWriter.Tests --filter-method "JetDatabaseWriter.Tests.Core.AccessReaderCoreTests.ListTables_WhenDatabaseHasTables_ReturnsNonEmptyList"` |
-| Run all tests in a class | `dotnet test --project JetDatabaseWriter.Tests --filter-class "JetDatabaseWriter.Tests.Core.AccessReaderCoreTests"` |
+| Run one fully-qualified test method | `dotnet test --project JetDatabaseWriter.Tests --filter-method "JetDatabaseWriter.Tests.Core.AccessReaderCatalogTests.ListTables_WhenDatabaseHasTables_ReturnsNonEmptyList"` |
+| Run all tests in a class | `dotnet test --project JetDatabaseWriter.Tests --filter-class "JetDatabaseWriter.Tests.Core.AccessReaderCatalogTests"` |
 | Run all tests in a namespace | `dotnet test --project JetDatabaseWriter.Tests --filter-namespace "JetDatabaseWriter.Tests.Internal"` |
 | Exclude a class / method / namespace | `--filter-not-class`, `--filter-not-method`, `--filter-not-namespace` |
 | Stop on first failure | `--stop-on-fail on` |

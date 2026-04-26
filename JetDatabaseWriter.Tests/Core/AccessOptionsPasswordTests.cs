@@ -3,7 +3,7 @@ namespace JetDatabaseWriter.Tests;
 using System.Security;
 using Xunit;
 
-public sealed class OptionsContractTests
+public sealed class AccessOptionsPasswordTests
 {
     [Fact]
     public void AccessReaderOptions_Password_DefaultsToNull()
