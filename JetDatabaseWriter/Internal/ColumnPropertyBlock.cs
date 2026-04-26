@@ -60,10 +60,10 @@ internal sealed class ColumnPropertyBlock
     public DatabaseFormat Format { get; private init; }
 
     /// <summary>Gets the parsed property targets, in source order. Targets may include the table itself and individual columns.</summary>
-    public IReadOnlyList<ColumnPropertyTarget> Targets { get; private init; } = Array.Empty<ColumnPropertyTarget>();
+    public IReadOnlyList<ColumnPropertyTarget> Targets { get; private init; } = [];
 
     /// <summary>Gets opaque chunks the parser did not recognise. Preserved verbatim for forward-compatible round-trip.</summary>
-    public IReadOnlyList<ColumnPropertyUnknownChunk> UnknownChunks { get; private init; } = Array.Empty<ColumnPropertyUnknownChunk>();
+    public IReadOnlyList<ColumnPropertyUnknownChunk> UnknownChunks { get; private init; } = [];
 
     /// <summary>
     /// Parses an <c>LvProp</c> blob. Returns <see langword="null"/> for null or

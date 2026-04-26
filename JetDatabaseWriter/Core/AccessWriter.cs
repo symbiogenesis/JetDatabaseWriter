@@ -334,7 +334,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     /// <inheritdoc/>
     public ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, CancellationToken cancellationToken = default)
-        => CreateTableAsync(tableName, columns, indexes: Array.Empty<IndexDefinition>(), cancellationToken);
+        => CreateTableAsync(tableName, columns, indexes: [], cancellationToken);
 
     /// <inheritdoc/>
     public async ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken = default)
@@ -434,7 +434,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 byte[] leafPage = IndexLeafPageBuilder.BuildJet4LeafPage(
                     _pgSz,
                     tdefPageNumber,
-                    Array.Empty<IndexLeafPageBuilder.LeafEntry>());
+                    []);
                 long leafPageNumber = await AppendPageAsync(leafPage, cancellationToken).ConfigureAwait(false);
                 Wi32(tdefPage, firstDpOffsets[i], checked((int)leafPageNumber));
             }
@@ -1377,14 +1377,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // numbers are stable for the cross-referenced first_dp values.
         if (pkPlan.AllocatesNewRealIdx)
         {
-            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(_pgSz, primaryTdefPage, Array.Empty<IndexLeafPageBuilder.LeafEntry>());
+            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(_pgSz, primaryTdefPage, []);
             long lp = await AppendPageAsync(leaf, cancellationToken).ConfigureAwait(false);
             pkPlan = pkPlan.WithLeafPage(lp);
         }
 
         if (fkPlan.AllocatesNewRealIdx)
         {
-            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(_pgSz, foreignTdefPage, Array.Empty<IndexLeafPageBuilder.LeafEntry>());
+            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(_pgSz, foreignTdefPage, []);
             long lp = await AppendPageAsync(leaf, cancellationToken).ConfigureAwait(false);
             fkPlan = fkPlan.WithLeafPage(lp);
         }
@@ -2388,7 +2388,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         long pg = await FindSystemTableTdefPageAsync("MSysRelationships", cancellationToken).ConfigureAwait(false);
         if (pg == 0)
         {
-            return Array.Empty<FkRelationship>();
+            return [];
         }
 
         DataTable t = await ReadTableSnapshotAsync("MSysRelationships", cancellationToken).ConfigureAwait(false);
@@ -2396,7 +2396,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             if (!t.Columns.Contains("szRelationship"))
             {
-                return Array.Empty<FkRelationship>();
+                return [];
             }
 
             var groups = new Dictionary<string, List<DataRow>>(StringComparer.OrdinalIgnoreCase);
@@ -4937,7 +4937,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     private byte[] BuildTDefPage(TableDef tableDef)
-        => BuildTDefPageWithIndexOffsets(tableDef, Array.Empty<ResolvedIndex>()).Page;
+        => BuildTDefPageWithIndexOffsets(tableDef, []).Page;
 
     private byte[] BuildTDefPage(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
         => BuildTDefPageWithIndexOffsets(tableDef, indexes).Page;
@@ -5239,7 +5239,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         if (indexes.Count == 0)
         {
-            return Array.Empty<ResolvedIndex>();
+            return [];
         }
 
         var result = new List<ResolvedIndex>(indexes.Count);
@@ -5416,7 +5416,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         foreach ((string name, ColumnDefinition[] cols) in _complexTypeTemplates)
         {
             TableDef tableDef = BuildTableDefinition(cols, _format);
-            (byte[] tdefPage, _) = BuildTDefPageWithIndexOffsets(tableDef, Array.Empty<ResolvedIndex>());
+            (byte[] tdefPage, _) = BuildTDefPageWithIndexOffsets(tableDef, []);
             long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
             await InsertCatalogEntryAsync(
@@ -5519,7 +5519,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         };
 
         TableDef tableDef = BuildTableDefinition(columns, _format);
-        (byte[] tdefPage, _) = BuildTDefPageWithIndexOffsets(tableDef, Array.Empty<ResolvedIndex>());
+        (byte[] tdefPage, _) = BuildTDefPageWithIndexOffsets(tableDef, []);
         long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         await InsertCatalogEntryAsync(
@@ -8497,7 +8497,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             replaceAt[idx] = newRow;
         }
 
-        CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingInsertRows: Array.Empty<object[]>(), replaceAtSnapshotIndex: replaceAt);
+        CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingInsertRows: [], replaceAtSnapshotIndex: replaceAt);
     }
 
     /// <summary>

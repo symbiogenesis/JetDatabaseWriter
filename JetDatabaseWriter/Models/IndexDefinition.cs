@@ -134,5 +134,5 @@ public sealed record IndexDefinition
     /// Access-authored database. Defer production use until that round-trip
     /// has been performed by hand (see design doc §8).
     /// </remarks>
-    public IReadOnlyList<string> DescendingColumns { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> DescendingColumns { get; init; } = [];
 }
