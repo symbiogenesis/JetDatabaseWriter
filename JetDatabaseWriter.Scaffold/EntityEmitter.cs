@@ -4,7 +4,7 @@ using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Globalization;
-
+using System.Security;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -98,7 +98,7 @@ internal static class EntityEmitter
             }
 
             // Add XML doc comment
-            string summary = $"Column: {EscapeXml(col.Name)} ({col.TypeName}, {col.Size}).";
+            string summary = SecurityElement.Escape($"Column: {col}.");
             var docComment = XmlDocSummary(summary);
             property = property.WithLeadingTrivia(
                 Trivia(docComment),
@@ -243,14 +243,5 @@ internal static class EntityEmitter
                                 "\n",
                                 TriviaList()))),
             }));
-    }
-
-    private static string EscapeXml(string text)
-    {
-        return text
-            .Replace("&", "&amp;", StringComparison.Ordinal)
-            .Replace("<", "&lt;", StringComparison.Ordinal)
-            .Replace(">", "&gt;", StringComparison.Ordinal)
-            .Replace("\"", "&quot;", StringComparison.Ordinal);
     }
 }

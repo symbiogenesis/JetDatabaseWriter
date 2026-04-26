@@ -55,4 +55,12 @@ public sealed record ColumnMetadata
     /// Gets or initializes the free-text column description. Sourced from <c>MSysObjects.LvProp</c>.
     /// </summary>
     public string? Description { get; init; }
+
+    /// <summary>
+    /// Returns a compact human-readable description of the column in the form
+    /// <c>"Name (TypeName, Size)"</c> — useful for diagnostics, log messages,
+    /// and debugger output.
+    /// </summary>
+    /// <returns>A short single-line description of this column.</returns>
+    public override string ToString() => $"{Name} ({TypeName}, {Size})";
 }
