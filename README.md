@@ -2,7 +2,7 @@
 
 [![NuGet](https://img.shields.io/nuget/v/JetDatabaseWriter.svg)](https://www.nuget.org/packages/JetDatabaseWriter/)
 [![Downloads](https://img.shields.io/nuget/dt/JetDatabaseWriter.svg)](https://www.nuget.org/packages/JetDatabaseWriter/)
-[![.NET Standard](https://img.shields.io/badge/.NET%20Standard-2.1-blue)](https://docs.microsoft.com/en-us/dotnet/standard/net-standard)
+[![Targets](https://img.shields.io/badge/targets-net10.0%20%7C%20netstandard2.1-blue)](#nuget-target-compatibility)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Pure-managed .NET library for reading and writing Microsoft Access JET databases — no OleDB, ODBC, or ACE/Jet driver installation required.
@@ -27,10 +27,10 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Non-Western text** | Code page auto-detected from the database header |
 | ✅ **OLE Objects** | Detects embedded JPEG, PNG, PDF, ZIP, DOC, RTF |
 | ✅ **Write support** | Create databases, Create/drop tables, insert/update/delete rows (Jet3/Jet4/ACE) |
-| ✅ **Encryption & passwords** | Jet3 page-level XOR, Jet4 `.mdb` RC4, legacy password-only `.accdb` (`;pwd=`), AES-128 page-encrypted Access 2007+ `.accdb` (CFB-wrapped), and Office Crypto API ECMA-376 "Agile" (SHA-512 PBKDF + AES-CBC) used by Access 2010 SP1+ / Microsoft 365 |
-| ✅ **Linked tables** | Read source paths / foreign names via `ListLinkedTablesAsync()`; create Access (type 4) and ODBC (type 6) links via `CreateLinkedTableAsync` / `CreateLinkedOdbcTableAsync` |
-| ✅ **Foreign-key relationships** | Read existing relationships via `ListIndexesAsync` (`Kind = ForeignKey`); create via `CreateRelationshipAsync` — `MSysRelationships` catalog rows + per-TDEF FK logical-index entries on both sides (Jet4/ACE only); **runtime referential-integrity enforcement** on `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync`, including cascade-update and cascade-delete |
-| ✅ **Complex fields** | Attachment and multi-value columns resolved via `MSysComplexColumns` FK lookup |
+| ✅ **Encryption & passwords** | Jet3 XOR, Jet4 RC4, ACCDB legacy password, ACCDB AES-128 (CFB-wrapped), ACCDB Agile (Office Crypto API, Access 2010 SP1+ / Microsoft 365) — all read/write |
+| ✅ **Linked tables** | Enumerate, create Access (type 4), and create ODBC (type 6) linked-table catalog entries |
+| ✅ **Foreign-key relationships** | Read and create relationships; runtime referential integrity (with cascade update/delete) on insert/update/delete |
+| ✅ **Complex fields** | Read and write attachment and multi-value columns (ACCDB only) |
 | ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on disposal (opt-out) |
 
 ---
@@ -292,30 +292,17 @@ Filtering and projection run client-side per row — there is no SQL engine unde
 
 ---
 
-## Async Operations
+## Reading All Tables
 
-```csharp
-using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-await using var reader = await AccessReader.OpenAsync("database.mdb", cancellationToken: cts.Token);
-
-List<Order>                   orders = await reader.ReadTableAsync<Order>("Orders", 50, cts.Token);
-List<string>                  tables = await reader.ListTablesAsync(cts.Token);
-DataTable                     dt     = await reader.ReadDataTableAsync("Orders", cancellationToken: cts.Token);
-DataTable                     str    = await reader.ReadTableAsStringsAsync("Orders", maxRows: 50, cancellationToken: cts.Token);
-DatabaseStatistics            stats  = await reader.GetStatisticsAsync(cts.Token);
-Dictionary<string, DataTable> all    = await reader.ReadAllTablesAsync(cancellationToken: cts.Token);
-Dictionary<string, DataTable> allStr = await reader.ReadAllTablesAsStringsAsync(cancellationToken: cts.Token);
-```
-
-All async APIs return `ValueTask<T>` and can be awaited directly. Reader/writer instances also implement `IAsyncDisposable`, so prefer `await using`.
-
-`ReadAllTablesAsync` and `ReadAllTablesAsStringsAsync` accept a `Progress<TableProgress>` callback that fires once per table:
+`ReadAllTablesAsync` and `ReadAllTablesAsStringsAsync` materialize every user table in one call and accept a `Progress<TableProgress>` callback that fires once per table:
 
 ```csharp
 Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(
     new Progress<TableProgress>(p => Console.WriteLine($"Reading {p.TableName} ({p.TableIndex + 1}/{p.TableCount})...")),
     cancellationToken);
 ```
+
+All async APIs return `ValueTask<T>`. Reader/writer instances implement `IAsyncDisposable`, so prefer `await using`.
 
 ---
 
@@ -652,7 +639,7 @@ The items below are **not yet implemented** and are the most likely places to hi
 - **No SQL parser, query engine, or ODBC driver.** This library is a managed reader/writer over the JET on-disk format, not a database engine. There is no equivalent of mdbtools' `mdb-sql` or its ODBC driver, and there are no plans to add one. Filter, project, and join through LINQ over `Rows(...)` / `Rows<T>(...)` instead. This is also why the upstream mdbtools `test_sql.sh` cases (`SELECT ... LIMIT`, `WHERE`, `LIKE`) and the `mdb-queries` / `mdb-schema --dialect postgres` parity tests are intentionally absent from the conformance suite — they exercise surfaces this library does not provide.
 
 ### Concurrency
-- **No byte-range locking and no populated `.ldb` slots.** Microsoft Access uses page-level byte-range locks via `LockFileEx` plus 64-byte machine-name / SID entries in the lockfile; this library implements neither. Concurrent writers against the same file (including Access opening it while a writer is active) will corrupt it. Keep `RespectExistingLockFile = true` (default) and `FileShare.Read` / `FileShare.None` on the writer to let the OS block other openers.
+- **No byte-range locking and no populated `.ldb` slots.** Microsoft Access uses page-level byte-range locks via `LockFileEx` plus 64-byte machine-name / SID entries in the lockfile; this library implements neither. Concurrent writers against the same file (including Access opening it while a writer is active) will corrupt it. Keep `RespectExistingLockFile = true` (the default) so other openers are blocked by the lockfile.
 - **No transactions or rollback.** A crashed write leaves the file in whatever partially-flushed state the page cache had reached.
 
 ---
