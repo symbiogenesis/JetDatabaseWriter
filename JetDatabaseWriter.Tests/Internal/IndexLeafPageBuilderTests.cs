@@ -18,7 +18,7 @@ public sealed class IndexLeafPageBuilderTests
     [Fact]
     public void EmptyPage_HasCorrectHeaderAndFreeSpace()
     {
-        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, parentTdefPage: 42, Array.Empty<IndexLeafPageBuilder.LeafEntry>());
+        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, parentTdefPage: 42, []);
 
         Assert.Equal(PageSize, page.Length);
         Assert.Equal(0x04, page[0]);                                // page_type

@@ -118,7 +118,7 @@ public sealed class IndexWriterTests
             await writer.CreateTableAsync(
                 TableName,
                 [new ColumnDefinition("Id", typeof(int))],
-                Array.Empty<IndexDefinition>(),
+                [],
                 TestContext.Current.CancellationToken);
         }
 
