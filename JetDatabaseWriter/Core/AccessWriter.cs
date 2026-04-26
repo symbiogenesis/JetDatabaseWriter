@@ -5441,6 +5441,133 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         await writer.CreateMSysComplexColumnsAsync(cancellationToken).ConfigureAwait(false);
+        await writer.CreateMSysComplexTypeTemplatesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Phase C10: per-kind <c>MSysComplexType_*</c> template tables. Each entry maps
+    /// the canonical Access template name to the column schema Access emits for that
+    /// template (verified against <c>ComplexFields.accdb</c> in
+    /// <c>docs/design/format-probe-appendix-complex.md</c> §<c>MSysComplexType_*</c>).
+    /// All templates are zero-row, zero-index tables; their <c>MSysObjects.Id</c>
+    /// (= TDEF page) is what <c>MSysComplexColumns.ComplexTypeObjectID</c> points at.
+    /// </summary>
+    private static readonly (string Name, ColumnDefinition[] Columns)[] _complexTypeTemplates = new[]
+    {
+        ("MSysComplexType_UnsignedByte", new[] { new ColumnDefinition("Value", typeof(byte)) }),
+        ("MSysComplexType_Short",        new[] { new ColumnDefinition("Value", typeof(short)) }),
+        ("MSysComplexType_Long",         new[] { new ColumnDefinition("Value", typeof(int)) }),
+        ("MSysComplexType_IEEESingle",   new[] { new ColumnDefinition("Value", typeof(float)) }),
+        ("MSysComplexType_IEEEDouble",   new[] { new ColumnDefinition("Value", typeof(double)) }),
+        ("MSysComplexType_GUID",         new[] { new ColumnDefinition("Value", typeof(Guid)) }),
+        ("MSysComplexType_Decimal",      new[] { new ColumnDefinition("Value", typeof(decimal)) }),
+        ("MSysComplexType_Text",         new[] { new ColumnDefinition("Value", typeof(string), maxLength: 255) }),
+        ("MSysComplexType_Attachment",   new[]
+        {
+            new ColumnDefinition("FileData",      typeof(byte[])),
+            new ColumnDefinition("FileFlags",     typeof(int)),
+            new ColumnDefinition("FileName",      typeof(string), maxLength: 255),
+            new ColumnDefinition("FileTimeStamp", typeof(DateTime)),
+            new ColumnDefinition("FileType",      typeof(string), maxLength: 255),
+            new ColumnDefinition("FileURL",       typeof(string)),
+        }),
+    };
+
+    /// <summary>
+    /// Phase C10: scaffolds the nine <c>MSysComplexType_*</c> template tables
+    /// (<c>UnsignedByte</c>, <c>Short</c>, <c>Long</c>, <c>IEEESingle</c>,
+    /// <c>IEEEDouble</c>, <c>GUID</c>, <c>Decimal</c>, <c>Text</c>, <c>Attachment</c>)
+    /// into a freshly-created ACCDB so subsequent <see cref="EmitComplexColumnArtifactsAsync"/>
+    /// calls can populate <c>MSysComplexColumns.ComplexTypeObjectID</c> with a real
+    /// catalog id instead of the placeholder <c>0</c>. Each catalog row carries
+    /// <c>MSysObjects.Flags = 0x80030000</c> (system + the 0x30000 marker Access uses
+    /// for type-template tables) so the templates are excluded from
+    /// <c>ListTablesAsync</c>. Schema verified against <c>ComplexFields.accdb</c> —
+    /// see <c>docs/design/format-probe-appendix-complex.md</c>.
+    /// </summary>
+    private async ValueTask CreateMSysComplexTypeTemplatesAsync(CancellationToken cancellationToken)
+    {
+        foreach ((string name, ColumnDefinition[] cols) in _complexTypeTemplates)
+        {
+            TableDef tableDef = BuildTableDefinition(cols, _format);
+            (byte[] tdefPage, _) = BuildTDefPageWithIndexOffsets(tableDef, Array.Empty<ResolvedIndex>());
+            long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+
+            await InsertCatalogEntryAsync(
+                name,
+                tdefPageNumber,
+                lvProp: null,
+                catalogFlags: 0x80030000U,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        InvalidateCatalogCache();
+    }
+
+    /// <summary>
+    /// Maps a user-declared complex column to the canonical
+    /// <c>MSysComplexType_*</c> template name (Phase C10). Returns <see langword="null"/>
+    /// when the column is not complex or its element type has no matching template.
+    /// </summary>
+    private static string? ResolveComplexTypeTemplateName(ColumnDefinition col)
+    {
+        if (col.IsAttachment)
+        {
+            return "MSysComplexType_Attachment";
+        }
+
+        if (!col.IsMultiValue)
+        {
+            return null;
+        }
+
+        Type? t = col.MultiValueElementType;
+        if (t is null)
+        {
+            return null;
+        }
+
+        if (t == typeof(byte))
+        {
+            return "MSysComplexType_UnsignedByte";
+        }
+
+        if (t == typeof(short))
+        {
+            return "MSysComplexType_Short";
+        }
+
+        if (t == typeof(int))
+        {
+            return "MSysComplexType_Long";
+        }
+
+        if (t == typeof(float))
+        {
+            return "MSysComplexType_IEEESingle";
+        }
+
+        if (t == typeof(double))
+        {
+            return "MSysComplexType_IEEEDouble";
+        }
+
+        if (t == typeof(Guid))
+        {
+            return "MSysComplexType_GUID";
+        }
+
+        if (t == typeof(decimal))
+        {
+            return "MSysComplexType_Decimal";
+        }
+
+        if (t == typeof(string))
+        {
+            return "MSysComplexType_Text";
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -5645,12 +5772,23 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 catalogFlags: 0x800A0000U,
                 cancellationToken).ConfigureAwait(false);
 
+            // Phase C10: resolve the matching MSysComplexType_* template id so the
+            // MSysComplexColumns row points at the canonical type-template table
+            // instead of carrying the placeholder 0. Templates are scaffolded by
+            // CreateDatabaseAsync; for files opened in-place that lack them (e.g.
+            // a slim-catalog ACCDB or a pre-C10 writer-authored file) the lookup
+            // returns 0 and the row falls back to the pre-C10 placeholder value.
+            string? templateName = ResolveComplexTypeTemplateName(col);
+            int templateId = templateName is null
+                ? 0
+                : (int)await FindSystemTableTdefPageAsync(templateName, cancellationToken).ConfigureAwait(false);
+
             await InsertMSysComplexColumnsRowAsync(
                 col.Name,
                 complexId: alloc.ComplexId,
                 conceptualTableId: alloc.ConceptualTableId,
                 flatTableId: (int)flatTdefPage,
-                complexTypeObjectId: 0,
+                complexTypeObjectId: templateId,
                 cancellationToken).ConfigureAwait(false);
         }
     }

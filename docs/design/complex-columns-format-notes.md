@@ -20,7 +20,7 @@ Access 2007 introduced three "complex column" kinds. All three are stored the sa
 
 The discrimination between attachment / multi-value / version-history is **not** done by the column-type byte. It is done by the linked flat table's schema and/or the value of `MSysComplexColumns.ComplexTypeObjectID` (which points at one of the `MSysComplexType_*` template tables — see [appendix](format-probe-appendix-complex.md)).
 
-The reader implements all three kinds. Writer support has shipped through phase C8 — see §4.2.
+The reader implements all three kinds. Writer support has shipped through phase C10 — see §4.2.
 
 ## 2. On-disk layout
 
@@ -166,13 +166,14 @@ The reader (see §1) implements `T_ATTACHMENT` / `T_COMPLEX` column-type recogni
 |---|---|---|
 | **C1** | Empty-DB scaffold: add `MSysComplexColumns` to `BuildEmptyDatabase`. | ✅ Shipped. ACCDB only. Helper: `AccessWriter.CreateMSysComplexColumnsAsync` (called from `ScaffoldSystemTablesAsync`). Catalog row carries `MSysObjects.Flags = 0x80000000` and is excluded from `ListTablesAsync`. Tests: `ComplexColumnsWriterTests`. |
 | **C2** | `ColumnDefinition.IsAttachment` / `IsMultiValue` declaration surface + `ColumnInfo.Misc` round-trip in TDEF emission (the `0x07` bitmask, the 4-byte `misc` ComplexID slot, `col_len = 4`). | ✅ Shipped. Public init-only props on `ColumnDefinition`. Descriptor offset `_colMiscOff` = 11 (Jet4/ACE). Tests: `ComplexColumnsWriterTests`. |
-| **C3** | `CreateTableAsync` emits the hidden flat child table, allocates a fresh `ComplexID`, writes the `MSysComplexColumns` row, and patches the parent descriptor. | ✅ Shipped. Helper: `CreateTableInternalAsync`. Flat table named `f_<32-hex>_<userColumnName>`, `MSysObjects.Flags = 0x800A0000`. C3 originally shipped without the per-flat PK/FK indexes — those landed in C7 (§4.4). `ComplexTypeObjectID = 0` is still written and `AddColumnAsync` of a brand-new complex column on an existing table remains pending (would need `RewriteTableAsync` plumbing). |
+| **C3** | `CreateTableAsync` emits the hidden flat child table, allocates a fresh `ComplexID`, writes the `MSysComplexColumns` row, and patches the parent descriptor. | ✅ Shipped. Helper: `CreateTableInternalAsync`. Flat table named `f_<32-hex>_<userColumnName>`, `MSysObjects.Flags = 0x800A0000`. C3 originally shipped without the per-flat PK/FK indexes — those landed in C7 (§4.4). C3 originally wrote `ComplexTypeObjectID = 0`; C10 (§4.7) populates it with a real template id. |
 | **C4** | Per-kind row APIs (`AddAttachmentAsync`, `AddMultiValueItemAsync`) and attachment payload encode (§3). | ✅ Shipped. Helpers: `AccessWriter.AddAttachmentAsync` / `AddMultiValueItemAsync`, `AttachmentWrapper`. Reader-side: `AccessReader.GetAttachmentsAsync` / `GetMultiValueItemsAsync`. C4 originally capped attachment payloads at ~256 bytes (inline-OLE limit); Phase C8 lifted that cap by pushing oversized payloads onto LVAL data pages. |
 | **C5** | Cascade flat-table rows on parent delete. | ✅ Shipped. Helper: `CascadeDeleteComplexChildrenAsync`, called from `DeleteRowsAsync` and the W10 `EnforceFkOnPrimaryDeleteAsync` cascade path. Cost: one O(P) flat-table scan per (parent table × complex column). Tests: `ComplexColumnsCascadeDeleteTests`. |
 | **C6** | `DropTableAsync` cascade for hidden flat tables and `MSysComplexColumns` rows. | ✅ Shipped. Helper: `DropComplexChildrenForTableAsync`, called from `DropTableAsync`. Removes `MSysComplexColumns` and `MSysObjects` catalog rows for each child flat table; orphaned data pages are reclaimed by Access on the next Compact & Repair (same model used by W5). |
 | **C7** | Per-flat-table indexes Access expects: autoincrement scalar PK column, primary key on the scalar, normal index on the FK back-reference, and (attachment only) a composite secondary index on (FK, FileName). Lifts the C3 "no PK / no autoincrement / no FK back-reference index" caveat. | ✅ Shipped. Helper: `BuildFlatTableSchema` (returns `(ColumnDefinition[], IndexDefinition[])`) wired through `EmitComplexColumnArtifactsAsync` and reused by `AddComplexItemCoreAsync` via `ApplyConstraintsAsync` so the autoincrement scalar PK is seeded per insert. See §4.3. |
 | **C8** | LVAL chain emission for oversized MEMO / OLE / Attachment payloads. Lifts the inline-only `MaxInlineMemoBytes = 1024` and `MaxInlineOleBytes = 256` caps. | ✅ Shipped. Helpers: `PreEncodeLongValuesAsync`, `EncodeAsLvalChainAsync`, `BuildSingleLvalPageBuffer`, `BuildChainLvalPageBuffer` on `AccessWriter`. Pre-encode pass runs once at the top of `InsertRowDataLocAsync`: any `T_OLE` / `T_MEMO` value whose encoded payload exceeds the inline cap is staged onto freshly-appended LVAL data pages (single-page bitmask `0x40` for sub-page payloads; chained bitmask `0x00` with one row per page, walked in reverse so each predecessor row carries its successor's `lval_dp` pointer) and the in-row value is replaced with a `PreEncodedLongValue` sentinel that the encoders splice through verbatim. Upper limit is the on-disk 24-bit LVAL length field (`MaxLvalPayloadBytes = 16 MiB - 1`). LVAL pages are emitted as page-type `0x01` with `tdef_page = 0`, matching the format the existing `AccessReader.LocateLvalRowAsync` / `ReadLvalChainAsync` decoders accept. See §4.5. |
 | **C9** | Schema evolution on parent tables that already contain complex columns: lift the `NotSupportedException` thrown by `BuildColumnDefinitionFromInfo` so `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` can run against tables with attachment / multi-value columns. | ✅ **Implemented (2026-04-25).** `BuildColumnDefinitionFromInfo` now returns `IsAttachment` / `IsMultiValue` ColumnDefinitions with the original `ComplexId` preserved from `ColumnInfo.Misc`. `RewriteTableAsync` was refactored: the original-table drop now routes through `DropTableCoreAsync(tableName, dropComplexChildren: false, ct)` (new private helper, also backing `DropTableAsync`), so flat children + `MSysComplexColumns` rows of surviving complex columns stay attached to the rebuilt parent. Surgical post-rewrite cleanup runs for the two single-column edge cases: `DropSingleComplexChildAsync(columnName, complexId)` removes the row + flat-table catalog entry when the user drops the complex column itself, and `RenameComplexColumnArtifactsAsync(oldName, newName, complexId)` rewrites `MSysComplexColumns.ColumnName` when the user renames it. The `RenameColumnAsync` projection now forwards `IsAttachment` / `IsMultiValue` / `MultiValueElementType` / `ComplexId` so the rebuilt TDEF re-emits T_ATTACHMENT / T_COMPLEX with the correct misc field. `HydrateConstraintsFromTableDef` skips the `Flags` flag-bit interpretation for complex columns (the on-disk Flags = 0x07 is a magic marker, not real `IsNullable` / `IsAutoIncrement` bits). 7 round-trip tests in `ComplexColumnsSchemaEvolutionTests`. See §4.6. |
+| **C10** | Scaffold the nine `MSysComplexType_*` template tables (`UnsignedByte`, `Short`, `Long`, `IEEESingle`, `IEEEDouble`, `GUID`, `Decimal`, `Text`, `Attachment`) and populate `MSysComplexColumns.ComplexTypeObjectID` with the matching template id instead of the placeholder `0`. | ✅ **Implemented (2026-04-25).** Helpers: `AccessWriter.CreateMSysComplexTypeTemplatesAsync` (called from `ScaffoldSystemTablesAsync` immediately after `CreateMSysComplexColumnsAsync`) and the static `ResolveComplexTypeTemplateName(ColumnDefinition)` lookup wired into `EmitComplexColumnArtifactsAsync`. ACE only (Jet3 / Jet4 `.mdb` skip the templates because complex columns are an Access 2007+ feature). Each template carries `MSysObjects.Flags = 0x80030000` (system + the `0x30000` marker Access uses for type-template tables) so they are excluded from `ListTablesAsync`. 6 round-trip tests in `ComplexColumnsWriterTests`. See §4.7. |
 
 ### 4.3 C7 flat-table schema
 
@@ -186,7 +187,7 @@ The flat-child schema emitted by `BuildFlatTableSchema` (called from `EmitComple
 C7 caveats:
 
 - **`first_dp` is patched to an empty W3 leaf page** for each emitted index. The leaves are not maintained on `AddAttachmentAsync` / `AddMultiValueItemAsync` (those route through `InsertRowDataAsync`, which bypasses the W5 `MaintainIndexesAsync` hook). Access rebuilds the leaves on the next Compact & Repair pass — same model as W3 placeholder leaves on user tables that were never mutated through a public Insert/Update/Delete entry point.
-- **`ComplexTypeObjectID = 0`** is unchanged — populating it would require a future `MSysComplexType_*` template-table phase.
+- **`ComplexTypeObjectID`** is populated by C10 (§4.7) with the matching `MSysComplexType_*` template id; pre-C10 writer-authored files had this field at `0`.
 - **`AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync` on tables that already contain complex columns** is unchanged — still `NotSupportedException` territory.
 - **Byte-level layout** is taken from the appendix probe of `f_A3DF50CFC033433899AF0AC1A4CF4171_Attachments` (column ordering, index names / kinds / column lists, scalar PK column name, autoincrement bit) and the Jackcess-derived multi-value extrapolation; the per-flat-table layout has not been round-tripped through a real Access install — see [`index-and-relationship-format-notes.md` §8](index-and-relationship-format-notes.md#8-validation-strategy).
 
@@ -256,6 +257,39 @@ C9 caveats:
 - **`AddAttachmentAsync` / `AddMultiValueItemAsync` after rename still work** because the FK back-reference column on the flat table (`_<userColumnName>`) keeps its original name; the reader resolves the flat table via `MSysComplexColumns.FlatTableID` and `GetAttachmentsAsync` joins via the parent's auto-number primary key without consulting the parent's complex slot. The `AddComplexItemCoreAsync` parent-row predicate matches on the user's PK columns, not on the renamed complex column.
 - **Per-row complex slot is null on the rebuilt parent.** Same as fresh `Insert` — `EncodeFixedValue` returns `null` for T_ATTACHMENT / T_COMPLEX so the slot is left at the null-mask default. The reader's `ReadDataTableAsync` path resolves the parent → child join via `ExtractParentId` (the parent's first LONG column) against the flat table's `_<columnName>` FK back-reference, which is preserved by the rewrite.
 - **Validation gap.** Round-trip through this library's reader is verified in `JetDatabaseWriter.Tests/Core/ComplexColumnsSchemaEvolutionTests.cs` (7 tests covering AddColumn / DropColumn / RenameColumn for both the complex column itself and a non-complex sibling, plus AddColumn of a brand-new attachment column on a table that already has one). Microsoft Access compact-and-repair validation is still pending — see [`index-and-relationship-format-notes.md` §8](index-and-relationship-format-notes.md#8-validation-strategy).
+
+### 4.7 C10 `MSysComplexType_*` template tables
+
+Phase C10 lifts the C3 caveat that wrote `MSysComplexColumns.ComplexTypeObjectID = 0`. Every fresh ACCDB built by `CreateDatabaseAsync` now also emits the nine type-template tables Access expects, and the C3 row-emit path resolves the matching template id by name and persists it on the catalog row.
+
+**Templates emitted** (all ACE-only, all carry `MSysObjects.Flags = 0x80030000`):
+
+| Template name | Schema | Used when |
+|---|---|---|
+| `MSysComplexType_UnsignedByte` | `Value: BYTE` | `MultiValueElementType = typeof(byte)` |
+| `MSysComplexType_Short` | `Value: INT` | `MultiValueElementType = typeof(short)` |
+| `MSysComplexType_Long` | `Value: LONG` | `MultiValueElementType = typeof(int)` |
+| `MSysComplexType_IEEESingle` | `Value: FLOAT` | `MultiValueElementType = typeof(float)` |
+| `MSysComplexType_IEEEDouble` | `Value: DOUBLE` | `MultiValueElementType = typeof(double)` |
+| `MSysComplexType_GUID` | `Value: GUID` | `MultiValueElementType = typeof(Guid)` |
+| `MSysComplexType_Decimal` | `Value: NUMERIC` | `MultiValueElementType = typeof(decimal)` |
+| `MSysComplexType_Text` | `Value: TEXT(255)` | `MultiValueElementType = typeof(string)` |
+| `MSysComplexType_Attachment` | `FileData OLE`, `FileFlags LONG`, `FileName TEXT(255)`, `FileTimeStamp DATETIME`, `FileType TEXT(255)`, `FileURL MEMO` | `IsAttachment = true` |
+
+Schemas come from `format-probe-appendix-complex.md` §`MSysComplexType_*` against `ComplexFields.accdb`.
+
+Helpers added on `AccessWriter`:
+
+- `CreateMSysComplexTypeTemplatesAsync` — emits the nine tables in declaration order (TDEF page + catalog row, no indexes, no rows). Skipped for Jet3 / Jet4 `.mdb` and for the slim-catalog ACCDB (`WriteFullCatalogSchema = false`) per the existing C1 gating.
+- `ResolveComplexTypeTemplateName(ColumnDefinition)` (static) — returns the canonical template name for a complex column declaration, or `null` if the element type has no matching template.
+- `EmitComplexColumnArtifactsAsync` now calls `ResolveComplexTypeTemplateName` + `FindSystemTableTdefPageAsync` to obtain the template's catalog id (= TDEF page) and passes it to `InsertMSysComplexColumnsRowAsync` instead of `0`.
+
+C10 caveats:
+
+- **Files opened in-place that lack the templates fall back to `ComplexTypeObjectID = 0`.** This covers slim-catalog ACCDBs and `.accdb` files produced by pre-C10 writer versions. The lookup tolerates a missing template by returning `0`, mirroring the pre-C10 behaviour.
+- **Existing `MSysComplexColumns` rows are not retroactively patched.** Opening a pre-C10 file does not rewrite the `0` placeholders. Microsoft Access reconciles cosmetically on the next Compact & Repair pass.
+- **Decimal template `col_len`.** The format-probe appendix shows `col_len = 9` (precision 9 / scale 0); the C10 implementation emits whatever the writer's default `decimal` mapping produces. The template table is never populated with rows, so the precise `col_len` value carries no observable semantic.
+- **Validation gap.** Round-trip through this library's reader is verified in 6 tests in `ComplexColumnsWriterTests` (template scaffolding, hidden-from-`ListTablesAsync`, attachment template column list, Jet4 skip, attachment + multi-value `ComplexTypeObjectID` non-zero). Microsoft Access compact-and-repair validation is still pending — see [`index-and-relationship-format-notes.md` §8](index-and-relationship-format-notes.md#8-validation-strategy).
 
 ## 5. Validation strategy
 
