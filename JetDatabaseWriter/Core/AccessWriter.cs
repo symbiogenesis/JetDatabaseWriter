@@ -416,7 +416,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         CancellationToken cancellationToken)
     {
         TableDef tableDef = BuildTableDefinition(columns, _format);
-        IReadOnlyList<ResolvedIndex> resolvedIndexes = ResolveIndexes(indexes, tableDef);
+        List<ResolvedIndex> resolvedIndexes = ResolveIndexes(indexes, tableDef);
         (byte[] tdefPage, int[] firstDpOffsets) = BuildTDefPageWithIndexOffsets(tableDef, resolvedIndexes);
         long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
@@ -5235,7 +5235,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return (columns, indexes);
     }
 
-    private IReadOnlyList<ResolvedIndex> ResolveIndexes(IReadOnlyList<IndexDefinition> indexes, TableDef tableDef)
+    private List<ResolvedIndex> ResolveIndexes(IReadOnlyList<IndexDefinition> indexes, TableDef tableDef)
     {
         if (indexes.Count == 0)
         {
@@ -8511,7 +8511,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         string tableName,
         List<UniqueIndexDescriptor> descriptors,
         DataTable snapshot,
-        IReadOnlyList<object[]> pendingInsertRows,
+        List<object[]> pendingInsertRows,
         Dictionary<int, object[]>? replaceAtSnapshotIndex)
     {
         int snapshotRowCount = snapshot.Rows.Count;

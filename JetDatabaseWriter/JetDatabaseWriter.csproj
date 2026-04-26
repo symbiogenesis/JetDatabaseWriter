@@ -33,6 +33,15 @@
   <ItemGroup>
     <None Include="..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
+  <!--
+    Per-codepoint General Legacy text-index sort-key tables, sourced verbatim from
+    Apache Jackcess (Apache License 2.0). Stored gzipped to keep the assembly small;
+    decompressed on first use. See THIRD-PARTY-NOTICES.md.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Internal\IndexCodeTables\index_codes_genleg.txt.gz" LogicalName="JetDatabaseWriter.IndexCodeTables.index_codes_genleg.txt.gz" />
+    <EmbeddedResource Include="Internal\IndexCodeTables\index_codes_ext_genleg.txt.gz" LogicalName="JetDatabaseWriter.IndexCodeTables.index_codes_ext_genleg.txt.gz" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.6" />
   </ItemGroup>

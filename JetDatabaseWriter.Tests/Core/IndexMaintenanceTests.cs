@@ -268,13 +268,12 @@ public sealed class IndexMaintenanceTests
     }
 
     [Fact]
-    public async Task InsertRows_TextIndex_UnsupportedCharacter_LeavesLeafStale()
+    public async Task InsertRows_TextIndex_UnicodeAndPunctuation_RebuildsLeaf()
     {
-        // Fail-closed: any character outside the General Legacy range
-        // (here a space) makes the encoder throw NotSupportedException, and
-        // the maintenance loop swallows it to leave the original empty
-        // placeholder leaf in place. We verify the inserts succeed and the
-        // visible leafs all show the implicit single-entry count.
+        // The full Jackcess General Legacy port supports the entire BMP
+        // (spaces, punctuation, accented characters). Strings that previously
+        // fell through to the stale-leaf path now participate in the W5
+        // bulk B-tree rebuild, so the emitted leaf reflects all inserted rows.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 
@@ -291,13 +290,43 @@ public sealed class IndexMaintenanceTests
                 [
                     new object[] { "Hello world" },
                     ["Foo Bar"],
+                    ["café"],
                 ],
                 ct);
         }
 
-        // Maintenance was skipped, so no leaf has more than the implicit first
-        // entry — the placeholder remains, hence MAX == 1.
-        Assert.Equal(1, FindMaxLeafEntryCount(stream.ToArray()));
+        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+    }
+
+    [Fact]
+    public async Task InsertRows_MemoIndex_RebuildsLeafViaSameEncoder()
+    {
+        // MEMO columns route through the same General Legacy encoder as TEXT
+        // (T_TEXT = 0x0A, T_MEMO = 0x0C both supported by IndexKeyEncoder).
+        // Round-trip a memo-keyed index and confirm the bulk rebuild populated
+        // the leaf instead of leaving the W3 placeholder in place.
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [new ColumnDefinition("Body", typeof(string))], // maxLength=0 → MEMO
+                [new IndexDefinition("IX_Body", "Body")],
+                ct);
+
+            await writer.InsertRowsAsync(
+                "T",
+                [
+                    new object[] { "the quick brown fox" },
+                    ["jumps over the lazy dog"],
+                    ["pack my box with five dozen liquor jugs"],
+                ],
+                ct);
+        }
+
+        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
     }
 
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)

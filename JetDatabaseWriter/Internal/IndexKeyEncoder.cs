@@ -64,6 +64,7 @@ internal static class IndexKeyEncoder
     private const byte T_DOUBLE = 0x07;
     private const byte T_DATETIME = 0x08;
     private const byte T_TEXT = 0x0A;
+    private const byte T_MEMO = 0x0C;
     private const byte T_GUID = 0x0F;
 
     // Entry flag bytes — see §4.3.
@@ -107,6 +108,16 @@ internal static class IndexKeyEncoder
         if (columnType == T_GUID)
         {
             return EncodeGuidEntry(value!, ascending);
+        }
+
+        // Text / Memo route through the dedicated General Legacy encoder which
+        // emits a self-contained entry block (flag + inline + END_TEXT framing
+        // + extra/unprintable/crazy streams + END_EXTRA_TEXT). The encoder
+        // applies its own internal bit-flip for descending — the bulk flip
+        // below is intentionally bypassed.
+        if (columnType == T_TEXT || columnType == T_MEMO)
+        {
+            return GeneralLegacyTextIndexEncoder.Encode(ToText(value!), ascending);
         }
 
         byte[] key = EncodeKey(columnType, value!);
@@ -175,66 +186,14 @@ internal static class IndexKeyEncoder
                     return TwiddleIeeeBigEndian(be);
                 }
 
-            case T_TEXT:
-                return EncodeGeneralLegacyText(ToText(value));
-
             case T_BOOL:
                 throw new NotSupportedException("BOOL columns are stored in the row null mask, not in index key bytes.");
 
             default:
                 throw new NotSupportedException(
                     $"Index key encoding for column type 0x{columnType:X2} is not supported in this writer phase. " +
-                    "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, GUID, TEXT (digits + ASCII letters only).");
+                    "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, GUID, TEXT, MEMO.");
         }
-    }
-
-    /// <summary>
-    /// W7 — "General Legacy" text sort-key encoding (Access 2000–2007 default,
-    /// Access 2010+ legacy fallback). Per HACKING.md §5 the documented mapping
-    /// is <c>0–9 → 0x56–0x5F</c> and <c>A–Z / a–z → 0x60–0x79</c> (case-
-    /// insensitive). The encoded key is terminated by a single <c>0x00</c>
-    /// byte (or <c>0xFF</c> after the descending ones-complement applied by
-    /// the caller).
-    /// <para>
-    /// Characters outside the documented range (space, punctuation, non-ASCII)
-    /// throw <see cref="NotSupportedException"/>. The full Access encoding
-    /// covers secondary case/accent weights and locale-specific mappings that
-    /// HACKING.md does not specify; emitting fabricated bytes for those
-    /// characters could produce a leaf that Microsoft Access would reject as
-    /// corrupt, so we strictly fail closed and let the W5 maintenance loop
-    /// fall through to the existing "leaf goes stale until Compact &amp; Repair"
-    /// behaviour for the unsupported rows.
-    /// </para>
-    /// </summary>
-    private static byte[] EncodeGeneralLegacyText(string text)
-    {
-        byte[] result = new byte[text.Length + 1];
-        for (int i = 0; i < text.Length; i++)
-        {
-            char c = text[i];
-            if (c >= '0' && c <= '9')
-            {
-                result[i] = (byte)(0x56 + (c - '0'));
-            }
-            else if (c >= 'A' && c <= 'Z')
-            {
-                result[i] = (byte)(0x60 + (c - 'A'));
-            }
-            else if (c >= 'a' && c <= 'z')
-            {
-                result[i] = (byte)(0x60 + (c - 'a'));
-            }
-            else
-            {
-                throw new NotSupportedException(
-                    $"Text index sort-key encoding (W7) supports only digits (0-9) and ASCII letters (A-Z, a-z). " +
-                    $"Character '{c}' (U+{(int)c:X4}) at offset {i} is outside that range; " +
-                    "the full \"General Legacy\" encoding for spaces, punctuation, and non-ASCII characters is not yet implemented.");
-            }
-        }
-
-        // result[text.Length] is the implicit 0x00 terminator (default value).
-        return result;
     }
 
     /// <summary>

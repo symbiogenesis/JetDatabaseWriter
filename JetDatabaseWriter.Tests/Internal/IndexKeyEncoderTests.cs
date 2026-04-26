@@ -189,40 +189,76 @@ public sealed class IndexKeyEncoderTests
         Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(columnType, 1, ascending: true));
     }
 
-    // ── General Legacy text encoding (digits + ASCII letters only) ──
+    // ── General Legacy text encoding (full Jackcess port) ──
+    //
+    // Inline-byte values come from `IndexCodeTables/index_codes_genleg.txt`
+    // (e.g. line 0x41 = "S4A" → 'A' encodes inline as 0x4A). Framing per
+    // `GeneralLegacyTextIndexEncoder`: ascending = [flag=0x7F] + inline bytes
+    // + END_TEXT(0x01) + END_EXTRA_TEXT(0x00). Descending writes the same
+    // payload + END_EXTRA_TEXT, ones-complements the payload (flag stays
+    // 0x80, the just-written 0x00 becomes 0xFF), then appends a fresh
+    // unflipped END_EXTRA_TEXT(0x00).
 
     [Fact]
-    public void Text_EmptyString_EmitsFlagAndTerminator()
+    public void Text_EmptyString_EmitsFlagAndFraming()
     {
-        // §5: text key terminator is 0x00 (or 0xFF when negated for descending).
         byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, string.Empty, ascending: true);
-        Assert.Equal(new byte[] { 0x7F, 0x00 }, encoded);
+        Assert.Equal(new byte[] { 0x7F, 0x01, 0x00 }, encoded);
     }
 
     [Fact]
-    public void Text_Digits_MapTo56Through5F()
+    public void Text_EmptyString_Descending_AppendsUnflippedTrailer()
     {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, string.Empty, ascending: false);
+        Assert.Equal(new byte[] { 0x80, 0xFE, 0xFF, 0x00 }, encoded);
+    }
+
+    [Fact]
+    public void Text_Digits_UseJackcessInlineCodes()
+    {
+        // Per Jackcess `index_codes_genleg.txt`: '0'=0x36, '1'=0x38, …, '9'=0x48.
         byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, "0123456789", ascending: true);
         Assert.Equal(
-            new byte[] { 0x7F, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x00 },
+            new byte[] { 0x7F, 0x36, 0x38, 0x3A, 0x3C, 0x3E, 0x40, 0x42, 0x44, 0x46, 0x48, 0x01, 0x00 },
             encoded);
     }
 
     [Fact]
-    public void Text_UpperAndLowerLetters_MapToSameRange60Through79()
+    public void Text_UpperAndLowerLetters_AreCaseInsensitive()
     {
-        // Case-insensitive per HACKING.md §5.
         byte[] upper = IndexKeyEncoder.EncodeEntry(T_TEXT, "ABCXYZ", ascending: true);
         byte[] lower = IndexKeyEncoder.EncodeEntry(T_TEXT, "abcxyz", ascending: true);
         Assert.Equal(upper, lower);
+
+        // 'A'=0x4A, 'B'=0x4C, 'C'=0x4D, 'X'=0x75, 'Y'=0x76, 'Z'=0x78.
         Assert.Equal(
-            new byte[] { 0x7F, 0x60, 0x61, 0x62, 0x77, 0x78, 0x79, 0x00 },
+            new byte[] { 0x7F, 0x4A, 0x4C, 0x4D, 0x75, 0x76, 0x78, 0x01, 0x00 },
             upper);
     }
 
     [Fact]
-    public void Text_Ordering_DigitsSortBeforeLetters()
+    public void Text_TrailingSpacesAreStripped()
     {
+        byte[] withSpaces = IndexKeyEncoder.EncodeEntry(T_TEXT, "AB   ", ascending: true);
+        byte[] withoutSpaces = IndexKeyEncoder.EncodeEntry(T_TEXT, "AB", ascending: true);
+        Assert.Equal(withoutSpaces, withSpaces);
+    }
+
+    [Fact]
+    public void Text_LongInputIsTruncatedToMaxIndexedChars()
+    {
+        // VARCHAR(255) → MAX_TEXT_INDEX_CHAR_LENGTH = 127 chars.
+        string longInput = new('A', 200);
+        byte[] truncated = IndexKeyEncoder.EncodeEntry(T_TEXT, longInput, ascending: true);
+        byte[] expected = IndexKeyEncoder.EncodeEntry(T_TEXT, new string('A', 127), ascending: true);
+        Assert.Equal(expected, truncated);
+    }
+
+    [Fact]
+    public void Text_Ordering_MatchesCaseInsensitiveOrdering()
+    {
+        // Input list is in expected ascending sort order under the General
+        // Legacy encoding (digits before letters; trailing-space stripped).
         string[] values = [string.Empty, "0", "1", "9", "A", "AB", "AC", "B", "Z", "ZZ"];
         byte[][] encoded = new byte[values.Length][];
         for (int i = 0; i < values.Length; i++)
@@ -239,18 +275,42 @@ public sealed class IndexKeyEncoderTests
     }
 
     [Fact]
-    public void Text_Descending_IsOnesComplementOfAscending()
+    public void Text_DescendingOrdering_IsReverseOfAscending()
     {
-        byte[] asc = IndexKeyEncoder.EncodeEntry(T_TEXT, "AB12", ascending: true);
-        byte[] desc = IndexKeyEncoder.EncodeEntry(T_TEXT, "AB12", ascending: false);
-        Assert.Equal(asc.Length, desc.Length);
-        for (int i = 0; i < asc.Length; i++)
+        string[] values = ["A", "AB", "AC", "B", "Z"];
+        byte[][] desc = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++)
         {
-            Assert.Equal(unchecked((byte)~asc[i]), desc[i]);
+            desc[i] = IndexKeyEncoder.EncodeEntry(T_TEXT, values[i], ascending: false);
         }
 
-        // Terminator becomes 0xFF after ones-complement.
-        Assert.Equal(0xFF, desc[^1]);
+        for (int i = 1; i < desc.Length; i++)
+        {
+            Assert.True(
+                CompareLex(desc[i - 1], desc[i]) > 0,
+                $"Descending order violated between '{values[i - 1]}' and '{values[i]}'.");
+        }
+    }
+
+    [Fact]
+    public void Text_Punctuation_NowEncodesViaSimpleHandler()
+    {
+        // Pre-W7-full: punctuation threw. With the full Jackcess port,
+        // characters like '!' (S9) encode as a SIMPLE inline byte.
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, "!", ascending: true);
+        Assert.Equal(new byte[] { 0x7F, 0x09, 0x01, 0x00 }, encoded);
+    }
+
+    [Fact]
+    public void Text_NonAscii_UsesInternationalOrSurrogateHandler()
+    {
+        // Non-ASCII characters route through INTERNATIONAL / surrogate
+        // handlers and no longer throw. Just assert the call succeeds and
+        // produces the standard framing.
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, "café", ascending: true);
+        Assert.Equal(0x7F, encoded[0]);
+        Assert.Equal(0x00, encoded[^1]);
+        Assert.True(encoded.Length > 4, "Encoded entry should contain inline + framing bytes.");
     }
 
     [Fact]
@@ -260,15 +320,13 @@ public sealed class IndexKeyEncoderTests
         Assert.Equal(new byte[] { 0x00 }, encoded);
     }
 
-    [Theory]
-    [InlineData(" ")] // space
-    [InlineData("a b")] // contains space
-    [InlineData("hello!")] // punctuation
-    [InlineData("caf\u00E9")] // non-ASCII (é)
-    [InlineData("_underscore")]
-    public void Text_UnsupportedCharacter_Throws(string value)
+    [Fact]
+    public void Memo_RoutesThroughTheSameEncoderAsText()
     {
-        Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(T_TEXT, value, ascending: true));
+        const byte T_MEMO = 0x0C;
+        byte[] memo = IndexKeyEncoder.EncodeEntry(T_MEMO, "Hello", ascending: true);
+        byte[] text = IndexKeyEncoder.EncodeEntry(T_TEXT, "Hello", ascending: true);
+        Assert.Equal(text, memo);
     }
 
     // ── GUID encoding via Jackcess "general binary entry" wrapping ──
