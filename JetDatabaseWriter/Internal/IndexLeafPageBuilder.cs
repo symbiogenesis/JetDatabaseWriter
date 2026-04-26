@@ -179,9 +179,7 @@ internal static class IndexLeafPageBuilder
             }
 
             int dpOff = entryStart + keyLen;
-            page[dpOff + 0] = (byte)((dp >> 16) & 0xFF);
-            page[dpOff + 1] = (byte)((dp >> 8) & 0xFF);
-            page[dpOff + 2] = (byte)(dp & 0xFF);
+            WriteUInt24Be(page, dpOff, (int)dp);
             page[dpOff + 3] = e.DataRow;
 
             // §4.3 + §4.2: every entry except the first sets a bit in the bitmask
@@ -215,6 +213,13 @@ internal static class IndexLeafPageBuilder
 
     private static void Wi32(byte[] b, int o, int value) =>
         BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(o, 4), value);
+
+    private static void WriteUInt24Be(byte[] b, int o, int value)
+    {
+        b[o] = (byte)((value >> 16) & 0xFF);
+        b[o + 1] = (byte)((value >> 8) & 0xFF);
+        b[o + 2] = (byte)(value & 0xFF);
+    }
 
     private static int ComputeSharedPrefixLength(IReadOnlyList<LeafEntry> entries)
     {

@@ -323,9 +323,7 @@ internal static class IndexBTreeBuilder
             // 3-byte BE data page + 1-byte data row (summary of last child entry).
             long dp = e.Summary.DataPage;
             int rpOff = entryStart + keyLen;
-            page[rpOff + 0] = (byte)((dp >> 16) & 0xFF);
-            page[rpOff + 1] = (byte)((dp >> 8) & 0xFF);
-            page[rpOff + 2] = (byte)(dp & 0xFF);
+            WriteUInt24Be(page, rpOff, (int)dp);
             page[rpOff + 3] = e.Summary.DataRow;
 
             // 4-byte child page pointer (little-endian, like every other 32-bit
@@ -337,10 +335,7 @@ internal static class IndexBTreeBuilder
             }
 
             int cpOff = rpOff + 4;
-            page[cpOff + 0] = (byte)(cp & 0xFF);
-            page[cpOff + 1] = (byte)((cp >> 8) & 0xFF);
-            page[cpOff + 2] = (byte)((cp >> 16) & 0xFF);
-            page[cpOff + 3] = (byte)((cp >> 24) & 0xFF);
+            BinaryPrimitives.WriteUInt32LittleEndian(page.AsSpan(cpOff, 4), (uint)cp);
 
             // §4.2 bitmask: every entry except the first sets a bit at its start
             // offset relative to the first-entry offset, LSB-first.
@@ -399,4 +394,11 @@ internal static class IndexBTreeBuilder
 
     private static void Wi32(byte[] b, int o, int value) =>
         BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(o, 4), value);
+
+    private static void WriteUInt24Be(byte[] b, int o, int value)
+    {
+        b[o] = (byte)((value >> 16) & 0xFF);
+        b[o + 1] = (byte)((value >> 8) & 0xFF);
+        b[o + 2] = (byte)(value & 0xFF);
+    }
 }
