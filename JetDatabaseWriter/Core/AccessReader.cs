@@ -2278,6 +2278,20 @@ public sealed class AccessReader : AccessBase, IAccessReader
         ReadTDefBytesAsync(tdefPage, cancellationToken);
 
     /// <summary>
+    /// Returns a heap-allocated copy of the raw bytes of <paramref name="pageNumber"/>
+    /// (post-decryption). Diagnostic-only helper for the format-probe tool under
+    /// <c>JetDatabaseWriter.FormatProbe</c>; production code should not call this.
+    /// </summary>
+    internal async ValueTask<byte[]> GetRawPageBytesAsync(long pageNumber, CancellationToken cancellationToken)
+    {
+        byte[] pooled = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        var copy = new byte[_pgSz];
+        Buffer.BlockCopy(pooled, 0, copy, 0, _pgSz);
+        ReturnPage(pooled);
+        return copy;
+    }
+
+    /// <summary>
     /// Reads and parses the <c>MSysObjects.LvProp</c> blob for the catalog row whose
     /// <c>Id</c> column's low-24 bits match <paramref name="tdefPage"/>. Returns
     /// <see langword="null"/> when the catalog has no <c>LvProp</c> column (slim
