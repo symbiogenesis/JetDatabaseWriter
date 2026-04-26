@@ -8363,9 +8363,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int realIdxDescStart = namePos;
         int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
 
-        // Decode every real-idx slot's key columns + flag bit.
-        var keyColsByRealIdx = new Dictionary<int, List<(int ColNum, bool Ascending)>>();
-        var flagByRealIdx = new Dictionary<int, bool>();
+        // Decode every real-idx slot's key columns + flag bit. Reuses the
+        // RealIdxEntry shape from MaintainIndexesAsync; FirstDpOffset is
+        // unused on this path (we don't rewrite first_dp here) so it's left
+        // at 0.
+        var realIdxSlots = new Dictionary<int, RealIdxEntry>();
         for (int ri = 0; ri < numRealIdx; ri++)
         {
             int phys = realIdxDescStart + (ri * RealIdxPhysSz);
@@ -8393,8 +8395,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            keyColsByRealIdx[ri] = keyCols;
-            flagByRealIdx[ri] = (tdefBuffer[phys + 42] & 0x01) != 0;
+            realIdxSlots[ri] = new RealIdxEntry(keyCols, FirstDpOffset: 0, IsUnique: (tdefBuffer[phys + 42] & 0x01) != 0);
         }
 
         // Walk the logical-idx entries to (a) promote any real-idx that backs a
@@ -8420,9 +8421,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 pkRealIdxNums.Add(realIdxNum);
             }
 
-            if (li < logIdxNames.Count && !nameByRealIdx.ContainsKey(realIdxNum))
+            if (li < logIdxNames.Count)
             {
-                nameByRealIdx[realIdxNum] = logIdxNames[li];
+                nameByRealIdx.TryAdd(realIdxNum, logIdxNames[li]);
             }
         }
 
@@ -8433,11 +8434,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             snapshotIndexByColNum[tableDef.Columns[c].ColNum] = c;
         }
 
-        foreach (KeyValuePair<int, List<(int ColNum, bool Ascending)>> kvp in keyColsByRealIdx)
+        foreach ((int realIdxNum, RealIdxEntry slot) in realIdxSlots)
         {
-            int realIdxNum = kvp.Key;
-            bool isUnique = (flagByRealIdx.TryGetValue(realIdxNum, out bool flag) && flag) || pkRealIdxNums.Contains(realIdxNum);
-            if (!isUnique)
+            if (!slot.IsUnique && !pkRealIdxNums.Contains(realIdxNum))
             {
                 continue;
             }
@@ -8445,18 +8444,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // Resolve every key column up front; if any column is missing from
             // the snapshot (deleted-column gap), skip — same fall-through model
             // as MaintainIndexesAsync.
-            var keyColInfos = new List<(ColumnInfo Col, int SnapIdx, bool Ascending)>(kvp.Value.Count);
+            var keyColInfos = new List<(ColumnInfo Col, int SnapIdx, bool Ascending)>(slot.KeyColumns.Count);
             bool resolveOk = true;
-            foreach ((int colNum, bool ascending) in kvp.Value)
+            foreach ((int colNum, bool ascending) in slot.KeyColumns)
             {
-                ColumnInfo? col = tableDef.Columns.Find(c => c.ColNum == colNum);
-                if (col is null || !snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
+                if (!snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
                 {
                     resolveOk = false;
                     break;
                 }
 
-                keyColInfos.Add((col, snapIdx, ascending));
+                keyColInfos.Add((tableDef.Columns[snapIdx], snapIdx, ascending));
             }
 
             if (!resolveOk)
