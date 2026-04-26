@@ -11,8 +11,6 @@ public sealed class DatabaseStatistics
     private static readonly IReadOnlyDictionary<string, long> EmptyTableRowCounts =
         new ReadOnlyDictionary<string, long>(new Dictionary<string, long>());
 
-    private IReadOnlyDictionary<string, long> _tableRowCounts = EmptyTableRowCounts;
-
     /// <summary>Gets or initializes the total number of pages in the database.</summary>
     public long TotalPages { get; init; }
 
@@ -26,11 +24,7 @@ public sealed class DatabaseStatistics
     public long TotalRows { get; init; }
 
     /// <summary>Gets the row count for each table.</summary>
-    public IReadOnlyDictionary<string, long> TableRowCounts
-    {
-        get => _tableRowCounts;
-        init => _tableRowCounts = FreezeTableRowCounts(value);
-    }
+    public IReadOnlyDictionary<string, long> TableRowCounts { get; init => field = FreezeTableRowCounts(value); } = EmptyTableRowCounts;
 
     /// <summary>Gets or initializes the page cache hit rate percentage (0-100).</summary>
     public int PageCacheHitRate { get; init; }
