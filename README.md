@@ -617,7 +617,7 @@ The items below are **not yet implemented** and are the most likely places to hi
 ### Indexes
 - **Jet3 (`.mdb` Access 97) rejects `IndexDefinition` entirely.**
 - **Indexable key types are limited.** Live leaf maintenance is unsupported for `OLE`, attachment, and complex columns — these round-trip as schema only and Access rebuilds the leaf on Compact & Repair. If *any* column in a multi-column index is unsupported, the whole index falls through to the schema-only path. Text and memo (`TEXT` / `MEMO`) keys are supported across the entire BMP via a port of the Jackcess "General Legacy" sort-key encoder (Apache 2.0; see `THIRD-PARTY-NOTICES.md`).
-- **No incremental B-tree maintenance.** Each insert/update/delete rebuilds the entire B-tree (no `tail_page` chain, no delta updates). Cost scales with row count. Emitted leaf and intermediate pages do use shared-prefix compression (`pref_len > 0`), so the on-disk footprint is competitive with Access-authored output.
+- **Partial incremental B-tree maintenance.** When the index B-tree is rooted on a single leaf page and the post-mutation entry list still fits on one page, insert/update/delete splice the change into the leaf in place (W4-C-1 / W4-C-2). Trees with one or more intermediate (`0x03`) levels — or any single-leaf tree whose post-mutation entries overflow — fall back to a full bulk rebuild. There is still no `tail_page` append optimisation, no leaf-split / leaf-merge propagation through intermediates, and no in-place insert against a multi-level tree. Emitted leaf and intermediate pages use shared-prefix compression (`pref_len > 0`).
 
 ### Primary & foreign keys
 - **TDEF must fit on one page** after FK entries are appended, otherwise `NotSupportedException`.

@@ -689,6 +689,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // roll the entire batch back if the bulk MaintainIndexesAsync at the end
         // rejects it (e.g. duplicate key inside the batch).
         var batchLocations = new List<RowLocation>();
+        var batchHintRows = new List<(RowLocation Loc, object[] Row)>();
         List<(ColumnConstraint Constraint, long? PreviousValue)>? batchAutoCheckpoints = null;
         int inserted = 0;
 
@@ -727,6 +728,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 RowLocation loc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
                 batchLocations.Add(loc);
+                batchHintRows.Add((loc, row));
                 if (fkCtx != null)
                 {
                     AugmentParentSetsAfterInsert(tableName, tableDef, row, fkCtx);
@@ -737,7 +739,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             if (inserted > 0)
             {
-                await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                bool incremental = await TryMaintainIndexesIncrementalAsync(
+                    entry.TDefPage,
+                    tableDef,
+                    batchHintRows,
+                    deletedRows: null,
+                    cancellationToken).ConfigureAwait(false);
+                if (!incremental)
+                {
+                    await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                }
             }
         }
         catch
@@ -788,6 +799,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
 
         var batchLocations = new List<RowLocation>();
+        var batchHintRows = new List<(RowLocation Loc, object[] Row)>();
         List<(ColumnConstraint Constraint, long? PreviousValue)>? batchAutoCheckpoints = null;
         int inserted = 0;
 
@@ -825,6 +837,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 RowLocation loc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, mappedRow, cancellationToken: cancellationToken).ConfigureAwait(false);
                 batchLocations.Add(loc);
+                batchHintRows.Add((loc, mappedRow));
                 if (fkCtx != null)
                 {
                     AugmentParentSetsAfterInsert(tableName, tableDef, mappedRow, fkCtx);
@@ -835,7 +848,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             if (inserted > 0)
             {
-                await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                bool incremental = await TryMaintainIndexesIncrementalAsync(
+                    entry.TDefPage,
+                    tableDef,
+                    batchHintRows,
+                    deletedRows: null,
+                    cancellationToken).ConfigureAwait(false);
+                if (!incremental)
+                {
+                    await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                }
             }
         }
         catch
@@ -978,17 +1000,31 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int updated = 0;
+        var updateInsertedHints = new List<(RowLocation Loc, object[] Row)>(pendingNewRows.Count);
+        var updateDeletedHints = new List<(RowLocation Loc, object[] Row)>(pendingNewRows.Count);
         foreach ((int i, object[] rowValues) in pendingNewRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            object[] oldRow = snapshot.Rows[i].ItemArray!;
             await MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, cancellationToken).ConfigureAwait(false);
-            await InsertRowDataAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            updateDeletedHints.Add((locations[i], oldRow));
+            RowLocation newLoc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            updateInsertedHints.Add((newLoc, rowValues));
             updated++;
         }
 
         if (updated > 0)
         {
-            await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+            bool incremental = await TryMaintainIndexesIncrementalAsync(
+                entry.TDefPage,
+                tableDef,
+                updateInsertedHints,
+                updateDeletedHints,
+                cancellationToken).ConfigureAwait(false);
+            if (!incremental)
+            {
+                await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return updated;
@@ -1085,17 +1121,29 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int deleted = 0;
+        var deleteHints = new List<(RowLocation Loc, object[] Row)>(matchingIndices.Count);
         foreach (int i in matchingIndices)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            object[] oldRow = snapshot.Rows[i].ItemArray!;
             await MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, cancellationToken).ConfigureAwait(false);
+            deleteHints.Add((locations[i], oldRow));
             deleted++;
         }
 
         if (deleted > 0)
         {
             await AdjustTDefRowCountAsync(entry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
-            await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+            bool incremental = await TryMaintainIndexesIncrementalAsync(
+                entry.TDefPage,
+                tableDef,
+                insertedRows: null,
+                deleteHints,
+                cancellationToken).ConfigureAwait(false);
+            if (!incremental)
+            {
+                await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return deleted;
@@ -4227,7 +4275,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 AugmentParentSetsAfterInsert(tableName, tableDef, values, fkCtx);
             }
 
-            await MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+            // W4-C-1 fast path: try in-place leaf splice for the inserted
+            // row before falling back to a full snapshot+rebuild.
+            (RowLocation Loc, object[] Row)[] hintInserts = [(loc, values)];
+            bool incremental = await TryMaintainIndexesIncrementalAsync(
+                tdefPage,
+                tableDef,
+                hintInserts,
+                deletedRows: null,
+                cancellationToken).ConfigureAwait(false);
+            if (!incremental)
+            {
+                await MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch
         {
@@ -8569,6 +8629,317 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             await WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// W4-C-1 / W4-C-2 fast path: when the change since the previous index
+    /// state is a small set of inserted and/or deleted rows AND every real-idx
+    /// is rooted at a single leaf page that can still hold the post-mutation
+    /// entry list, splice the change into each leaf in place rather than
+    /// rebuilding the whole B-tree from a snapshot. Returns
+    /// <see langword="true"/> when every supported real-idx was maintained
+    /// incrementally; the caller MUST then NOT call
+    /// <see cref="MaintainIndexesAsync"/>. Returns <see langword="false"/>
+    /// when any index can't be served by the fast path — the caller must
+    /// fall back to <see cref="MaintainIndexesAsync"/>, which will rebuild
+    /// every index from a fresh snapshot (any incremental work this method
+    /// already wrote is harmless: the orphaned pages are reclaimed by Access
+    /// on Compact &amp; Repair, exactly like the bulk-rebuild path's own
+    /// orphans).
+    /// <para>
+    /// Falls back when: format is Jet3 (no index emission); no indexes are
+    /// declared; any index has a multi-page TDEF; any key column is
+    /// <c>T_NUMERIC</c> (the W13 canonical-scale pre-pass needs a full
+    /// snapshot); the index B-tree root is not a single leaf
+    /// (<c>page_type = 0x04</c>) with no sibling pointers; the encoder rejects
+    /// any value (text outside General Legacy, etc.); or the spliced entry
+    /// list overflows the leaf payload area.
+    /// </para>
+    /// <para>
+    /// Pre-write unique-index enforcement is handled by W15
+    /// (<c>CheckUniqueIndexesPreInsertAsync</c> /
+    /// <c>CheckUniqueIndexesPreUpdateAsync</c>) before any disk page is
+    /// mutated, so this fast path does not re-check uniqueness — same model
+    /// as the bulk path's post-write check, which is defense-in-depth for
+    /// encoder-rejected indexes that fall through anyway.
+    /// </para>
+    /// </summary>
+    private async ValueTask<bool> TryMaintainIndexesIncrementalAsync(
+        long tdefPage,
+        TableDef tableDef,
+        IReadOnlyList<(RowLocation Loc, object[] Row)>? insertedRows,
+        IReadOnlyList<(RowLocation Loc, object[] Row)>? deletedRows,
+        CancellationToken cancellationToken)
+    {
+        if (_format == DatabaseFormat.Jet3Mdb)
+        {
+            return false;
+        }
+
+        int addCount = insertedRows?.Count ?? 0;
+        int delCount = deletedRows?.Count ?? 0;
+        if (addCount == 0 && delCount == 0)
+        {
+            return true;
+        }
+
+        byte[] tdefPageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] tdefBuffer;
+        try
+        {
+            tdefBuffer = (byte[])tdefPageBytes.Clone();
+        }
+        finally
+        {
+            ReturnPage(tdefPageBytes);
+        }
+
+        int numCols = Ru16(tdefBuffer, _tdNumCols);
+        int numIdx = Ri32(tdefBuffer, _tdNumCols + 2);
+        int numRealIdx = Ri32(tdefBuffer, _tdNumRealIdx);
+        if (numIdx <= 0 || numRealIdx <= 0)
+        {
+            return true;
+        }
+
+        if (numIdx > 1000 || numRealIdx > 1000)
+        {
+            return false;
+        }
+
+        const int RealIdxPhysSz = 52;
+        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
+        int namePos = colStart + (numCols * _colDescSz);
+        for (int i = 0; i < numCols; i++)
+        {
+            if (ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
+            {
+                return false;
+            }
+        }
+
+        int realIdxDescStart = namePos;
+
+        // Decode every real-idx slot's key columns + first_dp offset.
+        var slots = new List<RealIdxEntry>(numRealIdx);
+        for (int ri = 0; ri < numRealIdx; ri++)
+        {
+            int phys = realIdxDescStart + (ri * RealIdxPhysSz);
+            if (phys + RealIdxPhysSz > tdefBuffer.Length)
+            {
+                return false;
+            }
+
+            var keyCols = new List<(int ColNum, bool Ascending)>(10);
+            for (int slot = 0; slot < 10; slot++)
+            {
+                int so = phys + 4 + (slot * 3);
+                int cn = Ru16(tdefBuffer, so);
+                if (cn == 0xFFFF)
+                {
+                    continue;
+                }
+
+                byte order = tdefBuffer[so + 2];
+                keyCols.Add((cn, order != 0x02));
+            }
+
+            if (keyCols.Count == 0)
+            {
+                continue;
+            }
+
+            slots.Add(new RealIdxEntry(keyCols, phys + 4 + 30 + 4, IsUnique: false));
+        }
+
+        if (slots.Count == 0)
+        {
+            return true;
+        }
+
+        var snapshotIndexByColNum = new Dictionary<int, int>(tableDef.Columns.Count);
+        for (int c = 0; c < tableDef.Columns.Count; c++)
+        {
+            snapshotIndexByColNum[tableDef.Columns[c].ColNum] = c;
+        }
+
+        bool tdefDirty = false;
+        foreach (RealIdxEntry rie in slots)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Resolve key columns to (ColumnInfo, snapshot index, ascending).
+            var keyColInfos = new List<(ColumnInfo Col, int SnapIdx, bool Ascending)>(rie.KeyColumns.Count);
+            bool resolveFailed = false;
+            foreach ((int colNum, bool ascending) in rie.KeyColumns)
+            {
+                ColumnInfo? col = tableDef.Columns.Find(c => c.ColNum == colNum);
+                if (col is null || !snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
+                {
+                    resolveFailed = true;
+                    break;
+                }
+
+                // T_NUMERIC needs a per-rebuild canonical scale computed
+                // across the entire snapshot; the fast path can't compute it
+                // without reading the whole table, which is exactly what the
+                // bulk path already does. Bail.
+                if (col.Type == T_NUMERIC)
+                {
+                    resolveFailed = true;
+                    break;
+                }
+
+                keyColInfos.Add((col, snapIdx, ascending));
+            }
+
+            if (resolveFailed)
+            {
+                return false;
+            }
+
+            // Read the index root; require a single-leaf root.
+            long firstDp = (uint)Ri32(tdefBuffer, rie.FirstDpOffset);
+            if (firstDp <= 0)
+            {
+                return false;
+            }
+
+            byte[] rootPageBytes = await ReadPageAsync(firstDp, cancellationToken).ConfigureAwait(false);
+            byte[] rootPage;
+            try
+            {
+                rootPage = (byte[])rootPageBytes.Clone();
+            }
+            finally
+            {
+                ReturnPage(rootPageBytes);
+            }
+
+            if (!IndexLeafIncremental.IsSingleRootLeaf(rootPage))
+            {
+                return false;
+            }
+
+            // Encode the change-set keys for this index.
+            List<(byte[] Key, long DataPage, byte DataRow)> addEntries = EncodeHintEntries(insertedRows, keyColInfos);
+            if (addCount > 0 && addEntries.Count != addCount)
+            {
+                // Encoder rejected at least one row; bail to bulk.
+                return false;
+            }
+
+            List<(long DataPage, byte DataRow)> removePtrs = new(delCount);
+            if (deletedRows != null)
+            {
+                foreach ((RowLocation loc, _) in deletedRows)
+                {
+                    removePtrs.Add((loc.PageNumber, (byte)loc.RowIndex));
+                }
+            }
+
+            List<IndexLeafIncremental.DecodedEntry> existing = IndexLeafIncremental.DecodeEntries(rootPage, _pgSz);
+            List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(existing, addEntries, removePtrs);
+            if (spliced is null)
+            {
+                return false;
+            }
+
+            byte[]? newLeaf = IndexLeafIncremental.TryRebuildLeaf(_pgSz, tdefPage, spliced);
+            if (newLeaf is null)
+            {
+                return false;
+            }
+
+            // Append the new leaf and patch first_dp. Old leaf is orphaned —
+            // same disposal model as the bulk-rebuild path.
+            long newFirstDp = _stream.Length / _pgSz;
+            await AppendPageAsync(newLeaf, cancellationToken).ConfigureAwait(false);
+            Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)newFirstDp));
+            tdefDirty = true;
+        }
+
+        if (tdefDirty)
+        {
+            await WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Encodes the (composite-key, page, row) tuples for the rows in
+    /// <paramref name="rows"/> against the supplied key column descriptors.
+    /// Returns a partially-filled list when an encoder throws — the caller
+    /// detects this by comparing <c>Count</c> to the input count and bailing
+    /// to the bulk-rebuild path.
+    /// </summary>
+    private static List<(byte[] Key, long DataPage, byte DataRow)> EncodeHintEntries(
+        IReadOnlyList<(RowLocation Loc, object[] Row)>? rows,
+        List<(ColumnInfo Col, int SnapIdx, bool Ascending)> keyColInfos)
+    {
+        var result = new List<(byte[] Key, long DataPage, byte DataRow)>(rows?.Count ?? 0);
+        if (rows == null || rows.Count == 0)
+        {
+            return result;
+        }
+
+        foreach ((RowLocation loc, object[] row) in rows)
+        {
+            byte[][] perColumn = new byte[keyColInfos.Count][];
+            int totalLen = 0;
+            bool encoderRejected = false;
+            for (int k = 0; k < keyColInfos.Count; k++)
+            {
+                (ColumnInfo col, int snapIdx, bool ascending) = keyColInfos[k];
+                if (snapIdx >= row.Length)
+                {
+                    encoderRejected = true;
+                    break;
+                }
+
+                object cell = row[snapIdx];
+                object? value = cell is DBNull ? null : cell;
+                try
+                {
+                    perColumn[k] = IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
+                }
+                catch (NotSupportedException)
+                {
+                    encoderRejected = true;
+                    break;
+                }
+                catch (ArgumentException)
+                {
+                    encoderRejected = true;
+                    break;
+                }
+                catch (OverflowException)
+                {
+                    encoderRejected = true;
+                    break;
+                }
+
+                totalLen += perColumn[k].Length;
+            }
+
+            if (encoderRejected)
+            {
+                return result;
+            }
+
+            byte[] composite = new byte[totalLen];
+            int offset = 0;
+            for (int k = 0; k < perColumn.Length; k++)
+            {
+                Buffer.BlockCopy(perColumn[k], 0, composite, offset, perColumn[k].Length);
+                offset += perColumn[k].Length;
+            }
+
+            result.Add((composite, loc.PageNumber, (byte)loc.RowIndex));
+        }
+
+        return result;
     }
 
     private record struct RealIdxEntry(IReadOnlyList<(int ColNum, bool Ascending)> KeyColumns, int FirstDpOffset, bool IsUnique);
