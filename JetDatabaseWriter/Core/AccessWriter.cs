@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -7507,14 +7508,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                byte[]? fixedValue = EncodeFixedValue(column, value);
-                if (fixedValue == null)
+                int fixedSize = FixedSize(column.Type, column.Size);
+                if (fixedSize <= 0)
                 {
                     continue;
                 }
 
-                Buffer.BlockCopy(fixedValue, 0, fixedArea, column.FixedOff, fixedValue.Length);
-                fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + fixedValue.Length);
+                int written = TryEncodeFixedValue(column, value, fixedArea.AsSpan(column.FixedOff, fixedSize));
+                if (written == 0)
+                {
+                    continue;
+                }
+
+                fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + written);
                 SetNullMaskBit(nullMask, column.ColNum, true);
             }
             else
@@ -7596,19 +7602,67 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return size >= 0 && column.FixedOff >= 0 && column.FixedOff + size < _pgSz;
     }
 
-    private byte[]? EncodeFixedValue(ColumnInfo column, object value) => column.Type switch
+    private int TryEncodeFixedValue(ColumnInfo column, object value, Span<byte> dest)
     {
-        T_BYTE => [Convert.ToByte(value, CultureInfo.InvariantCulture)],
-        T_INT => BitConverter.GetBytes(Convert.ToInt16(value, CultureInfo.InvariantCulture)),
-        T_LONG => BitConverter.GetBytes(Convert.ToInt32(value, CultureInfo.InvariantCulture)),
-        T_FLOAT => BitConverter.GetBytes(Convert.ToSingle(value, CultureInfo.InvariantCulture)),
-        T_DOUBLE => BitConverter.GetBytes(Convert.ToDouble(value, CultureInfo.InvariantCulture)),
-        T_DATETIME => BitConverter.GetBytes(Convert.ToDateTime(value, CultureInfo.InvariantCulture).ToOADate()),
-        T_MONEY => BitConverter.GetBytes(decimal.ToOACurrency(Convert.ToDecimal(value, CultureInfo.InvariantCulture))),
-        T_NUMERIC => EncodeNumericValue(Convert.ToDecimal(value, CultureInfo.InvariantCulture)),
-        T_GUID => (value is Guid g ? g : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!)).ToByteArray(),
-        _ => null,
-    };
+        switch (column.Type)
+        {
+            case T_BYTE:
+                dest[0] = Convert.ToByte(value, CultureInfo.InvariantCulture);
+                return 1;
+
+            case T_INT:
+                BinaryPrimitives.WriteInt16LittleEndian(dest, Convert.ToInt16(value, CultureInfo.InvariantCulture));
+                return 2;
+
+            case T_LONG:
+                BinaryPrimitives.WriteInt32LittleEndian(dest, Convert.ToInt32(value, CultureInfo.InvariantCulture));
+                return 4;
+
+            case T_FLOAT:
+                BinaryPrimitives.WriteInt32LittleEndian(
+                    dest,
+                    BitConverter.SingleToInt32Bits(Convert.ToSingle(value, CultureInfo.InvariantCulture)));
+                return 4;
+
+            case T_DOUBLE:
+                BinaryPrimitives.WriteInt64LittleEndian(
+                    dest,
+                    BitConverter.DoubleToInt64Bits(Convert.ToDouble(value, CultureInfo.InvariantCulture)));
+                return 8;
+
+            case T_DATETIME:
+                BinaryPrimitives.WriteInt64LittleEndian(
+                    dest,
+                    BitConverter.DoubleToInt64Bits(Convert.ToDateTime(value, CultureInfo.InvariantCulture).ToOADate()));
+                return 8;
+
+            case T_MONEY:
+                BinaryPrimitives.WriteInt64LittleEndian(
+                    dest,
+                    decimal.ToOACurrency(Convert.ToDecimal(value, CultureInfo.InvariantCulture)));
+                return 8;
+
+            case T_NUMERIC:
+                EncodeNumericValue(Convert.ToDecimal(value, CultureInfo.InvariantCulture), dest);
+                return 17;
+
+            case T_GUID:
+                {
+                    Guid g = value is Guid guid
+                        ? guid
+                        : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!);
+                    if (!g.TryWriteBytes(dest))
+                    {
+                        return 0;
+                    }
+
+                    return 16;
+                }
+
+            default:
+                return 0;
+        }
+    }
 
     private byte[]? EncodeVariableValue(ColumnInfo column, object value)
     {
@@ -7697,7 +7751,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return WrapInlineLongValue(data);
     }
 
-    private byte[] EncodeNumericValue(decimal value)
+    private void EncodeNumericValue(decimal value, Span<byte> dest)
     {
         int[] bits = decimal.GetBits(value);
         int flags = bits[3];
@@ -7717,15 +7771,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             precision = 28;
         }
 
-        var buffer = new byte[17];
-        buffer[0] = precision;
-        buffer[1] = scale;
-        buffer[2] = negative ? (byte)1 : (byte)0;
+        dest[0] = precision;
+        dest[1] = scale;
+        dest[2] = negative ? (byte)1 : (byte)0;
+        dest[3] = 0;
 
-        Wi32(buffer, 4, bits[0]);
-        Wi32(buffer, 8, bits[1]);
-        Wi32(buffer, 12, bits[2]);
-        return buffer;
+        BinaryPrimitives.WriteInt32LittleEndian(dest.Slice(4, 4), bits[0]);
+        BinaryPrimitives.WriteInt32LittleEndian(dest.Slice(8, 4), bits[1]);
+        BinaryPrimitives.WriteInt32LittleEndian(dest.Slice(12, 4), bits[2]);
     }
 
     private void InvalidateCatalogCache()
