@@ -543,4 +543,19 @@ internal static class IndexKeyEncoder
         char c => c.ToString(),
         _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty,
     };
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="columnType"/> is
+    /// supported by <see cref="EncodeEntry(byte, object?, bool)"/> in the
+    /// fixed-width single-call form used by the parent-seek RI enforcement
+    /// path. Excludes <c>T_NUMERIC</c> (requires a per-batch canonical scale
+    /// computed from the snapshot) and <c>T_BOOL</c> (BOOL is in the row
+    /// null mask, never in the index key bytes).
+    /// </summary>
+    internal static bool IsColumnTypeSeekable(byte columnType) => columnType switch
+    {
+        T_BYTE or T_INT or T_LONG or T_MONEY or T_FLOAT or T_DOUBLE
+            or T_DATETIME or T_TEXT or T_MEMO or T_GUID => true,
+        _ => false,
+    };
 }

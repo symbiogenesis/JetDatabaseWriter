@@ -314,6 +314,127 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         await writer.InsertRowAsync(child, [2, 1, 2], TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task Insert_LargeParentTable_SeekPathFindsExistingKey()
+    {
+        // Regression for the seek-based RI enforcement (replacement for the
+        // O(N) parent scan): build a parent with thousands of rows, create
+        // the relationship after the parent rows already exist, then INSERT
+        // a child row whose FK matches a parent key buried deep in the
+        // table. The seek path must find it without loading every parent
+        // row into memory; functional verification only.
+        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        string parent = MakeTableName("BP");
+        string child = MakeTableName("BC");
+
+        const int parentRowCount = 5_000;
+        await using (var writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
+
+            var rows = new List<object[]>(parentRowCount);
+            for (int i = 1; i <= parentRowCount; i++)
+            {
+                rows.Add([i]);
+            }
+
+            await writer.InsertRowsAsync(parent, rows, TestContext.Current.CancellationToken);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_Seek_Big", parent, "Id", child, "ParentId"),
+                TestContext.Current.CancellationToken);
+
+            // Existing parent key (deep in the table) → must succeed via seek.
+            await writer.InsertRowAsync(child, [1, parentRowCount - 7], TestContext.Current.CancellationToken);
+
+            // Missing parent key → must throw.
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await writer.InsertRowAsync(child, [2, parentRowCount + 100], TestContext.Current.CancellationToken));
+            Assert.Contains("FK_Seek_Big", ex.Message, StringComparison.Ordinal);
+        }
+
+        await using var reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Single(t.Rows);
+        Assert.Equal(parentRowCount - 7, Convert.ToInt32(t.Rows[0]["ParentId"], System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task Insert_TextKeyFk_SeekPathHonoursGeneralLegacyEncoding()
+    {
+        // Text key relationships exercise the General Legacy encoder on
+        // both the writer's index leaf emission and the seeker's lookup
+        // path. The earlier HashSet path used case-insensitive ToUpperInvariant
+        // string equality (BuildCompositeKey/AppendNormalized); the seeker
+        // path now relies on the byte-identical encoding round-trip that
+        // the writer uses when building the leaf.
+        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        string parent = MakeTableName("TP");
+        string child = MakeTableName("TC");
+
+        await using (var writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(parent, [new("Code", typeof(string), maxLength: 32)], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("Code", typeof(string), maxLength: 32)], TestContext.Current.CancellationToken);
+
+            await writer.InsertRowsAsync(parent, [["alpha"], ["bravo"], ["charlie"]], TestContext.Current.CancellationToken);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_Seek_Text", parent, "Code", child, "Code"),
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(child, [1, "bravo"], TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await writer.InsertRowAsync(child, [2, "delta"], TestContext.Current.CancellationToken));
+        }
+
+        await using var reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Single(t.Rows);
+    }
+
+    [Fact]
+    public async Task Insert_BulkChildren_SeekPathReusesParentIndexAcrossRows()
+    {
+        // Bulk insert spanning many distinct parent keys must succeed when
+        // every key exists. Verifies (1) the per-call seek-index cache
+        // (FkContext.SeekIndexes) is reused across rows and (2) self-ref
+        // pending tracking does not accidentally reject a real parent key
+        // that is also the FK column of a previously-inserted child.
+        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        string parent = MakeTableName("BP");
+        string child = MakeTableName("BC");
+
+        await using (var writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
+
+            var pRows = new List<object[]>(200);
+            for (int i = 1; i <= 200; i++)
+            {
+                pRows.Add([i]);
+            }
+
+            await writer.InsertRowsAsync(parent, pRows, TestContext.Current.CancellationToken);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_Seek_Bulk", parent, "Id", child, "ParentId"),
+                TestContext.Current.CancellationToken);
+
+            var cRows = new List<object[]>(200);
+            for (int i = 1; i <= 200; i++)
+            {
+                cRows.Add([i, ((i * 7) % 200) + 1]);
+            }
+
+            await writer.InsertRowsAsync(child, cRows, TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Equal(200, t.Rows.Count);
+    }
+
     private static string MakeTableName(string prefix) =>
         $"{prefix}_{Guid.NewGuid():N}".Substring(0, Math.Min(18, prefix.Length + 11));
 

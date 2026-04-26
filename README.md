@@ -623,7 +623,7 @@ The items below are **not yet implemented** and are the most likely places to hi
 - **TDEF must fit on one page** after FK entries are appended, otherwise `NotSupportedException`.
 - **`DropRelationshipAsync` leaves the orphaned real-idx slot in place.** Reclaimed by Access on the next Compact & Repair pass.
 - **`RenameRelationshipAsync` does not update TDEF logical-idx name cookies.** Access regenerates them from the catalog row on the next Compact & Repair pass.
-- **RI enforcement uses an O(N) parent scan** (no index seek).
+- **RI enforcement on `InsertRow*` uses an O(log N) parent-PK index seek** (Jet4/ACE; falls back to a one-shot O(N) parent-key snapshot on Jet3 or when no covering parent index exists). **Cascade-update / cascade-delete on the parent still scan the child table** with an O(N) snapshot — index-seek of the FK side is not yet wired in.
 - **Not yet validated end-to-end through Microsoft Access.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not been round-tripped through a Compact & Repair pass on Windows.
 
 ### Specialized column kinds

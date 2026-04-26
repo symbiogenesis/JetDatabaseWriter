@@ -1323,6 +1323,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 foreignEntry.TDefPage,
                 foreignDef,
                 cancellationToken).ConfigureAwait(false);
+
+            // Populate the freshly-allocated FK index leaves so the seek-based
+            // RI enforcement path (EnforceFkOnInsertAsync) sees existing parent
+            // rows. EmitFkPerTdefEntriesAsync emits empty leaves; without this
+            // rebuild a child INSERT immediately after CreateRelationshipAsync
+            // would fail to match a parent row that was inserted before the
+            // relationship existed. Re-read TDEFs because the emit mutates
+            // both sides' TDEF pages in place.
+            TableDef primaryDefAfter = await ReadRequiredTableDefAsync(primaryEntry.TDefPage, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+            await MaintainIndexesAsync(primaryEntry.TDefPage, primaryDefAfter, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+            if (foreignEntry.TDefPage != primaryEntry.TDefPage)
+            {
+                TableDef foreignDefAfter = await ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+                await MaintainIndexesAsync(foreignEntry.TDefPage, foreignDefAfter, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
@@ -2376,7 +2391,36 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         public Dictionary<string, HashSet<string>> ParentKeySets { get; }
             = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Gets the per-relationship cached resolution of the parent table's
+        /// PK / FK index used by <see cref="EnforceFkOnInsertAsync"/> to
+        /// perform O(log N) seeks instead of a full parent snapshot scan. A
+        /// value of <see langword="null"/> means "resolution attempted and
+        /// the index was not usable" (Jet3 format, no covering real-idx,
+        /// unsupported key type) — the enforcement loop falls back to the
+        /// legacy HashSet-of-keys path in that case.
+        /// </summary>
+        public Dictionary<string, ParentSeekIndex?> SeekIndexes { get; }
+            = new(StringComparer.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Resolved parent-side seek index for a single relationship. The seeker
+    /// uses <see cref="RootPage"/> as the entry point and encodes the FK-side
+    /// row values using <see cref="KeyColumns"/> (one entry per relationship
+    /// PK column, in declaration order) plus the foreign-table column index
+    /// supplying each value.
+    /// </summary>
+    private sealed record ParentSeekIndex(
+        long RootPage,
+        IReadOnlyList<ParentSeekKeyColumn> KeyColumns);
+
+    /// <summary>One column of a parent-seek composite key.</summary>
+    private readonly record struct ParentSeekKeyColumn(
+        byte ColumnType,
+        bool Ascending,
+        int ForeignColumnIndex);
 
     /// <summary>
     /// Loads every enforced foreign-key relationship from the
@@ -2643,6 +2687,50 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
+            // Try the O(log N) parent-seek path first: locate (and cache) the
+            // parent's PK / FK index that backs this relationship and seek
+            // the encoded composite key in its B-tree. Falls back to the
+            // legacy HashSet path when the index is missing (Jet3, schema
+            // mismatch) or its key column types are not supported by the
+            // sort-key encoder.
+            ParentSeekIndex? seekIdx = await ResolveParentSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
+            if (seekIdx != null)
+            {
+                if (!ctx.ParentKeySets.TryGetValue(rel.Name, out HashSet<string>? pendingSet))
+                {
+                    pendingSet = new HashSet<string>(StringComparer.Ordinal);
+                    ctx.ParentKeySets[rel.Name] = pendingSet;
+                }
+
+                if (pendingSet.Contains(key))
+                {
+                    continue;
+                }
+
+                byte[]? encodedKey = TryEncodeSeekKey(seekIdx, values);
+                if (encodedKey != null)
+                {
+                    bool found = await IndexBTreeSeeker.ContainsKeyAsync(
+                        (page, ct) => ReadPageOwnedAsync(page, ct),
+                        _pgSz,
+                        seekIdx.RootPage,
+                        encodedKey,
+                        cancellationToken).ConfigureAwait(false);
+
+                    if (found)
+                    {
+                        continue;
+                    }
+
+                    throw new InvalidOperationException(
+                        $"INSERT into '{foreignTable}' violates foreign-key constraint '{rel.Name}': " +
+                        $"no matching row in '{rel.PrimaryTable}' for the supplied {string.Join(", ", rel.ForeignColumns)} value(s).");
+                }
+
+                // Encoder rejected (e.g. text outside General Legacy, GUID
+                // mismatch, …) — fall through to the HashSet path below.
+            }
+
             HashSet<string> parentKeys = await GetParentKeySetAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
             if (!parentKeys.Contains(key))
             {
@@ -2651,6 +2739,278 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     $"no matching row in '{rel.PrimaryTable}' for the supplied {string.Join(", ", rel.ForeignColumns)} value(s).");
             }
         }
+    }
+
+    /// <summary>
+    /// Page-read adapter that returns a copy of the page bytes (so the
+    /// seeker can hold the buffer past the read; the writer's page pool
+    /// recycles the original buffer immediately).
+    /// </summary>
+    private async ValueTask<byte[]> ReadPageOwnedAsync(long pageNumber, CancellationToken cancellationToken)
+    {
+        byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return (byte[])page.Clone();
+        }
+        finally
+        {
+            ReturnPage(page);
+        }
+    }
+
+    /// <summary>
+    /// Locates (and caches inside <paramref name="ctx"/>) the parent table's
+    /// real-idx whose col_map exactly covers <paramref name="rel"/>'s
+    /// PrimaryColumns in declaration order. Returns <see langword="null"/>
+    /// when no covering index exists, when the format is Jet3 (no index
+    /// emission), or when the parent table cannot be resolved.
+    /// </summary>
+    private async ValueTask<ParentSeekIndex?> ResolveParentSeekIndexAsync(
+        FkRelationship rel,
+        FkContext ctx,
+        CancellationToken cancellationToken)
+    {
+        if (ctx.SeekIndexes.TryGetValue(rel.Name, out ParentSeekIndex? cached))
+        {
+            return cached;
+        }
+
+        ParentSeekIndex? resolved = null;
+        try
+        {
+            if (_format == DatabaseFormat.Jet3Mdb)
+            {
+                return null;
+            }
+
+            CatalogEntry? primaryEntry = await GetCatalogEntryAsync(rel.PrimaryTable, cancellationToken).ConfigureAwait(false);
+            if (primaryEntry == null)
+            {
+                return null;
+            }
+
+            TableDef primaryDef = await ReadRequiredTableDefAsync(primaryEntry.TDefPage, rel.PrimaryTable, cancellationToken).ConfigureAwait(false);
+            CatalogEntry? foreignEntry = await GetCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            if (foreignEntry == null)
+            {
+                return null;
+            }
+
+            TableDef foreignDef = await ReadRequiredTableDefAsync(foreignEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+
+            // Map relationship.PrimaryColumns → ColNum (col_map values).
+            var pkColNums = new int[rel.PrimaryColumns.Count];
+            var pkColTypes = new byte[rel.PrimaryColumns.Count];
+            for (int i = 0; i < rel.PrimaryColumns.Count; i++)
+            {
+                int idx = primaryDef.FindColumnIndex(rel.PrimaryColumns[i]);
+                if (idx < 0)
+                {
+                    return null;
+                }
+
+                pkColNums[i] = primaryDef.Columns[idx].ColNum;
+                pkColTypes[i] = primaryDef.Columns[idx].Type;
+            }
+
+            // Map relationship.ForeignColumns → row index inside an
+            // InsertRow values array (the same indexing GetParentKeySetAsync /
+            // BuildCompositeKey already use).
+            var foreignRowIdx = new int[rel.ForeignColumns.Count];
+            for (int i = 0; i < rel.ForeignColumns.Count; i++)
+            {
+                foreignRowIdx[i] = foreignDef.FindColumnIndex(rel.ForeignColumns[i]);
+                if (foreignRowIdx[i] < 0)
+                {
+                    return null;
+                }
+            }
+
+            (long FirstDp, IReadOnlyList<bool> AscendingFlags)? hit = await TryFindCoveringRealIdxAsync(
+                primaryEntry.TDefPage,
+                pkColNums,
+                cancellationToken).ConfigureAwait(false);
+            if (hit == null)
+            {
+                return null;
+            }
+
+            // Probe each column type with the encoder; if any one rejects,
+            // the seek path cannot serve this relationship and we fall back.
+            for (int i = 0; i < pkColTypes.Length; i++)
+            {
+                if (!IndexKeyEncoder.IsColumnTypeSeekable(pkColTypes[i]))
+                {
+                    return null;
+                }
+            }
+
+            var keyColumns = new ParentSeekKeyColumn[pkColNums.Length];
+            for (int i = 0; i < pkColNums.Length; i++)
+            {
+                keyColumns[i] = new ParentSeekKeyColumn(pkColTypes[i], hit.Value.AscendingFlags[i], foreignRowIdx[i]);
+            }
+
+            resolved = new ParentSeekIndex(hit.Value.FirstDp, keyColumns);
+            return resolved;
+        }
+        finally
+        {
+            ctx.SeekIndexes[rel.Name] = resolved;
+        }
+    }
+
+    /// <summary>
+    /// Walks the TDEF at <paramref name="tdefPage"/>, decodes every real-idx
+    /// physical descriptor, and returns the first slot whose col_map exactly
+    /// matches <paramref name="targetColNums"/> (in declaration order). The
+    /// match is sharing-aware — a non-FK user index that happens to cover
+    /// the same columns is acceptable. Returns <see langword="null"/> when
+    /// no covering real-idx exists, when its <c>first_dp</c> is unset, or
+    /// when the TDEF spans multiple pages.
+    /// </summary>
+    private async ValueTask<(long FirstDp, IReadOnlyList<bool> AscendingFlags)?> TryFindCoveringRealIdxAsync(
+        long tdefPage,
+        int[] targetColNums,
+        CancellationToken cancellationToken)
+    {
+        byte[] pageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] td;
+        try
+        {
+            td = (byte[])pageBytes.Clone();
+        }
+        finally
+        {
+            ReturnPage(pageBytes);
+        }
+
+        if (td[0] != 0x02 || Ru32(td, 4) != 0)
+        {
+            return null;
+        }
+
+        int numCols = Ru16(td, _tdNumCols);
+        int numRealIdx = Ri32(td, _tdNumRealIdx);
+        if (numCols < 0 || numCols > 4096 || numRealIdx <= 0 || numRealIdx > 1000)
+        {
+            return null;
+        }
+
+        int realIdxDescStart = LocateRealIdxDescStart(td, numCols, numRealIdx);
+        if (realIdxDescStart < 0)
+        {
+            return null;
+        }
+
+        const int RealIdxPhysSz = 52;
+        for (int ri = 0; ri < numRealIdx; ri++)
+        {
+            int phys = realIdxDescStart + (ri * RealIdxPhysSz);
+            if (phys + RealIdxPhysSz > td.Length)
+            {
+                break;
+            }
+
+            // col_map: 10 × {col_num(2), col_order(1)}; col_num=0xFFFF is a
+            // padding slot. Match in declaration order against targetColNums.
+            var ascending = new bool[targetColNums.Length];
+            bool match = true;
+            for (int slot = 0; slot < 10; slot++)
+            {
+                int so = phys + 4 + (slot * 3);
+                int cn = Ru16(td, so);
+                if (slot < targetColNums.Length)
+                {
+                    if (cn != targetColNums[slot])
+                    {
+                        match = false;
+                        break;
+                    }
+
+                    ascending[slot] = td[so + 2] != 0x02;
+                }
+                else if (cn != 0xFFFF)
+                {
+                    match = false;
+                    break;
+                }
+            }
+
+            if (!match)
+            {
+                continue;
+            }
+
+            int firstDp = Ri32(td, phys + 38);
+            if (firstDp <= 0)
+            {
+                continue;
+            }
+
+            return (firstDp, ascending);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Encodes the composite seek key for a single FK-side row using the
+    /// parent-side column types and the per-column ascending flags captured
+    /// at index resolution. Returns <see langword="null"/> when any column
+    /// is null (Access permits partial-null FK tuples — caller already
+    /// short-circuited on this path) or when the encoder rejects any value.
+    /// </summary>
+    private static byte[]? TryEncodeSeekKey(ParentSeekIndex idx, object[] values)
+    {
+        var pieces = new byte[idx.KeyColumns.Count][];
+        int total = 0;
+        try
+        {
+            for (int i = 0; i < idx.KeyColumns.Count; i++)
+            {
+                ParentSeekKeyColumn col = idx.KeyColumns[i];
+                if (col.ForeignColumnIndex < 0 || col.ForeignColumnIndex >= values.Length)
+                {
+                    return null;
+                }
+
+                object? v = values[col.ForeignColumnIndex];
+                if (v is DBNull)
+                {
+                    v = null;
+                }
+
+                if (v == null)
+                {
+                    // BuildCompositeKey already rejected partial-null tuples,
+                    // but be defensive — encoding a null key entry still
+                    // produces a well-formed flag-only block.
+                    pieces[i] = IndexKeyEncoder.EncodeEntry(col.ColumnType, null, col.Ascending);
+                }
+                else
+                {
+                    pieces[i] = IndexKeyEncoder.EncodeEntry(col.ColumnType, v, col.Ascending);
+                }
+
+                total += pieces[i].Length;
+            }
+        }
+        catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException || ex is OverflowException)
+        {
+            return null;
+        }
+
+        byte[] composite = new byte[total];
+        int offset = 0;
+        for (int i = 0; i < pieces.Length; i++)
+        {
+            Buffer.BlockCopy(pieces[i], 0, composite, offset, pieces[i].Length);
+            offset += pieces[i].Length;
+        }
+
+        return composite;
     }
 
     /// <summary>
