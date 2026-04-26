@@ -40,7 +40,7 @@ public sealed class AccessOptionsPasswordTests
     [Fact]
     public void AccessReaderOptions_PlainTextConstructor_NullProducesEmpty()
     {
-        var options = new AccessReaderOptions((string?)null);
+        var options = new AccessReaderOptions(null);
 
         Assert.True(options.Password.IsEmpty);
     }
