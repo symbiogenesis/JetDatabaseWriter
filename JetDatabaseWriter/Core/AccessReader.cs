@@ -2297,10 +2297,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        int idxId = msys.Columns.FindIndex(c =>
-            string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
-        int idxLvProp = msys.Columns.FindIndex(c =>
-            string.Equals(c.Name, "LvProp", StringComparison.OrdinalIgnoreCase));
+        int idxId = msys.FindColumnIndex("Id");
+        int idxLvProp = msys.FindColumnIndex("LvProp");
         if (idxId < 0 || idxLvProp < 0)
         {
             return null;
@@ -2367,8 +2365,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return result;
             }
 
-            int idxCol = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
+            int idxCol = td.FindColumnIndex("ColumnName");
             int idxConceptualTable = td.Columns.FindIndex(c =>
                 string.Equals(c.Name, "ConceptualTableID", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(c.Name, "TableName", StringComparison.OrdinalIgnoreCase));
@@ -2520,12 +2517,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return 0;
             }
 
-            int idxCol = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "ColumnName", StringComparison.OrdinalIgnoreCase));
-            int idxConceptualTable = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "ConceptualTableID", StringComparison.OrdinalIgnoreCase));
-            int idxFlatTable = td.Columns.FindIndex(c =>
-                string.Equals(c.Name, "FlatTableID", StringComparison.OrdinalIgnoreCase));
+            int idxCol = td.FindColumnIndex("ColumnName");
+            int idxConceptualTable = td.FindColumnIndex("ConceptualTableID");
+            int idxFlatTable = td.FindColumnIndex("FlatTableID");
 
             if (idxCol < 0 || idxFlatTable < 0)
             {

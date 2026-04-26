@@ -1125,23 +1125,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
-        var values = new object[msys.Columns.Count];
+        object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
 
-        for (int i = 0; i < msys.Columns.Count; i++)
-        {
-            values[i] = DBNull.Value;
-        }
-
-        SetValue(msys, values, "Id", 0);
-        SetValue(msys, values, "ParentId", 0);
-        SetValue(msys, values, "Name", linkedTableName);
-        SetValue(msys, values, "Type", (short)OBJ_LINKED_TABLE);
-        SetValue(msys, values, "DateCreate", now);
-        SetValue(msys, values, "DateUpdate", now);
-        SetValue(msys, values, "Flags", 0);
-        SetValue(msys, values, "ForeignName", foreignTableName);
-        SetValue(msys, values, "Database", sourceDatabasePath);
+        msys.SetValueByName(values, "Id", 0);
+        msys.SetValueByName(values, "ParentId", 0);
+        msys.SetValueByName(values, "Name", linkedTableName);
+        msys.SetValueByName(values, "Type", (short)OBJ_LINKED_TABLE);
+        msys.SetValueByName(values, "DateCreate", now);
+        msys.SetValueByName(values, "DateUpdate", now);
+        msys.SetValueByName(values, "Flags", 0);
+        msys.SetValueByName(values, "ForeignName", foreignTableName);
+        msys.SetValueByName(values, "Database", sourceDatabasePath);
 
         await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
         InvalidateCatalogCache();
@@ -1176,23 +1171,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             : "ODBC;" + connectionString;
 
         TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
-        var values = new object[msys.Columns.Count];
+        object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
 
-        for (int i = 0; i < msys.Columns.Count; i++)
-        {
-            values[i] = DBNull.Value;
-        }
-
-        SetValue(msys, values, "Id", 0);
-        SetValue(msys, values, "ParentId", 0);
-        SetValue(msys, values, "Name", linkedTableName);
-        SetValue(msys, values, "Type", (short)OBJ_LINKED_ODBC);
-        SetValue(msys, values, "DateCreate", now);
-        SetValue(msys, values, "DateUpdate", now);
-        SetValue(msys, values, "Flags", 0);
-        SetValue(msys, values, "ForeignName", foreignTableName);
-        SetValue(msys, values, "Connect", normalizedConnect);
+        msys.SetValueByName(values, "Id", 0);
+        msys.SetValueByName(values, "ParentId", 0);
+        msys.SetValueByName(values, "Name", linkedTableName);
+        msys.SetValueByName(values, "Type", (short)OBJ_LINKED_ODBC);
+        msys.SetValueByName(values, "DateCreate", now);
+        msys.SetValueByName(values, "DateUpdate", now);
+        msys.SetValueByName(values, "Flags", 0);
+        msys.SetValueByName(values, "ForeignName", foreignTableName);
+        msys.SetValueByName(values, "Connect", normalizedConnect);
 
         await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
         InvalidateCatalogCache();
@@ -1301,20 +1291,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // One row per FK column pair (per appendix §"MSysRelationships — TDEF page 5").
         for (int i = 0; i < ccolumn; i++)
         {
-            var values = new object[msysRelDef.Columns.Count];
-            for (int c = 0; c < values.Length; c++)
-            {
-                values[c] = DBNull.Value;
-            }
+            object[] values = msysRelDef.CreateNullValueRow();
 
-            SetValue(msysRelDef, values, "ccolumn", ccolumn);
-            SetValue(msysRelDef, values, "grbit", grbitInt);
-            SetValue(msysRelDef, values, "icolumn", i);
-            SetValue(msysRelDef, values, "szColumn", relationship.ForeignColumns[i]);
-            SetValue(msysRelDef, values, "szObject", relationship.ForeignTable);
-            SetValue(msysRelDef, values, "szReferencedColumn", relationship.PrimaryColumns[i]);
-            SetValue(msysRelDef, values, "szReferencedObject", relationship.PrimaryTable);
-            SetValue(msysRelDef, values, "szRelationship", relationship.Name);
+            msysRelDef.SetValueByName(values, "ccolumn", ccolumn);
+            msysRelDef.SetValueByName(values, "grbit", grbitInt);
+            msysRelDef.SetValueByName(values, "icolumn", i);
+            msysRelDef.SetValueByName(values, "szColumn", relationship.ForeignColumns[i]);
+            msysRelDef.SetValueByName(values, "szObject", relationship.ForeignTable);
+            msysRelDef.SetValueByName(values, "szReferencedColumn", relationship.PrimaryColumns[i]);
+            msysRelDef.SetValueByName(values, "szReferencedObject", relationship.PrimaryTable);
+            msysRelDef.SetValueByName(values, "szRelationship", relationship.Name);
 
             await InsertRowDataAsync(msysRelTdefPage, msysRelDef, values, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
@@ -1956,8 +1942,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     fkColNames[i] = ordered[i].SzColumn;
                 }
 
-                int[] pkColNums = ResolveColNumsOrEmpty(pkDef, pkColNames);
-                int[] fkColNums = ResolveColNumsOrEmpty(fkDef, fkColNames);
+                int[] pkColNums = pkDef.ResolveColNumsOrEmpty(pkColNames);
+                int[] fkColNums = fkDef.ResolveColNumsOrEmpty(fkColNames);
                 if (pkColNums.Length == 0 || fkColNums.Length == 0)
                 {
                     continue;
@@ -2129,23 +2115,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         return results;
-    }
-
-    private static int[] ResolveColNumsOrEmpty(TableDef def, string[] columnNames)
-    {
-        var result = new int[columnNames.Length];
-        for (int i = 0; i < columnNames.Length; i++)
-        {
-            int idx = def.FindColumnIndex(columnNames[i]);
-            if (idx < 0)
-            {
-                return [];
-            }
-
-            result[i] = def.Columns[idx].ColNum;
-        }
-
-        return result;
     }
 
     /// <summary>
@@ -4086,15 +4055,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return type == T_TEXT || type == T_BINARY || type == T_MEMO || type == T_OLE;
     }
 
-    private static void SetValue(TableDef tableDef, object[] values, string columnName, object value)
-    {
-        int index = tableDef.FindColumnIndex(columnName);
-        if (index >= 0)
-        {
-            values[index] = value;
-        }
-    }
-
     private static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, DatabaseFormat format)
     {
         var result = new TableDef();
@@ -4698,21 +4658,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
     {
         TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
-        var values = new object[msys.Columns.Count];
+        object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
 
-        for (int i = 0; i < msys.Columns.Count; i++)
-        {
-            values[i] = DBNull.Value;
-        }
-
-        SetValue(msys, values, "Id", (int)tdefPageNumber);
-        SetValue(msys, values, "ParentId", 0);
-        SetValue(msys, values, "Name", tableName);
-        SetValue(msys, values, "Type", (short)OBJ_TABLE);
-        SetValue(msys, values, "DateCreate", now);
-        SetValue(msys, values, "DateUpdate", now);
-        SetValue(msys, values, "Flags", unchecked((int)catalogFlags));
+        msys.SetValueByName(values, "Id", (int)tdefPageNumber);
+        msys.SetValueByName(values, "ParentId", 0);
+        msys.SetValueByName(values, "Name", tableName);
+        msys.SetValueByName(values, "Type", (short)OBJ_TABLE);
+        msys.SetValueByName(values, "DateCreate", now);
+        msys.SetValueByName(values, "DateUpdate", now);
+        msys.SetValueByName(values, "Flags", unchecked((int)catalogFlags));
 
         // LvProp is the OLE/LongBinary cell carrying per-column persisted properties
         // (DefaultValue, ValidationRule, ValidationText, Description). Only emitted on
@@ -4720,7 +4675,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // column entirely, so SetValue is a no-op).
         if (lvProp is not null)
         {
-            SetValue(msys, values, "LvProp", lvProp);
+            msys.SetValueByName(values, "LvProp", lvProp);
         }
 
         await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -5873,17 +5828,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         TableDef msysComplex = await ReadRequiredTableDefAsync(pg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
-        var values = new object[msysComplex.Columns.Count];
-        for (int i = 0; i < values.Length; i++)
-        {
-            values[i] = DBNull.Value;
-        }
+        object[] values = msysComplex.CreateNullValueRow();
 
-        SetValue(msysComplex, values, "ColumnName", parentColumnName);
-        SetValue(msysComplex, values, "ComplexTypeObjectID", complexTypeObjectId);
-        SetValue(msysComplex, values, "FlatTableID", flatTableId);
-        SetValue(msysComplex, values, "ConceptualTableID", conceptualTableId);
-        SetValue(msysComplex, values, "ComplexID", complexId);
+        msysComplex.SetValueByName(values, "ColumnName", parentColumnName);
+        msysComplex.SetValueByName(values, "ComplexTypeObjectID", complexTypeObjectId);
+        msysComplex.SetValueByName(values, "FlatTableID", flatTableId);
+        msysComplex.SetValueByName(values, "ConceptualTableID", conceptualTableId);
+        msysComplex.SetValueByName(values, "ComplexID", complexId);
 
         await InsertRowDataAsync(pg, msysComplex, values, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
@@ -6306,9 +6257,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private async ValueTask<int> GetNextConceptualTableIdForFlatAsync(long flatTdefPage, TableDef flatDef, CancellationToken cancellationToken)
     {
-        ColumnInfo fkCol = flatDef.Columns.Find(c => c.Type == T_LONG && c.Name.StartsWith('_'))
-            ?? flatDef.Columns.Find(c => c.Type == T_LONG)
-            ?? throw new InvalidDataException("Flat child table is missing a Long FK back-reference column.");
+        ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
 
         int maxId = 0;
         long total = _stream.Length / _pgSz;
@@ -6349,43 +6298,30 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private static object[] BuildAttachmentFlatRow(TableDef flatDef, int conceptualTableId, AttachmentInput input)
     {
-        var values = new object[flatDef.Columns.Count];
-        for (int i = 0; i < values.Length; i++)
-        {
-            values[i] = DBNull.Value;
-        }
+        object[] values = flatDef.CreateNullValueRow();
 
         // FK back-ref: the single T_LONG column starting with "_".
-        ColumnInfo fkCol = flatDef.Columns.Find(c => c.Type == T_LONG && c.Name.StartsWith('_'))
-            ?? flatDef.Columns.Find(c => c.Type == T_LONG)
-            ?? throw new InvalidDataException("Flat child table is missing a Long FK back-reference column.");
+        ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
         values[flatDef.Columns.IndexOf(fkCol)] = conceptualTableId;
 
         string ext = input.FileType ?? DeriveExtension(input.FileName);
         byte[] wrapped = AttachmentWrapper.Encode(ext, input.FileData);
 
-        SetValue(flatDef, values, "FileURL", (object?)input.FileURL ?? DBNull.Value);
-        SetValue(flatDef, values, "FileName", input.FileName);
-        SetValue(flatDef, values, "FileType", ext);
-        SetValue(flatDef, values, "FileFlags", DBNull.Value);
-        SetValue(flatDef, values, "FileTimeStamp", input.FileTimeStamp ?? DateTime.UtcNow);
-        SetValue(flatDef, values, "FileData", wrapped);
+        flatDef.SetValueByName(values, "FileURL", (object?)input.FileURL ?? DBNull.Value);
+        flatDef.SetValueByName(values, "FileName", input.FileName);
+        flatDef.SetValueByName(values, "FileType", ext);
+        flatDef.SetValueByName(values, "FileFlags", DBNull.Value);
+        flatDef.SetValueByName(values, "FileTimeStamp", input.FileTimeStamp ?? DateTime.UtcNow);
+        flatDef.SetValueByName(values, "FileData", wrapped);
         return values;
     }
 
     private static object[] BuildMultiValueFlatRow(TableDef flatDef, int conceptualTableId, object value)
     {
-        var values = new object[flatDef.Columns.Count];
-        for (int i = 0; i < values.Length; i++)
-        {
-            values[i] = DBNull.Value;
-        }
-
-        ColumnInfo fkCol = flatDef.Columns.Find(c => c.Type == T_LONG && c.Name.StartsWith('_'))
-            ?? flatDef.Columns.Find(c => c.Type == T_LONG)
-            ?? throw new InvalidDataException("Flat child table is missing a Long FK back-reference column.");
+        object[] values = flatDef.CreateNullValueRow();
+        ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
         values[flatDef.Columns.IndexOf(fkCol)] = conceptualTableId;
-        SetValue(flatDef, values, "value", value ?? DBNull.Value);
+        flatDef.SetValueByName(values, "value", value ?? DBNull.Value);
         return values;
     }
 
@@ -6848,7 +6784,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
                     }
 
-                    SetValue(msysCxDef, values, "ColumnName", newColumnName);
+                    msysCxDef.SetValueByName(values, "ColumnName", newColumnName);
                     matched.Add((row.PageNumber, row.RowIndex, values));
                 }
             }
