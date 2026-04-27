@@ -502,7 +502,7 @@ W17a validation gap: the probe is read-only on real Access-authored bytes, so th
 
 ### 7.9 W4-C-1 + W4-C-2 — what shipped (2026-04-26)
 
-W4-C-1 (single-leaf incremental INSERT) and W4-C-2 (single-leaf incremental DELETE) lift the W5 "every mutation rebuilds the whole B-tree from a snapshot" cost when the index B-tree is rooted on a single leaf page (`page_type = 0x04`, no sibling pointers, no tail-page chain) AND the post-mutation entry list still fits on that one page. Multi-level trees, overflowing single-leaf trees, and numeric-keyed indexes (which need the W13 per-rebuild canonical-scale pre-pass) all fall back to `MaintainIndexesAsync` exactly as before.
+W4-C-1 (single-leaf incremental INSERT) and W4-C-2 (single-leaf incremental DELETE) lift the W5 "every mutation rebuilds the whole B-tree from a snapshot" cost when the index B-tree is rooted on a single leaf page (`page_type = 0x04`, no sibling pointers, no tail-page chain) AND the post-mutation entry list still fits on that one page. Multi-level trees and overflowing single-leaf trees fall back to `MaintainIndexesAsync` exactly as before. (Numeric-keyed indexes also fell back to bulk in this sub-phase pending the W13 per-rebuild canonical-scale pre-pass; **superseded by W23 (2026-04-27)** — the canonical scale now comes from the column's declared scale persisted in the TDEF descriptor, so numeric keys participate in the fast path; see §7.13.)
 
 New file: [`JetDatabaseWriter/Internal/IndexLeafIncremental.cs`](../../JetDatabaseWriter/Internal/IndexLeafIncremental.cs). Pure helper that:
 
@@ -515,7 +515,7 @@ New writer-side helper: `AccessWriter.TryMaintainIndexesIncrementalAsync(tdefPag
 
 - `_format == DatabaseFormat.Jet3Mdb` (no Jet3 index emission yet — W17b).
 - Multi-page TDEF chain (the writer never produces these for fresh tables, but defensive).
-- Any key column is `T_NUMERIC` (per-rebuild canonical scale needs a snapshot scan).
+- Any key column is `T_NUMERIC` AND the column was written by a pre-W23 build (descriptor `NumericPrecision == 0`) — fall back to the W13 snapshot-driven canonical-scale pre-pass. W23+ NUMERIC columns engage the fast path using the declared scale.
 - The index root is not a single leaf (`IsSingleRootLeaf` returns false).
 - The encoder rejects any value (text outside General Legacy, etc.).
 - The spliced entry list overflows the leaf payload area (`TryRebuildLeaf` returns `null`).
@@ -542,7 +542,7 @@ Validation:
 W4-C-1/W4-C-2 caveats:
 
 - **Update path now uses `InsertRowDataLocAsync` everywhere.** Previously `UpdateRowsAsync` called `InsertRowDataAsync` (no-loc variant). The change is internal and the public surface is identical — the new loc is only used to populate the incremental hint.
-- **The fast path is silently skipped per-index when its key column is `T_NUMERIC`.** A table with a mix of numeric and non-numeric indexes will trigger the bulk-rebuild fall-back even when the non-numeric indexes could have been maintained incrementally. Lifting this would require either pre-computing the canonical scale from a snapshot (defeating the purpose) or persisting the canonical scale alongside the index. Out of scope for this sub-phase.
+- **The fast path is silently skipped per-index when its key column is `T_NUMERIC` AND the file was written before W23.** Once the column is rewritten by a CREATE TABLE under W23+ the declared scale is persisted in the descriptor and the fast path engages. See §7.13.
 - **No batched leaf-page allocation.** Each successful fast-path call appends one new leaf page per mutated index. A 5-row batch insert against a 3-index table allocates 3 new leaves (one per index, holding the post-batch state) — not 15. This already wins over the bulk path on schema-evolution-style workloads.
 - **Validation gap (§8):** Microsoft Access compact-and-repair validation is still pending. The fast path emits the same byte format as the W3/W4 bulk path (it goes through `IndexLeafPageBuilder.BuildJet4LeafPage` with prefix compression enabled), so any file Access can read after a W5 bulk rebuild it can read after a W4-C-1/W4-C-2 incremental update.
 
@@ -648,7 +648,7 @@ Bail triggers (caller falls through to W4-D bulk rebuild):
 - 3+ page split needed.
 - Parent intermediate overflow on summary update or new entry insertion (recursive intermediate split is a future W4 sub-phase).
 - Descent overshoot (search key sorts above every summary on some intermediate; the W18 `tail_page` chain is reachable but the surgical path needs a deterministic (page, child-index) pair at every level).
-- Encoder rejects any change-set key (T_NUMERIC overflow, text outside General Legacy, etc.) — the existing W4-D pre-checks catch this before the surgical path is invoked.
+- Encoder rejects any change-set key (text outside General Legacy, etc.) — the existing W4-D pre-checks catch this before the surgical path is invoked.
 
 Side effect: `EnforceFkOnInsertAsync` and friends already passed `removeEntries` (with row pointers), but the surgical path also needs the encoded delete keys for path verification. `TryMaintainIndexesIncrementalAsync` now calls `EncodeHintEntries(deletedRows, keyColInfos)` and derives `removePtrs` from the result; existing W4-C-1/W4-C-2 and W4-D paths are unaffected (they consume only the pointer list).
 
@@ -663,6 +663,44 @@ W4-C-3 / W4-C-4 caveats:
 - **Multi-leaf change-sets always bail.** A common case where this hits is updates that change an indexed column's value such that the new key sorts into a different leaf than the old key. The surgical path requires every key in the batch to descend to the same leaf — when two keys differ at any intermediate, it bails to W4-D. Splitting the batch into per-leaf sub-batches and running surgical mutation per group is a possible future optimisation.
 - **Empty-leaf underflow always bails.** Deleting every entry from a leaf would orphan it (and leave its summary in the parent stale). W4-C-5 (merge / redistribute with siblings on delete underflow) is the planned follow-up.
 - **Validation gap (§8):** Microsoft Access compact-and-repair validation is still pending. The surgical path emits the same byte format as the W3/W4 bulk path through `IndexLeafPageBuilder.BuildLeafPage` and `IndexBTreeBuilder.TryBuildIntermediatePage` (both with prefix compression enabled), so any file Access can read after a W4-D rebuild it can read after a W4-C-3 or W4-C-4 mutation.
+
+### 7.13 W23 — what shipped (2026-04-27)
+
+W23 drops the `T_NUMERIC` bail from every incremental fast path (W4-C-1, W4-C-2, W4-C-3, W4-C-4, W18, W4-D). Before W23 every NUMERIC-keyed mutation fell through to the bulk rebuild because the canonical sort-key scale required a snapshot of every live row to compute `max(natural-scale)` per index. After W23 the canonical scale is the column's DECLARED scale, persisted in the TDEF column descriptor and read on load — the same scheme Microsoft Access itself uses.
+
+What's persisted:
+
+- `ColumnDefinition.NumericPrecision` (`byte`, default 18) and `NumericScale` (`byte`, default 0) — the Access "Number → Decimal" UI defaults. Validation: precision must be 1–28, scale must be ≤ precision and ≤ 28.
+- `AccessWriter.BuildTableDefinition` writes precision at TDEF column-descriptor offset 11 and scale at offset 12 for every `T_NUMERIC (0x10)` column on Jet4 / ACE (Jet3 has no NUMERIC). These are the same bytes Jackcess' `FixedPointColumnDescriptor` reads on parse, and the same bytes Access-authored `fixedNumericTest.accdb` carries (verified via `docs/design/format-probe-appendix-complex.md` — descriptor bytes `12 00 00 00` = precision 0x12 = 18, scale 0).
+- `AccessBase.LoadColumnInfos` parses both bytes back into `ColumnInfo.NumericPrecision` / `NumericScale`. `ColumnMetadata` exposes them on the public reader API.
+
+What changed in encoding: new `IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, declaredScale, legacy)` rounds the input value to the declared scale via `decimal.Round(d, declaredScale, MidpointRounding.ToEven)` before delegating to the existing `EncodeNumericEntry`. This matches Access's "round half to even" (banker's rounding) on store. Half-even is `MidpointRounding.ToEven`'s default behaviour and is what Access has used since at least Jet 4.
+
+Where the new path engages:
+
+- `EncodeHintEntries` (used by every fast path's encoded-key derivation) — calls `EncodeNumericEntryAtDeclaredScale(value, ascending, col.NumericScale, legacyNumeric)` for `T_NUMERIC` columns; non-numeric columns unchanged. Method changed from `private static` to `private` to access `_format`.
+- `EncodeCompositeKeyForUniqueCheck` (W15 pre-insert duplicate check) — same call site update.
+- `MaintainIndexesAsync` bulk rebuild — when `col.NumericPrecision != 0` the per-index canonical scale is the declared scale; the legacy max-natural snapshot pre-pass is preserved (and only invoked) when the column descriptor reports `NumericPrecision == 0`, which only happens for files written before W23.
+- `CheckUniqueIndexesCore` (W15 bulk path) — same declared-scale-with-legacy-fallback rewrite.
+- `TryMaintainIndexesIncrementalAsync` (W4-C entry point) — bail condition rewritten from `if (col.Type == T_NUMERIC) bail` to `if (col.Type == T_NUMERIC && col.NumericPrecision == 0) bail`. Only legacy (pre-W23) files take the bail.
+
+Backward compatibility:
+
+- Files written before W23 have descriptor bytes 11/12 set to zero for NUMERIC columns. Both reader and writer treat `NumericPrecision == 0` as "legacy file"; the bulk path falls back to the snapshot pre-pass and the incremental fast paths bail to bulk. Once a CREATE TABLE under W23+ rewrites the column descriptor, the declared-scale path engages.
+- `BuildColumnDefinitionFromInfo` reads back `NumericPrecision == 0` and substitutes `18` so callers see the Access default rather than an invalid zero precision.
+
+Validation:
+
+- 9 round-trip tests in [`IndexLimitationsW23NumericIncrementalTests`](../../JetDatabaseWriter.Tests/Core/IndexLimitationsW23NumericIncrementalTests.cs): metadata round-trip (declared and default), single-leaf splice on numeric key (file-growth assertion confirms incremental path engaged), tail append on multi-level numeric tree, incremental delete, unique pre-check at declared scale, half-even rounding collision at declared scale 0, precision and scale validation.
+- 1 existing test in `IndexWriterAdvancedTests` (`UniqueDecimalIndex_DuplicateInsert_Throws`) updated to declare scale=2 explicitly so the duplicate detection point under the new declared-scale semantics matches Access behaviour.
+- `LimitationsTests.SchemaEvolution_ColumnDefinition_ExposesConstraintProperties` updated to include the two new properties in the alphabetical expected list.
+- Full suite: 2318 / 2318 passing.
+
+W23 caveats:
+
+- **Validation gap (§8):** the descriptor bytes 11/12 emit path has not been pointed at an Access-authored fixed-numeric column outside the existing `fixedNumericTest.accdb` fixture; cross-Access compact-and-repair has not been performed.
+- **`TryDecodeFixedInlineTyped` still skips `T_NUMERIC`.** The W22 single-row reader used by cascade-update / cascade-delete recursion returns null when any in-scope column is `T_NUMERIC`, falling back to the W10 child-table snapshot scan. The descriptor scale is now available, but reassembling the typed `decimal` value from the inline 17-byte payload is a separate work item (the parsing code lives next to the LVAL handling that the same method already declines). Tangential to W23; tracked as a future small phase.
+- **No persisted-property scale.** Access also stores the scale (and `DecimalPlaces`) in the persisted column-property block; W23 only writes the TDEF descriptor bytes. Access reads either source, so this is a cosmetic gap (the property block scale is what the Access UI shows in Design View, but the engine canonicalises against the descriptor).
 
 ## 8. Validation strategy
 

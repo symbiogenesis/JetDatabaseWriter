@@ -215,6 +215,8 @@ public sealed class LimitationsTests : IDisposable
             "MaxLength",
             "MultiValueElementType",
             "Name",
+            "NumericPrecision",
+            "NumericScale",
             "ValidationRule",
             "ValidationRuleExpression",
             "ValidationText",

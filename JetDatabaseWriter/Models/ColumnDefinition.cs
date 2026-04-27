@@ -170,4 +170,26 @@ public sealed record ColumnDefinition
     /// leave this at <c>0</c>; Phase C3 will populate it on table creation.
     /// </summary>
     internal int ComplexId { get; init; }
+
+    /// <summary>
+    /// Gets the declared precision (1..28, total significant digits) for a
+    /// <c>decimal</c> / <c>T_NUMERIC</c> column. Default <c>18</c> matches
+    /// the Microsoft Access "Number → Decimal" UI default. Persisted to the
+    /// JET TDEF column-descriptor <c>misc</c> slot at descriptor-relative
+    /// offset 11 (Jet4 / ACE only — Jet3 has no <c>T_NUMERIC</c>). Ignored
+    /// for non-decimal columns.
+    /// </summary>
+    public byte NumericPrecision { get; init; } = 18;
+
+    /// <summary>
+    /// Gets the declared scale (0..28, decimal places) for a <c>decimal</c>
+    /// / <c>T_NUMERIC</c> column. Default <c>0</c> matches the Microsoft
+    /// Access "Number → Decimal" UI default. Persisted at descriptor-relative
+    /// offset 12. Index encoders rescale every cell value to this scale via
+    /// <see cref="System.MidpointRounding.ToEven"/> rounding so a single
+    /// canonical scale governs the B-tree (mirroring Access, which stores
+    /// every <c>T_NUMERIC</c> cell at the declared scale). Must satisfy
+    /// <c>NumericScale &lt;= NumericPrecision</c>.
+    /// </summary>
+    public byte NumericScale { get; init; }
 }

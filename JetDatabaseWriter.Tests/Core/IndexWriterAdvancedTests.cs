@@ -395,12 +395,14 @@ public sealed class IndexWriterAdvancedTests
 
         await writer.CreateTableAsync(
             "T",
-            [new ColumnDefinition("Amount", typeof(decimal))],
+            [new ColumnDefinition("Amount", typeof(decimal)) { NumericPrecision = 18, NumericScale = 2 }],
             [new IndexDefinition("UQ_Amount", "Amount") { IsUnique = true }],
             ct);
 
-        // 1.50 and 1.5 normalise to the same numeric value; they must collide
-        // under the target-scale normalisation.
+        // 1.50 and 1.5 normalise to the same numeric value at the column's
+        // declared scale (2); they must collide under the canonical-scale
+        // index encoding. (The intermediate 2m insert is at a different
+        // canonical value and must succeed.)
         await writer.InsertRowAsync("T", [1.50m], ct);
         await writer.InsertRowAsync("T", [2m], ct);
 

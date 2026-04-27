@@ -467,6 +467,45 @@ internal static class IndexKeyEncoder
     }
 
     /// <summary>
+    /// W23 (2026-04-27) — Decimal sort-key wrapper that mirrors Microsoft Access
+    /// semantics for canonical scale: a <c>T_NUMERIC</c> column has a single
+    /// declared scale that governs every cell, so the index encoder rescales
+    /// each value to <paramref name="declaredScale"/> via
+    /// <see cref="MidpointRounding.ToEven"/> rounding before delegating to
+    /// <see cref="EncodeNumericEntry"/>. Removes the need for the per-rebuild
+    /// snapshot pre-pass that previously computed
+    /// <c>max(naturalScale)</c> across the table — the W4-C / W4-D / W18
+    /// incremental fast paths now participate on numeric keys with no extra
+    /// I/O. Null / <see cref="DBNull"/> emit the standard null flag byte.
+    /// </summary>
+    public static byte[] EncodeNumericEntryAtDeclaredScale(object? value, bool ascending, byte declaredScale, bool legacy)
+    {
+        if (declaredScale > 28)
+        {
+            throw new ArgumentOutOfRangeException(nameof(declaredScale), declaredScale, "declaredScale must be in [0, 28].");
+        }
+
+        if (value is null || value is DBNull)
+        {
+            return EncodeNumericEntry(null, ascending, declaredScale, legacy);
+        }
+
+        decimal d = ToDecimal(value);
+        int natural = (decimal.GetBits(d)[3] >> 16) & 0x7F;
+        if (natural > declaredScale)
+        {
+            // Mirror Access: cells whose natural scale exceeds the column's
+            // declared scale are rounded half-to-even to fit. (Access stores
+            // every T_NUMERIC cell at the declared scale on insert; we don't
+            // round at the row-write boundary today, but the index key MUST
+            // be canonical or unique enforcement and seeks both break.)
+            d = decimal.Round(d, declaredScale, MidpointRounding.ToEven);
+        }
+
+        return EncodeNumericEntry(d, ascending, declaredScale, legacy);
+    }
+
+    /// <summary>
     /// Returns the maximum natural scale (decimal places) across the supplied
     /// values. Null and <see cref="DBNull"/> are skipped. Used by
     /// <see cref="EncodeNumericEntry"/> callers to compute a per-rebuild
