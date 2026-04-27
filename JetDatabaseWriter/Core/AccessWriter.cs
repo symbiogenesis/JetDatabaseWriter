@@ -11133,17 +11133,26 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // of-leaf intermediate (deepest captured level), greedy-split
         // the entries 2-way and either propagate to the grandparent or
         // (if this is the root) allocate a fresh root and patch first_dp.
-        long? newRootPage = null;
-        if (!TryStageIntermediateRewrites(
-                layout,
-                tdefPage,
-                groups,
-                parentOps,
-                existingPageRewrites,
-                ref nextAllocatedPageNumber,
-                newPageAppends,
-                out newRootPage,
-                cancellationToken))
+        // W4-C-7-v2 (2026-04-27): higher-level (non-parent-of-leaf)
+        // intermediates split too — the new helper looks up child
+        // intermediates' rightmost-leaf via either pending overrides,
+        // staged rewrites, or a cache-backed read of the live page.
+        var stagingState = new IntermediateStagingState
+        {
+            NextAllocatedPageNumber = nextAllocatedPageNumber,
+        };
+        bool stagingOk = await TryStageIntermediateRewritesAsync(
+            layout,
+            tdefPage,
+            groups,
+            parentOps,
+            existingPageRewrites,
+            stagingState,
+            newPageAppends,
+            cancellationToken).ConfigureAwait(false);
+        nextAllocatedPageNumber = stagingState.NextAllocatedPageNumber;
+        long? newRootPage = stagingState.NewRootPage;
+        if (!stagingOk)
         {
             return false;
         }
@@ -11449,30 +11458,91 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
+    /// Mutable staging state shared between
+    /// <see cref="TrySurgicalCrossLeafMaintainAsync"/> and
+    /// <see cref="TryStageIntermediateRewritesAsync"/>. Replaces the
+    /// <c>ref</c>/<c>out</c> parameters that the original synchronous helper
+    /// used (async signatures cannot carry <c>ref</c>/<c>out</c>).
+    /// </summary>
+    private sealed class IntermediateStagingState
+    {
+        /// <summary>Gets or sets the next page number to allocate from the end of the file.</summary>
+        public long NextAllocatedPageNumber { get; set; }
+
+        /// <summary>Gets or sets the page number of the freshly-allocated root intermediate when the root split (W4-C-7).</summary>
+        public long? NewRootPage { get; set; }
+    }
+
+    /// <summary>
+    /// W4-C-7-v2 helper. Returns the effective <c>tail_page</c> (rightmost
+    /// leaf reachable through <paramref name="intermediatePage"/>'s subtree)
+    /// taking pending mutations into account. Lookup priority:
+    /// <list type="number">
+    ///   <item><paramref name="overrides"/> (explicit per-page tail recorded
+    ///   when an intermediate was rewritten or split earlier in the same
+    ///   batch);</item>
+    ///   <item><paramref name="rewrites"/> (staged in-memory rewrite of the
+    ///   page \u2014 read its <c>tail_page</c> header bytes);</item>
+    ///   <item>live page bytes via the page cache (untouched intermediates).</item>
+    /// </list>
+    /// </summary>
+    private async ValueTask<long> GetEffectiveTailPageAsync(
+        long intermediatePage,
+        Dictionary<long, long> overrides,
+        Dictionary<long, byte[]> rewrites,
+        CancellationToken cancellationToken)
+    {
+        if (overrides.TryGetValue(intermediatePage, out long staged))
+        {
+            return staged;
+        }
+
+        if (rewrites.TryGetValue(intermediatePage, out byte[]? rewriteBytes))
+        {
+            return IndexLeafIncremental.ReadTailPage(rewriteBytes);
+        }
+
+        byte[] raw = await ReadPageAsync(intermediatePage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return IndexLeafIncremental.ReadTailPage(raw);
+        }
+        finally
+        {
+            ReturnPage(raw);
+        }
+    }
+
+    /// <summary>
     /// Stage rewrites for every parent intermediate touched by per-leaf ops,
     /// then propagate any resulting max-key changes up each LeafGroup's
     /// captured path. Returns <see langword="false"/> on any unrecoverable
-    /// shared-ancestor conflict. W4-C-7: when an in-place rebuild overflows
-    /// AND the page is a parent-of-leaf intermediate (deepest captured
-    /// level whose children are leaves), greedy-split the entries 2-way and
-    /// either propagate to the grandparent (Replace + InsertAfter) or, if
-    /// the splitting page IS the root, allocate a new root intermediate
-    /// with two summary entries pointing at the two halves and signal the
-    /// caller to patch <c>first_dp</c>. Bails on overflow at higher
-    /// (non-parent-of-leaf) levels — full recursive split is W4-C-7-v2.
+    /// shared-ancestor conflict. W4-C-7-v1: when an in-place rebuild
+    /// overflows AND the page is a parent-of-leaf intermediate (deepest
+    /// captured level whose children are leaves), greedy-split the entries
+    /// 2-way and either propagate to the grandparent (Replace + InsertAfter)
+    /// or, if the splitting page IS the root, allocate a new root
+    /// intermediate with two summary entries pointing at the two halves and
+    /// signal the caller to patch <c>first_dp</c>. W4-C-7-v2 (2026-04-27):
+    /// higher-level intermediates (children are themselves intermediates)
+    /// also split in place — the left half's <c>tail_page</c> is computed by
+    /// looking up the rightmost-child intermediate's effective tail via
+    /// staged overrides, staged rewrites, or a cache-backed read of the
+    /// live page. Recursive split through any number of levels (up to root
+    /// reallocation) is supported; only 3+-page splits at any single level
+    /// (TryGreedySplitIntermediateInTwo overflow) still bail to W4-D.
     /// </summary>
-    private bool TryStageIntermediateRewrites(
+    private async ValueTask<bool> TryStageIntermediateRewritesAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
         Dictionary<long, LeafGroup> groups,
         Dictionary<long, List<IntermediateOp>> parentOps,
         Dictionary<long, byte[]> existingPageRewrites,
-        ref long nextAllocatedPageNumber,
+        IntermediateStagingState stagingState,
         List<byte[]> newPageAppends,
-        out long? newRootPage,
         CancellationToken cancellationToken)
     {
-        newRootPage = null;
+        stagingState.NewRootPage = null;
 
         // Track which intermediates are "parent-of-leaf" (children are
         // leaves, NOT intermediates). These are the only pages W4-C-7 v1
@@ -11636,15 +11706,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // W4-C-7 (2026-04-27) — intermediate overflow. Greedy-split
                 // the entries 2-way; either grandparent absorbs the new
                 // summary OR (if this page is the root) we allocate a fresh
-                // root and signal the caller to patch first_dp.
-                if (!parentOfLeaf.Contains(deepest))
-                {
-                    // Higher-level intermediate (children are themselves
-                    // intermediates). v1 doesn't recompute child tail_page
-                    // headers — bail to W4-D. (Recursive split is W4-C-7-v2.)
-                    return false;
-                }
-
+                // root and signal the caller to patch first_dp. W4-C-7-v2
+                // (2026-04-27) extends this to higher-level intermediates
+                // (children are themselves intermediates) by computing the
+                // left half's tail_page from the rightmost child's effective
+                // tail (staged override, staged rewrite, or live page).
                 if (!TryGreedySplitIntermediateInTwo(
                         layout, _pgSz, tdefPage, newEntries, out var leftEntries, out var rightEntries))
                 {
@@ -11653,16 +11719,32 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     return false;
                 }
 
-                long newRightIntPage = nextAllocatedPageNumber++;
+                long newRightIntPage = stagingState.NextAllocatedPageNumber++;
                 var leftLast = leftEntries[leftEntries.Count - 1];
                 var rightLast = rightEntries[rightEntries.Count - 1];
 
-                // Children are leaves at this level → tail_page = last
-                // entry's child page. Right half inherits the original
-                // tail_page (which is the rightmost leaf in this subtree,
-                // and the right half DOES contain that subtree).
-                long leftTail = leftLast.ChildPage;
-                long rightTail = origTail != 0 ? origTail : rightLast.ChildPage;
+                // tail_page of each half = the rightmost LEAF reachable
+                // through that half's rightmost child. Parent-of-leaf:
+                // child IS the leaf, so left/rightTail equals leftLast/
+                // rightLast.ChildPage. Higher level: child is itself an
+                // intermediate — look up its effective tail_page (which
+                // may already have been mutated this batch).
+                long leftTail;
+                long rightTail;
+                if (parentOfLeaf.Contains(deepest))
+                {
+                    leftTail = leftLast.ChildPage;
+                    rightTail = origTail != 0 ? origTail : rightLast.ChildPage;
+                }
+                else
+                {
+                    leftTail = await GetEffectiveTailPageAsync(
+                        leftLast.ChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
+                        .ConfigureAwait(false);
+                    rightTail = await GetEffectiveTailPageAsync(
+                        rightLast.ChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
+                        .ConfigureAwait(false);
+                }
 
                 byte[]? leftIntBytes;
                 byte[]? rightIntBytes;
@@ -11691,13 +11773,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 existingPageRewrites[deepest] = leftIntBytes;
                 newPageAppends.Add(rightIntBytes);
 
+                // Record both halves' tails so any shallower split that
+                // looks up either page picks up the post-split value
+                // without re-reading the (now stale) live page.
+                intermediateTailOverrides[deepest] = leftTail;
+                intermediateTailOverrides[newRightIntPage] = rightTail;
+
                 if (intermediateGrandparent.TryGetValue(deepest, out (long ParentPage, int IndexInParent) gpSplit))
                 {
                     // Grandparent absorbs: replace the original summary at
                     // IndexInParent with the LEFT half's summary, then
                     // InsertAfter the RIGHT half's summary. Recurse into
-                    // grandparent in case it also overflows (v1 will bail
-                    // since grandparent is NOT parent-of-leaf).
+                    // grandparent in case it also overflows — W4-C-7-v2
+                    // handles this for any depth.
                     AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
                         OriginalIndex: gpSplit.IndexInParent,
                         Type: IntermediateOpType.Replace,
@@ -11724,14 +11812,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     // Allocate a fresh root with two summary entries
                     // pointing at the two halves. tail_page of the new
                     // root = right half's tail (= rightmost leaf in tree).
-                    if (newRootPage.HasValue)
+                    if (stagingState.NewRootPage.HasValue)
                     {
                         // Already split a root once in this batch (multi-
                         // group case); only one root is allowed. Bail.
                         return false;
                     }
 
-                    long newRootPageAlloc = nextAllocatedPageNumber++;
+                    long newRootPageAlloc = stagingState.NextAllocatedPageNumber++;
                     var rootEntries = new List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)>(2)
                     {
                         (leftLast.Key, leftLast.DataPage, leftLast.DataRow, deepest),
@@ -11755,7 +11843,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     }
 
                     newPageAppends.Add(newRootBytes);
-                    newRootPage = newRootPageAlloc;
+                    stagingState.NewRootPage = newRootPageAlloc;
                 }
 
                 continue;
