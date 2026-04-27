@@ -91,6 +91,11 @@ internal static class CompoundFileReader
             throw new InvalidDataException($"Unsupported CFB sector shift: {sectorShift}.");
         }
 
+        if (majorVersion != 3 && majorVersion != 4)
+        {
+            throw new InvalidDataException($"Unsupported CFB major version: {majorVersion}.");
+        }
+
         if ((majorVersion == 3 && sectorShift != 9) || (majorVersion == 4 && sectorShift != 12))
         {
             throw new InvalidDataException(
@@ -195,7 +200,13 @@ internal static class CompoundFileReader
     {
         // Root entry holds the start sector + size of the mini stream.
         uint rootStart = BinaryPrimitives.ReadUInt32LittleEndian(directory.AsSpan(0x74));
-        long rootSize = BinaryPrimitives.ReadUInt32LittleEndian(directory.AsSpan(0x78)) | ((long)BinaryPrimitives.ReadUInt32LittleEndian(directory.AsSpan(0x7C)) << 32);
+
+        // Per MS-CFB §2.6.1, the high 32 bits of the stream-size field MUST
+        // be ignored when the major version is 3 (512-byte sectors); some
+        // writers leave garbage there.
+        long rootSize = hdr.SectorSize == 512
+            ? BinaryPrimitives.ReadUInt32LittleEndian(directory.AsSpan(0x78))
+            : (long)BinaryPrimitives.ReadUInt64LittleEndian(directory.AsSpan(0x78, 8));
 
         if (rootStart == EndOfChain || rootStart == FreeSect || rootSize <= 0)
         {
@@ -243,8 +254,11 @@ internal static class CompoundFileReader
             uint startSector = BinaryPrimitives.ReadUInt32LittleEndian(entry.Slice(0x74, 4));
 
             // Stream size is stored as a single little-endian uint64 spanning
-            // 0x78..0x7F; cast to long since we cap usable size at 2 GiB anyway.
-            long size = (long)BinaryPrimitives.ReadUInt64LittleEndian(entry.Slice(0x78, 8));
+            // 0x78..0x7F; for v3 (512-byte sectors) the high 32 bits MUST be
+            // ignored per MS-CFB §2.6.1 (some writers leave garbage there).
+            long size = hdr.SectorSize == 512
+                ? BinaryPrimitives.ReadUInt32LittleEndian(entry.Slice(0x78, 4))
+                : (long)BinaryPrimitives.ReadUInt64LittleEndian(entry.Slice(0x78, 8));
 
             if (size <= 0)
             {

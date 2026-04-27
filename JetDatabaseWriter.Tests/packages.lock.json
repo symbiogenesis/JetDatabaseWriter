@@ -188,13 +188,13 @@
           "xunit.v3.runner.common": "[4.0.0-pre.81]"
         }
       },
-      "JetDatabaseWriter": {
+      "jetdatabasewriter": {
         "type": "Project"
       },
-      "JetDatabaseWriter.scaffold": {
+      "jetdatabasewriter.scaffold": {
         "type": "Project",
         "dependencies": {
-          "JetDatabaseWriter": "[3.0.0, )",
+          "JetDatabaseWriter": "[4.0.0, )",
           "Microsoft.CodeAnalysis.CSharp": "[4.*, )",
           "System.CommandLine": "[2.0.7, )"
         }

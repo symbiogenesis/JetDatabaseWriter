@@ -157,7 +157,7 @@ internal static class CompoundFileWriter
                 file,
                 dirOffset + ((i + 1) * DirEntrySize),
                 streams[i].Key,
-                startSector: (uint)streamStart[i],
+                startSector: unchecked((uint)streamStart[i]),
                 size: streams[i].Value?.Length ?? 0,
                 leftSibling: FreeSect,
                 rightSibling: right);
