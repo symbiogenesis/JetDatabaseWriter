@@ -581,6 +581,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     IsNullable = src.IsNullable,
                     DefaultValue = src.DefaultValue,
                     IsAutoIncrement = src.IsAutoIncrement,
+                    IsHyperlink = src.IsHyperlink,
                     ValidationRule = src.ValidationRule,
                     DefaultValueExpression = src.DefaultValueExpression,
                     ValidationRuleExpression = src.ValidationRuleExpression,
@@ -5473,6 +5474,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     return T_GUID;
                 }
 
+                if (clrType == typeof(Hyperlink))
+                {
+                    // Hyperlink columns are MEMO + the HYPERLINK_FLAG_MASK (0x80) bit
+                    // OR'd into the TDEF column-flag byte by BuildTableDefinition.
+                    return T_MEMO;
+                }
+
                 if (clrType == typeof(byte[]))
                 {
                     return column.MaxLength > 0 && column.MaxLength <= 255 ? T_BINARY : T_OLE;
@@ -5580,6 +5588,26 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 if (definition.IsAutoIncrement)
                 {
                     flags |= 0x04;
+                }
+
+                // Microsoft Access Hyperlink columns are MEMO + the Jackcess
+                // HYPERLINK_FLAG_MASK (0x80) bit. Honoured for both the explicit
+                // ColumnDefinition.IsHyperlink shortcut and the implicit
+                // typeof(Hyperlink) ClrType. The bit only has meaning on T_MEMO
+                // columns; reject the combination on any other type so users
+                // get a clear error rather than a silently-ignored flag.
+                bool wantsHyperlink = definition.IsHyperlink || definition.ClrType == typeof(Hyperlink);
+                if (wantsHyperlink)
+                {
+                    if (type != T_MEMO)
+                    {
+                        throw new ArgumentException(
+                            $"Column '{definition.Name}' has IsHyperlink = true but resolves to JET type 0x{type:X2}; " +
+                            "hyperlink columns must be MEMO (string with no MaxLength, or typeof(Hyperlink)).",
+                            nameof(columns));
+                    }
+
+                    flags |= 0x80;
                 }
             }
 
@@ -6413,6 +6441,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             IsNullable = (column.Flags & 0x02) != 0,
             IsAutoIncrement = (column.Flags & 0x04) != 0,
+            IsHyperlink = column.Type == T_MEMO && (column.Flags & 0x80) != 0,
         };
 
         // Preserve declared precision/scale through the schema-rewrite copy so

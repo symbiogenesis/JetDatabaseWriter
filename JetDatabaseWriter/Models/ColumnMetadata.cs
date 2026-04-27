@@ -25,6 +25,16 @@ public sealed record ColumnMetadata
     /// <summary>Gets a value indicating whether the column is fixed-length.</summary>
     public bool IsFixedLength { get; init; }
 
+    /// <summary>
+    /// Gets a value indicating whether the column is a Microsoft Access Hyperlink column
+    /// (a MEMO column whose TDEF flag byte has the <c>HYPERLINK_FLAG_MASK = 0x80</c> bit set).
+    /// When <see langword="true"/>, <see cref="ClrType"/> is <see cref="Hyperlink"/> and the
+    /// reader auto-materializes row values as <see cref="Hyperlink"/> instances parsed from
+    /// the encoded <c>displaytext#address#subaddress#screentip</c> form.
+    /// See <c>docs/design/hyperlink-format-notes.md</c>.
+    /// </summary>
+    public bool IsHyperlink { get; init; }
+
     /// <summary>Gets or initializes the zero-based ordinal position in the table.</summary>
     public int Ordinal { get; init; }
 

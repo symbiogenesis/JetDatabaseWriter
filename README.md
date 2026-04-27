@@ -213,6 +213,39 @@ IReadOnlyList<(int ConceptualTableId, object? Value)> tags = await reader.GetMul
 
 The parent-row predicate must match exactly one row (zero or multiple matches throw `InvalidOperationException`). Attachment payloads are wrapped per MS-ACCDB §3.1 (4-byte typeFlag + dataLen + extension + payload, with raw-deflate compression skipped for already-compressed extensions). Payloads larger than the 256-byte inline-OLE cap are pushed onto freshly-allocated LVAL data pages (single-page or chained form) and reassembled by the reader; the upper limit is the 24-bit on-disk LVAL length field (~16 MB per file).
 
+### Hyperlink columns
+
+Hyperlink columns are MEMO columns whose TDEF flag byte has the `HYPERLINK_FLAG_MASK = 0x80` bit set. Microsoft Access stores the value as a single `#`-delimited string (`displaytext#address#subaddress#screentip`); the library round-trips that structure as a strongly-typed [`Hyperlink`](JetDatabaseWriter/Models/Hyperlink.cs) record.
+
+```csharp
+await writer.CreateTableAsync("Bookmarks",
+[
+    new("Id", typeof(int)) { IsAutoIncrement = true, IsPrimaryKey = true },
+    new("Link", typeof(Hyperlink)),                 // shorthand
+    // equivalent: new("Link", typeof(string)) { IsHyperlink = true }
+]);
+
+await writer.InsertRowAsync("Bookmarks", new object[]
+{
+    DBNull.Value,
+    new Hyperlink("Docs site", "https://example.com/docs", subAddress: "intro"),
+});
+
+await using var reader = await AccessReader.OpenAsync(path);
+await foreach (object[] row in reader.Rows("Bookmarks"))
+{
+    var link = (Hyperlink)row[1];
+    Console.WriteLine($"{link.DisplayText} → {link.Address}#{link.SubAddress}");
+}
+
+ColumnMetadata col = (await reader.GetColumnMetadataAsync("Bookmarks"))[1];
+// col.IsHyperlink == true
+// col.ClrType     == typeof(Hyperlink)
+// col.TypeName    == "Hyperlink"
+```
+
+POCO mapping accepts either a `Hyperlink` property or a plain `string` property — the conversion runs both ways. Compatibility surfaces (`RowsAsStrings`, `ReadTableAsStringsAsync`) continue to yield the raw `#`-delimited form. See [docs/design/hyperlink-format-notes.md](docs/design/hyperlink-format-notes.md) for the on-disk layout, escape semantics, and round-trip rules.
+
 ### String DataTable — compatibility
 
 ```csharp
@@ -617,7 +650,6 @@ The items below are **not yet implemented** and are the most likely places to hi
 
 ### Specialized column kinds
 - **No calculated columns** (Access 2010+ expression columns).
-- **No hyperlink semantics.** Hyperlink fields round-trip as plain MEMO text; the `#display#address#subaddress#` structure is not parsed or emitted.
 
 ### Forms, reports, macros, queries, VBA
 - Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.

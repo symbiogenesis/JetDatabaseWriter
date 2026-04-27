@@ -209,6 +209,7 @@ public sealed class LimitationsTests : IDisposable
             "Description",
             "IsAttachment",
             "IsAutoIncrement",
+            "IsHyperlink",
             "IsMultiValue",
             "IsNullable",
             "IsPrimaryKey",
@@ -492,16 +493,16 @@ public sealed class LimitationsTests : IDisposable
     }
 
     [Fact]
-    public async Task SpecializedColumns_HyperlinkText_RoundTripsAsPlainMemo_NoSemanticParsing()
+    public async Task SpecializedColumns_HyperlinkText_PlainMemoWithoutFlag_StillRoundTripsAsString()
     {
-        // README: "No hyperlink semantics. Hyperlink fields round-trip as plain MEMO text;
-        //          the #display#address#subaddress# structure is not parsed or emitted."
+        // The "No hyperlink semantics" limitation has been lifted (see
+        // HyperlinkTests for positive coverage of the IsHyperlink flag),
+        // but a plain MEMO column without the HYPERLINK_FLAG_MASK (0x80) bit
+        // must continue to round-trip '#'-laden strings verbatim — we must not
+        // false-positive on memo content that merely contains '#' characters.
         await using var stream = await CreateFreshAccdbStreamAsync();
         string tableName = $"Hyper_{Guid.NewGuid():N}".Substring(0, 18);
 
-        // The string contains the literal Access hyperlink delimiters '#'.
-        // A semantics-aware writer would split it into display/address/subaddress
-        // and emit a structured value — we expect the writer to do nothing of the kind.
         const string hyperlinkText = "Click me#https://example.com/page#anchor#";
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -510,7 +511,7 @@ public sealed class LimitationsTests : IDisposable
                 tableName,
                 [
                     new("Id", typeof(int)),
-                    new("Link", typeof(string)), // no maxLength → MEMO
+                    new("Link", typeof(string)), // no maxLength → MEMO, no IsHyperlink
                 ],
                 TestContext.Current.CancellationToken);
 
@@ -521,13 +522,11 @@ public sealed class LimitationsTests : IDisposable
         DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(1, dt.Rows.Count);
 
-        // Round-trip is byte-for-byte identical: '#' delimiters preserved verbatim.
         Assert.Equal(hyperlinkText, dt.Rows[0]["Link"]);
 
-        // And the column type is the generic string/MEMO type — there is no
-        // dedicated Hyperlink CLR type surfaced by the reader.
         var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Equal(typeof(string), meta[1].ClrType);
+        Assert.False(meta[1].IsHyperlink);
     }
 
     // ── Compression on write ──────────────────────────────────────────

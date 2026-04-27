@@ -59,7 +59,28 @@ internal static class RowMapper<T>
 
             if (acc.TargetType != value.GetType())
             {
-                value = Convert.ChangeType(value, acc.TargetType, CultureInfo.InvariantCulture);
+                // Hyperlink ↔ string interop: a Hyperlink-typed property bound
+                // to a column read as raw string (e.g. plain MEMO without the
+                // hyperlink flag) is parsed; a string-typed property bound to
+                // a hyperlink-flagged column receives the encoded form.
+                if (acc.TargetType == typeof(Hyperlink) && value is string hs)
+                {
+                    Hyperlink? parsed = Hyperlink.Parse(hs);
+                    if (parsed == null)
+                    {
+                        continue;
+                    }
+
+                    value = parsed;
+                }
+                else if (acc.TargetType == typeof(string) && value is Hyperlink hv)
+                {
+                    value = hv.ToString();
+                }
+                else
+                {
+                    value = Convert.ChangeType(value, acc.TargetType, CultureInfo.InvariantCulture);
+                }
             }
 
             acc.Setter(item, value);
