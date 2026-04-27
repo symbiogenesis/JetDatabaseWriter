@@ -439,6 +439,148 @@ public sealed class IndexKeyEncoderTests
         Assert.Equal(fromGuid, fromString);
     }
 
+    // ── T_BINARY (variable raw bytes) ────────────────────────────
+    //
+    // Same general-binary-entry packing as T_GUID: the data is split into
+    // 8-byte zero-padded segments, each followed by a length byte (0x09 for
+    // intermediates, the actual valid count for the final segment). On
+    // descending the data bytes and the FINAL length byte flip; intermediate
+    // 0x09 length bytes stay unflipped.
+
+    private const byte T_BINARY = 0x09;
+
+    private static readonly byte[] BinaryEmpty = [];
+    private static readonly byte[] BinaryThree = [0x01, 0x02, 0x03];
+    private static readonly byte[] BinaryEight = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80];
+    private static readonly byte[] BinaryNine = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90];
+
+    [Fact]
+    public void Binary_Null_EmitsSingleFlagByte()
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BINARY, value: null, ascending: true);
+        Assert.Equal(new byte[] { 0x00 }, encoded);
+    }
+
+    [Fact]
+    public void Binary_Empty_EmitsSingleZeroPaddedSegment()
+    {
+        // Empty binary still emits one final segment so two empty values
+        // compare equal and sort below any non-empty value.
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BINARY, BinaryEmpty, ascending: true);
+        Assert.Equal(
+            new byte[] { 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+            encoded);
+    }
+
+    [Fact]
+    public void Binary_ThreeBytes_ZeroPadsToEightAndFinalLengthIsThree()
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BINARY, BinaryThree, ascending: true);
+        Assert.Equal(
+            new byte[] { 0x7F, 0x01, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03 },
+            encoded);
+    }
+
+    [Fact]
+    public void Binary_ExactlyEightBytes_SingleSegmentWithFinalLengthEight()
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BINARY, BinaryEight, ascending: true);
+        Assert.Equal(
+            new byte[] { 0x7F, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x08 },
+            encoded);
+    }
+
+    [Fact]
+    public void Binary_NineBytes_TwoSegmentsWithIntermediateLengthThenFinalOne()
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BINARY, BinaryNine, ascending: true);
+        Assert.Equal(
+            new byte[]
+            {
+                0x7F,
+                0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80,
+                0x09,
+                0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x01,
+            },
+            encoded);
+    }
+
+    [Fact]
+    public void Binary_Descending_FlipsDataAndFinalLengthButNotIntermediate()
+    {
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_BINARY, BinaryNine, ascending: false);
+        Assert.Equal(0x80, encoded[0]); // descending non-null flag
+        Assert.Equal(0x09, encoded[9]); // intermediate length stays unflipped
+
+        // Data bytes flipped.
+        Assert.Equal(unchecked((byte)~0x10), encoded[1]);
+        Assert.Equal(unchecked((byte)~0x90), encoded[10]);
+
+        // Final length byte (0x01) flipped to 0xFE.
+        Assert.Equal((byte)0xFE, encoded[18]);
+    }
+
+    [Fact]
+    public void Binary_Ordering_IsLexicographic_Ascending()
+    {
+        byte[][] values =
+        [
+            BinaryEmpty,
+            [0x00],
+            [0x00, 0x00],
+            BinaryThree,
+            [0x01, 0x02, 0x04],
+            BinaryEight,
+            BinaryNine,
+            [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+        ];
+
+        byte[][] encoded = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++)
+        {
+            encoded[i] = IndexKeyEncoder.EncodeEntry(T_BINARY, values[i], ascending: true);
+        }
+
+        for (int i = 1; i < encoded.Length; i++)
+        {
+            Assert.True(
+                CompareLex(encoded[i - 1], encoded[i]) < 0,
+                $"Ascending order violated between binary index {i - 1} and {i}.");
+        }
+    }
+
+    [Fact]
+    public void Binary_Ordering_IsReverseOfAscending_Descending()
+    {
+        byte[][] values =
+        [
+            BinaryEmpty,
+            BinaryThree,
+            BinaryEight,
+            BinaryNine,
+        ];
+
+        byte[][] encoded = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++)
+        {
+            encoded[i] = IndexKeyEncoder.EncodeEntry(T_BINARY, values[i], ascending: false);
+        }
+
+        for (int i = 1; i < encoded.Length; i++)
+        {
+            Assert.True(
+                CompareLex(encoded[i - 1], encoded[i]) > 0,
+                $"Descending order violated between binary index {i - 1} and {i}.");
+        }
+    }
+
+    [Fact]
+    public void Binary_RejectsNonByteArrayValue()
+    {
+        Assert.Throws<ArgumentException>(() => IndexKeyEncoder.EncodeEntry(T_BINARY, "not bytes", ascending: true));
+    }
+
     // ── T_NUMERIC (Decimal) ────────────────────────────────────────
 
     [Fact]
