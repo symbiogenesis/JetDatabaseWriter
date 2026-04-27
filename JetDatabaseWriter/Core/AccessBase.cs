@@ -718,9 +718,7 @@ public abstract class AccessBase : IAccessBase
                 // (descriptor-relative) to carry the declared precision and
                 // scale Access shows in Design View. Same byte positions as
                 // the Jackcess `FixedPointColumnDescriptor` parser. Other
-                // column types leave these at 0; the index path treats 0 as
-                // "no declared scale, fall back to per-rebuild max-natural"
-                // for backward compatibility with files written before W23.
+                // column types leave these at 0.
                 NumericPrecision = td[o + _colTypeOff] == /* T_NUMERIC */ 0x10 ? td[o + _colMiscOff] : (byte)0,
                 NumericScale = td[o + _colTypeOff] == /* T_NUMERIC */ 0x10 ? td[o + _colMiscOff + 1] : (byte)0,
             });
