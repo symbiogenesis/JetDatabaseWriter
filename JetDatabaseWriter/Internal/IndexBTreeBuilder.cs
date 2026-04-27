@@ -249,6 +249,48 @@ internal static class IndexBTreeBuilder
         return new BuildResult(pages, childPageBase, firstPageNumber);
     }
 
+    /// <summary>
+    /// W4-C-3 / W4-C-4 helper. Re-emits a single intermediate (<c>0x03</c>)
+    /// page from an arbitrary list of <c>(summaryKey, dataPage, dataRow,
+    /// childPage)</c> tuples (sorted by summary key), preserving the supplied
+    /// <c>prev_page</c> / <c>next_page</c> / <c>tail_page</c> headers. Returns
+    /// <see langword="null"/> when the entry list overflows the per-page
+    /// payload area; callers fall back to <see cref="Build(IndexLeafPageBuilder.LeafPageLayout, int, long, IReadOnlyList{IndexLeafPageBuilder.LeafEntry}, long)"/>
+    /// (full-tree rebuild) on overflow.
+    /// </summary>
+    public static byte[]? TryBuildIntermediatePage(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> entries,
+        long prevPage,
+        long nextPage,
+        long tailPage)
+    {
+        Guard.NotNull(entries, nameof(entries));
+
+        if (entries.Count == 0)
+        {
+            // Empty intermediate makes no sense — caller must collapse / merge.
+            return null;
+        }
+
+        var packed = new List<IntermediateEntry>(entries.Count);
+        foreach ((byte[] key, long dp, byte dr, long childPage) in entries)
+        {
+            packed.Add(new IntermediateEntry(new IndexLeafPageBuilder.LeafEntry(key, dp, dr), childPage));
+        }
+
+        try
+        {
+            return BuildIntermediatePage(layout, pageSize, parentTdefPage, packed, prevPage, nextPage, tailPage);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
     private readonly struct IntermediateEntry
     {
         public IntermediateEntry(IndexLeafPageBuilder.LeafEntry summary, long childPage)
