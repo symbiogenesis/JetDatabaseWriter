@@ -10768,61 +10768,83 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return true;
         }
 
-        // 6. W4-C-4 — try a 2-way leaf split. Greedy left-fill; bail if 3+
-        // pages would be needed or either half overflows the build.
-        if (!TryGreedySplitInTwo(layout, _pgSz, spliced, out List<IndexLeafPageBuilder.LeafEntry> leftPart, out List<IndexLeafPageBuilder.LeafEntry> rightPart))
+        // 6. W4-C-4 / W4-C-8 — try an N-way leaf split (greedy left-fill).
+        // Bails only if a single entry exceeds page payload area.
+        List<List<IndexLeafPageBuilder.LeafEntry>>? splitPages = TryGreedySplitLeafInN(layout, _pgSz, spliced);
+        if (splitPages is null)
         {
             return false;
         }
 
-        long newRightPage = _stream.Length / _pgSz;
-        byte[] leftBytes;
-        byte[] rightBytes;
+        // First page reuses the original leaf page; remaining pages are
+        // freshly appended at end-of-file.
+        int splitCount = splitPages.Count;
+        long[] pageNumbers = new long[splitCount];
+        pageNumbers[0] = targetLeafPage;
+        long firstFreshPage = _stream.Length / _pgSz;
+        for (int p = 1; p < splitCount; p++)
+        {
+            pageNumbers[p] = firstFreshPage + (p - 1);
+        }
+
+        byte[][] pageBytesAll = new byte[splitCount][];
         try
         {
-            leftBytes = IndexLeafPageBuilder.BuildLeafPage(
-                layout,
-                _pgSz,
-                tdefPage,
-                leftPart,
-                prevPage: leafPrev,
-                nextPage: newRightPage,
-                tailPage: 0,
-                enablePrefixCompression: true);
-            rightBytes = IndexLeafPageBuilder.BuildLeafPage(
-                layout,
-                _pgSz,
-                tdefPage,
-                rightPart,
-                prevPage: targetLeafPage,
-                nextPage: leafNext,
-                tailPage: 0,
-                enablePrefixCompression: true);
+            for (int p = 0; p < splitCount; p++)
+            {
+                long thisPrev = p == 0 ? leafPrev : pageNumbers[p - 1];
+                long thisNext = p == splitCount - 1 ? leafNext : pageNumbers[p + 1];
+                pageBytesAll[p] = IndexLeafPageBuilder.BuildLeafPage(
+                    layout,
+                    _pgSz,
+                    tdefPage,
+                    splitPages[p],
+                    prevPage: thisPrev,
+                    nextPage: thisNext,
+                    tailPage: 0,
+                    enablePrefixCompression: true);
+            }
         }
         catch (ArgumentOutOfRangeException)
         {
             return false;
         }
 
-        IndexLeafPageBuilder.LeafEntry leftLast = leftPart[leftPart.Count - 1];
-        IndexLeafPageBuilder.LeafEntry rightLast = rightPart[rightPart.Count - 1];
-        var leftSummary = (leftLast.EncodedKey, leftLast.DataPage, leftLast.DataRow, ChildPage: targetLeafPage);
-        var rightSummary = (rightLast.EncodedKey, rightLast.DataPage, rightLast.DataRow, ChildPage: newRightPage);
+        // Build summaries (max key per page) for parent ops.
+        IndexLeafPageBuilder.LeafEntry leftLast = splitPages[0][splitPages[0].Count - 1];
+        var leftSummary = (leftLast.EncodedKey, leftLast.DataPage, leftLast.DataRow, ChildPage: pageNumbers[0]);
+        var rightSummaries = new (byte[] Key, long DataPage, byte DataRow, long ChildPage)[splitCount - 1];
+        for (int p = 1; p < splitCount; p++)
+        {
+            IndexLeafPageBuilder.LeafEntry last = splitPages[p][splitPages[p].Count - 1];
+            rightSummaries[p - 1] = (last.EncodedKey, last.DataPage, last.DataRow, ChildPage: pageNumbers[p]);
+        }
 
         // Compute parent (and grandparent, ...) writes WITHOUT committing —
         // bail cleanly on overflow.
-        List<(long PageNum, byte[] Bytes)>? splitAncestorWrites = PrepareAncestorSplitWrites(layout, tdefPage, path, leftSummary, rightSummary);
+        List<(long PageNum, byte[] Bytes)>? splitAncestorWrites = PrepareAncestorSplitWrites(
+            layout, tdefPage, path, leftSummary, rightSummaries);
         if (splitAncestorWrites is null)
         {
             return false;
         }
 
         // Commit order (no transactions; minimise observable half-state):
-        //   (a) Append the new right page (no parent points at it yet).
-        //   (b) Patch leafNext.prev_page if non-zero.
-        //   (c) Rewrite the original leaf in place as the new LEFT half.
+        //   (a) Append every new right page in order (no parent points at
+        //       them yet, so a partial append leaves only orphans).
+        //   (b) Patch leafNext.prev_page to point at the LAST new page.
+        //   (c) Rewrite the original leaf in place as the new LEFT-most.
         //   (d) Rewrite parent + ancestors in place with the new summaries.
-        await AppendPageAsync(rightBytes, cancellationToken).ConfigureAwait(false);
+        for (int p = 1; p < splitCount; p++)
+        {
+            long appended = await AppendPageAsync(pageBytesAll[p], cancellationToken).ConfigureAwait(false);
+            if (appended != pageNumbers[p])
+            {
+                // Stream extended by something else mid-flight; partial
+                // appends are orphans, original tree still intact.
+                return false;
+            }
+        }
 
         if (leafNext > 0)
         {
@@ -10838,11 +10860,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             // prev_page is at offset 8 (§4.1).
-            BinaryPrimitives.WriteInt32LittleEndian(nextLeaf.AsSpan(8, 4), checked((int)newRightPage));
+            BinaryPrimitives.WriteInt32LittleEndian(nextLeaf.AsSpan(8, 4), checked((int)pageNumbers[splitCount - 1]));
             await WritePageAsync(leafNext, nextLeaf, cancellationToken).ConfigureAwait(false);
         }
 
-        await WritePageAsync(targetLeafPage, leftBytes, cancellationToken).ConfigureAwait(false);
+        await WritePageAsync(targetLeafPage, pageBytesAll[0], cancellationToken).ConfigureAwait(false);
 
         foreach ((long pn, byte[] bytes) in splitAncestorWrites)
         {
@@ -10992,121 +11014,131 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Greedy left-fill split of a spliced leaf entry list into two halves
-    /// that each fit on a single page. Returns <see langword="false"/> when
-    /// the input would need three or more pages (a single entry larger than
-    /// half the payload area, or a total payload greater than two pages).
-    /// Output halves are non-empty on success.
+    /// W4-C-8 (2026-04-27): greedy left-fill N-way split of a spliced leaf
+    /// entry list. Walks the input once, packing entries into a fresh page
+    /// until the next entry would overflow, then opens a new page and
+    /// continues. Returns <see langword="null"/> only when a single entry
+    /// is too large to fit on any page (encoded key + 4-byte slot offset
+    /// exceeds the per-page payload area) or when the input would not
+    /// actually require a split. The returned list always has
+    /// <c>Count &gt;= 2</c> on success; every page is non-empty.
     /// </summary>
-    private static bool TryGreedySplitInTwo(
+    private static List<List<IndexLeafPageBuilder.LeafEntry>>? TryGreedySplitLeafInN(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
-        List<IndexLeafPageBuilder.LeafEntry> entries,
-        out List<IndexLeafPageBuilder.LeafEntry> left,
-        out List<IndexLeafPageBuilder.LeafEntry> right)
+        List<IndexLeafPageBuilder.LeafEntry> entries)
     {
-        left = [];
-        right = [];
-
         int payloadArea = pageSize - layout.FirstEntryOffset;
         if (entries.Count < 2)
         {
-            return false;
+            return null;
         }
 
-        int leftSize = 0;
-        int splitIdx = -1;
+        var pages = new List<List<IndexLeafPageBuilder.LeafEntry>>();
+        var current = new List<IndexLeafPageBuilder.LeafEntry>();
+        int currentSize = 0;
+
         for (int i = 0; i < entries.Count; i++)
         {
             int len = entries[i].EncodedKey.Length + 4;
             if (len > payloadArea)
             {
-                return false;
+                // A single entry's encoded key + slot offset exceeds an
+                // entire page's payload area — no split arrangement helps.
+                return null;
             }
 
-            if (leftSize + len > payloadArea)
+            if (currentSize + len > payloadArea && current.Count > 0)
             {
-                splitIdx = i;
-                break;
+                pages.Add(current);
+                current = new List<IndexLeafPageBuilder.LeafEntry>();
+                currentSize = 0;
             }
 
-            leftSize += len;
+            current.Add(entries[i]);
+            currentSize += len;
         }
 
-        // splitIdx <= 0 means even the first entry doesn't fit (shouldn't
-        // happen since the W4-C-3 path was tried first and we know at least
-        // ONE page worth of entries fits). >= entries.Count means everything
-        // already fit one page (shouldn't have reached here either). Bail.
-        if (splitIdx <= 0 || splitIdx >= entries.Count)
+        if (current.Count > 0)
         {
-            return false;
+            pages.Add(current);
         }
 
-        int rightSize = 0;
-        for (int i = splitIdx; i < entries.Count; i++)
+        if (pages.Count < 2)
         {
-            rightSize += entries[i].EncodedKey.Length + 4;
+            // Whole thing fits on one page — caller should have used the
+            // W4-C-3 in-place rewrite instead of asking for a split. Bail
+            // so the call site falls through cleanly.
+            return null;
         }
 
-        if (rightSize > payloadArea)
-        {
-            return false;
-        }
-
-        left = entries.GetRange(0, splitIdx);
-        right = entries.GetRange(splitIdx, entries.Count - splitIdx);
-        return true;
+        return pages;
     }
 
     /// <summary>
-    /// W4-C-7 helper: greedy 2-way split of an INTERMEDIATE page's entry
-    /// list. Iterates the split index from largest possible (count-1) down
-    /// to 1; the first split where both halves rebuild successfully via
-    /// <see cref="IndexBTreeBuilder.TryBuildIntermediatePage"/> wins.
-    /// Returns <see langword="false"/> when no split fits (3+ pages
-    /// needed; caller bails to W4-D).
+    /// W4-C-8 (2026-04-27): greedy left-fill N-way split of an
+    /// INTERMEDIATE page's entry list. Each candidate page is validated by
+    /// <see cref="IndexBTreeBuilder.TryBuildIntermediatePage"/> so the
+    /// per-page byte budget — including the §4.4 prefix-compression savings
+    /// the simpler leaf splitter cannot model — is respected exactly.
+    /// Walks the entries once, growing the current page until
+    /// <c>TryBuildIntermediatePage</c> returns <see langword="null"/>, then
+    /// closing it and opening a new page. Returns <see langword="null"/>
+    /// when even a single entry refuses to fit (impossible on a well-formed
+    /// TDEF) or when the input fits one page (no split needed).
     /// </summary>
-    private static bool TryGreedySplitIntermediateInTwo(
+    private static List<List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)>>? TryGreedySplitIntermediateInN(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
         long parentTdefPage,
-        List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> entries,
-        out List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> left,
-        out List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> right)
+        List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> entries)
     {
-        left = [];
-        right = [];
-
         if (entries.Count < 2)
         {
-            return false;
+            return null;
         }
 
-        for (int splitIdx = entries.Count - 1; splitIdx >= 1; splitIdx--)
+        var pages = new List<List<(byte[], long, byte, long)>>();
+        int i = 0;
+        while (i < entries.Count)
         {
-            var leftCand = entries.GetRange(0, splitIdx);
-            var rightCand = entries.GetRange(splitIdx, entries.Count - splitIdx);
-
-            byte[]? l = IndexBTreeBuilder.TryBuildIntermediatePage(
-                layout, pageSize, parentTdefPage, leftCand, prevPage: 0, nextPage: 0, tailPage: 0);
-            if (l is null)
+            // Grow [i, end) until either (a) end == entries.Count and the
+            // remainder fits, or (b) the next extension overflows. Linear
+            // probe is fine — TryBuildIntermediatePage is O(slice size) and
+            // the total work across all probes is O(N²) where N is the
+            // intermediate's entry count (typically ≤ a few hundred).
+            int end = i + 1;
+            byte[]? lastFit = IndexBTreeBuilder.TryBuildIntermediatePage(
+                layout, pageSize, parentTdefPage, entries.GetRange(i, 1), prevPage: 0, nextPage: 0, tailPage: 0);
+            if (lastFit is null)
             {
-                continue;
+                // A single entry won't fit — degenerate, bail.
+                return null;
             }
 
-            byte[]? r = IndexBTreeBuilder.TryBuildIntermediatePage(
-                layout, pageSize, parentTdefPage, rightCand, prevPage: 0, nextPage: 0, tailPage: 0);
-            if (r is null)
+            while (end < entries.Count)
             {
-                continue;
+                var probe = entries.GetRange(i, end - i + 1);
+                byte[]? probeBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
+                    layout, pageSize, parentTdefPage, probe, prevPage: 0, nextPage: 0, tailPage: 0);
+                if (probeBytes is null)
+                {
+                    break;
+                }
+
+                end++;
             }
 
-            left = leftCand;
-            right = rightCand;
-            return true;
+            pages.Add(entries.GetRange(i, end - i));
+            i = end;
         }
 
-        return false;
+        if (pages.Count < 2)
+        {
+            return null;
+        }
+
+        return pages;
     }
 
     /// <summary>
@@ -11178,35 +11210,47 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Computes the in-place rewrites required for a W4-C-4 leaf split.
-    /// At the parent-of-leaf level, replaces the single entry at
-    /// <c>path[^1].TakenIndex</c> with TWO entries
-    /// (<paramref name="leftSummary"/> followed by <paramref name="rightSummary"/>);
-    /// when that entry was the LAST on the parent, the parent's max key has
-    /// changed too and we propagate via
-    /// <see cref="PrepareAncestorReplaceWrites"/>. Returns
-    /// <see langword="null"/> on overflow at any level (recursive
-    /// intermediate split is W4-C-5+ scope). Callers commit the writes
-    /// after the leaf-side writes.
+    /// Computes the in-place rewrites required for a W4-C-4 / W4-C-8 leaf
+    /// split. At the parent-of-leaf level, replaces the single entry at
+    /// <c>path[^1].TakenIndex</c> with the <paramref name="leftSummary"/>
+    /// followed by every entry in <paramref name="rightSummaries"/>
+    /// (one for the 2-way W4-C-4 case, N-1 for the N-way W4-C-8 case).
+    /// When the original entry was the LAST on the parent, the parent's max
+    /// key has changed too and we propagate via
+    /// <see cref="PrepareAncestorReplaceWrites"/> using the right-most new
+    /// summary's key. Returns <see langword="null"/> on overflow at any
+    /// captured ancestor level (recursive intermediate split lives in the
+    /// cross-leaf path's <see cref="TryStageIntermediateRewritesAsync"/>;
+    /// the single-leaf surgical path bails to W4-D when its parent
+    /// overflows). Callers commit the writes after the leaf-side writes.
     /// </summary>
     private List<(long PageNum, byte[] Bytes)>? PrepareAncestorSplitWrites(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
         List<DescentStep> path,
         (byte[] Key, long DataPage, byte DataRow, long ChildPage) leftSummary,
-        (byte[] Key, long DataPage, byte DataRow, long ChildPage) rightSummary)
+        (byte[] Key, long DataPage, byte DataRow, long ChildPage)[] rightSummaries)
     {
+        if (rightSummaries.Length == 0)
+        {
+            return null;
+        }
+
         int level = path.Count - 1;
         DescentStep step = path[level];
         List<IndexLeafIncremental.DecodedIntermediateEntry> entries = step.Entries;
 
-        var newEntries = new List<(byte[], long, byte, long)>(entries.Count + 1);
+        var newEntries = new List<(byte[], long, byte, long)>(entries.Count + rightSummaries.Length);
         for (int i = 0; i < entries.Count; i++)
         {
             if (i == step.TakenIndex)
             {
                 newEntries.Add((leftSummary.Key, leftSummary.DataPage, leftSummary.DataRow, leftSummary.ChildPage));
-                newEntries.Add((rightSummary.Key, rightSummary.DataPage, rightSummary.DataRow, rightSummary.ChildPage));
+                for (int r = 0; r < rightSummaries.Length; r++)
+                {
+                    var rs = rightSummaries[r];
+                    newEntries.Add((rs.Key, rs.DataPage, rs.DataRow, rs.ChildPage));
+                }
             }
             else
             {
@@ -11224,8 +11268,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             layout, _pgSz, tdefPage, newEntries, parentPrev, parentNext, parentTail);
         if (rebuiltParent is null)
         {
-            // Parent overflow on insertion of one new summary entry —
-            // recursive intermediate split is out of scope this phase. Bail.
+            // Parent overflow on insertion of the new summary entries —
+            // single-leaf surgical path has no recursive parent-split
+            // (that lives in the cross-leaf staging walker). Bail.
             return null;
         }
 
@@ -11237,9 +11282,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return writes;
         }
 
-        // The right summary became this parent's new max → grandparent's
-        // summary entry for this parent must carry the new max key.
-        var newAncestor = (rightSummary.Key, rightSummary.DataPage, rightSummary.DataRow, ChildPage: step.PageNumber);
+        // The right-most new summary became this parent's new max →
+        // grandparent's summary entry for this parent must carry the new
+        // max key.
+        var rightmost = rightSummaries[rightSummaries.Length - 1];
+        var newAncestor = (rightmost.Key, rightmost.DataPage, rightmost.DataRow, ChildPage: step.PageNumber);
         List<DescentStep> subPath = path.GetRange(0, level);
         List<(long PageNum, byte[] Bytes)>? more = PrepareAncestorReplaceWrites(layout, tdefPage, subPath, newAncestor);
         if (more is null)
@@ -11519,35 +11566,43 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            // ── W4-C-4 2-way split ──
-            if (!TryGreedySplitInTwo(layout, _pgSz, spliced, out List<IndexLeafPageBuilder.LeafEntry> leftPart, out List<IndexLeafPageBuilder.LeafEntry> rightPart))
+            // ── W4-C-4 / W4-C-8 N-way split ──
+            // Greedy left-fill into N pages; bails only if a single entry
+            // exceeds the page payload area.
+            List<List<IndexLeafPageBuilder.LeafEntry>>? splitPages = TryGreedySplitLeafInN(layout, _pgSz, spliced);
+            if (splitPages is null)
             {
                 return false;
             }
 
-            long newRightPage = nextAllocatedPageNumber++;
-            byte[] leftBytes;
-            byte[] rightBytes;
+            int splitCount = splitPages.Count;
+
+            // First page reuses group.LeafPage; remaining pages are
+            // freshly allocated from the staging counter.
+            long[] pageNumbers = new long[splitCount];
+            pageNumbers[0] = group.LeafPage;
+            for (int p = 1; p < splitCount; p++)
+            {
+                pageNumbers[p] = nextAllocatedPageNumber++;
+            }
+
+            byte[][] pageBytesAll = new byte[splitCount][];
             try
             {
-                leftBytes = IndexLeafPageBuilder.BuildLeafPage(
-                    layout,
-                    _pgSz,
-                    tdefPage,
-                    leftPart,
-                    prevPage: leafPrev,
-                    nextPage: newRightPage,
-                    tailPage: 0,
-                    enablePrefixCompression: true);
-                rightBytes = IndexLeafPageBuilder.BuildLeafPage(
-                    layout,
-                    _pgSz,
-                    tdefPage,
-                    rightPart,
-                    prevPage: group.LeafPage,
-                    nextPage: leafNext,
-                    tailPage: 0,
-                    enablePrefixCompression: true);
+                for (int p = 0; p < splitCount; p++)
+                {
+                    long thisPrev = p == 0 ? leafPrev : pageNumbers[p - 1];
+                    long thisNext = p == splitCount - 1 ? leafNext : pageNumbers[p + 1];
+                    pageBytesAll[p] = IndexLeafPageBuilder.BuildLeafPage(
+                        layout,
+                        _pgSz,
+                        tdefPage,
+                        splitPages[p],
+                        prevPage: thisPrev,
+                        nextPage: thisNext,
+                        tailPage: 0,
+                        enablePrefixCompression: true);
+                }
             }
             catch (ArgumentOutOfRangeException)
             {
@@ -11559,12 +11614,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return false;
             }
 
-            existingPageRewrites[group.LeafPage] = leftBytes;
-            newPageAppends.Add(rightBytes);
+            existingPageRewrites[group.LeafPage] = pageBytesAll[0];
+            for (int p = 1; p < splitCount; p++)
+            {
+                newPageAppends.Add(pageBytesAll[p]);
+            }
 
-            // Patch leafNext.prev_page if it exists. If leafNext is itself a
-            // leaf in another group, we'd need to merge the patch into that
-            // group's rewrite — bail to keep this phase simple.
+            // Patch leafNext.prev_page to point at the LAST new page.
+            // If leafNext is itself a leaf in another group, we'd need
+            // coordinated writes — bail to keep this phase simple.
             if (leafNext > 0)
             {
                 if (groups.ContainsKey(leafNext))
@@ -11572,7 +11630,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     return false;
                 }
 
-                if (!leafNextPointerPatches.TryAdd(leafNext, newRightPage))
+                if (!leafNextPointerPatches.TryAdd(leafNext, pageNumbers[splitCount - 1]))
                 {
                     // Two splits both want to patch the same neighbour leaf.
                     // Should not happen (each leaf has one prev), but defensive.
@@ -11580,25 +11638,29 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 }
             }
 
-            IndexLeafPageBuilder.LeafEntry leftLast = leftPart[leftPart.Count - 1];
-            IndexLeafPageBuilder.LeafEntry rightLast = rightPart[rightPart.Count - 1];
-
-            // Parent ops: replace existing summary with left summary, insert
-            // right summary immediately after.
+            // Parent ops: replace existing summary with the LEFT-most's
+            // summary, then insert one summary per right page (N-1 of them)
+            // immediately after, in left-to-right order. ApplyIntermediateOps
+            // preserves declaration order at the same OriginalIndex.
+            IndexLeafPageBuilder.LeafEntry leftLast = splitPages[0][splitPages[0].Count - 1];
             AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
                 OriginalIndex: parentStep.TakenIndex,
                 Type: IntermediateOpType.Replace,
                 NewKey: leftLast.EncodedKey,
                 NewDataPage: leftLast.DataPage,
                 NewDataRow: leftLast.DataRow,
-                NewChildPage: group.LeafPage));
-            AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
-                OriginalIndex: parentStep.TakenIndex,
-                Type: IntermediateOpType.InsertAfter,
-                NewKey: rightLast.EncodedKey,
-                NewDataPage: rightLast.DataPage,
-                NewDataRow: rightLast.DataRow,
-                NewChildPage: newRightPage));
+                NewChildPage: pageNumbers[0]));
+            for (int p = 1; p < splitCount; p++)
+            {
+                IndexLeafPageBuilder.LeafEntry pLast = splitPages[p][splitPages[p].Count - 1];
+                AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
+                    OriginalIndex: parentStep.TakenIndex,
+                    Type: IntermediateOpType.InsertAfter,
+                    NewKey: pLast.EncodedKey,
+                    NewDataPage: pLast.DataPage,
+                    NewDataRow: pLast.DataRow,
+                    NewChildPage: pageNumbers[p]));
+            }
         }
 
         // ── Phase C: aggregate intermediate rewrites ─────────────────
@@ -12179,64 +12241,81 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 layout, _pgSz, tdefPage, newEntries, origPrev, origNext, newTail);
             if (rebuilt is null)
             {
-                // W4-C-7 (2026-04-27) — intermediate overflow. Greedy-split
-                // the entries 2-way; either grandparent absorbs the new
-                // summary OR (if this page is the root) we allocate a fresh
-                // root and signal the caller to patch first_dp. W4-C-7-v2
-                // (2026-04-27) extends this to higher-level intermediates
-                // (children are themselves intermediates) by computing the
-                // left half's tail_page from the rightmost child's effective
-                // tail (staged override, staged rewrite, or live page).
-                if (!TryGreedySplitIntermediateInTwo(
-                        layout, _pgSz, tdefPage, newEntries, out var leftEntries, out var rightEntries))
+                // W4-C-7 / W4-C-8 (2026-04-27) — intermediate overflow.
+                // Greedy left-fill split into N pages; each subsequent page
+                // is freshly allocated. For parent-of-leaf intermediates
+                // each split page's tail_page = its rightmost child's
+                // ChildPage (the leaf itself). For higher intermediates we
+                // look up each split page's rightmost child's effective
+                // tail_page (staged override, staged rewrite, or live page).
+                // Either grandparent absorbs N new summaries (Replace +
+                // (N-1) InsertAfter) and we recurse into it, OR — when this
+                // page is the root — we allocate a fresh root intermediate
+                // with N summary entries pointing at every split page and
+                // signal the caller to patch first_dp.
+                List<List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)>>? splitInts =
+                    TryGreedySplitIntermediateInN(layout, _pgSz, tdefPage, newEntries);
+                if (splitInts is null)
                 {
-                    // Even a 2-way split overflows (entries too big for any
-                    // single intermediate). 3+ pages needed → bail to W4-D.
+                    // Single entry too big for any intermediate page — bail.
                     return false;
                 }
 
-                long newRightIntPage = stagingState.NextAllocatedPageNumber++;
-                var leftLast = leftEntries[leftEntries.Count - 1];
-                var rightLast = rightEntries[rightEntries.Count - 1];
+                int nSplit = splitInts.Count;
 
-                // tail_page of each half = the rightmost LEAF reachable
-                // through that half's rightmost child. Parent-of-leaf:
-                // child IS the leaf, so left/rightTail equals leftLast/
-                // rightLast.ChildPage. Higher level: child is itself an
-                // intermediate — look up its effective tail_page (which
-                // may already have been mutated this batch).
-                long leftTail;
-                long rightTail;
+                // First split page reuses `deepest`; remaining pages are
+                // freshly allocated.
+                long[] intPageNumbers = new long[nSplit];
+                intPageNumbers[0] = deepest;
+                for (int p = 1; p < nSplit; p++)
+                {
+                    intPageNumbers[p] = stagingState.NextAllocatedPageNumber++;
+                }
+
+                // Compute each split page's tail_page.
+                long[] intTails = new long[nSplit];
                 if (parentOfLeaf.Contains(deepest))
                 {
-                    leftTail = leftLast.ChildPage;
-                    rightTail = origTail != 0 ? origTail : rightLast.ChildPage;
+                    for (int p = 0; p < nSplit; p++)
+                    {
+                        var lastEntry = splitInts[p][splitInts[p].Count - 1];
+
+                        // Last split page inherits origTail when non-zero
+                        // (preserves the existing rightmost-leaf pointer
+                        // semantics on the rightmost subtree); other pages
+                        // get their own rightmost child as the leaf tail.
+                        intTails[p] = (p == nSplit - 1 && origTail != 0) ? origTail : lastEntry.ChildPage;
+                    }
                 }
                 else
                 {
-                    leftTail = await GetEffectiveTailPageAsync(
-                        leftLast.ChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
-                        .ConfigureAwait(false);
-                    rightTail = await GetEffectiveTailPageAsync(
-                        rightLast.ChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
-                        .ConfigureAwait(false);
+                    for (int p = 0; p < nSplit; p++)
+                    {
+                        var lastEntry = splitInts[p][splitInts[p].Count - 1];
+                        intTails[p] = await GetEffectiveTailPageAsync(
+                            lastEntry.ChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                 }
 
-                byte[]? leftIntBytes;
-                byte[]? rightIntBytes;
+                byte[][] intPageBytesAll = new byte[nSplit][];
                 try
                 {
-                    leftIntBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
-                        layout, _pgSz, tdefPage, leftEntries, origPrev, newRightIntPage, leftTail);
-                    rightIntBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
-                        layout, _pgSz, tdefPage, rightEntries, deepest, origNext, rightTail);
+                    for (int p = 0; p < nSplit; p++)
+                    {
+                        long thisPrev = p == 0 ? origPrev : intPageNumbers[p - 1];
+                        long thisNext = p == nSplit - 1 ? origNext : intPageNumbers[p + 1];
+                        byte[]? built = IndexBTreeBuilder.TryBuildIntermediatePage(
+                            layout, _pgSz, tdefPage, splitInts[p], thisPrev, thisNext, intTails[p]);
+                        if (built is null)
+                        {
+                            return false;
+                        }
+
+                        intPageBytesAll[p] = built;
+                    }
                 }
                 catch (ArgumentOutOfRangeException)
-                {
-                    return false;
-                }
-
-                if (leftIntBytes is null || rightIntBytes is null)
                 {
                     return false;
                 }
@@ -12246,36 +12325,46 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     return false;
                 }
 
-                existingPageRewrites[deepest] = leftIntBytes;
-                newPageAppends.Add(rightIntBytes);
+                existingPageRewrites[deepest] = intPageBytesAll[0];
+                for (int p = 1; p < nSplit; p++)
+                {
+                    newPageAppends.Add(intPageBytesAll[p]);
+                }
 
-                // Record both halves' tails so any shallower split that
-                // looks up either page picks up the post-split value
-                // without re-reading the (now stale) live page.
-                intermediateTailOverrides[deepest] = leftTail;
-                intermediateTailOverrides[newRightIntPage] = rightTail;
+                // Record every split page's tail so any shallower split
+                // that looks up these pages picks up the post-split values
+                // without re-reading the (now stale) live pages.
+                for (int p = 0; p < nSplit; p++)
+                {
+                    intermediateTailOverrides[intPageNumbers[p]] = intTails[p];
+                }
 
                 if (intermediateGrandparent.TryGetValue(deepest, out (long ParentPage, int IndexInParent) gpSplit))
                 {
-                    // Grandparent absorbs: replace the original summary at
-                    // IndexInParent with the LEFT half's summary, then
-                    // InsertAfter the RIGHT half's summary. Recurse into
-                    // grandparent in case it also overflows — W4-C-7-v2
-                    // handles this for any depth.
+                    // Grandparent absorbs: Replace the original summary at
+                    // IndexInParent with the FIRST split page's summary,
+                    // then InsertAfter one summary per remaining split page
+                    // in left-to-right order. Recurse into grandparent in
+                    // case it also overflows.
+                    var firstLast = splitInts[0][splitInts[0].Count - 1];
                     AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
                         OriginalIndex: gpSplit.IndexInParent,
                         Type: IntermediateOpType.Replace,
-                        NewKey: leftLast.Key,
-                        NewDataPage: leftLast.DataPage,
-                        NewDataRow: leftLast.DataRow,
-                        NewChildPage: deepest));
-                    AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
-                        OriginalIndex: gpSplit.IndexInParent,
-                        Type: IntermediateOpType.InsertAfter,
-                        NewKey: rightLast.Key,
-                        NewDataPage: rightLast.DataPage,
-                        NewDataRow: rightLast.DataRow,
-                        NewChildPage: newRightIntPage));
+                        NewKey: firstLast.Key,
+                        NewDataPage: firstLast.DataPage,
+                        NewDataRow: firstLast.DataRow,
+                        NewChildPage: intPageNumbers[0]));
+                    for (int p = 1; p < nSplit; p++)
+                    {
+                        var pLast = splitInts[p][splitInts[p].Count - 1];
+                        AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
+                            OriginalIndex: gpSplit.IndexInParent,
+                            Type: IntermediateOpType.InsertAfter,
+                            NewKey: pLast.Key,
+                            NewDataPage: pLast.DataPage,
+                            NewDataRow: pLast.DataRow,
+                            NewChildPage: intPageNumbers[p]));
+                    }
 
                     if (!pending.Contains(gpSplit.ParentPage))
                     {
@@ -12285,9 +12374,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 else
                 {
                     // No grandparent — this WAS the root intermediate.
-                    // Allocate a fresh root with two summary entries
-                    // pointing at the two halves. tail_page of the new
-                    // root = right half's tail (= rightmost leaf in tree).
+                    // Allocate a fresh root with one summary entry per
+                    // split page. tail_page of the new root = the LAST
+                    // split page's tail (= rightmost leaf in the tree).
                     if (stagingState.NewRootPage.HasValue)
                     {
                         // Already split a root once in this batch (multi-
@@ -12296,17 +12385,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     }
 
                     long newRootPageAlloc = stagingState.NextAllocatedPageNumber++;
-                    var rootEntries = new List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)>(2)
+                    var rootEntries = new List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)>(nSplit);
+                    for (int p = 0; p < nSplit; p++)
                     {
-                        (leftLast.Key, leftLast.DataPage, leftLast.DataRow, deepest),
-                        (rightLast.Key, rightLast.DataPage, rightLast.DataRow, newRightIntPage),
-                    };
+                        var pLast = splitInts[p][splitInts[p].Count - 1];
+                        rootEntries.Add((pLast.Key, pLast.DataPage, pLast.DataRow, intPageNumbers[p]));
+                    }
 
                     byte[]? newRootBytes;
                     try
                     {
                         newRootBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
-                            layout, _pgSz, tdefPage, rootEntries, prevPage: 0, nextPage: 0, tailPage: rightTail);
+                            layout, _pgSz, tdefPage, rootEntries, prevPage: 0, nextPage: 0, tailPage: intTails[nSplit - 1]);
                     }
                     catch (ArgumentOutOfRangeException)
                     {
