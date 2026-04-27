@@ -28,8 +28,6 @@ internal static class IndexLeafIncremental
     internal const byte PageTypeIntermediate = IndexBTreeBuilder.PageTypeIntermediate;
 
     private const byte PageTypeLeaf = IndexLeafPageBuilder.PageTypeLeaf;
-    private const int BitmaskOffset = IndexLeafPageBuilder.Jet4BitmaskOffset;
-    private const int FirstEntryOffset = IndexLeafPageBuilder.Jet4FirstEntryOffset;
 
     /// <summary>
     /// A decoded leaf entry: the canonical (uncompressed) key bytes plus the
@@ -59,7 +57,7 @@ internal static class IndexLeafIncremental
     /// </summary>
     public static bool IsIntermediate(byte[] page)
     {
-        if (page == null || page.Length < FirstEntryOffset)
+        if (page == null || page.Length < 32)
         {
             return false;
         }
@@ -91,6 +89,14 @@ internal static class IndexLeafIncremental
     /// a malformed page so the caller can bail to the bulk-rebuild path.
     /// </summary>
     public static long ReadFirstChildPointer(byte[] intermediatePage, int pageSize)
+        => ReadFirstChildPointer(IndexLeafPageBuilder.LeafPageLayout.Jet4, intermediatePage, pageSize);
+
+    /// <summary>
+    /// Layout-aware overload of <see cref="ReadFirstChildPointer(byte[], int)"/>
+    /// for callers that may target Jet3 (§4.2 bitmask at <c>0x16</c>, first
+    /// entry at <c>0xF8</c>).
+    /// </summary>
+    public static long ReadFirstChildPointer(IndexLeafPageBuilder.LeafPageLayout layout, byte[] intermediatePage, int pageSize)
     {
         if (intermediatePage == null || intermediatePage.Length < pageSize || intermediatePage[0] != PageTypeIntermediate)
         {
@@ -99,14 +105,14 @@ internal static class IndexLeafIncremental
 
         int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(intermediatePage.AsSpan(2, 2));
         int payloadEnd = pageSize - freeSpace;
-        if (payloadEnd <= FirstEntryOffset)
+        if (payloadEnd <= layout.FirstEntryOffset)
         {
             return 0;
         }
 
-        int next = NextEntryStart(intermediatePage, payloadEnd, FirstEntryOffset);
+        int next = NextEntryStart(layout, intermediatePage, payloadEnd, layout.FirstEntryOffset);
         int entryEnd = next < 0 ? payloadEnd : next;
-        int totalLen = entryEnd - FirstEntryOffset;
+        int totalLen = entryEnd - layout.FirstEntryOffset;
 
         // Each intermediate entry trails with [3 B page][1 B row][4 B child page].
         if (totalLen < 8)
@@ -128,7 +134,7 @@ internal static class IndexLeafIncremental
     /// </summary>
     public static bool IsSingleRootLeaf(byte[] page)
     {
-        if (page == null || page.Length < FirstEntryOffset)
+        if (page == null || page.Length < 32)
         {
             return false;
         }
@@ -150,22 +156,30 @@ internal static class IndexLeafIncremental
     /// shared prefix to entries beyond the first.
     /// </summary>
     public static List<DecodedEntry> DecodeEntries(byte[] page, int pageSize)
+        => DecodeEntries(IndexLeafPageBuilder.LeafPageLayout.Jet4, page, pageSize);
+
+    /// <summary>
+    /// Layout-aware overload of <see cref="DecodeEntries(byte[], int)"/> for
+    /// callers that may target Jet3 leaf pages (§4.2 bitmask at <c>0x16</c>,
+    /// first entry at <c>0xF8</c>).
+    /// </summary>
+    public static List<DecodedEntry> DecodeEntries(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, int pageSize)
     {
         var result = new List<DecodedEntry>();
         int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(20, 2));
         int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
         int payloadEnd = pageSize - freeSpace;
-        if (payloadEnd <= FirstEntryOffset)
+        if (payloadEnd <= layout.FirstEntryOffset)
         {
             return result;
         }
 
         byte[]? sharedPrefix = null;
-        int entryStart = FirstEntryOffset;
+        int entryStart = layout.FirstEntryOffset;
         bool isFirst = true;
         while (entryStart < payloadEnd)
         {
-            int next = NextEntryStart(page, payloadEnd, entryStart);
+            int next = NextEntryStart(layout, page, payloadEnd, entryStart);
             int entryEnd = next < 0 ? payloadEnd : next;
             int totalLen = entryEnd - entryStart;
 
@@ -305,10 +319,22 @@ internal static class IndexLeafIncremental
         int pageSize,
         long parentTdefPage,
         IReadOnlyList<IndexLeafPageBuilder.LeafEntry> entries)
+        => TryRebuildLeaf(IndexLeafPageBuilder.LeafPageLayout.Jet4, pageSize, parentTdefPage, entries);
+
+    /// <summary>
+    /// Layout-aware overload of <see cref="TryRebuildLeaf(int, long, IReadOnlyList{IndexLeafPageBuilder.LeafEntry})"/>
+    /// for callers that may target Jet3 leaf pages.
+    /// </summary>
+    public static byte[]? TryRebuildLeaf(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<IndexLeafPageBuilder.LeafEntry> entries)
     {
         try
         {
-            return IndexLeafPageBuilder.BuildJet4LeafPage(
+            return IndexLeafPageBuilder.BuildLeafPage(
+                layout,
                 pageSize,
                 parentTdefPage,
                 entries,
@@ -341,19 +367,22 @@ internal static class IndexLeafIncremental
     }
 
     private static int NextEntryStart(byte[] page, int payloadEnd, int currentStart)
+        => NextEntryStart(IndexLeafPageBuilder.LeafPageLayout.Jet4, page, payloadEnd, currentStart);
+
+    private static int NextEntryStart(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, int payloadEnd, int currentStart)
     {
-        int searchStart = currentStart - FirstEntryOffset + 1;
-        for (int bit = searchStart; bit < payloadEnd - FirstEntryOffset; bit++)
+        int searchStart = currentStart - layout.FirstEntryOffset + 1;
+        for (int bit = searchStart; bit < payloadEnd - layout.FirstEntryOffset; bit++)
         {
-            int byteOff = BitmaskOffset + (bit / 8);
-            if (byteOff >= FirstEntryOffset)
+            int byteOff = layout.BitmaskOffset + (bit / 8);
+            if (byteOff >= layout.FirstEntryOffset)
             {
                 return -1;
             }
 
             if ((page[byteOff] & (1 << (bit % 8))) != 0)
             {
-                int candidate = FirstEntryOffset + bit;
+                int candidate = layout.FirstEntryOffset + bit;
                 return candidate < payloadEnd ? candidate : -1;
             }
         }
