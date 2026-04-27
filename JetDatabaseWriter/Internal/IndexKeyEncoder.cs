@@ -24,9 +24,10 @@ using System.Numerics;
 /// data bytes intact and intermediate length bytes at <c>0x09</c> with the
 /// final length byte at the actual segment length, descending bit-flips
 /// every data byte and the FINAL length byte but leaves intermediate length
-/// bytes at <c>0x09</c>). MEMO, OLE, BINARY, NUMERIC, complex, and
-/// DATETIMEEXT are still deferred (no clean HACKING.md spec for any of
-/// them).
+/// bytes at <c>0x09</c>). W19 extends the same general-binary-entry packing
+/// to <c>T_BINARY (0x09)</c> for variable-length binary index keys. MEMO,
+/// OLE, complex, and DATETIMEEXT are still deferred (no clean HACKING.md
+/// spec for any of them).
 /// </para>
 /// <para>
 /// The encoded layout is one flag byte (0x7F asc / 0x80 desc for non-null,
@@ -63,6 +64,7 @@ internal static class IndexKeyEncoder
     private const byte T_FLOAT = 0x06;
     private const byte T_DOUBLE = 0x07;
     private const byte T_DATETIME = 0x08;
+    private const byte T_BINARY = 0x09;
     private const byte T_TEXT = 0x0A;
     private const byte T_MEMO = 0x0C;
     private const byte T_GUID = 0x0F;
@@ -108,6 +110,11 @@ internal static class IndexKeyEncoder
         if (columnType == T_GUID)
         {
             return EncodeGuidEntry(value!, ascending);
+        }
+
+        if (columnType == T_BINARY)
+        {
+            return EncodeBinaryEntry(value!, ascending);
         }
 
         // Text / Memo route through the dedicated General Legacy encoder which
@@ -192,7 +199,7 @@ internal static class IndexKeyEncoder
             default:
                 throw new NotSupportedException(
                     $"Index key encoding for column type 0x{columnType:X2} is not supported in this writer phase. " +
-                    "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, GUID, TEXT, MEMO.");
+                    "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, GUID, BINARY, TEXT, MEMO.");
         }
     }
 
@@ -245,25 +252,92 @@ internal static class IndexKeyEncoder
             storage[12], storage[13], storage[14], storage[15],
         ];
 
-        // Layout: flag(1) + segment1(8 data + 1 len=0x09) + segment2(8 data + 1 len=0x08) = 19 bytes.
-        byte[] result = new byte[19];
+        return EncodeGeneralBinaryEntry(display, ascending);
+    }
+
+    /// <summary>
+    /// W19 — Variable-length <c>T_BINARY (0x09)</c> sort-key encoding via the
+    /// Jackcess general-binary-entry packing. Accepts <see cref="byte"/>[]
+    /// (the canonical Access binary representation) and falls back to
+    /// <see cref="Convert"/> coercion otherwise. Empty arrays are encoded as
+    /// a single zero-length segment so two empty values compare equal and
+    /// sort below any non-empty value.
+    /// <para>
+    /// <b>Validation gap:</b> the format-probe corpus does not contain a
+    /// BINARY-keyed index leaf; these byte sequences come from Jackcess
+    /// <c>IndexData.writeGeneralBinaryEntry</c> and have not been independently
+    /// verified against an Access-authored fixture. See
+    /// <c>docs/design/index-and-relationship-format-notes.md</c> §8.
+    /// </para>
+    /// </summary>
+    private static byte[] EncodeBinaryEntry(object value, bool ascending)
+    {
+        byte[] data = value switch
+        {
+            byte[] b => b,
+            ArraySegment<byte> seg => seg.ToArray(),
+            ReadOnlyMemory<byte> rom => rom.ToArray(),
+            Memory<byte> mem => mem.ToArray(),
+            _ => throw new ArgumentException(
+                $"Cannot coerce value of type {value.GetType().Name} to byte[] for T_BINARY index key encoding.",
+                nameof(value)),
+        };
+
+        return EncodeGeneralBinaryEntry(data, ascending);
+    }
+
+    /// <summary>
+    /// Shared general-binary-entry packer (Jackcess
+    /// <c>IndexData.writeGeneralBinaryEntry</c>). Emits the entry-flag byte
+    /// followed by ⌈len/8⌉ 9-byte segments (8 zero-padded data bytes + 1
+    /// length byte): <c>0x09</c> for intermediate segments, the actual valid
+    /// byte count for the final segment. For empty input one final segment
+    /// of 8 zero bytes + length <c>0x00</c> is emitted so empty values are
+    /// representable and byte-comparable. On descending the data bytes and
+    /// the FINAL length byte are ones-complemented; intermediate length
+    /// bytes (<c>0x09</c>) stay unflipped.
+    /// </summary>
+    private static byte[] EncodeGeneralBinaryEntry(ReadOnlySpan<byte> data, bool ascending)
+    {
+        // Always emit at least one segment so empty input round-trips.
+        int segments = data.Length == 0 ? 1 : (data.Length + 7) / 8;
+        byte[] result = new byte[1 + (segments * 9)];
         result[0] = ascending ? FlagAscendingNonNull : FlagDescendingNonNull;
 
-        // Segment 1: bytes 0..7 + intermediate length byte 0x09.
-        for (int i = 0; i < 8; i++)
+        int read = 0;
+        for (int s = 0; s < segments; s++)
         {
-            result[1 + i] = ascending ? display[i] : unchecked((byte)~display[i]);
+            int segStart = 1 + (s * 9);
+            int chunkLen = Math.Min(data.Length - read, 8);
+            if (chunkLen < 0)
+            {
+                chunkLen = 0;
+            }
+
+            for (int i = 0; i < chunkLen; i++)
+            {
+                byte b = data[read + i];
+                result[segStart + i] = ascending ? b : unchecked((byte)~b);
+            }
+
+            // Zero-pad remaining bytes of the chunk; on descending the pad
+            // bytes flip to 0xFF so the encoded form remains a pure ones-
+            // complement of the ascending form (modulo the intermediate
+            // length byte handled below).
+            for (int i = chunkLen; i < 8; i++)
+            {
+                result[segStart + i] = ascending ? (byte)0x00 : (byte)0xFF;
+            }
+
+            read += chunkLen;
+            bool isFinal = s == segments - 1;
+            byte lenByte = isFinal ? (byte)chunkLen : (byte)0x09;
+
+            // Intermediate length bytes (0x09) are NOT flipped on descending
+            // — only data bytes and the FINAL length byte are.
+            result[segStart + 8] = (ascending || !isFinal) ? lenByte : unchecked((byte)~lenByte);
         }
 
-        result[9] = 0x09; // intermediate length byte — NOT flipped on descending.
-
-        // Segment 2 (final): bytes 8..15 + final length byte 0x08.
-        for (int i = 0; i < 8; i++)
-        {
-            result[10 + i] = ascending ? display[8 + i] : unchecked((byte)~display[8 + i]);
-        }
-
-        result[18] = ascending ? (byte)0x08 : unchecked((byte)~0x08);
         return result;
     }
 
@@ -555,7 +629,7 @@ internal static class IndexKeyEncoder
     internal static bool IsColumnTypeSeekable(byte columnType) => columnType switch
     {
         T_BYTE or T_INT or T_LONG or T_MONEY or T_FLOAT or T_DOUBLE
-            or T_DATETIME or T_TEXT or T_MEMO or T_GUID => true,
+            or T_DATETIME or T_BINARY or T_TEXT or T_MEMO or T_GUID => true,
         _ => false,
     };
 }
