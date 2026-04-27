@@ -933,8 +933,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 break;
             }
 
-            int indexNum = jet4 ? Ri32(td, entryStart + 4) : Ri32(td, entryStart + 4);
-            int realIdxNum = jet4 ? Ri32(td, entryStart + 8) : Ri32(td, entryStart + 8);
+            int indexNum = jet4 ? Ri32(td, entryStart + 4) : Ri32(td, entryStart + 0);
+            int realIdxNum = jet4 ? Ri32(td, entryStart + 8) : Ri32(td, entryStart + 4);
             int relIdxNum = jet4 ? Ri32(td, entryStart + 13) : Ri32(td, entryStart + 9);
             int relTblPage = jet4 ? Ri32(td, entryStart + 17) : Ri32(td, entryStart + 13);
             byte cascadeUps = jet4 ? td[entryStart + 21] : td[entryStart + 17];

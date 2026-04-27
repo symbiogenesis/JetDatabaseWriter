@@ -43,6 +43,12 @@ internal static class IndexLeafPageBuilder
     /// <summary>First-entry offset on a Jet4 leaf page (§4.2).</summary>
     internal const int Jet4FirstEntryOffset = 0x1E0;
 
+    /// <summary>Bitmask offset on a Jet3 leaf page (§4.2, W17a-confirmed).</summary>
+    internal const int Jet3BitmaskOffset = 0x16;
+
+    /// <summary>First-entry offset on a Jet3 leaf page (§4.2, W17a-confirmed).</summary>
+    internal const int Jet3FirstEntryOffset = 0xF8;
+
     /// <summary>
     /// A single leaf entry: the encoded key block produced by
     /// <see cref="IndexKeyEncoder.EncodeEntry(byte, object?, bool)"/> followed
@@ -205,6 +211,40 @@ internal static class IndexLeafPageBuilder
         int freeSpace = payloadLimit - payloadCursor;
         Wu16(page, 2, freeSpace);
 
+        return page;
+    }
+
+    /// <summary>
+    /// Builds an empty Jet3 (<c>.mdb</c> Access 97) index leaf page (W17b).
+    /// Page header layout matches Jet4 (§4.1, probe-confirmed identical between
+    /// formats by W17a) but the entry-start bitmask lives at <c>0x16</c> and
+    /// the first entry begins at <c>0xF8</c> (§4.2). The page is emitted with
+    /// no entries because Jet3 live index maintenance is not implemented;
+    /// Microsoft Access rebuilds the leaf on the next Compact &amp; Repair
+    /// pass once any rows are inserted (same schema-only fallback model used
+    /// for unsupported Jet4 key types).
+    /// </summary>
+    /// <param name="pageSize">Database page size (2048 for Jet3).</param>
+    /// <param name="parentTdefPage">Page number of the table's TDEF page.</param>
+    public static byte[] BuildJet3EmptyLeafPage(int pageSize, long parentTdefPage)
+    {
+        if (pageSize <= Jet3FirstEntryOffset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {Jet3FirstEntryOffset}.");
+        }
+
+        byte[] page = new byte[pageSize];
+
+        // ── Header (§4.1, identical between Jet3 and Jet4) ───────────────
+        page[0] = PageTypeLeaf; // page_type
+        page[1] = 0x01;         // unknown (always 0x01)
+        Wi32(page, 4, checked((int)parentTdefPage)); // parent_page (TDEF)
+
+        // prev/next/tail @ 8/12/16 are 0; pref_len @ 20 is 0 (no entries).
+        // Bitmask spans [0x16 .. 0xF7] inclusive on Jet3 (§4.2). Empty page:
+        // no bitmask bits are set and no entry bytes are written.
+        int freeSpace = pageSize - Jet3FirstEntryOffset;
+        Wu16(page, 2, freeSpace);
         return page;
     }
 

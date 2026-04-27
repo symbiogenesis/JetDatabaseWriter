@@ -357,10 +357,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // shortcut with an explicit PK IndexDefinition is rejected.
         (columns, indexes) = ApplyPrimaryKeyShortcut(columns, indexes);
 
-        if (indexes.Count > 0 && _format == DatabaseFormat.Jet3Mdb)
-        {
-            throw new NotSupportedException("Index emission is only supported for Jet4 (.mdb) and ACE (.accdb) databases.");
-        }
+        // W17b (2026-04-26): the Jet3 (.mdb Access 97) IndexDefinition
+        // rejection has been lifted. The writer now emits the §3.1 39-byte
+        // real-idx descriptor, the §3.2 20-byte logical-idx entry, and a
+        // schema-only empty Jet3 leaf page (§4.2 bitmask at 0x16, first
+        // entry at 0xF8). MaintainIndexesAsync still short-circuits for
+        // Jet3, so the leaf goes stale on the first row mutation and Access
+        // rebuilds it on the next Compact & Repair pass — the same
+        // schema-only fallback model already used for unsupported Jet4 key
+        // types (OLE / attachment / complex).
 
         if (await GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) != null)
         {
@@ -429,12 +434,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // docs/design/index-and-relationship-format-notes.md §7 W2/W3.
         if (resolvedIndexes.Count > 0)
         {
+            bool jet4 = _format != DatabaseFormat.Jet3Mdb;
             for (int i = 0; i < resolvedIndexes.Count; i++)
             {
-                byte[] leafPage = IndexLeafPageBuilder.BuildJet4LeafPage(
-                    _pgSz,
-                    tdefPageNumber,
-                    []);
+                byte[] leafPage = jet4
+                    ? IndexLeafPageBuilder.BuildJet4LeafPage(_pgSz, tdefPageNumber, [])
+                    : IndexLeafPageBuilder.BuildJet3EmptyLeafPage(_pgSz, tdefPageNumber);
                 long leafPageNumber = await AppendPageAsync(leafPage, cancellationToken).ConfigureAwait(false);
                 Wi32(tdefPage, firstDpOffsets[i], checked((int)leafPageNumber));
             }
@@ -5471,12 +5476,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 throw new NotSupportedException("Table definition (with indexes) does not fit within a single TDEF page.");
             }
 
+            // Per-format field offsets within the real-idx physical descriptor
+            // and logical-idx entry. The Jet3 layouts (39 / 20 bytes) drop the
+            // Jet4 leading 4-byte cookie + trailing tail, so every field shifts
+            // left by 4 bytes; first_dp lives where Jet4 puts used_pages and
+            // there is no separate used_pages slot. See §3.1 / §3.2 (W17a).
+            int physFirstDpOff = jet4 ? 38 : 34;
+            int physFlagsOff = jet4 ? 42 : 38;
+            int logIndexNumOff = jet4 ? 4 : 0;
+            int logIndexNum2Off = jet4 ? 8 : 4;
+            int logRelIdxNumOff = jet4 ? 13 : 9;
+            int logIndexTypeOff = jet4 ? 23 : 19;
+
             for (int i = 0; i < numIdx; i++)
             {
                 ResolvedIndex ri = indexes[i];
 
-                // ── Real-index physical descriptor (Jet4: 52 bytes) ─────────
-                // §3.1: unknown(4) + col_map(30) + used_pages(4) + first_dp(4) + flags(1) + unknown(9).
+                // ── Real-index physical descriptor ─────────────────────────
+                // §3.1 Jet4 (52 bytes): unknown(4) + col_map(30) + used_pages(4)
+                //                     + first_dp(4) + flags(1) + unknown(9).
+                // §3.1 Jet3 (39 bytes): unknown(4) + col_map(30) + first_dp(4)
+                //                     + flags(1).
                 int phys = realIdxPhysStart + (i * realIdxPhysSz);
 
                 // col_map: 10 × { col_num(2), col_order(1) }. First N slots = our
@@ -5500,32 +5520,30 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     }
                 }
 
-                // used_pages (4 bytes) at phys + 34, first_dp (4 bytes) at phys + 38,
-                // flags (1) at phys + 42, trailing 9 bytes at phys + 43..51 — all
-                // start zero. The caller patches first_dp after appending the
-                // leaf page (W3); used_pages remains 0 (no usage bitmap is
-                // emitted). Per the §3.1 empirical correction, real Access
-                // fixtures emit flags = 0x00 even for PK indexes — uniqueness
-                // is signalled by index_type = 0x01 below, not the flag bit.
-                // W11: non-PK unique indexes set flags bit 0x01 explicitly.
+                // The caller patches first_dp after appending the leaf page (W3).
+                // Per the §3.1 empirical correction, real Access fixtures emit
+                // flags = 0x00 even for PK indexes — uniqueness is signalled by
+                // index_type = 0x01 below, not the flag bit. W11: non-PK unique
+                // indexes set flags bit 0x01 explicitly.
                 if (ri.IsUnique && !ri.IsPrimaryKey)
                 {
-                    page[phys + 42] = 0x01;
+                    page[phys + physFlagsOff] = 0x01;
                 }
 
-                firstDpOffsets[i] = phys + 4 + 30 + 4;
+                firstDpOffsets[i] = phys + physFirstDpOff;
 
-                // ── Logical-index entry (Jet4: 28 bytes) ────────────────────
-                // §3.2: unknown(4) + index_num(4) + index_num2(4) + rel_tbl_type(1)
-                //     + rel_idx_num(4) + rel_tbl_page(4) + cascade_ups(1) + cascade_dels(1)
-                //     + index_type(1) + trailing(4).
+                // ── Logical-index entry ─────────────────────────────────────
+                // §3.2 Jet4 (28 bytes): unknown(4) + index_num(4) + index_num2(4)
+                //   + rel_tbl_type(1) + rel_idx_num(4) + rel_tbl_page(4)
+                //   + cascade_ups(1) + cascade_dels(1) + index_type(1) + trailing(4).
+                // §3.2 Jet3 (20 bytes): same fields, no leading cookie / trailing tail.
                 int log = logIdxStart + (i * logIdxEntrySz);
-                Wi32(page, log + 4, i);                  // index_num
-                Wi32(page, log + 8, i);                  // index_num2 (one real per logical)
-                Wi32(page, log + 13, -1);                // rel_idx_num = 0xFFFFFFFF (not a FK)
+                Wi32(page, log + logIndexNumOff, i);                  // index_num
+                Wi32(page, log + logIndexNum2Off, i);                 // index_num2 (one real per logical)
+                Wi32(page, log + logRelIdxNumOff, -1);                // rel_idx_num = 0xFFFFFFFF (not a FK)
 
                 // index_type: 0x01 for PK (W8), 0x00 for normal. FK (0x02) is W9.
-                page[log + 23] = (byte)(ri.IsPrimaryKey ? IndexKind.PrimaryKey : IndexKind.Normal);
+                page[log + logIndexTypeOff] = (byte)(ri.IsPrimaryKey ? IndexKind.PrimaryKey : IndexKind.Normal);
             }
 
             // Logical-index names — same length-prefix encoding as column names.
