@@ -43,7 +43,7 @@
     <EmbeddedResource Include="Internal\IndexCodeTables\index_codes_ext_genleg.txt.gz" LogicalName="JetDatabaseWriter.IndexCodeTables.index_codes_ext_genleg.txt.gz" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.6" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.7" />
   </ItemGroup>
   <!--
     System.Linq.AsyncEnumerable (Where/ToListAsync/etc. over IAsyncEnumerable<T>) ships in the
@@ -52,6 +52,6 @@
     without requiring downstream projects to add the package themselves.
   -->
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.1'">
-    <PackageReference Include="System.Linq.Async" Version="6.0.1" />
+    <PackageReference Include="System.Linq.Async" Version="7.0.1" />
   </ItemGroup>
 </Project>
