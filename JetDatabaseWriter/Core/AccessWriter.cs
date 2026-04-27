@@ -6415,18 +6415,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             IsAutoIncrement = (column.Flags & 0x04) != 0,
         };
 
-        // W23 (2026-04-27): preserve declared precision/scale through the
-        // schema-rewrite copy so AddColumn / DropColumn / RenameColumn don't
-        // silently reset a NUMERIC column to default 18/0. Files written
-        // before W23 store 0/0 here; in that case fall back to the new
-        // defaults so the rewritten descriptor matches what a fresh
-        // CreateTableAsync would emit (avoids tagging legacy files with
-        // accidentally-zero precision).
+        // Preserve declared precision/scale through the schema-rewrite copy so
+        // AddColumn / DropColumn / RenameColumn don't silently reset a NUMERIC
+        // column to default 18/0. Access-authored files always populate these
+        // descriptor bytes for T_NUMERIC columns.
         if (column.Type == T_NUMERIC)
         {
-            byte p = column.NumericPrecision == 0 ? (byte)18 : column.NumericPrecision;
-            byte s = column.NumericScale; // legitimately 0 for default Decimal columns
-            def = def with { NumericPrecision = p, NumericScale = s };
+            def = def with { NumericPrecision = column.NumericPrecision, NumericScale = column.NumericScale };
         }
 
         return def;
@@ -6511,16 +6506,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
             else if (col.Type == T_NUMERIC && _format != DatabaseFormat.Jet3Mdb)
             {
-                // W23 (2026-04-27): persist declared precision/scale at the
-                // same misc 4-byte slot Access uses for Decimal columns —
-                // descriptor offset 11 = precision, offset 12 = scale,
-                // bytes 13/14 stay zero (matches Jackcess
-                // FixedPointColumnDescriptor parser and round-tripped
+                // Persist declared precision/scale at the same misc 4-byte slot
+                // Access uses for Decimal columns — descriptor offset 11 =
+                // precision, offset 12 = scale, bytes 13/14 stay zero (matches
+                // Jackcess FixedPointColumnDescriptor parser and round-tripped
                 // Access-authored fixedNumericTest fixtures). Read back by
-                // AccessBase.LoadColumnInfos and consumed by
-                // MaintainIndexesAsync / TryMaintainIndexesIncrementalAsync
-                // as the canonical index-key scale (snapshot pre-pass
-                // becomes redundant for files written from W23 onwards).
+                // AccessBase.LoadColumnInfos and consumed by index encoders as
+                // the canonical index-key scale.
                 page[o + _colMiscOff] = col.NumericPrecision;
                 page[o + _colMiscOff + 1] = col.NumericScale;
             }
@@ -7247,9 +7239,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // Phase C10: resolve the matching MSysComplexType_* template id so the
             // MSysComplexColumns row points at the canonical type-template table
             // instead of carrying the placeholder 0. Templates are scaffolded by
-            // CreateDatabaseAsync; for files opened in-place that lack them (e.g.
-            // a slim-catalog ACCDB or a pre-C10 writer-authored file) the lookup
-            // returns 0 and the row falls back to the pre-C10 placeholder value.
+            // CreateDatabaseAsync and always present in Access-authored files; the
+            // lookup only falls back to 0 for slim-catalog ACCDBs
+            // (WriteFullCatalogSchema = false), which intentionally skip system
+            // tables for byte-hash backward compatibility.
             string? templateName = ResolveComplexTypeTemplateName(col);
             int templateId = templateName is null
                 ? 0
@@ -9900,49 +9893,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            // W23 (2026-04-27): canonical scale for a T_NUMERIC index column
-            // is the column's DECLARED scale (Access-parity — every cell is
-            // canonically stored at the declared scale, so the index sorts
-            // at that scale too). Files written by this library before W23
-            // have NumericPrecision == 0 (the descriptor's misc bytes were
-            // emitted as zero); for those, fall back to the legacy W13
-            // per-rebuild snapshot pre-pass so existing data still indexes.
+            // Canonical scale for a T_NUMERIC index column is the column's
+            // DECLARED scale (Access-parity — every cell is canonically stored
+            // at the declared scale, so the index sorts at that scale too).
             // Non-numeric columns get -1 as a sentinel.
             int[] numericTargetScales = new int[keyColInfos.Count];
             for (int k = 0; k < keyColInfos.Count; k++)
             {
                 ColumnInfo kCol = keyColInfos[k].Col;
-                if (kCol.Type != T_NUMERIC)
-                {
-                    numericTargetScales[k] = -1;
-                    continue;
-                }
-
-                if (kCol.NumericPrecision != 0)
-                {
-                    numericTargetScales[k] = kCol.NumericScale;
-                    continue;
-                }
-
-                int kSnap = keyColInfos[k].SnapIdx;
-                int max = 0;
-                for (int r = 0; r < rowCount; r++)
-                {
-                    object cell = snapshot.Rows[r][kSnap];
-                    if (cell is DBNull)
-                    {
-                        continue;
-                    }
-
-                    decimal dv = Convert.ToDecimal(cell, CultureInfo.InvariantCulture);
-                    int s = (decimal.GetBits(dv)[3] >> 16) & 0x7F;
-                    if (s > max)
-                    {
-                        max = s;
-                    }
-                }
-
-                numericTargetScales[k] = max;
+                numericTargetScales[k] = kCol.Type == T_NUMERIC ? kCol.NumericScale : -1;
             }
 
             bool legacyNumeric = _format == DatabaseFormat.Jet4Mdb;
@@ -10193,20 +10152,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             {
                 ColumnInfo? col = tableDef.Columns.Find(c => c.ColNum == colNum);
                 if (col is null || !snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
-                {
-                    resolveFailed = true;
-                    break;
-                }
-
-                // W23 (2026-04-27): T_NUMERIC keys participate in the
-                // incremental fast paths via the column's DECLARED scale
-                // (persisted at descriptor offsets 11/12 — see ColumnInfo
-                // .NumericPrecision/.NumericScale). Files written by this
-                // library before W23 have NumericPrecision == 0 (the
-                // descriptor's misc bytes were emitted as zero); for those
-                // legacy files we still bail so the bulk path's
-                // max-natural-scale snapshot pre-pass governs encoding.
-                if (col.Type == T_NUMERIC && col.NumericPrecision == 0)
                 {
                     resolveFailed = true;
                     break;
@@ -13010,74 +12955,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         foreach (UniqueIndexDescriptor descriptor in descriptors)
         {
-            // W23 (2026-04-27): canonical scale = column's DECLARED scale.
-            // Legacy files without declared metadata (NumericPrecision == 0)
-            // fall back to the W15 max-natural-scale snapshot pre-pass.
+            // Canonical scale = column's DECLARED scale.
             int[] numericTargetScales = new int[descriptor.KeyColumns.Count];
             for (int k = 0; k < descriptor.KeyColumns.Count; k++)
             {
                 ColumnInfo kCol = descriptor.KeyColumns[k].Col;
-                if (kCol.Type != T_NUMERIC)
-                {
-                    numericTargetScales[k] = -1;
-                    continue;
-                }
-
-                if (kCol.NumericPrecision != 0)
-                {
-                    numericTargetScales[k] = kCol.NumericScale;
-                    continue;
-                }
-
-                int kSnap = descriptor.KeyColumns[k].SnapIdx;
-                int max = 0;
-                for (int r = 0; r < snapshotRowCount; r++)
-                {
-                    object cell;
-                    if (replaceAtSnapshotIndex != null && replaceAtSnapshotIndex.TryGetValue(r, out object[]? rep))
-                    {
-                        cell = kSnap < rep.Length ? rep[kSnap] : DBNull.Value;
-                    }
-                    else
-                    {
-                        cell = snapshot.Rows[r][kSnap];
-                    }
-
-                    if (cell is null or DBNull)
-                    {
-                        continue;
-                    }
-
-                    decimal dv = Convert.ToDecimal(cell, CultureInfo.InvariantCulture);
-                    int s = (decimal.GetBits(dv)[3] >> 16) & 0x7F;
-                    if (s > max)
-                    {
-                        max = s;
-                    }
-                }
-
-                foreach (object[] pendingRow in pendingInsertRows)
-                {
-                    if (kSnap >= pendingRow.Length)
-                    {
-                        continue;
-                    }
-
-                    object cell = pendingRow[kSnap];
-                    if (cell is null or DBNull)
-                    {
-                        continue;
-                    }
-
-                    decimal dv = Convert.ToDecimal(cell, CultureInfo.InvariantCulture);
-                    int s = (decimal.GetBits(dv)[3] >> 16) & 0x7F;
-                    if (s > max)
-                    {
-                        max = s;
-                    }
-                }
-
-                numericTargetScales[k] = max;
+                numericTargetScales[k] = kCol.Type == T_NUMERIC ? kCol.NumericScale : -1;
             }
 
             // Encode every effective row's key. Collect into a HashSet keyed

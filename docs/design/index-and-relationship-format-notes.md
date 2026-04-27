@@ -680,14 +680,13 @@ Where the new path engages:
 
 - `EncodeHintEntries` (used by every fast path's encoded-key derivation) — calls `EncodeNumericEntryAtDeclaredScale(value, ascending, col.NumericScale, legacyNumeric)` for `T_NUMERIC` columns; non-numeric columns unchanged. Method changed from `private static` to `private` to access `_format`.
 - `EncodeCompositeKeyForUniqueCheck` (W15 pre-insert duplicate check) — same call site update.
-- `MaintainIndexesAsync` bulk rebuild — when `col.NumericPrecision != 0` the per-index canonical scale is the declared scale; the legacy max-natural snapshot pre-pass is preserved (and only invoked) when the column descriptor reports `NumericPrecision == 0`, which only happens for files written before W23.
-- `CheckUniqueIndexesCore` (W15 bulk path) — same declared-scale-with-legacy-fallback rewrite.
-- `TryMaintainIndexesIncrementalAsync` (W4-C entry point) — bail condition rewritten from `if (col.Type == T_NUMERIC) bail` to `if (col.Type == T_NUMERIC && col.NumericPrecision == 0) bail`. Only legacy (pre-W23) files take the bail.
+- `MaintainIndexesAsync` bulk rebuild — the per-index canonical scale is the column's declared scale.
+- `CheckUniqueIndexesCore` (W15 bulk path) — same declared-scale rewrite.
+- `TryMaintainIndexesIncrementalAsync` (W4-C entry point) — the prior `T_NUMERIC` bail is gone; numeric keys now participate in the incremental fast paths.
 
 Backward compatibility:
 
-- Files written before W23 have descriptor bytes 11/12 set to zero for NUMERIC columns. Both reader and writer treat `NumericPrecision == 0` as "legacy file"; the bulk path falls back to the snapshot pre-pass and the incremental fast paths bail to bulk. Once a CREATE TABLE under W23+ rewrites the column descriptor, the declared-scale path engages.
-- `BuildColumnDefinitionFromInfo` reads back `NumericPrecision == 0` and substitutes `18` so callers see the Access default rather than an invalid zero precision.
+- `BuildColumnDefinitionFromInfo` round-trips `NumericPrecision` / `NumericScale` from the on-disk descriptor so AddColumn / DropColumn / RenameColumn preserve the declared metadata.
 
 Validation:
 

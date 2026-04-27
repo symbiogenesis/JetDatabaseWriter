@@ -613,14 +613,9 @@ All password-protected formats produced by Microsoft Access from Access 97 throu
 The items below are **not yet implemented** and are the most likely places to hit a wall.
 
 ### Primary & foreign keys
-- **TDEF must fit on one page** after FK entries are appended, otherwise `NotSupportedException`.
-- **`DropRelationshipAsync` only reclaims trailing real-idx slots.** A mid-array orphan (e.g. drop the older of two relationships on the same TDEF) is left in place because mid-array compaction would require renumbering `rel_idx_num` on every other table that points at the slot. Reclaimed by Access on the next Compact & Repair pass.
-- **Referential-integrity enforcement is O(log N) on Jet4 / ACE** via parent-PK and FK-side index seeks. Jet3, encoder-rejected key types, and child rows containing LVAL columns that the single-row reader cannot decode fall back to an O(N) snapshot scan.
 - **Not yet validated end-to-end through Microsoft Access.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not been round-tripped through a Compact & Repair pass on Windows.
 
 ### Specialized column kinds
-- **Renaming a complex column does not rename its hidden flat-table catalog entry** (`f_<hex>_<oldColumnName>` stays). Access reconciles cosmetically on the next Compact & Repair pass.
-- **Files opened in-place that lack the `MSysComplexType_*` templates** (slim-catalog ACCDBs and pre-C10 writer-authored files) fall back to `ComplexTypeObjectID = 0`; the field is not retroactively patched on open.
 - **No calculated columns** (Access 2010+ expression columns).
 - **No hyperlink semantics.** Hyperlink fields round-trip as plain MEMO text; the `#display#address#subaddress#` structure is not parsed or emitted.
 

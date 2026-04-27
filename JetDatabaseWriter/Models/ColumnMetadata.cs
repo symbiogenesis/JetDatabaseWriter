@@ -60,8 +60,7 @@ public sealed record ColumnMetadata
     /// Gets or initializes the declared precision (1..28) for a
     /// <c>decimal</c> / <c>T_NUMERIC</c> column. Sourced from the TDEF
     /// column descriptor's <c>misc</c> slot at descriptor offset 11. Zero
-    /// for non-numeric columns and for legacy files written by
-    /// <see cref="AccessWriter"/> before W23 emitted these bytes.
+    /// for non-numeric columns.
     /// </summary>
     public byte NumericPrecision { get; init; }
 

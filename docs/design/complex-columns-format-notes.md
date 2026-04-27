@@ -281,8 +281,7 @@ Helpers added on `AccessWriter`:
 
 C10 caveats:
 
-- **Files opened in-place that lack the templates fall back to `ComplexTypeObjectID = 0`.** This covers slim-catalog ACCDBs and `.accdb` files produced by pre-C10 writer versions. The lookup tolerates a missing template by returning `0`, mirroring the pre-C10 behaviour.
-- **Existing `MSysComplexColumns` rows are not retroactively patched.** Opening a pre-C10 file does not rewrite the `0` placeholders. Microsoft Access reconciles cosmetically on the next Compact & Repair pass.
+- **Slim-catalog ACCDBs (`WriteFullCatalogSchema = false`) skip the templates by design.** That mode targets byte-hash backward compatibility with the legacy 9-column catalog and must not introduce additional pages; `EmitComplexColumnArtifactsAsync` falls back to `ComplexTypeObjectID = 0` when the template lookup misses. Access-authored files always carry the templates, and fresh `CreateDatabaseAsync` ACCDBs scaffold them, so the fallback only fires on the slim-catalog mode.
 - **Decimal template `col_len`.** The format-probe appendix shows `col_len = 9` (precision 9 / scale 0); the C10 implementation emits whatever the writer's default `decimal` mapping produces. The template table is never populated with rows, so the precise `col_len` value carries no observable semantic.
 - **Validation gap.** Round-trip through this library's reader is verified in 6 tests in `ComplexColumnsWriterTests` (template scaffolding, hidden-from-`ListTablesAsync`, attachment template column list, Jet4 skip, attachment + multi-value `ComplexTypeObjectID` non-zero). Microsoft Access compact-and-repair validation is still pending — see [`index-and-relationship-format-notes.md` §8](index-and-relationship-format-notes.md#8-validation-strategy).
 

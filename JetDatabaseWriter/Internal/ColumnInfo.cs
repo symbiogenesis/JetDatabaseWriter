@@ -31,18 +31,16 @@ internal sealed class ColumnInfo
     /// Gets or sets the declared precision (total significant digits, 1..28)
     /// for a <c>T_NUMERIC</c> column. Persisted at descriptor-relative offset
     /// 11 (the first byte of <see cref="Misc"/> for Jet4 / ACE column
-    /// descriptors). Zero for non-numeric columns and for legacy files that
-    /// pre-date W23 (treated by index encoders as "use bulk-rebuild
-    /// max-natural-scale fallback" for backward compatibility).
+    /// descriptors). Zero for non-numeric columns.
     /// </summary>
     public byte NumericPrecision { get; set; }
 
     /// <summary>
     /// Gets or sets the declared scale (decimal places, 0..28) for a
     /// <c>T_NUMERIC</c> column. Persisted at descriptor-relative offset 12
-    /// (the second byte of <see cref="Misc"/>). The W23 incremental fast
-    /// paths use this value as the canonical index scale, rescaling every
-    /// cell value via <see cref="System.MidpointRounding.ToEven"/> rounding
+    /// (the second byte of <see cref="Misc"/>). The incremental fast paths
+    /// use this value as the canonical index scale, rescaling every cell
+    /// value via <see cref="System.MidpointRounding.ToEven"/> rounding
     /// before the encoder runs — matching Access semantics that every
     /// <c>T_NUMERIC</c> cell sorts at the column's declared scale.
     /// </summary>
