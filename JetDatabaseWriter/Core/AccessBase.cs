@@ -289,11 +289,43 @@ public abstract class AccessBase : IAccessBase
     private protected static void Wi32(byte[] b, int o, int value) =>
         BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(o, 4), value);
 
+    /// <summary>Reads a 24-bit little-endian unsigned integer.</summary>
+    internal static int ReadUInt24LittleEndian(ReadOnlySpan<byte> source) =>
+        source[0] | (source[1] << 8) | (source[2] << 16);
+
+    /// <summary>Reads a 24-bit big-endian unsigned integer.</summary>
+    internal static int ReadUInt24BigEndian(ReadOnlySpan<byte> source) =>
+        (source[0] << 16) | (source[1] << 8) | source[2];
+
+    /// <summary>Reads an IEEE-754 single-precision float in little-endian byte order.</summary>
+    internal static float ReadSingleLittleEndian(ReadOnlySpan<byte> source) =>
+#if NET5_0_OR_GREATER
+        BinaryPrimitives.ReadSingleLittleEndian(source);
+#else
+        BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(source));
+#endif
+
+    /// <summary>Reads an IEEE-754 double-precision float in little-endian byte order.</summary>
+    internal static double ReadDoubleLittleEndian(ReadOnlySpan<byte> source) =>
+#if NET5_0_OR_GREATER
+        BinaryPrimitives.ReadDoubleLittleEndian(source);
+#else
+        BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(source));
+#endif
+
+    /// <summary>Encodes <paramref name="source"/> as an upper-case hex string with no separators.</summary>
+    internal static string ToHexStringNoSeparator(ReadOnlySpan<byte> source) =>
+#if NET5_0_OR_GREATER
+        Convert.ToHexString(source);
+#else
+        BitConverter.ToString(source.ToArray()).Replace("-", string.Empty, StringComparison.Ordinal);
+#endif
+
     private protected static void WriteUInt24(byte[] b, int o, int value)
     {
-        b[o] = (byte)(value & 0xFF);
-        b[o + 1] = (byte)((value >> 8) & 0xFF);
-        b[o + 2] = (byte)((value >> 16) & 0xFF);
+        Span<byte> span = b.AsSpan(o, 3);
+        BinaryPrimitives.WriteUInt16LittleEndian(span, (ushort)(value & 0xFFFF));
+        span[2] = (byte)((value >> 16) & 0xFF);
     }
 
     private protected static void WriteField(byte[] b, int o, int fieldSize, int value)
@@ -427,19 +459,27 @@ public abstract class AccessBase : IAccessBase
             }
             else
             {
+                // Find the end of the uncompressed run: either a 0x00 0x00
+                // terminator at a pair boundary, or the end of the buffer.
+                int runStart = i;
+                while (i + 1 < end && !(b[i] == 0x00 && b[i + 1] == 0x00))
+                {
+                    i += 2;
+                }
+
+                int runLen = i - runStart;
+                if (runLen > 0)
+                {
+                    _ = sb.Append(Encoding.Unicode.GetString(b, runStart, runLen));
+                }
+
                 if (i + 1 >= end)
                 {
                     break;
                 }
 
-                if (b[i] == 0x00 && b[i + 1] == 0x00)
-                {
-                    compressed = true;
-                    i += 2;
-                    continue;
-                }
-
-                _ = sb.Append((char)(b[i] | (b[i + 1] << 8)));
+                // Consume the 0x00 0x00 terminator and switch back to compressed mode.
+                compressed = true;
                 i += 2;
             }
         }
@@ -462,22 +502,22 @@ public abstract class AccessBase : IAccessBase
                 case T_LONG:
                     return Ri32(row, start).ToString(System.Globalization.CultureInfo.InvariantCulture);
                 case T_FLOAT:
-                    return BitConverter.ToSingle(row, start).ToString("G", System.Globalization.CultureInfo.InvariantCulture);
+                    return ReadSingleLittleEndian(row.AsSpan(start, 4)).ToString("G", System.Globalization.CultureInfo.InvariantCulture);
                 case T_DOUBLE:
-                    return BitConverter.ToDouble(row, start).ToString("G", System.Globalization.CultureInfo.InvariantCulture);
+                    return ReadDoubleLittleEndian(row.AsSpan(start, 8)).ToString("G", System.Globalization.CultureInfo.InvariantCulture);
                 case T_DATETIME:
-                    return DateTime.FromOADate(BitConverter.ToDouble(row, start)).ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+                    return DateTime.FromOADate(ReadDoubleLittleEndian(row.AsSpan(start, 8))).ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
                 case T_MONEY:
-                    return decimal.FromOACurrency(BitConverter.ToInt64(row, start)).ToString("F4", System.Globalization.CultureInfo.InvariantCulture);
+                    return decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(row.AsSpan(start, 8))).ToString("F4", System.Globalization.CultureInfo.InvariantCulture);
                 case T_GUID:
-                    return new Guid(ReadGuidBytes(row, start)).ToString("B");
+                    return new Guid(row.AsSpan(start, 16)).ToString("B");
                 case T_NUMERIC:
                     return ReadNumericString(row, start);
                 case T_COMPLEX:
                 case T_ATTACHMENT:
                     return size >= 4 ? $"__CX:{Ri32(row, start)}__" : string.Empty;
                 default:
-                    return BitConverter.ToString(row, start, Math.Min(size, 8));
+                    return ToHexStringNoSeparator(row.AsSpan(start, Math.Min(size, 8)));
             }
         }
         catch (ArgumentException)
@@ -492,13 +532,6 @@ public abstract class AccessBase : IAccessBase
         {
             return string.Empty;
         }
-    }
-
-    private protected static byte[] ReadGuidBytes(byte[] b, int start)
-    {
-        var guidBytes = new byte[16];
-        Buffer.BlockCopy(b, start, guidBytes, 0, 16);
-        return guidBytes;
     }
 
     private protected static string ReadNumericString(byte[] b, int start)

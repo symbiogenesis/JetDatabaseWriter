@@ -244,7 +244,7 @@ internal static class IndexLeafIncremental
             }
 
             int dpOff = entryStart + suffixLen;
-            long dp = ((long)page[dpOff] << 16) | ((long)page[dpOff + 1] << 8) | page[dpOff + 2];
+            long dp = AccessBase.ReadUInt24BigEndian(page.AsSpan(dpOff, 3));
             byte dr = page[dpOff + 3];
             result.Add(new DecodedEntry(canonical, dp, dr));
 
