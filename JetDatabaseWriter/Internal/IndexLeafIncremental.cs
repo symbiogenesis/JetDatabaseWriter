@@ -81,6 +81,37 @@ internal static class IndexLeafIncremental
     }
 
     /// <summary>
+    /// Returns the page number recorded in the <c>tail_page</c> header
+    /// field of any index page (offset 16, signed 32-bit little-endian per
+    /// §4.1). On intermediates emitted by <see cref="IndexBTreeBuilder"/>
+    /// this is the absolute page number of the rightmost leaf (W18
+    /// 2026-04-26). On a single-leaf root it is 0 (the leaf is its own tail).
+    /// </summary>
+    public static long ReadTailPage(byte[] page)
+    {
+        if (page == null || page.Length < 20)
+        {
+            return 0;
+        }
+
+        return (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(16, 4));
+    }
+
+    /// <summary>
+    /// Returns the page number recorded in the <c>prev_page</c> sibling
+    /// pointer of any index page (offset 8, signed 32-bit little-endian).
+    /// </summary>
+    public static long ReadPrevPage(byte[] page)
+    {
+        if (page == null || page.Length < 12)
+        {
+            return 0;
+        }
+
+        return (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(8, 4));
+    }
+
+    /// <summary>
     /// Decodes the child-page pointer of the FIRST entry on an intermediate
     /// (<c>0x03</c>) page. Each intermediate entry is laid out as
     /// <c>[stripped key bytes][3 B BE data page][1 B data row][4 B LE child page]</c>

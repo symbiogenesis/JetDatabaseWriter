@@ -22,8 +22,12 @@ using System.Collections.Generic;
 /// <b>Constraints / not done</b>:
 /// </para>
 /// <list type="bullet">
-///   <item>No prefix compression (<c>pref_len</c> is always 0). §4.4.</item>
-///   <item>No tail-page append optimisation (<c>tail_page</c> is always 0). §4.5.</item>
+///   <item>Shared-prefix compression on leaves and intermediates (W4 sub-phase A). §4.4.</item>
+///   <item>Tail-page recorded on every intermediate page (W18, 2026-04-26): the
+///   <c>tail_page</c> header field on each <c>0x03</c> page points at the
+///   absolute page number of the rightmost leaf so a reader / seeker can short-circuit
+///   to it without descending. Single-leaf trees keep <c>tail_page = 0</c> (the leaf
+///   itself is the tail). §4.5.</item>
 ///   <item>No incremental updates: this builds a fresh tree from a sorted
 ///   entry list. Maintenance hooks on insert / update / delete are W5.</item>
 /// </list>
@@ -203,6 +207,13 @@ internal static class IndexBTreeBuilder
         IReadOnlyList<IndexLeafPageBuilder.LeafEntry> childLastEntries = leafLastEntries;
         long nextFreePage = firstPageNumber + leafCount;
 
+        // W18 (2026-04-26): tail-leaf is the rightmost leaf the builder just
+        // emitted (firstPageNumber + leafCount - 1). Stamp it into every
+        // intermediate-page tail_page header so the seeker can jump directly
+        // to the tail without descending the tree, and so the append-only
+        // incremental fast path can locate it from the root in one read.
+        long tailLeafPage = firstPageNumber + leafCount - 1;
+
         while (childPageCount > 1)
         {
             (List<List<IntermediateEntry>> groups, List<IndexLeafPageBuilder.LeafEntry> nextLevelLast) =
@@ -224,7 +235,8 @@ internal static class IndexBTreeBuilder
                     parentTdefPage,
                     groups[i],
                     prevPage: prev,
-                    nextPage: next);
+                    nextPage: next,
+                    tailPage: tailLeafPage);
                 pages.Add(page);
             }
 
@@ -298,7 +310,8 @@ internal static class IndexBTreeBuilder
         long parentTdefPage,
         IReadOnlyList<IntermediateEntry> entries,
         long prevPage,
-        long nextPage)
+        long nextPage,
+        long tailPage)
     {
         byte[] page = new byte[pageSize];
 
@@ -309,7 +322,7 @@ internal static class IndexBTreeBuilder
         Wi32(page, 4, checked((int)parentTdefPage));
         Wi32(page, 8, checked((int)prevPage));
         Wi32(page, 12, checked((int)nextPage));
-        Wi32(page, 16, 0);   // tail_page
+        Wi32(page, 16, checked((int)tailPage));   // tail_page (W18: rightmost leaf in the tree)
 
         // §4.4 prefix compression on intermediate pages: hoist the longest
         // shared encoded-key prefix into the header and strip it from every

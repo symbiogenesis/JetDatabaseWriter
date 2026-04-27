@@ -30,9 +30,20 @@ using System.Threading.Tasks;
 /// entry still equals the search key.
 /// </para>
 /// <para>
-/// <b>Out of scope:</b> the §4.5 <c>tail_page</c> append optimisation (this
-/// writer never emits a non-zero <c>tail_page</c>) and Jet3 page layouts
-/// (Jet3 index emission is not supported by the writer).
+/// <b>W18 (2026-04-26):</b> honours the §4.5 <c>tail_page</c> append
+/// optimisation. When intermediate descent at any level finds that the
+/// search key sorts strictly greater than every summary on the page (i.e.
+/// would otherwise return "not present"), the seeker follows that page's
+/// <c>tail_page</c> header field if non-zero — the writer stamps it with
+/// the absolute page number of the rightmost leaf so reads land on the
+/// tail leaf without descending the tree. The append-only incremental
+/// fast path can leave the rightmost intermediate summary stale, so this
+/// fall-through is required for correctness, not just performance.
+/// </para>
+/// <para>
+/// <b>Out of scope:</b> Jet3 page layouts (Jet3 index emission is supported
+/// by the writer but the FK-side seeker is currently Jet4 / ACE only —
+/// Jet3 RI enforcement falls back to the O(N) HashSet snapshot path).
 /// </para>
 /// </summary>
 internal static class IndexBTreeSeeker
@@ -99,11 +110,21 @@ internal static class IndexBTreeSeeker
             }
 
             // Intermediate descent: pick the first entry whose summary key is
-            // >= searchKey and follow its child pointer.
+            // >= searchKey and follow its child pointer. When every summary
+            // is < searchKey, fall through to the page's tail_page (W18) if
+            // non-zero — the rightmost leaf can hold append-only entries
+            // whose key has not yet been promoted into the intermediate's
+            // summary record.
             long? next = SelectChildPage(pageSize, page, searchKey);
             if (next == null)
             {
-                return false;
+                long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(16, 4));
+                if (tail <= 0)
+                {
+                    return false;
+                }
+
+                next = tail;
             }
 
             currentPage = next.Value;
