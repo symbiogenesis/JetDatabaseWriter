@@ -2182,7 +2182,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                                  : _ansiEncoding.GetString(row, start, len);
 
                 case T_BINARY:
-                    return BitConverter.ToString(row, start, len);
+                    return ToHexStringNoSeparator(row.AsSpan(start, len));
 
                 case T_MEMO:
                 case T_OLE:
@@ -2205,9 +2205,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case T_LONG:
                     return len >= 4 ? Ri32(row, start).ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_FLOAT:
-                    return len >= 4 ? BitConverter.ToSingle(row, start).ToString(CultureInfo.InvariantCulture) : string.Empty;
+                    return len >= 4 ? AccessBase.ReadSingleLittleEndian(row.AsSpan(start, 4)).ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_DOUBLE:
-                    return len >= 8 ? BitConverter.ToDouble(row, start).ToString(CultureInfo.InvariantCulture) : string.Empty;
+                    return len >= 8 ? AccessBase.ReadDoubleLittleEndian(row.AsSpan(start, 8)).ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_DATETIME:
                 case T_MONEY:
                     return len >= 8 ? ReadFixed(row, start, col, 8) : string.Empty;
@@ -2827,7 +2827,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         byte bitmask = row[start + 3];
-        int memoLen = row[start] | (row[start + 1] << 8) | (row[start + 2] << 16);
+        int memoLen = ReadUInt24LittleEndian(row.AsSpan(start, 3));
 
         switch (bitmask & 0xC0)
         {

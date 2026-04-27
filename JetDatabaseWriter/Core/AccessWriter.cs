@@ -8323,7 +8323,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                             ? DecodeJet4Text(page, rowStart + slice.DataStart, slice.DataLen)
                             : _ansiEncoding.GetString(page, rowStart + slice.DataStart, slice.DataLen);
                     case T_BINARY:
-                        return BitConverter.ToString(page, rowStart + slice.DataStart, slice.DataLen);
+                        return ToHexStringNoSeparator(page.AsSpan(rowStart + slice.DataStart, slice.DataLen));
                     default:
                         return string.Empty;
                 }
