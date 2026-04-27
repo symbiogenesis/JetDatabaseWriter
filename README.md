@@ -353,7 +353,7 @@ await writer.CreateTableAsync("Contacts", new[]
 |---|---|---|
 | `IsNullable` | ✅ TDEF flag bit `FLAG_NULL_ALLOWED 0x02` | Restored on reopen; surfaced to readers via `ColumnMetadata.IsNullable`. |
 | `IsAutoIncrement` | ✅ TDEF flag bit `FLAG_AUTO_LONG 0x04` | Supported for `byte`/`short`/`int`/`long`. Seeded from `max(existing) + 1` on first use. |
-| `IsPrimaryKey` | ✅ TDEF logical-index entry with `index_type = 0x01` | Shortcut for synthesizing a PK `IndexDefinition` named `"PrimaryKey"` from one or more columns (in declaration order). Forces the PK key columns to `IsNullable = false` on the emitted TDEF. Mixing this with an explicit PK `IndexDefinition` in the same call throws `ArgumentException`. Multi-column PKs ship the schema only — the B-tree leaf is not maintained on subsequent mutations (single-column PKs are). |
+| `IsPrimaryKey` | ✅ TDEF logical-index entry with `index_type = 0x01` | Shortcut for synthesizing a PK `IndexDefinition` named `"PrimaryKey"` from one or more columns (in declaration order). Forces the PK key columns to `IsNullable = false` on the emitted TDEF. Mixing this with an explicit PK `IndexDefinition` in the same call throws `ArgumentException`. Single- and multi-column PKs both participate in live B-tree leaf maintenance (composite-key path). |
 | `DefaultValue` | ⚠️ client-side only | CLR object substituted for `DBNull.Value` at insert time on the `AccessWriter` instance that declared it. For an engine-level default that Microsoft Access also honours, set `DefaultValueExpression` (it is auto-derived from `DefaultValue` when omitted). |
 | `ValidationRule` | ⚠️ client-side only | A CLR `Func<>` cannot be serialized into the file. For an engine-level rule Microsoft Access also enforces, set `ValidationRuleExpression`. |
 | `DefaultValueExpression` | ✅ `MSysObjects.LvProp` (`DefaultValue`) | Jet expression string (e.g. `"0"`, `"\"hi\""`, `"=Now()"`). Surfaced to readers via `ColumnMetadata.DefaultValueExpression`. Wins over `DefaultValue` for persistence. |
@@ -613,14 +613,12 @@ All password-protected formats produced by Microsoft Access from Access 97 throu
 The items below are **not yet implemented** and are the most likely places to hit a wall.
 
 ### Indexes
-- **Indexable key types are limited to scalar columns Microsoft Access itself permits to index:** `BYTE`, `INT`, `LONG`, `MONEY`, `FLOAT`, `DOUBLE`, `DATETIME`, `GUID`, `NUMERIC`, `BINARY`, `TEXT`, and `MEMO`. Indexes over `OLE Object`, `Attachment`, and `Multi-Value (Complex)` columns throw `NotSupportedException`. `TEXT` / `MEMO` keys are encoded with a port of the Jackcess "General Legacy" sort-key encoder (Apache 2.0; see `THIRD-PARTY-NOTICES.md`).
+- **Indexable key types match what Microsoft Access itself permits to index:** `BYTE`, `INT`, `LONG`, `MONEY`, `FLOAT`, `DOUBLE`, `DATETIME`, `GUID`, `NUMERIC`, `BINARY`, `TEXT`, and `MEMO`. Indexes over `OLE Object`, `Attachment`, and `Multi-Value (Complex)` columns are intentionally out of scope — Access itself does not support indexing those types — and throw `NotSupportedException`. `TEXT` / `MEMO` keys are encoded with a port of the Jackcess "General Legacy" sort-key encoder (Apache 2.0; see `THIRD-PARTY-NOTICES.md`).
 - **Incremental B-tree maintenance falls back to a full rebuild** when 3+ page splits cascade in a single batch (greedy 2-way split overflows at any captured level). Cross-leaf change-sets, leaf-merge underflow (including the rightmost-leaf case with `tail_page` cascade up every captured ancestor), and recursive intermediate splits at any depth (parent-of-leaf, mid-level, and root reallocation) are handled in place. The full rebuild leaves the old pages orphaned for Compact & Repair to reclaim.
-- **Multi-column primary keys ship the schema only.** The PK B-tree leaf is not maintained on subsequent mutations (single-column PKs are).
 
 ### Primary & foreign keys
 - **TDEF must fit on one page** after FK entries are appended, otherwise `NotSupportedException`.
-- **`DropRelationshipAsync` leaves the orphaned real-idx slot in place.** Reclaimed by Access on the next Compact & Repair pass.
-- **`RenameRelationshipAsync` does not update TDEF logical-idx name cookies.** Access regenerates them from the catalog row on the next Compact & Repair pass.
+- **`DropRelationshipAsync` only reclaims trailing real-idx slots.** A mid-array orphan (e.g. drop the older of two relationships on the same TDEF) is left in place because mid-array compaction would require renumbering `rel_idx_num` on every other table that points at the slot. Reclaimed by Access on the next Compact & Repair pass.
 - **Referential-integrity enforcement is O(log N) on Jet4 / ACE** via parent-PK and FK-side index seeks. Jet3, encoder-rejected key types, and child rows containing LVAL columns that the single-row reader cannot decode fall back to an O(N) snapshot scan.
 - **Not yet validated end-to-end through Microsoft Access.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not been round-tripped through a Compact & Repair pass on Windows.
 

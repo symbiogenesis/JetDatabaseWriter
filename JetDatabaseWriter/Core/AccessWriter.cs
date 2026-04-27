@@ -1899,16 +1899,24 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     // Reverses CreateRelationshipAsync (W9a + W9b):
     //   • DropRelationshipAsync removes every MSysRelationships row whose
     //     szRelationship matches and (Jet4/ACE) removes the matching FK
-    //     logical-idx entry from each side's TDEF. The orphaned real-idx
-    //     slot is left in place — Microsoft Access reclaims it on Compact
-    //     & Repair, and ListIndexesAsync iterates by num_idx so it stops
-    //     surfacing the FK immediately.
+    //     logical-idx entry from each side's TDEF, then conservatively
+    //     reclaims any trailing real-idx physical-descriptor slots that the
+    //     removal left unreferenced (W26 — common case: FK got the last slot
+    //     on its TDEF and the slot is reclaimed cleanly; non-trailing
+    //     orphans are still left for Compact & Repair to reclaim, since
+    //     mid-array compaction would require cross-TDEF rel_idx_num
+    //     renumbering on every other table that points at the slot).
+    //     ListIndexesAsync iterates by num_idx so the FK stops surfacing
+    //     immediately regardless of whether the real-idx slot was reclaimed.
     //   • RenameRelationshipAsync rewrites the szRelationship column on
     //     every matching MSysRelationships row (read all 8 columns, mark
-    //     deleted, re-insert with the new name and updateTDefRowCount=false).
-    //     The TDEF logical-idx name cookies are left at the old name —
-    //     Access regenerates them from the catalog row on the next Compact
-    //     & Repair pass.
+    //     deleted, re-insert with the new name and updateTDefRowCount=false)
+    //     and (Jet4/ACE, W26) updates the matching FK logical-idx name
+    //     cookie on each side's TDEF in place. Variable-length name
+    //     records: shrink/grow shifts the trailing variable-column block;
+    //     a grow that would push the TDEF past one page leaves the cookie
+    //     unchanged (Access regenerates it from the catalog row on the
+    //     next Compact & Repair pass).
 
     /// <summary>
     /// Snapshot of one MSysRelationships row. <c>RowValues</c> mirrors the
@@ -2015,8 +2023,29 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // Self-referential relationships (PK and FK on same TDEF) need
                 // both removals to target distinct entries — pass the column
                 // list to disambiguate.
-                _ = await TryRemoveFkLogicalIdxEntryAsync(pkEntry.TDefPage, pkColNums, fkEntry.TDefPage, cancellationToken).ConfigureAwait(false);
-                _ = await TryRemoveFkLogicalIdxEntryAsync(fkEntry.TDefPage, fkColNums, pkEntry.TDefPage, cancellationToken).ConfigureAwait(false);
+                int pkReleased = await TryRemoveFkLogicalIdxEntryAsync(pkEntry.TDefPage, pkColNums, fkEntry.TDefPage, cancellationToken).ConfigureAwait(false);
+                int fkReleased = await TryRemoveFkLogicalIdxEntryAsync(fkEntry.TDefPage, fkColNums, pkEntry.TDefPage, cancellationToken).ConfigureAwait(false);
+
+                // Reclaim trailing real-idx slots that are no longer
+                // referenced by any logical-idx entry. PK-side typically
+                // shares its real-idx slot with the existing PK logical-idx
+                // (no reclaim possible), but the FK-side's real-idx is
+                // usually its own and can be reclaimed cleanly.
+                if (pkReleased >= 0)
+                {
+                    await TryReclaimTrailingRealIdxAsync(pkEntry.TDefPage, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (fkReleased >= 0)
+                {
+                    // Self-referential: PK and FK live on the same TDEF and
+                    // both removals already happened above; one reclaim pass
+                    // covers both released slots.
+                    if (pkEntry.TDefPage != fkEntry.TDefPage)
+                    {
+                        await TryReclaimTrailingRealIdxAsync(fkEntry.TDefPage, cancellationToken).ConfigureAwait(false);
+                    }
+                }
             }
         }
 
@@ -2085,6 +2114,123 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             await MarkRowDeletedAsync(row.Location.PageNumber, row.Location.RowIndex, cancellationToken).ConfigureAwait(false);
             await InsertRowDataAsync(msysRelTdefPage, msysRelDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        // Update the TDEF logical-idx name cookies on both sides so the
+        // on-disk index name matches the catalog row. Jet3 never received
+        // FK logical-idx entries, so this is a no-op there.
+        if (_format != DatabaseFormat.Jet3Mdb)
+        {
+            // Group matches by (PK table, FK table) pair so each TDEF is
+            // rewritten at most once per side, mirroring DropRelationshipAsync.
+            var byTablePair = new Dictionary<(string Pk, string Fk), List<RelationshipRowSnapshot>>(
+                new TablePairComparer());
+            foreach (RelationshipRowSnapshot row in matches)
+            {
+                (string Pk, string Fk) key = (row.SzReferencedObject, row.SzObject);
+                if (!byTablePair.TryGetValue(key, out List<RelationshipRowSnapshot>? group))
+                {
+                    group = new List<RelationshipRowSnapshot>();
+                    byTablePair[key] = group;
+                }
+
+                group.Add(row);
+            }
+
+            foreach (KeyValuePair<(string Pk, string Fk), List<RelationshipRowSnapshot>> pair in byTablePair)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                CatalogEntry? pkEntry = await GetCatalogEntryAsync(pair.Key.Pk, cancellationToken).ConfigureAwait(false);
+                CatalogEntry? fkEntry = await GetCatalogEntryAsync(pair.Key.Fk, cancellationToken).ConfigureAwait(false);
+                if (pkEntry == null || fkEntry == null)
+                {
+                    continue;
+                }
+
+                TableDef pkDef = await ReadRequiredTableDefAsync(pkEntry.TDefPage, pair.Key.Pk, cancellationToken).ConfigureAwait(false);
+                TableDef fkDef = await ReadRequiredTableDefAsync(fkEntry.TDefPage, pair.Key.Fk, cancellationToken).ConfigureAwait(false);
+
+                var ordered = new List<RelationshipRowSnapshot>(pair.Value);
+                ordered.Sort((a, b) => a.IColumn.CompareTo(b.IColumn));
+                var pkColNames = new string[ordered.Count];
+                var fkColNames = new string[ordered.Count];
+                for (int i = 0; i < ordered.Count; i++)
+                {
+                    pkColNames[i] = ordered[i].SzReferencedColumn;
+                    fkColNames[i] = ordered[i].SzColumn;
+                }
+
+                int[] pkColNums = pkDef.ResolveColNumsOrEmpty(pkColNames);
+                int[] fkColNums = fkDef.ResolveColNumsOrEmpty(fkColNames);
+                if (pkColNums.Length == 0 || fkColNums.Length == 0)
+                {
+                    continue;
+                }
+
+                // Reproduce the cookie-naming convention from CreateRelationshipAsync:
+                // PK side uses the relationship name; FK side appends "_FK"
+                // when both endpoints land on the same TDEF (self-referential).
+                string newPkBase = newName;
+                string newFkBase = pkEntry.TDefPage == fkEntry.TDefPage
+                    ? newName + "_FK"
+                    : newName;
+
+                string newPkName = await PickUniqueLogicalIdxNameAsync(pkEntry.TDefPage, newPkBase, cancellationToken).ConfigureAwait(false);
+                _ = await TryRenameFkLogicalIdxNameAsync(pkEntry.TDefPage, pkColNums, fkEntry.TDefPage, newPkName, cancellationToken).ConfigureAwait(false);
+
+                string newFkName = await PickUniqueLogicalIdxNameAsync(fkEntry.TDefPage, newFkBase, cancellationToken).ConfigureAwait(false);
+                _ = await TryRenameFkLogicalIdxNameAsync(fkEntry.TDefPage, fkColNums, pkEntry.TDefPage, newFkName, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads the existing logical-idx names from the TDEF at
+    /// <paramref name="tdefPage"/> and returns
+    /// <paramref name="baseName"/> if it is unique, otherwise a
+    /// <c>baseName_N</c> variant. Same algorithm as
+    /// <see cref="MakeUniqueLogicalIdxName"/>; this overload reads the TDEF
+    /// for callers that have only the page number.
+    /// </summary>
+    private async ValueTask<string> PickUniqueLogicalIdxNameAsync(
+        long tdefPage,
+        string baseName,
+        CancellationToken cancellationToken)
+    {
+        byte[] pageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (pageBytes[0] != 0x02 || Ru32(pageBytes, 4) != 0)
+            {
+                return baseName;
+            }
+
+            int numCols = Ru16(pageBytes, _tdNumCols);
+            int numIdx = Ri32(pageBytes, _tdNumCols + 2);
+            int numRealIdx = Ri32(pageBytes, _tdNumRealIdx);
+            if (numCols < 0 || numCols > 4096 || numIdx <= 0 || numIdx > 1000
+                || numRealIdx < 0 || numRealIdx > 1000)
+            {
+                return baseName;
+            }
+
+            int realIdxDescStart = LocateRealIdxDescStart(pageBytes, numCols, numRealIdx);
+            if (realIdxDescStart < 0)
+            {
+                return baseName;
+            }
+
+            const int RealIdxPhysSz = 52;
+            const int LogIdxEntrySz = 28;
+            int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
+            int logIdxNamesStart = logIdxStart + (numIdx * LogIdxEntrySz);
+            List<string> existing = ReadLogicalIdxNames(pageBytes, logIdxNamesStart, numIdx);
+            return MakeUniqueLogicalIdxName(baseName, existing);
+        }
+        finally
+        {
+            ReturnPage(pageBytes);
         }
     }
 
@@ -2183,11 +2329,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Locates and removes the FK logical-idx entry on <paramref name="tdefPage"/>
     /// whose backing real-idx col_map exactly covers <paramref name="columnNumbers"/>
     /// (in declaration order) AND whose <c>rel_tbl_page</c> equals
-    /// <paramref name="otherTdefPage"/>. Returns <see langword="true"/> when an
-    /// entry was removed; <see langword="false"/> when no matching entry exists
-    /// (already removed, or never created — Jet3 path, or out-of-band catalog).
+    /// <paramref name="otherTdefPage"/>. Returns the real-idx slot number that
+    /// the removed FK entry referenced (so the caller can attempt
+    /// <see cref="TryReclaimTrailingRealIdxAsync"/>), or <c>-1</c> when no
+    /// matching entry exists (already removed, or never created — Jet3 path,
+    /// or out-of-band catalog).
     /// </summary>
-    private async ValueTask<bool> TryRemoveFkLogicalIdxEntryAsync(
+    private async ValueTask<int> TryRemoveFkLogicalIdxEntryAsync(
         long tdefPage,
         int[] columnNumbers,
         long otherTdefPage,
@@ -2208,6 +2356,326 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             // Multi-page TDEF — out of scope for in-place mutation, same
             // contract as W9b emission.
+            return -1;
+        }
+
+        int numCols = Ru16(td, _tdNumCols);
+        int numIdx = Ri32(td, _tdNumCols + 2);
+        int numRealIdx = Ri32(td, _tdNumRealIdx);
+        if (numCols < 0 || numCols > 4096
+            || numIdx <= 0 || numIdx > 1000
+            || numRealIdx <= 0 || numRealIdx > 1000)
+        {
+            return -1;
+        }
+
+        const int RealIdxPhysSz = 52;
+        const int LogIdxEntrySz = 28;
+
+        int realIdxDescStart = LocateRealIdxDescStart(td, numCols, numRealIdx);
+        if (realIdxDescStart < 0)
+        {
+            return -1;
+        }
+
+        int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
+        int logIdxNamesStart = logIdxStart + (numIdx * LogIdxEntrySz);
+        int logIdxNamesLen = MeasureLogicalIdxNamesLength(td, logIdxNamesStart, numIdx);
+        if (logIdxNamesLen < 0)
+        {
+            return -1;
+        }
+
+        // Locate the matching logical-idx entry. Iterate in order so we can
+        // also locate its name by walking the names list to the same index.
+        int matchEntryIdx = -1;
+        int releasedRealIdxNum = -1;
+        for (int li = 0; li < numIdx; li++)
+        {
+            int e = logIdxStart + (li * LogIdxEntrySz);
+            byte indexType = td[e + 23];
+            if (indexType != 0x02)
+            {
+                continue;
+            }
+
+            int relTblPage = Ri32(td, e + 17);
+            if (relTblPage != otherTdefPage)
+            {
+                continue;
+            }
+
+            int realIdxNum = Ri32(td, e + 8);
+            if (realIdxNum < 0 || realIdxNum >= numRealIdx)
+            {
+                continue;
+            }
+
+            int phys = realIdxDescStart + (realIdxNum * RealIdxPhysSz);
+            if (!RealIdxColMapMatches(td, phys, columnNumbers))
+            {
+                continue;
+            }
+
+            matchEntryIdx = li;
+            releasedRealIdxNum = realIdxNum;
+            break;
+        }
+
+        if (matchEntryIdx < 0)
+        {
+            return -1;
+        }
+
+        // Find the byte offset and length of the corresponding name (variable
+        // length). Walk the names list to position matchEntryIdx.
+        int namePos = logIdxNamesStart;
+        int removedNameStart = -1;
+        int removedNameLen = 0;
+        for (int i = 0; i < numIdx; i++)
+        {
+            int before = namePos;
+            if (ReadColumnName(td, ref namePos, out _) < 0)
+            {
+                return -1;
+            }
+
+            if (i == matchEntryIdx)
+            {
+                removedNameStart = before;
+                removedNameLen = namePos - before;
+                break;
+            }
+        }
+
+        if (removedNameStart < 0)
+        {
+            return -1;
+        }
+
+        // Compute trailing block bounds (mirror of W9b EmitFkLogicalIdxAsync).
+        int trailingStart = logIdxNamesStart + logIdxNamesLen;
+        int storedTdefLen = Ri32(td, 8);
+        int currentEnd = storedTdefLen + 8;
+        if (currentEnd < trailingStart)
+        {
+            currentEnd = trailingStart;
+        }
+
+        int trailingLen = currentEnd - trailingStart;
+        if (trailingLen < 0 || trailingStart + trailingLen > td.Length)
+        {
+            return -1;
+        }
+
+        // Mutate `td` in place via two left-shifts (Buffer.BlockCopy supports
+        // overlapping regions). Step 1 collapses the 28-byte logical-idx
+        // entry; step 2 collapses the variable-length name. The trailing
+        // variable-length-column block rides along with the second shift.
+        int removedEntryStart = logIdxStart + (matchEntryIdx * LogIdxEntrySz);
+        int afterEntry = removedEntryStart + LogIdxEntrySz;
+
+        // Step 1 — drop the 28-byte logical-idx entry.
+        Buffer.BlockCopy(td, afterEntry, td, removedEntryStart, currentEnd - afterEntry);
+        int shiftedNameStart = removedNameStart - LogIdxEntrySz;
+        int afterName = shiftedNameStart + removedNameLen;
+        int endAfterStep1 = currentEnd - LogIdxEntrySz;
+
+        // Step 2 — drop the name record.
+        Buffer.BlockCopy(td, afterName, td, shiftedNameStart, endAfterStep1 - afterName);
+        int finalEnd = endAfterStep1 - removedNameLen;
+
+        // Zero the freed tail so the on-disk page matches the prior
+        // fresh-buffer behavior (bytes past the new end are padding).
+        Array.Clear(td, finalEnd, currentEnd - finalEnd);
+
+        // Update header counts.
+        Wi32(td, _tdNumCols + 2, numIdx - 1);
+        Wi32(td, 8, finalEnd - 8);
+
+        await WritePageAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
+        return releasedRealIdxNum;
+    }
+
+    /// <summary>
+    /// After a FK logical-idx removal, attempts to reclaim trailing real-idx
+    /// physical descriptor slots that are no longer referenced by any
+    /// logical-idx entry. Conservatively reclaims only contiguous slots at
+    /// the end of the real-idx array (i.e. <c>numRealIdx - 1</c> down to the
+    /// first still-referenced slot) so that no still-referenced slot's index
+    /// shifts. This avoids the cross-TDEF index renumbering that a generic
+    /// mid-array compaction would require (the OTHER table's logical-idx
+    /// entries store this TDEF's slot number in <c>rel_idx_num</c>).
+    /// <para>
+    /// In the common case — relationship freshly created, FK got the last
+    /// slot, then dropped — this reclaims exactly one slot. After multiple
+    /// drops in any order, every now-trailing orphan is reclaimed.
+    /// </para>
+    /// <para>
+    /// Removes both the corresponding entry from the leading real-idx skip
+    /// block (<c>num_real_idx × _realIdxEntrySz</c> bytes immediately after
+    /// the Jet4 TDEF block) and the trailing 52-byte physical descriptor,
+    /// decrements <c>num_real_idx</c>, and updates <c>tdef_len</c>.
+    /// </para>
+    /// <para>
+    /// Jet4 / ACE only — Jet3 takes the same path because the FK logical-idx
+    /// entries are not emitted on Jet3 to begin with, so this is never called
+    /// against a Jet3 TDEF.
+    /// </para>
+    /// </summary>
+    private async ValueTask TryReclaimTrailingRealIdxAsync(
+        long tdefPage,
+        CancellationToken cancellationToken)
+    {
+        byte[] pageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] td;
+        try
+        {
+            td = (byte[])pageBytes.Clone();
+        }
+        finally
+        {
+            ReturnPage(pageBytes);
+        }
+
+        if (td[0] != 0x02 || Ru32(td, 4) != 0)
+        {
+            return;
+        }
+
+        int numCols = Ru16(td, _tdNumCols);
+        int numIdx = Ri32(td, _tdNumCols + 2);
+        int numRealIdx = Ri32(td, _tdNumRealIdx);
+        if (numCols < 0 || numCols > 4096
+            || numIdx < 0 || numIdx > 1000
+            || numRealIdx <= 0 || numRealIdx > 1000)
+        {
+            return;
+        }
+
+        const int RealIdxPhysSz = 52;
+        const int LogIdxEntrySz = 28;
+
+        int realIdxDescStart = LocateRealIdxDescStart(td, numCols, numRealIdx);
+        if (realIdxDescStart < 0)
+        {
+            return;
+        }
+
+        int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
+        int logIdxNamesStart = logIdxStart + (numIdx * LogIdxEntrySz);
+        int logIdxNamesLen = MeasureLogicalIdxNamesLength(td, logIdxNamesStart, numIdx);
+        if (logIdxNamesLen < 0)
+        {
+            return;
+        }
+
+        // Build the set of real-idx slots that are still referenced by some
+        // logical-idx entry. A logical-idx points at one real-idx via
+        // index_num2 (offset +8 in the 28-byte Jet4 entry).
+        var referenced = new bool[numRealIdx];
+        for (int li = 0; li < numIdx; li++)
+        {
+            int e = logIdxStart + (li * LogIdxEntrySz);
+            int realIdxNum = Ri32(td, e + 8);
+            if (realIdxNum >= 0 && realIdxNum < numRealIdx)
+            {
+                referenced[realIdxNum] = true;
+            }
+        }
+
+        // Count contiguous trailing unreferenced slots.
+        int reclaim = 0;
+        for (int ri = numRealIdx - 1; ri >= 0 && !referenced[ri]; ri--)
+        {
+            reclaim++;
+        }
+
+        if (reclaim == 0)
+        {
+            return;
+        }
+
+        int storedTdefLen = Ri32(td, 8);
+        int currentEnd = storedTdefLen + 8;
+        int trailingStart = logIdxNamesStart + logIdxNamesLen;
+        if (currentEnd < trailingStart)
+        {
+            currentEnd = trailingStart;
+        }
+
+        int trailingLen = currentEnd - trailingStart;
+        if (trailingLen < 0 || trailingStart + trailingLen > td.Length)
+        {
+            return;
+        }
+
+        // Step 1 — drop the trailing N entries (12 bytes each on Jet4) from
+        // the leading real-idx skip block. The skip block lives at
+        // [_tdBlockEnd, _tdBlockEnd + numRealIdx * _realIdxEntrySz). We
+        // collapse out the LAST N × _realIdxEntrySz bytes of that block by
+        // left-shifting everything that follows.
+        int oldSkipEnd = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
+        int newSkipEnd = oldSkipEnd - (reclaim * _realIdxEntrySz);
+        int afterSkip = oldSkipEnd;
+        Buffer.BlockCopy(td, afterSkip, td, newSkipEnd, currentEnd - afterSkip);
+        int endAfterStep1 = currentEnd - (reclaim * _realIdxEntrySz);
+
+        // After step 1 the real-idx physical descriptor section starts at
+        // (realIdxDescStart - reclaim * _realIdxEntrySz). We need to drop the
+        // trailing N × 52 bytes of physical descriptors. Compute the new
+        // boundaries.
+        int newRealIdxDescStart = realIdxDescStart - (reclaim * _realIdxEntrySz);
+        int newPhysEnd = newRealIdxDescStart + ((numRealIdx - reclaim) * RealIdxPhysSz);
+        int oldPhysEnd = newRealIdxDescStart + (numRealIdx * RealIdxPhysSz);
+
+        // Step 2 — drop the trailing N × 52-byte physical descriptors by
+        // left-shifting the logical-idx entries + names + variable-col block.
+        Buffer.BlockCopy(td, oldPhysEnd, td, newPhysEnd, endAfterStep1 - oldPhysEnd);
+        int finalEnd = endAfterStep1 - (reclaim * RealIdxPhysSz);
+
+        // Zero the freed tail so the on-disk page matches the prior
+        // fresh-buffer behavior (bytes past the new end are padding).
+        Array.Clear(td, finalEnd, currentEnd - finalEnd);
+
+        // Update header counts.
+        Wi32(td, _tdNumRealIdx, numRealIdx - reclaim);
+        Wi32(td, 8, finalEnd - 8);
+
+        await WritePageAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Renames the FK logical-idx "name cookie" on <paramref name="tdefPage"/>
+    /// for the entry whose backing real-idx col_map exactly covers
+    /// <paramref name="columnNumbers"/> AND whose <c>rel_tbl_page</c> equals
+    /// <paramref name="otherTdefPage"/>. Returns <see langword="true"/> when
+    /// an entry was found and renamed; <see langword="false"/> otherwise
+    /// (already renamed, never created — Jet3, multi-page TDEF, or out-of-band
+    /// catalog). Variable-length name records: shrink/grow is handled by
+    /// shifting the trailing variable-column block; growth that would push the
+    /// TDEF past one page returns <see langword="false"/>.
+    /// </summary>
+    private async ValueTask<bool> TryRenameFkLogicalIdxNameAsync(
+        long tdefPage,
+        int[] columnNumbers,
+        long otherTdefPage,
+        string newName,
+        CancellationToken cancellationToken)
+    {
+        byte[] pageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] td;
+        try
+        {
+            td = (byte[])pageBytes.Clone();
+        }
+        finally
+        {
+            ReturnPage(pageBytes);
+        }
+
+        if (td[0] != 0x02 || Ru32(td, 4) != 0)
+        {
             return false;
         }
 
@@ -2238,8 +2706,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        // Locate the matching logical-idx entry. Iterate in order so we can
-        // also locate its name by walking the names list to the same index.
+        // Locate the matching FK logical-idx entry.
         int matchEntryIdx = -1;
         for (int li = 0; li < numIdx; li++)
         {
@@ -2277,11 +2744,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        // Find the byte offset and length of the corresponding name (variable
-        // length). Walk the names list to position matchEntryIdx.
+        // Walk the names section to find the byte offset/length of the entry
+        // we want to rewrite.
         int namePos = logIdxNamesStart;
-        int removedNameStart = -1;
-        int removedNameLen = 0;
+        int oldNameStart = -1;
+        int oldNameLen = 0;
         for (int i = 0; i < numIdx; i++)
         {
             int before = namePos;
@@ -2292,18 +2759,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             if (i == matchEntryIdx)
             {
-                removedNameStart = before;
-                removedNameLen = namePos - before;
+                oldNameStart = before;
+                oldNameLen = namePos - before;
                 break;
             }
         }
 
-        if (removedNameStart < 0)
+        if (oldNameStart < 0)
         {
             return false;
         }
 
-        // Compute trailing block bounds (mirror of W9b EmitFkLogicalIdxAsync).
+        // Trailing variable-column block bounds.
         int trailingStart = logIdxNamesStart + logIdxNamesLen;
         int storedTdefLen = Ri32(td, 8);
         int currentEnd = storedTdefLen + 8;
@@ -2312,35 +2779,44 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             currentEnd = trailingStart;
         }
 
-        int trailingLen = currentEnd - trailingStart;
-        if (trailingLen < 0 || trailingStart + trailingLen > td.Length)
+        if (currentEnd > td.Length)
         {
             return false;
         }
 
-        // Mutate `td` in place via two left-shifts (Buffer.BlockCopy supports
-        // overlapping regions). Step 1 collapses the 28-byte logical-idx
-        // entry; step 2 collapses the variable-length name. The trailing
-        // variable-length-column block rides along with the second shift.
-        int removedEntryStart = logIdxStart + (matchEntryIdx * LogIdxEntrySz);
-        int afterEntry = removedEntryStart + LogIdxEntrySz;
+        byte[] newNameBytes = Encoding.Unicode.GetBytes(newName);
+        int newNameRecordSize = 2 + newNameBytes.Length;
+        int delta = newNameRecordSize - oldNameLen;
 
-        // Step 1 — drop the 28-byte logical-idx entry.
-        Buffer.BlockCopy(td, afterEntry, td, removedEntryStart, currentEnd - afterEntry);
-        int shiftedNameStart = removedNameStart - LogIdxEntrySz;
-        int afterName = shiftedNameStart + removedNameLen;
-        int endAfterStep1 = currentEnd - LogIdxEntrySz;
+        int finalEnd = currentEnd + delta;
+        if (finalEnd > _pgSz || finalEnd < trailingStart)
+        {
+            return false;
+        }
 
-        // Step 2 — drop the name record.
-        Buffer.BlockCopy(td, afterName, td, shiftedNameStart, endAfterStep1 - afterName);
-        int finalEnd = endAfterStep1 - removedNameLen;
+        // Shift the bytes between (oldNameStart + oldNameLen) and currentEnd
+        // by delta. This covers the rest of the names section + the variable
+        // -column trailing block in one move. Buffer.BlockCopy handles
+        // overlapping regions.
+        int afterOldName = oldNameStart + oldNameLen;
+        int tailLen = currentEnd - afterOldName;
+        if (tailLen > 0)
+        {
+            Buffer.BlockCopy(td, afterOldName, td, afterOldName + delta, tailLen);
+        }
 
-        // Zero the freed tail so the on-disk page matches the prior
-        // fresh-buffer behavior (bytes past the new end are padding).
-        Array.Clear(td, finalEnd, currentEnd - finalEnd);
+        // If we shrank, zero the freed tail bytes; if we grew, the prior
+        // contents have already been overwritten by the shift.
+        if (delta < 0)
+        {
+            Array.Clear(td, finalEnd, -delta);
+        }
 
-        // Update header counts.
-        Wi32(td, _tdNumCols + 2, numIdx - 1);
+        // Write the new length-prefixed name into the freed slot.
+        Wu16(td, oldNameStart, newNameBytes.Length);
+        Buffer.BlockCopy(newNameBytes, 0, td, oldNameStart + 2, newNameBytes.Length);
+
+        // Update tdef_len.
         Wi32(td, 8, finalEnd - 8);
 
         await WritePageAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
