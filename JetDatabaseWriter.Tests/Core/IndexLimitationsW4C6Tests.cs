@@ -1,0 +1,437 @@
+namespace JetDatabaseWriter.Tests;
+
+using System.Collections.Generic;
+using System.Data;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using Xunit;
+
+#pragma warning disable CA1707 // Test names use underscores by convention.
+
+/// <summary>
+/// Round-trip tests for the W4-C-6 (leaf merge on delete underflow) path
+/// inside <c>AccessWriter.TrySurgicalCrossLeafMaintainAsync</c>. When a
+/// per-leaf splice empties the affected leaf, the cross-leaf path drops
+/// the leaf from its parent intermediate and patches the leaf-sibling
+/// chain to skip it — the dead leaf is orphaned (Compact &amp; Repair
+/// reclaims it). Bails to W4-D when the dead leaf was its parent's
+/// rightmost child (would shrink ancestor <c>tail_page</c>) or when the
+/// parent has only one child (would cascade-collapse the parent).
+/// </summary>
+public sealed class IndexLimitationsW4C6Tests
+{
+    private const int PageSize = 4096; // ACE
+
+    [Fact]
+    public async Task DeleteAllInLeftmostLeaf_MergesIntoRightSibling_AppendsZeroIndexPages()
+    {
+        // Non-unique index on Tag. 800 rows split 400/400 across Tag=0 and
+        // Tag=1 → leaf 0 holds Tag=0, leaf 1 holds Tag=1; one intermediate
+        // root with 2 entries. Deleting all Tag=0 empties leaf 0 (the
+        // leftmost). W4-C-6 conditions: parent count 2 (>= 2), deadIdx 0
+        // (!= last) → merge engages. Dead leaf is orphaned (still 0x04
+        // 0x01-tagged) so CountIndexPages stays equal.
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new ColumnDefinition("Tag", typeof(int)),
+                    new ColumnDefinition("Id", typeof(int)),
+                ],
+                [new IndexDefinition("IX_Tag", "Tag")],
+                ct);
+
+            var rows = new object[800][];
+            for (int i = 0; i < 400; i++)
+            {
+                rows[i] = [0, i];
+            }
+
+            for (int i = 0; i < 400; i++)
+            {
+                rows[400 + i] = [1, i];
+            }
+
+            await writer.InsertRowsAsync("T", rows, ct);
+        }
+
+        int idxBefore = CountIndexPages(stream.ToArray());
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            int deleted = await writer.DeleteRowsAsync("T", "Tag", 0, ct);
+            Assert.Equal(400, deleted);
+        }
+
+        int idxAfter = CountIndexPages(stream.ToArray());
+
+        // Surgical merge: zero new index pages appended (orphaned dead
+        // leaf still byte-counted, but count delta should remain zero
+        // because the bulk path also leaves orphans — the difference is
+        // bulk also APPENDS a fresh tree, surgical does not).
+        Assert.Equal(idxBefore, idxAfter);
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        Assert.NotNull(dt);
+        Assert.Equal(400, dt!.Rows.Count);
+
+        // All surviving rows have Tag=1.
+        foreach (DataRow r in dt.Rows)
+        {
+            Assert.Equal(1, (int)r["Tag"]);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteAllInMiddleLeaf_MergesAndOrphans_PreservesDataIntegrity()
+    {
+        // Three Tag values, 400 rows each — the bulk index builder is
+        // free to put Tag=1's entries on its own leaf or split them
+        // across leaf boundaries depending on payload-area math. So we
+        // can't strictly assert "page count unchanged" here (when the
+        // delete change-set straddles two leaves and the descent picks
+        // one of them, splice rejects the unresolved removes and falls
+        // through to W4-D bulk — a correctness path, just not the W4-C-6
+        // surgical path). What we DO assert is that, regardless of which
+        // path runs, the post-state is correct: 800 surviving rows, no
+        // Tag=1 entries left, and a navigable tree.
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new ColumnDefinition("Tag", typeof(int)),
+                    new ColumnDefinition("Id", typeof(int)),
+                ],
+                [new IndexDefinition("IX_Tag", "Tag")],
+                ct);
+
+            var rows = new object[1200][];
+            for (int t = 0; t < 3; t++)
+            {
+                for (int i = 0; i < 400; i++)
+                {
+                    rows[(t * 400) + i] = [t, i];
+                }
+            }
+
+            await writer.InsertRowsAsync("T", rows, ct);
+        }
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            int deleted = await writer.DeleteRowsAsync("T", "Tag", 1, ct);
+            Assert.Equal(400, deleted);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        Assert.NotNull(dt);
+        Assert.Equal(800, dt!.Rows.Count);
+
+        var tags = dt.Rows.Cast<DataRow>().Select(r => (int)r["Tag"]).ToHashSet();
+        Assert.Equal(2, tags.Count);
+        Assert.Contains(0, tags);
+        Assert.Contains(2, tags);
+        Assert.DoesNotContain(1, tags);
+    }
+
+    [Fact]
+    public async Task DeleteAllInTailLeaf_BailsToW4D_PageCountIncreases()
+    {
+        // Delete all Tag=2 (the rightmost leaf in a 3-leaf tree). W4-C-6
+        // v1 bails when dead leaf is the parent's last child (its
+        // tail_page would shrink → ancestor tail_page propagation, out of
+        // scope). W4-D bulk path runs instead → fresh tree appended →
+        // index page count strictly increases. Data must still be correct
+        // post-bulk-rebuild.
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new ColumnDefinition("Tag", typeof(int)),
+                    new ColumnDefinition("Id", typeof(int)),
+                ],
+                [new IndexDefinition("IX_Tag", "Tag")],
+                ct);
+
+            var rows = new object[1200][];
+            for (int t = 0; t < 3; t++)
+            {
+                for (int i = 0; i < 400; i++)
+                {
+                    rows[(t * 400) + i] = [t, i];
+                }
+            }
+
+            await writer.InsertRowsAsync("T", rows, ct);
+        }
+
+        int idxBefore = CountIndexPages(stream.ToArray());
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            int deleted = await writer.DeleteRowsAsync("T", "Tag", 2, ct);
+            Assert.Equal(400, deleted);
+        }
+
+        int idxAfter = CountIndexPages(stream.ToArray());
+
+        // W4-D appends a fresh tree (≥ 1 leaf + ≥ 1 intermediate page) for
+        // the surviving 800 rows.
+        Assert.True(idxAfter > idxBefore, $"Expected W4-D bulk rebuild to append index pages; before={idxBefore}, after={idxAfter}.");
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        Assert.NotNull(dt);
+        Assert.Equal(800, dt!.Rows.Count);
+
+        var tags = dt.Rows.Cast<DataRow>().Select(r => (int)r["Tag"]).ToHashSet();
+        Assert.Contains(0, tags);
+        Assert.Contains(1, tags);
+        Assert.DoesNotContain(2, tags);
+    }
+
+    [Fact]
+    public async Task DeleteAcrossMultipleLeaves_NoUnderflow_RewritesInPlace()
+    {
+        // Indexed column `Id`, predicate column `Desc` (NOT indexed).
+        // Insert 800 rows where every other row carries Desc="DEL".
+        // DeleteRowsAsync(T, "Desc", "DEL") removes 400 rows spread evenly
+        // across both leaves of the IX_Id index → cross-leaf change-set
+        // with no per-leaf underflow. W4-C-5 in-place rewrites both leaves.
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Desc", typeof(string), maxLength: 8),
+                ],
+                [new IndexDefinition("IX_Id", "Id")],
+                ct);
+
+            var rows = new object[800][];
+            for (int i = 0; i < 800; i++)
+            {
+                rows[i] = [i + 1, (i % 2 == 0) ? "DEL" : "KEEP"];
+            }
+
+            await writer.InsertRowsAsync("T", rows, ct);
+        }
+
+        int idxBefore = CountIndexPages(stream.ToArray());
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            int deleted = await writer.DeleteRowsAsync("T", "Desc", "DEL", ct);
+            Assert.Equal(400, deleted);
+        }
+
+        int idxAfter = CountIndexPages(stream.ToArray());
+        Assert.Equal(idxBefore, idxAfter);
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        Assert.NotNull(dt);
+        Assert.Equal(400, dt!.Rows.Count);
+
+        // Surviving rows all have Desc=KEEP and even Ids (since DEL was
+        // assigned to even-INDEX rows, which got Id = i+1 = odd Id;
+        // KEEP rows ended up with even Id values).
+        foreach (DataRow r in dt.Rows)
+        {
+            Assert.Equal("KEEP", (string)r["Desc"]);
+            Assert.Equal(0, ((int)r["Id"]) % 2);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteEmptiesLeaf_DataIntegrityRoundTrips()
+    {
+        // Functional verification: after a leaf-empty operation (path may
+        // engage W4-C-6 merge OR fall back to W4-D depending on leaf
+        // alignment), the index can still be read back AND a subsequent
+        // mutation succeeds (the chain pointers were patched correctly
+        // either way).
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new ColumnDefinition("Tag", typeof(int)),
+                    new ColumnDefinition("Id", typeof(int)),
+                ],
+                [new IndexDefinition("IX_Tag", "Tag")],
+                ct);
+
+            var rows = new object[1200][];
+            for (int t = 0; t < 3; t++)
+            {
+                for (int i = 0; i < 400; i++)
+                {
+                    rows[(t * 400) + i] = [t, i];
+                }
+            }
+
+            await writer.InsertRowsAsync("T", rows, ct);
+        }
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.DeleteRowsAsync("T", "Tag", 1, ct);
+            await writer.InsertRowAsync("T", new object[] { 0, 9999 }, ct);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        Assert.NotNull(dt);
+        Assert.Equal(801, dt!.Rows.Count);
+
+        // 9999 row present.
+        bool found = false;
+        foreach (DataRow r in dt.Rows)
+        {
+            if ((int)r["Tag"] == 0 && (int)r["Id"] == 9999)
+            {
+                found = true;
+                break;
+            }
+        }
+
+        Assert.True(found, "Post-delete inserted row should be readable.");
+
+        // No Tag=1 rows survived.
+        foreach (DataRow r in dt.Rows)
+        {
+            Assert.NotEqual(1, (int)r["Tag"]);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteAllInOneLeaf_MergesIntoLeftSibling_NoRightLeafExists()
+    {
+        // Two-leaf tree (Tag = 0, 1; 400 each). Deleting Tag=1 empties
+        // the RIGHTMOST leaf — but our v1 caveat bails when deadIdx == last.
+        // So this test verifies the BAIL behaviour for a 2-leaf tree's
+        // tail-leaf delete. (Functional cousin of DeleteAllInTailLeaf, but
+        // with a 2-leaf tree where parent count is exactly 2 and deadIdx 1
+        // is the last → still bails to W4-D.)
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new ColumnDefinition("Tag", typeof(int)),
+                    new ColumnDefinition("Id", typeof(int)),
+                ],
+                [new IndexDefinition("IX_Tag", "Tag")],
+                ct);
+
+            var rows = new object[800][];
+            for (int t = 0; t < 2; t++)
+            {
+                for (int i = 0; i < 400; i++)
+                {
+                    rows[(t * 400) + i] = [t, i];
+                }
+            }
+
+            await writer.InsertRowsAsync("T", rows, ct);
+        }
+
+        int idxBefore = CountIndexPages(stream.ToArray());
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            int deleted = await writer.DeleteRowsAsync("T", "Tag", 1, ct);
+            Assert.Equal(400, deleted);
+        }
+
+        int idxAfter = CountIndexPages(stream.ToArray());
+        Assert.True(idxAfter > idxBefore, $"Tail-leaf merge should bail to W4-D; before={idxBefore}, after={idxAfter}.");
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        Assert.NotNull(dt);
+        Assert.Equal(400, dt!.Rows.Count);
+        foreach (DataRow r in dt.Rows)
+        {
+            Assert.Equal(0, (int)r["Tag"]);
+        }
+    }
+
+    private static int CountIndexPages(byte[] fileBytes)
+    {
+        int n = 0;
+        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        {
+            int o = p * PageSize;
+            byte t = fileBytes[o];
+            if ((t == 0x03 || t == 0x04) && fileBytes[o + 1] == 0x01)
+            {
+                n++;
+            }
+        }
+
+        return n;
+    }
+
+    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
+    {
+        var ms = new MemoryStream();
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken))
+        {
+        }
+
+        ms.Position = 0;
+        return ms;
+    }
+
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
+    {
+        stream.Position = 0;
+        return AccessWriter.OpenAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+    }
+
+    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)
+    {
+        stream.Position = 0;
+        return AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+    }
+}

@@ -9859,6 +9859,25 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
+                // W4-C-5 (2026-04-27) — cross-leaf surgical mutation. When
+                // the change-set spans multiple leaves the W4-C-3/W4-C-4
+                // single-leaf path bails; group changes by target leaf and
+                // mutate each leaf in place, aggregating per-parent summary
+                // updates. Bails on underflow (W4-C-6) or parent overflow
+                // (W4-C-7), in which case W4-D below resnaps the tree.
+                bool crossLeafHandled = await TrySurgicalCrossLeafMaintainAsync(
+                    layout,
+                    tdefPage,
+                    firstDp,
+                    rie.FirstDpOffset,
+                    addEntries,
+                    removeEntries,
+                    cancellationToken).ConfigureAwait(false);
+                if (crossLeafHandled)
+                {
+                    continue;
+                }
+
                 long leftmostLeaf = await DescendToLeftmostLeafAsync(layout, firstDp, cancellationToken).ConfigureAwait(false);
                 if (leftmostLeaf <= 0)
                 {
@@ -10564,6 +10583,57 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
+    /// W4-C-7 helper: greedy 2-way split of an INTERMEDIATE page's entry
+    /// list. Iterates the split index from largest possible (count-1) down
+    /// to 1; the first split where both halves rebuild successfully via
+    /// <see cref="IndexBTreeBuilder.TryBuildIntermediatePage"/> wins.
+    /// Returns <see langword="false"/> when no split fits (3+ pages
+    /// needed; caller bails to W4-D).
+    /// </summary>
+    private static bool TryGreedySplitIntermediateInTwo(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> entries,
+        out List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> left,
+        out List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> right)
+    {
+        left = [];
+        right = [];
+
+        if (entries.Count < 2)
+        {
+            return false;
+        }
+
+        for (int splitIdx = entries.Count - 1; splitIdx >= 1; splitIdx--)
+        {
+            var leftCand = entries.GetRange(0, splitIdx);
+            var rightCand = entries.GetRange(splitIdx, entries.Count - splitIdx);
+
+            byte[]? l = IndexBTreeBuilder.TryBuildIntermediatePage(
+                layout, pageSize, parentTdefPage, leftCand, prevPage: 0, nextPage: 0, tailPage: 0);
+            if (l is null)
+            {
+                continue;
+            }
+
+            byte[]? r = IndexBTreeBuilder.TryBuildIntermediatePage(
+                layout, pageSize, parentTdefPage, rightCand, prevPage: 0, nextPage: 0, tailPage: 0);
+            if (r is null)
+            {
+                continue;
+            }
+
+            left = leftCand;
+            right = rightCand;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Computes the in-place rewrites required for a W4-C-3 max-key change.
     /// At the parent-of-leaf level, replaces the entry at
     /// <c>path[^1].TakenIndex</c> with <paramref name="newSummary"/> (same
@@ -10703,6 +10773,1000 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         writes.AddRange(more);
         return writes;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // W4-C-5 (2026-04-27) — cross-leaf surgical multi-level mutation
+    // ════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Per-leaf bucket built by <see cref="GroupChangesByTargetLeafAsync"/>.
+    /// Adds and removes routed to the same leaf are accumulated here; the
+    /// captured intermediate path is shared across all keys that descended
+    /// to this leaf (every key in the bucket picked the same child at every
+    /// level above, by definition of "same target leaf").
+    /// </summary>
+    private sealed class LeafGroup
+    {
+        public LeafGroup(long leafPage, List<DescentStep> path)
+        {
+            LeafPage = leafPage;
+            Path = path;
+            Adds = [];
+            RemovePtrs = [];
+        }
+
+        /// <summary>Gets the page number of the target leaf.</summary>
+        public long LeafPage { get; }
+
+        /// <summary>Gets the captured path from root intermediate down to the parent-of-leaf.</summary>
+        public List<DescentStep> Path { get; }
+
+        /// <summary>Gets the encoded inserts that landed on this leaf.</summary>
+        public List<(byte[] Key, long DataPage, byte DataRow)> Adds { get; }
+
+        /// <summary>Gets the row pointers whose entries should be removed from this leaf.</summary>
+        public List<(long DataPage, byte DataRow)> RemovePtrs { get; }
+    }
+
+    /// <summary>
+    /// W4-C-5 cross-leaf surgical mutation. Invoked by
+    /// <see cref="TryMaintainIndexesIncrementalAsync"/> AFTER the single-leaf
+    /// surgical path (<see cref="TrySurgicalMultiLevelMaintainAsync"/>) has
+    /// bailed. Groups every change-set key by its target leaf via
+    /// path-capturing descent, applies a per-leaf splice (in-place rewrite or
+    /// 2-way split), and aggregates all parent-intermediate updates into a
+    /// single rewrite per intermediate page. Returns <see langword="true"/>
+    /// when every leaf was mutated in place at its existing page number (with
+    /// at most one new appended page per split); the caller MUST then NOT
+    /// invoke <see cref="MaintainIndexesAsync"/>. Returns <see langword="false"/>
+    /// on any bail trigger — caller falls through to the W4-D bulk rebuild.
+    /// <para>
+    /// Maximum distinct target leaves in a single cross-leaf surgical batch.
+    /// Above this, the W4-D bulk path is faster (linear leaf-chain walk).
+    /// The cap is held as a local constant in the method body.
+    /// </para>
+    /// <list type="bullet">
+    ///   <item>More than 64 distinct target leaves
+    ///   (W4-D's linear leaf-chain walk is faster past this point).</item>
+    ///   <item>Any per-leaf splice produces an empty leaf (W4-C-6 underflow
+    ///   is the next sub-phase).</item>
+    ///   <item>Any per-leaf splice would need 3+ pages.</item>
+    ///   <item>Any parent intermediate would overflow on its aggregated
+    ///   summary updates (W4-C-7 recursive intermediate split is the
+    ///   sub-phase after that).</item>
+    ///   <item>A leaf split's right page would need a sibling-pointer patch
+    ///   on a leaf that another group is also mutating (rare; would need
+    ///   merged in-place writes).</item>
+    ///   <item>Any descent overshoots into a tail_page chain.</item>
+    ///   <item>Any captured intermediate's last entry change requires an
+    ///   ancestor rewrite that is shared with another group's update of the
+    ///   same ancestor (handled — both updates are merged into one rewrite —
+    ///   but only when both updates are summary replacements; mixed
+    ///   replace+insert at the same position bails).</item>
+    /// </list>
+    /// </summary>
+    private async ValueTask<bool> TrySurgicalCrossLeafMaintainAsync(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long tdefPage,
+        long firstDp,
+        int firstDpOffset,
+        List<(byte[] Key, long DataPage, byte DataRow)> addEntries,
+        List<(byte[] Key, long DataPage, byte DataRow)> removeEntries,
+        CancellationToken cancellationToken)
+    {
+        const int W4C5MaxLeafGroupCount = 64;
+
+        if (addEntries.Count == 0 && removeEntries.Count == 0)
+        {
+            return true;
+        }
+
+        // ── Phase A: per-key descent → group by leaf ─────────────────
+        Dictionary<long, LeafGroup>? groups = await GroupChangesByTargetLeafAsync(
+            layout,
+            firstDp,
+            addEntries,
+            removeEntries,
+            W4C5MaxLeafGroupCount,
+            cancellationToken).ConfigureAwait(false);
+        if (groups is null)
+        {
+            return false;
+        }
+
+        // Single-leaf groups should have been handled by the W4-C-3/W4-C-4
+        // path. If we landed here with one group, the single-leaf path
+        // bailed (e.g. parent overflow on summary insert, leaf underflow,
+        // etc.). The cross-leaf code below handles W4-C-6 leaf-merge
+        // (a one-group underflow case) too — only return false when there
+        // are zero groups (no work to do, defensive).
+        if (groups.Count == 0)
+        {
+            return true;
+        }
+
+        // ── Phase B: per-leaf splice + classify outcome ──────────────
+        // Stage all writes in memory; commit only after every group's plan
+        // and every aggregated intermediate rewrite validates.
+        var existingPageRewrites = new Dictionary<long, byte[]>(groups.Count * 2);
+        var newPageAppends = new List<byte[]>(groups.Count); // appended in order
+        var leafNextPointerPatches = new Dictionary<long, long>(); // page → new prev_page (offset 8)
+        var leafPrevPointerPatches = new Dictionary<long, long>(); // page → new next_page (offset 12)
+
+        // Per-parent-intermediate aggregated operations. Key = parent page;
+        // value = ordered list of ops keyed by ORIGINAL child index in the
+        // parent's entry list. Two ops at the same original index (e.g.
+        // ReplaceAt + InsertAfter for a split) coexist in declaration order.
+        var parentOps = new Dictionary<long, List<IntermediateOp>>();
+
+        // For ascending-up propagation when a parent's max key changes, we
+        // need to know which child-index in the GRANDPARENT this parent
+        // occupies. The captured DescentStep for the grandparent already
+        // carries TakenIndex pointing at this parent's slot.
+
+        long nextAllocatedPageNumber = _stream.Length / _pgSz;
+
+        foreach (LeafGroup group in groups.Values)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] leafBytes = await ReadPageAsync(group.LeafPage, cancellationToken).ConfigureAwait(false);
+            byte[] leaf;
+            try
+            {
+                leaf = (byte[])leafBytes.Clone();
+            }
+            finally
+            {
+                ReturnPage(leafBytes);
+            }
+
+            if (leaf[0] != IndexLeafPageBuilder.PageTypeLeaf)
+            {
+                return false;
+            }
+
+            List<IndexLeafIncremental.DecodedEntry> existing = IndexLeafIncremental.DecodeEntries(layout, leaf, _pgSz);
+            if (existing.Count == 0)
+            {
+                return false;
+            }
+
+            List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(existing, group.Adds, group.RemovePtrs);
+            if (spliced is null)
+            {
+                return false;
+            }
+
+            long leafPrev = IndexLeafIncremental.ReadPrevPage(leaf);
+            long leafNext = IndexLeafIncremental.ReadNextLeafPage(leaf);
+            long leafTail = IndexLeafIncremental.ReadTailPage(leaf);
+
+            if (spliced.Count == 0)
+            {
+                // ── W4-C-6 leaf-merge on underflow ───────────────────
+                // Drop this leaf entirely; surviving siblings absorb the
+                // logical key range. v1 caveats:
+                //   - Bail when dead leaf is the parent's last child
+                //     (would shrink parent.tail_page → ancestor tail_page
+                //     propagation; out of scope).
+                //   - Bail when the parent has only one child (removing
+                //     would empty the parent → cascade collapse, out of
+                //     scope).
+                //   - Bail when either leaf-chain neighbour is being
+                //     mutated by another group in this batch (would need
+                //     coordinated pointer/content writes).
+                DescentStep mergeParent = group.Path[group.Path.Count - 1];
+                if (mergeParent.Entries.Count < 2)
+                {
+                    return false;
+                }
+
+                if (mergeParent.TakenIndex == mergeParent.Entries.Count - 1)
+                {
+                    return false;
+                }
+
+                if (leafPrev > 0 && groups.ContainsKey(leafPrev))
+                {
+                    return false;
+                }
+
+                if (leafNext > 0 && groups.ContainsKey(leafNext))
+                {
+                    return false;
+                }
+
+                // Stage chain detach. Two patches at most; both are pure
+                // pointer-byte writes on neighbour pages that are NOT in
+                // any other group (validated above).
+                if (leafPrev > 0)
+                {
+                    if (!leafPrevPointerPatches.TryAdd(leafPrev, leafNext))
+                    {
+                        return false;
+                    }
+                }
+
+                if (leafNext > 0)
+                {
+                    if (!leafNextPointerPatches.TryAdd(leafNext, leafPrev))
+                    {
+                        return false;
+                    }
+                }
+
+                // Stage parent Remove op. ApplyIntermediateOps drops the
+                // entry at OriginalIndex; the dead leaf page is orphaned
+                // (not appended to any free list — Compact & Repair sweeps
+                // it, same as W4-D bulk path orphans).
+                AddIntermediateOp(parentOps, mergeParent.PageNumber, new IntermediateOp(
+                    OriginalIndex: mergeParent.TakenIndex,
+                    Type: IntermediateOpType.Remove,
+                    NewKey: [],
+                    NewDataPage: 0,
+                    NewDataRow: 0,
+                    NewChildPage: 0));
+
+                continue;
+            }
+
+            byte[] oldMaxKey = existing[existing.Count - 1].Key;
+
+            DescentStep parentStep = group.Path[group.Path.Count - 1];
+
+            // ── Try W4-C-3 in-place rewrite first ──
+            byte[]? rebuilt = IndexLeafIncremental.TryRebuildLeafWithSiblings(
+                layout, _pgSz, tdefPage, spliced, leafPrev, leafNext, leafTail);
+            if (rebuilt != null)
+            {
+                if (existingPageRewrites.ContainsKey(group.LeafPage))
+                {
+                    // Two groups targeted the same leaf — shouldn't happen
+                    // (groups are keyed by leaf page). Defensive bail.
+                    return false;
+                }
+
+                existingPageRewrites[group.LeafPage] = rebuilt;
+
+                IndexLeafPageBuilder.LeafEntry newLast = spliced[spliced.Count - 1];
+                if (CompareKeyBytes(newLast.EncodedKey, oldMaxKey) != 0)
+                {
+                    // Parent's summary entry for this leaf must be replaced.
+                    AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
+                        OriginalIndex: parentStep.TakenIndex,
+                        Type: IntermediateOpType.Replace,
+                        NewKey: newLast.EncodedKey,
+                        NewDataPage: newLast.DataPage,
+                        NewDataRow: newLast.DataRow,
+                        NewChildPage: group.LeafPage));
+                }
+
+                continue;
+            }
+
+            // ── W4-C-4 2-way split ──
+            if (!TryGreedySplitInTwo(layout, _pgSz, spliced, out List<IndexLeafPageBuilder.LeafEntry> leftPart, out List<IndexLeafPageBuilder.LeafEntry> rightPart))
+            {
+                return false;
+            }
+
+            long newRightPage = nextAllocatedPageNumber++;
+            byte[] leftBytes;
+            byte[] rightBytes;
+            try
+            {
+                leftBytes = IndexLeafPageBuilder.BuildLeafPage(
+                    layout,
+                    _pgSz,
+                    tdefPage,
+                    leftPart,
+                    prevPage: leafPrev,
+                    nextPage: newRightPage,
+                    tailPage: 0,
+                    enablePrefixCompression: true);
+                rightBytes = IndexLeafPageBuilder.BuildLeafPage(
+                    layout,
+                    _pgSz,
+                    tdefPage,
+                    rightPart,
+                    prevPage: group.LeafPage,
+                    nextPage: leafNext,
+                    tailPage: 0,
+                    enablePrefixCompression: true);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                return false;
+            }
+
+            if (existingPageRewrites.ContainsKey(group.LeafPage))
+            {
+                return false;
+            }
+
+            existingPageRewrites[group.LeafPage] = leftBytes;
+            newPageAppends.Add(rightBytes);
+
+            // Patch leafNext.prev_page if it exists. If leafNext is itself a
+            // leaf in another group, we'd need to merge the patch into that
+            // group's rewrite — bail to keep this phase simple.
+            if (leafNext > 0)
+            {
+                if (groups.ContainsKey(leafNext))
+                {
+                    return false;
+                }
+
+                if (!leafNextPointerPatches.TryAdd(leafNext, newRightPage))
+                {
+                    // Two splits both want to patch the same neighbour leaf.
+                    // Should not happen (each leaf has one prev), but defensive.
+                    return false;
+                }
+            }
+
+            IndexLeafPageBuilder.LeafEntry leftLast = leftPart[leftPart.Count - 1];
+            IndexLeafPageBuilder.LeafEntry rightLast = rightPart[rightPart.Count - 1];
+
+            // Parent ops: replace existing summary with left summary, insert
+            // right summary immediately after.
+            AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
+                OriginalIndex: parentStep.TakenIndex,
+                Type: IntermediateOpType.Replace,
+                NewKey: leftLast.EncodedKey,
+                NewDataPage: leftLast.DataPage,
+                NewDataRow: leftLast.DataRow,
+                NewChildPage: group.LeafPage));
+            AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
+                OriginalIndex: parentStep.TakenIndex,
+                Type: IntermediateOpType.InsertAfter,
+                NewKey: rightLast.EncodedKey,
+                NewDataPage: rightLast.DataPage,
+                NewDataRow: rightLast.DataRow,
+                NewChildPage: newRightPage));
+        }
+
+        // ── Phase C: aggregate intermediate rewrites ─────────────────
+        // For every parent intermediate that received ops, build a fresh
+        // entry list, attempt to rebuild in place, and propagate any
+        // resulting max-key changes up the captured paths. W4-C-7:
+        // when an in-place rebuild overflows AND the page is a parent-
+        // of-leaf intermediate (deepest captured level), greedy-split
+        // the entries 2-way and either propagate to the grandparent or
+        // (if this is the root) allocate a fresh root and patch first_dp.
+        long? newRootPage = null;
+        if (!TryStageIntermediateRewrites(
+                layout,
+                tdefPage,
+                groups,
+                parentOps,
+                existingPageRewrites,
+                ref nextAllocatedPageNumber,
+                newPageAppends,
+                out newRootPage,
+                cancellationToken))
+        {
+            return false;
+        }
+
+        // ── Phase D: validate + Phase E: commit ──────────────────────
+        // Validation already done implicitly (every staged page has been
+        // built via a try-call that returned null/false on overflow). Now
+        // commit in safe order:
+        //   1. Append new pages (right halves of leaf splits) so their page
+        //      numbers exist before any in-place rewrite references them.
+        //   2. Patch sibling pointers on any leafNext outside the touched
+        //      set.
+        //   3. Rewrite all in-place pages (leaves first, then intermediates,
+        //      to minimise observable inconsistency for any concurrent
+        //      reader between writes — though there are none in single-
+        //      writer mode).
+
+        long verifyNextPage = _stream.Length / _pgSz;
+        foreach (byte[] pageBytes in newPageAppends)
+        {
+            long appended = await AppendPageAsync(pageBytes, cancellationToken).ConfigureAwait(false);
+            if (appended != verifyNextPage)
+            {
+                // Stream was extended by something else mid-flight (shouldn't
+                // happen in single-writer mode). Bail loudly via false; the
+                // partially-appended right page is just an orphan.
+                return false;
+            }
+
+            verifyNextPage++;
+        }
+
+        foreach ((long neighbourPage, long newPrevValue) in leafNextPointerPatches)
+        {
+            byte[] neighbourBytes = await ReadPageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
+            byte[] neighbour;
+            try
+            {
+                neighbour = (byte[])neighbourBytes.Clone();
+            }
+            finally
+            {
+                ReturnPage(neighbourBytes);
+            }
+
+            // §4.1 prev_page is at offset 8.
+            BinaryPrimitives.WriteInt32LittleEndian(neighbour.AsSpan(8, 4), checked((int)newPrevValue));
+            await WritePageAsync(neighbourPage, neighbour, cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach ((long neighbourPage, long newNextValue) in leafPrevPointerPatches)
+        {
+            byte[] neighbourBytes = await ReadPageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
+            byte[] neighbour;
+            try
+            {
+                neighbour = (byte[])neighbourBytes.Clone();
+            }
+            finally
+            {
+                ReturnPage(neighbourBytes);
+            }
+
+            // §4.1 next_page is at offset 12.
+            BinaryPrimitives.WriteInt32LittleEndian(neighbour.AsSpan(12, 4), checked((int)newNextValue));
+            await WritePageAsync(neighbourPage, neighbour, cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach ((long pageNum, byte[] bytes) in existingPageRewrites)
+        {
+            await WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
+        }
+
+        // W4-C-7: if the root intermediate split, patch the real-idx
+        // first_dp slot on the TDEF page to point at the freshly-allocated
+        // root. The new root page itself was already appended via
+        // newPageAppends above, so the page number is stable.
+        if (newRootPage.HasValue)
+        {
+            byte[] tdefBytesRaw = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+            byte[] tdefBytes;
+            try
+            {
+                tdefBytes = (byte[])tdefBytesRaw.Clone();
+            }
+            finally
+            {
+                ReturnPage(tdefBytesRaw);
+            }
+
+            BinaryPrimitives.WriteInt32LittleEndian(tdefBytes.AsSpan(firstDpOffset, 4), checked((int)newRootPage.Value));
+            await WritePageAsync(tdefPage, tdefBytes, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Per-key path-capturing descent. Builds one <see cref="LeafGroup"/>
+    /// per distinct target leaf, sharing the captured intermediate path
+    /// across all keys that landed on the same leaf. Returns
+    /// <see langword="null"/> on any descent failure (overshoot into
+    /// tail_page chain, malformed page, encoder mismatch) or when the
+    /// distinct-leaf count exceeds the cap supplied by the caller.
+    /// </summary>
+    private async ValueTask<Dictionary<long, LeafGroup>?> GroupChangesByTargetLeafAsync(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long firstDp,
+        List<(byte[] Key, long DataPage, byte DataRow)> addEntries,
+        List<(byte[] Key, long DataPage, byte DataRow)> removeEntries,
+        int maxLeafGroupCount,
+        CancellationToken cancellationToken)
+    {
+        var groups = new Dictionary<long, LeafGroup>();
+
+        for (int i = 0; i < addEntries.Count; i++)
+        {
+            (byte[] key, long dp, byte dr) = addEntries[i];
+            LeafGroup? g = await DescendOrLookupGroupAsync(layout, firstDp, key, groups, cancellationToken).ConfigureAwait(false);
+            if (g is null)
+            {
+                return null;
+            }
+
+            g.Adds.Add((key, dp, dr));
+            if (groups.Count > maxLeafGroupCount)
+            {
+                return null;
+            }
+        }
+
+        for (int i = 0; i < removeEntries.Count; i++)
+        {
+            (byte[] key, long dp, byte dr) = removeEntries[i];
+            LeafGroup? g = await DescendOrLookupGroupAsync(layout, firstDp, key, groups, cancellationToken).ConfigureAwait(false);
+            if (g is null)
+            {
+                return null;
+            }
+
+            g.RemovePtrs.Add((dp, dr));
+            if (groups.Count > maxLeafGroupCount)
+            {
+                return null;
+            }
+        }
+
+        return groups;
+    }
+
+    private async ValueTask<LeafGroup?> DescendOrLookupGroupAsync(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long firstDp,
+        byte[] key,
+        Dictionary<long, LeafGroup> groups,
+        CancellationToken cancellationToken)
+    {
+        // Always descend: the page cache amortises the cost, and the
+        // captured path lets us verify the key actually landed there
+        // (reusing a stale path could mis-route a key that overshoots).
+        var path = new List<DescentStep>();
+        long leafPage = await DescendCapturingAsync(layout, firstDp, key, path, cancellationToken).ConfigureAwait(false);
+        if (leafPage <= 0 || path.Count == 0)
+        {
+            return null;
+        }
+
+        if (groups.TryGetValue(leafPage, out LeafGroup? existing))
+        {
+            return existing;
+        }
+
+        var fresh = new LeafGroup(leafPage, path);
+        groups[leafPage] = fresh;
+        return fresh;
+    }
+
+    /// <summary>
+    /// Aggregated operation against an intermediate page: replace or insert
+    /// a summary entry at <paramref name="OriginalIndex"/>. Original index
+    /// always refers to the position in the LIVE intermediate's entry list
+    /// (not the post-mutation list). When two ops share an original index,
+    /// declaration order is preserved (a Replace for the original entry
+    /// followed by an InsertAfter that produces a leaf split).
+    /// </summary>
+    private readonly record struct IntermediateOp(
+        int OriginalIndex,
+        IntermediateOpType Type,
+        byte[] NewKey,
+        long NewDataPage,
+        byte NewDataRow,
+        long NewChildPage);
+
+    private enum IntermediateOpType
+    {
+        Replace,
+        InsertAfter,
+
+        /// <summary>W4-C-6: drop the entry at <c>OriginalIndex</c>. The
+        /// other tuple fields (<c>NewKey</c>, <c>NewDataPage</c>,
+        /// <c>NewDataRow</c>, <c>NewChildPage</c>) are unused.</summary>
+        Remove,
+    }
+
+    private static void AddIntermediateOp(
+        Dictionary<long, List<IntermediateOp>> ops,
+        long pageNumber,
+        IntermediateOp op)
+    {
+        if (!ops.TryGetValue(pageNumber, out List<IntermediateOp>? list))
+        {
+            list = [];
+            ops[pageNumber] = list;
+        }
+
+        list.Add(op);
+    }
+
+    /// <summary>
+    /// Apply <paramref name="ops"/> to <paramref name="original"/> producing
+    /// the post-mutation intermediate entry list. Ops are sorted by
+    /// (OriginalIndex, declaration order); each entry index in
+    /// <paramref name="original"/> is consumed at most once by a Replace.
+    /// </summary>
+    private static List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> ApplyIntermediateOps(
+        List<IndexLeafIncremental.DecodedIntermediateEntry> original,
+        List<IntermediateOp> ops)
+    {
+        // Stable sort by OriginalIndex; declaration order preserved within ties.
+        var indexed = new (IntermediateOp Op, int Order)[ops.Count];
+        for (int i = 0; i < ops.Count; i++)
+        {
+            indexed[i] = (ops[i], i);
+        }
+
+        Array.Sort(indexed, static (a, b) =>
+        {
+            int c = a.Op.OriginalIndex - b.Op.OriginalIndex;
+            return c != 0 ? c : a.Order - b.Order;
+        });
+
+        var result = new List<(byte[], long, byte, long)>(original.Count + ops.Count);
+        int opCursor = 0;
+        for (int origIdx = 0; origIdx < original.Count; origIdx++)
+        {
+            // Consume any ops at this original index.
+            bool replaced = false;
+            bool removed = false;
+            while (opCursor < indexed.Length && indexed[opCursor].Op.OriginalIndex == origIdx)
+            {
+                IntermediateOp op = indexed[opCursor].Op;
+                opCursor++;
+                switch (op.Type)
+                {
+                    case IntermediateOpType.Replace:
+                        if (removed)
+                        {
+                            // Can't replace something that was already removed.
+                            // Defensive — caller guards against this combination.
+                            return [];
+                        }
+
+                        result.Add((op.NewKey, op.NewDataPage, op.NewDataRow, op.NewChildPage));
+                        replaced = true;
+                        break;
+
+                    case IntermediateOpType.Remove:
+                        if (replaced)
+                        {
+                            return [];
+                        }
+
+                        removed = true;
+                        break;
+
+                    case IntermediateOpType.InsertAfter:
+                        // Insert after the (possibly replaced) original entry.
+                        // If the original was removed, insert in its place.
+                        if (!replaced && !removed)
+                        {
+                            IndexLeafIncremental.DecodedIntermediateEntry e = original[origIdx];
+                            result.Add((e.Key, e.DataPage, e.DataRow, e.ChildPage));
+                            replaced = true;
+                        }
+
+                        result.Add((op.NewKey, op.NewDataPage, op.NewDataRow, op.NewChildPage));
+                        break;
+                }
+            }
+
+            if (!replaced && !removed)
+            {
+                IndexLeafIncremental.DecodedIntermediateEntry e = original[origIdx];
+                result.Add((e.Key, e.DataPage, e.DataRow, e.ChildPage));
+            }
+        }
+
+        // Any ops past the final original index would be invalid (no
+        // OriginalIndex == original.Count is meaningful). Drop them
+        // defensively — caller treats this as a bail by checking the result
+        // count vs. expected.
+        return result;
+    }
+
+    /// <summary>
+    /// Stage rewrites for every parent intermediate touched by per-leaf ops,
+    /// then propagate any resulting max-key changes up each LeafGroup's
+    /// captured path. Returns <see langword="false"/> on any unrecoverable
+    /// shared-ancestor conflict. W4-C-7: when an in-place rebuild overflows
+    /// AND the page is a parent-of-leaf intermediate (deepest captured
+    /// level whose children are leaves), greedy-split the entries 2-way and
+    /// either propagate to the grandparent (Replace + InsertAfter) or, if
+    /// the splitting page IS the root, allocate a new root intermediate
+    /// with two summary entries pointing at the two halves and signal the
+    /// caller to patch <c>first_dp</c>. Bails on overflow at higher
+    /// (non-parent-of-leaf) levels — full recursive split is W4-C-7-v2.
+    /// </summary>
+    private bool TryStageIntermediateRewrites(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long tdefPage,
+        Dictionary<long, LeafGroup> groups,
+        Dictionary<long, List<IntermediateOp>> parentOps,
+        Dictionary<long, byte[]> existingPageRewrites,
+        ref long nextAllocatedPageNumber,
+        List<byte[]> newPageAppends,
+        out long? newRootPage,
+        CancellationToken cancellationToken)
+    {
+        newRootPage = null;
+
+        // Track which intermediates are "parent-of-leaf" (children are
+        // leaves, NOT intermediates). These are the only pages W4-C-7 v1
+        // is willing to split — splitting a higher-level intermediate
+        // requires reading its children's tail_page values to recompute
+        // the split halves' tail_page headers, which v1 punts on.
+        var parentOfLeaf = new HashSet<long>(parentOps.Keys);
+
+        // Build a map of every intermediate page touched, keyed by page
+        // number, with a reference DescentStep (for header preservation +
+        // original entries). Multiple groups may pass through the same
+        // intermediate — they ALL carry the same canonical bytes by
+        // construction (DescendCapturingAsync reads the same page bytes;
+        // we rely on the page cache returning the same content per call,
+        // which it does in single-writer mode because no mid-batch write
+        // touches these pages yet).
+        var intermediateRefs = new Dictionary<long, DescentStep>(parentOps.Count * 2);
+        var intermediateGrandparent = new Dictionary<long, (long ParentPage, int IndexInParent)>(parentOps.Count * 2);
+
+        // Also: remember each group's path so we can propagate max-key
+        // changes upward when a parent's rewrite changes its own max.
+        foreach (LeafGroup group in groups.Values)
+        {
+            for (int level = 0; level < group.Path.Count; level++)
+            {
+                DescentStep step = group.Path[level];
+                if (!intermediateRefs.ContainsKey(step.PageNumber))
+                {
+                    intermediateRefs[step.PageNumber] = step;
+                }
+
+                if (level > 0)
+                {
+                    DescentStep parent = group.Path[level - 1];
+                    intermediateGrandparent[step.PageNumber] = (parent.PageNumber, parent.TakenIndex);
+                }
+            }
+        }
+
+        // Process intermediates from deepest level up. We don't know depth
+        // explicitly, but parentOps initially keys ONLY parent-of-leaf
+        // intermediates. As we propagate max-key changes up, we add ops to
+        // shallower intermediates. Process in passes, deepest first.
+
+        // Compute depth of each intermediate via the captured paths.
+        var depthOf = new Dictionary<long, int>(intermediateRefs.Count);
+        foreach (LeafGroup group in groups.Values)
+        {
+            for (int level = 0; level < group.Path.Count; level++)
+            {
+                long pn = group.Path[level].PageNumber;
+                if (!depthOf.TryGetValue(pn, out int existingDepth) || existingDepth < level)
+                {
+                    depthOf[pn] = level;
+                }
+            }
+        }
+
+        // Process pages in descending depth (deepest first).
+        var pending = new List<long>(parentOps.Keys);
+        while (pending.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Pick the deepest pending page.
+            long deepest = pending[0];
+            int deepestDepth = depthOf.TryGetValue(deepest, out int d0) ? d0 : -1;
+            for (int i = 1; i < pending.Count; i++)
+            {
+                long candidate = pending[i];
+                int cd = depthOf.TryGetValue(candidate, out int dc) ? dc : -1;
+                if (cd > deepestDepth)
+                {
+                    deepest = candidate;
+                    deepestDepth = cd;
+                }
+            }
+
+            pending.Remove(deepest);
+
+            if (!parentOps.TryGetValue(deepest, out List<IntermediateOp>? ops) || ops.Count == 0)
+            {
+                continue;
+            }
+
+            if (!intermediateRefs.TryGetValue(deepest, out DescentStep refStep))
+            {
+                // No descent passed through this page — shouldn't happen
+                // because all ops were registered against pages we descended
+                // through. Defensive bail.
+                return false;
+            }
+
+            // Validate every op's OriginalIndex is in range.
+            foreach (IntermediateOp op in ops)
+            {
+                if (op.OriginalIndex < 0 || op.OriginalIndex >= refStep.Entries.Count)
+                {
+                    return false;
+                }
+            }
+
+            List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> newEntries =
+                ApplyIntermediateOps(refStep.Entries, ops);
+
+            if (newEntries.Count == 0)
+            {
+                // Intermediate emptied out — would require recursive removal
+                // from grandparent. W4-C-6 / collapse territory.
+                return false;
+            }
+
+            byte[] origBytes = refStep.PageBytes;
+            long origPrev = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(8, 4));
+            long origNext = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(12, 4));
+            long origTail = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(16, 4));
+
+            byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
+                layout, _pgSz, tdefPage, newEntries, origPrev, origNext, origTail);
+            if (rebuilt is null)
+            {
+                // W4-C-7 (2026-04-27) — intermediate overflow. Greedy-split
+                // the entries 2-way; either grandparent absorbs the new
+                // summary OR (if this page is the root) we allocate a fresh
+                // root and signal the caller to patch first_dp.
+                if (!parentOfLeaf.Contains(deepest))
+                {
+                    // Higher-level intermediate (children are themselves
+                    // intermediates). v1 doesn't recompute child tail_page
+                    // headers — bail to W4-D. (Recursive split is W4-C-7-v2.)
+                    return false;
+                }
+
+                if (!TryGreedySplitIntermediateInTwo(
+                        layout, _pgSz, tdefPage, newEntries, out var leftEntries, out var rightEntries))
+                {
+                    // Even a 2-way split overflows (entries too big for any
+                    // single intermediate). 3+ pages needed → bail to W4-D.
+                    return false;
+                }
+
+                long newRightIntPage = nextAllocatedPageNumber++;
+                var leftLast = leftEntries[leftEntries.Count - 1];
+                var rightLast = rightEntries[rightEntries.Count - 1];
+
+                // Children are leaves at this level → tail_page = last
+                // entry's child page. Right half inherits the original
+                // tail_page (which is the rightmost leaf in this subtree,
+                // and the right half DOES contain that subtree).
+                long leftTail = leftLast.ChildPage;
+                long rightTail = origTail != 0 ? origTail : rightLast.ChildPage;
+
+                byte[]? leftIntBytes;
+                byte[]? rightIntBytes;
+                try
+                {
+                    leftIntBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
+                        layout, _pgSz, tdefPage, leftEntries, origPrev, newRightIntPage, leftTail);
+                    rightIntBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
+                        layout, _pgSz, tdefPage, rightEntries, deepest, origNext, rightTail);
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    return false;
+                }
+
+                if (leftIntBytes is null || rightIntBytes is null)
+                {
+                    return false;
+                }
+
+                if (existingPageRewrites.ContainsKey(deepest))
+                {
+                    return false;
+                }
+
+                existingPageRewrites[deepest] = leftIntBytes;
+                newPageAppends.Add(rightIntBytes);
+
+                if (intermediateGrandparent.TryGetValue(deepest, out (long ParentPage, int IndexInParent) gpSplit))
+                {
+                    // Grandparent absorbs: replace the original summary at
+                    // IndexInParent with the LEFT half's summary, then
+                    // InsertAfter the RIGHT half's summary. Recurse into
+                    // grandparent in case it also overflows (v1 will bail
+                    // since grandparent is NOT parent-of-leaf).
+                    AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
+                        OriginalIndex: gpSplit.IndexInParent,
+                        Type: IntermediateOpType.Replace,
+                        NewKey: leftLast.Key,
+                        NewDataPage: leftLast.DataPage,
+                        NewDataRow: leftLast.DataRow,
+                        NewChildPage: deepest));
+                    AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
+                        OriginalIndex: gpSplit.IndexInParent,
+                        Type: IntermediateOpType.InsertAfter,
+                        NewKey: rightLast.Key,
+                        NewDataPage: rightLast.DataPage,
+                        NewDataRow: rightLast.DataRow,
+                        NewChildPage: newRightIntPage));
+
+                    if (!pending.Contains(gpSplit.ParentPage))
+                    {
+                        pending.Add(gpSplit.ParentPage);
+                    }
+                }
+                else
+                {
+                    // No grandparent — this WAS the root intermediate.
+                    // Allocate a fresh root with two summary entries
+                    // pointing at the two halves. tail_page of the new
+                    // root = right half's tail (= rightmost leaf in tree).
+                    if (newRootPage.HasValue)
+                    {
+                        // Already split a root once in this batch (multi-
+                        // group case); only one root is allowed. Bail.
+                        return false;
+                    }
+
+                    long newRootPageAlloc = nextAllocatedPageNumber++;
+                    var rootEntries = new List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)>(2)
+                    {
+                        (leftLast.Key, leftLast.DataPage, leftLast.DataRow, deepest),
+                        (rightLast.Key, rightLast.DataPage, rightLast.DataRow, newRightIntPage),
+                    };
+
+                    byte[]? newRootBytes;
+                    try
+                    {
+                        newRootBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
+                            layout, _pgSz, tdefPage, rootEntries, prevPage: 0, nextPage: 0, tailPage: rightTail);
+                    }
+                    catch (ArgumentOutOfRangeException)
+                    {
+                        return false;
+                    }
+
+                    if (newRootBytes is null)
+                    {
+                        return false;
+                    }
+
+                    newPageAppends.Add(newRootBytes);
+                    newRootPage = newRootPageAlloc;
+                }
+
+                continue;
+            }
+
+            if (existingPageRewrites.ContainsKey(deepest))
+            {
+                // An intermediate page should never collide with a leaf
+                // rewrite (different page-type populations). Defensive bail.
+                return false;
+            }
+
+            existingPageRewrites[deepest] = rebuilt;
+
+            // Did the page's max key change? Compare new last entry to
+            // original last entry's key.
+            var newMax = newEntries[newEntries.Count - 1];
+            IndexLeafIncremental.DecodedIntermediateEntry oldMax = refStep.Entries[refStep.Entries.Count - 1];
+            bool maxChanged = CompareKeyBytes(newMax.Key, oldMax.Key) != 0
+                || newMax.DataPage != oldMax.DataPage
+                || newMax.DataRow != oldMax.DataRow
+                || newMax.ChildPage != oldMax.ChildPage;
+
+            if (maxChanged && intermediateGrandparent.TryGetValue(deepest, out (long ParentPage, int IndexInParent) gp))
+            {
+                // Propagate: grandparent's summary entry for this
+                // intermediate (at IndexInParent) needs to carry the new
+                // max key (and same ChildPage = this intermediate page).
+                AddIntermediateOp(parentOps, gp.ParentPage, new IntermediateOp(
+                    OriginalIndex: gp.IndexInParent,
+                    Type: IntermediateOpType.Replace,
+                    NewKey: newMax.Key,
+                    NewDataPage: newMax.DataPage,
+                    NewDataRow: newMax.DataRow,
+                    NewChildPage: deepest));
+
+                if (!pending.Contains(gp.ParentPage))
+                {
+                    pending.Add(gp.ParentPage);
+                }
+            }
+
+            // If maxChanged but no grandparent (this WAS the root) — that's
+            // fine, the root's max key doesn't need propagation anywhere.
+        }
+
+        return true;
     }
 
     /// <summary>
