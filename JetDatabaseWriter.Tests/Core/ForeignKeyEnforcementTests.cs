@@ -435,6 +435,123 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         Assert.Equal(200, t.Rows.Count);
     }
 
+    [Fact]
+    public async Task Delete_PkSide_WithCascade_BulkSeeksChildIndex()
+    {
+        // W22: covering child-side real-idx is present (auto-emitted on every
+        // FK relationship in Jet4 / ACE), so cascade-delete should locate the
+        // 200 dependent child rows via index-seek rather than the legacy
+        // O(N) child snapshot scan. Functional verification only — proves the
+        // post-state is correct at scale; the snapshot fallback would also
+        // pass this test.
+        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        string parent = MakeTableName("DP");
+        string child = MakeTableName("DC");
+
+        await using (var writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
+
+            var pRows = new List<object[]>(50);
+            for (int i = 1; i <= 50; i++)
+            {
+                pRows.Add([i]);
+            }
+
+            await writer.InsertRowsAsync(parent, pRows, TestContext.Current.CancellationToken);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_W22_DelSeek", parent, "Id", child, "ParentId")
+                {
+                    CascadeDeletes = true,
+                },
+                TestContext.Current.CancellationToken);
+
+            var cRows = new List<object[]>(200);
+            for (int i = 1; i <= 200; i++)
+            {
+                cRows.Add([i, ((i - 1) % 50) + 1]);
+            }
+
+            await writer.InsertRowsAsync(child, cRows, TestContext.Current.CancellationToken);
+
+            // Delete a single parent — should cascade-delete exactly 4
+            // children (rows whose ParentId == 7).
+            int deleted = await writer.DeleteRowsAsync(parent, "Id", 7, TestContext.Current.CancellationToken);
+            Assert.Equal(1, deleted);
+        }
+
+        await using var reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Equal(196, t.Rows.Count);
+        foreach (DataRow r in t.Rows)
+        {
+            Assert.NotEqual(7, (int)r["ParentId"]);
+        }
+    }
+
+    [Fact]
+    public async Task Update_PkSide_WithCascade_BulkSeeksChildIndex()
+    {
+        // W22: cascade-update via child-side index-seek. Move PK 7 → 999 and
+        // assert all children that referenced 7 now reference 999, and the
+        // rest are unchanged.
+        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        string parent = MakeTableName("UP");
+        string child = MakeTableName("UC");
+
+        await using (var writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
+
+            var pRows = new List<object[]>(50);
+            for (int i = 1; i <= 50; i++)
+            {
+                pRows.Add([i]);
+            }
+
+            await writer.InsertRowsAsync(parent, pRows, TestContext.Current.CancellationToken);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_W22_UpdSeek", parent, "Id", child, "ParentId")
+                {
+                    CascadeUpdates = true,
+                },
+                TestContext.Current.CancellationToken);
+
+            var cRows = new List<object[]>(200);
+            for (int i = 1; i <= 200; i++)
+            {
+                cRows.Add([i, ((i - 1) % 50) + 1]);
+            }
+
+            await writer.InsertRowsAsync(child, cRows, TestContext.Current.CancellationToken);
+
+            int updated = await writer.UpdateRowsAsync(
+                parent,
+                "Id",
+                7,
+                new Dictionary<string, object> { ["Id"] = 999 },
+                TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
+        }
+
+        await using var reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        int repointed = 0;
+        foreach (DataRow r in t.Rows)
+        {
+            int p = (int)r["ParentId"];
+            Assert.NotEqual(7, p);
+            if (p == 999)
+            {
+                repointed++;
+            }
+        }
+
+        Assert.Equal(4, repointed);
+    }
+
     private static string MakeTableName(string prefix) =>
         $"{prefix}_{Guid.NewGuid():N}".Substring(0, Math.Min(18, prefix.Length + 11));
 

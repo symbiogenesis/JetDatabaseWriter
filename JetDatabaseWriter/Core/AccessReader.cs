@@ -1545,6 +1545,24 @@ public sealed class AccessReader : AccessBase, IAccessReader
             : ReadFixedString(row, start, col.Type, sz);
     }
 
+    // Magic-byte signatures for OLE-wrapped file payloads. Ordered so the
+    // longest / most specific patterns are checked first when ambiguous.
+    private static ReadOnlySpan<byte> MagicJpeg => [0xFF, 0xD8, 0xFF];
+
+    private static ReadOnlySpan<byte> MagicPng => [0x89, 0x50, 0x4E, 0x47];
+
+    private static ReadOnlySpan<byte> MagicGif => [0x47, 0x49, 0x46];
+
+    private static ReadOnlySpan<byte> MagicBmp => [0x42, 0x4D];
+
+    private static ReadOnlySpan<byte> MagicPdf => [0x25, 0x50, 0x44, 0x46];
+
+    private static ReadOnlySpan<byte> MagicZip => [0x50, 0x4B, 0x03, 0x04];
+
+    private static ReadOnlySpan<byte> MagicOleCompound => [0xD0, 0xCF, 0x11, 0xE0];
+
+    private static ReadOnlySpan<byte> MagicRtf => [0x7B, 0x5C, 0x72, 0x74];
+
     /// <summary>
     /// Scans the first 512 bytes for known file magic numbers (images, PDFs, Office docs, archives).
     /// Typical Access OLE fields wrap files in an OLE container (~78-byte header),
@@ -1561,64 +1579,51 @@ public sealed class AccessReader : AccessBase, IAccessReader
         int scanEnd = Math.Min(start + len, start + 512);
         for (int i = start; i < scanEnd - 3; i++)
         {
+            ReadOnlySpan<byte> window = b.AsSpan(i, scanEnd - i);
+            int fileLen = start + len - i;
+
             // ── Images ──
-            // JPEG: FF D8 FF
-            if (b[i] == 0xFF && b[i + 1] == 0xD8 && b[i + 2] == 0xFF)
+            if (window.StartsWith(MagicJpeg))
             {
-                int fileLen = start + len - i;
                 return "data:image/jpeg;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
-            // PNG: 89 50 4E 47
-            if (b[i] == 0x89 && b[i + 1] == 0x50 && b[i + 2] == 0x4E && b[i + 3] == 0x47)
+            if (window.StartsWith(MagicPng))
             {
-                int fileLen = start + len - i;
                 return "data:image/png;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
-            // GIF: 47 49 46
-            if (b[i] == 0x47 && b[i + 1] == 0x49 && b[i + 2] == 0x46)
+            if (window.StartsWith(MagicGif))
             {
-                int fileLen = start + len - i;
                 return "data:image/gif;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
-            // BMP: 42 4D
-            if (b[i] == 0x42 && b[i + 1] == 0x4D)
+            if (window.StartsWith(MagicBmp))
             {
-                int fileLen = start + len - i;
                 return "data:image/bmp;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
             // ── Documents ──
-            // PDF: 25 50 44 46 (%PDF)
-            if (b[i] == 0x25 && b[i + 1] == 0x50 && b[i + 2] == 0x44 && b[i + 3] == 0x46)
+            if (window.StartsWith(MagicPdf))
             {
-                int fileLen = start + len - i;
                 return "data:application/pdf;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
-            // ZIP (also DOCX/XLSX/PPTX): 50 4B 03 04 (PK..)
-            if (i + 3 < scanEnd && b[i] == 0x50 && b[i + 1] == 0x4B && b[i + 2] == 0x03 && b[i + 3] == 0x04)
+            // ZIP (also DOCX/XLSX/PPTX). For simplicity, return generic zip MIME.
+            if (window.StartsWith(MagicZip))
             {
-                int fileLen = start + len - i;
-
-                // Check if it's an Office Open XML file by looking for [Content_Types].xml signature
-                // For simplicity, return generic zip MIME
                 return "data:application/zip;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
-            // DOC (Word 97-2003): D0 CF 11 E0 (OLE compound file)
-            if (i + 3 < scanEnd && b[i] == 0xD0 && b[i + 1] == 0xCF && b[i + 2] == 0x11 && b[i + 3] == 0xE0)
+            // DOC (Word 97-2003): OLE compound file.
+            if (window.StartsWith(MagicOleCompound))
             {
-                int fileLen = start + len - i;
                 return "data:application/msword;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
-            // RTF: 7B 5C 72 74 ({\rt)
-            if (i + 3 < scanEnd && b[i] == 0x7B && b[i + 1] == 0x5C && b[i + 2] == 0x72 && b[i + 3] == 0x74)
+            // RTF: {\rt
+            if (window.StartsWith(MagicRtf))
             {
-                int fileLen = start + len - i;
                 return "data:application/rtf;base64," + Convert.ToBase64String(b, i, fileLen);
             }
         }

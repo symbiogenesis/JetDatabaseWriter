@@ -960,7 +960,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // PK-side: if any of the updated columns belongs to a PK referenced
             // by a child table, gather (oldKey, newPkValues) pairs per affected
             // row and let EnforceFkOnPrimaryUpdateAsync cascade or reject.
-            var changes = new List<(string? OldKey, object[] NewPkValues)>(pendingNewRows.Count);
+            var changes = new List<(string? OldKey, object?[] OldFullRow, object[] NewPkValues)>(pendingNewRows.Count);
             foreach (FkRelationship rel in rels)
             {
                 if (!string.Equals(rel.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
@@ -994,11 +994,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 changes.Clear();
                 foreach ((int rowIdx, object[] newRow) in pendingNewRows)
                 {
-                    string? oldKey = BuildCompositeKey(snapshot.Rows[rowIdx].ItemArray, pkIdx);
-                    changes.Add((oldKey, newRow));
+                    object?[] oldFullRow = snapshot.Rows[rowIdx].ItemArray;
+                    string? oldKey = BuildCompositeKey(oldFullRow, pkIdx);
+                    changes.Add((oldKey, oldFullRow, newRow));
                 }
 
-                await EnforceFkOnPrimaryUpdateAsync(tableName, changes, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
+                await EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, changes, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -1083,38 +1084,24 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (rels.Count > 0 && matchingIndices.Count > 0)
         {
             var fkCtx = new FkContext(rels);
-            foreach (FkRelationship rel in rels)
+
+            // Snapshot the typed full row of every parent we are about to
+            // delete, in primary-table column order. EnforceFkOnPrimaryDeleteAsync
+            // consumes this once per relationship (slicing the relationship's
+            // PrimaryColumns out for the FK seek / snapshot scan).
+            var deletedParentRows = new List<object?[]>(matchingIndices.Count);
+            foreach (int rowIdx in matchingIndices)
             {
-                if (!string.Equals(rel.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                var pkIdx = new int[rel.PrimaryColumns.Count];
-                bool ok = true;
-                for (int i = 0; i < rel.PrimaryColumns.Count; i++)
-                {
-                    pkIdx[i] = tableDef.FindColumnIndex(rel.PrimaryColumns[i]);
-                    if (pkIdx[i] < 0)
-                    {
-                        ok = false;
-                        break;
-                    }
-                }
-
-                if (!ok)
-                {
-                    continue;
-                }
-
-                var deletedKeys = new List<string?>(matchingIndices.Count);
-                foreach (int rowIdx in matchingIndices)
-                {
-                    deletedKeys.Add(BuildCompositeKey(snapshot.Rows[rowIdx].ItemArray, pkIdx));
-                }
-
-                await EnforceFkOnPrimaryDeleteAsync(tableName, deletedKeys, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
+                deletedParentRows.Add(snapshot.Rows[rowIdx].ItemArray);
             }
+
+            await EnforceFkOnPrimaryDeleteAsync(
+                tableName,
+                tableDef,
+                deletedParentRows,
+                fkCtx,
+                depth: 0,
+                cancellationToken).ConfigureAwait(false);
         }
 
         // ── C5 — cascade flat-child rows for any complex columns on the
@@ -2463,6 +2450,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         /// </summary>
         public Dictionary<string, ParentSeekIndex?> SeekIndexes { get; }
             = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Gets the per-relationship cached resolution of the child (FK)
+        /// table's real-idx covering the relationship's foreign columns.
+        /// Used by <see cref="EnforceFkOnPrimaryDeleteAsync"/> /
+        /// <see cref="EnforceFkOnPrimaryUpdateAsync"/> to locate dependent
+        /// child rows by parent-key seek instead of an O(N) child snapshot
+        /// scan. A value of <see langword="null"/> means "resolution
+        /// attempted and the index is not usable" — caller falls back to
+        /// the snapshot path.
+        /// </summary>
+        public Dictionary<string, ChildSeekIndex?> ChildSeekIndexes { get; }
+            = new(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -2481,6 +2481,23 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         byte ColumnType,
         bool Ascending,
         int ForeignColumnIndex);
+
+    /// <summary>
+    /// Resolved child-side (FK-side) seek index for a single relationship.
+    /// The seeker uses <see cref="RootPage"/> as the entry point and encodes
+    /// the parent's PK tuple (in relationship-PK declaration order) using
+    /// <see cref="KeyColumns"/>. Used by cascade-update / cascade-delete to
+    /// locate dependent child rows in O(log N + K) page reads instead of an
+    /// O(N) child-table snapshot scan.
+    /// </summary>
+    private sealed record ChildSeekIndex(
+        long RootPage,
+        IReadOnlyList<ChildSeekKeyColumn> KeyColumns);
+
+    /// <summary>One column of a child (FK-side) seek composite key.</summary>
+    private readonly record struct ChildSeekKeyColumn(
+        byte ColumnType,
+        bool Ascending);
 
     /// <summary>
     /// Loads every enforced foreign-key relationship from the
@@ -3074,6 +3091,139 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
+    /// Locates (and caches inside <paramref name="ctx"/>) the child (FK) table's
+    /// real-idx whose col_map exactly covers <paramref name="rel"/>'s
+    /// ForeignColumns in declaration order. Returns <see langword="null"/>
+    /// when no covering index exists, when the format is Jet3, when the
+    /// child TDEF cannot be resolved, or when any FK column type is not
+    /// seekable (the cascade enforcement loop falls back to the snapshot
+    /// scan in that case).
+    /// </summary>
+    private async ValueTask<ChildSeekIndex?> ResolveChildSeekIndexAsync(
+        FkRelationship rel,
+        FkContext ctx,
+        CancellationToken cancellationToken)
+    {
+        if (ctx.ChildSeekIndexes.TryGetValue(rel.Name, out ChildSeekIndex? cached))
+        {
+            return cached;
+        }
+
+        ChildSeekIndex? resolved = null;
+        try
+        {
+            if (_format == DatabaseFormat.Jet3Mdb)
+            {
+                return null;
+            }
+
+            CatalogEntry? childEntry = await GetCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            if (childEntry == null)
+            {
+                return null;
+            }
+
+            TableDef childDef = await ReadRequiredTableDefAsync(childEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+
+            var fkColNums = new int[rel.ForeignColumns.Count];
+            var fkColTypes = new byte[rel.ForeignColumns.Count];
+            for (int i = 0; i < rel.ForeignColumns.Count; i++)
+            {
+                int idx = childDef.FindColumnIndex(rel.ForeignColumns[i]);
+                if (idx < 0)
+                {
+                    return null;
+                }
+
+                fkColNums[i] = childDef.Columns[idx].ColNum;
+                fkColTypes[i] = childDef.Columns[idx].Type;
+            }
+
+            (long FirstDp, IReadOnlyList<bool> AscendingFlags)? hit = await TryFindCoveringRealIdxAsync(
+                childEntry.TDefPage,
+                fkColNums,
+                cancellationToken).ConfigureAwait(false);
+            if (hit == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < fkColTypes.Length; i++)
+            {
+                if (!IndexKeyEncoder.IsColumnTypeSeekable(fkColTypes[i]))
+                {
+                    return null;
+                }
+            }
+
+            var keyColumns = new ChildSeekKeyColumn[fkColNums.Length];
+            for (int i = 0; i < fkColNums.Length; i++)
+            {
+                keyColumns[i] = new ChildSeekKeyColumn(fkColTypes[i], hit.Value.AscendingFlags[i]);
+            }
+
+            resolved = new ChildSeekIndex(hit.Value.FirstDp, keyColumns);
+            return resolved;
+        }
+        finally
+        {
+            ctx.ChildSeekIndexes[rel.Name] = resolved;
+        }
+    }
+
+    /// <summary>
+    /// Encodes a composite seek key for the child (FK-side) index using the
+    /// supplied parent-PK column values (in relationship-PK declaration
+    /// order). Returns <see langword="null"/> when any value is null
+    /// (cascade callers already short-circuit on partial-null parent keys)
+    /// or when the encoder rejects any value.
+    /// </summary>
+    private static byte[]? TryEncodeChildSeekKey(ChildSeekIndex idx, object?[] parentPkValues)
+    {
+        if (parentPkValues.Length != idx.KeyColumns.Count)
+        {
+            return null;
+        }
+
+        var pieces = new byte[idx.KeyColumns.Count][];
+        int total = 0;
+        try
+        {
+            for (int i = 0; i < idx.KeyColumns.Count; i++)
+            {
+                ChildSeekKeyColumn col = idx.KeyColumns[i];
+                object? v = parentPkValues[i];
+                if (v is DBNull)
+                {
+                    v = null;
+                }
+
+                if (v == null)
+                {
+                    return null;
+                }
+
+                pieces[i] = IndexKeyEncoder.EncodeEntry(col.ColumnType, v, col.Ascending);
+                total += pieces[i].Length;
+            }
+        }
+        catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException || ex is OverflowException)
+        {
+            return null;
+        }
+
+        byte[] composite = new byte[total];
+        int offset = 0;
+        for (int i = 0; i < pieces.Length; i++)
+        {
+            Buffer.BlockCopy(pieces[i], 0, composite, offset, pieces[i].Length);
+            offset += pieces[i].Length;
+        }
+
+        return composite;
+    }
+
+    /// <summary>
     /// After a successful insert, augments any cached parent-key sets that
     /// reference <paramref name="primaryTable"/> with the row's PK tuple so
     /// subsequent inserts within the same call (self-references and bulk
@@ -3120,14 +3270,26 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     /// <summary>
     /// For each enforced FK whose primary side is <paramref name="primaryTable"/>,
-    /// inspects the rows currently being deleted (by their PK tuples in
-    /// <paramref name="deletedKeys"/>) and either cascades the delete to the
-    /// child table when <see cref="FkRelationship.CascadeDeletes"/> is set, or
-    /// throws when child rows still reference one of the deleted PK tuples.
+    /// inspects the parent rows currently being deleted (full typed rows in
+    /// primary-table column order in <paramref name="deletedParentRows"/>)
+    /// and either cascades the delete to the child table when
+    /// <see cref="FkRelationship.CascadeDeletes"/> is set, or throws when
+    /// child rows still reference one of the deleted PK tuples.
+    /// <para>
+    /// W22 (2026-04-26): when a covering FK-side real-idx is available
+    /// (<see cref="ResolveChildSeekIndexAsync"/>), each parent PK tuple is
+    /// encoded once and seeked through <see cref="IndexBTreeSeeker.FindRowLocationsAsync"/>
+    /// to locate dependent child rows in O(log N + K) page reads. Falls
+    /// back to the legacy O(N) child-table snapshot scan when the seek
+    /// path is not usable (Jet3, no covering child index, encoder-rejected
+    /// key types, child row contains LVAL-only columns the single-row
+    /// reader cannot decode for the recursive grandchild step).
+    /// </para>
     /// </summary>
     private async ValueTask EnforceFkOnPrimaryDeleteAsync(
         string primaryTable,
-        IReadOnlyList<string?> deletedKeys,
+        TableDef primaryDef,
+        List<object?[]> deletedParentRows,
         FkContext ctx,
         int depth,
         CancellationToken cancellationToken)
@@ -3145,16 +3307,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            // Find child rows referencing any of the deleted PK tuples.
             CatalogEntry childEntry = await GetRequiredCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             TableDef childDef = await ReadRequiredTableDefAsync(childEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
 
             var fkIdx = new int[rel.ForeignColumns.Count];
+            var primaryPkIdx = new int[rel.PrimaryColumns.Count];
             bool ok = true;
             for (int i = 0; i < rel.ForeignColumns.Count; i++)
             {
                 fkIdx[i] = childDef.FindColumnIndex(rel.ForeignColumns[i]);
-                if (fkIdx[i] < 0)
+                primaryPkIdx[i] = primaryDef.FindColumnIndex(rel.PrimaryColumns[i]);
+                if (fkIdx[i] < 0 || primaryPkIdx[i] < 0)
                 {
                     ok = false;
                     break;
@@ -3166,13 +3329,80 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
+            // Build per-rel typed parent PK arrays (in rel.PrimaryColumns
+            // declaration order) once for both the seek and the snapshot
+            // fallback paths.
+            var parentPkRows = new List<object?[]>(deletedParentRows.Count);
+            foreach (object?[] row in deletedParentRows)
+            {
+                var pk = new object?[primaryPkIdx.Length];
+                bool nullPart = false;
+                for (int i = 0; i < primaryPkIdx.Length; i++)
+                {
+                    object? v = row[primaryPkIdx[i]];
+                    if (v is DBNull)
+                    {
+                        v = null;
+                    }
+
+                    if (v == null)
+                    {
+                        nullPart = true;
+                        break;
+                    }
+
+                    pk[i] = v;
+                }
+
+                if (!nullPart)
+                {
+                    parentPkRows.Add(pk);
+                }
+            }
+
+            if (parentPkRows.Count == 0)
+            {
+                continue;
+            }
+
+            // ── W22 fast path: child-side index seek ──────────────────
+            ChildSeekIndex? childSeek = await ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
+            if (childSeek != null)
+            {
+                bool seekOk = await TryProcessCascadeDeleteWithSeekAsync(
+                    rel,
+                    childEntry,
+                    childDef,
+                    childSeek,
+                    parentPkRows,
+                    ctx,
+                    depth,
+                    cancellationToken).ConfigureAwait(false);
+                if (seekOk)
+                {
+                    continue;
+                }
+            }
+
+            // ── Snapshot fallback ─────────────────────────────────────
             using DataTable childSnap = await ReadTableSnapshotAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             List<RowLocation> locations = await GetLiveRowLocationsAsync(childEntry.TDefPage, cancellationToken).ConfigureAwait(false);
             int total = Math.Min(childSnap.Rows.Count, locations.Count);
 
+            // Build deletedSet from typed parent PK arrays (composite-key
+            // strings keyed off rel.PrimaryColumns ordering). Equivalent to
+            // the legacy BuildCompositeKey path but driven by the typed
+            // parent rows we received from the caller.
             var deletedSet = new HashSet<string>(StringComparer.Ordinal);
-            foreach (string? k in deletedKeys)
+            int[] identity = new int[primaryPkIdx.Length];
+            for (int i = 0; i < identity.Length; i++)
             {
+                identity[i] = i;
+            }
+
+            foreach (object?[] pk in parentPkRows)
+            {
+                string? k = BuildCompositeKey(pk, identity);
                 if (k != null)
                 {
                     _ = deletedSet.Add(k);
@@ -3180,7 +3410,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             var matchingRowIndices = new List<int>();
-            var matchingChildKeys = new List<string?>();
             for (int i = 0; i < total; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -3193,13 +3422,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 if (deletedSet.Contains(childKey))
                 {
                     matchingRowIndices.Add(i);
-
-                    // If this child is itself referenced by grandchildren, we need
-                    // to recurse with the GRANDCHILD's PK tuples — i.e. the child
-                    // row's own PK values (per any further relationship). Build
-                    // the grandchild-side key (= this row's PK columns) on demand
-                    // as we recurse below.
-                    matchingChildKeys.Add(childKey);
                 }
             }
 
@@ -3215,51 +3437,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     $"{matchingRowIndices.Count} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.");
             }
 
-            // Capture the child rows' OWN PK tuples (per every relationship
-            // whose primary side is the child table) before we delete them so
-            // grandchildren can be cascaded recursively.
-            var childPkSnapshots = new Dictionary<string, List<string?>>(StringComparer.OrdinalIgnoreCase);
-            foreach (FkRelationship grandRel in ctx.All)
+            // Capture the child rows' OWN full typed values (in child-table
+            // column order) before we delete them so any grandchild relationship
+            // can be recursed via the same EnforceFkOnPrimaryDeleteAsync entry.
+            var childDeletedRows = new List<object?[]>(matchingRowIndices.Count);
+            foreach (int rIdx in matchingRowIndices)
             {
-                if (!string.Equals(grandRel.PrimaryTable, rel.ForeignTable, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                var pkIdx = new int[grandRel.PrimaryColumns.Count];
-                bool pkOk = true;
-                for (int i = 0; i < grandRel.PrimaryColumns.Count; i++)
-                {
-                    pkIdx[i] = childDef.FindColumnIndex(grandRel.PrimaryColumns[i]);
-                    if (pkIdx[i] < 0)
-                    {
-                        pkOk = false;
-                        break;
-                    }
-                }
-
-                if (!pkOk)
-                {
-                    continue;
-                }
-
-                var keys = new List<string?>(matchingRowIndices.Count);
-                foreach (int rIdx in matchingRowIndices)
-                {
-                    keys.Add(BuildCompositeKey(childSnap.Rows[rIdx].ItemArray, pkIdx));
-                }
-
-                childPkSnapshots[grandRel.Name] = keys;
+                childDeletedRows.Add(childSnap.Rows[rIdx].ItemArray);
             }
 
-            // Recurse for grandchildren BEFORE we delete this level so the
-            // grandchild-side enforcement can still see the parent rows
-            // (it uses table snapshots independent of our pending deletes,
-            // but cascading bottom-up keeps the state consistent on disk).
-            foreach (KeyValuePair<string, List<string?>> kvp in childPkSnapshots)
-            {
-                await EnforceFkOnPrimaryDeleteAsync(rel.ForeignTable, kvp.Value, ctx, depth + 1, cancellationToken).ConfigureAwait(false);
-            }
+            await EnforceFkOnPrimaryDeleteAsync(
+                rel.ForeignTable,
+                childDef,
+                childDeletedRows,
+                ctx,
+                depth + 1,
+                cancellationToken).ConfigureAwait(false);
 
             // C5: cascade complex flat-child rows for the child rows we are
             // about to delete. Must precede MarkRowDeletedAsync so the
@@ -3290,6 +3483,173 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
+    /// W22 fast path for cascade-delete: locate dependent child rows by
+    /// seeking the child (FK) table's covering index for each parent PK
+    /// tuple. Returns <see langword="false"/> when the seek path cannot be
+    /// completed (any parent key fails to encode, or any matched child row
+    /// contains an LVAL column the single-row reader cannot decode for the
+    /// recursive grandchild step) — caller falls back to the snapshot scan.
+    /// </summary>
+    private async ValueTask<bool> TryProcessCascadeDeleteWithSeekAsync(
+        FkRelationship rel,
+        CatalogEntry childEntry,
+        TableDef childDef,
+        ChildSeekIndex childSeek,
+        IReadOnlyList<object?[]> parentPkRows,
+        FkContext ctx,
+        int depth,
+        CancellationToken cancellationToken)
+    {
+        // De-duplicate matched row locations across parent keys (a child row
+        // is uniquely identified by (page, rowIndex)).
+        var seen = new HashSet<long>();
+        var matchedLocations = new List<(long DataPage, int RowIndex)>();
+        foreach (object?[] pk in parentPkRows)
+        {
+            byte[]? encoded = TryEncodeChildSeekKey(childSeek, pk);
+            if (encoded == null)
+            {
+                return false;
+            }
+
+            List<(long DataPage, int RowIndex)> hits = await IndexBTreeSeeker.FindRowLocationsAsync(
+                (page, ct) => ReadPageOwnedAsync(page, ct),
+                _pgSz,
+                childSeek.RootPage,
+                encoded,
+                cancellationToken).ConfigureAwait(false);
+
+            foreach ((long dp, int ri) in hits)
+            {
+                long key = (dp << 16) | (uint)ri;
+                if (seen.Add(key))
+                {
+                    matchedLocations.Add((dp, ri));
+                }
+            }
+        }
+
+        if (matchedLocations.Count == 0)
+        {
+            return true;
+        }
+
+        if (!rel.CascadeDeletes)
+        {
+            throw new InvalidOperationException(
+                $"DELETE on '{rel.PrimaryTable}' violates foreign-key constraint '{rel.Name}': " +
+                $"{matchedLocations.Count} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.");
+        }
+
+        // Resolve full row bounds (RowStart / RowSize) via a one-pass live
+        // location enumeration of just the pages we need. Cheaper than a
+        // full snapshot read when the matched set is small. We index the
+        // matched (page, rowIndex) tuples by page for the lookup.
+        var matchedByPage = new Dictionary<long, HashSet<int>>();
+        foreach ((long dp, int ri) in matchedLocations)
+        {
+            if (!matchedByPage.TryGetValue(dp, out HashSet<int>? rs))
+            {
+                rs = new HashSet<int>();
+                matchedByPage[dp] = rs;
+            }
+
+            _ = rs.Add(ri);
+        }
+
+        var fullLocations = new List<RowLocation>(matchedLocations.Count);
+        foreach (KeyValuePair<long, HashSet<int>> kvp in matchedByPage)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            byte[] page = await ReadPageAsync(kvp.Key, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != childEntry.TDefPage)
+                {
+                    // The seek pointer led to an unexpected page — bail.
+                    return false;
+                }
+
+                foreach (RowBound rb in EnumerateLiveRowBounds(page))
+                {
+                    if (kvp.Value.Contains(rb.RowIndex))
+                    {
+                        fullLocations.Add(new RowLocation(kvp.Key, rb.RowIndex, rb.RowStart, rb.RowSize));
+                    }
+                }
+            }
+            finally
+            {
+                ReturnPage(page);
+            }
+        }
+
+        if (fullLocations.Count != matchedLocations.Count)
+        {
+            // Index points at row indices the live-row enumerator could not
+            // confirm — stale index pages or page-pool race. Fall back.
+            return false;
+        }
+
+        // Read each matched child row's full typed values for the recursive
+        // grandchild step. If any contains a column the single-row reader
+        // cannot decode (LVAL: T_MEMO/T_OLE/T_COMPLEX/T_ATTACHMENT), bail.
+        var allColumnOrdinals = new int[childDef.Columns.Count];
+        for (int i = 0; i < childDef.Columns.Count; i++)
+        {
+            allColumnOrdinals[i] = i;
+        }
+
+        var childDeletedRows = new List<object?[]>(fullLocations.Count);
+        foreach (RowLocation loc in fullLocations)
+        {
+            object?[]? values = await TryReadColumnValuesTypedAsync(loc, childDef, allColumnOrdinals, cancellationToken).ConfigureAwait(false);
+            if (values == null)
+            {
+                return false;
+            }
+
+            // Promote bare-null entries to DBNull.Value so downstream code
+            // (which uses DataRow.ItemArray semantics) sees the same shape.
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (values[i] == null)
+                {
+                    values[i] = DBNull.Value;
+                }
+            }
+
+            childDeletedRows.Add(values);
+        }
+
+        await EnforceFkOnPrimaryDeleteAsync(
+            rel.ForeignTable,
+            childDef,
+            childDeletedRows,
+            ctx,
+            depth + 1,
+            cancellationToken).ConfigureAwait(false);
+
+        await CascadeDeleteComplexChildrenAsync(childDef, fullLocations, cancellationToken).ConfigureAwait(false);
+
+        int deleted = 0;
+        foreach (RowLocation loc in fullLocations)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, cancellationToken).ConfigureAwait(false);
+            deleted++;
+        }
+
+        if (deleted > 0)
+        {
+            await AdjustTDefRowCountAsync(childEntry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
+            await MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// For each enforced FK whose primary side is <paramref name="primaryTable"/>,
     /// when a row's PK tuple is changing from <c>oldKey</c> to <c>newKey</c>,
     /// either propagates the change to dependent child rows (cascade-update)
@@ -3298,7 +3658,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private async ValueTask EnforceFkOnPrimaryUpdateAsync(
         string primaryTable,
-        IReadOnlyList<(string? OldKey, object[] NewPkValues)> changes,
+        TableDef primaryDef,
+        IReadOnlyList<(string? OldKey, object?[] OldFullRow, object[] NewPkValues)> changes,
         FkContext ctx,
         int depth,
         CancellationToken cancellationToken)
@@ -3319,13 +3680,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             CatalogEntry childEntry = await GetRequiredCatalogEntryAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             TableDef childDef = await ReadRequiredTableDefAsync(childEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
 
-            // Map this relationship's PK column ordinals on the PRIMARY-side def too
+            // Map this relationship's PK column ordinals on the PRIMARY-side def
             // (we need to extract the new PK tuple from NewPkValues which is in
-            // primary-table column order).
-            // Caller passed NewPkValues already in primary table column order;
-            // we still need to slice out just the PK columns of THIS rel.
-            CatalogEntry primaryEntry = await GetRequiredCatalogEntryAsync(primaryTable, cancellationToken).ConfigureAwait(false);
-            TableDef primaryDef = await ReadRequiredTableDefAsync(primaryEntry.TDefPage, primaryTable, cancellationToken).ConfigureAwait(false);
+            // primary-table column order, and the old PK tuple from OldFullRow).
             var primaryPkIdx = new int[rel.PrimaryColumns.Count];
             var fkIdx = new int[rel.ForeignColumns.Count];
             bool ok = true;
@@ -3345,9 +3702,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            // Build (oldKey -> newPkObjects) map for changes whose PK actually moves.
-            var movingChanges = new Dictionary<string, object[]>(StringComparer.Ordinal);
-            foreach ((string? oldKey, object[] newPkValues) in changes)
+            // Build (oldKey -> (oldPkSubset, newPkSubset)) for changes whose PK
+            // actually moves. movingChanges keys remain the synthetic OldKey
+            // string so the snapshot fallback (which composes child-side keys
+            // via BuildCompositeKey) can still match.
+            var movingChanges = new Dictionary<string, (object?[] OldPkSubset, object[] NewPkSubset)>(StringComparer.Ordinal);
+            foreach ((string? oldKey, object?[] oldFullRow, object[] newPkValues) in changes)
             {
                 if (oldKey == null)
                 {
@@ -3357,23 +3717,41 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 string? newKey = BuildCompositeKey(newPkValues, primaryPkIdx);
                 if (newKey == null || string.Equals(newKey, oldKey, StringComparison.Ordinal))
                 {
-                    // Either new tuple is null (will fail other constraints) or
-                    // unchanged — no dependents to touch.
                     continue;
                 }
 
                 var newPkSubset = new object[rel.PrimaryColumns.Count];
+                var oldPkSubset = new object?[rel.PrimaryColumns.Count];
                 for (int i = 0; i < rel.PrimaryColumns.Count; i++)
                 {
                     newPkSubset[i] = newPkValues[primaryPkIdx[i]];
+                    oldPkSubset[i] = oldFullRow[primaryPkIdx[i]];
                 }
 
-                movingChanges[oldKey] = newPkSubset;
+                movingChanges[oldKey] = (oldPkSubset, newPkSubset);
             }
 
             if (movingChanges.Count == 0)
             {
                 continue;
+            }
+
+            // ── W22 fast path: child-side index seek ──────────────────
+            ChildSeekIndex? childSeek = await ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
+            if (childSeek != null)
+            {
+                bool seekOk = await TryProcessCascadeUpdateWithSeekAsync(
+                    rel,
+                    childEntry,
+                    childDef,
+                    childSeek,
+                    movingChanges,
+                    fkIdx,
+                    cancellationToken).ConfigureAwait(false);
+                if (seekOk)
+                {
+                    continue;
+                }
             }
 
             using DataTable childSnap = await ReadTableSnapshotAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
@@ -3410,7 +3788,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             for (int ai = 0; ai < affectedIndices.Count; ai++)
             {
                 int rIdx = affectedIndices[ai];
-                object[] newPkSubset = movingChanges[affectedOldKeys[ai]];
+                object[] newPkSubset = movingChanges[affectedOldKeys[ai]].NewPkSubset;
                 object[] rowValues = childSnap.Rows[rIdx].ItemArray;
 
                 for (int j = 0; j < rel.ForeignColumns.Count; j++)
@@ -3424,6 +3802,152 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             await MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// W22 fast path for cascade-update: for each (oldKey, oldPkSubset, newPkSubset)
+    /// triplet, encode the OLD PK subset as a child-index seek key, locate
+    /// every dependent child row in O(log N + K) page reads, fetch each
+    /// matched row's full typed values, and rewrite it in place via
+    /// delete + insert with the new FK values. Returns <see langword="false"/>
+    /// when any old PK fails to encode, when matched (page, rowIndex) hits
+    /// cannot be confirmed against live row bounds, or when any matched
+    /// child row contains an LVAL column the single-row reader cannot
+    /// decode — caller falls back to the snapshot scan.
+    /// </summary>
+    private async ValueTask<bool> TryProcessCascadeUpdateWithSeekAsync(
+        FkRelationship rel,
+        CatalogEntry childEntry,
+        TableDef childDef,
+        ChildSeekIndex childSeek,
+        Dictionary<string, (object?[] OldPkSubset, object[] NewPkSubset)> movingChanges,
+        int[] fkIdx,
+        CancellationToken cancellationToken)
+    {
+        // Step 1: seek every old PK and collect (location, newPkSubset).
+        // Dedupe across keys by (dataPage, rowIndex).
+        var pendingByLocation = new Dictionary<long, (long DataPage, int RowIndex, object[] NewPkSubset)>();
+        foreach (KeyValuePair<string, (object?[] OldPkSubset, object[] NewPkSubset)> kvp in movingChanges)
+        {
+            byte[]? encoded = TryEncodeChildSeekKey(childSeek, kvp.Value.OldPkSubset);
+            if (encoded == null)
+            {
+                return false;
+            }
+
+            List<(long DataPage, int RowIndex)> hits = await IndexBTreeSeeker.FindRowLocationsAsync(
+                (page, ct) => ReadPageOwnedAsync(page, ct),
+                _pgSz,
+                childSeek.RootPage,
+                encoded,
+                cancellationToken).ConfigureAwait(false);
+
+            foreach ((long dp, int ri) in hits)
+            {
+                long key = (dp << 16) | (uint)ri;
+                if (!pendingByLocation.ContainsKey(key))
+                {
+                    pendingByLocation[key] = (dp, ri, kvp.Value.NewPkSubset);
+                }
+            }
+        }
+
+        if (pendingByLocation.Count == 0)
+        {
+            return true;
+        }
+
+        if (!rel.CascadeUpdates)
+        {
+            throw new InvalidOperationException(
+                $"UPDATE on '{rel.PrimaryTable}' violates foreign-key constraint '{rel.Name}': " +
+                $"{pendingByLocation.Count} dependent row(s) in '{rel.ForeignTable}' reference the old key(s) and cascade-update is not enabled.");
+        }
+
+        // Step 2: resolve full row bounds (RowStart / RowSize) via per-page
+        // live-row enumeration of just the pages we need. Dedupe per-page.
+        var locationsByPage = new Dictionary<long, HashSet<int>>();
+        foreach ((long dp, int ri, _) in pendingByLocation.Values)
+        {
+            if (!locationsByPage.TryGetValue(dp, out HashSet<int>? rs))
+            {
+                rs = new HashSet<int>();
+                locationsByPage[dp] = rs;
+            }
+
+            _ = rs.Add(ri);
+        }
+
+        var rowMeta = new List<(RowLocation Loc, object[] NewPkSubset)>(pendingByLocation.Count);
+        foreach (KeyValuePair<long, HashSet<int>> kvp in locationsByPage)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            byte[] page = await ReadPageAsync(kvp.Key, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != childEntry.TDefPage)
+                {
+                    return false;
+                }
+
+                foreach (RowBound rb in EnumerateLiveRowBounds(page))
+                {
+                    if (kvp.Value.Contains(rb.RowIndex))
+                    {
+                        long key = (kvp.Key << 16) | (uint)rb.RowIndex;
+                        if (pendingByLocation.TryGetValue(key, out (long DataPage, int RowIndex, object[] NewPkSubset) entry))
+                        {
+                            rowMeta.Add((new RowLocation(kvp.Key, rb.RowIndex, rb.RowStart, rb.RowSize), entry.NewPkSubset));
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                ReturnPage(page);
+            }
+        }
+
+        if (rowMeta.Count != pendingByLocation.Count)
+        {
+            return false;
+        }
+
+        // Step 3: read each matched child row's full typed values and rewrite
+        // in place via delete + insert.
+        var allColumnOrdinals = new int[childDef.Columns.Count];
+        for (int i = 0; i < childDef.Columns.Count; i++)
+        {
+            allColumnOrdinals[i] = i;
+        }
+
+        foreach ((RowLocation loc, object[] newPkSubset) in rowMeta)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            object?[]? values = await TryReadColumnValuesTypedAsync(loc, childDef, allColumnOrdinals, cancellationToken).ConfigureAwait(false);
+            if (values == null)
+            {
+                return false;
+            }
+
+            object[] rowValues = new object[values.Length];
+            for (int i = 0; i < values.Length; i++)
+            {
+                rowValues[i] = values[i] ?? DBNull.Value;
+            }
+
+            for (int j = 0; j < fkIdx.Length; j++)
+            {
+                rowValues[fkIdx[j]] = newPkSubset[j] ?? DBNull.Value;
+            }
+
+            await MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, cancellationToken).ConfigureAwait(false);
+            await InsertRowDataAsync(childEntry.TDefPage, childDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        await MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     /// <summary>
@@ -8378,6 +8902,267 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         foreach (RowBound rb in EnumerateLiveRowBounds(page))
         {
             yield return new RowLocation(pageNumber, rb.RowIndex, rb.RowStart, rb.RowSize);
+        }
+    }
+
+    /// <summary>
+    /// Reads <paramref name="columnOrdinals"/>'s typed values out of a single
+    /// row at <paramref name="loc"/> on a data page belonging to
+    /// <paramref name="tableDef"/>. Returns <see langword="null"/> when the
+    /// row layout cannot be parsed OR when any requested column points at
+    /// a long-value (T_MEMO, T_OLE) or complex (T_COMPLEX, T_ATTACHMENT)
+    /// column — those require LVAL chain traversal which the writer does
+    /// not implement; the cascade-seek caller falls back to the snapshot
+    /// path in that case. Index-key column types (the focus of this helper)
+    /// only include scalar fixed and var-inline kinds — JET indexes cannot
+    /// cover MEMO / OLE / Complex columns at all (rejected by W18 in
+    /// <see cref="ResolveIndexes"/>) so the LVAL fall-through is safety
+    /// netting, not the common path.
+    /// </summary>
+    private async ValueTask<object?[]?> TryReadColumnValuesTypedAsync(
+        RowLocation loc,
+        TableDef tableDef,
+        int[] columnOrdinals,
+        CancellationToken cancellationToken)
+    {
+        byte[] pageBytes = await ReadPageAsync(loc.PageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (pageBytes[0] != 0x01)
+            {
+                return null;
+            }
+
+            bool hasVarColumns = false;
+            for (int i = 0; i < tableDef.Columns.Count; i++)
+            {
+                if (!tableDef.Columns[i].IsFixed)
+                {
+                    hasVarColumns = true;
+                    break;
+                }
+            }
+
+            if (!TryParseRowLayout(pageBytes, loc.RowStart, loc.RowSize, hasVarColumns, out RowLayout layout))
+            {
+                return null;
+            }
+
+            var result = new object?[columnOrdinals.Length];
+            for (int i = 0; i < columnOrdinals.Length; i++)
+            {
+                int ord = columnOrdinals[i];
+                if (ord < 0 || ord >= tableDef.Columns.Count)
+                {
+                    return null;
+                }
+
+                ColumnInfo col = tableDef.Columns[ord];
+                ColumnSlice slice = ResolveColumnSlice(pageBytes, loc.RowStart, loc.RowSize, layout, col);
+
+                switch (slice.Kind)
+                {
+                    case ColumnSliceKind.Bool:
+                        result[i] = slice.BoolValue;
+                        break;
+
+                    case ColumnSliceKind.Null:
+                    case ColumnSliceKind.Empty:
+                        result[i] = null;
+                        break;
+
+                    case ColumnSliceKind.Fixed:
+                        {
+                            object? v = TryDecodeFixedTyped(pageBytes, loc.RowStart + slice.DataStart, col.Type, slice.DataLen);
+                            if (v == null && col.Type != T_BOOL)
+                            {
+                                return null;
+                            }
+
+                            result[i] = v;
+                        }
+
+                        break;
+
+                    case ColumnSliceKind.Var:
+                        {
+                            object? v = TryDecodeVarInlineTyped(pageBytes, loc.RowStart + slice.DataStart, col.Type, slice.DataLen);
+                            if (v == null)
+                            {
+                                // T_MEMO / T_OLE / T_COMPLEX / T_ATTACHMENT
+                                // — caller falls back to snapshot path.
+                                return null;
+                            }
+
+                            result[i] = v;
+                        }
+
+                        break;
+
+                    default:
+                        return null;
+                }
+            }
+
+            return result;
+        }
+        finally
+        {
+            ReturnPage(pageBytes);
+        }
+    }
+
+    /// <summary>
+    /// Decodes a fixed-area slice into the canonical CLR object the
+    /// public InsertRow API accepts back. Returns <see langword="null"/>
+    /// only on unsupported / malformed types — callers treat that as
+    /// "fall back to snapshot path".
+    /// </summary>
+    private static object? TryDecodeFixedTyped(byte[] page, int start, byte type, int size)
+    {
+        switch (type)
+        {
+            case T_BYTE:
+                return size >= 1 ? page[start] : (object?)null;
+            case T_INT:
+                return size >= 2 ? (short)BinaryPrimitives.ReadInt16LittleEndian(page.AsSpan(start, 2)) : (object?)null;
+            case T_LONG:
+                return size >= 4 ? BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4)) : (object?)null;
+            case T_FLOAT:
+                return size >= 4 ? ReadSingleLittleEndian(page.AsSpan(start, 4)) : (object?)null;
+            case T_DOUBLE:
+                return size >= 8 ? ReadDoubleLittleEndian(page.AsSpan(start, 8)) : (object?)null;
+            case T_DATETIME:
+                {
+                    if (size < 8)
+                    {
+                        return null;
+                    }
+
+                    double oa = ReadDoubleLittleEndian(page.AsSpan(start, 8));
+                    try
+                    {
+                        return DateTime.FromOADate(oa);
+                    }
+                    catch (ArgumentException)
+                    {
+                        return null;
+                    }
+                }
+
+            case T_MONEY:
+                {
+                    if (size < 8)
+                    {
+                        return null;
+                    }
+
+                    long raw = BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8));
+                    return raw / 10000m;
+                }
+
+            case T_GUID:
+                {
+                    if (size < 16)
+                    {
+                        return null;
+                    }
+
+                    byte[] g = new byte[16];
+                    Buffer.BlockCopy(page, start, g, 0, 16);
+                    return new Guid(g);
+                }
+
+            case T_NUMERIC:
+                {
+                    // 17-byte scaled decimal (1 sign byte + 16 magnitude bytes).
+                    // Cascade enforcement on T_NUMERIC keys is rare but handle it
+                    // for completeness; signal failure on malformed bytes so the
+                    // caller falls back to the snapshot path rather than emit a
+                    // bad value.
+                    if (size < 17)
+                    {
+                        return null;
+                    }
+
+                    return null; // canonical-scale resolution requires column metadata; defer to snapshot
+                }
+
+            default:
+                return null;
+        }
+    }
+
+    private object? TryDecodeVarInlineTyped(byte[] page, int start, byte type, int size)
+    {
+        if (size <= 0)
+        {
+            return null;
+        }
+
+        switch (type)
+        {
+            case T_TEXT:
+                return _format != DatabaseFormat.Jet3Mdb
+                    ? DecodeJet4Text(page, start, size)
+                    : _ansiEncoding.GetString(page, start, size);
+
+            case T_BINARY:
+                {
+                    byte[] b = new byte[size];
+                    Buffer.BlockCopy(page, start, b, 0, size);
+                    return b;
+                }
+
+            case T_BYTE:
+                return size >= 1 ? page[start] : (object?)null;
+            case T_INT:
+                return size >= 2 ? (short)BinaryPrimitives.ReadInt16LittleEndian(page.AsSpan(start, 2)) : (object?)null;
+            case T_LONG:
+                return size >= 4 ? BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4)) : (object?)null;
+            case T_FLOAT:
+                return size >= 4 ? ReadSingleLittleEndian(page.AsSpan(start, 4)) : (object?)null;
+            case T_DOUBLE:
+                return size >= 8 ? ReadDoubleLittleEndian(page.AsSpan(start, 8)) : (object?)null;
+            case T_DATETIME:
+                {
+                    if (size < 8)
+                    {
+                        return null;
+                    }
+
+                    double oa = ReadDoubleLittleEndian(page.AsSpan(start, 8));
+                    try
+                    {
+                        return DateTime.FromOADate(oa);
+                    }
+                    catch (ArgumentException)
+                    {
+                        return null;
+                    }
+                }
+
+            case T_MONEY:
+                if (size < 8)
+                {
+                    return null;
+                }
+
+                return BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8)) / 10000m;
+            case T_GUID:
+                if (size < 16)
+                {
+                    return null;
+                }
+
+                byte[] g = new byte[16];
+                Buffer.BlockCopy(page, start, g, 0, 16);
+                return new Guid(g);
+
+            // T_MEMO / T_OLE / T_COMPLEX / T_ATTACHMENT / T_NUMERIC — not
+            // index-keyable in any case, fall back to snapshot.
+            default:
+                return null;
         }
     }
 

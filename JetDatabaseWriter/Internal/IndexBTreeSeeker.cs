@@ -137,6 +137,70 @@ internal static class IndexBTreeSeeker
     }
 
     /// <summary>
+    /// Like <see cref="ContainsKeyAsync"/> but accumulates the
+    /// <c>(dataPage, rowIndex)</c> row pointer of every leaf entry whose
+    /// canonical key equals <paramref name="searchKey"/>. Walks sibling
+    /// leaves while the leaf's last canonical key still equals
+    /// <paramref name="searchKey"/> so non-unique keys spanning multiple
+    /// leaves are fully enumerated. Returns an empty list when the key
+    /// is absent. Used by the writer's cascade-update / cascade-delete
+    /// paths to locate dependent child rows in O(log N + K) page reads
+    /// instead of an O(N) child-table snapshot scan.
+    /// </summary>
+    public static async ValueTask<List<(long DataPage, int RowIndex)>> FindRowLocationsAsync(
+        Func<long, CancellationToken, ValueTask<byte[]>> readPage,
+        int pageSize,
+        long rootPageNumber,
+        byte[] searchKey,
+        CancellationToken cancellationToken)
+    {
+        Guard.NotNull(readPage, nameof(readPage));
+        Guard.NotNull(searchKey, nameof(searchKey));
+
+        var matches = new List<(long DataPage, int RowIndex)>();
+        if (rootPageNumber <= 0 || pageSize <= FirstEntryOffset)
+        {
+            return matches;
+        }
+
+        long currentPage = rootPageNumber;
+        for (int depth = 0; depth < 32; depth++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await readPage(currentPage, cancellationToken).ConfigureAwait(false);
+            byte pageType = page[0];
+
+            if (pageType == PageTypeLeaf)
+            {
+                await CollectLeafChain(readPage, pageSize, page, searchKey, matches, cancellationToken).ConfigureAwait(false);
+                return matches;
+            }
+
+            if (pageType != PageTypeIntermediate)
+            {
+                return matches;
+            }
+
+            long? next = SelectChildPage(pageSize, page, searchKey);
+            if (next == null)
+            {
+                long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(16, 4));
+                if (tail <= 0)
+                {
+                    return matches;
+                }
+
+                next = tail;
+            }
+
+            currentPage = next.Value;
+        }
+
+        return matches;
+    }
+
+    /// <summary>
     /// Scans <paramref name="leafPage"/> for an entry equal to
     /// <paramref name="searchKey"/>; if not found and the search key matches
     /// the leaf's last entry, follows <c>next_page</c> and continues — handles
@@ -436,5 +500,122 @@ internal static class IndexBTreeSeeker
         }
 
         return searchKey.Length - canonicalLen;
+    }
+
+    /// <summary>
+    /// Walks the leaf-sibling chain starting at <paramref name="leafPage"/>,
+    /// appending the row pointer <c>(dataPage, rowIndex)</c> of every entry
+    /// whose canonical key equals <paramref name="searchKey"/>. Stops once
+    /// the per-page last canonical key sorts strictly greater than the
+    /// search key (further siblings cannot hold a match) or when
+    /// <c>next_page</c> is zero.
+    /// </summary>
+    private static async ValueTask CollectLeafChain(
+        Func<long, CancellationToken, ValueTask<byte[]>> readPage,
+        int pageSize,
+        byte[] leafPage,
+        byte[] searchKey,
+        List<(long DataPage, int RowIndex)> matches,
+        CancellationToken cancellationToken)
+    {
+        byte[]? page = leafPage;
+        while (page != null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(20, 2));
+            int payloadEnd = pageSize - BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+            byte[]? sharedPrefix = null;
+
+            if (pref > 0 && searchKey.Length < pref)
+            {
+                return;
+            }
+
+            int entryStart = FirstEntryOffset;
+            bool prefixChecked = false;
+            int lastEntryStart = -1;
+            int lastSuffixLen = 0;
+            while (entryStart < payloadEnd)
+            {
+                int next = NextEntryStart(page, payloadEnd, entryStart);
+                int entryEnd = next < 0 ? payloadEnd : next;
+                int totalLen = entryEnd - entryStart;
+                int suffixLen = totalLen - 4;
+                if (suffixLen < 0)
+                {
+                    break;
+                }
+
+                if (!prefixChecked)
+                {
+                    if (pref > 0)
+                    {
+                        sharedPrefix = new byte[pref];
+                        Buffer.BlockCopy(page, entryStart, sharedPrefix, 0, pref);
+                        for (int i = 0; i < pref; i++)
+                        {
+                            if (searchKey[i] != sharedPrefix[i])
+                            {
+                                return;
+                            }
+                        }
+                    }
+
+                    prefixChecked = true;
+                }
+
+                int canonicalLen = entryStart == FirstEntryOffset ? suffixLen : pref + suffixLen;
+                if (canonicalLen == searchKey.Length
+                    && KeyEquals(searchKey, page, entryStart, suffixLen, sharedPrefix, pref, isFirstEntry: entryStart == FirstEntryOffset))
+                {
+                    int ptrOffset = entryStart + suffixLen;
+                    long dataPage = ((long)page[ptrOffset] << 16) | ((long)page[ptrOffset + 1] << 8) | page[ptrOffset + 2];
+                    int rowIndex = page[ptrOffset + 3];
+                    matches.Add((dataPage, rowIndex));
+                }
+
+                lastEntryStart = entryStart;
+                lastSuffixLen = suffixLen;
+                if (next < 0)
+                {
+                    break;
+                }
+
+                entryStart = next;
+            }
+
+            // If the page's last canonical key sorts strictly greater than
+            // searchKey, no sibling leaf can hold further matches (entries
+            // are sorted globally). Otherwise, when last == searchKey OR
+            // last < searchKey but tail-page may overshoot, walk next_page.
+            long nextPageNumber = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(12, 4));
+            if (nextPageNumber <= 0 || lastEntryStart < 0)
+            {
+                return;
+            }
+
+            int cmp = CompareCanonicalKey(
+                searchKey,
+                page,
+                lastEntryStart,
+                lastSuffixLen,
+                sharedPrefix,
+                pref,
+                isFirstEntry: lastEntryStart == FirstEntryOffset);
+
+            // cmp = searchKey - lastCanonical. If searchKey < lastCanonical
+            // (cmp < 0) then sibling leaves only hold larger keys → stop.
+            if (cmp < 0)
+            {
+                return;
+            }
+
+            page = await readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
+            if (page[0] != PageTypeLeaf)
+            {
+                return;
+            }
+        }
     }
 }
