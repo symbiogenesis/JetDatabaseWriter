@@ -329,6 +329,141 @@ public sealed class IndexMaintenanceTests
         Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
     }
 
+    [Fact]
+    public async Task InsertRows_LargeBatch_GrowsToMultiLevelTree_AndStaysEnumerable()
+    {
+        // Forces a multi-level B-tree by inserting more entries than fit on a
+        // single 4 KB leaf (~400 int entries). Verifies that the resulting
+        // tree (intermediate root over a chain of leaves) round-trips
+        // correctly through the reader.
+        const int RowCount = 700;
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
+                ct);
+
+            var rows = new List<object[]>(RowCount);
+            for (int i = 0; i < RowCount; i++)
+            {
+                rows.Add([i]);
+            }
+
+            await writer.InsertRowsAsync("T", rows, ct);
+        }
+
+        Assert.Equal(0x03, FindLatestRootPageType(stream.ToArray()));
+
+        await using var reader = await OpenReaderAsync(stream);
+        var indexes = await reader.ListIndexesAsync("T", ct);
+        Assert.Single(indexes);
+        Assert.Equal("IX_Id", indexes[0].Name);
+
+        // Rows still readable via table scan (the reader does not consume the
+        // index, but the rows-on-disk count is the index's truth source).
+        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        Assert.Equal(RowCount, rowsRead.Rows.Count);
+    }
+
+    [Fact]
+    public async Task InsertRow_AfterMultiLevelTreeExists_RebuildsViaIncrementalPath()
+    {
+        // Build a multi-level tree, then add a single row. The incremental
+        // path must descend into the tree, walk the leaf chain, splice in
+        // the new entry, and emit a fresh root. The reader's row count must
+        // include the late insert.
+        const int InitialRows = 700;
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
+                ct);
+
+            var rows = new List<object[]>(InitialRows);
+            for (int i = 0; i < InitialRows; i++)
+            {
+                rows.Add([i]);
+            }
+
+            await writer.InsertRowsAsync("T", rows, ct);
+
+            // Late single insert against the now-multi-level tree.
+            await writer.InsertRowAsync("T", [InitialRows], ct);
+        }
+
+        Assert.Equal(0x03, FindLatestRootPageType(stream.ToArray()));
+
+        await using var reader = await OpenReaderAsync(stream);
+        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        Assert.Equal(InitialRows + 1, rowsRead.Rows.Count);
+    }
+
+    [Fact]
+    public async Task DeleteRows_AfterMultiLevelTreeExists_ShrinksTreeAndStaysConsistent()
+    {
+        const int InitialRows = 700;
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
+                ct);
+
+            var rows = new List<object[]>(InitialRows);
+            for (int i = 0; i < InitialRows; i++)
+            {
+                rows.Add([i]);
+            }
+
+            await writer.InsertRowsAsync("T", rows, ct);
+
+            int deleted = await writer.DeleteRowsAsync("T", "Id", 42, ct);
+            Assert.Equal(1, deleted);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        Assert.Equal(InitialRows - 1, rowsRead.Rows.Count);
+    }
+
+    /// <summary>
+    /// Returns the page type byte (<c>0x03</c> for intermediate,
+    /// <c>0x04</c> for leaf) of the highest-page-numbered index page in the
+    /// file. The most recently maintained index always patches
+    /// <c>first_dp</c> to a freshly-allocated page at the end of the file,
+    /// so the highest-numbered index page is the current root. Returns -1
+    /// when no index page is found.
+    /// </summary>
+    private static int FindLatestRootPageType(byte[] fileBytes)
+    {
+        int latest = -1;
+        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        {
+            int o = p * PageSize;
+            byte t = fileBytes[o];
+            if ((t == 0x03 || t == 0x04) && fileBytes[o + 1] == 0x01)
+            {
+                latest = p;
+            }
+        }
+
+        return latest < 0 ? -1 : fileBytes[latest * PageSize];
+    }
+
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
     {
         // §4.2: one implicit first entry, plus one bit per subsequent entry

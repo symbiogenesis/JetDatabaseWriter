@@ -24,6 +24,9 @@ using System.Collections.Generic;
 /// </summary>
 internal static class IndexLeafIncremental
 {
+    /// <summary>Page type byte for index intermediate (<c>0x03</c>) pages.</summary>
+    internal const byte PageTypeIntermediate = IndexBTreeBuilder.PageTypeIntermediate;
+
     private const byte PageTypeLeaf = IndexLeafPageBuilder.PageTypeLeaf;
     private const int BitmaskOffset = IndexLeafPageBuilder.Jet4BitmaskOffset;
     private const int FirstEntryOffset = IndexLeafPageBuilder.Jet4FirstEntryOffset;
@@ -46,6 +49,73 @@ internal static class IndexLeafIncremental
         public long DataPage { get; }
 
         public byte DataRow { get; }
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="page"/> is an
+    /// intermediate page (<c>page_type = 0x03</c>). Used by the multi-level
+    /// fast path to decide whether to descend through the tree to the
+    /// leftmost leaf before walking the leaf-sibling chain.
+    /// </summary>
+    public static bool IsIntermediate(byte[] page)
+    {
+        if (page == null || page.Length < FirstEntryOffset)
+        {
+            return false;
+        }
+
+        return page[0] == PageTypeIntermediate;
+    }
+
+    /// <summary>
+    /// Returns the page number recorded in the <c>next_page</c> sibling
+    /// pointer of a leaf page (offset 12, signed 32-bit little-endian).
+    /// 0 means "no further leaf to the right".
+    /// </summary>
+    public static long ReadNextLeafPage(byte[] leafPage)
+    {
+        if (leafPage == null || leafPage.Length < 16)
+        {
+            return 0;
+        }
+
+        return (uint)BinaryPrimitives.ReadInt32LittleEndian(leafPage.AsSpan(12, 4));
+    }
+
+    /// <summary>
+    /// Decodes the child-page pointer of the FIRST entry on an intermediate
+    /// (<c>0x03</c>) page. Each intermediate entry is laid out as
+    /// <c>[stripped key bytes][3 B BE data page][1 B data row][4 B LE child page]</c>
+    /// (§4.3); the entry's end is determined by the §4.2 bitmask (or the
+    /// payload end when the entry is the only one on the page). Returns 0 on
+    /// a malformed page so the caller can bail to the bulk-rebuild path.
+    /// </summary>
+    public static long ReadFirstChildPointer(byte[] intermediatePage, int pageSize)
+    {
+        if (intermediatePage == null || intermediatePage.Length < pageSize || intermediatePage[0] != PageTypeIntermediate)
+        {
+            return 0;
+        }
+
+        int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(intermediatePage.AsSpan(2, 2));
+        int payloadEnd = pageSize - freeSpace;
+        if (payloadEnd <= FirstEntryOffset)
+        {
+            return 0;
+        }
+
+        int next = NextEntryStart(intermediatePage, payloadEnd, FirstEntryOffset);
+        int entryEnd = next < 0 ? payloadEnd : next;
+        int totalLen = entryEnd - FirstEntryOffset;
+
+        // Each intermediate entry trails with [3 B page][1 B row][4 B child page].
+        if (totalLen < 8)
+        {
+            return 0;
+        }
+
+        int childOff = entryEnd - 4;
+        return BinaryPrimitives.ReadUInt32LittleEndian(intermediatePage.AsSpan(childOff, 4));
     }
 
     /// <summary>

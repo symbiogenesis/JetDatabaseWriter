@@ -220,4 +220,59 @@ public sealed class IndexLeafIncrementalTests
             Assert.Equal(spliced[i].EncodedKey, reDecoded[i].Key);
         }
     }
+
+    [Fact]
+    public void IsIntermediate_TrueOnly_For_PageType_03()
+    {
+        byte[] inter = new byte[PageSize];
+        inter[0] = 0x03;
+        Assert.True(IndexLeafIncremental.IsIntermediate(inter));
+
+        byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, ParentTdef, []);
+        Assert.False(IndexLeafIncremental.IsIntermediate(leaf));
+    }
+
+    [Fact]
+    public void ReadNextLeafPage_ReturnsHeaderField()
+    {
+        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(
+            PageSize, ParentTdef, [], prevPage: 0, nextPage: 12345, tailPage: 0);
+        Assert.Equal(12345, IndexLeafIncremental.ReadNextLeafPage(page));
+    }
+
+    [Fact]
+    public void ReadFirstChildPointer_RecoversChildPageFromMultiLevelTree()
+    {
+        // Build a multi-level tree by feeding IndexBTreeBuilder enough int
+        // entries to overflow a single leaf, then walk into the root and
+        // confirm the first intermediate entry's child pointer matches the
+        // first leaf's allocated page number (sequential allocation by the
+        // builder starting at FirstPageNumber).
+        var entries = new List<IndexLeafPageBuilder.LeafEntry>(800);
+        for (int i = 0; i < 800; i++)
+        {
+            entries.Add(new IndexLeafPageBuilder.LeafEntry(
+                IndexKeyEncoder.EncodeEntry(0x04, i, true), 100 + (i / 10), (byte)(i % 10)));
+        }
+
+        IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, firstPageNumber: 50);
+        Assert.True(build.RootPageNumber > build.FirstPageNumber, "Expected the multi-level tree to root at an intermediate page above its leaves.");
+
+        int rootIdx = (int)(build.RootPageNumber - build.FirstPageNumber);
+        byte[] root = build.Pages[rootIdx];
+        Assert.True(IndexLeafIncremental.IsIntermediate(root));
+
+        long firstChild = IndexLeafIncremental.ReadFirstChildPointer(root, PageSize);
+
+        // The first intermediate entry summarises the first leaf page, which
+        // is the page allocated at FirstPageNumber.
+        Assert.Equal(build.FirstPageNumber, firstChild);
+    }
+
+    [Fact]
+    public void ReadFirstChildPointer_ReturnsZero_OnNonIntermediatePage()
+    {
+        byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, ParentTdef, []);
+        Assert.Equal(0, IndexLeafIncremental.ReadFirstChildPointer(leaf, PageSize));
+    }
 }

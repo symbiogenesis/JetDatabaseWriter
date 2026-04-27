@@ -8634,9 +8634,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <summary>
     /// W4-C-1 / W4-C-2 fast path: when the change since the previous index
     /// state is a small set of inserted and/or deleted rows AND every real-idx
-    /// is rooted at a single leaf page that can still hold the post-mutation
-    /// entry list, splice the change into each leaf in place rather than
-    /// rebuilding the whole B-tree from a snapshot. Returns
+    /// can be maintained without rereading the table snapshot, splice the
+    /// change into each index in place rather than rebuilding the whole
+    /// B-tree from a snapshot. Returns
     /// <see langword="true"/> when every supported real-idx was maintained
     /// incrementally; the caller MUST then NOT call
     /// <see cref="MaintainIndexesAsync"/>. Returns <see langword="false"/>
@@ -8647,13 +8647,31 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// on Compact &amp; Repair, exactly like the bulk-rebuild path's own
     /// orphans).
     /// <para>
+    /// Two flavours of fast path are attempted per real-idx:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><b>Single-leaf splice (§7 W4-C-1 / W4-C-2).</b> Root is a leaf
+    ///   (<c>page_type = 0x04</c>) with no sibling pointers AND the
+    ///   post-mutation entry list still fits on one page. The leaf is
+    ///   decoded, spliced, and re-emitted as a single page; <c>first_dp</c>
+    ///   is patched to the new leaf.</item>
+    ///   <item><b>Multi-level rebuild from existing tree (§7 W4 sub-phase D).</b>
+    ///   Root is an intermediate (<c>0x03</c>) page. We descend to the
+    ///   leftmost leaf, walk the leaf-sibling chain to collect every entry,
+    ///   splice the change-set in, and rebuild a fresh B-tree via
+    ///   <see cref="IndexBTreeBuilder"/>; <c>first_dp</c> is patched to the
+    ///   new root. This avoids the bulk path's full table-snapshot read +
+    ///   per-row key re-encode while still propagating leaf splits / merges
+    ///   correctly through any number of intermediate levels.</item>
+    /// </list>
+    /// <para>
     /// Falls back when: format is Jet3 (no index emission); no indexes are
     /// declared; any index has a multi-page TDEF; any key column is
     /// <c>T_NUMERIC</c> (the W13 canonical-scale pre-pass needs a full
-    /// snapshot); the index B-tree root is not a single leaf
-    /// (<c>page_type = 0x04</c>) with no sibling pointers; the encoder rejects
-    /// any value (text outside General Legacy, etc.); or the spliced entry
-    /// list overflows the leaf payload area.
+    /// snapshot); the encoder rejects any value (text outside General
+    /// Legacy, etc.); the index page chain is malformed; or the spliced
+    /// entry list cannot be repacked (e.g. a single entry exceeds the
+    /// payload area).
     /// </para>
     /// <para>
     /// Pre-write unique-index enforcement is handled by W15
@@ -8816,12 +8834,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 ReturnPage(rootPageBytes);
             }
 
-            if (!IndexLeafIncremental.IsSingleRootLeaf(rootPage))
-            {
-                return false;
-            }
-
-            // Encode the change-set keys for this index.
+            // Encode the change-set keys for this index. Used by both the
+            // single-leaf splice and the multi-level rebuild path below.
             List<(byte[] Key, long DataPage, byte DataRow)> addEntries = EncodeHintEntries(insertedRows, keyColInfos);
             if (addCount > 0 && addEntries.Count != addCount)
             {
@@ -8836,6 +8850,88 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 {
                     removePtrs.Add((loc.PageNumber, (byte)loc.RowIndex));
                 }
+            }
+
+            if (!IndexLeafIncremental.IsSingleRootLeaf(rootPage))
+            {
+                // Multi-level tree (root is an intermediate 0x03 page) or a
+                // single leaf with sibling pointers (a child of an
+                // intermediate root reached transitively via first_dp would
+                // not happen — first_dp always points at the root). Try the
+                // multi-level path: descend to the leftmost leaf, walk the
+                // leaf-sibling chain, splice the change-set into the
+                // collected entry list, and rebuild a fresh tree. Bails to
+                // bulk only when the encoder rejects a row or the page chain
+                // is malformed. Removes the "fall back to bulk for
+                // multi-level trees" branch documented in §7 W4 sub-phase D.
+                if (rootPage[0] != IndexLeafIncremental.PageTypeIntermediate
+                    && rootPage[0] != IndexLeafPageBuilder.PageTypeLeaf)
+                {
+                    return false;
+                }
+
+                long leftmostLeaf = await DescendToLeftmostLeafAsync(firstDp, cancellationToken).ConfigureAwait(false);
+                if (leftmostLeaf <= 0)
+                {
+                    return false;
+                }
+
+                var allExisting = new List<IndexLeafIncremental.DecodedEntry>();
+                long walkPage = leftmostLeaf;
+                int safetyBudget = 1_000_000; // arbitrary upper bound on leaf count
+                while (walkPage > 0)
+                {
+                    if (--safetyBudget <= 0)
+                    {
+                        return false;
+                    }
+
+                    cancellationToken.ThrowIfCancellationRequested();
+                    byte[] leafBytes = await ReadPageAsync(walkPage, cancellationToken).ConfigureAwait(false);
+                    byte[] leaf;
+                    try
+                    {
+                        leaf = (byte[])leafBytes.Clone();
+                    }
+                    finally
+                    {
+                        ReturnPage(leafBytes);
+                    }
+
+                    if (leaf[0] != IndexLeafPageBuilder.PageTypeLeaf)
+                    {
+                        return false;
+                    }
+
+                    allExisting.AddRange(IndexLeafIncremental.DecodeEntries(leaf, _pgSz));
+                    walkPage = IndexLeafIncremental.ReadNextLeafPage(leaf);
+                }
+
+                List<IndexLeafPageBuilder.LeafEntry>? splicedAll = IndexLeafIncremental.Splice(allExisting, addEntries, removePtrs);
+                if (splicedAll is null)
+                {
+                    return false;
+                }
+
+                long firstNewPage = _stream.Length / _pgSz;
+                IndexBTreeBuilder.BuildResult mlBuild;
+                try
+                {
+                    mlBuild = IndexBTreeBuilder.Build(_pgSz, tdefPage, splicedAll, firstNewPage);
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    return false;
+                }
+
+                foreach (byte[] page in mlBuild.Pages)
+                {
+                    await AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+                }
+
+                Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)mlBuild.RootPageNumber));
+                tdefDirty = true;
+                continue;
             }
 
             List<IndexLeafIncremental.DecodedEntry> existing = IndexLeafIncremental.DecodeEntries(rootPage, _pgSz);
@@ -8865,6 +8961,53 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Descends an index B-tree from <paramref name="rootPage"/> through
+    /// successive intermediate (<c>0x03</c>) levels by following the first
+    /// child pointer of each intermediate, returning the page number of the
+    /// leftmost leaf (<c>0x04</c>). Returns 0 when the chain is malformed
+    /// (unknown page type, missing child pointer, or depth exceeds a sanity
+    /// cap), so the caller can fall back to the bulk-rebuild path.
+    /// </summary>
+    private async ValueTask<long> DescendToLeftmostLeafAsync(long rootPage, CancellationToken cancellationToken)
+    {
+        long current = rootPage;
+        for (int depth = 0; depth < 16; depth++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            byte[] pageBytes = await ReadPageAsync(current, cancellationToken).ConfigureAwait(false);
+            byte[] page;
+            try
+            {
+                page = (byte[])pageBytes.Clone();
+            }
+            finally
+            {
+                ReturnPage(pageBytes);
+            }
+
+            if (page[0] == IndexLeafPageBuilder.PageTypeLeaf)
+            {
+                return current;
+            }
+
+            if (page[0] != IndexLeafIncremental.PageTypeIntermediate)
+            {
+                return 0;
+            }
+
+            long firstChild = IndexLeafIncremental.ReadFirstChildPointer(page, _pgSz);
+            if (firstChild <= 0)
+            {
+                return 0;
+            }
+
+            current = firstChild;
+        }
+
+        return 0;
     }
 
     /// <summary>
