@@ -19,7 +19,7 @@ using Xunit;
 /// rightmost child (would shrink ancestor <c>tail_page</c>) or when the
 /// parent has only one child (would cascade-collapse the parent).
 /// </summary>
-public sealed class IndexLimitationsW4C6Tests
+public sealed class IndexSurgicalLeafMergeTests
 {
     private const int PageSize = 4096; // ACE
 

@@ -18,7 +18,7 @@ using Xunit;
 /// a fresh tree and leaves old pages orphaned (still typed) so the count
 /// strictly increases.
 /// </summary>
-public sealed class IndexLimitationsW4CDTests
+public sealed class IndexSurgicalSingleLeafMutationTests
 {
     private const int PageSize = 4096; // ACE
 

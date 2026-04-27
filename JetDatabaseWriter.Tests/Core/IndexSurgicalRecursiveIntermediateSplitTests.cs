@@ -22,7 +22,7 @@ using Xunit;
 /// counts to the millions, then verify that ALL row data round-trips
 /// across the surgical and the W4-D fallback paths interchangeably.
 /// </summary>
-public sealed class IndexLimitationsW4C7v2Tests
+public sealed class IndexSurgicalRecursiveIntermediateSplitTests
 {
     private static readonly string[] CompositeKeyColumns = ["K1", "K2"];
 

@@ -27,7 +27,7 @@ using Xunit;
 /// direction.
 /// </para>
 /// </summary>
-public sealed class IndexLimitationsW19BinaryKeyTests
+public sealed class IndexBinaryKeyTests
 {
     private static readonly string[] CompositeKeyColumns = ["Tag", "Bin"];
     private static readonly string[] BinDescendingColumns = ["Bin"];

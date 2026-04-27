@@ -25,7 +25,7 @@ using Xunit;
 /// in-place batch).
 /// </para>
 /// </summary>
-public sealed class IndexLimitationsW4C5Tests
+public sealed class IndexSurgicalCrossLeafMutationTests
 {
     private const int PageSize = 4096; // ACE
 

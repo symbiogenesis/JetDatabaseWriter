@@ -35,7 +35,7 @@ using Xunit;
 /// dramatically.
 /// </para>
 /// </summary>
-public sealed class IndexLimitationsW18Tests
+public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
 {
     private const int PageSize = 4096; // ACE
     private const byte PageTypeIntermediate = 0x03;

@@ -158,7 +158,7 @@ ship a hard-coded constant without that sweep.**
 
 ### 3.6 Tests (W4-C-5)
 
-In `JetDatabaseWriter.Tests/Core/IndexLimitationsW4C5Tests.cs` (new file):
+In `JetDatabaseWriter.Tests/Core/IndexSurgicalCrossLeafMutationTests.cs` (new file):
 
 - **`BulkInsert_AcrossTwoLeaves_RewritesBothInPlace`** — 800-row table, insert
   3 rows where keys 25, 425, 825 land on three different leaves. Assert
@@ -256,7 +256,7 @@ as the W4-D path — Compact & Repair sweeps it.
 
 ### 4.5 Tests (W4-C-6)
 
-In `JetDatabaseWriter.Tests/Core/IndexLimitationsW4C6Tests.cs` (new):
+In `JetDatabaseWriter.Tests/Core/IndexSurgicalLeafMergeTests.cs` (new):
 
 - **`Delete_EmptiesMiddleLeaf_MergesIntoLeftSibling`** — assert two leaves
   collapse to one, parent intermediate has one fewer summary, file
@@ -344,7 +344,7 @@ patches happen as part of each rewrite.
 
 ### 5.5 Tests (W4-C-7)
 
-In `JetDatabaseWriter.Tests/Core/IndexLimitationsW4C7Tests.cs` (new):
+In `JetDatabaseWriter.Tests/Core/IndexSurgicalIntermediateSplitTests.cs` (new):
 
 - **`SplitLeaf_ParentIntermediateOverflow_SplitsParentInPlace`** — set up
   a parent intermediate at capacity, split a child leaf, assert one new
