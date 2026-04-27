@@ -32,6 +32,7 @@ internal static class TypedValueParser
                 TypeCode.DateTime => DateTime.Parse(value, CultureInfo.InvariantCulture),
                 _ when targetType == typeof(Guid) => Guid.Parse(value),
                 _ when targetType == typeof(byte[]) => ParseByteArray(value),
+                _ when targetType == typeof(Hyperlink) => (object?)Hyperlink.Parse(value) ?? DBNull.Value,
                 _ => value,
             };
         }

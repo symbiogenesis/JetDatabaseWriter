@@ -64,6 +64,20 @@ public sealed record ColumnDefinition
     public bool IsAutoIncrement { get; init; }
 
     /// <summary>
+    /// Gets a value indicating whether this column is a Microsoft Access Hyperlink column.
+    /// Persisted in the JET TDEF column-flag bit <c>HYPERLINK_FLAG_MASK = 0x80</c> so that
+    /// Access opens the column with the Hyperlink data-format affordance (clickable values,
+    /// Insert Hyperlink dialog, etc.). Implies <c>T_MEMO</c>: the underlying CLR type must be
+    /// <see cref="string"/> or <see cref="Hyperlink"/> and any <see cref="MaxLength"/> hint
+    /// is ignored. <c>CreateTableAsync</c> throws <see cref="ArgumentException"/>
+    /// if the bit is requested on a non-text column. Surfaced to readers via
+    /// <see cref="ColumnMetadata.IsHyperlink"/>; values are auto-materialized as
+    /// <see cref="Hyperlink"/> instances when the bit is observed on read.
+    /// See <c>docs/design/hyperlink-format-notes.md</c>.
+    /// </summary>
+    public bool IsHyperlink { get; init; }
+
+    /// <summary>
     /// Gets an optional client-side validation predicate invoked for every supplied
     /// non-null value before the row is written. Returning <c>false</c> raises an
     /// <see cref="ArgumentException"/>. Not persisted — a CLR delegate cannot be

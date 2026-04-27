@@ -543,11 +543,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 Name = col.Name,
                 TypeName = (col.Type == T_COMPLEX && complexSubtypes.TryGetValue(col.Name, out string? subtype))
                     ? subtype
-                    : TypeCodeToName(col.Type),
-                ClrType = TypeCodeToClrType(col.Type),
+                    : ResolveTypeName(col),
+                ClrType = ResolveClrType(col),
                 MaxLength = col.Size > 0 ? col.Size : null,
                 IsNullable = (col.Flags & 0x02) != 0,
                 IsFixedLength = col.IsFixed,
+                IsHyperlink = IsHyperlinkColumn(col),
                 Ordinal = index,
                 Size = SizeForColumn(col),
                 DefaultValueExpression = target?.GetTextValue(ColumnPropertyNames.DefaultValue, _format),
@@ -1181,7 +1182,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             dt = new DataTable(tableName);
             foreach (ColumnInfo col in td.Columns)
             {
-                _ = dt.Columns.Add(col.Name, TypeCodeToClrType(col.Type));
+                _ = dt.Columns.Add(col.Name, ResolveClrType(col));
             }
 
             Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
@@ -1536,6 +1537,21 @@ public sealed class AccessReader : AccessBase, IAccessReader
         _ => typeof(string),
     };
 
+    /// <summary>
+    /// Returns <see langword="true"/> when the column is a MEMO whose TDEF flag
+    /// byte has Jackcess <c>HYPERLINK_FLAG_MASK = 0x80</c> set — Microsoft Access
+    /// surfaces such columns through the Hyperlink data-format affordance.
+    /// See <c>docs/design/hyperlink-format-notes.md</c>.
+    /// </summary>
+    internal static bool IsHyperlinkColumn(ColumnInfo col) =>
+        col.Type == T_MEMO && (col.Flags & 0x80) != 0;
+
+    private static Type ResolveClrType(ColumnInfo col) =>
+        IsHyperlinkColumn(col) ? typeof(Hyperlink) : TypeCodeToClrType(col.Type);
+
+    private static string ResolveTypeName(ColumnInfo col) =>
+        IsHyperlinkColumn(col) ? "Hyperlink" : TypeCodeToName(col.Type);
+
     private static string ReadFixed(byte[] row, int start, ColumnInfo col, int sz)
     {
         // T_NUMERIC overflow / scale>28 is surfaced as JetLimitationException on
@@ -1711,7 +1727,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            typedRow[i] = TypedValueParser.ParseValue(raw, TypeCodeToClrType(col.Type), strictParsing);
+            typedRow[i] = TypedValueParser.ParseValue(raw, ResolveClrType(col), strictParsing);
         }
 
         return typedRow;
