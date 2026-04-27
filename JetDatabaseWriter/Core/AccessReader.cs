@@ -554,6 +554,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 ValidationRuleExpression = target?.GetTextValue(ColumnPropertyNames.ValidationRule, _format),
                 ValidationText = target?.GetTextValue(ColumnPropertyNames.ValidationText, _format),
                 Description = target?.GetTextValue(ColumnPropertyNames.Description, _format),
+                NumericPrecision = col.NumericPrecision,
+                NumericScale = col.NumericScale,
             };
         }).ToList();
     }

@@ -57,6 +57,22 @@ public sealed record ColumnMetadata
     public string? Description { get; init; }
 
     /// <summary>
+    /// Gets or initializes the declared precision (1..28) for a
+    /// <c>decimal</c> / <c>T_NUMERIC</c> column. Sourced from the TDEF
+    /// column descriptor's <c>misc</c> slot at descriptor offset 11. Zero
+    /// for non-numeric columns and for legacy files written by
+    /// <see cref="AccessWriter"/> before W23 emitted these bytes.
+    /// </summary>
+    public byte NumericPrecision { get; init; }
+
+    /// <summary>
+    /// Gets or initializes the declared scale (0..28) for a <c>decimal</c>
+    /// / <c>T_NUMERIC</c> column. Sourced from descriptor offset 12.
+    /// Defines the canonical sort-key scale for any index over this column.
+    /// </summary>
+    public byte NumericScale { get; init; }
+
+    /// <summary>
     /// Returns a compact human-readable description of the column in the form
     /// <c>"Name (TypeName, Size)"</c> — useful for diagnostics, log messages,
     /// and debugger output.
