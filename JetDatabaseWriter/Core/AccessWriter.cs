@@ -9680,13 +9680,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return false;
             }
 
-            List<(long DataPage, byte DataRow)> removePtrs = new(delCount);
-            if (deletedRows != null)
+            // W4-C-3 / W4-C-4 (2026-04-27) — encode the deleted rows' keys too.
+            // The single-leaf and W4-D paths only need the (page, row) pointers
+            // (they re-derive the key from the live leaf entry); the surgical
+            // multi-level path needs the keys to perform a path-capturing
+            // descent that confirms every change targets the same leaf.
+            List<(byte[] Key, long DataPage, byte DataRow)> removeEntries = EncodeHintEntries(deletedRows, keyColInfos);
+            if (delCount > 0 && removeEntries.Count != delCount)
             {
-                foreach ((RowLocation loc, _) in deletedRows)
-                {
-                    removePtrs.Add((loc.PageNumber, (byte)loc.RowIndex));
-                }
+                return false;
+            }
+
+            List<(long DataPage, byte DataRow)> removePtrs = new(delCount);
+            foreach ((_, long dpDel, byte drDel) in removeEntries)
+            {
+                removePtrs.Add((dpDel, drDel));
             }
 
             if (!IndexLeafIncremental.IsSingleRootLeaf(rootPage))
@@ -9730,6 +9738,34 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     {
                         continue;
                     }
+                }
+
+                // W4-C-3 / W4-C-4 (2026-04-27) — surgical multi-level mutation.
+                // When every change in this batch lands on the SAME leaf and
+                // the spliced entry list either still fits one page (W4-C-3
+                // in-place rewrite) or splits cleanly into two pages whose
+                // new summary entries fit into the parent intermediate
+                // (W4-C-4 split + propagate up), mutate the affected leaf
+                // (and possibly its right sibling + parent / ancestors) in
+                // place at their existing page numbers — no orphaned pages,
+                // no fresh page-range allocation. Returns true when handled,
+                // false on any bail trigger (multi-leaf change-set, leaf
+                // becomes empty, leaf needs 3+ pages, parent intermediate
+                // overflows, descent overshoots into a tail_page chain, or
+                // the encoder/IO chain hits a malformed page). The caller
+                // falls through to the W4-D bulk rebuild on false. See
+                // docs/design/index-and-relationship-format-notes.md §7
+                // (W4-C-3 / W4-C-4).
+                bool surgicalHandled = await TrySurgicalMultiLevelMaintainAsync(
+                    layout,
+                    tdefPage,
+                    firstDp,
+                    addEntries,
+                    removeEntries,
+                    cancellationToken).ConfigureAwait(false);
+                if (surgicalHandled)
+                {
+                    continue;
                 }
 
                 long leftmostLeaf = await DescendToLeftmostLeafAsync(layout, firstDp, cancellationToken).ConfigureAwait(false);
@@ -9994,6 +10030,588 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         await WritePageAsync(tailLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    /// <summary>
+    /// W4-C-3 / W4-C-4 (2026-04-27) — surgical multi-level mutation of a
+    /// JET index B-tree. Replaces the W4-D fall-through "descend to leftmost
+    /// leaf, walk every leaf, splice, rebuild a fresh tree on a new page
+    /// range" path with an in-place mutation when:
+    /// <list type="bullet">
+    ///   <item>Every change in the batch lands on the SAME leaf (verified by
+    ///   path-capturing descent against each change-set key).</item>
+    ///   <item>The spliced entry list either still fits a single page (W4-C-3
+    ///   in-place leaf rewrite) or splits cleanly into exactly two pages
+    ///   (W4-C-4 split + propagate up).</item>
+    ///   <item>Any required parent intermediate updates (max-key replacement
+    ///   for W4-C-3, or insertion of one new summary entry for W4-C-4) fit
+    ///   into the existing intermediate page without overflow.</item>
+    /// </list>
+    /// On any bail trigger — multi-leaf change-set, leaf becomes empty,
+    /// 3+ page split, parent intermediate overflow, descent overshoot into
+    /// a tail-page chain, malformed page, or encoder rejection — returns
+    /// <see langword="false"/>; the caller falls through to the W4-D bulk
+    /// rebuild. Pages are rewritten at their existing page numbers (no
+    /// orphans) on success.
+    /// </summary>
+    private async ValueTask<bool> TrySurgicalMultiLevelMaintainAsync(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long tdefPage,
+        long firstDp,
+        List<(byte[] Key, long DataPage, byte DataRow)> addEntries,
+        List<(byte[] Key, long DataPage, byte DataRow)> removeEntries,
+        CancellationToken cancellationToken)
+    {
+        if (addEntries.Count == 0 && removeEntries.Count == 0)
+        {
+            return true;
+        }
+
+        // 1. Path-capturing descent with the FIRST change key.
+        byte[] firstKey = addEntries.Count > 0 ? addEntries[0].Key : removeEntries[0].Key;
+        var path = new List<DescentStep>();
+        long targetLeafPage = await DescendCapturingAsync(layout, firstDp, firstKey, path, cancellationToken).ConfigureAwait(false);
+        if (targetLeafPage <= 0 || path.Count == 0)
+        {
+            // Either descent overshot (search key > every summary, follows
+            // tail_page) or the root was a leaf (single-root-leaf path
+            // should have caught it). Either way: bail.
+            return false;
+        }
+
+        // 2. Verify every other change targets the same leaf via fast re-walk.
+        int firstAdd = addEntries.Count > 0 ? 1 : 0;
+        for (int i = firstAdd; i < addEntries.Count; i++)
+        {
+            if (!ConfirmKeyTargetsSamePath(path, addEntries[i].Key))
+            {
+                return false;
+            }
+        }
+
+        int rstart = addEntries.Count > 0 ? 0 : 1;
+        for (int i = rstart; i < removeEntries.Count; i++)
+        {
+            if (!ConfirmKeyTargetsSamePath(path, removeEntries[i].Key))
+            {
+                return false;
+            }
+        }
+
+        // 3. Read the target leaf and decode existing entries.
+        byte[] leafBytes = await ReadPageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
+        byte[] leaf;
+        try
+        {
+            leaf = (byte[])leafBytes.Clone();
+        }
+        finally
+        {
+            ReturnPage(leafBytes);
+        }
+
+        if (leaf[0] != IndexLeafPageBuilder.PageTypeLeaf)
+        {
+            return false;
+        }
+
+        List<IndexLeafIncremental.DecodedEntry> existingLeafEntries = IndexLeafIncremental.DecodeEntries(layout, leaf, _pgSz);
+        if (existingLeafEntries.Count == 0)
+        {
+            // Empty leaf — descent shouldn't normally land here. Bail.
+            return false;
+        }
+
+        // 4. Splice the change-set into the live leaf entries.
+        var removePtrs = new List<(long DataPage, byte DataRow)>(removeEntries.Count);
+        foreach ((_, long dp, byte dr) in removeEntries)
+        {
+            removePtrs.Add((dp, dr));
+        }
+
+        List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(existingLeafEntries, addEntries, removePtrs);
+        if (spliced is null)
+        {
+            return false;
+        }
+
+        if (spliced.Count == 0)
+        {
+            // W4-C-5 leaf-becomes-empty underflow is out of scope this phase.
+            return false;
+        }
+
+        long leafPrev = IndexLeafIncremental.ReadPrevPage(leaf);
+        long leafNext = IndexLeafIncremental.ReadNextLeafPage(leaf);
+        long leafTail = IndexLeafIncremental.ReadTailPage(leaf);
+
+        byte[] oldMaxKey = existingLeafEntries[existingLeafEntries.Count - 1].Key;
+
+        // 5. W4-C-3 — try to fit the spliced entries on the original leaf page.
+        byte[]? rebuilt = IndexLeafIncremental.TryRebuildLeafWithSiblings(
+            layout, _pgSz, tdefPage, spliced, leafPrev, leafNext, leafTail);
+        if (rebuilt != null)
+        {
+            IndexLeafPageBuilder.LeafEntry newLast = spliced[spliced.Count - 1];
+            bool maxUnchanged = CompareKeyBytes(newLast.EncodedKey, oldMaxKey) == 0;
+
+            if (maxUnchanged)
+            {
+                // Pure in-place leaf rewrite — no parent updates needed.
+                await WritePageAsync(targetLeafPage, rebuilt, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+
+            // Max key changed → walk path replacing parent's summary entry
+            // for this leaf (and propagating up while the change is to the
+            // last summary on each ancestor).
+            var newSummary = (newLast.EncodedKey, newLast.DataPage, newLast.DataRow, ChildPage: targetLeafPage);
+            List<(long PageNum, byte[] Bytes)>? ancestorWrites = PrepareAncestorReplaceWrites(layout, tdefPage, path, newSummary);
+            if (ancestorWrites is null)
+            {
+                return false;
+            }
+
+            // Commit: leaf first, then ancestors.
+            await WritePageAsync(targetLeafPage, rebuilt, cancellationToken).ConfigureAwait(false);
+            foreach ((long pn, byte[] bytes) in ancestorWrites)
+            {
+                await WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
+            }
+
+            return true;
+        }
+
+        // 6. W4-C-4 — try a 2-way leaf split. Greedy left-fill; bail if 3+
+        // pages would be needed or either half overflows the build.
+        if (!TryGreedySplitInTwo(layout, _pgSz, spliced, out List<IndexLeafPageBuilder.LeafEntry> leftPart, out List<IndexLeafPageBuilder.LeafEntry> rightPart))
+        {
+            return false;
+        }
+
+        long newRightPage = _stream.Length / _pgSz;
+        byte[] leftBytes;
+        byte[] rightBytes;
+        try
+        {
+            leftBytes = IndexLeafPageBuilder.BuildLeafPage(
+                layout,
+                _pgSz,
+                tdefPage,
+                leftPart,
+                prevPage: leafPrev,
+                nextPage: newRightPage,
+                tailPage: 0,
+                enablePrefixCompression: true);
+            rightBytes = IndexLeafPageBuilder.BuildLeafPage(
+                layout,
+                _pgSz,
+                tdefPage,
+                rightPart,
+                prevPage: targetLeafPage,
+                nextPage: leafNext,
+                tailPage: 0,
+                enablePrefixCompression: true);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+
+        IndexLeafPageBuilder.LeafEntry leftLast = leftPart[leftPart.Count - 1];
+        IndexLeafPageBuilder.LeafEntry rightLast = rightPart[rightPart.Count - 1];
+        var leftSummary = (leftLast.EncodedKey, leftLast.DataPage, leftLast.DataRow, ChildPage: targetLeafPage);
+        var rightSummary = (rightLast.EncodedKey, rightLast.DataPage, rightLast.DataRow, ChildPage: newRightPage);
+
+        // Compute parent (and grandparent, ...) writes WITHOUT committing —
+        // bail cleanly on overflow.
+        List<(long PageNum, byte[] Bytes)>? splitAncestorWrites = PrepareAncestorSplitWrites(layout, tdefPage, path, leftSummary, rightSummary);
+        if (splitAncestorWrites is null)
+        {
+            return false;
+        }
+
+        // Commit order (no transactions; minimise observable half-state):
+        //   (a) Append the new right page (no parent points at it yet).
+        //   (b) Patch leafNext.prev_page if non-zero.
+        //   (c) Rewrite the original leaf in place as the new LEFT half.
+        //   (d) Rewrite parent + ancestors in place with the new summaries.
+        await AppendPageAsync(rightBytes, cancellationToken).ConfigureAwait(false);
+
+        if (leafNext > 0)
+        {
+            byte[] nextBytes = await ReadPageAsync(leafNext, cancellationToken).ConfigureAwait(false);
+            byte[] nextLeaf;
+            try
+            {
+                nextLeaf = (byte[])nextBytes.Clone();
+            }
+            finally
+            {
+                ReturnPage(nextBytes);
+            }
+
+            // prev_page is at offset 8 (§4.1).
+            BinaryPrimitives.WriteInt32LittleEndian(nextLeaf.AsSpan(8, 4), checked((int)newRightPage));
+            await WritePageAsync(leafNext, nextLeaf, cancellationToken).ConfigureAwait(false);
+        }
+
+        await WritePageAsync(targetLeafPage, leftBytes, cancellationToken).ConfigureAwait(false);
+
+        foreach ((long pn, byte[] bytes) in splitAncestorWrites)
+        {
+            await WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// One step of an intermediate-page descent: the page number, a clone
+    /// of its raw bytes (for sibling-pointer header preservation on
+    /// rewrite), the decoded summary entries, and the index of the entry
+    /// whose <c>ChildPage</c> the descent followed.
+    /// </summary>
+    private readonly struct DescentStep
+    {
+        public DescentStep(long pageNumber, byte[] pageBytes, List<IndexLeafIncremental.DecodedIntermediateEntry> entries, int takenIndex)
+        {
+            PageNumber = pageNumber;
+            PageBytes = pageBytes;
+            Entries = entries;
+            TakenIndex = takenIndex;
+        }
+
+        public long PageNumber { get; }
+
+        public byte[] PageBytes { get; }
+
+        public List<IndexLeafIncremental.DecodedIntermediateEntry> Entries { get; }
+
+        public int TakenIndex { get; }
+    }
+
+    /// <summary>
+    /// Descends an index B-tree from <paramref name="rootPage"/> using
+    /// <paramref name="searchKey"/> to pick the child at every intermediate
+    /// level (first summary &gt;= searchKey wins, mirroring
+    /// <see cref="IndexBTreeSeeker.ContainsKeyAsync"/>). On every level
+    /// pushed onto <paramref name="path"/>: the page number, raw bytes,
+    /// decoded summary entries, and the index of the followed child. Returns
+    /// the leaf page number reached, or 0 on any descent failure (overshoot,
+    /// malformed page, or excessive depth) — surgical mutation bails on 0.
+    /// </summary>
+    private async ValueTask<long> DescendCapturingAsync(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long rootPage,
+        byte[] searchKey,
+        List<DescentStep> path,
+        CancellationToken cancellationToken)
+    {
+        long current = rootPage;
+        for (int depth = 0; depth < 32; depth++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            byte[] pageBytes = await ReadPageAsync(current, cancellationToken).ConfigureAwait(false);
+            byte[] page;
+            try
+            {
+                page = (byte[])pageBytes.Clone();
+            }
+            finally
+            {
+                ReturnPage(pageBytes);
+            }
+
+            if (page[0] == IndexLeafPageBuilder.PageTypeLeaf)
+            {
+                return current;
+            }
+
+            if (page[0] != IndexLeafIncremental.PageTypeIntermediate)
+            {
+                return 0;
+            }
+
+            List<IndexLeafIncremental.DecodedIntermediateEntry> entries =
+                IndexLeafIncremental.DecodeIntermediateEntries(layout, page, _pgSz);
+            if (entries.Count == 0)
+            {
+                return 0;
+            }
+
+            int idx = SelectChildIndexFromDecoded(entries, searchKey);
+            if (idx < 0)
+            {
+                // Search key sorts strictly above every summary on this
+                // intermediate. The seeker would follow tail_page (W18) here,
+                // but the surgical path needs a clean (page, taken-index)
+                // pair at every level for an in-place ancestor rewrite — bail.
+                return 0;
+            }
+
+            path.Add(new DescentStep(current, page, entries, idx));
+            current = entries[idx].ChildPage;
+            if (current <= 0)
+            {
+                return 0;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Returns the index of the first intermediate entry whose summary key
+    /// sorts &gt;= <paramref name="searchKey"/>, or <c>-1</c> when every
+    /// summary is &lt; searchKey (the descent would have to follow
+    /// <c>tail_page</c>, which the surgical path rejects).
+    /// </summary>
+    private static int SelectChildIndexFromDecoded(
+        List<IndexLeafIncremental.DecodedIntermediateEntry> entries,
+        byte[] searchKey)
+    {
+        for (int i = 0; i < entries.Count; i++)
+        {
+            if (CompareKeyBytes(searchKey, entries[i].Key) <= 0)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Re-walks a captured <paramref name="path"/> with a different search
+    /// key, returning <see langword="true"/> only when every level picks the
+    /// same child entry that was originally followed. Used to confirm that
+    /// every change in the batch lands on the same leaf as the first one
+    /// (surgical mutation requires this; multi-leaf change-sets bail to
+    /// W4-D).
+    /// </summary>
+    private static bool ConfirmKeyTargetsSamePath(List<DescentStep> path, byte[] searchKey)
+    {
+        for (int level = 0; level < path.Count; level++)
+        {
+            DescentStep step = path[level];
+            int idx = SelectChildIndexFromDecoded(step.Entries, searchKey);
+            if (idx != step.TakenIndex)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Greedy left-fill split of a spliced leaf entry list into two halves
+    /// that each fit on a single page. Returns <see langword="false"/> when
+    /// the input would need three or more pages (a single entry larger than
+    /// half the payload area, or a total payload greater than two pages).
+    /// Output halves are non-empty on success.
+    /// </summary>
+    private static bool TryGreedySplitInTwo(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        int pageSize,
+        List<IndexLeafPageBuilder.LeafEntry> entries,
+        out List<IndexLeafPageBuilder.LeafEntry> left,
+        out List<IndexLeafPageBuilder.LeafEntry> right)
+    {
+        left = [];
+        right = [];
+
+        int payloadArea = pageSize - layout.FirstEntryOffset;
+        if (entries.Count < 2)
+        {
+            return false;
+        }
+
+        int leftSize = 0;
+        int splitIdx = -1;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            int len = entries[i].EncodedKey.Length + 4;
+            if (len > payloadArea)
+            {
+                return false;
+            }
+
+            if (leftSize + len > payloadArea)
+            {
+                splitIdx = i;
+                break;
+            }
+
+            leftSize += len;
+        }
+
+        // splitIdx <= 0 means even the first entry doesn't fit (shouldn't
+        // happen since the W4-C-3 path was tried first and we know at least
+        // ONE page worth of entries fits). >= entries.Count means everything
+        // already fit one page (shouldn't have reached here either). Bail.
+        if (splitIdx <= 0 || splitIdx >= entries.Count)
+        {
+            return false;
+        }
+
+        int rightSize = 0;
+        for (int i = splitIdx; i < entries.Count; i++)
+        {
+            rightSize += entries[i].EncodedKey.Length + 4;
+        }
+
+        if (rightSize > payloadArea)
+        {
+            return false;
+        }
+
+        left = entries.GetRange(0, splitIdx);
+        right = entries.GetRange(splitIdx, entries.Count - splitIdx);
+        return true;
+    }
+
+    /// <summary>
+    /// Computes the in-place rewrites required for a W4-C-3 max-key change.
+    /// At the parent-of-leaf level, replaces the entry at
+    /// <c>path[^1].TakenIndex</c> with <paramref name="newSummary"/> (same
+    /// child page, new key + summary row pointer). When that entry was the
+    /// LAST on the parent intermediate, the parent's max key has changed
+    /// too, so we walk up replacing the grandparent's entry that summarises
+    /// this parent (and so on, up to the root). Returns <see langword="null"/>
+    /// when any intermediate page would overflow on rebuild — caller bails
+    /// to W4-D rebuild without committing any partial state.
+    /// </summary>
+    private List<(long PageNum, byte[] Bytes)>? PrepareAncestorReplaceWrites(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long tdefPage,
+        List<DescentStep> path,
+        (byte[] Key, long DataPage, byte DataRow, long ChildPage) newSummary)
+    {
+        var writes = new List<(long PageNum, byte[] Bytes)>(path.Count);
+        var current = newSummary;
+        for (int level = path.Count - 1; level >= 0; level--)
+        {
+            DescentStep step = path[level];
+            List<IndexLeafIncremental.DecodedIntermediateEntry> entries = step.Entries;
+
+            var newEntries = new List<(byte[], long, byte, long)>(entries.Count);
+            for (int i = 0; i < entries.Count; i++)
+            {
+                if (i == step.TakenIndex)
+                {
+                    newEntries.Add((current.Key, current.DataPage, current.DataRow, current.ChildPage));
+                }
+                else
+                {
+                    IndexLeafIncremental.DecodedIntermediateEntry e = entries[i];
+                    newEntries.Add((e.Key, e.DataPage, e.DataRow, e.ChildPage));
+                }
+            }
+
+            byte[] pageBytes = step.PageBytes;
+            long prev = (uint)BinaryPrimitives.ReadInt32LittleEndian(pageBytes.AsSpan(8, 4));
+            long next = (uint)BinaryPrimitives.ReadInt32LittleEndian(pageBytes.AsSpan(12, 4));
+            long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(pageBytes.AsSpan(16, 4));
+
+            byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
+                layout, _pgSz, tdefPage, newEntries, prev, next, tail);
+            if (rebuilt is null)
+            {
+                return null;
+            }
+
+            writes.Add((step.PageNumber, rebuilt));
+
+            bool wasLast = step.TakenIndex == entries.Count - 1;
+            if (!wasLast)
+            {
+                // Parent's max didn't change → no need to walk further up.
+                return writes;
+            }
+
+            // Was last → grandparent's summary for this intermediate also
+            // needs the new max key. Carry the new max upward; the
+            // grandparent's entry's ChildPage is this intermediate's page.
+            current = (current.Key, current.DataPage, current.DataRow, ChildPage: step.PageNumber);
+        }
+
+        return writes;
+    }
+
+    /// <summary>
+    /// Computes the in-place rewrites required for a W4-C-4 leaf split.
+    /// At the parent-of-leaf level, replaces the single entry at
+    /// <c>path[^1].TakenIndex</c> with TWO entries
+    /// (<paramref name="leftSummary"/> followed by <paramref name="rightSummary"/>);
+    /// when that entry was the LAST on the parent, the parent's max key has
+    /// changed too and we propagate via
+    /// <see cref="PrepareAncestorReplaceWrites"/>. Returns
+    /// <see langword="null"/> on overflow at any level (recursive
+    /// intermediate split is W4-C-5+ scope). Callers commit the writes
+    /// after the leaf-side writes.
+    /// </summary>
+    private List<(long PageNum, byte[] Bytes)>? PrepareAncestorSplitWrites(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long tdefPage,
+        List<DescentStep> path,
+        (byte[] Key, long DataPage, byte DataRow, long ChildPage) leftSummary,
+        (byte[] Key, long DataPage, byte DataRow, long ChildPage) rightSummary)
+    {
+        int level = path.Count - 1;
+        DescentStep step = path[level];
+        List<IndexLeafIncremental.DecodedIntermediateEntry> entries = step.Entries;
+
+        var newEntries = new List<(byte[], long, byte, long)>(entries.Count + 1);
+        for (int i = 0; i < entries.Count; i++)
+        {
+            if (i == step.TakenIndex)
+            {
+                newEntries.Add((leftSummary.Key, leftSummary.DataPage, leftSummary.DataRow, leftSummary.ChildPage));
+                newEntries.Add((rightSummary.Key, rightSummary.DataPage, rightSummary.DataRow, rightSummary.ChildPage));
+            }
+            else
+            {
+                IndexLeafIncremental.DecodedIntermediateEntry e = entries[i];
+                newEntries.Add((e.Key, e.DataPage, e.DataRow, e.ChildPage));
+            }
+        }
+
+        byte[] parentBytes = step.PageBytes;
+        long parentPrev = (uint)BinaryPrimitives.ReadInt32LittleEndian(parentBytes.AsSpan(8, 4));
+        long parentNext = (uint)BinaryPrimitives.ReadInt32LittleEndian(parentBytes.AsSpan(12, 4));
+        long parentTail = (uint)BinaryPrimitives.ReadInt32LittleEndian(parentBytes.AsSpan(16, 4));
+
+        byte[]? rebuiltParent = IndexBTreeBuilder.TryBuildIntermediatePage(
+            layout, _pgSz, tdefPage, newEntries, parentPrev, parentNext, parentTail);
+        if (rebuiltParent is null)
+        {
+            // Parent overflow on insertion of one new summary entry —
+            // recursive intermediate split is out of scope this phase. Bail.
+            return null;
+        }
+
+        var writes = new List<(long PageNum, byte[] Bytes)>(path.Count) { (step.PageNumber, rebuiltParent) };
+
+        bool wasLast = step.TakenIndex == entries.Count - 1;
+        if (!wasLast || level == 0)
+        {
+            return writes;
+        }
+
+        // The right summary became this parent's new max → grandparent's
+        // summary entry for this parent must carry the new max key.
+        var newAncestor = (rightSummary.Key, rightSummary.DataPage, rightSummary.DataRow, ChildPage: step.PageNumber);
+        List<DescentStep> subPath = path.GetRange(0, level);
+        List<(long PageNum, byte[] Bytes)>? more = PrepareAncestorReplaceWrites(layout, tdefPage, subPath, newAncestor);
+        if (more is null)
+        {
+            return null;
+        }
+
+        writes.AddRange(more);
+        return writes;
     }
 
     /// <summary>

@@ -50,6 +50,33 @@ internal static class IndexLeafIncremental
     }
 
     /// <summary>
+    /// A decoded intermediate (<c>0x03</c>) page entry: the canonical
+    /// (uncompressed) summary key bytes, the row pointer of the LAST entry on
+    /// the referenced child page, and the absolute page number of that child.
+    /// Used by the W4-C-3 / W4-C-4 surgical multi-level mutation path so the
+    /// writer can re-emit a single intermediate page in place after a
+    /// summary-key change or a leaf-split insert.
+    /// </summary>
+    internal readonly struct DecodedIntermediateEntry
+    {
+        public DecodedIntermediateEntry(byte[] key, long dataPage, byte dataRow, long childPage)
+        {
+            Key = key;
+            DataPage = dataPage;
+            DataRow = dataRow;
+            ChildPage = childPage;
+        }
+
+        public byte[] Key { get; }
+
+        public long DataPage { get; }
+
+        public byte DataRow { get; }
+
+        public long ChildPage { get; }
+    }
+
+    /// <summary>
     /// Returns <see langword="true"/> when <paramref name="page"/> is an
     /// intermediate page (<c>page_type = 0x03</c>). Used by the multi-level
     /// fast path to decide whether to descend through the tree to the
@@ -378,6 +405,125 @@ internal static class IndexLeafIncremental
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// W4-C-3 helper. Re-emits a leaf page in place at its existing position
+    /// in the sibling-leaf chain, preserving its <c>prev_page</c> /
+    /// <c>next_page</c> / <c>tail_page</c> header fields. Returns
+    /// <see langword="null"/> when the spliced entry list overflows a single
+    /// page (caller falls back to W4-C-4 split or the W4-D bulk rebuild).
+    /// </summary>
+    public static byte[]? TryRebuildLeafWithSiblings(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<IndexLeafPageBuilder.LeafEntry> entries,
+        long prevPage,
+        long nextPage,
+        long tailPage)
+    {
+        try
+        {
+            return IndexLeafPageBuilder.BuildLeafPage(
+                layout,
+                pageSize,
+                parentTdefPage,
+                entries,
+                prevPage: prevPage,
+                nextPage: nextPage,
+                tailPage: tailPage,
+                enablePrefixCompression: true);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Decodes every entry on a single intermediate (<c>0x03</c>) index page
+    /// back into its canonical <c>(key, data_page, data_row, child_page)</c>
+    /// tuple, re-prepending the §4.4 shared prefix to entries beyond the
+    /// first. Used by the W4-C-3 / W4-C-4 surgical multi-level mutation path
+    /// when it needs to update a parent intermediate's stale summary entry or
+    /// insert a new summary for a freshly-split leaf without rebuilding the
+    /// whole tree.
+    /// </summary>
+    public static List<DecodedIntermediateEntry> DecodeIntermediateEntries(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        byte[] page,
+        int pageSize)
+    {
+        var result = new List<DecodedIntermediateEntry>();
+        if (page == null || page.Length < pageSize || page[0] != PageTypeIntermediate)
+        {
+            return result;
+        }
+
+        int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(20, 2));
+        int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+        int payloadEnd = pageSize - freeSpace;
+        if (payloadEnd <= layout.FirstEntryOffset)
+        {
+            return result;
+        }
+
+        byte[]? sharedPrefix = null;
+        int entryStart = layout.FirstEntryOffset;
+        bool isFirst = true;
+        while (entryStart < payloadEnd)
+        {
+            int next = NextEntryStart(layout, page, payloadEnd, entryStart);
+            int entryEnd = next < 0 ? payloadEnd : next;
+            int totalLen = entryEnd - entryStart;
+
+            // Intermediate entry: [stripped key bytes] + 3-byte BE data page +
+            // 1-byte data row + 4-byte LE child page → suffix length = totalLen - 8.
+            int suffixLen = totalLen - 8;
+            if (suffixLen < 0)
+            {
+                break;
+            }
+
+            byte[] canonical;
+            if (isFirst)
+            {
+                canonical = new byte[suffixLen];
+                Buffer.BlockCopy(page, entryStart, canonical, 0, suffixLen);
+                if (pref > 0 && suffixLen >= pref)
+                {
+                    sharedPrefix = new byte[pref];
+                    Buffer.BlockCopy(canonical, 0, sharedPrefix, 0, pref);
+                }
+            }
+            else
+            {
+                canonical = new byte[pref + suffixLen];
+                if (pref > 0 && sharedPrefix != null)
+                {
+                    Buffer.BlockCopy(sharedPrefix, 0, canonical, 0, pref);
+                }
+
+                Buffer.BlockCopy(page, entryStart, canonical, pref, suffixLen);
+            }
+
+            int trailerOff = entryStart + suffixLen;
+            long dp = ((long)page[trailerOff] << 16) | ((long)page[trailerOff + 1] << 8) | page[trailerOff + 2];
+            byte dr = page[trailerOff + 3];
+            long childPage = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(trailerOff + 4, 4));
+            result.Add(new DecodedIntermediateEntry(canonical, dp, dr, childPage));
+
+            isFirst = false;
+            if (next < 0)
+            {
+                break;
+            }
+
+            entryStart = next;
+        }
+
+        return result;
     }
 
     private static long EncodePtr(long page, byte row) => (page << 8) | row;
