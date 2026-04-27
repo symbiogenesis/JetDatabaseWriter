@@ -33,3 +33,19 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ```
+
+## OpenMcdf (test fixtures)
+
+The Compound File Binary test fixtures under
+`JetDatabaseWriter.Tests/Cfb/` (`TestStream_v*.cfs`,
+`MultipleStorage*.cfs`, `FatChainLoop_v3.cfs`,
+`LibreOfficeBlankSample_v25.8.*`, `Office365BlankSample_v2507.*`,
+`VSPro_v17.suo`) are taken verbatim from the OpenMcdf project's
+`OpenMcdf.Tests` directory. They are used solely to validate this
+library's CFB reader/writer against a known corpus.
+
+Source: https://github.com/openmcdf/openmcdf
+
+OpenMcdf is licensed under the Mozilla Public License, version 2.0
+(MPL-2.0). The full text is available at
+https://www.mozilla.org/MPL/2.0/.

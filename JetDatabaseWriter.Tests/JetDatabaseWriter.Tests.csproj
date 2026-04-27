@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <None Include="Databases\**\*.mdb;Databases\**\*.accdb" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Cfb\**\*.cfs;Cfb\**\*.doc;Cfb\**\*.xls;Cfb\**\*.ppt;Cfb\**\*.suo" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
