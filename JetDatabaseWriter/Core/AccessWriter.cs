@@ -359,13 +359,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // W17b (2026-04-26): the Jet3 (.mdb Access 97) IndexDefinition
         // rejection has been lifted. The writer now emits the §3.1 39-byte
-        // real-idx descriptor, the §3.2 20-byte logical-idx entry, and a
-        // schema-only empty Jet3 leaf page (§4.2 bitmask at 0x16, first
-        // entry at 0xF8). MaintainIndexesAsync still short-circuits for
-        // Jet3, so the leaf goes stale on the first row mutation and Access
-        // rebuilds it on the next Compact & Repair pass — the same
-        // schema-only fallback model already used for unsupported Jet4 key
-        // types (OLE / attachment / complex).
+        // real-idx descriptor and the §3.2 20-byte logical-idx entry, and
+        // W17c added live Jet3 leaf maintenance using the §4.2 layout
+        // (bitmask at 0x16, first entry at 0xF8) parameterised through
+        // IndexLeafPageBuilder.LeafPageLayout. Unsupported Jet4 key types
+        // (OLE / Attachment / Multi-Value) are rejected up-front below in
+        // ResolveIndexes per W18.
 
         if (await GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) != null)
         {
@@ -5742,6 +5741,28 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 ColumnInfo column = tableDef.FindColumn(columnName)
                     ?? throw new ArgumentException($"IndexDefinition '{def.Name}' references unknown column '{columnName}'.", nameof(indexes));
 
+                // W18 (2026-04-26): match Microsoft Access — neither the UI
+                // nor the engine permits CREATE INDEX over OLE Object,
+                // Attachment, or Multi-Value (Complex) columns. Previously
+                // these silently fell through to a "schema-only" path that
+                // emitted a stale empty leaf and let Access rebuild on
+                // Compact & Repair; that fallback masked a programmer error
+                // and disagreed with Access semantics. Reject with a clear
+                // diagnostic so callers correct the index definition.
+                if (column.Type is T_OLE or T_ATTACHMENT or T_COMPLEX)
+                {
+                    string typeName = column.Type switch
+                    {
+                        T_OLE => "OLE Object",
+                        T_ATTACHMENT => "Attachment",
+                        T_COMPLEX => "Multi-Value (Complex)",
+                        _ => $"0x{column.Type:X2}",
+                    };
+                    throw new NotSupportedException(
+                        $"IndexDefinition '{def.Name}' references column '{columnName}' whose type is {typeName}; "
+                        + "Microsoft Access does not permit indexes on this column type.");
+                }
+
                 colNums[k] = column.ColNum;
             }
 
@@ -8374,10 +8395,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// reclaims them — this library does not maintain a free-page bitmap).
     /// </para>
     /// <para>
-    /// Indexes whose key column type is unsupported by the encoder (text, GUID,
-    /// numeric, attachment, etc.) are skipped silently; their <c>first_dp</c> stays
-    /// pointing at whatever leaf was emitted at <c>CreateTableAsync</c> time, which
-    /// will go stale on first row write — same behaviour as W4 shipped with.
+    /// All key column types accepted by <see cref="ResolveIndexes"/> have
+    /// matching <see cref="IndexKeyEncoder"/> support, so encoder rejection
+    /// is treated as an unrecoverable programmer error and propagates to
+    /// the caller rather than silently leaving the leaf stale (the W18
+    /// rejection of OLE / Attachment / Multi-Value keys at create time
+    /// removed the only legitimate trigger for the prior silent-skip path).
     /// </para>
     /// </summary>
     private async ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
@@ -8577,31 +8600,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             bool legacyNumeric = _format == DatabaseFormat.Jet4Mdb;
 
             var entries = new List<(byte[] Key, long Page, byte Row)>(rowCount);
-            bool encoderRejected = false;
             for (int r = 0; r < rowCount; r++)
             {
                 byte[][] perColumn = new byte[keyColInfos.Count][];
                 int totalLen = 0;
-                try
+                for (int k = 0; k < keyColInfos.Count; k++)
                 {
-                    for (int k = 0; k < keyColInfos.Count; k++)
-                    {
-                        (ColumnInfo col, int snapIdx, bool ascending) = keyColInfos[k];
-                        object cell = snapshot.Rows[r][snapIdx];
-                        object? value = cell is DBNull ? null : cell;
-                        perColumn[k] = col.Type == T_NUMERIC
-                            ? IndexKeyEncoder.EncodeNumericEntry(value, ascending, numericTargetScales[k], legacyNumeric)
-                            : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
-                        totalLen += perColumn[k].Length;
-                    }
-                }
-                catch (NotSupportedException)
-                {
-                    // Unsupported key type for one of the columns. Leave first_dp
-                    // pointing at the existing (now-stale) leaf — same behaviour
-                    // as before W5 shipped.
-                    encoderRejected = true;
-                    break;
+                    (ColumnInfo col, int snapIdx, bool ascending) = keyColInfos[k];
+                    object cell = snapshot.Rows[r][snapIdx];
+                    object? value = cell is DBNull ? null : cell;
+                    perColumn[k] = col.Type == T_NUMERIC
+                        ? IndexKeyEncoder.EncodeNumericEntry(value, ascending, numericTargetScales[k], legacyNumeric)
+                        : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
+                    totalLen += perColumn[k].Length;
                 }
 
                 byte[] composite = new byte[totalLen];
@@ -8613,11 +8624,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 }
 
                 entries.Add((composite, locations[r].PageNumber, (byte)locations[r].RowIndex));
-            }
-
-            if (encoderRejected)
-            {
-                continue;
             }
 
             entries.Sort(static (a, b) => CompareKeyBytes(a.Key, b.Key));
@@ -8916,6 +8922,31 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     return false;
                 }
 
+                // W18 (2026-04-26) — append-only tail-page fast path. When
+                // the change-set is insert-only AND every new key sorts
+                // strictly after the current tail-leaf max key, splice the
+                // new entries into the tail leaf and rewrite that one page.
+                // No descend-walk-rebuild, no sibling-chain updates, no
+                // intermediate writes — the rightmost intermediate summary
+                // becomes (one entry) stale, which the seeker compensates
+                // for by following the intermediate's tail_page header on
+                // overshoot. Falls through to W4-D on overflow, deletes,
+                // out-of-order inserts, missing tail_page, or any malformed
+                // page.
+                if (delCount == 0 && addEntries.Count > 0)
+                {
+                    bool tailHandled = await TryAppendToTailLeafAsync(
+                        layout,
+                        tdefPage,
+                        rootPage,
+                        addEntries,
+                        cancellationToken).ConfigureAwait(false);
+                    if (tailHandled)
+                    {
+                        continue;
+                    }
+                }
+
                 long leftmostLeaf = await DescendToLeftmostLeafAsync(layout, firstDp, cancellationToken).ConfigureAwait(false);
                 if (leftmostLeaf <= 0)
                 {
@@ -9063,6 +9094,121 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// W18 (2026-04-26) append-only tail-page fast path. When every key in
+    /// <paramref name="addEntries"/> sorts strictly greater than the current
+    /// tail-leaf max key, splice the new entries into the tail leaf and
+    /// rewrite that one page in place — preserving the leaf's
+    /// <c>prev_page</c> sibling pointer and re-emitting with
+    /// <c>next_page = 0</c> and <c>tail_page = 0</c> on the leaf itself.
+    /// Returns <see langword="true"/> on success (the caller should
+    /// <c>continue</c> to the next index slot); returns <see langword="false"/>
+    /// when the fast path does not apply — missing root <c>tail_page</c>,
+    /// any insert key &lt;= tail max, or the rewritten leaf overflows a
+    /// single page (the caller falls through to the W4-D descend-walk-rebuild
+    /// path).
+    /// <para>
+    /// No sibling-chain or intermediate-summary updates are performed. The
+    /// rightmost intermediate's summary entry consequently becomes stale
+    /// (its key is the OLD tail max, not the new one); the §4.5 design
+    /// expects readers / seekers to compensate by following the
+    /// intermediate's <c>tail_page</c> header on overshoot, which
+    /// <see cref="IndexBTreeSeeker"/> does as of W18.
+    /// </para>
+    /// </summary>
+    private async ValueTask<bool> TryAppendToTailLeafAsync(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long tdefPage,
+        byte[] rootPage,
+        List<(byte[] Key, long DataPage, byte DataRow)> addEntries,
+        CancellationToken cancellationToken)
+    {
+        long tailLeafPage = IndexLeafIncremental.ReadTailPage(rootPage);
+        if (tailLeafPage <= 0)
+        {
+            return false;
+        }
+
+        byte[] tailBytes = await ReadPageAsync(tailLeafPage, cancellationToken).ConfigureAwait(false);
+        byte[] tailLeaf;
+        try
+        {
+            tailLeaf = (byte[])tailBytes.Clone();
+        }
+        finally
+        {
+            ReturnPage(tailBytes);
+        }
+
+        if (tailLeaf[0] != IndexLeafPageBuilder.PageTypeLeaf)
+        {
+            return false;
+        }
+
+        long tailPrev = IndexLeafIncremental.ReadPrevPage(tailLeaf);
+        long tailNext = IndexLeafIncremental.ReadNextLeafPage(tailLeaf);
+        if (tailNext != 0)
+        {
+            // The tail leaf must be the rightmost leaf (next_page == 0). If
+            // a previous fast-path append already grew the chain and the
+            // root's tail_page wasn't updated, give up — the W4-D path will
+            // resync the whole tree.
+            return false;
+        }
+
+        List<IndexLeafIncremental.DecodedEntry> existingTail = IndexLeafIncremental.DecodeEntries(layout, tailLeaf, _pgSz);
+
+        // Every new key must sort strictly after the current tail max.
+        // Empty tail leaf trivially satisfies the predicate.
+        if (existingTail.Count > 0)
+        {
+            byte[] tailMax = existingTail[existingTail.Count - 1].Key;
+            for (int i = 0; i < addEntries.Count; i++)
+            {
+                if (CompareKeyBytes(addEntries[i].Key, tailMax) <= 0)
+                {
+                    return false;
+                }
+            }
+        }
+
+        // Splice (existing tail entries unchanged + new entries appended).
+        // Splice() handles the (no-removes, sorted-merge) case efficiently;
+        // since adds already sort > existing max, the stable merge produces
+        // existing-then-new in the right order.
+        List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(
+            existingTail,
+            addEntries,
+            Array.Empty<(long DataPage, byte DataRow)>());
+        if (spliced is null)
+        {
+            return false;
+        }
+
+        byte[] rewritten;
+        try
+        {
+            rewritten = IndexLeafPageBuilder.BuildLeafPage(
+                layout,
+                _pgSz,
+                tdefPage,
+                spliced,
+                prevPage: tailPrev,
+                nextPage: 0,
+                tailPage: 0,
+                enablePrefixCompression: true);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            // Tail leaf would overflow a single page. Fall through to W4-D,
+            // which will resnap the tree (and emit a fresh tail leaf).
+            return false;
+        }
+
+        await WritePageAsync(tailLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     /// <summary>
@@ -9320,13 +9466,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     /// <summary>
     /// W15: encode the composite index key for one row using a previously
-    /// computed canonical numeric scale per key column. Returns <c>null</c>
-    /// (i.e. "encoder rejected this row") only when the underlying encoder
-    /// throws <see cref="NotSupportedException"/>; the caller treats that as
-    /// "skip the unique check for this index" — same fall-through model as
-    /// <see cref="MaintainIndexesAsync"/>.
+    /// computed canonical numeric scale per key column.
+    /// All key column types accepted by <see cref="ResolveIndexes"/> have
+    /// matching <see cref="IndexKeyEncoder"/> support; any encoder failure
+    /// propagates to the caller as an unrecoverable error.
     /// </summary>
-    private byte[]? EncodeCompositeKeyForUniqueCheck(
+    private byte[] EncodeCompositeKeyForUniqueCheck(
         UniqueIndexDescriptor descriptor,
         object[] row,
         int[] numericTargetScales)
@@ -9334,22 +9479,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         bool legacyNumeric = _format == DatabaseFormat.Jet4Mdb;
         byte[][] perColumn = new byte[descriptor.KeyColumns.Count][];
         int totalLen = 0;
-        try
+        for (int k = 0; k < descriptor.KeyColumns.Count; k++)
         {
-            for (int k = 0; k < descriptor.KeyColumns.Count; k++)
-            {
-                (ColumnInfo col, int snapIdx, bool ascending) = descriptor.KeyColumns[k];
-                object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
-                object? value = cell is null or DBNull ? null : cell;
-                perColumn[k] = col.Type == T_NUMERIC
-                    ? IndexKeyEncoder.EncodeNumericEntry(value, ascending, numericTargetScales[k], legacyNumeric)
-                    : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
-                totalLen += perColumn[k].Length;
-            }
-        }
-        catch (NotSupportedException)
-        {
-            return null;
+            (ColumnInfo col, int snapIdx, bool ascending) = descriptor.KeyColumns[k];
+            object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
+            object? value = cell is null or DBNull ? null : cell;
+            perColumn[k] = col.Type == T_NUMERIC
+                ? IndexKeyEncoder.EncodeNumericEntry(value, ascending, numericTargetScales[k], legacyNumeric)
+                : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
+            totalLen += perColumn[k].Length;
         }
 
         byte[] composite = new byte[totalLen];
@@ -9368,10 +9506,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// table snapshot once, encodes the existing-row keys + the pending-row
     /// keys for every unique index, and throws
     /// <see cref="InvalidOperationException"/> on the first collision (existing
-    /// vs. pending or pending vs. pending). On encoder failure for a given
-    /// index (unsupported key type, e.g. text outside General Legacy) the
-    /// check is silently skipped for that index — the post-write check inside
-    /// <see cref="MaintainIndexesAsync"/> still runs as defense-in-depth.
+    /// vs. pending or pending vs. pending). All key column types accepted by
+    /// <see cref="ResolveIndexes"/> have matching <see cref="IndexKeyEncoder"/>
+    /// support, so encoder rejection propagates as an unrecoverable error
+    /// rather than being silently skipped (W18 removed the only legitimate
+    /// trigger by rejecting OLE / Attachment / Multi-Value index keys at
+    /// create time).
     /// <para>
     /// Pending rows MUST already have had <c>ApplyConstraintsAsync</c> applied
     /// (auto-increment values resolved, defaults substituted) — the encoder
@@ -9521,7 +9661,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // Encode every effective row's key. Collect into a HashSet keyed
             // by composite key bytes; first collision triggers the throw.
             var seen = new HashSet<byte[]>(ByteArrayEqualityComparer.Instance);
-            bool encoderRejected = false;
 
             for (int r = 0; r < snapshotRowCount; r++)
             {
@@ -9535,12 +9674,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     effectiveRow = snapshot.Rows[r].ItemArray;
                 }
 
-                byte[]? key = EncodeCompositeKeyForUniqueCheck(descriptor, effectiveRow, numericTargetScales);
-                if (key is null)
-                {
-                    encoderRejected = true;
-                    break;
-                }
+                byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, effectiveRow, numericTargetScales);
 
                 if (!seen.Add(key))
                 {
@@ -9548,21 +9682,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. " +
                         "The conflict was detected before any row was written; the table is unchanged.");
                 }
-            }
-
-            if (encoderRejected)
-            {
-                continue;
             }
 
             for (int p = 0; p < pendingCount; p++)
             {
-                byte[]? key = EncodeCompositeKeyForUniqueCheck(descriptor, pendingInsertRows[p], numericTargetScales);
-                if (key is null)
-                {
-                    encoderRejected = true;
-                    break;
-                }
+                byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, pendingInsertRows[p], numericTargetScales);
 
                 if (!seen.Add(key))
                 {
@@ -9572,8 +9696,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 }
             }
 
-            // encoderRejected on pending rows: silently skip — the post-write
-            // check in MaintainIndexesAsync still runs.
             _ = totalRows;
         }
     }
