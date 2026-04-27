@@ -10947,23 +10947,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             {
                 // ── W4-C-6 leaf-merge on underflow ───────────────────
                 // Drop this leaf entirely; surviving siblings absorb the
-                // logical key range. v1 caveats:
-                //   - Bail when dead leaf is the parent's last child
-                //     (would shrink parent.tail_page → ancestor tail_page
-                //     propagation; out of scope).
+                // logical key range. As of W4-C-6-v2 (2026-04-27) the
+                // dead-leaf-is-rightmost case is supported: tail_page is
+                // recomputed on the parent intermediate AND propagated up
+                // every captured ancestor where the parent we mutated was
+                // the rightmost child (see TryStageIntermediateRewrites).
+                // Remaining caveats:
                 //   - Bail when the parent has only one child (removing
                 //     would empty the parent → cascade collapse, out of
-                //     scope).
+                //     scope; recursive intermediate collapse is W4-C-8+).
                 //   - Bail when either leaf-chain neighbour is being
                 //     mutated by another group in this batch (would need
                 //     coordinated pointer/content writes).
                 DescentStep mergeParent = group.Path[group.Path.Count - 1];
                 if (mergeParent.Entries.Count < 2)
-                {
-                    return false;
-                }
-
-                if (mergeParent.TakenIndex == mergeParent.Entries.Count - 1)
                 {
                     return false;
                 }
@@ -11495,6 +11492,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var intermediateRefs = new Dictionary<long, DescentStep>(parentOps.Count * 2);
         var intermediateGrandparent = new Dictionary<long, (long ParentPage, int IndexInParent)>(parentOps.Count * 2);
 
+        // W4-C-6-v2 (2026-04-27) — tail_page propagation. When a per-leaf
+        // splice removes the parent's rightmost child entry (or a leaf
+        // split appends a new rightmost child), the parent intermediate's
+        // tail_page header must be recomputed to point at the NEW rightmost
+        // leaf in the parent's subtree. The change cascades up: any
+        // ancestor whose own rightmost child is the parent we just
+        // modified inherits the new tail value. We record per-intermediate
+        // tail overrides here as we process pages deepest-first so the
+        // shallower intermediates' rebuild step can pick up the inherited
+        // value via the lookup below.
+        var intermediateTailOverrides = new Dictionary<long, long>(parentOps.Count * 2);
+
         // Also: remember each group's path so we can propagate max-key
         // changes upward when a parent's rewrite changes its own max.
         foreach (LeafGroup group in groups.Values)
@@ -11593,8 +11602,35 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             long origNext = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(12, 4));
             long origTail = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(16, 4));
 
+            // W4-C-6-v2: recompute tail_page based on the post-mutation
+            // entry list. For parent-of-leaf intermediates the rightmost
+            // leaf is always the LAST entry's ChildPage. For higher
+            // intermediates we inherit the new tail from the rightmost
+            // child intermediate when we recorded an override for it on a
+            // deeper iteration; otherwise origTail stays. The fix-up only
+            // applies when the page genuinely had a non-zero origTail —
+            // single-leaf-root state (origTail = 0) stays untouched.
+            long newTail = origTail;
+            if (origTail != 0)
+            {
+                long lastChildPage = newEntries[newEntries.Count - 1].ChildPage;
+                if (parentOfLeaf.Contains(deepest))
+                {
+                    newTail = lastChildPage;
+                }
+                else if (intermediateTailOverrides.TryGetValue(lastChildPage, out long inheritedTail))
+                {
+                    newTail = inheritedTail;
+                }
+            }
+
+            if (newTail != origTail)
+            {
+                intermediateTailOverrides[deepest] = newTail;
+            }
+
             byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
-                layout, _pgSz, tdefPage, newEntries, origPrev, origNext, origTail);
+                layout, _pgSz, tdefPage, newEntries, origPrev, origNext, newTail);
             if (rebuilt is null)
             {
                 // W4-C-7 (2026-04-27) — intermediate overflow. Greedy-split

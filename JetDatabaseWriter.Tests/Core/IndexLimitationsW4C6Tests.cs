@@ -146,35 +146,42 @@ public sealed class IndexLimitationsW4C6Tests
     }
 
     [Fact]
-    public async Task DeleteAllInTailLeaf_BailsToW4D_PageCountIncreases()
+    public async Task DeleteAllInTailLeaf_MergesAndPropagatesTailPage_AppendsZeroIndexPages()
     {
-        // Delete all Tag=2 (the rightmost leaf in a 3-leaf tree). W4-C-6
-        // v1 bails when dead leaf is the parent's last child (its
-        // tail_page would shrink → ancestor tail_page propagation, out of
-        // scope). W4-D bulk path runs instead → fresh tree appended →
-        // index page count strictly increases. Data must still be correct
-        // post-bulk-rebuild.
+        // 3-leaf tree on a UNIQUE sparse INT index (1200 rows, Id =
+        // 0, 10, ..., 11990 → bulk builder packs ~401 / 401 / 398 entries
+        // per leaf). Region label is set so that ONLY the rightmost-leaf
+        // rows carry Region = "C" — deleting Region = "C" then descends
+        // every removed key into the rightmost leaf, splice empties it,
+        // and the merge path engages without a concurrent middle-leaf
+        // mutation.
+        //
+        // W4-C-6-v2 (2026-04-27): the parent intermediate (= root) drops
+        // its rightmost child entry AND its tail_page header is recomputed
+        // to point at the surviving (former middle) leaf. Surgical engages
+        // → zero new index pages appended (the orphaned dead leaf is
+        // reclaimed by Compact & Repair).
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
+
+        const int Total = 1200;
+        const int LeftAndMidCount = 802; // matches the bulk builder split
 
         await using (var writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
                 [
-                    new ColumnDefinition("Tag", typeof(int)),
                     new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Region", typeof(string), maxLength: 4),
                 ],
-                [new IndexDefinition("IX_Tag", "Tag")],
+                [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
                 ct);
 
-            var rows = new object[1200][];
-            for (int t = 0; t < 3; t++)
+            var rows = new object[Total][];
+            for (int i = 0; i < Total; i++)
             {
-                for (int i = 0; i < 400; i++)
-                {
-                    rows[(t * 400) + i] = [t, i];
-                }
+                rows[i] = [i * 10, i < LeftAndMidCount ? "AB" : "C"];
             }
 
             await writer.InsertRowsAsync("T", rows, ct);
@@ -182,27 +189,25 @@ public sealed class IndexLimitationsW4C6Tests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
+        const int ExpectedDeletes = Total - LeftAndMidCount; // 398
         await using (var writer = await OpenWriterAsync(stream))
         {
-            int deleted = await writer.DeleteRowsAsync("T", "Tag", 2, ct);
-            Assert.Equal(400, deleted);
+            int deleted = await writer.DeleteRowsAsync("T", "Region", "C", ct);
+            Assert.Equal(ExpectedDeletes, deleted);
         }
 
         int idxAfter = CountIndexPages(stream.ToArray());
-
-        // W4-D appends a fresh tree (≥ 1 leaf + ≥ 1 intermediate page) for
-        // the surviving 800 rows.
-        Assert.True(idxAfter > idxBefore, $"Expected W4-D bulk rebuild to append index pages; before={idxBefore}, after={idxAfter}.");
+        Assert.Equal(idxBefore, idxAfter);
 
         await using var reader = await OpenReaderAsync(stream);
         DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
-        Assert.Equal(800, dt!.Rows.Count);
+        Assert.Equal(LeftAndMidCount, dt!.Rows.Count);
 
-        var tags = dt.Rows.Cast<DataRow>().Select(r => (int)r["Tag"]).ToHashSet();
-        Assert.Contains(0, tags);
-        Assert.Contains(1, tags);
-        Assert.DoesNotContain(2, tags);
+        foreach (DataRow r in dt.Rows)
+        {
+            Assert.Equal("AB", (string)r["Region"]);
+        }
     }
 
     [Fact]
@@ -328,35 +333,42 @@ public sealed class IndexLimitationsW4C6Tests
     }
 
     [Fact]
-    public async Task DeleteAllInOneLeaf_MergesIntoLeftSibling_NoRightLeafExists()
+    public async Task DeleteAllInRightmostLeaf_MergesAndShrinksRoot_AppendsZeroIndexPages()
     {
-        // Two-leaf tree (Tag = 0, 1; 400 each). Deleting Tag=1 empties
-        // the RIGHTMOST leaf — but our v1 caveat bails when deadIdx == last.
-        // So this test verifies the BAIL behaviour for a 2-leaf tree's
-        // tail-leaf delete. (Functional cousin of DeleteAllInTailLeaf, but
-        // with a 2-leaf tree where parent count is exactly 2 and deadIdx 1
-        // is the last → still bails to W4-D.)
+        // Two-leaf tree on a UNIQUE sparse INT index. The bulk builder
+        // packs ~401 entries into the leftmost leaf and ~399 into the
+        // rightmost (split at Id = 4010 for 800 sparse rows on a 4 KiB
+        // page). We label rows so that only the rightmost-leaf rows carry
+        // Region = "B" — deleting Region = "B" then descends EVERY removed
+        // key into the rightmost leaf, splice empties it, and the merge
+        // path engages without a concurrent left-sibling mutation.
+        //
+        // W4-C-6-v2 (2026-04-27): the parent intermediate (= root) drops
+        // its rightmost child entry, leaving a single-entry root pointing
+        // at the surviving (former leftmost) leaf, with tail_page
+        // recomputed to that leaf's page number. Single-entry intermediates
+        // are valid — the seeker descends through their lone child pointer.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
+
+        const int Total = 800;
+        const int LeftLeafCount = 401; // matches the bulk builder split
 
         await using (var writer = await OpenWriterAsync(stream))
         {
             await writer.CreateTableAsync(
                 "T",
                 [
-                    new ColumnDefinition("Tag", typeof(int)),
                     new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Region", typeof(string), maxLength: 4),
                 ],
-                [new IndexDefinition("IX_Tag", "Tag")],
+                [new IndexDefinition("IX_Id", "Id") { IsUnique = true }],
                 ct);
 
-            var rows = new object[800][];
-            for (int t = 0; t < 2; t++)
+            var rows = new object[Total][];
+            for (int i = 0; i < Total; i++)
             {
-                for (int i = 0; i < 400; i++)
-                {
-                    rows[(t * 400) + i] = [t, i];
-                }
+                rows[i] = [i * 10, i < LeftLeafCount ? "A" : "B"];
             }
 
             await writer.InsertRowsAsync("T", rows, ct);
@@ -364,22 +376,23 @@ public sealed class IndexLimitationsW4C6Tests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
+        const int ExpectedDeletes = Total - LeftLeafCount; // 399
         await using (var writer = await OpenWriterAsync(stream))
         {
-            int deleted = await writer.DeleteRowsAsync("T", "Tag", 1, ct);
-            Assert.Equal(400, deleted);
+            int deleted = await writer.DeleteRowsAsync("T", "Region", "B", ct);
+            Assert.Equal(ExpectedDeletes, deleted);
         }
 
         int idxAfter = CountIndexPages(stream.ToArray());
-        Assert.True(idxAfter > idxBefore, $"Tail-leaf merge should bail to W4-D; before={idxBefore}, after={idxAfter}.");
+        Assert.Equal(idxBefore, idxAfter);
 
         await using var reader = await OpenReaderAsync(stream);
         DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
-        Assert.Equal(400, dt!.Rows.Count);
+        Assert.Equal(LeftLeafCount, dt!.Rows.Count);
         foreach (DataRow r in dt.Rows)
         {
-            Assert.Equal(0, (int)r["Tag"]);
+            Assert.Equal("A", (string)r["Region"]);
         }
     }
 

@@ -614,7 +614,7 @@ The items below are **not yet implemented** and are the most likely places to hi
 
 ### Indexes
 - **Indexable key types are limited to scalar columns Microsoft Access itself permits to index:** `BYTE`, `INT`, `LONG`, `MONEY`, `FLOAT`, `DOUBLE`, `DATETIME`, `GUID`, `NUMERIC`, `BINARY`, `TEXT`, and `MEMO`. Indexes over `OLE Object`, `Attachment`, and `Multi-Value (Complex)` columns throw `NotSupportedException`. `TEXT` / `MEMO` keys are encoded with a port of the Jackcess "General Legacy" sort-key encoder (Apache 2.0; see `THIRD-PARTY-NOTICES.md`).
-- **Incremental B-tree maintenance falls back to a full rebuild** when 3+ page splits cascade in a single batch, when a non-parent-of-leaf intermediate page overflows on summary insert, or when an empty-leaf merge would shrink an ancestor's `tail_page`. Cross-leaf change-sets, leaf-merge underflow, and parent-of-leaf intermediate splits (including root reallocation) are handled in place. The full rebuild leaves the old pages orphaned for Compact & Repair to reclaim.
+- **Incremental B-tree maintenance falls back to a full rebuild** when 3+ page splits cascade in a single batch, or when a non-parent-of-leaf intermediate page overflows on summary insert. Cross-leaf change-sets, leaf-merge underflow (including the rightmost-leaf case with `tail_page` cascade up every captured ancestor), and parent-of-leaf intermediate splits (including root reallocation) are handled in place. The full rebuild leaves the old pages orphaned for Compact & Repair to reclaim.
 - **Multi-column primary keys ship the schema only.** The PK B-tree leaf is not maintained on subsequent mutations (single-column PKs are).
 
 ### Primary & foreign keys
