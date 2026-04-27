@@ -229,6 +229,114 @@ public sealed class PrimaryKeyWriterTests
     }
 
     [Fact]
+    public async Task CompositePrimaryKey_OnInsert_ParticipatesInBulkRebuild()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new ColumnDefinition("OrderId", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("LineNo", typeof(int)) { IsPrimaryKey = true },
+                ],
+                ct);
+
+            await writer.InsertRowsAsync(
+                "T",
+                [
+                    new object[] { 5, 1 },
+                    [1, 2],
+                    [3, 1],
+                ],
+                ct);
+        }
+
+        // Multi-column PK leaf is now maintained on bulk insert (W11
+        // composite-key path covers PK uniqueness too).
+        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+    }
+
+    [Fact]
+    public async Task CompositePrimaryKey_OnUpdateAndDelete_LeafReflectsLatestState()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new ColumnDefinition("OrderId", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("LineNo", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("Note", typeof(string), maxLength: 50),
+                ],
+                ct);
+
+            await writer.InsertRowsAsync(
+                "T",
+                [
+                    new object[] { 1, 1, "a" },
+                    [1, 2, "b"],
+                    [2, 1, "c"],
+                ],
+                ct);
+
+            _ = await writer.UpdateRowsAsync(
+                "T",
+                "OrderId",
+                1,
+                new System.Collections.Generic.Dictionary<string, object> { ["Note"] = "updated" },
+                ct);
+
+            _ = await writer.DeleteRowsAsync("T", "LineNo", 1, ct);
+        }
+
+        // After delete the latest (highest-page-number) leaf is the current
+        // root and reports a single remaining entry; older leaves are
+        // orphaned for Compact & Repair.
+        Assert.Equal(1, FindLatestLeafEntryCount(stream.ToArray()));
+    }
+
+    [Fact]
+    public async Task CompositePrimaryKey_SurvivesAddColumn_LeafRebuilt()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new ColumnDefinition("A", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("B", typeof(int)) { IsPrimaryKey = true },
+                ],
+                ct);
+
+            await writer.InsertRowsAsync(
+                "T",
+                [
+                    new object[] { 1, 1 },
+                    [2, 2],
+                ],
+                ct);
+
+            await writer.AddColumnAsync(
+                "T",
+                new ColumnDefinition("C", typeof(string), maxLength: 10),
+                ct);
+        }
+
+        // RewriteTableAsync forwards the composite PK and rebuilds the leaf
+        // for the rewritten table.
+        Assert.Equal(2, FindLatestLeafEntryCount(stream.ToArray()));
+    }
+
+    [Fact]
     public async Task PrimaryKey_SurvivesAddColumn()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
@@ -407,6 +515,21 @@ public sealed class PrimaryKeyWriterTests
         }
 
         return max;
+    }
+
+    private static int FindLatestLeafEntryCount(byte[] fileBytes)
+    {
+        int latest = -1;
+        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        {
+            int o = p * PageSize;
+            if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
+            {
+                latest = p;
+            }
+        }
+
+        return latest < 0 ? 0 : CountLeafEntries(fileBytes, latest * PageSize);
     }
 
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()

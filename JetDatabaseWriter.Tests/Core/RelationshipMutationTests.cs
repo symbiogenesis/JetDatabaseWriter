@@ -186,6 +186,85 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         await writer.RenameRelationshipAsync("AnyName", "anyname", TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task RenameRelationshipAsync_UpdatesTDefLogicalIdxNameCookies()
+    {
+        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+
+        string parent = MakeTableName("RNP");
+        string child = MakeTableName("RNC");
+        string oldName = $"FK_{child}_{parent}";
+        string newName = $"FK2_{child}_{parent}";
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
+
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition(oldName, parent, "Id", child, "ParentId"),
+                TestContext.Current.CancellationToken);
+
+            await writer.RenameRelationshipAsync(oldName, newName, TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        var parentIdx = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        var childIdx = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
+
+        // The TDEF logical-idx name cookie should now reflect the new name on
+        // both sides — neither the old name nor the auto-renamed catalog row
+        // should leave a stale cookie behind.
+        Assert.Single(parentIdx, ix => ix.Kind == IndexKind.ForeignKey && ix.Name == newName);
+        Assert.Single(childIdx, ix => ix.Kind == IndexKind.ForeignKey && ix.Name == newName);
+        Assert.DoesNotContain(parentIdx, ix => ix.Name == oldName);
+        Assert.DoesNotContain(childIdx, ix => ix.Name == oldName);
+    }
+
+    [Fact]
+    public async Task DropRelationshipAsync_ReclaimsTrailingRealIdxSlot()
+    {
+        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+
+        string parent = MakeTableName("DRP");
+        string child = MakeTableName("DRC");
+        string firstRel = $"FK1_{child}_{parent}";
+        string secondRel = $"FK2_{child}_{parent}";
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
+
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition(firstRel, parent, "Id", child, "ParentId"),
+                TestContext.Current.CancellationToken);
+
+            int childRealIdxBefore;
+            await using (var preReader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
+            {
+                IndexMetadata fkBefore = (await preReader.ListIndexesAsync(child, TestContext.Current.CancellationToken))
+                    .Single(ix => ix.Kind == IndexKind.ForeignKey);
+                childRealIdxBefore = fkBefore.RealIndexNumber;
+            }
+
+            await writer.DropRelationshipAsync(firstRel, TestContext.Current.CancellationToken);
+
+            // Re-add a different FK on the same column. With trailing-slot
+            // reclaim it should land on the same real-idx number the dropped
+            // relationship freed; without reclaim it would advance to a
+            // higher slot.
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition(secondRel, parent, "Id", child, "ParentId"),
+                TestContext.Current.CancellationToken);
+
+            await using var postReader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+            IndexMetadata fkAfter = (await postReader.ListIndexesAsync(child, TestContext.Current.CancellationToken))
+                .Single(ix => ix.Kind == IndexKind.ForeignKey);
+            Assert.Equal(childRealIdxBefore, fkAfter.RealIndexNumber);
+        }
+    }
+
     private static string MakeTableName(string prefix) =>
         $"{prefix}_{Guid.NewGuid():N}".Substring(0, Math.Min(18, prefix.Length + 11));
 
