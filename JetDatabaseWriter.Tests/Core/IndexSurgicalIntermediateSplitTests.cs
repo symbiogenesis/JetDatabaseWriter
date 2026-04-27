@@ -21,7 +21,7 @@ using Xunit;
 /// paths so neither path corrupts the index when large multi-level
 /// trees experience cross-leaf mutations.
 /// </summary>
-public sealed class IndexLimitationsW4C7Tests
+public sealed class IndexSurgicalIntermediateSplitTests
 {
     [Fact]
     public async Task LargeKeyMultiLevelTree_BulkInsertThenCrossLeafDelete_DataRoundTrips()

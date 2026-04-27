@@ -19,7 +19,7 @@ using Xunit;
 /// whose natural scale exceeds the declared scale are rounded
 /// half-to-even, mirroring Access semantics.
 /// </summary>
-public sealed class IndexLimitationsW23NumericIncrementalTests
+public sealed class IndexNumericKeyIncrementalTests
 {
     [Fact]
     public async Task ColumnMetadata_DecimalColumn_RoundTripsDeclaredPrecisionAndScale()
