@@ -13,8 +13,10 @@ using System.Collections.Generic;
 /// §4.1 (header), §4.2 (entry-start bitmask), §4.3 (per-entry record), and
 /// §4.5 (tail-page chain).
 /// <para>
-/// Jet4 / ACE only. Bitmask is at <c>0x1B</c> and the first entry is at
-/// <c>0x1E0</c> on every page (matching <see cref="IndexLeafPageBuilder"/>).
+/// Both Jet4 / ACE and Jet3 layouts are emitted via the
+/// <see cref="IndexLeafPageBuilder.LeafPageLayout"/> descriptor passed to
+/// the layout-aware <c>Build</c> overload. W17c (2026-04-26) lifted the
+/// previous Jet4-only restriction.
 /// </para>
 /// <para>
 /// <b>Constraints / not done</b>:
@@ -32,7 +34,7 @@ internal static class IndexBTreeBuilder
     internal const byte PageTypeIntermediate = 0x03;
 
     /// <summary>
-    /// Result of <see cref="Build"/>: the rendered pages (in the order they
+    /// Result of <c>Build</c>: the rendered pages (in the order they
     /// should be appended to the database) and the absolute page number of
     /// the root, which the caller writes into the real-index
     /// <c>first_dp</c> field on the TDEF.
@@ -76,10 +78,23 @@ internal static class IndexBTreeBuilder
         long parentTdefPage,
         IReadOnlyList<IndexLeafPageBuilder.LeafEntry> entries,
         long firstPageNumber)
+        => Build(IndexLeafPageBuilder.LeafPageLayout.Jet4, pageSize, parentTdefPage, entries, firstPageNumber);
+
+    /// <summary>
+    /// Builds a complete index B-tree using the supplied per-format
+    /// <paramref name="layout"/> (Jet3 or Jet4 / ACE). See the parameterless-layout
+    /// overload for the contract.
+    /// </summary>
+    public static BuildResult Build(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<IndexLeafPageBuilder.LeafEntry> entries,
+        long firstPageNumber)
     {
-        if (pageSize <= IndexLeafPageBuilder.Jet4FirstEntryOffset)
+        if (pageSize <= layout.FirstEntryOffset)
         {
-            throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {IndexLeafPageBuilder.Jet4FirstEntryOffset}.");
+            throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {layout.FirstEntryOffset}.");
         }
 
         Guard.NotNull(entries, nameof(entries));
@@ -89,7 +104,7 @@ internal static class IndexBTreeBuilder
             throw new ArgumentOutOfRangeException(nameof(firstPageNumber), "Page number exceeds the 24-bit child-pointer range.");
         }
 
-        int entryAreaSize = pageSize - IndexLeafPageBuilder.Jet4FirstEntryOffset;
+        int entryAreaSize = pageSize - layout.FirstEntryOffset;
 
         // ── Step 1: Pack entries into leaves greedily, in input order, and
         // remember the last entry of each leaf for the level above. Each leaf
@@ -160,7 +175,8 @@ internal static class IndexBTreeBuilder
         {
             long prev = i == 0 ? 0 : firstPageNumber + i - 1;
             long next = i == leafCount - 1 ? 0 : firstPageNumber + i + 1;
-            byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(
+            byte[] leaf = IndexLeafPageBuilder.BuildLeafPage(
+                layout,
                 pageSize,
                 parentTdefPage,
                 leafGroups[i],
@@ -203,6 +219,7 @@ internal static class IndexBTreeBuilder
                 long prev = i == 0 ? 0 : nextFreePage + i - 1;
                 long next = i == levelCount - 1 ? 0 : nextFreePage + i + 1;
                 byte[] page = BuildIntermediatePage(
+                    layout,
                     pageSize,
                     parentTdefPage,
                     groups[i],
@@ -276,6 +293,7 @@ internal static class IndexBTreeBuilder
     }
 
     private static byte[] BuildIntermediatePage(
+        IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
         long parentTdefPage,
         IReadOnlyList<IntermediateEntry> entries,
@@ -299,7 +317,7 @@ internal static class IndexBTreeBuilder
         int prefLen = ComputeIntermediatePrefixLength(entries);
         Wu16(page, 20, prefLen);
 
-        int payloadCursor = IndexLeafPageBuilder.Jet4FirstEntryOffset;
+        int payloadCursor = layout.FirstEntryOffset;
         int payloadLimit = pageSize;
 
         for (int i = 0; i < entries.Count; i++)
@@ -339,10 +357,10 @@ internal static class IndexBTreeBuilder
             // offset relative to the first-entry offset, LSB-first.
             if (i > 0)
             {
-                int bitIndex = entryStart - IndexLeafPageBuilder.Jet4FirstEntryOffset;
-                int byteOff = IndexLeafPageBuilder.Jet4BitmaskOffset + (bitIndex / 8);
+                int bitIndex = entryStart - layout.FirstEntryOffset;
+                int byteOff = layout.BitmaskOffset + (bitIndex / 8);
                 int bit = bitIndex % 8;
-                if (byteOff >= IndexLeafPageBuilder.Jet4FirstEntryOffset)
+                if (byteOff >= layout.FirstEntryOffset)
                 {
                     throw new ArgumentOutOfRangeException(nameof(entries), "Bitmask overflow on intermediate page.");
                 }
