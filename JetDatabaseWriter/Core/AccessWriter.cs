@@ -11423,12 +11423,57 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // ReplaceAt + InsertAfter for a split) coexist in declaration order.
         var parentOps = new Dictionary<long, List<IntermediateOp>>();
 
+        // W4-C-8+ run-stitching map: each emptying leaf records its
+        // (prev, next) sibling pointers so the post-loop boundary pass
+        // can correctly patch the surviving pages of contiguous emptying
+        // runs (skipping over every dead leaf in the run).
+        var emptyingLeafSiblings = new Dictionary<long, (long Prev, long Next)>();
+
         // For ascending-up propagation when a parent's max key changes, we
         // need to know which child-index in the GRANDPARENT this parent
         // occupies. The captured DescentStep for the grandparent already
         // carries TakenIndex pointing at this parent's slot.
 
         long nextAllocatedPageNumber = _stream.Length / _pgSz;
+
+        // ── Pre-pass: classify which leaves will empty out so the W4-C-6
+        // chain-detach logic below can tolerate a contiguous run of
+        // emptying leaves. Without this set the
+        // `groups.ContainsKey(neighbor)` guard bails on every internal
+        // group whose immediate sibling is also being emptied — which is
+        // exactly the workload required to engage the W4-C-8+ recursive
+        // intermediate-collapse path. With it, when both neighbours are
+        // also empty-targets we simply skip patching their pointer-bytes
+        // (they're being orphaned together; no surviving page needs to
+        // skip them).
+        var emptyingLeaves = new HashSet<long>();
+        foreach (LeafGroup pre in groups.Values)
+        {
+            byte[] preBytes = await ReadPageAsync(pre.LeafPage, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (preBytes[0] != IndexLeafPageBuilder.PageTypeLeaf)
+                {
+                    continue;
+                }
+
+                List<IndexLeafIncremental.DecodedEntry> preExisting = IndexLeafIncremental.DecodeEntries(layout, preBytes, _pgSz);
+                if (preExisting.Count == 0)
+                {
+                    continue;
+                }
+
+                List<IndexLeafPageBuilder.LeafEntry>? preSpliced = IndexLeafIncremental.Splice(preExisting, pre.Adds, pre.RemovePtrs);
+                if (preSpliced is { Count: 0 })
+                {
+                    emptyingLeaves.Add(pre.LeafPage);
+                }
+            }
+            finally
+            {
+                ReturnPage(preBytes);
+            }
+        }
 
         foreach (LeafGroup group in groups.Values)
         {
@@ -11488,34 +11533,53 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     return false;
                 }
 
-                if (leafPrev > 0 && groups.ContainsKey(leafPrev))
+                // W4-C-8+ (2026-04-27): a contiguous run of emptying
+                // leaves is allowed; we skip the pair-wise chain-detach
+                // here for any neighbour that is also being orphaned.
+                // The surviving boundary pointers are patched once after
+                // the per-group loop completes (see "boundary stitching"
+                // pass below) so they correctly skip the entire run.
+                // For surviving neighbours that are ALSO in `groups`
+                // (being mutated for content) we still bail, because
+                // merge has no way to coordinate a content rewrite +
+                // pointer patch on the same page.
+                bool prevAlsoEmptying = leafPrev > 0 && emptyingLeaves.Contains(leafPrev);
+                bool nextAlsoEmptying = leafNext > 0 && emptyingLeaves.Contains(leafNext);
+
+                if (leafPrev > 0 && groups.ContainsKey(leafPrev) && !prevAlsoEmptying)
                 {
                     return false;
                 }
 
-                if (leafNext > 0 && groups.ContainsKey(leafNext))
+                if (leafNext > 0 && groups.ContainsKey(leafNext) && !nextAlsoEmptying)
                 {
                     return false;
                 }
 
-                // Stage chain detach. Two patches at most; both are pure
-                // pointer-byte writes on neighbour pages that are NOT in
-                // any other group (validated above).
-                if (leafPrev > 0)
+                // Per-group pair-wise patches happen ONLY when both
+                // surviving neighbours are non-emptying (the standalone
+                // dead-leaf case shipped in W4-C-6 v1/v2). Runs of two
+                // or more emptying leaves are stitched together below.
+                if (!prevAlsoEmptying && !nextAlsoEmptying)
                 {
-                    if (!leafPrevPointerPatches.TryAdd(leafPrev, leafNext))
+                    if (leafPrev > 0)
                     {
-                        return false;
+                        if (!leafPrevPointerPatches.TryAdd(leafPrev, leafNext))
+                        {
+                            return false;
+                        }
+                    }
+
+                    if (leafNext > 0)
+                    {
+                        if (!leafNextPointerPatches.TryAdd(leafNext, leafPrev))
+                        {
+                            return false;
+                        }
                     }
                 }
 
-                if (leafNext > 0)
-                {
-                    if (!leafNextPointerPatches.TryAdd(leafNext, leafPrev))
-                    {
-                        return false;
-                    }
-                }
+                emptyingLeafSiblings[group.LeafPage] = (leafPrev, leafNext);
 
                 // Stage parent Remove op. ApplyIntermediateOps drops the
                 // entry at OriginalIndex; the dead leaf page is orphaned
@@ -11660,6 +11724,62 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     NewDataPage: pLast.DataPage,
                     NewDataRow: pLast.DataRow,
                     NewChildPage: pageNumbers[p]));
+            }
+        }
+
+        // ── W4-C-8+ run-boundary stitching ───────────────────────────
+        // For each contiguous run of emptying leaves with at least one
+        // surviving boundary on either side, patch the surviving page's
+        // sibling pointer to skip OVER the entire run. Per-group patches
+        // above only fire for standalone empty leaves; runs of 2+ are
+        // stitched here.
+        foreach ((long deadPage, (long deadPrev, long deadNext)) in emptyingLeafSiblings)
+        {
+            // Only act at run boundaries: this dead leaf has at least one
+            // non-emptying immediate neighbour OR a chain terminus (0).
+            bool prevIsLeftBoundary = deadPrev == 0 || !emptyingLeafSiblings.ContainsKey(deadPrev);
+            bool nextIsRightBoundary = deadNext == 0 || !emptyingLeafSiblings.ContainsKey(deadNext);
+
+            if (!prevIsLeftBoundary && !nextIsRightBoundary)
+            {
+                continue; // strictly internal to a run; nothing to do
+            }
+
+            // Walk the run rightwards from deadPage to find the first
+            // non-emptying page (or 0 = chain terminus).
+            long surv = deadNext;
+            while (surv > 0 && emptyingLeafSiblings.ContainsKey(surv))
+            {
+                surv = emptyingLeafSiblings[surv].Next;
+            }
+
+            // Walk leftwards similarly.
+            long survLeft = deadPrev;
+            while (survLeft > 0 && emptyingLeafSiblings.ContainsKey(survLeft))
+            {
+                survLeft = emptyingLeafSiblings[survLeft].Prev;
+            }
+
+            // Apply the patches at run boundaries (idempotent — multiple
+            // dead leaves in the same run all compute the same survLeft /
+            // survRight, so TryAdd may legitimately collide; treat the
+            // collision as success when the staged value matches).
+            if (prevIsLeftBoundary && deadPrev > 0 && !groups.ContainsKey(deadPrev))
+            {
+                if (!leafPrevPointerPatches.TryAdd(deadPrev, surv) &&
+                    leafPrevPointerPatches[deadPrev] != surv)
+                {
+                    return false;
+                }
+            }
+
+            if (nextIsRightBoundary && deadNext > 0 && !groups.ContainsKey(deadNext))
+            {
+                if (!leafNextPointerPatches.TryAdd(deadNext, survLeft) &&
+                    leafNextPointerPatches[deadNext] != survLeft)
+                {
+                    return false;
+                }
             }
         }
 
@@ -12200,9 +12320,41 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             if (newEntries.Count == 0)
             {
-                // Intermediate emptied out — would require recursive removal
-                // from grandparent. W4-C-6 / collapse territory.
-                return false;
+                // ── W4-C-8+ recursive intermediate collapse on cascading
+                // underflow (2026-04-27) ────────────────────────────────
+                // A multi-group delete batch removed every child of this
+                // intermediate. Cascade the removal up: stage a Remove op
+                // on the grandparent for the slot that referenced this
+                // page, then re-enqueue the grandparent so the loop picks
+                // up the new ops on a subsequent pass. The dead intermediate
+                // page is orphaned (same disposal model as W4-C-6 dead
+                // leaves and W4-D bulk-rebuild orphans — Compact & Repair
+                // sweeps it). When this collapse happens to the root (no
+                // grandparent) the entire tree has emptied; we still bail
+                // because emitting a fresh empty single-leaf root would
+                // require allocating a leaf page and patching first_dp,
+                // which the W4-D bulk path already does correctly.
+                if (!intermediateGrandparent.TryGetValue(deepest, out (long ParentPage, int IndexInParent) gpCollapse))
+                {
+                    return false;
+                }
+
+                AddIntermediateOp(parentOps, gpCollapse.ParentPage, new IntermediateOp(
+                    OriginalIndex: gpCollapse.IndexInParent,
+                    Type: IntermediateOpType.Remove,
+                    NewKey: [],
+                    NewDataPage: 0,
+                    NewDataRow: 0,
+                    NewChildPage: 0));
+
+                if (!pending.Contains(gpCollapse.ParentPage))
+                {
+                    pending.Add(gpCollapse.ParentPage);
+                }
+
+                // No staged rewrite for `deepest`: it's orphaned. Skip the
+                // rest of the per-page rebuild path.
+                continue;
             }
 
             byte[] origBytes = refStep.PageBytes;
@@ -12214,10 +12366,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // entry list. For parent-of-leaf intermediates the rightmost
             // leaf is always the LAST entry's ChildPage. For higher
             // intermediates we inherit the new tail from the rightmost
-            // child intermediate when we recorded an override for it on a
-            // deeper iteration; otherwise origTail stays. The fix-up only
-            // applies when the page genuinely had a non-zero origTail —
-            // single-leaf-root state (origTail = 0) stays untouched.
+            // child intermediate — first checking the override map (set
+            // when that child was rewritten or split earlier in this
+            // batch), then falling back to GetEffectiveTailPageAsync
+            // which reads the live or staged page header. The live-page
+            // fallback matters for the W4-C-8+ recursive-collapse case:
+            // when a Remove drops the previous rightmost child entry
+            // entirely, the new rightmost child may be an untouched
+            // intermediate whose tail is only available on disk. The
+            // fix-up only applies when the page genuinely had a non-zero
+            // origTail — single-leaf-root state (origTail = 0) stays
+            // untouched.
             long newTail = origTail;
             if (origTail != 0)
             {
@@ -12226,9 +12385,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 {
                     newTail = lastChildPage;
                 }
-                else if (intermediateTailOverrides.TryGetValue(lastChildPage, out long inheritedTail))
+                else
                 {
-                    newTail = inheritedTail;
+                    newTail = await GetEffectiveTailPageAsync(
+                        lastChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
+                        .ConfigureAwait(false);
                 }
             }
 

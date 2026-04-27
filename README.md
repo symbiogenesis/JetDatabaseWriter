@@ -612,10 +612,6 @@ All password-protected formats produced by Microsoft Access from Access 97 throu
 
 The items below are **not yet implemented** and are the most likely places to hit a wall.
 
-### Indexes
-- **Indexable key types match what Microsoft Access itself permits to index:** `BYTE`, `INT`, `LONG`, `MONEY`, `FLOAT`, `DOUBLE`, `DATETIME`, `GUID`, `NUMERIC`, `BINARY`, `TEXT`, and `MEMO`. Indexes over `OLE Object`, `Attachment`, and `Multi-Value (Complex)` columns are intentionally out of scope — Access itself does not support indexing those types — and throw `NotSupportedException`. `TEXT` / `MEMO` keys are encoded with a port of the Jackcess "General Legacy" sort-key encoder (Apache 2.0; see `THIRD-PARTY-NOTICES.md`).
-- **Incremental B-tree maintenance handles every shape in place.** Cross-leaf change-sets, leaf-merge underflow (including the rightmost-leaf case with `tail_page` cascade up every captured ancestor), recursive intermediate splits at any depth (parent-of-leaf, mid-level, and root reallocation), and N-way leaf or intermediate splits of any width are applied surgically without rebuilding the tree. The remaining fall-back to a full rebuild is the cascading-underflow case where a multi-group delete batch would empty an entire intermediate page; the rebuild leaves the old pages orphaned for Compact & Repair to reclaim.
-
 ### Primary & foreign keys
 - **TDEF must fit on one page** after FK entries are appended, otherwise `NotSupportedException`.
 - **`DropRelationshipAsync` only reclaims trailing real-idx slots.** A mid-array orphan (e.g. drop the older of two relationships on the same TDEF) is left in place because mid-array compaction would require renumbering `rel_idx_num` on every other table that points at the slot. Reclaimed by Access on the next Compact & Repair pass.
