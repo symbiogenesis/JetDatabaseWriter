@@ -8722,15 +8722,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         IReadOnlyList<(RowLocation Loc, object[] Row)>? deletedRows,
         CancellationToken cancellationToken)
     {
-        if (_format == DatabaseFormat.Jet3Mdb)
-        {
-            // W17c: Jet3 live maintenance flows through the bulk-rebuild path
-            // (MaintainIndexesAsync) only. Threading the incremental fast paths
-            // (W4-C single-leaf splice + W4 sub-phase D multi-level rebuild)
-            // through Jet3 is W17d work — same disposal model would apply, the
-            // bulk path is just simpler to validate first.
-            return false;
-        }
+        // W17d (2026-04-26): Jet3 (.mdb Access 97) participates in the
+        // incremental fast paths via the per-format LeafPageLayout descriptor
+        // (page size 2048, bitmask at 0x16, first entry at 0xF8) and the §3.1
+        // 39-byte real-idx physical descriptor (first_dp at phys+34 instead
+        // of phys+38). The change-set encode + splice + rebuild logic is
+        // unchanged; only the layout-dependent byte offsets and page builder
+        // calls fork on `jet3`. Same disposal model as Jet4 — old leaf /
+        // intermediate pages are orphaned and reclaimed by Access on
+        // Compact & Repair.
+        bool jet3 = _format == DatabaseFormat.Jet3Mdb;
+        IndexLeafPageBuilder.LeafPageLayout layout = jet3
+            ? IndexLeafPageBuilder.LeafPageLayout.Jet3
+            : IndexLeafPageBuilder.LeafPageLayout.Jet4;
 
         int addCount = insertedRows?.Count ?? 0;
         int delCount = deletedRows?.Count ?? 0;
@@ -8763,7 +8767,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        const int RealIdxPhysSz = 52;
+        // §3.1 per-format real-idx physical descriptor sizes (W17a probe-confirmed for Jet3).
+        // Jet4/ACE: 52 bytes — unknown(4) + col_map(30) + used_pages(4) + first_dp(4) + flags(1) + unknown(9).
+        // Jet3:     39 bytes — unknown(4) + col_map(30) + first_dp(4) + flags(1) — no used_pages slot.
+        int realIdxPhysSz = jet3 ? 39 : 52;
+        int physFirstDpOff = jet3 ? 34 : 38;
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
         int namePos = colStart + (numCols * _colDescSz);
         for (int i = 0; i < numCols; i++)
@@ -8780,8 +8788,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var slots = new List<RealIdxEntry>(numRealIdx);
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            int phys = realIdxDescStart + (ri * RealIdxPhysSz);
-            if (phys + RealIdxPhysSz > tdefBuffer.Length)
+            int phys = realIdxDescStart + (ri * realIdxPhysSz);
+            if (phys + realIdxPhysSz > tdefBuffer.Length)
             {
                 return false;
             }
@@ -8805,7 +8813,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            slots.Add(new RealIdxEntry(keyCols, phys + 4 + 30 + 4, IsUnique: false));
+            slots.Add(new RealIdxEntry(keyCols, phys + physFirstDpOff, IsUnique: false));
         }
 
         if (slots.Count == 0)
@@ -8908,7 +8916,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     return false;
                 }
 
-                long leftmostLeaf = await DescendToLeftmostLeafAsync(firstDp, cancellationToken).ConfigureAwait(false);
+                long leftmostLeaf = await DescendToLeftmostLeafAsync(layout, firstDp, cancellationToken).ConfigureAwait(false);
                 if (leftmostLeaf <= 0)
                 {
                     return false;
@@ -8941,7 +8949,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         return false;
                     }
 
-                    allExisting.AddRange(IndexLeafIncremental.DecodeEntries(leaf, _pgSz));
+                    allExisting.AddRange(IndexLeafIncremental.DecodeEntries(layout, leaf, _pgSz));
                     walkPage = IndexLeafIncremental.ReadNextLeafPage(leaf);
                 }
 
@@ -8955,7 +8963,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 IndexBTreeBuilder.BuildResult mlBuild;
                 try
                 {
-                    mlBuild = IndexBTreeBuilder.Build(_pgSz, tdefPage, splicedAll, firstNewPage);
+                    mlBuild = IndexBTreeBuilder.Build(layout, _pgSz, tdefPage, splicedAll, firstNewPage);
                 }
                 catch (ArgumentOutOfRangeException)
                 {
@@ -8972,14 +8980,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            List<IndexLeafIncremental.DecodedEntry> existing = IndexLeafIncremental.DecodeEntries(rootPage, _pgSz);
+            List<IndexLeafIncremental.DecodedEntry> existing = IndexLeafIncremental.DecodeEntries(layout, rootPage, _pgSz);
             List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(existing, addEntries, removePtrs);
             if (spliced is null)
             {
                 return false;
             }
 
-            byte[]? newLeaf = IndexLeafIncremental.TryRebuildLeaf(_pgSz, tdefPage, spliced);
+            byte[]? newLeaf = IndexLeafIncremental.TryRebuildLeaf(layout, _pgSz, tdefPage, spliced);
             if (newLeaf is null)
             {
                 return false;
@@ -9010,6 +9018,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// cap), so the caller can fall back to the bulk-rebuild path.
     /// </summary>
     private async ValueTask<long> DescendToLeftmostLeafAsync(long rootPage, CancellationToken cancellationToken)
+        => await DescendToLeftmostLeafAsync(IndexLeafPageBuilder.LeafPageLayout.Jet4, rootPage, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Layout-aware overload of <see cref="DescendToLeftmostLeafAsync(long, CancellationToken)"/>
+    /// — needed so the Jet3 incremental path reads intermediate-page entries
+    /// at offset <c>0xF8</c> with the bitmask at <c>0x16</c> instead of the
+    /// Jet4 offsets <c>0x1E0</c> / <c>0x1B</c>.
+    /// </summary>
+    private async ValueTask<long> DescendToLeftmostLeafAsync(IndexLeafPageBuilder.LeafPageLayout layout, long rootPage, CancellationToken cancellationToken)
     {
         long current = rootPage;
         for (int depth = 0; depth < 16; depth++)
@@ -9036,7 +9053,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return 0;
             }
 
-            long firstChild = IndexLeafIncremental.ReadFirstChildPointer(page, _pgSz);
+            long firstChild = IndexLeafIncremental.ReadFirstChildPointer(layout, page, _pgSz);
             if (firstChild <= 0)
             {
                 return 0;
@@ -9151,10 +9168,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
     {
         var result = new List<UniqueIndexDescriptor>();
-        if (_format == DatabaseFormat.Jet3Mdb)
-        {
-            return result;
-        }
+
+        // §3.1 / §3.2 per-format sizes + offsets (W17a probe-confirmed for Jet3,
+        // W17d wires Jet3 into the W15 pre-write unique check so the
+        // incremental fast path no longer relies on the W11 post-write check
+        // inside MaintainIndexesAsync to detect duplicates).
+        bool jet3 = _format == DatabaseFormat.Jet3Mdb;
+        int realIdxPhysSz = jet3 ? 39 : 52;
+        int logIdxEntrySz = jet3 ? 20 : 28;
+        int physFlagsOff = jet3 ? 38 : 42;
+        int logIndexNum2Off = jet3 ? 4 : 8;
+        int logIndexTypeOff = jet3 ? 19 : 23;
 
         byte[] tdefPageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] tdefBuffer;
@@ -9175,8 +9199,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return result;
         }
 
-        const int RealIdxPhysSz = 52;
-        const int LogIdxEntrySz = 28;
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
         int namePos = colStart + (numCols * _colDescSz);
         for (int i = 0; i < numCols; i++)
@@ -9188,7 +9210,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int realIdxDescStart = namePos;
-        int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
+        int logIdxStart = realIdxDescStart + (numRealIdx * realIdxPhysSz);
 
         // Decode every real-idx slot's key columns + flag bit. Reuses the
         // RealIdxEntry shape from MaintainIndexesAsync; FirstDpOffset is
@@ -9197,8 +9219,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var realIdxSlots = new Dictionary<int, RealIdxEntry>();
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            int phys = realIdxDescStart + (ri * RealIdxPhysSz);
-            if (phys + RealIdxPhysSz > tdefBuffer.Length)
+            int phys = realIdxDescStart + (ri * realIdxPhysSz);
+            if (phys + realIdxPhysSz > tdefBuffer.Length)
             {
                 break;
             }
@@ -9222,27 +9244,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            realIdxSlots[ri] = new RealIdxEntry(keyCols, FirstDpOffset: 0, IsUnique: (tdefBuffer[phys + 42] & 0x01) != 0);
+            realIdxSlots[ri] = new RealIdxEntry(keyCols, FirstDpOffset: 0, IsUnique: (tdefBuffer[phys + physFlagsOff] & 0x01) != 0);
         }
 
         // Walk the logical-idx entries to (a) promote any real-idx that backs a
         // PK logical-idx to unique, and (b) capture a best-effort name for each
         // unique real-idx (first logical-idx referencing it wins).
-        int logIdxNamesStart = logIdxStart + (numIdx * LogIdxEntrySz);
+        int logIdxNamesStart = logIdxStart + (numIdx * logIdxEntrySz);
         List<string> logIdxNames = ReadLogicalIdxNames(tdefBuffer, logIdxNamesStart, numIdx);
 
         var pkRealIdxNums = new HashSet<int>();
         var nameByRealIdx = new Dictionary<int, string>();
         for (int li = 0; li < numIdx; li++)
         {
-            int entryStart = logIdxStart + (li * LogIdxEntrySz);
-            if (entryStart + LogIdxEntrySz > tdefBuffer.Length)
+            int entryStart = logIdxStart + (li * logIdxEntrySz);
+            if (entryStart + logIdxEntrySz > tdefBuffer.Length)
             {
                 break;
             }
 
-            int realIdxNum = Ri32(tdefBuffer, entryStart + 8);
-            byte indexType = tdefBuffer[entryStart + 23];
+            int realIdxNum = Ri32(tdefBuffer, entryStart + logIndexNum2Off);
+            byte indexType = tdefBuffer[entryStart + logIndexTypeOff];
             if (indexType == (byte)IndexKind.PrimaryKey)
             {
                 pkRealIdxNums.Add(realIdxNum);

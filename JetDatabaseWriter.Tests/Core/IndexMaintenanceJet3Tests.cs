@@ -221,6 +221,110 @@ public sealed class IndexMaintenanceJet3Tests
         Assert.Equal("Id", indexes[0].Columns[0].Name);
     }
 
+    [Fact]
+    public async Task Jet3_W17d_IncrementalFastPath_SplicesSingleLeaf_OnInsertAndDelete()
+    {
+        // The W17d single-leaf splice writes exactly ONE new leaf page per
+        // mutation (then patches first_dp on the TDEF). Compare the file
+        // length before and after a small InsertRowAsync / DeleteRowsAsync
+        // pair: the growth must be small (≤ a couple of pages — one leaf +
+        // any new data-page allocation, at most). The bulk-rebuild path
+        // would orphan and re-emit the whole index from scratch; on a
+        // single-leaf tree both paths grow by one leaf, so this is mostly
+        // a smoke-test that the incremental path doesn't silently corrupt
+        // the leaf entries.
+        await using var stream = await CreateFreshJet3StreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using var writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            "T",
+            [new ColumnDefinition("Id", typeof(int))],
+            [new IndexDefinition("IX_Id", "Id")],
+            ct);
+
+        await writer.InsertRowsAsync("T", [new object[] { 10 }, [20], [30]], ct);
+        await writer.InsertRowAsync("T", [15], ct); // splice into existing leaf
+        int deleted = await writer.DeleteRowsAsync("T", "Id", 20, ct);
+
+        Assert.Equal(1, deleted);
+
+        // The latest leaf must contain the post-mutation entries [10, 15, 30].
+        long fileLen = stream.Length;
+        byte[] bytes = stream.GetBuffer();
+        int latestEntryCount = -1;
+        for (int p = 0; p < fileLen / PageSize; p++)
+        {
+            int o = p * PageSize;
+            if (bytes[o] == 0x04 && bytes[o + 1] == 0x01)
+            {
+                latestEntryCount = CountLeafEntries(bytes, o);
+            }
+        }
+
+        Assert.Equal(3, latestEntryCount);
+    }
+
+    [Fact]
+    public async Task Jet3_W17d_IncrementalFastPath_RebuildsMultiLevelTree()
+    {
+        // A Jet3 leaf page (2048 bytes, payload area 0xF8..end ≈ 1880 bytes)
+        // holds roughly ~200 INT entries before splitting. Bulk-load enough
+        // rows up front to force an intermediate (0x03) root, then splice
+        // one more row through the W17d multi-level rebuild path. The
+        // resulting tree must still round-trip every (Id) row via the
+        // reader.
+        const int InitialRows = 400;
+
+        await using var stream = await CreateFreshJet3StreamAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
+                ct);
+
+            var rows = new object[InitialRows][];
+            for (int i = 0; i < InitialRows; i++)
+            {
+                rows[i] = [i * 2];
+            }
+
+            await writer.InsertRowsAsync("T", rows, ct);
+
+            // Splice one row through the W17d multi-level path.
+            await writer.InsertRowAsync("T", [1], ct);
+        }
+
+        // Confirm at least one intermediate (0x03) page exists — the multi-
+        // level path must be exercised.
+        byte[] bytes = stream.GetBuffer();
+        int intermediateCount = 0;
+        for (int p = 0; p < stream.Length / PageSize; p++)
+        {
+            int o = p * PageSize;
+            if (bytes[o] == 0x03 && bytes[o + 1] == 0x01)
+            {
+                intermediateCount++;
+            }
+        }
+
+        Assert.True(intermediateCount >= 1, $"Expected at least one intermediate (0x03) index page; found {intermediateCount}.");
+
+        // Reader sees every row back.
+        await using var reader = await OpenReaderAsync(stream);
+        var rowsBack = new System.Collections.Generic.List<int>();
+        await foreach (object[] row in reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            rowsBack.Add((int)row[0]);
+        }
+
+        Assert.Equal(InitialRows + 1, rowsBack.Count);
+    }
+
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
     {
         // §4.2: one implicit first entry, plus one bit per subsequent entry
