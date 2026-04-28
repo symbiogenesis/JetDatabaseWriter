@@ -16,6 +16,7 @@ using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Internal.Transactions;
 using JetDatabaseWriter.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
@@ -65,6 +66,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly string? _lockFileMachineName;
     private readonly bool _useByteRangeLocks;
     private readonly int _lockTimeoutMilliseconds;
+    private readonly int _maxTransactionPageBudget;
     private readonly ReaderWriterLockSlim _stateLock = new(LockRecursionPolicy.NoRecursion);
 
     // Agile re-encryption context. When non-null, the underlying _stream is an
@@ -85,6 +87,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         new(StringComparer.OrdinalIgnoreCase);
 
     private LockFileSlotWriter? _lockFileSlot;
+
+    // Active explicit transaction. We dispose of any in-flight transaction's
+    // journal explicitly in DisposeAsync (see below); CA2213 cannot see that
+    // because we mark the transaction terminated rather than calling its
+    // public DisposeAsync (which would re-enter the writer).
+#pragma warning disable CA2213
+    private JetTransaction? _activeTransaction;
+#pragma warning restore CA2213
     private long _cachedInsertTDefPage = -1;
     private long _cachedInsertPageNumber = -1;
 
@@ -99,6 +109,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         string? lockFileMachineName,
         bool useByteRangeLocks,
         int lockTimeoutMilliseconds,
+        int maxTransactionPageBudget,
         Stream? outerEncryptedStream = null,
         bool outerEncryptedLeaveOpen = false,
         bool isAgileEncryptedRewrap = false)
@@ -111,6 +122,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         _lockFileMachineName = lockFileMachineName;
         _useByteRangeLocks = useByteRangeLocks;
         _lockTimeoutMilliseconds = lockTimeoutMilliseconds;
+        _maxTransactionPageBudget = maxTransactionPageBudget;
         _outerEncryptedStream = outerEncryptedStream;
         _outerEncryptedLeaveOpen = outerEncryptedLeaveOpen;
         _isAgileEncryptedRewrap = isAgileEncryptedRewrap;
@@ -237,6 +249,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         options.LockFileMachineName,
                         options.UseByteRangeLocks,
                         options.LockTimeoutMilliseconds,
+                        options.MaxTransactionPageBudget,
                         outerEncryptedStream: wrapped,
                         outerEncryptedLeaveOpen: leaveOpen,
                         isAgileEncryptedRewrap: true);
@@ -259,7 +272,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 options.LockFileUserName,
                 options.LockFileMachineName,
                 options.UseByteRangeLocks,
-                options.LockTimeoutMilliseconds);
+                options.LockTimeoutMilliseconds,
+                options.MaxTransactionPageBudget);
         }
         catch
         {
@@ -4678,12 +4692,167 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return EncryptionConverter.ApplyEncryption(plaintext, effectiveTarget, newPwd);
     }
 
+    /// <summary>
+    /// Begins an explicit page-buffered transaction against this writer. While
+    /// the returned <see cref="JetTransaction"/> is active, every page-write
+    /// performed by this writer is journaled in memory instead of flushed to
+    /// the database file. <see cref="JetTransaction.CommitAsync"/> atomically
+    /// replays the journal; <see cref="JetTransaction.RollbackAsync"/> (and
+    /// <see cref="JetTransaction.DisposeAsync"/> on an uncommitted transaction)
+    /// discards it, leaving the file in its pre-transaction state.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The newly-started transaction.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when a transaction is already active on this writer (only one
+    /// concurrent transaction is supported per <see cref="AccessWriter"/>).
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
+    public async ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
+    {
+        if (_disposed)
+        {
+            throw new ObjectDisposedException(nameof(AccessWriter));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        await IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_activeTransaction is not null)
+            {
+                throw new InvalidOperationException(
+                    "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
+            }
+
+            long baseLength = _stream.Length;
+            var journal = new PageJournal(baseLength, PageSize, _maxTransactionPageBudget);
+            var tx = new JetTransaction(this, journal);
+            ActiveJournal = journal;
+            _activeTransaction = tx;
+            return tx;
+        }
+        finally
+        {
+            _ = IoGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Commits the supplied <paramref name="transaction"/>: detaches the
+    /// journal from the writer and replays each buffered page (in ascending
+    /// page-number order) through the normal page-write pipeline so that
+    /// per-page encryption and cooperative byte-range locks are honoured.
+    /// </summary>
+    internal async ValueTask CommitTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
+    {
+        Guard.NotNull(transaction, nameof(transaction));
+
+        if (_disposed)
+        {
+            throw new ObjectDisposedException(nameof(AccessWriter));
+        }
+
+        PageJournal journal;
+        await IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (transaction.IsTerminated)
+            {
+                throw new InvalidOperationException("The transaction has already been committed or rolled back.");
+            }
+
+            if (!ReferenceEquals(_activeTransaction, transaction))
+            {
+                throw new InvalidOperationException("The transaction is not active on this writer.");
+            }
+
+            journal = transaction.Journal;
+
+            // Detach the journal first so the page-write loop below routes
+            // straight to disk (otherwise WritePageAsync would re-journal the
+            // same bytes back into the journal we are draining).
+            ActiveJournal = null;
+            _activeTransaction = null;
+        }
+        finally
+        {
+            _ = IoGate.Release();
+        }
+
+        try
+        {
+            foreach (KeyValuePair<long, byte[]> entry in journal.EnumerateInOrder())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await WritePageAsync(entry.Key, entry.Value, cancellationToken).ConfigureAwait(false);
+            }
+
+            transaction.MarkCommitted();
+        }
+        catch
+        {
+            // Mid-commit failure: the on-disk file may now be partially
+            // mutated. Mark the transaction terminated so the caller cannot
+            // commit again, but propagate the original exception.
+            transaction.MarkRolledBack();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Rolls back the supplied <paramref name="transaction"/>: discards the
+    /// in-memory journal without touching the database file.
+    /// </summary>
+    internal async ValueTask RollbackTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
+    {
+        Guard.NotNull(transaction, nameof(transaction));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Allow rollback during dispose: skip the disposed-check so a
+        // JetTransaction.DisposeAsync after writer-dispose is a quiet no-op
+        // when the writer has already cleaned up the active transaction.
+        await IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (transaction.IsTerminated)
+            {
+                throw new InvalidOperationException("The transaction has already been committed or rolled back.");
+            }
+
+            if (!ReferenceEquals(_activeTransaction, transaction))
+            {
+                throw new InvalidOperationException("The transaction is not active on this writer.");
+            }
+
+            ActiveJournal = null;
+            _activeTransaction = null;
+            transaction.MarkRolledBack();
+        }
+        finally
+        {
+            _ = IoGate.Release();
+        }
+    }
+
     /// <inheritdoc/>
     public override async ValueTask DisposeAsync()
     {
         if (_disposed)
         {
             return;
+        }
+
+        // Drop any in-flight transaction so its journal does not survive
+        // dispose. Nothing has been written to disk for an uncommitted
+        // transaction, so this is equivalent to an implicit rollback.
+        if (_activeTransaction is { } pending)
+        {
+            ActiveJournal = null;
+            _activeTransaction = null;
+            pending.MarkRolledBack();
         }
 
         if (_useLockFile)

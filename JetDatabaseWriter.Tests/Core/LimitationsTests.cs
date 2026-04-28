@@ -706,12 +706,11 @@ public sealed class LimitationsTests : IDisposable
     }
 
     [Fact]
-    public void Concurrency_AccessWriter_DoesNotExposePageOrRowLockingApi()
+    public void Concurrency_AccessWriter_DoesNotExposeRowLockingApi()
     {
-        // README: "the writer does NOT implement page-level locking."
+        // Page-level byte-range locks (Phase 2) and explicit transactions
+        // (Phase 3) are now shipped — only row-level locking remains absent.
         AssertNoMethodMatching(typeof(IAccessWriter), "Lock");
-        AssertNoMethodMatching(typeof(IAccessWriter), "Transaction");
-        AssertNoMethodMatching(typeof(AccessWriter), "BeginTransaction");
         AssertNoMethodMatching(typeof(AccessWriter), "AcquirePageLock");
         AssertNoMethodMatching(typeof(AccessWriter), "AcquireRowLock");
     }
