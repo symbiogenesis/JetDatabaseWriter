@@ -218,7 +218,7 @@ public sealed class PrimaryKeyWriterTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 5 },
+                    [5],
                     [1],
                     [3],
                 ],
@@ -249,7 +249,7 @@ public sealed class PrimaryKeyWriterTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 5, 1 },
+                    [5, 1],
                     [1, 2],
                     [3, 1],
                 ],
@@ -280,7 +280,7 @@ public sealed class PrimaryKeyWriterTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 1, 1, "a" },
+                    [1, 1, "a"],
                     [1, 2, "b"],
                     [2, 1, "c"],
                 ],
@@ -321,7 +321,7 @@ public sealed class PrimaryKeyWriterTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 1, 1 },
+                    [1, 1],
                     [2, 2],
                 ],
                 ct);
@@ -353,7 +353,7 @@ public sealed class PrimaryKeyWriterTests
                 ],
                 ct);
 
-            await writer.InsertRowsAsync("T", [new object[] { 1, "a" }, [2, "b"]], ct);
+            await writer.InsertRowsAsync("T", [[1, "a"], [2, "b"]], ct);
             await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), ct);
         }
 

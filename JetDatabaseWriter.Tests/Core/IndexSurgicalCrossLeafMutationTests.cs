@@ -68,7 +68,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             // (between 4000 and 4010). Neither is the leaf's max key.
             await writer.InsertRowsAsync(
                 "T",
-                new[] { new object[] { 5 }, new object[] { 4005 } },
+                new[] { new object[] { 5 }, [4005] },
                 ct);
         }
 
@@ -131,7 +131,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             // change for leaf 1).
             await writer.InsertRowsAsync(
                 "T",
-                new[] { new object[] { 3991 }, new object[] { 4005 } },
+                new[] { new object[] { 3991 }, [4005] },
                 ct);
         }
 
@@ -184,8 +184,8 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 new[]
                 {
                     new object[] { 5 },     // leaf 0
-                    new object[] { 25 },    // leaf 0
-                    new object[] { 4005 },  // leaf 1
+                    [25],    // leaf 0
+                    [4005],  // leaf 1
                 },
                 ct);
         }
@@ -233,12 +233,12 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             var rows = new List<object[]>(799);
             for (int i = 0; i < 399; i++)
             {
-                rows.Add(new object[] { i + 1 }); // 1..399 (dense, leaf 0)
+                rows.Add([i + 1]); // 1..399 (dense, leaf 0)
             }
 
             for (int i = 0; i < 400; i++)
             {
-                rows.Add(new object[] { 10000 + (i * 10) }); // 10000..13990 sparse, leaf 1
+                rows.Add([10000 + (i * 10)]); // 10000..13990 sparse, leaf 1
             }
 
             await writer.InsertRowsAsync("T", rows.ToArray(), ct);
@@ -252,7 +252,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             // 10005 → leaf 1, stays in-place.
             await writer.InsertRowsAsync(
                 "T",
-                new[] { new object[] { 200 }, new object[] { 10005 } },
+                new[] { new object[] { 200 }, [10005] },
                 ct);
         }
 
@@ -306,7 +306,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
             // Batch 1: 3 cross-leaf inserts.
             await writer.InsertRowsAsync(
                 "T",
-                new[] { new object[] { 1 }, new object[] { 2 }, new object[] { 4001 } },
+                new[] { new object[] { 1 }, [2], [4001] },
                 ct);
 
             // Batch 2: 4 cross-leaf inserts.
@@ -315,9 +315,9 @@ public sealed class IndexSurgicalCrossLeafMutationTests
                 new[]
                 {
                     new object[] { 3 },
-                    new object[] { 4 },
-                    new object[] { 4002 },
-                    new object[] { 4003 },
+                    [4],
+                    [4002],
+                    [4003],
                 },
                 ct);
         }

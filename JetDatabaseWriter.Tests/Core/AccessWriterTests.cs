@@ -1405,7 +1405,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<ArgumentNullException>(async () =>
-            await writer.InsertRowsAsync(null!, [new object[] { 1 }], TestContext.Current.CancellationToken));
+            await writer.InsertRowsAsync(null!, [[1]], TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -1433,7 +1433,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await writer.DisposeAsync();
 
         await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
-            await writer.InsertRowsAsync("AnyTable", [new object[] { 1 }], TestContext.Current.CancellationToken));
+            await writer.InsertRowsAsync("AnyTable", [[1]], TestContext.Current.CancellationToken));
     }
 
     // ── Writer negative: UpdateRows args ──────────────────────────────

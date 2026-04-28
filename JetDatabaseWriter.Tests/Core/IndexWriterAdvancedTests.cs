@@ -187,7 +187,7 @@ public sealed class IndexWriterAdvancedTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 5 },
+                    [5],
                     [1],
                     [3],
                 ],
@@ -217,7 +217,7 @@ public sealed class IndexWriterAdvancedTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 1, 100 },
+                    [1, 100],
                     [1, 50],
                     [2, 25],
                     [1, 75],
@@ -271,7 +271,7 @@ public sealed class IndexWriterAdvancedTests
                 [new IndexDefinition("IX_AB", CompositeAB) { IsUnique = true }],
                 ct);
 
-            await writer.InsertRowsAsync("T", [new object[] { 1, 1 }, [2, 2]], ct);
+            await writer.InsertRowsAsync("T", [[1, 1], [2, 2]], ct);
             await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), ct);
         }
 
@@ -324,7 +324,7 @@ public sealed class IndexWriterAdvancedTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { Guid.Parse("00000000-0000-0000-0000-000000000001") },
+                    [Guid.Parse("00000000-0000-0000-0000-000000000001")],
                     [Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")],
                     [Guid.Parse("11111111-2222-3333-4444-555555555555")],
                 ],
@@ -374,7 +374,7 @@ public sealed class IndexWriterAdvancedTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { -1000.50m },
+                    [-1000.50m],
                     [0m],
                     [1m],
                     [1.50m],

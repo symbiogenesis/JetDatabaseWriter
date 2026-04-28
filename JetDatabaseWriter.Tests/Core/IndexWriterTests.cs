@@ -184,7 +184,7 @@ public sealed class IndexWriterTests
             await writer.InsertRowsAsync(
                 TableName,
                 [
-                    new object[] { 1, "alpha" },
+                    [1, "alpha"],
                     [2, "beta"],
                     [3, "gamma"],
                 ],

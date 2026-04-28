@@ -52,7 +52,7 @@ public sealed class IndexMaintenanceTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 3 },
+                    [3],
                     [1],
                     [2],
                 ],
@@ -106,7 +106,7 @@ public sealed class IndexMaintenanceTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 1, 10 },
+                    [1, 10],
                     [2, 20],
                     [3, 30],
                 ],
@@ -144,7 +144,7 @@ public sealed class IndexMaintenanceTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 1 },
+                    [1],
                     [2],
                     [3],
                     [4],
@@ -174,7 +174,7 @@ public sealed class IndexMaintenanceTests
                 [new IndexDefinition("IX_Id", "Id")],
                 ct);
 
-            await writer.InsertRowsAsync("T", [new object[] { 1 }, [2]], ct);
+            await writer.InsertRowsAsync("T", [[1], [2]], ct);
             await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), ct);
         }
 
@@ -199,7 +199,7 @@ public sealed class IndexMaintenanceTests
                 [new IndexDefinition("IX_Id", "Id")],
                 ct);
 
-            await writer.InsertRowsAsync("T", [new object[] { 1 }, [2]], ct);
+            await writer.InsertRowsAsync("T", [[1], [2]], ct);
             await writer.RenameColumnAsync("T", "Id", "Identifier", ct);
         }
 
@@ -230,7 +230,7 @@ public sealed class IndexMaintenanceTests
                 ],
                 ct);
 
-            await writer.InsertRowsAsync("T", [new object[] { 1, 10 }], ct);
+            await writer.InsertRowsAsync("T", [[1, 10]], ct);
             await writer.DropColumnAsync("T", "Score", ct);
         }
 
@@ -259,7 +259,7 @@ public sealed class IndexMaintenanceTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { "B" },
+                    ["B"],
                     ["A"],
                     ["C"],
                 ],
@@ -290,7 +290,7 @@ public sealed class IndexMaintenanceTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { "Hello world" },
+                    ["Hello world"],
                     ["Foo Bar"],
                     ["café"],
                 ],
@@ -321,7 +321,7 @@ public sealed class IndexMaintenanceTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { "the quick brown fox" },
+                    ["the quick brown fox"],
                     ["jumps over the lazy dog"],
                     ["pack my box with five dozen liquor jugs"],
                 ],

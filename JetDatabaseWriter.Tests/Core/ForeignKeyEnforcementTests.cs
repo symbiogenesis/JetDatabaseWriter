@@ -134,7 +134,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.InsertRowsAsync(
                 table,
                 [
-                    new object[] { 2, 1 },
+                    [2, 1],
                     [3, 2],
                 ],
                 TestContext.Current.CancellationToken);
@@ -213,7 +213,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.InsertRowsAsync(
                 child,
                 [
-                    new object[] { 1, 5 },
+                    [1, 5],
                     [2, 5],
                 ],
                 TestContext.Current.CancellationToken);
@@ -274,7 +274,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.InsertRowsAsync(
                 child,
                 [
-                    new object[] { 1, 5 },
+                    [1, 5],
                     [2, 5],
                 ],
                 TestContext.Current.CancellationToken);

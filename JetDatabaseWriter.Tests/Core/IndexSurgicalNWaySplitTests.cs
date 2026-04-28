@@ -264,7 +264,7 @@ public sealed class IndexSurgicalNWaySplitTests
                 await Assert.ThrowsAsync<System.InvalidOperationException>(async () =>
                     await writer.InsertRowAsync(
                         "T",
-                        new object[] { BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M') },
+                        [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M')],
                         ct));
             }
         }

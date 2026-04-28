@@ -158,8 +158,8 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
 
         var entries = new List<IndexLeafPageBuilder.LeafEntry>
         {
-            new IndexLeafPageBuilder.LeafEntry(new byte[] { 0x7F, 0x80, 0x00, 0x00, 0x01 }, 1, 0),
-            new IndexLeafPageBuilder.LeafEntry(new byte[] { 0x7F, 0x80, 0x00, 0x00, 0x02 }, 1, 1),
+            new IndexLeafPageBuilder.LeafEntry([0x7F, 0x80, 0x00, 0x00, 0x01], 1, 0),
+            new IndexLeafPageBuilder.LeafEntry([0x7F, 0x80, 0x00, 0x00, 0x02], 1, 1),
         };
 
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, parentTdef, entries, firstPage);

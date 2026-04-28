@@ -305,7 +305,7 @@ public sealed class IndexSurgicalLeafMergeTests
         await using (var writer = await OpenWriterAsync(stream))
         {
             await writer.DeleteRowsAsync("T", "Tag", 1, ct);
-            await writer.InsertRowAsync("T", new object[] { 0, 9999 }, ct);
+            await writer.InsertRowAsync("T", [0, 9999], ct);
         }
 
         await using var reader = await OpenReaderAsync(stream);

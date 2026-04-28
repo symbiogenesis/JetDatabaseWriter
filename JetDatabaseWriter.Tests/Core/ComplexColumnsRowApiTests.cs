@@ -166,7 +166,7 @@ public sealed class ComplexColumnsRowApiTests
 
             await writer.InsertRowsAsync(
                 "Documents",
-                [new object[] { 1, DBNull.Value }, [2, DBNull.Value]],
+                [[1, DBNull.Value], [2, DBNull.Value]],
                 TestContext.Current.CancellationToken);
 
             await writer.AddAttachmentAsync("Documents", "Files", new Dictionary<string, object> { ["Id"] = 1 }, new AttachmentInput("one.txt", Encoding.UTF8.GetBytes("one")), TestContext.Current.CancellationToken);

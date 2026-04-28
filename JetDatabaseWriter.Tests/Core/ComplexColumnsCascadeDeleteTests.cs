@@ -42,7 +42,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
             await writer.InsertRowsAsync(
                 "Documents",
                 [
-                    new object[] { 1, DBNull.Value },
+                    [1, DBNull.Value],
                     [2, DBNull.Value],
                 ],
                 TestContext.Current.CancellationToken);
@@ -115,7 +115,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
             await writer.InsertRowsAsync(
                 "Tags",
                 [
-                    new object[] { 1, DBNull.Value },
+                    [1, DBNull.Value],
                     [2, DBNull.Value],
                 ],
                 TestContext.Current.CancellationToken);
@@ -174,7 +174,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
             await writer.InsertRowsAsync(
                 "Documents",
                 [
-                    new object[] { 1, DBNull.Value },
+                    [1, DBNull.Value],
                     [2, DBNull.Value],
                 ],
                 TestContext.Current.CancellationToken);

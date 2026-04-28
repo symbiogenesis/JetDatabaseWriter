@@ -124,7 +124,7 @@ public sealed class IncrementalIndexMaintenanceTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 1 },
+                    [1],
                     [2],
                     [3],
                     [4],
@@ -171,7 +171,7 @@ public sealed class IncrementalIndexMaintenanceTests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 1, 10 },
+                    [1, 10],
                     [2, 20],
                     [3, 30],
                 ],

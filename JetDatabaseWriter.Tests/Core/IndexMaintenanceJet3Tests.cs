@@ -41,7 +41,7 @@ public sealed class IndexMaintenanceJet3Tests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 3 },
+                    [3],
                     [1],
                     [2],
                 ],
@@ -92,7 +92,7 @@ public sealed class IndexMaintenanceJet3Tests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 1, 10 },
+                    [1, 10],
                     [2, 20],
                     [3, 30],
                 ],
@@ -128,7 +128,7 @@ public sealed class IndexMaintenanceJet3Tests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { 1 },
+                    [1],
                     [2],
                     [3],
                     [4],
@@ -188,7 +188,7 @@ public sealed class IndexMaintenanceJet3Tests
             await writer.InsertRowsAsync(
                 "T",
                 [
-                    new object[] { "Bravo" },
+                    ["Bravo"],
                     ["Alpha"],
                     ["café"],
                 ],
@@ -212,7 +212,7 @@ public sealed class IndexMaintenanceJet3Tests
                 [new IndexDefinition("IX_Id", "Id")],
                 ct);
 
-            await writer.InsertRowsAsync("T", [new object[] { 1 }, [2]], ct);
+            await writer.InsertRowsAsync("T", [[1], [2]], ct);
             await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), ct);
         }
 
@@ -245,7 +245,7 @@ public sealed class IndexMaintenanceJet3Tests
             [new IndexDefinition("IX_Id", "Id")],
             ct);
 
-        await writer.InsertRowsAsync("T", [new object[] { 10 }, [20], [30]], ct);
+        await writer.InsertRowsAsync("T", [[10], [20], [30]], ct);
         await writer.InsertRowAsync("T", [15], ct); // splice into existing leaf
         int deleted = await writer.DeleteRowsAsync("T", "Id", 20, ct);
 
