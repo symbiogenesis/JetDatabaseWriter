@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Core;
 
 using System;
 using System.Buffers;
@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Internal.Models;
 
 #pragma warning disable SA1401 // Field should be private — fields are private protected (assembly-only)
 

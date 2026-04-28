@@ -1,7 +1,9 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Models;
 
 using System;
 using System.Collections.Generic;
+using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>
 /// Defines a foreign-key relationship that

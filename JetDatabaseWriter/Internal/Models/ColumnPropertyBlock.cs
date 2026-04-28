@@ -1,9 +1,10 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal.Models;
 
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Text;
+using JetDatabaseWriter.Core;
 
 /// <summary>
 /// Parsed representation of an <c>MSysObjects.LvProp</c> blob (<c>KKD\0</c> / <c>MR2\0</c>).

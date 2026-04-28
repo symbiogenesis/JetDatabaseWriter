@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal.Helpers;
 
 using System;
 using System.IO;

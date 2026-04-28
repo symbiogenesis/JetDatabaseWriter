@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Core;
 
 using System;
 using System.Buffers.Binary;
@@ -11,7 +11,11 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Models;
 
 #pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API
 

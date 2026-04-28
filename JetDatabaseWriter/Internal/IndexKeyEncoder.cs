@@ -1,9 +1,10 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal;
 
 using System;
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Numerics;
+using JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>
 /// JET index sort-key encoder for fixed-width numeric and date/time column types.

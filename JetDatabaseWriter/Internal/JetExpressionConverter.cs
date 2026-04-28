@@ -1,8 +1,12 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal;
 
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Internal.Builders;
+using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Conversions from CLR literal default values to the string a Jet expression engine

@@ -1,6 +1,7 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Internal.Models;
 
 using System.Collections.Generic;
+using JetDatabaseWriter.Internal;
 
 /// <summary>
 /// One step of an intermediate-page descent: the page number, a clone

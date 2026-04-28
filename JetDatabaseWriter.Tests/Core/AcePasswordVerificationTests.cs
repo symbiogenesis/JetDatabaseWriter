@@ -1,10 +1,13 @@
-namespace JetDatabaseWriter.Tests;
+namespace JetDatabaseWriter.Tests.Core;
 
 using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention

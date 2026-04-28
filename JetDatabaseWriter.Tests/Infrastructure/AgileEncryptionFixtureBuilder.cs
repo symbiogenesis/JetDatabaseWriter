@@ -1,9 +1,10 @@
-namespace JetDatabaseWriter.Tests;
+namespace JetDatabaseWriter.Tests.Infrastructure;
 
 using System;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
+using JetDatabaseWriter.Tests.Core;
 
 #pragma warning disable CA5358 // ECMA-376 Agile encryption uses fixed cipher modes per spec.
 #pragma warning disable CA5379 // SHA-512 is the spec-mandated hash for Agile here.

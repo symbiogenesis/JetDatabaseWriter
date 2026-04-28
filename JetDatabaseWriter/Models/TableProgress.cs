@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Models;
 
 /// <summary>
 /// Structured progress information reported during bulk table read operations.

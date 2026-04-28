@@ -1,4 +1,6 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Models;
+
+using JetDatabaseWriter.Core;
 
 /// <summary>
 /// Metadata for one Access 2007+ complex (attachment / multi-value /

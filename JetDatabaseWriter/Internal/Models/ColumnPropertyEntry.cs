@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal.Models;
 
 /// <summary>
 /// One property entry within a <see cref="ColumnPropertyTarget"/>.

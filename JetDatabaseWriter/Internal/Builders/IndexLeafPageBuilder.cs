@@ -1,8 +1,10 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal.Builders;
 
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>
 /// Builds JET index leaf pages (page type <c>0x04</c>). Encodes the

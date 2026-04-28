@@ -1,10 +1,16 @@
-namespace JetDatabaseWriter.Tests;
+namespace JetDatabaseWriter.Tests.Internal;
 
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Internal.Builders;
+using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Models;
 using Xunit;
 
 #pragma warning disable SA1202 // Tests intentionally interleave public test methods with private fixture helpers.

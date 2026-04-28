@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal.Models;
 
 internal sealed class ColumnInfo
 {

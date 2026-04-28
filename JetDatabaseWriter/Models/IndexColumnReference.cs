@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Models;
 
 /// <summary>
 /// One column participating in a JET index, in key order.

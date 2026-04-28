@@ -1,9 +1,12 @@
-namespace JetDatabaseWriter.Tests;
+namespace JetDatabaseWriter.Tests.Stream;
 
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Models;
 using Xunit;
 
 #pragma warning disable CA5394 // System.Random is fine — no security context here, just deterministic fuzz seeds.

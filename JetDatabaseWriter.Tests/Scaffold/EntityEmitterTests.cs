@@ -2,9 +2,8 @@ namespace JetDatabaseWriter.Tests.Scaffold;
 
 using System;
 using System.Collections.Generic;
-
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Scaffold;
-
 using Xunit;
 
 public class EntityEmitterTests

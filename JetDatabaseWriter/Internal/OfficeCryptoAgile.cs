@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal;
 
 using System;
 using System.Buffers.Binary;
@@ -6,6 +6,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml;
+using JetDatabaseWriter.Internal.Helpers;
 
 #pragma warning disable CA5358 // Cipher modes are fixed by the ECMA-376 Agile spec.
 #pragma warning disable CA5379 // SHA-512 is the spec-mandated Agile hash; spinCount is honoured.

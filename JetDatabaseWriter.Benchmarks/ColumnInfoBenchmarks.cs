@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Benchmarks;
 
 using BenchmarkDotNet.Attributes;
+using JetDatabaseWriter.Internal.Models;
 
 [MemoryDiagnoser]
 public class ColumnInfoBenchmarks

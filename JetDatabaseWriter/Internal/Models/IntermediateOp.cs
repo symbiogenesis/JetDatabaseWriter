@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Internal.Models;
 
 /// <summary>
 /// Aggregated operation against an intermediate page: replace, insert

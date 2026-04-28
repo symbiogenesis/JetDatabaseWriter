@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal.Models;
 
 /// <summary>
 /// A chunk whose type was not recognised by the parser. Preserved verbatim so that

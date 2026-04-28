@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>
 /// Standard property names that appear in <c>MSysObjects.LvProp</c> blobs.

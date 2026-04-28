@@ -1,6 +1,7 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Internal.Models;
 
 using System.Collections.Generic;
+using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Resolved per-index column-number / direction / uniqueness tuple consumed

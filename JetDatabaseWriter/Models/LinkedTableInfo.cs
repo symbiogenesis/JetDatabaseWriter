@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Models;
 
 /// <summary>
 /// Metadata about a linked table entry in the database catalog.
