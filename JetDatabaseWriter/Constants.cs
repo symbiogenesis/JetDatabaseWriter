@@ -7,6 +7,67 @@ namespace JetDatabaseWriter;
 internal static class Constants
 {
     /// <summary>
+    /// JET column-type discriminator codes as documented in the mdbtools
+    /// <c>HACKING.md</c> reference. Stored in the <c>col_type</c> byte of each
+    /// TDEF column descriptor; also used as the runtime tag for every value
+    /// crack / encode path. Names mirror mdbtools' <c>MDB_*</c> identifiers
+    /// (with the customary <c>T_</c> prefix used throughout this codebase).
+    /// </summary>
+    public static class ColumnTypes
+    {
+        /// <summary>mdbtools <c>MDB_BOOL</c> (0x01): 1 bit — stored in the row null-mask, never in the fixed area.</summary>
+        public const byte T_BOOL = 0x01;
+
+        /// <summary>mdbtools <c>MDB_BYTE</c> (0x02): 1-byte unsigned integer.</summary>
+        public const byte T_BYTE = 0x02;
+
+        /// <summary>mdbtools <c>MDB_INT</c> (0x03): 2-byte signed integer.</summary>
+        public const byte T_INT = 0x03;
+
+        /// <summary>mdbtools <c>MDB_LONGINT</c> (0x04): 4-byte signed integer.</summary>
+        public const byte T_LONG = 0x04;
+
+        /// <summary>mdbtools <c>MDB_MONEY</c> (0x05): 8-byte int64 / 10000 fixed-point currency.</summary>
+        public const byte T_MONEY = 0x05;
+
+        /// <summary>mdbtools <c>MDB_FLOAT</c> (0x06): 4-byte IEEE-754 single-precision float.</summary>
+        public const byte T_FLOAT = 0x06;
+
+        /// <summary>mdbtools <c>MDB_DOUBLE</c> (0x07): 8-byte IEEE-754 double-precision float.</summary>
+        public const byte T_DOUBLE = 0x07;
+
+        /// <summary>mdbtools <c>MDB_SDATETIME</c> (0x08): 8-byte OLE-Automation date.</summary>
+        public const byte T_DATETIME = 0x08;
+
+        /// <summary>mdbtools <c>MDB_BINARY</c> (0x09): variable-length binary, ≤ 255 bytes inline.</summary>
+        public const byte T_BINARY = 0x09;
+
+        /// <summary>mdbtools <c>MDB_TEXT</c> (0x0A): variable-length string (UCS-2 in Jet4/ACE, ANSI in Jet3).</summary>
+        public const byte T_TEXT = 0x0A;
+
+        /// <summary>mdbtools <c>MDB_OLE</c> (0x0B): long-value (LVAL) OLE blob.</summary>
+        public const byte T_OLE = 0x0B;
+
+        /// <summary>mdbtools <c>MDB_MEMO</c> (0x0C): long-value (LVAL) text — stored inline when small.</summary>
+        public const byte T_MEMO = 0x0C;
+
+        /// <summary>mdbtools <c>MDB_REPID</c> (0x0F): 16-byte GUID (replication identifier).</summary>
+        public const byte T_GUID = 0x0F;
+
+        /// <summary>mdbtools <c>MDB_NUMERIC</c> (0x10): 17-byte scaled decimal (precision + scale + 16-byte mantissa).</summary>
+        public const byte T_NUMERIC = 0x10;
+
+        /// <summary>mdbtools <c>MDB_COMPLEX</c> attachment subtype (0x11): Access 2007+ attachment column (complex flat-table backing).</summary>
+        public const byte T_ATTACHMENT = 0x11;
+
+        /// <summary>mdbtools <c>MDB_COMPLEX</c> (0x12): Access 2007+ multi-value / version-history column (complex flat-table backing).</summary>
+        public const byte T_COMPLEX = 0x12;
+
+        /// <summary>Access 2019+ extended Date/Time (0x14): 42-byte fixed string. No mdbtools symbol — post-dates mdbtools.</summary>
+        public const byte T_DATETIMEEXT = 0x14;
+    }
+
+    /// <summary>
     /// Standard property names that appear in <c>MSysObjects.LvProp</c> blobs.
     /// </summary>
     public static class ColumnPropertyNames
@@ -59,16 +120,18 @@ internal static class Constants
     /// <summary>
     /// Constants describing rows in <c>MSysObjects</c> (catalog object types
     /// and the flag bitmask that distinguishes system tables from user tables).
+    /// Names in parentheses correspond to the mdbtools <c>HACKING.md</c>
+    /// <c>MDB_TABLE_*</c> / <c>OBJ_*</c> nomenclature.
     /// </summary>
     public static class SystemObjects
     {
-        /// <summary>MSysObjects.Type value for a regular user table.</summary>
+        /// <summary>MSysObjects.Type value for a regular user table (mdbtools <c>OBJ_TABLE</c> / <c>MDB_TABLE_USER</c>).</summary>
         public const int UserTableType = 1;
 
-        /// <summary>MSysObjects.Type value for a linked Jet/Access table.</summary>
+        /// <summary>MSysObjects.Type value for a linked Jet/Access table (mdbtools <c>MDB_TABLE_LINK</c>).</summary>
         public const int LinkedTableType = 4;
 
-        /// <summary>MSysObjects.Type value for a linked ODBC table.</summary>
+        /// <summary>MSysObjects.Type value for a linked ODBC table (mdbtools <c>MDB_TABLE_LINK_ODBC</c>).</summary>
         public const int LinkedOdbcType = 6;
 
         /// <summary>

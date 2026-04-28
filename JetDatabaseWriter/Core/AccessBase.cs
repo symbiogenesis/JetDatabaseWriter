@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Core.Interfaces;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Models;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 
 #pragma warning disable SA1401 // Field should be private — fields are private protected (assembly-only)
 
@@ -20,28 +21,6 @@ using JetDatabaseWriter.Internal.Models;
 /// </summary>
 public abstract class AccessBase : IAccessBase
 {
-    // ── Column type codes (mdbtools HACKING.md) ──────────────────────
-    private protected const byte T_BOOL = 0x01; // 1 bit  – stored in null_mask
-    private protected const byte T_BYTE = 0x02; // 1 byte
-    private protected const byte T_INT = 0x03; // 2 bytes (signed)
-    private protected const byte T_LONG = 0x04; // 4 bytes (signed)
-    private protected const byte T_MONEY = 0x05; // 8 bytes (int64 / 10000)
-    private protected const byte T_FLOAT = 0x06; // 4 bytes (IEEE 754)
-    private protected const byte T_DOUBLE = 0x07; // 8 bytes (IEEE 754)
-    private protected const byte T_DATETIME = 0x08; // 8 bytes (OA date)
-    private protected const byte T_BINARY = 0x09; // variable (≤ 255 bytes)
-    private protected const byte T_TEXT = 0x0A; // variable (UCS-2 in Jet4, ANSI in Jet3)
-    private protected const byte T_OLE = 0x0B; // LVAL
-    private protected const byte T_MEMO = 0x0C; // LVAL or inline
-    private protected const byte T_GUID = 0x0F; // 16 bytes
-    private protected const byte T_NUMERIC = 0x10; // 17 bytes scaled decimal
-    private protected const byte T_ATTACHMENT = 0x11; // complex: attachment (Access 2007+)
-    private protected const byte T_COMPLEX = 0x12; // complex: multi-value / version history (Access 2007+)
-    private protected const byte T_DATETIMEEXT = 0x14; // 42-byte fixed string: extended Date/Time (Access 2019+)
-
-    // Catalog (MSysObjects) constants
-    private protected const int OBJ_TABLE = Constants.SystemObjects.UserTableType;
-
     // ── Format-specific offsets ───────────────────────────────────────
 
     // Data page

@@ -1,5 +1,7 @@
 namespace JetDatabaseWriter.Internal.Models;
 
+using static JetDatabaseWriter.Constants.ColumnTypes;
+
 internal sealed class ColumnInfo
 {
     public byte Type { get; set; }
@@ -58,13 +60,13 @@ internal sealed class ColumnInfo
         {
             switch (Type)
             {
-                case 0x01: // T_BOOL
+                case T_BOOL:
                     // BOOL stores its value in the null mask, never in fixed area.
                     return true;
-                case 0x0A: // T_TEXT
-                case 0x09: // T_BINARY
-                case 0x0C: // T_MEMO
-                case 0x0B: // T_OLE
+                case T_TEXT:
+                case T_BINARY:
+                case T_MEMO:
+                case T_OLE:
                     return false;
                 default:
                     return (Flags & 0x01) != 0; // FLAG_FIXED

@@ -11,6 +11,7 @@ using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 
 /// <summary>
 /// State-free index-related helpers extracted from <see cref="AccessWriter"/>.
@@ -20,13 +21,6 @@ using JetDatabaseWriter.Models;
 /// </summary>
 internal static class IndexHelpers
 {
-    // Mirror of AccessBase column-type discriminators used by the schema
-    // validators here. Kept private to avoid expanding the visibility of
-    // the AccessBase constants for one consumer.
-    private const byte T_OLE = 0x0B;
-    private const byte T_ATTACHMENT = 0x11;
-    private const byte T_COMPLEX = 0x12;
-
     /// <summary>
     /// Returns <paramref name="baseName"/> if no entry in <paramref name="existing"/>
     /// already uses it (case-insensitive); otherwise appends "_1", "_2", … until
