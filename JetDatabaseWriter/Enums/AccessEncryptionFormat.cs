@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Models;
+namespace JetDatabaseWriter.Enums;
 
 using JetDatabaseWriter.Core;
 

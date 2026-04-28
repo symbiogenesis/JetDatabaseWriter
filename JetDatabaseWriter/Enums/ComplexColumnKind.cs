@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Models;
+namespace JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Subtype of an Access 2007+ "complex" column, as classified by the
