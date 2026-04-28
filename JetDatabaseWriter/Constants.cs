@@ -81,6 +81,78 @@ internal static class Constants
         public const string InputMask = "InputMask";
         public const string Caption = "Caption";
         public const string Required = "Required";
+
+        /// <summary>
+        /// Calculated-column expression string (Access 2010+, ACCDB only). Written as a
+        /// <see cref="Internal.Models.ColumnPropertyBlock.DataTypeMemo"/> entry. Contains the Jet/VBA
+        /// expression Microsoft Access evaluates to compute the cached column value
+        /// (e.g. <c>"[FirstName] &amp; \" \" &amp; [LastName]"</c>). See Jackcess <c>PropertyMap.EXPRESSION_PROP</c>.
+        /// </summary>
+        public const string Expression = "Expression";
+
+        /// <summary>
+        /// Calculated-column result data type (Access 2010+, ACCDB only). Written as a
+        /// <see cref="Internal.Models.ColumnPropertyBlock.DataTypeByte"/> entry holding
+        /// the JET column-type code (<see cref="ColumnTypes"/>) of the value the
+        /// expression produces. Distinguishes the logical CLR type of the column from
+        /// the on-disk storage which always carries a 23-byte calculated-value wrapper.
+        /// See Jackcess <c>PropertyMap.RESULT_TYPE_PROP</c>.
+        /// </summary>
+        public const string ResultType = "ResultType";
+    }
+
+    /// <summary>
+    /// On-disk constants for Access 2010+ calculated (expression) columns —
+    /// translated from Jackcess <c>CalculatedColumnUtil</c> and <c>ColumnImpl</c>.
+    /// Calculated columns are an ACCDB-only feature; Jet3 / Jet4 .mdb files
+    /// have no <c>OFFSET_COLUMN_EXT_FLAGS</c> slot in the column descriptor and
+    /// reject the on-disk markers below.
+    /// </summary>
+    /// <remarks>
+    /// See <c>docs/design/calculated-columns-format-notes.md</c> for the full
+    /// on-disk layout and the multi-phase implementation plan.
+    /// </remarks>
+    public static class CalculatedColumn
+    {
+        /// <summary>
+        /// Bitmask written into the column descriptor's <c>extra flags</c> byte
+        /// (descriptor-relative offset 16 in the 25-byte ACE column descriptor)
+        /// to mark a column as calculated. Jackcess <c>ColumnImpl.CALCULATED_EXT_FLAG_MASK</c>
+        /// = <c>0xC0</c>. The high bit alone (<c>0x80</c>) is sometimes documented; Access
+        /// always sets both bits, so we test/emit the full <c>0xC0</c> mask.
+        /// </summary>
+        public const byte ExtFlagMask = 0xC0;
+
+        /// <summary>
+        /// Number of overhead bytes prepended to every stored calculated value.
+        /// Jackcess <c>CalculatedColumnUtil.CALC_EXTRA_DATA_LEN</c> = 23.
+        /// Layout: 16 reserved/version/CRC bytes (zeroed by this library) + 4-byte
+        /// little-endian payload length + 3 unused bytes, then the actual value
+        /// bytes encoded per the column's result type.
+        /// </summary>
+        public const int ExtraDataLen = 23;
+
+        /// <summary>
+        /// Byte offset within the wrapper at which the 4-byte little-endian payload
+        /// length is stored. Jackcess <c>CalculatedColumnUtil.CALC_DATA_LEN_OFFSET</c> = 16.
+        /// </summary>
+        public const int DataLenOffset = 16;
+
+        /// <summary>
+        /// Byte offset within the wrapper at which the actual value bytes start.
+        /// Jackcess <c>CalculatedColumnUtil.CALC_DATA_OFFSET</c> = 20
+        /// (= <see cref="DataLenOffset"/> + 4).
+        /// </summary>
+        public const int DataOffset = 20;
+
+        /// <summary>
+        /// Column-descriptor <c>col_len</c> Microsoft Access writes for fixed-length
+        /// calculated columns regardless of the result type. Jackcess
+        /// <c>CalculatedColumnUtil.CALC_FIXED_FIELD_LEN</c> = 39 (= <see cref="ExtraDataLen"/> + 16).
+        /// Variable-length result types (TEXT/MEMO) instead carry the original
+        /// <c>col_len</c> + <see cref="ExtraDataLen"/>.
+        /// </summary>
+        public const short FixedFieldLen = 39;
     }
 
     /// <summary>

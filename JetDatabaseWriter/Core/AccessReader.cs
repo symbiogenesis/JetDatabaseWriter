@@ -544,6 +544,23 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return resolved.Value.Td.Columns.Select((col, index) =>
         {
             ColumnPropertyTarget? target = properties?.FindTarget(col.Name);
+            bool isCalc = col.IsCalculated;
+            string? calcExpr = isCalc
+                ? target?.GetTextValue(Constants.ColumnPropertyNames.Expression, _format)
+                : null;
+            byte calcResultType = 0;
+            if (isCalc)
+            {
+                ColumnPropertyEntry? rt = target?.Find(Constants.ColumnPropertyNames.ResultType);
+                if (rt is not null && rt.Value.Length >= 1
+                    && (rt.DataType == ColumnPropertyBlock.DataTypeByte
+                        || rt.DataType == ColumnPropertyBlock.DataTypeInteger
+                        || rt.DataType == ColumnPropertyBlock.DataTypeLong))
+                {
+                    calcResultType = rt.Value[0];
+                }
+            }
+
             return new ColumnMetadata
             {
                 Name = col.Name,
@@ -563,6 +580,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 Description = target?.GetTextValue(Constants.ColumnPropertyNames.Description, _format),
                 NumericPrecision = col.NumericPrecision,
                 NumericScale = col.NumericScale,
+                IsCalculated = isCalc,
+                CalculationExpression = calcExpr,
+                CalculatedResultType = calcResultType,
             };
         }).ToList();
     }

@@ -206,4 +206,52 @@ public sealed record ColumnDefinition
     /// <c>NumericScale &lt;= NumericPrecision</c>.
     /// </summary>
     public byte NumericScale { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether this column is an Access 2010+
+    /// calculated (expression) column. Calculated columns store the result of
+    /// a Jet/VBA expression (<see cref="CalculationExpression"/>) computed by
+    /// Microsoft Access at insert / update time. ACE (.accdb) only.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// On disk, calculated columns are flagged via the
+    /// <see cref="Constants.CalculatedColumn.ExtFlagMask"/> bits in the column
+    /// descriptor's extra-flags byte; the expression and result type are
+    /// persisted in <c>MSysObjects.LvProp</c> as the <c>Expression</c> and
+    /// <c>ResultType</c> properties; every stored cell carries a 23-byte
+    /// calculated-value wrapper.
+    /// </para>
+    /// <para>
+    /// <b>Phase 1A status (current):</b> the library reads calc-column metadata
+    /// produced by Microsoft Access and surfaces it via
+    /// <see cref="ColumnMetadata.IsCalculated"/> /
+    /// <see cref="ColumnMetadata.CalculationExpression"/> /
+    /// <see cref="ColumnMetadata.CalculatedResultType"/>. Writing calc columns
+    /// (Phase 1B) and evaluating expressions client-side (Phase 2+) are not
+    /// yet implemented; <c>CreateTableAsync</c> throws
+    /// <see cref="NotSupportedException"/> when this flag is set. See
+    /// <c>docs/design/calculated-columns-format-notes.md</c>.
+    /// </para>
+    /// </remarks>
+    public bool IsCalculated { get; init; }
+
+    /// <summary>
+    /// Gets the Jet/VBA expression Microsoft Access evaluates to compute this
+    /// column's value (e.g. <c>"[FirstName] &amp; \" \" &amp; [LastName]"</c>).
+    /// Required when <see cref="IsCalculated"/> is <see langword="true"/>;
+    /// ignored otherwise. Persisted in <c>MSysObjects.LvProp</c> as the
+    /// <see cref="Constants.ColumnPropertyNames.Expression"/> property.
+    /// </summary>
+    public string? CalculationExpression { get; init; }
+
+    /// <summary>
+    /// Gets the JET column-type code (see <see cref="Constants.ColumnTypes"/>)
+    /// of the value <see cref="CalculationExpression"/> produces. Required
+    /// when <see cref="IsCalculated"/> is <see langword="true"/>; ignored
+    /// otherwise. Persisted in <c>MSysObjects.LvProp</c> as the
+    /// <see cref="Constants.ColumnPropertyNames.ResultType"/> property and
+    /// also written into the column descriptor's <c>col_type</c> byte.
+    /// </summary>
+    public byte CalculatedResultType { get; init; }
 }
