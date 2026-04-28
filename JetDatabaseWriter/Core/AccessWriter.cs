@@ -1168,14 +1168,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new InvalidOperationException($"An object named '{linkedTableName}' already exists.");
         }
 
-        TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
+        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
 
         msys.SetValueByName(values, "Id", 0);
         msys.SetValueByName(values, "ParentId", 0);
         msys.SetValueByName(values, "Name", linkedTableName);
-        msys.SetValueByName(values, "Type", (short)OBJ_LINKED_TABLE);
+        msys.SetValueByName(values, "Type", (short)Constants.SystemObjects.LinkedTableType);
         msys.SetValueByName(values, "DateCreate", now);
         msys.SetValueByName(values, "DateUpdate", now);
         msys.SetValueByName(values, "Flags", 0);
@@ -1214,14 +1214,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ? connectionString
             : "ODBC;" + connectionString;
 
-        TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
+        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
 
         msys.SetValueByName(values, "Id", 0);
         msys.SetValueByName(values, "ParentId", 0);
         msys.SetValueByName(values, "Name", linkedTableName);
-        msys.SetValueByName(values, "Type", (short)OBJ_LINKED_ODBC);
+        msys.SetValueByName(values, "Type", (short)Constants.SystemObjects.LinkedOdbcType);
         msys.SetValueByName(values, "DateCreate", now);
         msys.SetValueByName(values, "DateUpdate", now);
         msys.SetValueByName(values, "Flags", 0);
@@ -1291,7 +1291,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         // Locate MSysRelationships (system table — not in the user-table cache).
-        long msysRelTdefPage = await FindSystemTableTdefPageAsync("MSysRelationships", cancellationToken).ConfigureAwait(false);
+        long msysRelTdefPage = await FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)
         {
             throw new NotSupportedException(
@@ -1300,7 +1300,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 "Access-authored database before calling CreateRelationshipAsync.");
         }
 
-        TableDef msysRelDef = await ReadRequiredTableDefAsync(msysRelTdefPage, "MSysRelationships", cancellationToken).ConfigureAwait(false);
+        TableDef msysRelDef = await ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
 
         // Reject duplicate relationship names (case-insensitive).
         HashSet<string> existingNames = await ReadExistingRelationshipNamesAsync(msysRelTdefPage, msysRelDef, cancellationToken).ConfigureAwait(false);
@@ -1311,24 +1311,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // grbit flag bits — values per Jackcess com.healthmarketscience.jackcess.impl.RelationshipImpl.
         // (These are not yet documented in the format-probe appendix.)
-        const uint NoRefIntegrityFlag = 0x00000002;
-        const uint CascadeUpdatesFlag = 0x00000100;
-        const uint CascadeDeletesFlag = 0x00001000;
-
         uint grbit = 0;
         if (!relationship.EnforceReferentialIntegrity)
         {
-            grbit |= NoRefIntegrityFlag;
+            grbit |= Constants.RelationshipFlags.NoRefIntegrity;
         }
 
         if (relationship.CascadeUpdates)
         {
-            grbit |= CascadeUpdatesFlag;
+            grbit |= Constants.RelationshipFlags.CascadeUpdates;
         }
 
         if (relationship.CascadeDeletes)
         {
-            grbit |= CascadeDeletesFlag;
+            grbit |= Constants.RelationshipFlags.CascadeDeletes;
         }
 
         int ccolumn = relationship.PrimaryColumns.Count;
@@ -1917,14 +1913,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
-        long msysRelTdefPage = await FindSystemTableTdefPageAsync("MSysRelationships", cancellationToken).ConfigureAwait(false);
+        long msysRelTdefPage = await FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)
         {
             throw new NotSupportedException(
                 "The database does not contain a 'MSysRelationships' table; nothing to drop.");
         }
 
-        TableDef msysRelDef = await ReadRequiredTableDefAsync(msysRelTdefPage, "MSysRelationships", cancellationToken).ConfigureAwait(false);
+        TableDef msysRelDef = await ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         List<RelationshipRowSnapshot> matches = await CollectRelationshipRowsAsync(
             msysRelTdefPage,
             msysRelDef,
@@ -2046,14 +2042,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return; // No-op; matches Microsoft Access' designer behaviour.
         }
 
-        long msysRelTdefPage = await FindSystemTableTdefPageAsync("MSysRelationships", cancellationToken).ConfigureAwait(false);
+        long msysRelTdefPage = await FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)
         {
             throw new NotSupportedException(
                 "The database does not contain a 'MSysRelationships' table; nothing to rename.");
         }
 
-        TableDef msysRelDef = await ReadRequiredTableDefAsync(msysRelTdefPage, "MSysRelationships", cancellationToken).ConfigureAwait(false);
+        TableDef msysRelDef = await ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
 
         // Reject collision with an existing name (case-insensitive).
         HashSet<string> existing = await ReadExistingRelationshipNamesAsync(msysRelTdefPage, msysRelDef, cancellationToken).ConfigureAwait(false);
@@ -2890,13 +2886,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private async ValueTask<IReadOnlyList<FkRelationship>> GetEnforcedRelationshipsAsync(CancellationToken cancellationToken)
     {
-        long pg = await FindSystemTableTdefPageAsync("MSysRelationships", cancellationToken).ConfigureAwait(false);
+        long pg = await FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (pg == 0)
         {
             return [];
         }
 
-        DataTable t = await ReadTableSnapshotAsync("MSysRelationships", cancellationToken).ConfigureAwait(false);
+        DataTable t = await ReadTableSnapshotAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         try
         {
             if (!t.Columns.Contains("szRelationship"))
@@ -2942,14 +2938,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 //   0x00000002 NO_REFERENTIAL_INTEGRITY
                 //   0x00000100 CASCADE_UPDATES
                 //   0x00001000 CASCADE_DELETES
-                bool enforce = (grbit & 0x00000002) == 0;
+                bool enforce = (grbit & Constants.RelationshipFlags.NoRefIntegrity) == 0;
                 if (!enforce)
                 {
                     continue;
                 }
 
-                bool cascadeUpdates = (grbit & 0x00000100) != 0;
-                bool cascadeDeletes = (grbit & 0x00001000) != 0;
+                bool cascadeUpdates = (grbit & Constants.RelationshipFlags.CascadeUpdates) != 0;
+                bool cascadeDeletes = (grbit & Constants.RelationshipFlags.CascadeDeletes) != 0;
 
                 string primaryTable = head["szReferencedObject"]?.ToString() ?? string.Empty;
                 string foreignTable = head["szObject"]?.ToString() ?? string.Empty;
@@ -5747,7 +5743,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            if ((unchecked((uint)row.Flags) & SYSTABLE_MASK) != 0)
+            if ((unchecked((uint)row.Flags) & Constants.SystemObjects.SystemTableMask) != 0)
             {
                 continue;
             }
@@ -5791,7 +5787,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
     {
-        TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
+        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
 
@@ -5859,13 +5855,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             {
                 baseDef = baseDef with
                 {
-                    DefaultValueExpression = target.GetTextValue(ColumnPropertyNames.DefaultValue, _format)
+                    DefaultValueExpression = target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, _format)
                         ?? baseDef.DefaultValueExpression,
-                    ValidationRuleExpression = target.GetTextValue(ColumnPropertyNames.ValidationRule, _format)
+                    ValidationRuleExpression = target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, _format)
                         ?? baseDef.ValidationRuleExpression,
-                    ValidationText = target.GetTextValue(ColumnPropertyNames.ValidationText, _format)
+                    ValidationText = target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, _format)
                         ?? baseDef.ValidationText,
-                    Description = target.GetTextValue(ColumnPropertyNames.Description, _format)
+                    Description = target.GetTextValue(Constants.ColumnPropertyNames.Description, _format)
                         ?? baseDef.Description,
                 };
             }
@@ -5976,7 +5972,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private async ValueTask RenameTableInCatalogAsync(string oldName, string newName, byte[]? lvProp, CancellationToken cancellationToken)
     {
-        TableDef msys = await ReadRequiredTableDefAsync(2, "MSysObjects", cancellationToken).ConfigureAwait(false);
+        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
 
         long? tdefPage = null;
@@ -6342,15 +6338,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private static readonly (string Name, ColumnDefinition[] Columns)[] _complexTypeTemplates =
     [
-        ("MSysComplexType_UnsignedByte", new[] { new ColumnDefinition("Value", typeof(byte)) }),
-        ("MSysComplexType_Short",        [new ColumnDefinition("Value", typeof(short))]),
-        ("MSysComplexType_Long",         [new ColumnDefinition("Value", typeof(int))]),
-        ("MSysComplexType_IEEESingle",   [new ColumnDefinition("Value", typeof(float))]),
-        ("MSysComplexType_IEEEDouble",   [new ColumnDefinition("Value", typeof(double))]),
-        ("MSysComplexType_GUID",         [new ColumnDefinition("Value", typeof(Guid))]),
-        ("MSysComplexType_Decimal",      [new ColumnDefinition("Value", typeof(decimal))]),
-        ("MSysComplexType_Text",         [new ColumnDefinition("Value", typeof(string), maxLength: 255)]),
-        ("MSysComplexType_Attachment",
+        (Constants.ComplexTypeNames.UnsignedByte, new[] { new ColumnDefinition("Value", typeof(byte)) }),
+        (Constants.ComplexTypeNames.Short,        [new ColumnDefinition("Value", typeof(short))]),
+        (Constants.ComplexTypeNames.Long,         [new ColumnDefinition("Value", typeof(int))]),
+        (Constants.ComplexTypeNames.IEEESingle,   [new ColumnDefinition("Value", typeof(float))]),
+        (Constants.ComplexTypeNames.IEEEDouble,   [new ColumnDefinition("Value", typeof(double))]),
+        (Constants.ComplexTypeNames.GUID,         [new ColumnDefinition("Value", typeof(Guid))]),
+        (Constants.ComplexTypeNames.Decimal,      [new ColumnDefinition("Value", typeof(decimal))]),
+        (Constants.ComplexTypeNames.Text,         [new ColumnDefinition("Value", typeof(string), maxLength: 255)]),
+        (Constants.ComplexTypeNames.Attachment,
         [
             new ColumnDefinition("FileData",      typeof(byte[])),
             new ColumnDefinition("FileFlags",     typeof(int)),
@@ -6401,7 +6397,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         if (col.IsAttachment)
         {
-            return "MSysComplexType_Attachment";
+            return Constants.ComplexTypeNames.Attachment;
         }
 
         if (!col.IsMultiValue)
@@ -6417,42 +6413,42 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         if (t == typeof(byte))
         {
-            return "MSysComplexType_UnsignedByte";
+            return Constants.ComplexTypeNames.UnsignedByte;
         }
 
         if (t == typeof(short))
         {
-            return "MSysComplexType_Short";
+            return Constants.ComplexTypeNames.Short;
         }
 
         if (t == typeof(int))
         {
-            return "MSysComplexType_Long";
+            return Constants.ComplexTypeNames.Long;
         }
 
         if (t == typeof(float))
         {
-            return "MSysComplexType_IEEESingle";
+            return Constants.ComplexTypeNames.IEEESingle;
         }
 
         if (t == typeof(double))
         {
-            return "MSysComplexType_IEEEDouble";
+            return Constants.ComplexTypeNames.IEEEDouble;
         }
 
         if (t == typeof(Guid))
         {
-            return "MSysComplexType_GUID";
+            return Constants.ComplexTypeNames.GUID;
         }
 
         if (t == typeof(decimal))
         {
-            return "MSysComplexType_Decimal";
+            return Constants.ComplexTypeNames.Decimal;
         }
 
         if (t == typeof(string))
         {
-            return "MSysComplexType_Text";
+            return Constants.ComplexTypeNames.Text;
         }
 
         return null;
@@ -6485,7 +6481,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         await InsertCatalogEntryAsync(
-            "MSysComplexColumns",
+            Constants.SystemTableNames.ComplexColumns,
             tdefPageNumber,
             lvProp: null,
             catalogFlags: 0x80000000U,
@@ -6541,7 +6537,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 "Attachment and MultiValue columns are an Access 2007+ ACE feature; declare them only on .accdb databases.");
         }
 
-        long msysComplexPg = await FindSystemTableTdefPageAsync("MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        long msysComplexPg = await FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysComplexPg == 0)
         {
             throw new NotSupportedException(
@@ -6570,7 +6566,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private async ValueTask<int> GetNextComplexIdAsync(long msysComplexPg, CancellationToken cancellationToken)
     {
-        TableDef msysComplex = await ReadRequiredTableDefAsync(msysComplexPg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        TableDef msysComplex = await ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? idCol = msysComplex.FindColumn("ComplexID");
         ColumnInfo? ctIdCol = msysComplex.FindColumn("ConceptualTableID");
 
@@ -6784,13 +6780,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int complexTypeObjectId,
         CancellationToken cancellationToken)
     {
-        long pg = await FindSystemTableTdefPageAsync("MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        long pg = await FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (pg == 0)
         {
             throw new InvalidOperationException("MSysComplexColumns table is missing.");
         }
 
-        TableDef msysComplex = await ReadRequiredTableDefAsync(pg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        TableDef msysComplex = await ReadRequiredTableDefAsync(pg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         object[] values = msysComplex.CreateNullValueRow();
 
         msysComplex.SetValueByName(values, "ColumnName", parentColumnName);
@@ -6978,13 +6974,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private async ValueTask<long> ResolveFlatTableTdefPageAsync(string columnName, int complexId, CancellationToken cancellationToken)
     {
-        long msysPg = await FindSystemTableTdefPageAsync("MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        long msysPg = await FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysPg == 0)
         {
             return 0;
         }
 
-        TableDef msys = await ReadRequiredTableDefAsync(msysPg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        TableDef msys = await ReadRequiredTableDefAsync(msysPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameCol = msys.FindColumn("ColumnName");
         ColumnInfo? flatIdCol = msys.FindColumn("FlatTableID");
         ColumnInfo? complexIdCol = msys.FindColumn("ComplexID");
@@ -7517,7 +7513,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            if ((unchecked((uint)row.Flags) & SYSTABLE_MASK) != 0)
+            if ((unchecked((uint)row.Flags) & Constants.SystemObjects.SystemTableMask) != 0)
             {
                 continue;
             }
@@ -7558,13 +7554,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private async ValueTask DropSingleComplexChildAsync(string columnName, int complexId, CancellationToken cancellationToken)
     {
-        long msysCxPg = await FindSystemTableTdefPageAsync("MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        long msysCxPg = await FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysCxPg == 0)
         {
             return;
         }
 
-        TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
         ColumnInfo? flatIdCol = msysCxDef.FindColumn("FlatTableID");
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
@@ -7673,13 +7669,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private async ValueTask RenameComplexColumnArtifactsAsync(string oldColumnName, string newColumnName, int complexId, CancellationToken cancellationToken)
     {
-        long msysCxPg = await FindSystemTableTdefPageAsync("MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        long msysCxPg = await FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysCxPg == 0)
         {
             return;
         }
 
-        TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
         if (nameCol == null || cxIdCol == null)
@@ -7779,13 +7775,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return;
         }
 
-        long msysCxPg = await FindSystemTableTdefPageAsync("MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        long msysCxPg = await FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysCxPg == 0)
         {
             return;
         }
 
-        TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, "MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
         ColumnInfo? flatIdCol = msysCxDef.FindColumn("FlatTableID");
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");

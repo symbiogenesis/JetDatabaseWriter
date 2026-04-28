@@ -19,11 +19,6 @@ using JetDatabaseWriter.Internal.Models;
 /// </summary>
 public abstract class AccessBase : IAccessBase
 {
-    // Catalog (MSysObjects) constants shared with Internal helpers
-    internal const int OBJ_LINKED_TABLE = 4;
-    internal const int OBJ_LINKED_ODBC = 6;
-    internal const uint SYSTABLE_MASK = 0x80000002U;
-
     // ── Column type codes (mdbtools HACKING.md) ──────────────────────
     private protected const byte T_BOOL = 0x01; // 1 bit  – stored in null_mask
     private protected const byte T_BYTE = 0x02; // 1 byte
@@ -44,7 +39,7 @@ public abstract class AccessBase : IAccessBase
     private protected const byte T_DATETIMEEXT = 0x14; // 42-byte fixed string: extended Date/Time (Access 2019+)
 
     // Catalog (MSysObjects) constants
-    private protected const int OBJ_TABLE = 1;
+    private protected const int OBJ_TABLE = Constants.SystemObjects.UserTableType;
 
     // ── Format-specific offsets ───────────────────────────────────────
 
@@ -239,7 +234,7 @@ public abstract class AccessBase : IAccessBase
     }
 
     /// <summary>Returns the page size in bytes for the given database format (2048 for Jet3, 4096 for Jet4/ACE).</summary>
-    internal static int GetPageSize(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb ? 4096 : 2048;
+    internal static int GetPageSize(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet4 : Constants.PageSizes.Jet3;
 
     /// <summary>
     /// Asynchronously reads the fixed-size JET header (first 0x80 bytes) from page 0.

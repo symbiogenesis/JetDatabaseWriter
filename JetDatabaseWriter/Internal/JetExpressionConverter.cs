@@ -119,22 +119,22 @@ internal static class JetExpressionConverter
         ColumnPropertyBlockBuilder.TargetBuilder target = builder.GetOrAddTarget(col.Name);
         if (defaultExpr is not null)
         {
-            target.AddText(ColumnPropertyNames.DefaultValue, defaultExpr, format);
+            target.AddText(Constants.ColumnPropertyNames.DefaultValue, defaultExpr, format);
         }
 
         if (col.ValidationRuleExpression is not null)
         {
-            target.AddText(ColumnPropertyNames.ValidationRule, col.ValidationRuleExpression, format);
+            target.AddText(Constants.ColumnPropertyNames.ValidationRule, col.ValidationRuleExpression, format);
         }
 
         if (col.ValidationText is not null)
         {
-            target.AddText(ColumnPropertyNames.ValidationText, col.ValidationText, format);
+            target.AddText(Constants.ColumnPropertyNames.ValidationText, col.ValidationText, format);
         }
 
         if (col.Description is not null)
         {
-            target.AddText(ColumnPropertyNames.Description, col.Description, format);
+            target.AddText(Constants.ColumnPropertyNames.Description, col.Description, format);
         }
     }
 }

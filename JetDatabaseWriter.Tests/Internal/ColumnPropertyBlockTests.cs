@@ -58,9 +58,9 @@ public class ColumnPropertyBlockTests
         Assert.Single(target.Entries);
 
         ColumnPropertyEntry entry = target.Entries[0];
-        Assert.Equal(ColumnPropertyNames.DefaultValue, entry.Name);
+        Assert.Equal(Constants.ColumnPropertyNames.DefaultValue, entry.Name);
         Assert.Equal(ColumnPropertyBlock.DataTypeText, entry.DataType);
-        Assert.Equal("0", target.GetTextValue(ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
+        Assert.Equal("0", target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
     }
 
     [Fact]
@@ -83,10 +83,10 @@ public class ColumnPropertyBlockTests
         Assert.NotNull(parsed);
         ColumnPropertyTarget? target = parsed!.FindTarget("Score");
         Assert.NotNull(target);
-        Assert.Equal("0", target!.GetTextValue(ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
-        Assert.Equal(">=0 And <=100", target.GetTextValue(ColumnPropertyNames.ValidationRule, DatabaseFormat.Jet4Mdb));
-        Assert.Equal("Score must be 0-100", target.GetTextValue(ColumnPropertyNames.ValidationText, DatabaseFormat.Jet4Mdb));
-        Assert.Equal("Test score (0-100)", target.GetTextValue(ColumnPropertyNames.Description, DatabaseFormat.Jet4Mdb));
+        Assert.Equal("0", target!.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
+        Assert.Equal(">=0 And <=100", target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, DatabaseFormat.Jet4Mdb));
+        Assert.Equal("Score must be 0-100", target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, DatabaseFormat.Jet4Mdb));
+        Assert.Equal("Test score (0-100)", target.GetTextValue(Constants.ColumnPropertyNames.Description, DatabaseFormat.Jet4Mdb));
     }
 
     [Fact]

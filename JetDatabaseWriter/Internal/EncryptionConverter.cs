@@ -24,8 +24,6 @@ using JetDatabaseWriter.Models;
 /// </summary>
 internal static class EncryptionConverter
 {
-    private const int Jet3PageSize = 2048;
-    private const int Jet4PageSize = 4096;
     private const int HeaderLength = 0x80;
 
     /// <summary>
@@ -94,7 +92,7 @@ internal static class EncryptionConverter
         }
 
         DatabaseFormat fmt = DetectFormat(plaintext);
-        int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Jet3PageSize : Jet4PageSize;
+        int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
         if (targetFormat == AccessEncryptionFormat.None)
         {
@@ -175,7 +173,7 @@ internal static class EncryptionConverter
         CancellationToken cancellationToken)
     {
         DatabaseFormat fmt = isLegacyAesCfb ? DatabaseFormat.AceAccdb : DetectFormat(header);
-        int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Jet3PageSize : Jet4PageSize;
+        int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
         var pageKeys = new EncryptionManager.PageDecryptionKeys
         {
