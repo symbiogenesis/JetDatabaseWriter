@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core.Interfaces;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;

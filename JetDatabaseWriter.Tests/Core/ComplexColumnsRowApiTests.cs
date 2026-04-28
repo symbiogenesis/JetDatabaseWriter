@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Core.Interfaces;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 using Xunit;

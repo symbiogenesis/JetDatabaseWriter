@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Tests.Internal;
 
 using System.IO;
 using System.Text;
-using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Internal.Models;
 using Xunit;
 

@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Core.Interfaces;
 
 using System;
+using JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Base interface for Access database readers and writers.

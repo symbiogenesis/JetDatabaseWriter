@@ -3,7 +3,7 @@ namespace JetDatabaseWriter.Internal.Models;
 using System;
 using System.Collections.Generic;
 using System.Text;
-using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Enums;
 
 /// <summary>
 /// A single property target within a <see cref="ColumnPropertyBlock"/> — typically a

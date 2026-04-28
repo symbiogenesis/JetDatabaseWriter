@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Models;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Statistical information about the database including size, table counts, and cache performance.

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Core;
 
 using System;
 using JetDatabaseWriter.Core.Interfaces;
+using JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Configuration options for opening a JET database with <see cref="AccessWriter"/>.
