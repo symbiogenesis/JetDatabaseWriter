@@ -72,6 +72,16 @@ public abstract class AccessBase : IAccessBase
     private readonly SemaphoreSlim _ioGate = new(1, 1);
     private volatile List<CatalogEntry>? _catalogCache;
 
+    /// <summary>
+    /// Cooperative JET byte-range lock helper (Win32 <c>LockFileEx</c>). Initialised by
+    /// <see cref="AccessReader"/> / <see cref="AccessWriter"/> after construction.
+    /// Until set, page-write paths skip locking — equivalent to a disabled instance.
+    /// </summary>
+    private protected JetByteRangeLock? _byteRangeLock;
+
+    /// <summary>Sentinel disposable used when no byte-range lock is active.</summary>
+    private static readonly IDisposable NullDisposable = new NullDisposableImpl();
+
     static AccessBase()
     {
         // On .NET Core / .NET 5+ code-page encodings (e.g. Windows-1252) are not
@@ -822,6 +832,7 @@ public abstract class AccessBase : IAccessBase
         _ioGate.Wait();
         try
         {
+            using IDisposable pageLock = _byteRangeLock?.AcquirePageLock(pageNumber, _pgSz) ?? NullDisposable;
             _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
             _stream.Write(toWrite, 0, _pgSz);
             _stream.Flush();
@@ -840,9 +851,19 @@ public abstract class AccessBase : IAccessBase
         await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-            await _stream.WriteAsync(toWrite.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
-            await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            IDisposable pageLock = _byteRangeLock is null
+                ? NullDisposable
+                : await _byteRangeLock.AcquirePageLockAsync(pageNumber, _pgSz, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
+                await _stream.WriteAsync(toWrite.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
+                await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                pageLock.Dispose();
+            }
         }
         finally
         {
@@ -857,6 +878,7 @@ public abstract class AccessBase : IAccessBase
         {
             long pageNumber = _stream.Length / _pgSz;
             byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
+            using IDisposable pageLock = _byteRangeLock?.AcquirePageLock(pageNumber, _pgSz) ?? NullDisposable;
             _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
             _stream.Write(toWrite, 0, _pgSz);
             _stream.Flush();
@@ -877,10 +899,20 @@ public abstract class AccessBase : IAccessBase
         {
             long pageNumber = _stream.Length / _pgSz;
             byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
-            _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-            await _stream.WriteAsync(toWrite.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
-            await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            return pageNumber;
+            IDisposable pageLock = _byteRangeLock is null
+                ? NullDisposable
+                : await _byteRangeLock.AcquirePageLockAsync(pageNumber, _pgSz, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
+                await _stream.WriteAsync(toWrite.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
+                await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                return pageNumber;
+            }
+            finally
+            {
+                pageLock.Dispose();
+            }
         }
         finally
         {
@@ -1226,4 +1258,11 @@ public abstract class AccessBase : IAccessBase
         int DataStart,
         int DataLen,
         bool BoolValue);
+
+    private sealed class NullDisposableImpl : IDisposable
+    {
+        public void Dispose()
+        {
+        }
+    }
 }

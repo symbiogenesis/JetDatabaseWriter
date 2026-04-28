@@ -63,6 +63,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly bool _respectExistingLockFile;
     private readonly string? _lockFileUserName;
     private readonly string? _lockFileMachineName;
+    private readonly bool _useByteRangeLocks;
+    private readonly int _lockTimeoutMilliseconds;
     private readonly ReaderWriterLockSlim _stateLock = new(LockRecursionPolicy.NoRecursion);
 
     // Agile re-encryption context. When non-null, the underlying _stream is an
@@ -95,6 +97,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         bool respectExistingLockFile,
         string? lockFileUserName,
         string? lockFileMachineName,
+        bool useByteRangeLocks,
+        int lockTimeoutMilliseconds,
         Stream? outerEncryptedStream = null,
         bool outerEncryptedLeaveOpen = false,
         bool isAgileEncryptedRewrap = false)
@@ -105,6 +109,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         _respectExistingLockFile = respectExistingLockFile;
         _lockFileUserName = lockFileUserName;
         _lockFileMachineName = lockFileMachineName;
+        _useByteRangeLocks = useByteRangeLocks;
+        _lockTimeoutMilliseconds = lockTimeoutMilliseconds;
         _outerEncryptedStream = outerEncryptedStream;
         _outerEncryptedLeaveOpen = outerEncryptedLeaveOpen;
         _isAgileEncryptedRewrap = isAgileEncryptedRewrap;
@@ -136,6 +142,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 machineName: _lockFileMachineName,
                 userName: _lockFileUserName);
         }
+
+        _byteRangeLock = JetByteRangeLock.Create(stream, _useByteRangeLocks, _lockTimeoutMilliseconds);
     }
 
     /// <summary>
@@ -227,6 +235,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         options.RespectExistingLockFile,
                         options.LockFileUserName,
                         options.LockFileMachineName,
+                        options.UseByteRangeLocks,
+                        options.LockTimeoutMilliseconds,
                         outerEncryptedStream: wrapped,
                         outerEncryptedLeaveOpen: leaveOpen,
                         isAgileEncryptedRewrap: true);
@@ -247,7 +257,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 options.UseLockFile,
                 options.RespectExistingLockFile,
                 options.LockFileUserName,
-                options.LockFileMachineName);
+                options.LockFileMachineName,
+                options.UseByteRangeLocks,
+                options.LockTimeoutMilliseconds);
         }
         catch
         {

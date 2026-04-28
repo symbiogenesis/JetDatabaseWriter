@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Core;
 
 using System;
+using System.Runtime.InteropServices;
 using JetDatabaseWriter.Core.Interfaces;
 using JetDatabaseWriter.Enums;
 
@@ -85,4 +86,29 @@ public sealed class AccessWriterOptions : IAccessOptions
     /// non-ASCII characters are replaced with '?' to match Access's slot format.
     /// </summary>
     public string? LockFileMachineName { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether cooperative byte-range page locks are taken
+    /// against the database file during writes (Win32 <c>LockFileEx</c>). When
+    /// enabled, every page-write call exclusively locks the page-sized byte range
+    /// at <c>pageNumber * pageSize</c> for the duration of the write, mirroring the
+    /// JET locking protocol that Microsoft Access, the OLE DB JET provider, and the
+    /// ACE engine all observe. This makes concurrent openers (Access included)
+    /// serialise their page mutations against this writer.
+    /// <para>
+    /// Default: <see langword="true"/> on Windows; <see langword="false"/> on other
+    /// platforms (the call is silently a no-op there). Has no effect when the writer
+    /// was opened from a non-<see cref="System.IO.FileStream"/>, since there is no
+    /// Win32 file handle to lock against.
+    /// </para>
+    /// </summary>
+    public bool UseByteRangeLocks { get; init; } = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+    /// <summary>
+    /// Gets the maximum time in milliseconds to wait when acquiring a contended
+    /// byte-range page lock before throwing <see cref="System.IO.IOException"/>.
+    /// Matches the JET "Object is currently in use" timeout semantics.
+    /// Default: <c>5000</c>.
+    /// </summary>
+    public int LockTimeoutMilliseconds { get; init; } = 5_000;
 }

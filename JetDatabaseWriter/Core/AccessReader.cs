@@ -118,6 +118,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 machineName: _lockFileMachineName,
                 userName: _lockFileUserName);
         }
+
+        _byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
     }
 
     /// <summary>Gets a value indicating whether to print console logs with verbose hex dumps for debugging. Default: false.</summary>

@@ -87,6 +87,24 @@ public sealed class AccessReaderOptions : IAccessOptions
     public string? LockFileMachineName { get; init; }
 
     /// <summary>
+    /// Gets a value indicating whether cooperative byte-range page locks are taken
+    /// against the database file (Win32 <c>LockFileEx</c>). Readers are not required
+    /// to participate in JET page locking; the option exists for symmetry with
+    /// <see cref="AccessWriterOptions.UseByteRangeLocks"/> for callers that want
+    /// fully-consistent reads against a concurrent writer that obeys the protocol.
+    /// Default: <see langword="false"/>. No-op on non-Windows or when the reader
+    /// was opened from a non-<see cref="FileStream"/>.
+    /// </summary>
+    public bool UseByteRangeLocks { get; init; }
+
+    /// <summary>
+    /// Gets the maximum time in milliseconds to wait when acquiring a contended
+    /// byte-range page lock before throwing <see cref="IOException"/>.
+    /// Default: <c>5000</c>.
+    /// </summary>
+    public int LockTimeoutMilliseconds { get; init; } = 5_000;
+
+    /// <summary>
     /// Gets an optional allowlist of directories that linked-table source paths must stay under.
     /// Paths may be absolute or relative (relative entries are resolved from the opened database directory).
     /// Leave empty to allow any directory.

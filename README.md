@@ -658,7 +658,7 @@ The items below are **not yet implemented** and are the most likely places to hi
 - **No SQL parser, query engine, or ODBC driver.** This library is a managed reader/writer over the JET on-disk format, not a database engine. Filter, project, and join through LINQ over `Rows(...)` / `Rows<T>(...)` instead.
 
 ### Concurrency
-- **No byte-range locking.** Microsoft Access uses page-level byte-range locks via `LockFileEx` to coordinate concurrent writers; this library does not. Concurrent writers against the same file (including Access opening it while a writer is active) will corrupt it. Keep `RespectExistingLockFile = true` (the default) so other openers are blocked by the lockfile.
+- **Cooperative byte-range page locks (Windows-only).** On Windows, the writer takes per-page exclusive `LockFile` ranges around every `WritePage` / `AppendPage` call, mirroring the JET locking protocol Microsoft Access and the OLE DB JET / ACE providers observe. Disable with `AccessWriterOptions.UseByteRangeLocks = false`; tune the contention timeout via `LockTimeoutMilliseconds` (default 5000). The reader exposes the same options for callers that want fully-consistent reads against a concurrent writer (default off — readers don't need to participate). On non-Windows hosts, and when the writer was opened from a non-`FileStream`, the locks are silently a no-op. The `LockFile` API is used in preference to `LockFileEx` to avoid overlapped-IO completion against async-bound file handles.
 - **No transactions or rollback.** A crashed write leaves the file in whatever partially-flushed state the page cache had reached.
 
 ---
