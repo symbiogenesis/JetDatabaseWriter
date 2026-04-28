@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Benchmarks;
 
 using BenchmarkDotNet.Attributes;
+using JetDatabaseWriter.Internal.Helpers;
 
 [MemoryDiagnoser]
 public class LruCacheBenchmarks

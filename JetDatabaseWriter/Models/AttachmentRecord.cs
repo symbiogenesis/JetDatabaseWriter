@@ -1,7 +1,8 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Models;
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using JetDatabaseWriter.Core;
 
 /// <summary>
 /// One attachment row decoded from the hidden flat child table of an

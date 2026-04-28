@@ -1,10 +1,13 @@
-namespace JetDatabaseWriter.Tests;
+namespace JetDatabaseWriter.Tests.Core;
 
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Models;
 using Xunit;
 
 /// <summary>
@@ -366,7 +369,7 @@ public sealed class CreateDatabaseTests
 
         ms.Position = 0;
         await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        JetDatabaseWriter.TableDef? msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
+        TableDef? msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(msys);
         Assert.Equal(FullCatalogColumnNames, msys!.Columns.ConvertAll(c => c.Name));
@@ -388,7 +391,7 @@ public sealed class CreateDatabaseTests
 
         ms.Position = 0;
         await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        JetDatabaseWriter.TableDef? msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
+        TableDef? msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(msys);
         Assert.Equal(SlimCatalogColumnNames, msys!.Columns.ConvertAll(c => c.Name));

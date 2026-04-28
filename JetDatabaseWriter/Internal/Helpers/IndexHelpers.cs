@@ -1,10 +1,15 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Internal.Helpers;
 
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Internal.Builders;
+using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Models;
 
 /// <summary>
 /// State-free index-related helpers extracted from <see cref="AccessWriter"/>.

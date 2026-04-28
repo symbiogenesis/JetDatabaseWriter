@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Models;
 
 /// <summary>
 /// Classification of a JET logical index, derived from the

@@ -1,7 +1,8 @@
-namespace JetDatabaseWriter.Tests;
+namespace JetDatabaseWriter.Tests.Internal;
 
 using System;
 using System.Collections.Generic;
+using JetDatabaseWriter.Internal;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper

@@ -1,5 +1,6 @@
-namespace JetDatabaseWriter.Tests;
+namespace JetDatabaseWriter.Tests.Internal;
 
+using JetDatabaseWriter.Internal.Helpers;
 using Xunit;
 
 public class LruCacheTests

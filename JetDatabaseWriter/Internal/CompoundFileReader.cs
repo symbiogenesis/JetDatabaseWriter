@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal;
 
 using System;
 using System.Buffers;
@@ -8,6 +8,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>
 /// Minimal reader for the OLE / Microsoft Compound File Binary (CFB / OLE2)

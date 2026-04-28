@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Tests;
+namespace JetDatabaseWriter.Tests.Infrastructure;
 
 using System;
 using System.Collections.Concurrent;
@@ -7,6 +7,8 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Exceptions;
 using Xunit;
 
 /// <summary>

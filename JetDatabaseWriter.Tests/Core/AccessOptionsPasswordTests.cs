@@ -1,6 +1,8 @@
-namespace JetDatabaseWriter.Tests;
+namespace JetDatabaseWriter.Tests.Core;
 
 using System;
+using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 public sealed class AccessOptionsPasswordTests

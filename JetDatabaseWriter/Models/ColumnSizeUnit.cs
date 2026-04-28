@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Models;
 
 /// <summary>Unit of measurement for a <see cref="ColumnSize"/> value.</summary>
 public enum ColumnSizeUnit

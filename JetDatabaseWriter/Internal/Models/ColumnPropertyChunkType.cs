@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal.Models;
 
 /// <summary>
 /// Chunk-type codes carried in the 6-byte chunk header of an

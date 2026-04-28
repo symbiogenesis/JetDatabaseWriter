@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Tests;
+namespace JetDatabaseWriter.Tests.Infrastructure;
 
 using System;
 using System.Collections.Concurrent;
@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Core;
 
 /// <summary>
 /// xUnit class fixture that caches <see cref="AccessReader"/> instances by path.

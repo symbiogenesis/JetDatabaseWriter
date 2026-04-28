@@ -1,7 +1,8 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal;
 
 using System;
 using System.Globalization;
+using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Helper class for parsing string values into proper CLR types.

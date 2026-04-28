@@ -1,6 +1,7 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Models;
 
 using System.Collections.Generic;
+using JetDatabaseWriter.Core;
 
 /// <summary>
 /// Metadata describing a single JET logical index, parsed directly from the

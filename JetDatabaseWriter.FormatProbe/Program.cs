@@ -6,7 +6,10 @@
 using System.Globalization;
 using System.Text;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Models;
 
 string repoRoot = FindRepoRoot();
 string fixtures = Path.Combine(repoRoot, "JetDatabaseWriter.Tests", "Databases");

@@ -1,7 +1,8 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Models;
 
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using JetDatabaseWriter.Core;
 
 /// <summary>
 /// Statistical information about the database including size, table counts, and cache performance.

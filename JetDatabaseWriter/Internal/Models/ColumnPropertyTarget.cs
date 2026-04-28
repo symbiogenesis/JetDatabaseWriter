@@ -1,8 +1,9 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal.Models;
 
 using System;
 using System.Collections.Generic;
 using System.Text;
+using JetDatabaseWriter.Core;
 
 /// <summary>
 /// A single property target within a <see cref="ColumnPropertyBlock"/> — typically a

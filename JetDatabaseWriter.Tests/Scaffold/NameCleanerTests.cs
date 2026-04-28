@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Tests.Scaffold;
 
 using JetDatabaseWriter.Scaffold;
-
 using Xunit;
 
 public class NameCleanerTests

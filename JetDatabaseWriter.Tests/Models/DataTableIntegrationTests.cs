@@ -1,7 +1,8 @@
-namespace JetDatabaseWriter.Tests;
+namespace JetDatabaseWriter.Tests.Models;
 
 using System.Data;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>

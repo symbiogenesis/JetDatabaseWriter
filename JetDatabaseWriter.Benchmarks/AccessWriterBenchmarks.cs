@@ -6,6 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
+using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Benchmarks for <see cref="AccessWriter"/> operations.

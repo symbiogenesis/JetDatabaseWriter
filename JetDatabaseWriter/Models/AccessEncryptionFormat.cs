@@ -1,4 +1,6 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Models;
+
+using JetDatabaseWriter.Core;
 
 /// <summary>
 /// Identifies the on-disk encryption layout of a JET / ACE database.

@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Core;
 
 using System;
 using System.Buffers.Binary;
@@ -9,7 +9,12 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Internal.Builders;
+using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Models;
 
 #pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers

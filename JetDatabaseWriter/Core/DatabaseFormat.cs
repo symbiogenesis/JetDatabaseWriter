@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Core;
 
 /// <summary>
 /// Specifies the JET database format.

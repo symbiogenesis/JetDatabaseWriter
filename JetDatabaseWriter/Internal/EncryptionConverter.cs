@@ -7,6 +7,10 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Implements the read-decrypt-rewrite pipeline used by

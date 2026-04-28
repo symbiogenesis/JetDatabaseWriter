@@ -6,6 +6,8 @@ using System.CommandLine;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Models;
 
 /// <summary>
 /// CLI tool that reads the schema of every user table in a JET database

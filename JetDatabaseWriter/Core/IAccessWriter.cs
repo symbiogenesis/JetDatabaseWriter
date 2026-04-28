@@ -1,8 +1,9 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Core;
 
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Interface for writing to Microsoft Access JET databases (.mdb / .accdb).

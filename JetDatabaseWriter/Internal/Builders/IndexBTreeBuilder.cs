@@ -1,8 +1,9 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Internal.Builders;
 
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>
 /// Builds a complete JET index B-tree from a sorted list of leaf

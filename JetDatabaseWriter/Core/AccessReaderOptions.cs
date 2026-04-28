@@ -1,8 +1,9 @@
-namespace JetDatabaseWriter;
+namespace JetDatabaseWriter.Core;
 
 using System;
 using System.Collections.Generic;
 using System.IO;
+using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Configuration options for opening a JET database with <see cref="AccessReader"/>.

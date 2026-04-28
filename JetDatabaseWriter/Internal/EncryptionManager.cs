@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Core;
 
 /// <summary>
 /// Centralizes all JET / ACE / ACCDB encryption logic — header detection,
