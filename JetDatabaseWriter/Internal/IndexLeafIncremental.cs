@@ -53,7 +53,7 @@ internal static class IndexLeafIncremental
             return false;
         }
 
-        return page[0] == IndexBTreeBuilder.PageTypeIntermediate;
+        return page[0] == Constants.IndexLeafPage.PageTypeIntermediate;
     }
 
     /// <summary>
@@ -119,7 +119,7 @@ internal static class IndexLeafIncremental
     /// </summary>
     public static long ReadFirstChildPointer(IndexLeafPageBuilder.LeafPageLayout layout, byte[] intermediatePage, int pageSize)
     {
-        if (intermediatePage == null || intermediatePage.Length < pageSize || intermediatePage[0] != IndexBTreeBuilder.PageTypeIntermediate)
+        if (intermediatePage == null || intermediatePage.Length < pageSize || intermediatePage[0] != Constants.IndexLeafPage.PageTypeIntermediate)
         {
             return 0;
         }
@@ -160,7 +160,7 @@ internal static class IndexLeafIncremental
             return false;
         }
 
-        if (page[0] != IndexLeafPageBuilder.PageTypeLeaf)
+        if (page[0] != Constants.IndexLeafPage.PageTypeLeaf)
         {
             return false;
         }
@@ -419,7 +419,7 @@ internal static class IndexLeafIncremental
         int pageSize)
     {
         var result = new List<DecodedIntermediateEntry>();
-        if (page == null || page.Length < pageSize || page[0] != IndexBTreeBuilder.PageTypeIntermediate)
+        if (page == null || page.Length < pageSize || page[0] != Constants.IndexLeafPage.PageTypeIntermediate)
         {
             return result;
         }

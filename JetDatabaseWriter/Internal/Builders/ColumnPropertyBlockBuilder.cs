@@ -29,10 +29,10 @@ using JetDatabaseWriter.Internal.Models;
 internal sealed class ColumnPropertyBlockBuilder
 {
     /// <summary>Gets the mutable list of property targets in emission order. The first target is conventionally the table itself.</summary>
-    public List<TargetBuilder> Targets { get; } = new();
+    public List<TargetBuilder> Targets { get; } = [];
 
     /// <summary>Gets the mutable list of opaque chunks to re-emit verbatim (forward-compat).</summary>
-    public List<ColumnPropertyUnknownChunk> UnknownChunks { get; } = new();
+    public List<ColumnPropertyUnknownChunk> UnknownChunks { get; } = [];
 
     /// <summary>
     /// Gets a value indicating whether the builder would emit zero targets and
@@ -294,7 +294,7 @@ internal sealed class ColumnPropertyBlockBuilder
         public ColumnPropertyChunkType ChunkType { get; set; }
 
         /// <summary>Gets the mutable list of property entries in emission order.</summary>
-        public List<EntryBuilder> Entries { get; } = new();
+        public List<EntryBuilder> Entries { get; } = [];
 
         /// <summary>Adds a Text-typed (<c>0x0A</c>) string property using the supplied database format's encoding.</summary>
         public void AddText(string propertyName, string value, DatabaseFormat format)

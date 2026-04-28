@@ -36,9 +36,6 @@ using JetDatabaseWriter.Internal.Models;
 /// </summary>
 internal static class IndexBTreeBuilder
 {
-    /// <summary>Page type byte for index intermediate pages.</summary>
-    internal const byte PageTypeIntermediate = 0x03;
-
     /// <summary>
     /// Result of <c>Build</c>: the rendered pages (in the order they
     /// should be appended to the database) and the absolute page number of
@@ -342,7 +339,7 @@ internal static class IndexBTreeBuilder
     {
         byte[] page = new byte[pageSize];
 
-        page[0] = PageTypeIntermediate; // page_type = 0x03
+        page[0] = Constants.IndexLeafPage.PageTypeIntermediate; // page_type = 0x03
         page[1] = 0x01;                 // unknown
 
         // free_space patched at end.

@@ -9526,8 +9526,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // bulk only when the encoder rejects a row or the page chain
                 // is malformed. Removes the "fall back to bulk for
                 // multi-level trees" branch.
-                if (rootPage[0] != IndexLeafPageBuilder.PageTypeIntermediate
-                    && rootPage[0] != IndexLeafPageBuilder.PageTypeLeaf)
+                if (rootPage[0] != Constants.IndexLeafPage.PageTypeIntermediate
+                    && rootPage[0] != Constants.IndexLeafPage.PageTypeLeaf)
                 {
                     return false;
                 }
@@ -9630,7 +9630,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         ReturnPage(leafBytes);
                     }
 
-                    if (leaf[0] != IndexLeafPageBuilder.PageTypeLeaf)
+                    if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
                     {
                         return false;
                     }
@@ -9729,12 +9729,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 ReturnPage(pageBytes);
             }
 
-            if (page[0] == IndexLeafPageBuilder.PageTypeLeaf)
+            if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
             {
                 return current;
             }
 
-            if (page[0] != IndexLeafPageBuilder.PageTypeIntermediate)
+            if (page[0] != Constants.IndexLeafPage.PageTypeIntermediate)
             {
                 return 0;
             }
@@ -9797,7 +9797,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ReturnPage(tailBytes);
         }
 
-        if (tailLeaf[0] != IndexLeafPageBuilder.PageTypeLeaf)
+        if (tailLeaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
         {
             return false;
         }
@@ -9943,7 +9943,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ReturnPage(leafBytes);
         }
 
-        if (leaf[0] != IndexLeafPageBuilder.PageTypeLeaf)
+        if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
         {
             return false;
         }
@@ -10153,12 +10153,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 ReturnPage(pageBytes);
             }
 
-            if (page[0] == IndexLeafPageBuilder.PageTypeLeaf)
+            if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
             {
                 return current;
             }
 
-            if (page[0] != IndexBTreeBuilder.PageTypeIntermediate)
+            if (page[0] != Constants.IndexLeafPage.PageTypeIntermediate)
             {
                 return 0;
             }
@@ -10488,7 +10488,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             byte[] preBytes = await ReadPageAsync(pre.LeafPage, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (preBytes[0] != IndexLeafPageBuilder.PageTypeLeaf)
+                if (preBytes[0] != Constants.IndexLeafPage.PageTypeLeaf)
                 {
                     continue;
                 }
@@ -10526,7 +10526,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 ReturnPage(leafBytes);
             }
 
-            if (leaf[0] != IndexLeafPageBuilder.PageTypeLeaf)
+            if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
                 return false;
             }
