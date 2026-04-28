@@ -57,7 +57,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
 {
     private readonly object _cacheLock = new();
     private readonly bool _useLockFile;
+    private readonly string? _lockFileUserName;
+    private readonly string? _lockFileMachineName;
     private readonly bool _strictParsing;
+    private LockFileSlotWriter? _lockFileSlot;
     private volatile LruCache<long, byte[]>? _pageCache;
     private long _cacheHits;
     private long _cacheMisses;
@@ -76,6 +79,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNull(options, nameof(options));
 
         _useLockFile = options.UseLockFile && !string.IsNullOrEmpty(path);
+        _lockFileUserName = options.LockFileUserName;
+        _lockFileMachineName = options.LockFileMachineName;
         _strictParsing = options.StrictParsing;
         LinkedSourcePathValidator = options.LinkedSourcePathValidator;
         LinkedSourcePathAllowlist = LinkedTableManager.NormalizeAllowlist(options.LinkedSourcePathAllowlist, path);
@@ -106,7 +111,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         if (_useLockFile)
         {
-            LockFileManager.Create(_path, nameof(AccessReader));
+            _lockFileSlot = LockFileSlotWriter.Open(
+                _path,
+                nameof(AccessReader),
+                respectExisting: false,
+                machineName: _lockFileMachineName,
+                userName: _lockFileUserName);
         }
     }
 
@@ -1459,7 +1469,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             if (_useLockFile)
             {
-                LockFileManager.Delete(_path, nameof(AccessReader));
+                _lockFileSlot?.Dispose();
+                _lockFileSlot = null;
             }
 
             lock (_cacheLock)

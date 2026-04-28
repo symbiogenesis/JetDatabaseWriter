@@ -658,7 +658,7 @@ The items below are **not yet implemented** and are the most likely places to hi
 - **No SQL parser, query engine, or ODBC driver.** This library is a managed reader/writer over the JET on-disk format, not a database engine. Filter, project, and join through LINQ over `Rows(...)` / `Rows<T>(...)` instead.
 
 ### Concurrency
-- **No byte-range locking and no populated `.ldb` slots.** Microsoft Access uses page-level byte-range locks via `LockFileEx` plus 64-byte machine-name / SID entries in the lockfile; this library implements neither. Concurrent writers against the same file (including Access opening it while a writer is active) will corrupt it. Keep `RespectExistingLockFile = true` (the default) so other openers are blocked by the lockfile.
+- **No byte-range locking.** Microsoft Access uses page-level byte-range locks via `LockFileEx` to coordinate concurrent writers; this library does not. Concurrent writers against the same file (including Access opening it while a writer is active) will corrupt it. Keep `RespectExistingLockFile = true` (the default) so other openers are blocked by the lockfile.
 - **No transactions or rollback.** A crashed write leaves the file in whatever partially-flushed state the page cache had reached.
 
 ---

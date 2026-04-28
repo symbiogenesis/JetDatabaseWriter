@@ -391,6 +391,254 @@ public sealed class LockFileTests : IDisposable
         Assert.True(options.UseLockFile);
     }
 
+    // ── Phase 1: populated lockfile slots ─────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task Reader_PopulatesSlot_WithMachineAndUserName(string path)
+    {
+        string temp = CopyToTemp(path);
+        string lockPath = GetExpectedLockPath(temp);
+
+        await using var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+
+        byte[] bytes = ReadAllShared(lockPath);
+        Assert.True(bytes.Length >= 64, $"Lockfile must contain at least one slot, got {bytes.Length} bytes");
+
+        string machine = ReadAsciiField(bytes, 0, 32);
+        string user = ReadAsciiField(bytes, 32, 32);
+        Assert.Equal(TruncateAscii(Environment.MachineName, 31), machine);
+        Assert.Equal(TruncateAscii(Environment.UserName, 31), user);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task Writer_PopulatesSlot_WithMachineAndUserName(string path)
+    {
+        string temp = CopyToTemp(path);
+        string lockPath = GetExpectedLockPath(temp);
+
+        await using var writer = await AccessWriter.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+
+        byte[] bytes = ReadAllShared(lockPath);
+        Assert.True(bytes.Length >= 64);
+
+        string machine = ReadAsciiField(bytes, 0, 32);
+        string user = ReadAsciiField(bytes, 32, 32);
+        Assert.Equal(TruncateAscii(Environment.MachineName, 31), machine);
+        Assert.Equal(TruncateAscii(Environment.UserName, 31), user);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task Reader_OverrideUserAndMachine_RoundTripsIntoSlot(string path)
+    {
+        string temp = CopyToTemp(path);
+        string lockPath = GetExpectedLockPath(temp);
+
+        var options = new AccessReaderOptions
+        {
+            LockFileMachineName = "TESTHOST",
+            LockFileUserName = "alice",
+        };
+
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+
+        byte[] bytes = ReadAllShared(lockPath);
+        Assert.Equal("TESTHOST", ReadAsciiField(bytes, 0, 32));
+        Assert.Equal("alice", ReadAsciiField(bytes, 32, 32));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task Writer_OverrideUserAndMachine_RoundTripsIntoSlot(string path)
+    {
+        string temp = CopyToTemp(path);
+        string lockPath = GetExpectedLockPath(temp);
+
+        var options = new AccessWriterOptions
+        {
+            LockFileMachineName = "BUILDBOX",
+            LockFileUserName = "svc-build",
+            RespectExistingLockFile = false,
+        };
+
+        await using var writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+
+        byte[] bytes = ReadAllShared(lockPath);
+        Assert.Equal("BUILDBOX", ReadAsciiField(bytes, 0, 32));
+        Assert.Equal("svc-build", ReadAsciiField(bytes, 32, 32));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task Reader_NonAsciiNames_ReplacedWithQuestionMark(string path)
+    {
+        string temp = CopyToTemp(path);
+        string lockPath = GetExpectedLockPath(temp);
+
+        var options = new AccessReaderOptions
+        {
+            LockFileMachineName = "MÄCHINE",
+            LockFileUserName = "üser",
+        };
+
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+
+        byte[] bytes = ReadAllShared(lockPath);
+        Assert.Equal("M?CHINE", ReadAsciiField(bytes, 0, 32));
+        Assert.Equal("?ser", ReadAsciiField(bytes, 32, 32));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task Reader_LongName_TruncatedTo31Chars(string path)
+    {
+        string temp = CopyToTemp(path);
+        string lockPath = GetExpectedLockPath(temp);
+
+        string longName = new string('a', 64);
+        var options = new AccessReaderOptions
+        {
+            LockFileMachineName = longName,
+            LockFileUserName = longName,
+        };
+
+        await using var reader = await AccessReader.OpenAsync(temp, options, TestContext.Current.CancellationToken);
+
+        byte[] bytes = ReadAllShared(lockPath);
+        string machine = ReadAsciiField(bytes, 0, 32);
+        string user = ReadAsciiField(bytes, 32, 32);
+        Assert.Equal(31, machine.Length);
+        Assert.Equal(31, user.Length);
+        Assert.Equal(new string('a', 31), machine);
+        Assert.Equal(new string('a', 31), user);
+
+        // Trailing null preserved.
+        Assert.Equal(0, bytes[31]);
+        Assert.Equal(0, bytes[63]);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task Slot_IsZeroedOnDispose(string path)
+    {
+        string temp = CopyToTemp(path);
+        string lockPath = GetExpectedLockPath(temp);
+
+        var reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
+
+        // Capture the slot bytes while open so the path & permissions are warm.
+        Assert.True(File.Exists(lockPath));
+        await reader.DisposeAsync();
+
+        // Last opener deleted the lockfile; the slot is therefore "zeroed" by removal.
+        Assert.False(File.Exists(lockPath), $"Last opener should remove the lockfile: {lockPath}");
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task MultipleReaders_AppendDistinctSlots(string path)
+    {
+        string temp = CopyToTemp(path);
+        string lockPath = GetExpectedLockPath(temp);
+
+        var optsA = new AccessReaderOptions
+        {
+            LockFileMachineName = "HOST-A",
+            LockFileUserName = "user-a",
+        };
+        var optsB = new AccessReaderOptions
+        {
+            LockFileMachineName = "HOST-B",
+            LockFileUserName = "user-b",
+        };
+
+        await using var readerA = await AccessReader.OpenAsync(temp, optsA, TestContext.Current.CancellationToken);
+        await using var readerB = await AccessReader.OpenAsync(temp, optsB, TestContext.Current.CancellationToken);
+
+        // Read with FileShare.ReadWrite | FileShare.Delete since the openers still hold handles.
+        byte[] bytes = ReadAllShared(lockPath);
+        Assert.True(bytes.Length >= 128, $"Expected at least two slots, got {bytes.Length} bytes");
+        Assert.Equal("HOST-A", ReadAsciiField(bytes, 0, 32));
+        Assert.Equal("user-a", ReadAsciiField(bytes, 32, 32));
+        Assert.Equal("HOST-B", ReadAsciiField(bytes, 64, 32));
+        Assert.Equal("user-b", ReadAsciiField(bytes, 96, 32));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task SecondOpener_ReusesFreedSlot(string path)
+    {
+        string temp = CopyToTemp(path);
+        string lockPath = GetExpectedLockPath(temp);
+
+        var optsA = new AccessReaderOptions { LockFileMachineName = "HOST-A", LockFileUserName = "u-a" };
+        var optsB = new AccessReaderOptions { LockFileMachineName = "HOST-B", LockFileUserName = "u-b" };
+        var optsC = new AccessReaderOptions { LockFileMachineName = "HOST-C", LockFileUserName = "u-c" };
+
+        var readerA = await AccessReader.OpenAsync(temp, optsA, TestContext.Current.CancellationToken);
+        await using var readerB = await AccessReader.OpenAsync(temp, optsB, TestContext.Current.CancellationToken);
+
+        // Free slot 0.
+        await readerA.DisposeAsync();
+
+        await using var readerC = await AccessReader.OpenAsync(temp, optsC, TestContext.Current.CancellationToken);
+
+        byte[] bytes = ReadAllShared(lockPath);
+
+        // Slot 0 was freed by A and should now hold C; slot 1 still holds B.
+        Assert.Equal("HOST-C", ReadAsciiField(bytes, 0, 32));
+        Assert.Equal("HOST-B", ReadAsciiField(bytes, 64, 32));
+    }
+
+    private static string ReadAsciiField(byte[] bytes, int offset, int length)
+    {
+        int end = offset;
+        int max = offset + length;
+        while (end < max && bytes[end] != 0)
+        {
+            end++;
+        }
+
+        return System.Text.Encoding.ASCII.GetString(bytes, offset, end - offset);
+    }
+
+    private static string TruncateAscii(string value, int max)
+    {
+        char[] buf = new char[Math.Min(value.Length, max)];
+        for (int i = 0; i < buf.Length; i++)
+        {
+            char c = value[i];
+            buf[i] = (c >= 0x20 && c < 0x7F) ? c : '?';
+        }
+
+        return new string(buf);
+    }
+
+    private static byte[] ReadAllShared(string path)
+    {
+        using var fs = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        byte[] buf = new byte[fs.Length];
+        int read = 0;
+        while (read < buf.Length)
+        {
+            int n = fs.Read(buf, read, buf.Length - read);
+            if (n == 0)
+            {
+                break;
+            }
+
+            read += n;
+        }
+
+        return buf;
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────
 
     public void Dispose()

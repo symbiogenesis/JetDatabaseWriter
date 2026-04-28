@@ -71,6 +71,22 @@ public sealed class AccessReaderOptions : IAccessOptions
     public bool UseLockFile { get; init; } = true;
 
     /// <summary>
+    /// Gets the user / security name written into this opener's slot in the
+    /// JET lock-file (.ldb / .laccdb). When <see langword="null"/> (the default),
+    /// <see cref="Environment.UserName"/> is used. Truncated to 31 ASCII characters;
+    /// non-ASCII characters are replaced with '?' to match Access's slot format.
+    /// </summary>
+    public string? LockFileUserName { get; init; }
+
+    /// <summary>
+    /// Gets the machine / computer name written into this opener's slot in the
+    /// JET lock-file (.ldb / .laccdb). When <see langword="null"/> (the default),
+    /// <see cref="Environment.MachineName"/> is used. Truncated to 31 ASCII characters;
+    /// non-ASCII characters are replaced with '?' to match Access's slot format.
+    /// </summary>
+    public string? LockFileMachineName { get; init; }
+
+    /// <summary>
     /// Gets an optional allowlist of directories that linked-table source paths must stay under.
     /// Paths may be absolute or relative (relative entries are resolved from the opened database directory).
     /// Leave empty to allow any directory.
