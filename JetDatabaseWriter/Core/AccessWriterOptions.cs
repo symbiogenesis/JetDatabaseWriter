@@ -111,4 +111,15 @@ public sealed class AccessWriterOptions : IAccessOptions
     /// Default: <c>5000</c>.
     /// </summary>
     public int LockTimeoutMilliseconds { get; init; } = 5_000;
+
+    /// <summary>
+    /// Gets the maximum number of distinct pages a single explicit transaction
+    /// (started via <see cref="AccessWriter.BeginTransactionAsync(System.Threading.CancellationToken)"/>)
+    /// may journal in memory before the next page write throws a
+    /// <see cref="JetDatabaseWriter.Exceptions.JetLimitationException"/> and the
+    /// transaction is automatically rolled back. Each journaled page costs
+    /// <see cref="AccessBase.PageSize"/> bytes of process memory.
+    /// Default: <c>16384</c> (~64 MiB at the standard 4&#8239;KiB ACE page size).
+    /// </summary>
+    public int MaxTransactionPageBudget { get; init; } = 16_384;
 }

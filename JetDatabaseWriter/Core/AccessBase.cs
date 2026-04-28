@@ -12,6 +12,7 @@ using JetDatabaseWriter.Core.Interfaces;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Internal.Transactions;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
 #pragma warning disable SA1401 // Field should be private — fields are private protected (assembly-only)
@@ -78,6 +79,19 @@ public abstract class AccessBase : IAccessBase
     /// Until set, page-write paths skip locking — equivalent to a disabled instance.
     /// </summary>
     private protected JetByteRangeLock? _byteRangeLock;
+
+    /// <summary>
+    /// Gets or sets the in-memory page journal for an explicit <see cref="JetTransaction"/>.
+    /// When non-null, page writes/appends are buffered into the journal
+    /// instead of being flushed to the underlying stream, and page reads
+    /// consult the journal first so the transaction sees its own writes.
+    /// Set/cleared exclusively by <see cref="AccessWriter"/> while holding
+    /// <see cref="_ioGate"/>.
+    /// </summary>
+    internal PageJournal? ActiveJournal { get; set; }
+
+    /// <summary>Gets the writer's internal I/O gate so derived types may serialise transaction commit / rollback.</summary>
+    internal SemaphoreSlim IoGate => _ioGate;
 
     /// <summary>Sentinel disposable used when no byte-range lock is active.</summary>
     private static readonly IDisposable NullDisposable = new NullDisposableImpl();
@@ -572,6 +586,16 @@ public abstract class AccessBase : IAccessBase
         await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // Inside an explicit transaction, prefer the journal: the page may
+            // be a transaction-local mutation (or an appended page that has no
+            // on-disk slot yet). Journal bytes are plaintext; bypass decrypt.
+            byte[]? journaled = ActiveJournal?.TryGet(n);
+            if (journaled is not null)
+            {
+                Buffer.BlockCopy(journaled, 0, buf, 0, _pgSz);
+                return buf;
+            }
+
             _ = _stream.Seek(n * _pgSz, SeekOrigin.Begin);
 
             int read = 0;
@@ -828,10 +852,18 @@ public abstract class AccessBase : IAccessBase
 
     private protected void WritePage(long pageNumber, byte[] page)
     {
-        byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
         _ioGate.Wait();
         try
         {
+            // Buffer into the active transaction journal (plaintext) instead
+            // of touching disk. Encryption + locks are applied at commit time.
+            if (ActiveJournal is { } journal)
+            {
+                journal.Write(pageNumber, page.AsSpan(0, _pgSz));
+                return;
+            }
+
+            byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
             using IDisposable pageLock = _byteRangeLock?.AcquirePageLock(pageNumber, _pgSz) ?? NullDisposable;
             _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
             _stream.Write(toWrite, 0, _pgSz);
@@ -847,10 +879,16 @@ public abstract class AccessBase : IAccessBase
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
         await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (ActiveJournal is { } journal)
+            {
+                journal.Write(pageNumber, page.AsSpan(0, _pgSz));
+                return;
+            }
+
+            byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
             IDisposable pageLock = _byteRangeLock is null
                 ? NullDisposable
                 : await _byteRangeLock.AcquirePageLockAsync(pageNumber, _pgSz, cancellationToken).ConfigureAwait(false);
@@ -876,6 +914,11 @@ public abstract class AccessBase : IAccessBase
         _ioGate.Wait();
         try
         {
+            if (ActiveJournal is { } journal)
+            {
+                return journal.Append(page.AsSpan(0, _pgSz));
+            }
+
             long pageNumber = _stream.Length / _pgSz;
             byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
             using IDisposable pageLock = _byteRangeLock?.AcquirePageLock(pageNumber, _pgSz) ?? NullDisposable;
@@ -897,6 +940,11 @@ public abstract class AccessBase : IAccessBase
         await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (ActiveJournal is { } journal)
+            {
+                return journal.Append(page.AsSpan(0, _pgSz));
+            }
+
             long pageNumber = _stream.Length / _pgSz;
             byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
             IDisposable pageLock = _byteRangeLock is null
