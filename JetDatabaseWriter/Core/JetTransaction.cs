@@ -16,7 +16,6 @@ using JetDatabaseWriter.Internal.Transactions;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Implements Phase 3 of <c>docs/design/concurrency-and-transactions-plan.md</c>.
 /// Only one transaction may be active at a time per <see cref="AccessWriter"/>;
 /// a second concurrent <see cref="AccessWriter.BeginTransactionAsync"/> call
 /// throws <see cref="InvalidOperationException"/>.

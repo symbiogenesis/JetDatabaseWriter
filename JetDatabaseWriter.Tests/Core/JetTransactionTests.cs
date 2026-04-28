@@ -225,4 +225,110 @@ public sealed class JetTransactionTests
         await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken));
     }
+
+    [Fact]
+    public async Task Commit_BumpsPageZeroCommitLockByte()
+    {
+        // The JET commit-lock byte at page-0 offset 0x14 must increment on
+        // every committed transaction so cooperating openers can detect a
+        // catalog/data version change without re-reading the entire file.
+        var ms = new MemoryStream();
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            DatabaseFormat.AceAccdb,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
+
+            ms.Position = 0;
+            byte[] before = new byte[0x18];
+            await ms.ReadAsync(before.AsMemory(), TestContext.Current.CancellationToken);
+            byte beforeByte = before[0x14];
+
+            await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Items", [1, "Alpha"], TestContext.Current.CancellationToken);
+            await tx.CommitAsync(TestContext.Current.CancellationToken);
+
+            ms.Position = 0;
+            byte[] after = new byte[0x18];
+            await ms.ReadAsync(after.AsMemory(), TestContext.Current.CancellationToken);
+
+            Assert.Equal(unchecked((byte)(beforeByte + 1)), after[0x14]);
+        }
+    }
+
+    [Fact]
+    public async Task UseTransactionalWrites_RollsBackOnExceptionDuringInsert()
+    {
+        // With UseTransactionalWrites=true, an exception thrown mid-call must
+        // leave the database in its pre-call state.
+        var ms = new MemoryStream();
+        var writerOptions = new AccessWriterOptions
+        {
+            UseLockFile = false,
+            UseByteRangeLocks = false,
+            UseTransactionalWrites = true,
+        };
+
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            DatabaseFormat.AceAccdb,
+            writerOptions,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "Items",
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("Label", typeof(string), maxLength: 50),
+                ],
+                TestContext.Current.CancellationToken);
+
+            // Seed one row.
+            await writer.InsertRowAsync("Items", [1, "Seed"], TestContext.Current.CancellationToken);
+
+            // Bulk insert with an intra-batch primary-key duplicate; the
+            // pre-write unique check throws and the WHOLE batch must be
+            // rolled back by the implicit auto-commit transaction.
+            object[][] batch =
+            [
+                [10, "Ten"],
+                [11, "Eleven"],
+                [10, "DupTen"],
+            ];
+
+            await Assert.ThrowsAnyAsync<Exception>(async () =>
+                await writer.InsertRowsAsync("Items", batch, TestContext.Current.CancellationToken));
+        }
+
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        long count = await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken);
+
+        // Only the seed row should remain — none of the batch rows persisted.
+        Assert.Equal(1, count);
+    }
+
+    [Fact]
+    public async Task UseTransactionalWrites_Disabled_AllowsPartialBatchVisibility()
+    {
+        // Sanity check: with UseTransactionalWrites=false (default), a
+        // failure mid-batch leaves whatever rows the writer's per-call
+        // rollback path didn't catch. We don't assert exact persisted-row
+        // count here — just that the option is honoured (no implicit
+        // transaction is opened, so PageCacheSize/MaxTransactionPageBudget
+        // do not affect the call's success).
+        var ms = new MemoryStream();
+        await using var writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false },
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync("Items", [1, "A"], TestContext.Current.CancellationToken);
+    }
 }

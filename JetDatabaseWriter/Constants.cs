@@ -110,7 +110,7 @@ internal static class Constants
     /// </summary>
     /// <remarks>
     /// See <c>docs/design/calculated-columns-format-notes.md</c> for the full
-    /// on-disk layout and the multi-phase implementation plan.
+    /// on-disk layout.
     /// </remarks>
     public static class CalculatedColumn
     {

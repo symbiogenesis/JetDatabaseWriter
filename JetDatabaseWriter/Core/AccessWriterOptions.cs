@@ -122,4 +122,24 @@ public sealed class AccessWriterOptions : IAccessOptions
     /// Default: <c>16384</c> (~64 MiB at the standard 4&#8239;KiB ACE page size).
     /// </summary>
     public int MaxTransactionPageBudget { get; init; } = 16_384;
+
+    /// <summary>
+    /// Gets a value indicating whether every public mutation method on
+    /// <see cref="AccessWriter"/> is wrapped in an implicit
+    /// <see cref="JetTransaction"/> when no explicit transaction is active.
+    /// When <see langword="true"/>, each call to <c>CreateTableAsync</c>,
+    /// <c>InsertRowsAsync</c>, <c>UpdateRowsAsync</c>, etc. begins a private
+    /// transaction at entry, commits it on success, and rolls it back on
+    /// exception &#8212; so a crash mid-call leaves the database in its
+    /// pre-call state instead of in whatever partially-flushed state the
+    /// page-write pipeline had reached. Calls made inside an explicit
+    /// transaction are unaffected.
+    /// <para>
+    /// Default: <see langword="false"/> (preserves today's flush-per-page
+    /// behaviour). The flag is intentionally opt-in for the first release;
+    /// the plan is to flip the default in a later major version once it has
+    /// bake time.
+    /// </para>
+    /// </summary>
+    public bool UseTransactionalWrites { get; init; }
 }

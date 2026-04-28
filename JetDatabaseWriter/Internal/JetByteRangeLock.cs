@@ -124,6 +124,29 @@ internal sealed class JetByteRangeLock
         return new ReleaseToken(this, offset, pageSize);
     }
 
+    /// <summary>
+    /// Acquires the JET commit-lock sentinel: a 1-byte exclusive lock at the
+    /// fixed offset Microsoft Access / OLE DB JET / ACE all use to gate
+    /// schema-changing transaction commits and increments of the page-0
+    /// commit-lock byte (header offset <c>0x14</c>). Held only across the
+    /// atomic-replay window inside
+    /// <see cref="JetDatabaseWriter.Core.AccessWriter.CommitTransactionAsync"/>.
+    /// </summary>
+    /// <param name="isAccdb">True when the target database is ACE (.accdb), which uses sentinel offset <c>0xFFFFFFFC</c>; otherwise <c>0xFFFFFFFE</c> (Jet3/Jet4).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A disposable that releases the commit-lock sentinel; a no-op disposable on a disabled instance.</returns>
+    public async ValueTask<IDisposable> AcquireCommitLockAsync(bool isAccdb, CancellationToken cancellationToken = default)
+    {
+        if (!_enabled)
+        {
+            return NoOpDisposable.Instance;
+        }
+
+        long offset = isAccdb ? 0xFFFFFFFCL : 0xFFFFFFFEL;
+        await AcquireBlockingAsync(offset, length: 1, cancellationToken).ConfigureAwait(false);
+        return new ReleaseToken(this, offset, length: 1);
+    }
+
     private static bool PlatformIsWindows() => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
     [DllImport("kernel32.dll", SetLastError = true)]
