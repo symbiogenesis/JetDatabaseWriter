@@ -231,9 +231,9 @@ public sealed class CreateDatabaseTests
     }
 
     [Fact]
-    public async Task CreateDatabaseAsync_Path_NullPath_ThrowsArgumentException()
+    public async Task CreateDatabaseAsync_Path_NullPath_ThrowsArgumentNullException()
     {
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
             AccessWriter.CreateDatabaseAsync((string)null!, DatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
     }
 

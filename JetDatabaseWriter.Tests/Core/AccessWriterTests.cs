@@ -39,9 +39,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     }
 
     [Fact]
-    public async Task Open_WithNullPath_ThrowsArgumentException()
+    public async Task Open_WithNullPath_ThrowsArgumentNullException()
     {
-        await Assert.ThrowsAsync<ArgumentException>(async () => await AccessWriter.OpenAsync((string)null!, cancellationToken: TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ArgumentNullException>(async () => await AccessWriter.OpenAsync((string)null!, cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -558,13 +558,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task CreateTable_NullTableName_ThrowsArgumentException(string path)
+    public async Task CreateTable_NullTableName_ThrowsArgumentNullException(string path)
     {
         var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.CreateTableAsync(null!, [], TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ArgumentNullException>(async () => await writer.CreateTableAsync(null!, [], TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -580,13 +580,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task DeleteRows_NullTableName_ThrowsArgumentException(string path)
+    public async Task DeleteRows_NullTableName_ThrowsArgumentNullException(string path)
     {
         var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.DeleteRowsAsync(null!, "Col", "Val", TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ArgumentNullException>(async () => await writer.DeleteRowsAsync(null!, "Col", "Val", TestContext.Current.CancellationToken));
     }
 
     // ── Roundtrip: multiple data types ────────────────────────────────
@@ -1296,13 +1296,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task DropTable_NullTableName_ThrowsArgumentException(string path)
+    public async Task DropTable_NullTableName_ThrowsArgumentNullException(string path)
     {
         var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.DropTableAsync(null!, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ArgumentNullException>(async () => await writer.DropTableAsync(null!, TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -1395,13 +1395,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task InsertRows_NullTableName_ThrowsArgumentException(string path)
+    public async Task InsertRows_NullTableName_ThrowsArgumentNullException(string path)
     {
         var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await Assert.ThrowsAsync<ArgumentNullException>(async () =>
             await writer.InsertRowsAsync(null!, [new object[] { 1 }], TestContext.Current.CancellationToken));
     }
 
@@ -1437,14 +1437,14 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task UpdateRows_NullTableName_ThrowsArgumentException(string path)
+    public async Task UpdateRows_NullTableName_ThrowsArgumentNullException(string path)
     {
         var temp = await CopyToStreamAsync(path);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         var updates = new Dictionary<string, object> { ["Col"] = "val" };
 
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await Assert.ThrowsAsync<ArgumentNullException>(async () =>
             await writer.UpdateRowsAsync(null!, "Col", "val", updates, TestContext.Current.CancellationToken));
     }
 
