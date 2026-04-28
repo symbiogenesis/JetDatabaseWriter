@@ -223,14 +223,14 @@ public sealed record ColumnDefinition
     /// calculated-value wrapper.
     /// </para>
     /// <para>
-    /// <b>Phase 1A status (current):</b> the library reads calc-column metadata
+    /// <b>Current status:</b> the library reads calc-column metadata
     /// produced by Microsoft Access and surfaces it via
     /// <see cref="ColumnMetadata.IsCalculated"/> /
     /// <see cref="ColumnMetadata.CalculationExpression"/> /
     /// <see cref="ColumnMetadata.CalculatedResultType"/>. Writing calc columns
-    /// (Phase 1B) and evaluating expressions client-side (Phase 2+) are not
-    /// yet implemented; <c>CreateTableAsync</c> throws
-    /// <see cref="NotSupportedException"/> when this flag is set. See
+    /// and evaluating expressions client-side are not yet implemented;
+    /// <c>CreateTableAsync</c> throws <see cref="NotSupportedException"/> when
+    /// this flag is set. See
     /// <c>docs/design/calculated-columns-format-notes.md</c>.
     /// </para>
     /// </remarks>

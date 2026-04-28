@@ -7,11 +7,10 @@ using JetDatabaseWriter.Exceptions;
 
 /// <summary>
 /// In-memory journal of dirty pages produced inside an explicit
-/// <see cref="JetDatabaseWriter.Core.JetTransaction"/>. Backs Phase 3 of the
-/// concurrency-and-transactions plan: page mutations are buffered (plaintext)
-/// instead of flushed to disk, then atomically replayed by
-/// <see cref="JetDatabaseWriter.Core.AccessWriter"/> at <c>CommitAsync</c> time
-/// (or discarded by <c>RollbackAsync</c> / dispose).
+/// <see cref="JetDatabaseWriter.Core.JetTransaction"/>. Page mutations are
+/// buffered (plaintext) instead of flushed to disk, then atomically replayed
+/// by <see cref="JetDatabaseWriter.Core.AccessWriter"/> at <c>CommitAsync</c>
+/// time (or discarded by <c>RollbackAsync</c> / dispose).
 /// </summary>
 /// <remarks>
 /// <para>

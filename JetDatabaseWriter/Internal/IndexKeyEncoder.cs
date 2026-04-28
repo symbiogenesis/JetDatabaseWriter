@@ -185,7 +185,7 @@ internal static class IndexKeyEncoder
 
             default:
                 throw new NotSupportedException(
-                    $"Index key encoding for column type 0x{columnType:X2} is not supported in this writer phase. " +
+                    $"Index key encoding for column type 0x{columnType:X2} is not supported. " +
                     "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, GUID, BINARY, TEXT, MEMO.");
         }
     }
