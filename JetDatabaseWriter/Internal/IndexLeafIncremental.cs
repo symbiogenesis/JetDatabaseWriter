@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Internal.Builders;
+using JetDatabaseWriter.Internal.Models;
 
 /// <summary>
 /// Single-leaf fast-path helper: in-place incremental insert and delete
@@ -26,11 +27,6 @@ using JetDatabaseWriter.Internal.Builders;
 /// </summary>
 internal static class IndexLeafIncremental
 {
-    /// <summary>Page type byte for index intermediate (<c>0x03</c>) pages.</summary>
-    internal const byte PageTypeIntermediate = IndexBTreeBuilder.PageTypeIntermediate;
-
-    private const byte PageTypeLeaf = IndexLeafPageBuilder.PageTypeLeaf;
-
     /// <summary>
     /// A decoded leaf entry: the canonical (uncompressed) key bytes plus the
     /// <c>(data_page, data_row)</c> row pointer.
@@ -42,25 +38,6 @@ internal static class IndexLeafIncremental
         public long DataPage { get; } = dataPage;
 
         public byte DataRow { get; } = dataRow;
-    }
-
-    /// <summary>
-    /// A decoded intermediate (<c>0x03</c>) page entry: the canonical
-    /// (uncompressed) summary key bytes, the row pointer of the LAST entry on
-    /// the referenced child page, and the absolute page number of that child.
-    /// Used by the surgical multi-level mutation path so the
-    /// writer can re-emit a single intermediate page in place after a
-    /// summary-key change or a leaf-split insert.
-    /// </summary>
-    internal readonly struct DecodedIntermediateEntry(byte[] key, long dataPage, byte dataRow, long childPage)
-    {
-        public byte[] Key { get; } = key;
-
-        public long DataPage { get; } = dataPage;
-
-        public byte DataRow { get; } = dataRow;
-
-        public long ChildPage { get; } = childPage;
     }
 
     /// <summary>
@@ -76,7 +53,7 @@ internal static class IndexLeafIncremental
             return false;
         }
 
-        return page[0] == PageTypeIntermediate;
+        return page[0] == IndexBTreeBuilder.PageTypeIntermediate;
     }
 
     /// <summary>
@@ -142,7 +119,7 @@ internal static class IndexLeafIncremental
     /// </summary>
     public static long ReadFirstChildPointer(IndexLeafPageBuilder.LeafPageLayout layout, byte[] intermediatePage, int pageSize)
     {
-        if (intermediatePage == null || intermediatePage.Length < pageSize || intermediatePage[0] != PageTypeIntermediate)
+        if (intermediatePage == null || intermediatePage.Length < pageSize || intermediatePage[0] != IndexBTreeBuilder.PageTypeIntermediate)
         {
             return 0;
         }
@@ -183,7 +160,7 @@ internal static class IndexLeafIncremental
             return false;
         }
 
-        if (page[0] != PageTypeLeaf)
+        if (page[0] != IndexLeafPageBuilder.PageTypeLeaf)
         {
             return false;
         }
@@ -442,7 +419,7 @@ internal static class IndexLeafIncremental
         int pageSize)
     {
         var result = new List<DecodedIntermediateEntry>();
-        if (page == null || page.Length < pageSize || page[0] != PageTypeIntermediate)
+        if (page == null || page.Length < pageSize || page[0] != IndexBTreeBuilder.PageTypeIntermediate)
         {
             return result;
         }

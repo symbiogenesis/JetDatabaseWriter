@@ -628,7 +628,7 @@ W4-C-3 (surgical multi-level descent + leaf-local mutate) and W4-C-4 (surgical l
 
 New helpers:
 
-- `IndexLeafIncremental.DecodedIntermediateEntry` + `DecodeIntermediateEntries(layout, page, pageSize)` — decodes every entry on an intermediate (`0x03`) page back into its canonical `(key, dataPage, dataRow, childPage)` tuple, re-prepending the §4.4 shared prefix to entries beyond the first.
+- `DecodedIntermediateEntry` + `IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize)` — decodes every entry on an intermediate (`0x03`) page back into its canonical `(Key, DataPage, DataRow, ChildPage)` record, re-prepending the §4.4 shared prefix to entries beyond the first.
 - `IndexLeafIncremental.TryRebuildLeafWithSiblings(layout, pageSize, parentTdef, entries, prev, next, tail)` — overload of `TryRebuildLeaf` that preserves a non-root leaf's sibling-chain header fields. Returns `null` on overflow.
 - `IndexBTreeBuilder.TryBuildIntermediatePage(layout, pageSize, parentTdef, entries, prev, next, tail)` — re-emits a single `0x03` page from an arbitrary list of `(summaryKey, dataPage, dataRow, childPage)` tuples, preserving sibling-chain headers. Returns `null` on overflow.
 
