@@ -38,9 +38,8 @@ public sealed class IndexBinaryKeyTests
     public async Task CreateTable_IndexOnBinaryColumn_BulkInsertRoundTrips()
     {
         // T_BINARY is byte[] with MaxLength in [1, 255]. The bulk maintenance
-        // loop encodes every snapshot row through IndexKeyEncoder; binary-key indexes
-        // wires T_BINARY into that switch so the create-then-insert flow
-        // no longer throws NotSupportedException.
+        // loop encodes every snapshot row through IndexKeyEncoder, which must
+        // accept T_BINARY so create-then-insert on a binary-key index round-trips.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 

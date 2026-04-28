@@ -51,8 +51,6 @@ internal static class TypedValueParser
     }
 #pragma warning restore CA1031
 
-    // No longer needed: replaced by Convert.ToBoolean in ParseValue
-
     private static byte[] ParseByteArray(string hexString)
     {
         // Format: "XX-XX-XX-XX" from BitConverter.ToString
