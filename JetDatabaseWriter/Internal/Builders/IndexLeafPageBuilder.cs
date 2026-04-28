@@ -35,21 +35,6 @@ using JetDatabaseWriter.Internal.Helpers;
 /// </summary>
 internal static class IndexLeafPageBuilder
 {
-    /// <summary>Page type byte for index leaf pages.</summary>
-    internal const byte PageTypeLeaf = 0x04;
-
-    /// <summary>Bitmask offset on a Jet4 leaf page (§4.2).</summary>
-    internal const int Jet4BitmaskOffset = 0x1B;
-
-    /// <summary>First-entry offset on a Jet4 leaf page (§4.2).</summary>
-    internal const int Jet4FirstEntryOffset = 0x1E0;
-
-    /// <summary>Bitmask offset on a Jet3 leaf page (§4.2).</summary>
-    internal const int Jet3BitmaskOffset = 0x16;
-
-    /// <summary>First-entry offset on a Jet3 leaf page (§4.2).</summary>
-    internal const int Jet3FirstEntryOffset = 0xF8;
-
     /// <summary>
     /// Per-format index page layout descriptor. The §4.1 page header is
     /// identical between Jet3 and Jet4 / ACE; only
@@ -59,10 +44,10 @@ internal static class IndexLeafPageBuilder
     internal readonly struct LeafPageLayout(int bitmaskOffset, int firstEntryOffset)
     {
         /// <summary>Gets the Jet3 (<c>.mdb</c> Access 97) leaf page layout.</summary>
-        public static LeafPageLayout Jet3 => new(Jet3BitmaskOffset, Jet3FirstEntryOffset);
+        public static LeafPageLayout Jet3 => new(Constants.IndexLeafPage.Jet3BitmaskOffset, Constants.IndexLeafPage.Jet3FirstEntryOffset);
 
         /// <summary>Gets the Jet4 / ACE leaf page layout.</summary>
-        public static LeafPageLayout Jet4 => new(Jet4BitmaskOffset, Jet4FirstEntryOffset);
+        public static LeafPageLayout Jet4 => new(Constants.IndexLeafPage.Jet4BitmaskOffset, Constants.IndexLeafPage.Jet4FirstEntryOffset);
 
         /// <summary>Gets the byte offset of the entry-start bitmask within the page.</summary>
         public int BitmaskOffset { get; } = bitmaskOffset;
@@ -170,7 +155,7 @@ internal static class IndexLeafPageBuilder
         byte[] page = new byte[pageSize];
 
         // ── Header (§4.1) ────────────────────────────────────────────────
-        page[0] = PageTypeLeaf; // page_type
+        page[0] = Constants.IndexLeafPage.PageTypeLeaf; // page_type
         page[1] = 0x01;         // unknown (always 0x01)
 
         // free_space (offset 2, u16) is patched after we know the entry size.

@@ -198,4 +198,34 @@ internal static class Constants
         /// </summary>
         public const uint FatSectMin = 0xFFFFFFFAu;
     }
+
+    /// <summary>
+    /// Page-layout constants for JET index pages
+    /// (leaf <c>0x04</c> and intermediate <c>0x03</c>) as documented in
+    /// <c>docs/design/index-and-relationship-format-notes.md</c>
+    /// §4.1 (header) and §4.2 (entry-start bitmask + first entry).
+    /// The bitmask / first-entry offsets are shared by both page types
+    /// because the §4.1 header layout is identical between them.
+    /// </summary>
+    public static class IndexLeafPage
+    {
+        /// <summary>Page type byte for index leaf pages.</summary>
+        public const byte PageTypeLeaf = 0x04;
+
+        /// <summary>Page type byte for index intermediate pages
+        /// (sibling of <see cref="PageTypeLeaf"/> in the same B-tree).</summary>
+        public const byte PageTypeIntermediate = 0x03;
+
+        /// <summary>Bitmask offset on a Jet4 leaf page (§4.2).</summary>
+        public const int Jet4BitmaskOffset = 0x1B;
+
+        /// <summary>First-entry offset on a Jet4 leaf page (§4.2).</summary>
+        public const int Jet4FirstEntryOffset = 0x1E0;
+
+        /// <summary>Bitmask offset on a Jet3 leaf page (§4.2).</summary>
+        public const int Jet3BitmaskOffset = 0x16;
+
+        /// <summary>First-entry offset on a Jet3 leaf page (§4.2).</summary>
+        public const int Jet3FirstEntryOffset = 0xF8;
+    }
 }
