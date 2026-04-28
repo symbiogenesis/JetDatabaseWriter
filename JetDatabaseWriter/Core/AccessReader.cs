@@ -556,10 +556,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 IsHyperlink = IsHyperlinkColumn(col),
                 Ordinal = index,
                 Size = SizeForColumn(col),
-                DefaultValueExpression = target?.GetTextValue(ColumnPropertyNames.DefaultValue, _format),
-                ValidationRuleExpression = target?.GetTextValue(ColumnPropertyNames.ValidationRule, _format),
-                ValidationText = target?.GetTextValue(ColumnPropertyNames.ValidationText, _format),
-                Description = target?.GetTextValue(ColumnPropertyNames.Description, _format),
+                DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, _format),
+                ValidationRuleExpression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, _format),
+                ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, _format),
+                Description = target?.GetTextValue(Constants.ColumnPropertyNames.Description, _format),
                 NumericPrecision = col.NumericPrecision,
                 NumericScale = col.NumericScale,
             };
@@ -850,7 +850,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return ComplexColumnKind.Unknown;
         }
 
-        if (complexTypeName.Equals("MSysComplexType_Attachment", StringComparison.OrdinalIgnoreCase))
+        if (complexTypeName.Equals(Constants.ComplexTypeNames.Attachment, StringComparison.OrdinalIgnoreCase))
         {
             return ComplexColumnKind.Attachment;
         }
@@ -858,7 +858,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         // Memo + datetime "version" template — Access surfaces this via "Append Only" memos.
         // No probe-confirmed template name yet; classify by primitive-template prefix below
         // when present, otherwise fall through to MultiValue / Unknown.
-        if (complexTypeName.StartsWith("MSysComplexType_", StringComparison.OrdinalIgnoreCase))
+        if (complexTypeName.StartsWith(Constants.ComplexTypeNames.Prefix, StringComparison.OrdinalIgnoreCase))
         {
             return ComplexColumnKind.MultiValue;
         }
@@ -1041,7 +1041,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Dictionary<int, (string Name, byte Type)> byComplexId,
         CancellationToken cancellationToken)
     {
-        long msysTdef = await FindSystemTablePageAsync("MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+        long msysTdef = await FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysTdef <= 0)
         {
             return [];
@@ -1963,7 +1963,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     flagsLong = 0;
                 }
 
-                if ((unchecked((uint)flagsLong) & SYSTABLE_MASK) != 0)
+                if ((unchecked((uint)flagsLong) & Constants.SystemObjects.SystemTableMask) != 0)
                 {
                     continue;
                 }
@@ -2392,7 +2392,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         try
         {
-            long tdefPage = await FindSystemTablePageAsync("MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+            long tdefPage = await FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
             if (tdefPage <= 0)
             {
                 return result;
@@ -2485,7 +2485,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != 6))
+            if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != Constants.SystemObjects.LinkedOdbcType))
             {
                 continue;
             }
@@ -2544,7 +2544,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         try
         {
-            long msysTdef = await FindSystemTablePageAsync("MSysComplexColumns", cancellationToken).ConfigureAwait(false);
+            long msysTdef = await FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
             if (msysTdef <= 0)
             {
                 return 0;

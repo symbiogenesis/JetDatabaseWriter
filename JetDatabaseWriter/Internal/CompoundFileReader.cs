@@ -19,11 +19,6 @@ using JetDatabaseWriter.Internal.Helpers;
 /// </summary>
 internal static class CompoundFileReader
 {
-    private const uint FreeSect = 0xFFFFFFFFu;
-    private const uint EndOfChain = 0xFFFFFFFEu;
-    private const int DirEntrySize = 128;
-    private const uint FatSectMin = 0xFFFFFFFAu; // entries >= this are reserved markers
-
     /// <summary>
     /// Gets the 8-byte OLE / Microsoft Compound File Binary (CFB / OLE2) signature
     /// that appears at offset 0 of every compound document.
@@ -129,7 +124,7 @@ internal static class CompoundFileReader
         for (int i = 0; i < headerDifatCount; i++)
         {
             uint entry = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x4C + (i * 4)));
-            if (entry < FatSectMin)
+            if (entry < Constants.CompoundFile.FatSectMin)
             {
                 fatSectorIds.Add(entry);
             }
@@ -138,13 +133,13 @@ internal static class CompoundFileReader
         uint difatSector = hdr.FirstDifatSector;
         int difatSectorsRead = 0;
         int entriesPerDifatSector = (hdr.SectorSize / 4) - 1;
-        while (difatSector != EndOfChain && difatSector != FreeSect && difatSectorsRead < hdr.NumDifatSectors)
+        while (difatSector != Constants.CompoundFile.EndOfChain && difatSector != Constants.CompoundFile.FreeSect && difatSectorsRead < hdr.NumDifatSectors)
         {
             await ReadSectorIntoAsync(stream, difatSector, scratch, hdr.SectorSize, cancellationToken).ConfigureAwait(false);
             for (int i = 0; i < entriesPerDifatSector; i++)
             {
                 uint entry = BinaryPrimitives.ReadUInt32LittleEndian(scratch.AsSpan(i * 4));
-                if (entry < FatSectMin && fatSectorIds.Count < (int)hdr.NumFatSectors)
+                if (entry < Constants.CompoundFile.FatSectMin && fatSectorIds.Count < (int)hdr.NumFatSectors)
                 {
                     fatSectorIds.Add(entry);
                 }
@@ -176,7 +171,7 @@ internal static class CompoundFileReader
         uint[] fat,
         CancellationToken cancellationToken)
     {
-        if (hdr.NumMiniFatSectors == 0 || hdr.FirstMiniFatSector == EndOfChain || hdr.FirstMiniFatSector == FreeSect)
+        if (hdr.NumMiniFatSectors == 0 || hdr.FirstMiniFatSector == Constants.CompoundFile.EndOfChain || hdr.FirstMiniFatSector == Constants.CompoundFile.FreeSect)
         {
             return [];
         }
@@ -209,7 +204,7 @@ internal static class CompoundFileReader
             ? BinaryPrimitives.ReadUInt32LittleEndian(directory.AsSpan(0x78))
             : (long)BinaryPrimitives.ReadUInt64LittleEndian(directory.AsSpan(0x78, 8));
 
-        if (rootStart == EndOfChain || rootStart == FreeSect || rootSize <= 0)
+        if (rootStart == Constants.CompoundFile.EndOfChain || rootStart == Constants.CompoundFile.FreeSect || rootSize <= 0)
         {
             return [];
         }
@@ -228,14 +223,14 @@ internal static class CompoundFileReader
         uint[] miniFat,
         CancellationToken cancellationToken)
     {
-        int dirCount = directory.Length / DirEntrySize;
+        int dirCount = directory.Length / Constants.CompoundFile.DirEntrySize;
 
         // Upper-bound the capacity to the directory entry count so the
         // dictionary never has to rehash while we walk the directory.
         var streams = new Dictionary<string, byte[]>(dirCount, StringComparer.Ordinal);
         for (int i = 0; i < dirCount; i++)
         {
-            int off = i * DirEntrySize;
+            int off = i * Constants.CompoundFile.DirEntrySize;
 
             // 0 = unallocated, 1 = storage, 2 = stream, 5 = root
             if (directory[off + 0x42] != 2)
@@ -243,7 +238,7 @@ internal static class CompoundFileReader
                 continue;
             }
 
-            ReadOnlySpan<byte> entry = directory.AsSpan(off, DirEntrySize);
+            ReadOnlySpan<byte> entry = directory.AsSpan(off, Constants.CompoundFile.DirEntrySize);
             ushort nameLen = BinaryPrimitives.ReadUInt16LittleEndian(entry.Slice(0x40, 2));
             if (nameLen == 0 || nameLen > 64)
             {
@@ -402,7 +397,7 @@ internal static class CompoundFileReader
         int safety = 0;
         int limit = fat.Length + 16;
         uint cur = startSector;
-        while (cur != EndOfChain && cur != FreeSect)
+        while (cur != Constants.CompoundFile.EndOfChain && cur != Constants.CompoundFile.FreeSect)
         {
             if (cur >= fat.Length)
             {

@@ -111,7 +111,7 @@ internal static class LinkedTableManager
                 continue;
             }
 
-            if (objType != AccessBase.OBJ_LINKED_TABLE && objType != AccessBase.OBJ_LINKED_ODBC)
+            if (objType != Constants.SystemObjects.LinkedTableType && objType != Constants.SystemObjects.LinkedOdbcType)
             {
                 continue;
             }
@@ -124,12 +124,12 @@ internal static class LinkedTableManager
 
             string flagsStr = SafeGet(row, idxFlags);
             if (long.TryParse(flagsStr, out long flagsLong) &&
-                (unchecked((uint)flagsLong) & AccessBase.SYSTABLE_MASK) != 0)
+                (unchecked((uint)flagsLong) & Constants.SystemObjects.SystemTableMask) != 0)
             {
                 continue;
             }
 
-            bool isOdbc = objType == AccessBase.OBJ_LINKED_ODBC;
+            bool isOdbc = objType == Constants.SystemObjects.LinkedOdbcType;
             result.Add(new LinkedTableInfo
             {
                 Name = nameStr,
