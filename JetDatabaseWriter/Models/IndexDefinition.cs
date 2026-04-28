@@ -60,14 +60,7 @@ public sealed record IndexDefinition
     /// <param name="columns">The columns that make up the index key, in key order. Must contain at least one entry.</param>
     public IndexDefinition(string name, IReadOnlyList<string> columns)
     {
-#if NET6_0_OR_GREATER
-        ArgumentNullException.ThrowIfNull(columns);
-#else
-        if (columns is null)
-        {
-            throw new ArgumentNullException(nameof(columns));
-        }
-#endif
+        Guard.NotNull(columns, nameof(columns));
 
         if (columns.Count == 0)
         {

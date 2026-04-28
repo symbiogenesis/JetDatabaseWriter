@@ -5229,13 +5229,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private static byte ResolveNumericPrecision(ColumnDefinition definition)
     {
         byte p = definition.NumericPrecision == 0 ? (byte)18 : definition.NumericPrecision;
-        if (p > 28)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(definition),
-                $"Column '{definition.Name}' declares NumericPrecision={p}; must be in [1, 28] (Access maximum).");
-        }
-
+        Guard.InRange(p, 1, 28, $"Column '{definition.Name}' NumericPrecision");
         return p;
     }
 
@@ -5249,20 +5243,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         byte s = definition.NumericScale;
         byte p = definition.NumericPrecision == 0 ? (byte)18 : definition.NumericPrecision;
-        if (s > 28)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(definition),
-                $"Column '{definition.Name}' declares NumericScale={s}; must be in [0, 28].");
-        }
-
-        if (s > p)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(definition),
-                $"Column '{definition.Name}' declares NumericScale={s} which exceeds NumericPrecision={p}.");
-        }
-
+        Guard.InRange(s, 0, 28, $"Column '{definition.Name}' NumericScale");
+        Guard.InRange(s, 0, p, $"Column '{definition.Name}' NumericScale (NumericPrecision={p})");
         return s;
     }
 
@@ -6836,20 +6818,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         AttachmentInput attachment,
         CancellationToken cancellationToken = default)
     {
-#if NET6_0_OR_GREATER
-        ArgumentNullException.ThrowIfNull(parentRowKey);
-        ArgumentNullException.ThrowIfNull(attachment);
-#else
-        if (parentRowKey is null)
-        {
-            throw new ArgumentNullException(nameof(parentRowKey));
-        }
-
-        if (attachment is null)
-        {
-            throw new ArgumentNullException(nameof(attachment));
-        }
-#endif
+        Guard.NotNull(parentRowKey, nameof(parentRowKey));
+        Guard.NotNull(attachment, nameof(attachment));
         return AddComplexItemCoreAsync(tableName, columnName, parentRowKey, attachment, expectAttachment: true, cancellationToken);
     }
 
@@ -6861,14 +6831,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         object value,
         CancellationToken cancellationToken = default)
     {
-#if NET6_0_OR_GREATER
-        ArgumentNullException.ThrowIfNull(parentRowKey);
-#else
-        if (parentRowKey is null)
-        {
-            throw new ArgumentNullException(nameof(parentRowKey));
-        }
-#endif
+        Guard.NotNull(parentRowKey, nameof(parentRowKey));
         return AddComplexItemCoreAsync(tableName, columnName, parentRowKey, value, expectAttachment: false, cancellationToken);
     }
 

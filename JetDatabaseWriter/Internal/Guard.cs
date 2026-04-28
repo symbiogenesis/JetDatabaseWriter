@@ -8,29 +8,52 @@ using System.Runtime.CompilerServices;
 /// </summary>
 internal static class Guard
 {
-    public static void NotNull(object value, string paramName)
+    /// <summary>
+    /// Throws an <see cref="ArgumentNullException"/> when <paramref name="value"/> is
+    /// <see langword="null"/>. Forwards to <c>ArgumentNullException.ThrowIfNull</c> on
+    /// .NET 6+ for JIT-friendlier codegen and falls back to a manual check on older targets.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void NotNull<T>(T value, string paramName)
+        where T : class
     {
-        if (value == null)
+#if NET6_0_OR_GREATER
+        ArgumentNullException.ThrowIfNull(value, paramName);
+#else
+        if (value is null)
         {
             throw new ArgumentNullException(paramName);
         }
+#endif
     }
 
     public static void NotNullOrEmpty(string value, string paramName)
     {
+#if NET6_0_OR_GREATER
+        ArgumentException.ThrowIfNullOrEmpty(value, paramName);
+#else
         if (string.IsNullOrWhiteSpace(value))
         {
             throw new ArgumentException("Value cannot be null or empty", paramName);
         }
+#endif
     }
 
-    public static void InRange(int value, int min, int max, string paramName)
+    /// <summary>
+    /// Validates that <paramref name="value"/> falls in the inclusive range
+    /// <c>[min, max]</c>. On failure throws an <see cref="ArgumentOutOfRangeException"/>
+    /// whose message is deterministically derived from <paramref name="paramName"/>
+    /// and the bounds.
+    /// </summary>
+    public static void InRange<T>(T value, T min, T max, string paramName)
+        where T : IComparable<T>
     {
-        if (value < min || value > max)
+        if (value.CompareTo(min) < 0 || value.CompareTo(max) > 0)
         {
             throw new ArgumentOutOfRangeException(
                 paramName,
-                $"Value must be between {min} and {max}");
+                value,
+                $"{paramName} must be between {min} and {max}.");
         }
     }
 
@@ -38,7 +61,7 @@ internal static class Guard
     {
         if (value <= 0)
         {
-            throw new ArgumentOutOfRangeException(paramName, "Value must be positive");
+            throw new ArgumentOutOfRangeException(paramName, value, "Value must be positive.");
         }
     }
 
