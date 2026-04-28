@@ -70,6 +70,8 @@ internal static class LinkedTableManager
             FileShare = options.FileShare,
             Password = options.Password,
             UseLockFile = options.UseLockFile,
+            LockFileUserName = options.LockFileUserName,
+            LockFileMachineName = options.LockFileMachineName,
             LinkedSourcePathAllowlist = normalizedAllowlist,
             LinkedSourcePathValidator = linkedSourcePathValidator,
         };

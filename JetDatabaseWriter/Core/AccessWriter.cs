@@ -61,6 +61,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly ReadOnlyMemory<char> _password;
     private readonly bool _useLockFile;
     private readonly bool _respectExistingLockFile;
+    private readonly string? _lockFileUserName;
+    private readonly string? _lockFileMachineName;
     private readonly ReaderWriterLockSlim _stateLock = new(LockRecursionPolicy.NoRecursion);
 
     // Agile re-encryption context. When non-null, the underlying _stream is an
@@ -80,6 +82,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly Dictionary<string, List<ColumnConstraint>> _constraints =
         new(StringComparer.OrdinalIgnoreCase);
 
+    private LockFileSlotWriter? _lockFileSlot;
     private long _cachedInsertTDefPage = -1;
     private long _cachedInsertPageNumber = -1;
 
@@ -90,6 +93,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         ReadOnlyMemory<char> password,
         bool useLockFile,
         bool respectExistingLockFile,
+        string? lockFileUserName,
+        string? lockFileMachineName,
         Stream? outerEncryptedStream = null,
         bool outerEncryptedLeaveOpen = false,
         bool isAgileEncryptedRewrap = false)
@@ -98,6 +103,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         _password = password;
         _useLockFile = useLockFile && !string.IsNullOrEmpty(path);
         _respectExistingLockFile = respectExistingLockFile;
+        _lockFileUserName = lockFileUserName;
+        _lockFileMachineName = lockFileMachineName;
         _outerEncryptedStream = outerEncryptedStream;
         _outerEncryptedLeaveOpen = outerEncryptedLeaveOpen;
         _isAgileEncryptedRewrap = isAgileEncryptedRewrap;
@@ -122,7 +129,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         if (_useLockFile)
         {
-            LockFileManager.Create(_path, nameof(AccessWriter), _respectExistingLockFile);
+            _lockFileSlot = LockFileSlotWriter.Open(
+                _path,
+                nameof(AccessWriter),
+                respectExisting: _respectExistingLockFile,
+                machineName: _lockFileMachineName,
+                userName: _lockFileUserName);
         }
     }
 
@@ -213,6 +225,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         options.Password,
                         options.UseLockFile,
                         options.RespectExistingLockFile,
+                        options.LockFileUserName,
+                        options.LockFileMachineName,
                         outerEncryptedStream: wrapped,
                         outerEncryptedLeaveOpen: leaveOpen,
                         isAgileEncryptedRewrap: true);
@@ -231,7 +245,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 header,
                 options.Password,
                 options.UseLockFile,
-                options.RespectExistingLockFile);
+                options.RespectExistingLockFile,
+                options.LockFileUserName,
+                options.LockFileMachineName);
         }
         catch
         {
@@ -4526,9 +4542,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // Lockfile honouring: respect any existing lockfile while we rewrite.
         bool useLockFile = options?.UseLockFile ?? true;
         bool respectLockFile = options?.RespectExistingLockFile ?? true;
+        LockFileSlotWriter? lockSlot = null;
         if (useLockFile)
         {
-            LockFileManager.Create(path, nameof(AccessWriter), respectLockFile);
+            lockSlot = LockFileSlotWriter.Open(
+                path,
+                nameof(AccessWriter),
+                respectExisting: respectLockFile,
+                machineName: options?.LockFileMachineName,
+                userName: options?.LockFileUserName);
         }
 
         try
@@ -4571,10 +4593,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
         finally
         {
-            if (useLockFile)
-            {
-                LockFileManager.Delete(path, nameof(AccessWriter));
-            }
+            lockSlot?.Dispose();
         }
     }
 
@@ -4657,7 +4676,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         if (_useLockFile)
         {
-            LockFileManager.Delete(_path, nameof(AccessWriter));
+            _lockFileSlot?.Dispose();
+            _lockFileSlot = null;
         }
 
         // For Agile-encrypted databases the underlying _stream is an in-memory
