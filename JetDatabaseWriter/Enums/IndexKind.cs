@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Models;
+namespace JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Classification of a JET logical index, derived from the

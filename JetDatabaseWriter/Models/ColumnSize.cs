@@ -1,5 +1,7 @@
 namespace JetDatabaseWriter.Models;
 
+using JetDatabaseWriter.Enums;
+
 /// <summary>
 /// Structured column size: a numeric <see cref="Value"/> paired with a <see cref="ColumnSizeUnit"/>.
 /// Use <see cref="ToString"/> for a human-readable description.

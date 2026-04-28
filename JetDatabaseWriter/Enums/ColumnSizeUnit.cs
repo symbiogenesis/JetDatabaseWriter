@@ -1,6 +1,6 @@
-namespace JetDatabaseWriter.Models;
+namespace JetDatabaseWriter.Enums;
 
-/// <summary>Unit of measurement for a <see cref="ColumnSize"/> value.</summary>
+/// <summary>Unit of measurement for a <see cref="JetDatabaseWriter.Models.ColumnSize"/> value.</summary>
 public enum ColumnSizeUnit
 {
     /// <summary>Size in bits (e.g., Yes/No stores 1 bit in the null mask).</summary>
