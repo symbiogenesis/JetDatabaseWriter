@@ -43,25 +43,19 @@ internal static class IndexBTreeBuilder
     /// the root, which the caller writes into the real-index
     /// <c>first_dp</c> field on the TDEF.
     /// </summary>
-    internal readonly struct BuildResult
+    internal readonly struct BuildResult(IReadOnlyList<byte[]> pages, long rootPageNumber, long firstPageNumber)
     {
-        public BuildResult(IReadOnlyList<byte[]> pages, long rootPageNumber, long firstPageNumber)
-        {
-            Pages = pages;
-            RootPageNumber = rootPageNumber;
-            FirstPageNumber = firstPageNumber;
-        }
 
         /// <summary>Gets the rendered pages, indexed [0..N-1]. Page i lives at
         /// absolute database page number <see cref="FirstPageNumber"/> + i.</summary>
-        public IReadOnlyList<byte[]> Pages { get; }
+        public IReadOnlyList<byte[]> Pages { get; } = pages;
 
         /// <summary>Gets the absolute page number of the root (leaf for a
         /// single-page tree, otherwise the topmost intermediate).</summary>
-        public long RootPageNumber { get; }
+        public long RootPageNumber { get; } = rootPageNumber;
 
         /// <summary>Gets the absolute page number assigned to <c>Pages[0]</c>.</summary>
-        public long FirstPageNumber { get; }
+        public long FirstPageNumber { get; } = firstPageNumber;
     }
 
     /// <summary>
@@ -287,17 +281,11 @@ internal static class IndexBTreeBuilder
         }
     }
 
-    private readonly struct IntermediateEntry
+    private readonly struct IntermediateEntry(IndexLeafPageBuilder.LeafEntry summary, long childPage)
     {
-        public IntermediateEntry(IndexLeafPageBuilder.LeafEntry summary, long childPage)
-        {
-            Summary = summary;
-            ChildPage = childPage;
-        }
+        public IndexLeafPageBuilder.LeafEntry Summary { get; } = summary;
 
-        public IndexLeafPageBuilder.LeafEntry Summary { get; }
-
-        public long ChildPage { get; }
+        public long ChildPage { get; } = childPage;
 
         public int OnDiskSize => Summary.EncodedKey.Length + 4 + 4; // key + (3B page + 1B row) + 4B child
     }

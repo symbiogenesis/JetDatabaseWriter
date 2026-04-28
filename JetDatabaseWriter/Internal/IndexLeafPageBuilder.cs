@@ -54,13 +54,8 @@ internal static class IndexLeafPageBuilder
     /// the §4.2 entry-start bitmask offset and the first-entry offset
     /// differ, along with the database page size (2048 vs 4096).
     /// </summary>
-    internal readonly struct LeafPageLayout
+    internal readonly struct LeafPageLayout(int bitmaskOffset, int firstEntryOffset)
     {
-        public LeafPageLayout(int bitmaskOffset, int firstEntryOffset)
-        {
-            BitmaskOffset = bitmaskOffset;
-            FirstEntryOffset = firstEntryOffset;
-        }
 
         /// <summary>Gets the Jet3 (<c>.mdb</c> Access 97) leaf page layout.</summary>
         public static LeafPageLayout Jet3 => new(Jet3BitmaskOffset, Jet3FirstEntryOffset);
@@ -69,10 +64,10 @@ internal static class IndexLeafPageBuilder
         public static LeafPageLayout Jet4 => new(Jet4BitmaskOffset, Jet4FirstEntryOffset);
 
         /// <summary>Gets the byte offset of the entry-start bitmask within the page.</summary>
-        public int BitmaskOffset { get; }
+        public int BitmaskOffset { get; } = bitmaskOffset;
 
         /// <summary>Gets the byte offset of the first entry payload within the page.</summary>
-        public int FirstEntryOffset { get; }
+        public int FirstEntryOffset { get; } = firstEntryOffset;
     }
 
     /// <summary>
@@ -80,23 +75,17 @@ internal static class IndexLeafPageBuilder
     /// <see cref="IndexKeyEncoder.EncodeEntry(byte, object?, bool)"/> followed
     /// by the row pointer (data page + data row).
     /// </summary>
-    internal readonly struct LeafEntry
+    internal readonly struct LeafEntry(byte[] encodedKey, long dataPage, byte dataRow)
     {
-        public LeafEntry(byte[] encodedKey, long dataPage, byte dataRow)
-        {
-            EncodedKey = encodedKey ?? throw new ArgumentNullException(nameof(encodedKey));
-            DataPage = dataPage;
-            DataRow = dataRow;
-        }
 
         /// <summary>Gets the flag byte + key bytes (per <see cref="IndexKeyEncoder"/>).</summary>
-        public byte[] EncodedKey { get; }
+        public byte[] EncodedKey { get; } = encodedKey ?? throw new ArgumentNullException(nameof(encodedKey));
 
         /// <summary>Gets the page number of the row this entry indexes (24-bit big-endian on disk).</summary>
-        public long DataPage { get; }
+        public long DataPage { get; } = dataPage;
 
         /// <summary>Gets the row index on the data page.</summary>
-        public byte DataRow { get; }
+        public byte DataRow { get; } = dataRow;
     }
 
     /// <summary>

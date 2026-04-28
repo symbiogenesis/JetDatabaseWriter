@@ -456,27 +456,19 @@ internal static class GeneralLegacyTextIndexEncoder
         public virtual byte CrazyFlag => 0;
     }
 
-    private sealed class SimpleCharHandler : CharHandler
+    private sealed class SimpleCharHandler(byte[] bytes) : CharHandler
     {
-        private readonly byte[] bytes;
-
-        public SimpleCharHandler(byte[] bytes) => this.bytes = bytes;
+        private readonly byte[] bytes = bytes;
 
         public override CharHandlerType Type => CharHandlerType.Simple;
 
         public override byte[] GetInlineBytes(char c) => this.bytes;
     }
 
-    private sealed class InternationalCharHandler : CharHandler
+    private sealed class InternationalCharHandler(byte[] bytes, byte[] extraBytes) : CharHandler
     {
-        private readonly byte[] bytes;
-        private readonly byte[] extraBytes;
-
-        public InternationalCharHandler(byte[] bytes, byte[] extraBytes)
-        {
-            this.bytes = bytes;
-            this.extraBytes = extraBytes;
-        }
+        private readonly byte[] bytes = bytes;
+        private readonly byte[] extraBytes = extraBytes;
 
         public override CharHandlerType Type => CharHandlerType.International;
 
@@ -485,40 +477,29 @@ internal static class GeneralLegacyTextIndexEncoder
         public override byte[] ExtraBytes => this.extraBytes;
     }
 
-    private sealed class UnprintableCharHandler : CharHandler
+    private sealed class UnprintableCharHandler(byte[] unprintBytes) : CharHandler
     {
-        private readonly byte[] unprintBytes;
-
-        public UnprintableCharHandler(byte[] unprintBytes) => this.unprintBytes = unprintBytes;
+        private readonly byte[] unprintBytes = unprintBytes;
 
         public override CharHandlerType Type => CharHandlerType.Unprintable;
 
         public override byte[] UnprintableBytes => this.unprintBytes;
     }
 
-    private sealed class UnprintableExtCharHandler : CharHandler
+    private sealed class UnprintableExtCharHandler(byte extraByteMod) : CharHandler
     {
-        private readonly byte extraByteMod;
-
-        public UnprintableExtCharHandler(byte extraByteMod) => this.extraByteMod = extraByteMod;
+        private readonly byte extraByteMod = extraByteMod;
 
         public override CharHandlerType Type => CharHandlerType.UnprintableExt;
 
         public override byte ExtraByteModifier => this.extraByteMod;
     }
 
-    private sealed class InternationalExtCharHandler : CharHandler
+    private sealed class InternationalExtCharHandler(byte[] bytes, byte[]? extraBytes, byte crazyFlag) : CharHandler
     {
-        private readonly byte[] bytes;
-        private readonly byte[]? extraBytes;
-        private readonly byte crazyFlag;
-
-        public InternationalExtCharHandler(byte[] bytes, byte[]? extraBytes, byte crazyFlag)
-        {
-            this.bytes = bytes;
-            this.extraBytes = extraBytes;
-            this.crazyFlag = crazyFlag;
-        }
+        private readonly byte[] bytes = bytes;
+        private readonly byte[]? extraBytes = extraBytes;
+        private readonly byte crazyFlag = crazyFlag;
 
         public override CharHandlerType Type => CharHandlerType.InternationalExt;
 
@@ -529,11 +510,9 @@ internal static class GeneralLegacyTextIndexEncoder
         public override byte CrazyFlag => this.crazyFlag;
     }
 
-    private sealed class SignificantCharHandler : CharHandler
+    private sealed class SignificantCharHandler(byte[] bytes) : CharHandler
     {
-        private readonly byte[] bytes;
-
-        public SignificantCharHandler(byte[] bytes) => this.bytes = bytes;
+        private readonly byte[] bytes = bytes;
 
         public override CharHandlerType Type => CharHandlerType.Significant;
 
@@ -600,14 +579,9 @@ internal static class GeneralLegacyTextIndexEncoder
         public override byte[] ExtraBytes => SurrogateExtraBytes;
     }
 
-    private sealed class ExtraCodesStream
+    private sealed class ExtraCodesStream(int initialCapacity)
     {
-        public ExtraCodesStream(int initialCapacity)
-        {
-            this.Bytes = new List<byte>(initialCapacity);
-        }
-
-        public List<byte> Bytes { get; }
+        public List<byte> Bytes { get; } = new List<byte>(initialCapacity);
 
         public int NumChars { get; set; }
 

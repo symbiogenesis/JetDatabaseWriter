@@ -2845,14 +2845,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// (Insert/Update/Delete) so the parent snapshot of a given table is
     /// loaded at most once per call even when many rows need checking.
     /// </summary>
-    private sealed class FkContext
+    private sealed class FkContext(IReadOnlyList<AccessWriter.FkRelationship> all)
     {
-        public FkContext(IReadOnlyList<FkRelationship> all)
-        {
-            this.All = all;
-        }
-
-        public IReadOnlyList<FkRelationship> All { get; }
+        public IReadOnlyList<FkRelationship> All { get; } = all;
 
         public Dictionary<string, HashSet<string>> ParentKeySets { get; }
             = new(StringComparer.OrdinalIgnoreCase);
@@ -5437,14 +5432,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <see cref="EncodeVariableValue"/> just splice <see cref="HeaderBytes"/>
     /// straight into the row body without any further encoding.
     /// </summary>
-    private sealed class PreEncodedLongValue
+    private sealed class PreEncodedLongValue(byte[] headerBytes)
     {
-        public PreEncodedLongValue(byte[] headerBytes)
-        {
-            HeaderBytes = headerBytes;
-        }
-
-        public byte[] HeaderBytes { get; }
+        public byte[] HeaderBytes { get; } = headerBytes;
     }
 
     /// <summary>
@@ -10463,27 +10453,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// to this leaf (every key in the bucket picked the same child at every
     /// level above, by definition of "same target leaf").
     /// </summary>
-    private sealed class LeafGroup
+    private sealed class LeafGroup(long leafPage, List<DescentStep> path)
     {
-        public LeafGroup(long leafPage, List<DescentStep> path)
-        {
-            LeafPage = leafPage;
-            Path = path;
-            Adds = [];
-            RemovePtrs = [];
-        }
 
         /// <summary>Gets the page number of the target leaf.</summary>
-        public long LeafPage { get; }
+        public long LeafPage { get; } = leafPage;
 
         /// <summary>Gets the captured path from root intermediate down to the parent-of-leaf.</summary>
-        public List<DescentStep> Path { get; }
+        public List<DescentStep> Path { get; } = path;
 
         /// <summary>Gets the encoded inserts that landed on this leaf.</summary>
-        public List<(byte[] Key, long DataPage, byte DataRow)> Adds { get; }
+        public List<(byte[] Key, long DataPage, byte DataRow)> Adds { get; } = [];
 
         /// <summary>Gets the row pointers whose entries should be removed from this leaf.</summary>
-        public List<(long DataPage, byte DataRow)> RemovePtrs { get; }
+        public List<(long DataPage, byte DataRow)> RemovePtrs { get; } = [];
     }
 
     /// <summary>

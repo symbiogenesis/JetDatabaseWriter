@@ -6,25 +6,16 @@ using System.Collections.Generic;
 /// Resolved per-index column-number / direction / uniqueness tuple consumed
 /// by the TDEF emitter and the maintenance loop.
 /// </summary>
-internal readonly struct ResolvedIndex
+internal readonly struct ResolvedIndex(string name, IReadOnlyList<int> columnNumbers, IReadOnlyList<bool> ascending, bool isPrimaryKey, bool isUnique)
 {
-    public ResolvedIndex(string name, IReadOnlyList<int> columnNumbers, IReadOnlyList<bool> ascending, bool isPrimaryKey, bool isUnique)
-    {
-        Name = name;
-        ColumnNumbers = columnNumbers;
-        Ascending = ascending;
-        IsPrimaryKey = isPrimaryKey;
-        IsUnique = isUnique;
-    }
+    public string Name { get; } = name;
 
-    public string Name { get; }
-
-    public IReadOnlyList<int> ColumnNumbers { get; }
+    public IReadOnlyList<int> ColumnNumbers { get; } = columnNumbers;
 
     /// <summary>Gets the per-column sort direction (parallel to <see cref="ColumnNumbers"/>).</summary>
-    public IReadOnlyList<bool> Ascending { get; }
+    public IReadOnlyList<bool> Ascending { get; } = ascending;
 
-    public bool IsPrimaryKey { get; }
+    public bool IsPrimaryKey { get; } = isPrimaryKey;
 
     /// <summary>
     /// Gets a value indicating whether this index enforces uniqueness on its
@@ -32,5 +23,5 @@ internal readonly struct ResolvedIndex
     /// returns <see langword="true"/> regardless of the user-supplied
     /// <see cref="IndexDefinition.IsUnique"/>.
     /// </summary>
-    public bool IsUnique { get; }
+    public bool IsUnique { get; } = isUnique;
 }

@@ -8,21 +8,13 @@ using System.Collections.Generic;
 /// rewrite), the decoded summary entries, and the index of the entry
 /// whose <c>ChildPage</c> the descent followed.
 /// </summary>
-internal readonly struct DescentStep
+internal readonly struct DescentStep(long pageNumber, byte[] pageBytes, List<IndexLeafIncremental.DecodedIntermediateEntry> entries, int takenIndex)
 {
-    public DescentStep(long pageNumber, byte[] pageBytes, List<IndexLeafIncremental.DecodedIntermediateEntry> entries, int takenIndex)
-    {
-        PageNumber = pageNumber;
-        PageBytes = pageBytes;
-        Entries = entries;
-        TakenIndex = takenIndex;
-    }
+    public long PageNumber { get; } = pageNumber;
 
-    public long PageNumber { get; }
+    public byte[] PageBytes { get; } = pageBytes;
 
-    public byte[] PageBytes { get; }
+    public List<IndexLeafIncremental.DecodedIntermediateEntry> Entries { get; } = entries;
 
-    public List<IndexLeafIncremental.DecodedIntermediateEntry> Entries { get; }
-
-    public int TakenIndex { get; }
+    public int TakenIndex { get; } = takenIndex;
 }

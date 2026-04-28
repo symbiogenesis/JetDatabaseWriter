@@ -33,20 +33,13 @@ internal static class IndexLeafIncremental
     /// A decoded leaf entry: the canonical (uncompressed) key bytes plus the
     /// <c>(data_page, data_row)</c> row pointer.
     /// </summary>
-    internal readonly struct DecodedEntry
+    internal readonly struct DecodedEntry(byte[] key, long dataPage, byte dataRow)
     {
-        public DecodedEntry(byte[] key, long dataPage, byte dataRow)
-        {
-            Key = key;
-            DataPage = dataPage;
-            DataRow = dataRow;
-        }
+        public byte[] Key { get; } = key;
 
-        public byte[] Key { get; }
+        public long DataPage { get; } = dataPage;
 
-        public long DataPage { get; }
-
-        public byte DataRow { get; }
+        public byte DataRow { get; } = dataRow;
     }
 
     /// <summary>
@@ -57,23 +50,15 @@ internal static class IndexLeafIncremental
     /// writer can re-emit a single intermediate page in place after a
     /// summary-key change or a leaf-split insert.
     /// </summary>
-    internal readonly struct DecodedIntermediateEntry
+    internal readonly struct DecodedIntermediateEntry(byte[] key, long dataPage, byte dataRow, long childPage)
     {
-        public DecodedIntermediateEntry(byte[] key, long dataPage, byte dataRow, long childPage)
-        {
-            Key = key;
-            DataPage = dataPage;
-            DataRow = dataRow;
-            ChildPage = childPage;
-        }
+        public byte[] Key { get; } = key;
 
-        public byte[] Key { get; }
+        public long DataPage { get; } = dataPage;
 
-        public long DataPage { get; }
+        public byte DataRow { get; } = dataRow;
 
-        public byte DataRow { get; }
-
-        public long ChildPage { get; }
+        public long ChildPage { get; } = childPage;
     }
 
     /// <summary>
