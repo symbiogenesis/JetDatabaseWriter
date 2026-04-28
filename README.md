@@ -32,6 +32,8 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **Foreign-key relationships** | Read and create relationships; runtime referential integrity (with cascade update/delete) on insert/update/delete |
 | ✅ **Complex fields** | Read and write attachment and multi-value columns (ACCDB only) |
 | ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on disposal (opt-out) |
+| ✅ **Page-level concurrency** | Cooperative `LockFile` byte-range locks per `WritePage` / `AppendPage` (Windows), matching the JET / ACE locking protocol Microsoft Access observes |
+| ✅ **Transactions** | `BeginTransactionAsync()` → `JetTransaction` with atomic `CommitAsync` / `RollbackAsync` over an in-memory page journal; opt-in auto-commit-per-statement via `UseTransactionalWrites` |
 
 ---
 
@@ -656,10 +658,6 @@ The items below are **not yet implemented** and are the most likely places to hi
 
 ### SQL and ODBC
 - **No SQL parser, query engine, or ODBC driver.** This library is a managed reader/writer over the JET on-disk format, not a database engine. Filter, project, and join through LINQ over `Rows(...)` / `Rows<T>(...)` instead.
-
-### Concurrency
-- **Cooperative byte-range page locks (Windows-only).** On Windows, the writer takes per-page exclusive `LockFile` ranges around every `WritePage` / `AppendPage` call, mirroring the JET locking protocol Microsoft Access and the OLE DB JET / ACE providers observe. Disable with `AccessWriterOptions.UseByteRangeLocks = false`; tune the contention timeout via `LockTimeoutMilliseconds` (default 5000). The reader exposes the same options for callers that want fully-consistent reads against a concurrent writer (default off — readers don't need to participate). On non-Windows hosts, and when the writer was opened from a non-`FileStream`, the locks are silently a no-op. The `LockFile` API is used in preference to `LockFileEx` to avoid overlapped-IO completion against async-bound file handles.
-- **Explicit page-buffered transactions.** `AccessWriter.BeginTransactionAsync()` returns a `JetTransaction` whose `CommitAsync()` atomically replays an in-memory journal of dirty pages, and whose `RollbackAsync()` (and `DisposeAsync()` on an uncommitted transaction) discards the journal — leaving the file untouched, since nothing is written to disk during the transaction. Only one transaction may be active per writer; auto-commit-per-statement remains the default for callers who don't opt in. The journal is bounded by `AccessWriterOptions.MaxTransactionPageBudget` (default 16,384 pages); exceeding the budget throws `JetLimitationException`. A crash mid-`CommitAsync` can still leave the file partially mutated — the JET page-shadow protocol's torn-write window is preserved (no separate WAL).
 
 ---
 
