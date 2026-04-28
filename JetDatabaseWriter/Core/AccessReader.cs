@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Internal.Collections;
 using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
