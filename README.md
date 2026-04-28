@@ -13,27 +13,19 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 
 | | |
 |---|---|
-| ✅ **No native dependencies** | Pure C# — runs anywhere .NET runs |
-| ✅ **Jet3 & Jet4 / ACE** | Access 97 through Access 2021 and Microsoft 365 (`.mdb` / `.accdb`) |
-| ✅ **Typed by default** | `int`, `DateTime`, `decimal`, `Guid` — not just strings |
-| ✅ **All column types** | Text, Integer, Currency, Date/Time, GUID, MEMO, OLE Object, Decimal |
-| ✅ **Streaming API** | Process millions of rows without loading the whole file |
-| ✅ **Async support** | Async-first `ValueTask<T>` API, `OpenAsync(...)` + `await using` (`IAsyncDisposable`) |
-| ✅ **Stream support** | Open from any seekable `Stream` (byte arrays, blobs, embedded resources) |
-| ✅ **Page cache** | 256-page LRU cache (~1 MB, configurable) |
-| ✅ **Generic POCO mapping** | `ReadTable<T>()`, `Rows<T>()`, `InsertRow<T>()` — no manual casting |
-| ✅ **LINQ-friendly streaming** | `reader.Rows<T>("...").Where(...).Take(...).ToListAsync(ct)` — standard async LINQ over `IAsyncEnumerable<T>` |
-| ✅ **Progress reporting** | `IProgress<long>` row callbacks; `IProgress<TableProgress>` per-table callbacks for whole-database reads |
-| ✅ **Non-Western text** | Code page auto-detected from the database header |
-| ✅ **OLE Objects** | Detects embedded JPEG, PNG, PDF, ZIP, DOC, RTF |
-| ✅ **Write support** | Create databases, create/drop tables, insert/update/delete rows (Jet3/Jet4/ACE) |
-| ✅ **Encryption & passwords** | Jet3 XOR, Jet4 RC4, ACCDB legacy password, ACCDB AES-128 (CFB-wrapped), ACCDB Agile (Office Crypto API, Access 2010 SP1+ / Microsoft 365) — all read/write |
-| ✅ **Linked tables** | Enumerate, create Access (type 4), and create ODBC (type 6) linked-table catalog entries |
-| ✅ **Foreign-key relationships** | Read and create relationships; runtime referential integrity (with cascade update/delete) on insert/update/delete |
-| ✅ **Complex fields** | Read and write attachment and multi-value columns (ACCDB only) |
-| ✅ **Lockfile support** | Creates `.ldb` / `.laccdb` lockfile on open, deletes on disposal (opt-out) |
-| ✅ **Page-level concurrency** | Cooperative `LockFile` byte-range locks per `WritePage` / `AppendPage` (Windows), matching the JET / ACE locking protocol Microsoft Access observes |
-| ✅ **Transactions** | `BeginTransactionAsync()` → `JetTransaction` with atomic `CommitAsync` / `RollbackAsync` over an in-memory page journal; opt-in auto-commit-per-statement via `UseTransactionalWrites` |
+| ✅ **Pure managed .NET** | No OleDB, ODBC, or ACE/Jet driver — runs anywhere .NET runs |
+| ✅ **All Access versions** | Jet3 / Jet4 / ACE — Access 97 through Microsoft 365 (`.mdb` / `.accdb`) |
+| ✅ **Read & write** | Create databases and tables; insert/update/delete rows; add/drop/rename columns |
+| ✅ **Typed values** | `int`, `DateTime`, `decimal`, `Guid`, MEMO, OLE, Hyperlink — not just strings |
+| ✅ **POCO + LINQ streaming** | `Rows<T>("...").Where(...).Take(...).ToListAsync(ct)` over `IAsyncEnumerable<T>` |
+| ✅ **Async-first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
+| ✅ **Stream-based I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
+| ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Agile (Office Crypto) — all read/write |
+| ✅ **Schema features** | Indexes, primary & foreign keys with referential integrity (cascade update/delete), linked tables (Access + ODBC catalog entries) |
+| ✅ **Complex columns** | Read/write attachments and multi-value columns (ACCDB) |
+| ✅ **Concurrency** | `.ldb` / `.laccdb` lockfile + page-level byte-range locks matching the JET/ACE protocol |
+| ✅ **Transactions** | `BeginTransactionAsync()` → atomic `CommitAsync` / `RollbackAsync` via in-memory page journal |
+| ✅ **Performance** | Configurable LRU page cache, optional parallel page reads, streams millions of rows without loading the file |
 
 ---
 
