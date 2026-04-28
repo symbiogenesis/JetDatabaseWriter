@@ -3653,7 +3653,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 depth + 1,
                 cancellationToken).ConfigureAwait(false);
 
-            // C5: cascade complex flat-child rows for the child rows we are
+            // Cascade complex flat-child rows for the child rows we are
             // about to delete. Must precede MarkRowDeletedAsync so the
             // ConceptualTableID slots are still readable.
             var cascadeLocs = new List<RowLocation>(matchingRowIndices.Count);
@@ -5110,7 +5110,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private static byte[]? EncodeOleValue(object value)
     {
-        // C8: when the row pre-encode pass has already pushed an oversized
+        // When the row pre-encode pass has already pushed an oversized
         // payload to LVAL pages, the sentinel carries the finished 12-byte
         // header and we just splice it through.
         if (value is PreEncodedLongValue pre)
@@ -5417,7 +5417,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return buffer;
     }
 
-    // ── C8 — LVAL chain emission for oversized MEMO / OLE / Attachment payloads ──
+    // ── LVAL chain emission for oversized MEMO / OLE / Attachment payloads ──
     // The 12-byte LVAL header (read by AccessReader.ReadLongValueAsync) is:
     //   [memo_len: 3 bytes LE][bitmask: 1 byte][lval_dp: 4 bytes LE][unknown: 4 bytes]
     // bitmask values:
@@ -6150,7 +6150,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // complex columns declared via ColumnDefinition.AsAttachment() /
             // .AsMultiValue(), CreateTableAsync supplies Misc = 0 today and throws
             // before reaching disk because the corresponding flat table + MSysComplexColumns
-            // row are not yet emitted (see complex-columns-format-notes.md C3).
+            // row are not yet emitted (see complex-columns-format-notes.md).
             if (col.Type == T_ATTACHMENT || col.Type == T_COMPLEX)
             {
                 Wi32(page, o + _colMiscOff, col.Misc);
@@ -6798,7 +6798,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         await InsertRowDataAsync(pg, msysComplex, values, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    // ── C4 — Row-level APIs for complex (Attachment / MultiValue) columns ──
+    // ── Row-level APIs for complex (Attachment / MultiValue) columns ──
     // See docs/design/complex-columns-format-notes.md §2.1 / §2.4 / §3.
 
     /// <inheritdoc/>
@@ -6929,7 +6929,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ? BuildAttachmentFlatRow(flatDef, conceptualTableId, (AttachmentInput)payload)
             : BuildMultiValueFlatRow(flatDef, conceptualTableId, payload);
 
-        // C7: the flat table now carries an autoincrement scalar PK column.
+        // The flat table carries an autoincrement scalar PK column.
         // ApplyConstraintsAsync hydrates the constraint registry from the
         // persisted FLAG_AUTO_LONG bit and seeds the next value from the
         // existing rows so AddAttachmentAsync / AddMultiValueItemAsync stay
@@ -7193,7 +7193,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Returns one greater than the largest FK value currently stored in the
     /// flat table, or <c>1</c> when the table is empty. The FK column is the
     /// single <c>T_LONG</c> column whose name starts with <c>"_"</c> per
-    /// C3's <see cref="BuildFlatTableSchema"/>.
+    /// <see cref="BuildFlatTableSchema"/>.
     /// </summary>
     private async ValueTask<int> GetNextConceptualTableIdForFlatAsync(long flatTdefPage, TableDef flatDef, CancellationToken cancellationToken)
     {
@@ -7282,8 +7282,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return fileName.Substring(dot + 1).ToLowerInvariant();
     }
 
-    // ── C5 — Cascade-on-delete for complex (Attachment / MultiValue) columns ──
-    // See docs/design/complex-columns-format-notes.md §4.3 (C5).
+    // ── Cascade-on-delete for complex (Attachment / MultiValue) columns ──
+    // See docs/design/complex-columns-format-notes.md §4.3.
     //
     // Whenever a parent row containing a complex column slot is deleted, the
     // associated rows in the hidden flat child table (joined via the parent's
@@ -7304,8 +7304,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Per-flat-table cost is O(P) where P is the database page count
     /// (full sequential scan, no index seek). Multiple complex columns on
     /// the same parent perform one scan each. This matches the existing
-    /// cascade-delete cost profile and the C4 ConceptualTableID
-    /// allocator.
+    /// cascade-delete cost profile and the ConceptualTableID allocator
+    /// used by the row-add path.
     /// </remarks>
     private async ValueTask CascadeDeleteComplexChildrenAsync(
         TableDef parentDef,
@@ -7334,7 +7334,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // Resolve each complex column to its flat-table TDEF page (skip
         // any column whose MSysComplexColumns row is missing — same
-        // tolerance as the C4 row-add path).
+        // tolerance as the row-add path).
         var flatPagesByCol = new Dictionary<int, long>(complexCols.Count);
         foreach (ColumnInfo col in complexCols)
         {
@@ -8107,7 +8107,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 nameof(values));
         }
 
-        // C8 \u2014 push any oversized MEMO / OLE / Attachment payload to LVAL pages
+        // Push any oversized MEMO / OLE / Attachment payload to LVAL pages
         // before serializing the row. The pre-encode pass appends LVAL pages to
         // the file and rewrites the matching slot in `values` with a
         // PreEncodedLongValue sentinel carrying the finished 12-byte header.
@@ -10512,7 +10512,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         List<(byte[] Key, long DataPage, byte DataRow)> removeEntries,
         CancellationToken cancellationToken)
     {
-        const int W4C5MaxLeafGroupCount = 64;
+        const int MaxLeafGroupCount = 64;
 
         if (addEntries.Count == 0 && removeEntries.Count == 0)
         {
@@ -10525,7 +10525,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             firstDp,
             addEntries,
             removeEntries,
-            W4C5MaxLeafGroupCount,
+            MaxLeafGroupCount,
             cancellationToken).ConfigureAwait(false);
         if (groups is null)
         {

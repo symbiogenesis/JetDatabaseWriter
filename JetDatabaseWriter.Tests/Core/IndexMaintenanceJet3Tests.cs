@@ -224,7 +224,7 @@ public sealed class IndexMaintenanceJet3Tests
     }
 
     [Fact]
-    public async Task Jet3_W17d_IncrementalFastPath_SplicesSingleLeaf_OnInsertAndDelete()
+    public async Task Jet3_IncrementalFastPath_SplicesSingleLeaf_OnInsertAndDelete()
     {
         // The single-leaf splice single-leaf splice writes exactly ONE new leaf page per
         // mutation (then patches first_dp on the TDEF). Compare the file
@@ -268,7 +268,7 @@ public sealed class IndexMaintenanceJet3Tests
     }
 
     [Fact]
-    public async Task Jet3_W17d_IncrementalFastPath_RebuildsMultiLevelTree()
+    public async Task Jet3_IncrementalFastPath_RebuildsMultiLevelTree()
     {
         // A Jet3 leaf page (2048 bytes, payload area 0xF8..end ≈ 1880 bytes)
         // holds roughly ~200 INT entries before splitting. Bulk-load enough

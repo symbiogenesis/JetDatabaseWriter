@@ -821,8 +821,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private static int FindFlatLongFkIndex(DataTable flat)
     {
-        // Prefer the conventional `_<userColumnName>` FK column (C3 emitter
-        // and Access-authored fixtures both use this naming).
+        // Prefer the conventional `_<userColumnName>` FK column (the
+        // flat-table emitter and Access-authored fixtures both use this naming).
         for (int i = 0; i < flat.Columns.Count; i++)
         {
             DataColumn c = flat.Columns[i];

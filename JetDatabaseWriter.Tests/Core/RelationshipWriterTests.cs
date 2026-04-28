@@ -233,7 +233,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     // ════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task CreateRelationshipAsync_W9b_SingleColumn_EmitsFkLogicalIdxEntriesOnBothSides()
+    public async Task CreateRelationshipAsync_SingleColumn_EmitsFkLogicalIdxEntriesOnBothSides()
     {
         var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
 
@@ -275,7 +275,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     }
 
     [Fact]
-    public async Task CreateRelationshipAsync_W9b_CascadeFlags_OnFkSideOnly()
+    public async Task CreateRelationshipAsync_CascadeFlags_OnFkSideOnly()
     {
         var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
 
@@ -314,7 +314,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     }
 
     [Fact]
-    public async Task CreateRelationshipAsync_W9b_MultiColumn_EmitsFkLogicalIdxEntriesOnBothSides()
+    public async Task CreateRelationshipAsync_MultiColumn_EmitsFkLogicalIdxEntriesOnBothSides()
     {
         var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
 
@@ -354,7 +354,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     }
 
     [Fact]
-    public async Task CreateRelationshipAsync_W9b_RealIdxSharing_ReusesExistingPkIndex()
+    public async Task CreateRelationshipAsync_RealIdxSharing_ReusesExistingPkIndex()
     {
         var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
 
@@ -389,7 +389,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     }
 
     [Fact]
-    public async Task CreateRelationshipAsync_W9b_SelfReferential_DistinctIndexNames()
+    public async Task CreateRelationshipAsync_SelfReferential_DistinctIndexNames()
     {
         var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
 

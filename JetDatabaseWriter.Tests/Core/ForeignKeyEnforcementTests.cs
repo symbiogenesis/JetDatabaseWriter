@@ -32,13 +32,13 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateRelationshipAsync(
-            new RelationshipDefinition("FK_W10_Missing", parent, "Id", child, "ParentId"),
+            new RelationshipDefinition("FK_Missing", parent, "Id", child, "ParentId"),
             TestContext.Current.CancellationToken);
 
         // Parent is empty; child insert with ParentId=42 must be rejected.
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.InsertRowAsync(child, [1, 42], TestContext.Current.CancellationToken));
-        Assert.Contains("FK_W10_Missing", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("FK_Missing", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(parent, [7], TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
-                new RelationshipDefinition("FK_W10_Ok", parent, "Id", child, "ParentId"),
+                new RelationshipDefinition("FK_Ok", parent, "Id", child, "ParentId"),
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(child, [1, 7], TestContext.Current.CancellationToken);
         }
@@ -76,7 +76,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
-                new RelationshipDefinition("FK_W10_Null", parent, "Id", child, "ParentId"),
+                new RelationshipDefinition("FK_Null", parent, "Id", child, "ParentId"),
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(child, [1, DBNull.Value], TestContext.Current.CancellationToken);
         }
@@ -98,7 +98,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
-                new RelationshipDefinition("FK_W10_NoEnforce", parent, "Id", child, "ParentId")
+                new RelationshipDefinition("FK_NoEnforce", parent, "Id", child, "ParentId")
                 {
                     EnforceReferentialIntegrity = false,
                 },
@@ -126,7 +126,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             // Pre-seed root then declare relationship.
             await writer.InsertRowAsync(table, [1, DBNull.Value], TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
-                new RelationshipDefinition("FK_W10_Self", table, "Id", table, "ParentId"),
+                new RelationshipDefinition("FK_Self", table, "Id", table, "ParentId"),
                 TestContext.Current.CancellationToken);
 
             // Bulk insert: row 2 references row 1; row 3 references row 2.
@@ -157,7 +157,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
         await writer.CreateRelationshipAsync(
-            new RelationshipDefinition("FK_W10_UFk", parent, "Id", child, "ParentId"),
+            new RelationshipDefinition("FK_UFk", parent, "Id", child, "ParentId"),
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(child, [1, 5], TestContext.Current.CancellationToken);
 
@@ -168,7 +168,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 1,
                 new Dictionary<string, object> { ["ParentId"] = 999 },
                 TestContext.Current.CancellationToken));
-        Assert.Contains("FK_W10_UFk", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("FK_UFk", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -183,13 +183,13 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
         await writer.CreateRelationshipAsync(
-            new RelationshipDefinition("FK_W10_DelNoCasc", parent, "Id", child, "ParentId"),
+            new RelationshipDefinition("FK_DelNoCasc", parent, "Id", child, "ParentId"),
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(child, [1, 5], TestContext.Current.CancellationToken);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.DeleteRowsAsync(parent, "Id", 5, TestContext.Current.CancellationToken));
-        Assert.Contains("FK_W10_DelNoCasc", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("FK_DelNoCasc", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -205,7 +205,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
-                new RelationshipDefinition("FK_W10_DelCasc", parent, "Id", child, "ParentId")
+                new RelationshipDefinition("FK_DelCasc", parent, "Id", child, "ParentId")
                 {
                     CascadeDeletes = true,
                 },
@@ -239,7 +239,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
         await writer.CreateRelationshipAsync(
-            new RelationshipDefinition("FK_W10_UPkNoCasc", parent, "Id", child, "ParentId"),
+            new RelationshipDefinition("FK_UPkNoCasc", parent, "Id", child, "ParentId"),
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(child, [1, 5], TestContext.Current.CancellationToken);
 
@@ -250,7 +250,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 5,
                 new Dictionary<string, object> { ["Id"] = 99 },
                 TestContext.Current.CancellationToken));
-        Assert.Contains("FK_W10_UPkNoCasc", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("FK_UPkNoCasc", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -266,7 +266,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(parent, [5], TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
-                new RelationshipDefinition("FK_W10_UPkCasc", parent, "Id", child, "ParentId")
+                new RelationshipDefinition("FK_UPkCasc", parent, "Id", child, "ParentId")
                 {
                     CascadeUpdates = true,
                 },
@@ -306,7 +306,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("RefA", typeof(int)), new("RefB", typeof(int))], TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(parent, [1, 2], TestContext.Current.CancellationToken);
         await writer.CreateRelationshipAsync(
-            new RelationshipDefinition("FK_W10_Multi", parent, ["A", "B"], child, ["RefA", "RefB"]),
+            new RelationshipDefinition("FK_Multi", parent, ["A", "B"], child, ["RefA", "RefB"]),
             TestContext.Current.CancellationToken);
 
         // Wrong B value → reject.
@@ -464,7 +464,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
 
             await writer.InsertRowsAsync(parent, pRows, TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
-                new RelationshipDefinition("FK_W22_DelSeek", parent, "Id", child, "ParentId")
+                new RelationshipDefinition("FK_DelSeek", parent, "Id", child, "ParentId")
                 {
                     CascadeDeletes = true,
                 },
@@ -516,7 +516,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
 
             await writer.InsertRowsAsync(parent, pRows, TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
-                new RelationshipDefinition("FK_W22_UpdSeek", parent, "Id", child, "ParentId")
+                new RelationshipDefinition("FK_UpdSeek", parent, "Id", child, "ParentId")
                 {
                     CascadeUpdates = true,
                 },
