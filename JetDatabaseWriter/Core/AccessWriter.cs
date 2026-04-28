@@ -355,7 +355,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // marked IsPrimaryKey=true, in declaration order, and force those
         // columns to IsNullable=false on the emitted TDEF. Mixing the
         // shortcut with an explicit PK IndexDefinition is rejected.
-        (columns, indexes) = ApplyPrimaryKeyShortcut(columns, indexes);
+        (columns, indexes) = IndexHelpers.ApplyPrimaryKeyShortcut(columns, indexes);
 
         // Unsupported Jet4 key types (OLE / Attachment / Multi-Value) are
         // rejected up-front below in ResolveIndexes.
@@ -414,7 +414,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         CancellationToken cancellationToken)
     {
         TableDef tableDef = BuildTableDefinition(columns, _format);
-        List<ResolvedIndex> resolvedIndexes = ResolveIndexes(indexes, tableDef);
+        List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
         (byte[] tdefPage, int[] firstDpOffsets) = BuildTDefPageWithIndexOffsets(tableDef, resolvedIndexes);
         long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
@@ -988,7 +988,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 foreach ((int rowIdx, object[] newRow) in pendingNewRows)
                 {
                     object?[] oldFullRow = snapshot.Rows[rowIdx].ItemArray;
-                    string? oldKey = BuildCompositeKey(oldFullRow, pkIdx);
+                    string? oldKey = IndexHelpers.BuildCompositeKey(oldFullRow, pkIdx);
                     changes.Add((oldKey, oldFullRow, newRow));
                 }
 
@@ -1451,8 +1451,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // Choose unique-within-tdef logical-idx names. The PK side uses the
         // relationship name; the FK side appends "_FK" to disambiguate when
         // both endpoints land on the same table (self-referential).
-        string pkName = MakeUniqueLogicalIdxName(relationship.Name, pkExistingNames);
-        string fkName = MakeUniqueLogicalIdxName(
+        string pkName = IndexHelpers.MakeUniqueLogicalIdxName(relationship.Name, pkExistingNames);
+        string fkName = IndexHelpers.MakeUniqueLogicalIdxName(
             primaryTdefPage == foreignTdefPage ? relationship.Name + "_FK" : relationship.Name,
             fkExistingNames);
 
@@ -1861,31 +1861,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return -1;
     }
 
-    /// <summary>
-    /// Returns <paramref name="baseName"/> if no entry in <paramref name="existing"/>
-    /// already uses it (case-insensitive); otherwise appends "_1", "_2", … until
-    /// an unused name is found.
-    /// </summary>
-    private static string MakeUniqueLogicalIdxName(string baseName, IReadOnlyList<string> existing)
-    {
-        var taken = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
-        if (!taken.Contains(baseName))
-        {
-            return baseName;
-        }
-
-        for (int i = 1; i < int.MaxValue; i++)
-        {
-            string candidate = baseName + "_" + i.ToString(CultureInfo.InvariantCulture);
-            if (!taken.Contains(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return baseName;
-    }
-
     // ════════════════════════════════════════════════════════════════
     // Drop / Rename relationship
     // ════════════════════════════════════════════════════════════════
@@ -2184,7 +2159,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <paramref name="tdefPage"/> and returns
     /// <paramref name="baseName"/> if it is unique, otherwise a
     /// <c>baseName_N</c> variant. Same algorithm as
-    /// <see cref="MakeUniqueLogicalIdxName"/>; this overload reads the TDEF
+    /// <see cref="IndexHelpers.MakeUniqueLogicalIdxName"/>; this overload reads the TDEF
     /// for callers that have only the page number.
     /// </summary>
     private async ValueTask<string> PickUniqueLogicalIdxNameAsync(
@@ -2220,7 +2195,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
             int logIdxNamesStart = logIdxStart + (numIdx * LogIdxEntrySz);
             List<string> existing = ReadLogicalIdxNames(pageBytes, logIdxNamesStart, numIdx);
-            return MakeUniqueLogicalIdxName(baseName, existing);
+            return IndexHelpers.MakeUniqueLogicalIdxName(baseName, existing);
         }
         finally
         {
@@ -2405,7 +2380,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             int phys = realIdxDescStart + (realIdxNum * RealIdxPhysSz);
-            if (!RealIdxColMapMatches(td, phys, columnNumbers))
+            if (!IndexHelpers.RealIdxColMapMatches(td, phys, columnNumbers))
             {
                 continue;
             }
@@ -2723,7 +2698,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             int phys = realIdxDescStart + (realIdxNum * RealIdxPhysSz);
-            if (!RealIdxColMapMatches(td, phys, columnNumbers))
+            if (!IndexHelpers.RealIdxColMapMatches(td, phys, columnNumbers))
             {
                 continue;
             }
@@ -2813,33 +2788,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Wi32(td, 8, finalEnd - 8);
 
         await WritePageAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
-        return true;
-    }
-
-    private static bool RealIdxColMapMatches(byte[] td, int phys, int[] columnNumbers)
-    {
-        if (phys + 52 > td.Length)
-        {
-            return false;
-        }
-
-        for (int slot = 0; slot < 10; slot++)
-        {
-            int so = phys + 4 + (slot * 3);
-            int cn = Ru16(td, so);
-            if (slot < columnNumbers.Length)
-            {
-                if (cn != columnNumbers[slot])
-                {
-                    return false;
-                }
-            }
-            else if (cn != 0xFFFF)
-            {
-                return false;
-            }
-        }
-
         return true;
     }
 
@@ -2936,40 +2884,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Resolved parent-side seek index for a single relationship. The seeker
-    /// uses <see cref="RootPage"/> as the entry point and encodes the FK-side
-    /// row values using <see cref="KeyColumns"/> (one entry per relationship
-    /// PK column, in declaration order) plus the foreign-table column index
-    /// supplying each value.
-    /// </summary>
-    private sealed record ParentSeekIndex(
-        long RootPage,
-        IReadOnlyList<ParentSeekKeyColumn> KeyColumns);
-
-    /// <summary>One column of a parent-seek composite key.</summary>
-    private readonly record struct ParentSeekKeyColumn(
-        byte ColumnType,
-        bool Ascending,
-        int ForeignColumnIndex);
-
-    /// <summary>
-    /// Resolved child-side (FK-side) seek index for a single relationship.
-    /// The seeker uses <see cref="RootPage"/> as the entry point and encodes
-    /// the parent's PK tuple (in relationship-PK declaration order) using
-    /// <see cref="KeyColumns"/>. Used by cascade-update / cascade-delete to
-    /// locate dependent child rows in O(log N + K) page reads instead of an
-    /// O(N) child-table snapshot scan.
-    /// </summary>
-    private sealed record ChildSeekIndex(
-        long RootPage,
-        IReadOnlyList<ChildSeekKeyColumn> KeyColumns);
-
-    /// <summary>One column of a child (FK-side) seek composite key.</summary>
-    private readonly record struct ChildSeekKeyColumn(
-        byte ColumnType,
-        bool Ascending);
-
-    /// <summary>
     /// Loads every enforced foreign-key relationship from the
     /// <c>MSysRelationships</c> system table. Returns an empty list when the
     /// database does not contain that table or contains no enforced rows.
@@ -3064,77 +2978,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Builds a canonical, type-tolerant string key from <paramref name="row"/>
-    /// for the columns listed in <paramref name="columnIndexes"/>. Returns
-    /// <see langword="null"/> when any component is <see cref="DBNull"/> /
-    /// <see langword="null"/> — Access treats a partial-null FK tuple as
-    /// unconstrained (the row is allowed even if no parent matches).
-    /// </summary>
-    private static string? BuildCompositeKey(object?[] row, int[] columnIndexes)
-    {
-        var sb = new StringBuilder();
-        for (int i = 0; i < columnIndexes.Length; i++)
-        {
-            int idx = columnIndexes[i];
-            if (idx < 0 || idx >= row.Length)
-            {
-                return null;
-            }
-
-            object? v = row[idx];
-            if (v == null || v is DBNull)
-            {
-                return null;
-            }
-
-            sb.Append('|');
-            AppendNormalized(sb, v);
-        }
-
-        return sb.ToString();
-    }
-
-    private static void AppendNormalized(StringBuilder sb, object value)
-    {
-        switch (value)
-        {
-            case string s:
-                // Access string equality is case-insensitive in JET — match that.
-                sb.Append('S').Append(':').Append(s.ToUpperInvariant());
-                break;
-            case Guid g:
-                sb.Append('G').Append(':').Append(g.ToString("N"));
-                break;
-            case byte[] b:
-                sb.Append('B').Append(':').Append(Convert.ToBase64String(b));
-                break;
-            case DateTime dt:
-                sb.Append('D').Append(':').Append(dt.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture));
-                break;
-            case bool bl:
-                sb.Append('?').Append(':').Append(bl ? '1' : '0');
-                break;
-            case IConvertible c:
-                // Numeric-ish: normalize through decimal for cross-width equality
-                // (e.g. user passes int 5 against a long parent column).
-                try
-                {
-                    decimal d = c.ToDecimal(CultureInfo.InvariantCulture);
-                    sb.Append('N').Append(':').Append(d.ToString(CultureInfo.InvariantCulture));
-                }
-                catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is OverflowException)
-                {
-                    sb.Append('X').Append(':').Append(value.ToString() ?? string.Empty);
-                }
-
-                break;
-            default:
-                sb.Append('X').Append(':').Append(value.ToString() ?? string.Empty);
-                break;
-        }
-    }
-
-    /// <summary>
     /// Lazily builds (and caches inside <paramref name="ctx"/>) the set of
     /// composite-key strings for every row currently in <paramref name="rel"/>'s
     /// primary table. A relationship with a missing parent column or a missing
@@ -3178,7 +3021,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             {
                 foreach (DataRow row in parent.Rows)
                 {
-                    string? k = BuildCompositeKey(row.ItemArray, idx);
+                    string? k = IndexHelpers.BuildCompositeKey(row.ItemArray, idx);
                     if (k != null)
                     {
                         _ = set.Add(k);
@@ -3228,7 +3071,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            string? key = BuildCompositeKey(values, fkIdx);
+            string? key = IndexHelpers.BuildCompositeKey(values, fkIdx);
             if (key == null)
             {
                 continue;
@@ -3254,7 +3097,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                byte[]? encodedKey = TryEncodeSeekKey(seekIdx, values);
+                byte[]? encodedKey = IndexHelpers.TryEncodeSeekKey(seekIdx, values);
                 if (encodedKey != null)
                 {
                     bool found = await IndexBTreeSeeker.ContainsKeyAsync(
@@ -3503,64 +3346,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Encodes the composite seek key for a single FK-side row using the
-    /// parent-side column types and the per-column ascending flags captured
-    /// at index resolution. Returns <see langword="null"/> when any column
-    /// is null (Access permits partial-null FK tuples — caller already
-    /// short-circuited on this path) or when the encoder rejects any value.
-    /// </summary>
-    private static byte[]? TryEncodeSeekKey(ParentSeekIndex idx, object[] values)
-    {
-        var pieces = new byte[idx.KeyColumns.Count][];
-        int total = 0;
-        try
-        {
-            for (int i = 0; i < idx.KeyColumns.Count; i++)
-            {
-                ParentSeekKeyColumn col = idx.KeyColumns[i];
-                if (col.ForeignColumnIndex < 0 || col.ForeignColumnIndex >= values.Length)
-                {
-                    return null;
-                }
-
-                object? v = values[col.ForeignColumnIndex];
-                if (v is DBNull)
-                {
-                    v = null;
-                }
-
-                if (v == null)
-                {
-                    // BuildCompositeKey already rejected partial-null tuples,
-                    // but be defensive — encoding a null key entry still
-                    // produces a well-formed flag-only block.
-                    pieces[i] = IndexKeyEncoder.EncodeEntry(col.ColumnType, null, col.Ascending);
-                }
-                else
-                {
-                    pieces[i] = IndexKeyEncoder.EncodeEntry(col.ColumnType, v, col.Ascending);
-                }
-
-                total += pieces[i].Length;
-            }
-        }
-        catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException || ex is OverflowException)
-        {
-            return null;
-        }
-
-        byte[] composite = new byte[total];
-        int offset = 0;
-        for (int i = 0; i < pieces.Length; i++)
-        {
-            Buffer.BlockCopy(pieces[i], 0, composite, offset, pieces[i].Length);
-            offset += pieces[i].Length;
-        }
-
-        return composite;
-    }
-
-    /// <summary>
     /// Locates (and caches inside <paramref name="ctx"/>) the child (FK) table's
     /// real-idx whose col_map exactly covers <paramref name="rel"/>'s
     /// ForeignColumns in declaration order. Returns <see langword="null"/>
@@ -3642,58 +3427,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Encodes a composite seek key for the child (FK-side) index using the
-    /// supplied parent-PK column values (in relationship-PK declaration
-    /// order). Returns <see langword="null"/> when any value is null
-    /// (cascade callers already short-circuit on partial-null parent keys)
-    /// or when the encoder rejects any value.
-    /// </summary>
-    private static byte[]? TryEncodeChildSeekKey(ChildSeekIndex idx, object?[] parentPkValues)
-    {
-        if (parentPkValues.Length != idx.KeyColumns.Count)
-        {
-            return null;
-        }
-
-        var pieces = new byte[idx.KeyColumns.Count][];
-        int total = 0;
-        try
-        {
-            for (int i = 0; i < idx.KeyColumns.Count; i++)
-            {
-                ChildSeekKeyColumn col = idx.KeyColumns[i];
-                object? v = parentPkValues[i];
-                if (v is DBNull)
-                {
-                    v = null;
-                }
-
-                if (v == null)
-                {
-                    return null;
-                }
-
-                pieces[i] = IndexKeyEncoder.EncodeEntry(col.ColumnType, v, col.Ascending);
-                total += pieces[i].Length;
-            }
-        }
-        catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException || ex is OverflowException)
-        {
-            return null;
-        }
-
-        byte[] composite = new byte[total];
-        int offset = 0;
-        for (int i = 0; i < pieces.Length; i++)
-        {
-            Buffer.BlockCopy(pieces[i], 0, composite, offset, pieces[i].Length);
-            offset += pieces[i].Length;
-        }
-
-        return composite;
-    }
-
-    /// <summary>
     /// After a successful insert, augments any cached parent-key sets that
     /// reference <paramref name="primaryTable"/> with the row's PK tuple so
     /// subsequent inserts within the same call (self-references and bulk
@@ -3730,7 +3463,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            string? key = BuildCompositeKey(insertedValues, pkIdx);
+            string? key = IndexHelpers.BuildCompositeKey(insertedValues, pkIdx);
             if (key != null)
             {
                 _ = set.Add(key);
@@ -3872,7 +3605,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             foreach (object?[] pk in parentPkRows)
             {
-                string? k = BuildCompositeKey(pk, identity);
+                string? k = IndexHelpers.BuildCompositeKey(pk, identity);
                 if (k != null)
                 {
                     _ = deletedSet.Add(k);
@@ -3883,7 +3616,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             for (int i = 0; i < total; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                string? childKey = BuildCompositeKey(childSnap.Rows[i].ItemArray, fkIdx);
+                string? childKey = IndexHelpers.BuildCompositeKey(childSnap.Rows[i].ItemArray, fkIdx);
                 if (childKey == null)
                 {
                     continue;
@@ -3976,7 +3709,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var matchedLocations = new List<(long DataPage, int RowIndex)>();
         foreach (object?[] pk in parentPkRows)
         {
-            byte[]? encoded = TryEncodeChildSeekKey(childSeek, pk);
+            byte[]? encoded = IndexHelpers.TryEncodeChildSeekKey(childSeek, pk);
             if (encoded == null)
             {
                 return false;
@@ -4184,7 +3917,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                string? newKey = BuildCompositeKey(newPkValues, primaryPkIdx);
+                string? newKey = IndexHelpers.BuildCompositeKey(newPkValues, primaryPkIdx);
                 if (newKey == null || string.Equals(newKey, oldKey, StringComparison.Ordinal))
                 {
                     continue;
@@ -4234,7 +3967,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             for (int i = 0; i < total; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                string? childKey = BuildCompositeKey(childSnap.Rows[i].ItemArray, fkIdx);
+                string? childKey = IndexHelpers.BuildCompositeKey(childSnap.Rows[i].ItemArray, fkIdx);
                 if (childKey != null && movingChanges.ContainsKey(childKey))
                 {
                     affectedIndices.Add(i);
@@ -4299,7 +4032,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var pendingByLocation = new Dictionary<long, (long DataPage, int RowIndex, object[] NewPkSubset)>();
         foreach (KeyValuePair<string, (object?[] OldPkSubset, object[] NewPkSubset)> kvp in movingChanges)
         {
-            byte[]? encoded = TryEncodeChildSeekKey(childSeek, kvp.Value.OldPkSubset);
+            byte[]? encoded = IndexHelpers.TryEncodeChildSeekKey(childSeek, kvp.Value.OldPkSubset);
             if (encoded == null)
             {
                 return false;
@@ -5979,82 +5712,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Default index-projection strategy used by <see cref="RewriteTableAsync"/>
-    /// when no caller-specific projection is supplied. Forwards every existing
-    /// normal or primary-key index whose key columns all still exist
-    /// (case-insensitive name match) in the rebuilt schema. Non-PK indexes
-    /// must be single-column (multi-column non-PK indexes are not supported).
-    /// FK indexes are not forwarded today.
-    /// </summary>
-    private static List<IndexDefinition> DefaultIndexProjection(IReadOnlyList<IndexMetadata> existing, IReadOnlyList<ColumnDefinition> newDefs)
-    {
-        var result = new List<IndexDefinition>(existing.Count);
-        var newColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (ColumnDefinition c in newDefs)
-        {
-            newColumnNames.Add(c.Name);
-        }
-
-        foreach (IndexMetadata idx in existing)
-        {
-            if (idx.Kind != IndexKind.Normal && idx.Kind != IndexKind.PrimaryKey)
-            {
-                continue;
-            }
-
-            if (idx.Columns.Count == 0)
-            {
-                continue;
-            }
-
-            bool allSurvive = true;
-            foreach (IndexColumnReference ic in idx.Columns)
-            {
-                if (string.IsNullOrEmpty(ic.Name) || !newColumnNames.Contains(ic.Name))
-                {
-                    allSurvive = false;
-                    break;
-                }
-            }
-
-            if (!allSurvive)
-            {
-                continue;
-            }
-
-            var pkCols = new string[idx.Columns.Count];
-            var descendingCols = new List<string>();
-            for (int i = 0; i < idx.Columns.Count; i++)
-            {
-                pkCols[i] = idx.Columns[i].Name;
-                if (!idx.Columns[i].IsAscending)
-                {
-                    descendingCols.Add(idx.Columns[i].Name);
-                }
-            }
-
-            if (idx.Kind == IndexKind.PrimaryKey)
-            {
-                result.Add(new IndexDefinition(idx.Name, pkCols)
-                {
-                    IsPrimaryKey = true,
-                    DescendingColumns = descendingCols,
-                });
-            }
-            else
-            {
-                result.Add(new IndexDefinition(idx.Name, pkCols)
-                {
-                    IsUnique = idx.IsUnique,
-                    DescendingColumns = descendingCols,
-                });
-            }
-        }
-
-        return result;
-    }
-
-    /// <summary>
     /// Opens a transient <see cref="AccessReader"/> against the same backing file/stream
     /// to read and parse the <c>MSysObjects.LvProp</c> blob for the catalog row whose
     /// <c>Id</c> low-24 bits equal <paramref name="tdefPage"/>. Returns
@@ -6257,7 +5914,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // projection that rewrites references to the renamed column.
         List<IndexDefinition> projectedIndexes = projectIndexes != null
             ? projectIndexes(existingIndexes, newDefs)
-            : DefaultIndexProjection(existingIndexes, newDefs);
+            : IndexHelpers.DefaultIndexProjection(existingIndexes, newDefs);
 
         string tempName = $"~tmp_{Guid.NewGuid():N}".Substring(0, 18);
         await CreateTableAsync(tempName, newDefs, projectedIndexes, cancellationToken).ConfigureAwait(false);
@@ -6674,235 +6331,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         Wi32(page, 8, Math.Max(0, namePos - 8));
         return (page, firstDpOffsets);
-    }
-
-    /// <summary>
-    /// synthesizes a primary-key <see cref="IndexDefinition"/> from any
-    /// <see cref="ColumnDefinition.IsPrimaryKey"/> flags set on the supplied
-    /// columns and forces those columns to <see cref="ColumnDefinition.IsNullable"/>
-    /// = <c>false</c> on the returned column list (the JET TDEF flag bit
-    /// <c>FLAG_NULL_ALLOWED 0x02</c> is cleared, matching Access semantics
-    /// for PK columns). Mixing the column-level shortcut with an explicit
-    /// PK <see cref="IndexDefinition"/> in the same call throws
-    /// <see cref="ArgumentException"/>.
-    /// </summary>
-    private static (IReadOnlyList<ColumnDefinition> Columns, IReadOnlyList<IndexDefinition> Indexes) ApplyPrimaryKeyShortcut(
-        IReadOnlyList<ColumnDefinition> columns,
-        IReadOnlyList<IndexDefinition> indexes)
-    {
-        bool anyColumnPk = false;
-        foreach (ColumnDefinition c in columns)
-        {
-            if (c.IsPrimaryKey)
-            {
-                anyColumnPk = true;
-                break;
-            }
-        }
-
-        bool anyIndexPk = false;
-        foreach (IndexDefinition idx in indexes)
-        {
-            if (idx.IsPrimaryKey)
-            {
-                anyIndexPk = true;
-                break;
-            }
-        }
-
-        if (anyColumnPk && anyIndexPk)
-        {
-            throw new ArgumentException(
-                "Primary key declared both via ColumnDefinition.IsPrimaryKey and an explicit IndexDefinition.IsPrimaryKey. Use one or the other.");
-        }
-
-        // Force PK key columns (whether declared via column flag OR an explicit
-        // PK IndexDefinition) to non-nullable on the emitted TDEF.
-        HashSet<string>? pkColumnNames = null;
-        if (anyColumnPk)
-        {
-            pkColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var pkColList = new List<string>();
-            foreach (ColumnDefinition c in columns)
-            {
-                if (c.IsPrimaryKey)
-                {
-                    pkColumnNames.Add(c.Name);
-                    pkColList.Add(c.Name);
-                }
-            }
-
-            var newIndexes = new List<IndexDefinition>(indexes.Count + 1);
-            newIndexes.AddRange(indexes);
-            newIndexes.Add(new IndexDefinition("PrimaryKey", pkColList) { IsPrimaryKey = true });
-            indexes = newIndexes;
-        }
-        else if (anyIndexPk)
-        {
-            pkColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (IndexDefinition idx in indexes)
-            {
-                if (idx.IsPrimaryKey)
-                {
-                    foreach (string col in idx.Columns)
-                    {
-                        pkColumnNames.Add(col);
-                    }
-                }
-            }
-        }
-
-        if (pkColumnNames is not null)
-        {
-            var newCols = new ColumnDefinition[columns.Count];
-            for (int i = 0; i < columns.Count; i++)
-            {
-                ColumnDefinition c = columns[i];
-                if (pkColumnNames.Contains(c.Name) && c.IsNullable)
-                {
-                    c = c with { IsNullable = false };
-                }
-
-                newCols[i] = c;
-            }
-
-            columns = newCols;
-        }
-
-        return (columns, indexes);
-    }
-
-    private List<ResolvedIndex> ResolveIndexes(IReadOnlyList<IndexDefinition> indexes, TableDef tableDef)
-    {
-        if (indexes.Count == 0)
-        {
-            return [];
-        }
-
-        var result = new List<ResolvedIndex>(indexes.Count);
-        var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        bool sawPk = false;
-        for (int i = 0; i < indexes.Count; i++)
-        {
-            IndexDefinition def = indexes[i];
-            if (string.IsNullOrEmpty(def.Name))
-            {
-                throw new ArgumentException($"IndexDefinition at position {i} has an empty name.", nameof(indexes));
-            }
-
-            if (!seenNames.Add(def.Name))
-            {
-                throw new ArgumentException($"Duplicate index name '{def.Name}'.", nameof(indexes));
-            }
-
-            if (def.Columns.Count == 0)
-            {
-                throw new ArgumentException($"IndexDefinition '{def.Name}' must reference at least one column.", nameof(indexes));
-            }
-
-            // The JET col_map carries up to 10 columns per index (§3.1).
-            if (def.Columns.Count > 10)
-            {
-                throw new NotSupportedException($"IndexDefinition '{def.Name}' has {def.Columns.Count} columns; the JET col_map supports at most 10.");
-            }
-
-            // Multi-column non-PK indexes are accepted; the maintenance loop
-            // encodes per-column and concatenates to form the composite key.
-            if (def.IsPrimaryKey)
-            {
-                if (sawPk)
-                {
-                    throw new ArgumentException("Only one primary-key index is permitted per table.", nameof(indexes));
-                }
-
-                sawPk = true;
-            }
-
-            var seenCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var colNums = new int[def.Columns.Count];
-            for (int k = 0; k < def.Columns.Count; k++)
-            {
-                string columnName = def.Columns[k];
-                if (!seenCols.Add(columnName))
-                {
-                    throw new ArgumentException($"IndexDefinition '{def.Name}' references column '{columnName}' more than once.", nameof(indexes));
-                }
-
-                ColumnInfo column = tableDef.FindColumn(columnName)
-                    ?? throw new ArgumentException($"IndexDefinition '{def.Name}' references unknown column '{columnName}'.", nameof(indexes));
-
-                // match Microsoft Access — neither the UI
-                // nor the engine permits CREATE INDEX over OLE Object,
-                // Attachment, or Multi-Value (Complex) columns. Previously
-                // these silently fell through to a "schema-only" path that
-                // emitted a stale empty leaf and let Access rebuild on
-                // Compact & Repair; that fallback masked a programmer error
-                // and disagreed with Access semantics. Reject with a clear
-                // diagnostic so callers correct the index definition.
-                if (column.Type is T_OLE or T_ATTACHMENT or T_COMPLEX)
-                {
-                    string typeName = column.Type switch
-                    {
-                        T_OLE => "OLE Object",
-                        T_ATTACHMENT => "Attachment",
-                        T_COMPLEX => "Multi-Value (Complex)",
-                        _ => $"0x{column.Type:X2}",
-                    };
-                    throw new NotSupportedException(
-                        $"IndexDefinition '{def.Name}' references column '{columnName}' whose type is {typeName}; "
-                        + "Microsoft Access does not permit indexes on this column type.");
-                }
-
-                colNums[k] = column.ColNum;
-            }
-
-            // per-column ascending direction. DescendingColumns is a
-            // case-insensitive subset of Columns; any entry that does not
-            // appear in Columns is rejected.
-            bool[] ascending = new bool[def.Columns.Count];
-            for (int k = 0; k < ascending.Length; k++)
-            {
-                ascending[k] = true;
-            }
-
-            if (def.DescendingColumns is { Count: > 0 } descendingList)
-            {
-                foreach (string descName in descendingList)
-                {
-                    if (string.IsNullOrEmpty(descName))
-                    {
-                        throw new ArgumentException($"IndexDefinition '{def.Name}' has an empty entry in DescendingColumns.", nameof(indexes));
-                    }
-
-                    int matchIndex = -1;
-                    for (int k = 0; k < def.Columns.Count; k++)
-                    {
-                        if (string.Equals(def.Columns[k], descName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            matchIndex = k;
-                            break;
-                        }
-                    }
-
-                    if (matchIndex < 0)
-                    {
-                        throw new ArgumentException(
-                            $"IndexDefinition '{def.Name}' lists '{descName}' in DescendingColumns but the column is not in Columns.",
-                            nameof(indexes));
-                    }
-
-                    ascending[matchIndex] = false;
-                }
-            }
-
-            // PKs are implicitly unique (signalled by index_type=0x01, not the
-            // flag bit per §3.1). User-set IsUnique on a PK is silently subsumed.
-            bool isUnique = def.IsPrimaryKey || def.IsUnique;
-
-            result.Add(new ResolvedIndex(def.Name, colNums, ascending, def.IsPrimaryKey, isUnique));
-        }
-
-        return result;
     }
 
     /// <summary>
@@ -9482,7 +8910,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// path in that case. Index-key column types (the focus of this helper)
     /// only include scalar fixed and var-inline kinds — JET indexes cannot
     /// cover MEMO / OLE / Complex columns at all (rejected by
-    /// <see cref="ResolveIndexes"/>) so the LVAL fall-through is safety
+    /// <see cref="IndexHelpers.ResolveIndexes"/>) so the LVAL fall-through is safety
     /// netting, not the common path.
     /// </summary>
     private async ValueTask<object?[]?> TryReadColumnValuesTypedAsync(
@@ -9746,7 +9174,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// reclaims them — this library does not maintain a free-page bitmap).
     /// </para>
     /// <para>
-    /// All key column types accepted by <see cref="ResolveIndexes"/> have
+    /// All key column types accepted by <see cref="IndexHelpers.ResolveIndexes"/> have
     /// matching <see cref="IndexKeyEncoder"/> support, so encoder rejection
     /// is treated as an unrecoverable programmer error and propagates to
     /// the caller rather than silently leaving the leaf stale (the
@@ -9951,7 +9379,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 entries.Add((composite, locations[r].PageNumber, (byte)locations[r].RowIndex));
             }
 
-            entries.Sort(static (a, b) => CompareKeyBytes(a.Key, b.Key));
+            entries.Sort(static (a, b) => IndexHelpers.CompareKeyBytes(a.Key, b.Key));
 
             // unique-violation detection. Note this is a post-write check —
             // the offending row has already been persisted by the time we get
@@ -9962,7 +9390,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             {
                 for (int e = 1; e < entries.Count; e++)
                 {
-                    if (CompareKeyBytes(entries[e - 1].Key, entries[e].Key) == 0)
+                    if (IndexHelpers.CompareKeyBytes(entries[e - 1].Key, entries[e].Key) == 0)
                     {
                         throw new InvalidOperationException(
                             $"Unique index violation on table '{tableName}': duplicate key detected after row mutation. " +
@@ -10535,7 +9963,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             byte[] tailMax = existingTail[existingTail.Count - 1].Key;
             for (int i = 0; i < addEntries.Count; i++)
             {
-                if (CompareKeyBytes(addEntries[i].Key, tailMax) <= 0)
+                if (IndexHelpers.CompareKeyBytes(addEntries[i].Key, tailMax) <= 0)
                 {
                     return false;
                 }
@@ -10629,7 +10057,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int firstAdd = addEntries.Count > 0 ? 1 : 0;
         for (int i = firstAdd; i < addEntries.Count; i++)
         {
-            if (!ConfirmKeyTargetsSamePath(path, addEntries[i].Key))
+            if (!IndexHelpers.ConfirmKeyTargetsSamePath(path, addEntries[i].Key))
             {
                 return false;
             }
@@ -10638,7 +10066,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int rstart = addEntries.Count > 0 ? 0 : 1;
         for (int i = rstart; i < removeEntries.Count; i++)
         {
-            if (!ConfirmKeyTargetsSamePath(path, removeEntries[i].Key))
+            if (!IndexHelpers.ConfirmKeyTargetsSamePath(path, removeEntries[i].Key))
             {
                 return false;
             }
@@ -10699,7 +10127,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (rebuilt != null)
         {
             IndexLeafPageBuilder.LeafEntry newLast = spliced[spliced.Count - 1];
-            bool maxUnchanged = CompareKeyBytes(newLast.EncodedKey, oldMaxKey) == 0;
+            bool maxUnchanged = IndexHelpers.CompareKeyBytes(newLast.EncodedKey, oldMaxKey) == 0;
 
             if (maxUnchanged)
             {
@@ -10730,7 +10158,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // 6. Try an N-way leaf split (greedy left-fill).
         // Bails only if a single entry exceeds page payload area.
-        List<List<IndexLeafPageBuilder.LeafEntry>>? splitPages = TryGreedySplitLeafInN(layout, _pgSz, spliced);
+        List<List<IndexLeafPageBuilder.LeafEntry>>? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, _pgSz, spliced);
         if (splitPages is null)
         {
             return false;
@@ -10835,31 +10263,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// One step of an intermediate-page descent: the page number, a clone
-    /// of its raw bytes (for sibling-pointer header preservation on
-    /// rewrite), the decoded summary entries, and the index of the entry
-    /// whose <c>ChildPage</c> the descent followed.
-    /// </summary>
-    private readonly struct DescentStep
-    {
-        public DescentStep(long pageNumber, byte[] pageBytes, List<IndexLeafIncremental.DecodedIntermediateEntry> entries, int takenIndex)
-        {
-            PageNumber = pageNumber;
-            PageBytes = pageBytes;
-            Entries = entries;
-            TakenIndex = takenIndex;
-        }
-
-        public long PageNumber { get; }
-
-        public byte[] PageBytes { get; }
-
-        public List<IndexLeafIncremental.DecodedIntermediateEntry> Entries { get; }
-
-        public int TakenIndex { get; }
-    }
-
-    /// <summary>
     /// Descends an index B-tree from <paramref name="rootPage"/> using
     /// <paramref name="searchKey"/> to pick the child at every intermediate
     /// level (first summary &gt;= searchKey wins, mirroring
@@ -10908,7 +10311,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return 0;
             }
 
-            int idx = SelectChildIndexFromDecoded(entries, searchKey);
+            int idx = IndexHelpers.SelectChildIndexFromDecoded(entries, searchKey);
             if (idx < 0)
             {
                 // Search key sorts strictly above every summary on this
@@ -10927,178 +10330,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         return 0;
-    }
-
-    /// <summary>
-    /// Returns the index of the first intermediate entry whose summary key
-    /// sorts &gt;= <paramref name="searchKey"/>, or <c>-1</c> when every
-    /// summary is &lt; searchKey (the descent would have to follow
-    /// <c>tail_page</c>, which the surgical path rejects).
-    /// </summary>
-    private static int SelectChildIndexFromDecoded(
-        List<IndexLeafIncremental.DecodedIntermediateEntry> entries,
-        byte[] searchKey)
-    {
-        for (int i = 0; i < entries.Count; i++)
-        {
-            if (CompareKeyBytes(searchKey, entries[i].Key) <= 0)
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
-    /// <summary>
-    /// Re-walks a captured <paramref name="path"/> with a different search
-    /// key, returning <see langword="true"/> only when every level picks the
-    /// same child entry that was originally followed. Used to confirm that
-    /// every change in the batch lands on the same leaf as the first one
-    /// (surgical mutation requires this; multi-leaf change-sets bail to
-    /// the bulk path).
-    /// </summary>
-    private static bool ConfirmKeyTargetsSamePath(List<DescentStep> path, byte[] searchKey)
-    {
-        for (int level = 0; level < path.Count; level++)
-        {
-            DescentStep step = path[level];
-            int idx = SelectChildIndexFromDecoded(step.Entries, searchKey);
-            if (idx != step.TakenIndex)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// greedy left-fill N-way split of a spliced leaf
-    /// entry list. Walks the input once, packing entries into a fresh page
-    /// until the next entry would overflow, then opens a new page and
-    /// continues. Returns <see langword="null"/> only when a single entry
-    /// is too large to fit on any page (encoded key + 4-byte slot offset
-    /// exceeds the per-page payload area) or when the input would not
-    /// actually require a split. The returned list always has
-    /// <c>Count &gt;= 2</c> on success; every page is non-empty.
-    /// </summary>
-    private static List<List<IndexLeafPageBuilder.LeafEntry>>? TryGreedySplitLeafInN(
-        IndexLeafPageBuilder.LeafPageLayout layout,
-        int pageSize,
-        List<IndexLeafPageBuilder.LeafEntry> entries)
-    {
-        int payloadArea = pageSize - layout.FirstEntryOffset;
-        if (entries.Count < 2)
-        {
-            return null;
-        }
-
-        var pages = new List<List<IndexLeafPageBuilder.LeafEntry>>();
-        var current = new List<IndexLeafPageBuilder.LeafEntry>();
-        int currentSize = 0;
-
-        for (int i = 0; i < entries.Count; i++)
-        {
-            int len = entries[i].EncodedKey.Length + 4;
-            if (len > payloadArea)
-            {
-                // A single entry's encoded key + slot offset exceeds an
-                // entire page's payload area — no split arrangement helps.
-                return null;
-            }
-
-            if (currentSize + len > payloadArea && current.Count > 0)
-            {
-                pages.Add(current);
-                current = new List<IndexLeafPageBuilder.LeafEntry>();
-                currentSize = 0;
-            }
-
-            current.Add(entries[i]);
-            currentSize += len;
-        }
-
-        if (current.Count > 0)
-        {
-            pages.Add(current);
-        }
-
-        if (pages.Count < 2)
-        {
-            // Whole thing fits on one page — caller should have used the
-            // in-place rewrite instead of asking for a split. Bail
-            // so the call site falls through cleanly.
-            return null;
-        }
-
-        return pages;
-    }
-
-    /// <summary>
-    /// greedy left-fill N-way split of an
-    /// INTERMEDIATE page's entry list. Each candidate page is validated by
-    /// <see cref="IndexBTreeBuilder.TryBuildIntermediatePage"/> so the
-    /// per-page byte budget — including the §4.4 prefix-compression savings
-    /// the simpler leaf splitter cannot model — is respected exactly.
-    /// Walks the entries once, growing the current page until
-    /// <c>TryBuildIntermediatePage</c> returns <see langword="null"/>, then
-    /// closing it and opening a new page. Returns <see langword="null"/>
-    /// when even a single entry refuses to fit (impossible on a well-formed
-    /// TDEF) or when the input fits one page (no split needed).
-    /// </summary>
-    private static List<List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)>>? TryGreedySplitIntermediateInN(
-        IndexLeafPageBuilder.LeafPageLayout layout,
-        int pageSize,
-        long parentTdefPage,
-        List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> entries)
-    {
-        if (entries.Count < 2)
-        {
-            return null;
-        }
-
-        var pages = new List<List<(byte[], long, byte, long)>>();
-        int i = 0;
-        while (i < entries.Count)
-        {
-            // Grow [i, end) until either (a) end == entries.Count and the
-            // remainder fits, or (b) the next extension overflows. Linear
-            // probe is fine — TryBuildIntermediatePage is O(slice size) and
-            // the total work across all probes is O(N²) where N is the
-            // intermediate's entry count (typically ≤ a few hundred).
-            int end = i + 1;
-            byte[]? lastFit = IndexBTreeBuilder.TryBuildIntermediatePage(
-                layout, pageSize, parentTdefPage, entries.GetRange(i, 1), prevPage: 0, nextPage: 0, tailPage: 0);
-            if (lastFit is null)
-            {
-                // A single entry won't fit — degenerate, bail.
-                return null;
-            }
-
-            while (end < entries.Count)
-            {
-                var probe = entries.GetRange(i, end - i + 1);
-                byte[]? probeBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
-                    layout, pageSize, parentTdefPage, probe, prevPage: 0, nextPage: 0, tailPage: 0);
-                if (probeBytes is null)
-                {
-                    break;
-                }
-
-                end++;
-            }
-
-            pages.Add(entries.GetRange(i, end - i));
-            i = end;
-        }
-
-        if (pages.Count < 2)
-        {
-            return null;
-        }
-
-        return pages;
     }
 
     /// <summary>
@@ -11542,7 +10773,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // entry at OriginalIndex; the dead leaf page is orphaned
                 // (not appended to any free list — Compact & Repair sweeps
                 // it, same as bulk path orphans).
-                AddIntermediateOp(parentOps, mergeParent.PageNumber, new IntermediateOp(
+                IndexHelpers.AddIntermediateOp(parentOps, mergeParent.PageNumber, new IntermediateOp(
                     OriginalIndex: mergeParent.TakenIndex,
                     Type: IntermediateOpType.Remove,
                     NewKey: [],
@@ -11572,10 +10803,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 existingPageRewrites[group.LeafPage] = rebuilt;
 
                 IndexLeafPageBuilder.LeafEntry newLast = spliced[spliced.Count - 1];
-                if (CompareKeyBytes(newLast.EncodedKey, oldMaxKey) != 0)
+                if (IndexHelpers.CompareKeyBytes(newLast.EncodedKey, oldMaxKey) != 0)
                 {
                     // Parent's summary entry for this leaf must be replaced.
-                    AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
+                    IndexHelpers.AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
                         OriginalIndex: parentStep.TakenIndex,
                         Type: IntermediateOpType.Replace,
                         NewKey: newLast.EncodedKey,
@@ -11590,7 +10821,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // ── N-way split ──
             // Greedy left-fill into N pages; bails only if a single entry
             // exceeds the page payload area.
-            List<List<IndexLeafPageBuilder.LeafEntry>>? splitPages = TryGreedySplitLeafInN(layout, _pgSz, spliced);
+            List<List<IndexLeafPageBuilder.LeafEntry>>? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, _pgSz, spliced);
             if (splitPages is null)
             {
                 return false;
@@ -11664,7 +10895,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // immediately after, in left-to-right order. ApplyIntermediateOps
             // preserves declaration order at the same OriginalIndex.
             IndexLeafPageBuilder.LeafEntry leftLast = splitPages[0][splitPages[0].Count - 1];
-            AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
+            IndexHelpers.AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
                 OriginalIndex: parentStep.TakenIndex,
                 Type: IntermediateOpType.Replace,
                 NewKey: leftLast.EncodedKey,
@@ -11674,7 +10905,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             for (int p = 1; p < splitCount; p++)
             {
                 IndexLeafPageBuilder.LeafEntry pLast = splitPages[p][splitPages[p].Count - 1];
-                AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
+                IndexHelpers.AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
                     OriginalIndex: parentStep.TakenIndex,
                     Type: IntermediateOpType.InsertAfter,
                     NewKey: pLast.EncodedKey,
@@ -11946,133 +11177,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Aggregated operation against an intermediate page: replace or insert
-    /// a summary entry at <paramref name="OriginalIndex"/>. Original index
-    /// always refers to the position in the LIVE intermediate's entry list
-    /// (not the post-mutation list). When two ops share an original index,
-    /// declaration order is preserved (a Replace for the original entry
-    /// followed by an InsertAfter that produces a leaf split).
-    /// </summary>
-    private readonly record struct IntermediateOp(
-        int OriginalIndex,
-        IntermediateOpType Type,
-        byte[] NewKey,
-        long NewDataPage,
-        byte NewDataRow,
-        long NewChildPage);
-
-    private enum IntermediateOpType
-    {
-        Replace,
-        InsertAfter,
-
-        /// <summary>Drop the entry at <c>OriginalIndex</c>. The
-        /// other tuple fields (<c>NewKey</c>, <c>NewDataPage</c>,
-        /// <c>NewDataRow</c>, <c>NewChildPage</c>) are unused.</summary>
-        Remove,
-    }
-
-    private static void AddIntermediateOp(
-        Dictionary<long, List<IntermediateOp>> ops,
-        long pageNumber,
-        IntermediateOp op)
-    {
-        if (!ops.TryGetValue(pageNumber, out List<IntermediateOp>? list))
-        {
-            list = [];
-            ops[pageNumber] = list;
-        }
-
-        list.Add(op);
-    }
-
-    /// <summary>
-    /// Apply <paramref name="ops"/> to <paramref name="original"/> producing
-    /// the post-mutation intermediate entry list. Ops are sorted by
-    /// (OriginalIndex, declaration order); each entry index in
-    /// <paramref name="original"/> is consumed at most once by a Replace.
-    /// </summary>
-    private static List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> ApplyIntermediateOps(
-        List<IndexLeafIncremental.DecodedIntermediateEntry> original,
-        List<IntermediateOp> ops)
-    {
-        // Stable sort by OriginalIndex; declaration order preserved within ties.
-        var indexed = new (IntermediateOp Op, int Order)[ops.Count];
-        for (int i = 0; i < ops.Count; i++)
-        {
-            indexed[i] = (ops[i], i);
-        }
-
-        Array.Sort(indexed, static (a, b) =>
-        {
-            int c = a.Op.OriginalIndex - b.Op.OriginalIndex;
-            return c != 0 ? c : a.Order - b.Order;
-        });
-
-        var result = new List<(byte[], long, byte, long)>(original.Count + ops.Count);
-        int opCursor = 0;
-        for (int origIdx = 0; origIdx < original.Count; origIdx++)
-        {
-            // Consume any ops at this original index.
-            bool replaced = false;
-            bool removed = false;
-            while (opCursor < indexed.Length && indexed[opCursor].Op.OriginalIndex == origIdx)
-            {
-                IntermediateOp op = indexed[opCursor].Op;
-                opCursor++;
-                switch (op.Type)
-                {
-                    case IntermediateOpType.Replace:
-                        if (removed)
-                        {
-                            // Can't replace something that was already removed.
-                            // Defensive — caller guards against this combination.
-                            return [];
-                        }
-
-                        result.Add((op.NewKey, op.NewDataPage, op.NewDataRow, op.NewChildPage));
-                        replaced = true;
-                        break;
-
-                    case IntermediateOpType.Remove:
-                        if (replaced)
-                        {
-                            return [];
-                        }
-
-                        removed = true;
-                        break;
-
-                    case IntermediateOpType.InsertAfter:
-                        // Insert after the (possibly replaced) original entry.
-                        // If the original was removed, insert in its place.
-                        if (!replaced && !removed)
-                        {
-                            IndexLeafIncremental.DecodedIntermediateEntry e = original[origIdx];
-                            result.Add((e.Key, e.DataPage, e.DataRow, e.ChildPage));
-                            replaced = true;
-                        }
-
-                        result.Add((op.NewKey, op.NewDataPage, op.NewDataRow, op.NewChildPage));
-                        break;
-                }
-            }
-
-            if (!replaced && !removed)
-            {
-                IndexLeafIncremental.DecodedIntermediateEntry e = original[origIdx];
-                result.Add((e.Key, e.DataPage, e.DataRow, e.ChildPage));
-            }
-        }
-
-        // Any ops past the final original index would be invalid (no
-        // OriginalIndex == original.Count is meaningful). Drop them
-        // defensively — caller treats this as a bail by checking the result
-        // count vs. expected.
-        return result;
-    }
-
-    /// <summary>
     /// Mutable staging state shared between
     /// <see cref="TrySurgicalCrossLeafMaintainAsync"/> and
     /// <see cref="TryStageIntermediateRewritesAsync"/>. Replaces the
@@ -12274,7 +11378,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> newEntries =
-                ApplyIntermediateOps(refStep.Entries, ops);
+                IndexHelpers.ApplyIntermediateOps(refStep.Entries, ops);
 
             if (newEntries.Count == 0)
             {
@@ -12297,7 +11401,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     return false;
                 }
 
-                AddIntermediateOp(parentOps, gpCollapse.ParentPage, new IntermediateOp(
+                IndexHelpers.AddIntermediateOp(parentOps, gpCollapse.ParentPage, new IntermediateOp(
                     OriginalIndex: gpCollapse.IndexInParent,
                     Type: IntermediateOpType.Remove,
                     NewKey: [],
@@ -12373,7 +11477,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // with N summary entries pointing at every split page and
                 // signal the caller to patch first_dp.
                 List<List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)>>? splitInts =
-                    TryGreedySplitIntermediateInN(layout, _pgSz, tdefPage, newEntries);
+                    IndexHelpers.TryGreedySplitIntermediateInN(layout, _pgSz, tdefPage, newEntries);
                 if (splitInts is null)
                 {
                     // Single entry too big for any intermediate page — bail.
@@ -12466,7 +11570,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     // in left-to-right order. Recurse into grandparent in
                     // case it also overflows.
                     var firstLast = splitInts[0][splitInts[0].Count - 1];
-                    AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
+                    IndexHelpers.AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
                         OriginalIndex: gpSplit.IndexInParent,
                         Type: IntermediateOpType.Replace,
                         NewKey: firstLast.Key,
@@ -12476,7 +11580,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     for (int p = 1; p < nSplit; p++)
                     {
                         var pLast = splitInts[p][splitInts[p].Count - 1];
-                        AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
+                        IndexHelpers.AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
                             OriginalIndex: gpSplit.IndexInParent,
                             Type: IntermediateOpType.InsertAfter,
                             NewKey: pLast.Key,
@@ -12547,7 +11651,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // original last entry's key.
             var newMax = newEntries[newEntries.Count - 1];
             IndexLeafIncremental.DecodedIntermediateEntry oldMax = refStep.Entries[refStep.Entries.Count - 1];
-            bool maxChanged = CompareKeyBytes(newMax.Key, oldMax.Key) != 0
+            bool maxChanged = IndexHelpers.CompareKeyBytes(newMax.Key, oldMax.Key) != 0
                 || newMax.DataPage != oldMax.DataPage
                 || newMax.DataRow != oldMax.DataRow
                 || newMax.ChildPage != oldMax.ChildPage;
@@ -12557,7 +11661,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // Propagate: grandparent's summary entry for this
                 // intermediate (at IndexInParent) needs to carry the new
                 // max key (and same ChildPage = this intermediate page).
-                AddIntermediateOp(parentOps, gp.ParentPage, new IntermediateOp(
+                IndexHelpers.AddIntermediateOp(parentOps, gp.ParentPage, new IntermediateOp(
                     OriginalIndex: gp.IndexInParent,
                     Type: IntermediateOpType.Replace,
                     NewKey: newMax.Key,
@@ -12661,21 +11765,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     private record struct RealIdxEntry(IReadOnlyList<(int ColNum, bool Ascending)> KeyColumns, int FirstDpOffset, bool IsUnique);
-
-    private static int CompareKeyBytes(byte[] a, byte[] b)
-    {
-        int n = Math.Min(a.Length, b.Length);
-        for (int i = 0; i < n; i++)
-        {
-            int diff = a[i] - b[i];
-            if (diff != 0)
-            {
-                return diff;
-            }
-        }
-
-        return a.Length - b.Length;
-    }
 
     /// <summary>
     /// parse the TDEF page and return one descriptor per <em>unique</em>
@@ -12838,7 +11927,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <summary>
     /// encode the composite index key for one row using a previously
     /// computed canonical numeric scale per key column.
-    /// All key column types accepted by <see cref="ResolveIndexes"/> have
+    /// All key column types accepted by <see cref="IndexHelpers.ResolveIndexes"/> have
     /// matching <see cref="IndexKeyEncoder"/> support; any encoder failure
     /// propagates to the caller as an unrecoverable error.
     /// </summary>
@@ -12878,7 +11967,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// keys for every unique index, and throws
     /// <see cref="InvalidOperationException"/> on the first collision (existing
     /// vs. pending or pending vs. pending). All key column types accepted by
-    /// <see cref="ResolveIndexes"/> have matching <see cref="IndexKeyEncoder"/>
+    /// <see cref="IndexHelpers.ResolveIndexes"/> have matching <see cref="IndexKeyEncoder"/>
     /// support, so encoder rejection propagates as an unrecoverable error
     /// rather than being silently skipped.
     /// <para>
@@ -13127,34 +12216,5 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         public bool HasAnyConstraint =>
             !IsNullable || DefaultValue != null || IsAutoIncrement || ValidationRule != null;
-    }
-
-    private readonly struct ResolvedIndex
-    {
-        public ResolvedIndex(string name, IReadOnlyList<int> columnNumbers, IReadOnlyList<bool> ascending, bool isPrimaryKey, bool isUnique)
-        {
-            Name = name;
-            ColumnNumbers = columnNumbers;
-            Ascending = ascending;
-            IsPrimaryKey = isPrimaryKey;
-            IsUnique = isUnique;
-        }
-
-        public string Name { get; }
-
-        public IReadOnlyList<int> ColumnNumbers { get; }
-
-        /// <summary>Gets the per-column sort direction (parallel to <see cref="ColumnNumbers"/>).</summary>
-        public IReadOnlyList<bool> Ascending { get; }
-
-        public bool IsPrimaryKey { get; }
-
-        /// <summary>
-        /// Gets a value indicating whether this index enforces uniqueness on its
-        /// key columns. Primary keys are implicitly unique; for them this
-        /// returns <see langword="true"/> regardless of the user-supplied
-        /// <see cref="IndexDefinition.IsUnique"/>.
-        /// </summary>
-        public bool IsUnique { get; }
     }
 }
