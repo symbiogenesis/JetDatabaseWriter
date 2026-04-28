@@ -596,7 +596,7 @@ internal static class IndexHelpers
     /// <c>tail_page</c>, which the surgical path rejects).
     /// </summary>
     public static int SelectChildIndexFromDecoded(
-        List<IndexLeafIncremental.DecodedIntermediateEntry> entries,
+        List<DecodedIntermediateEntry> entries,
         byte[] searchKey)
     {
         for (int i = 0; i < entries.Count; i++)
@@ -679,18 +679,18 @@ internal static class IndexHelpers
     /// per-page byte budget — including the §4.4 prefix-compression savings
     /// the simpler leaf splitter cannot model — is respected exactly.
     /// </summary>
-    public static List<List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)>>? TryGreedySplitIntermediateInN(
+    public static List<List<DecodedIntermediateEntry>>? TryGreedySplitIntermediateInN(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
         long parentTdefPage,
-        List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> entries)
+        List<DecodedIntermediateEntry> entries)
     {
         if (entries.Count < 2)
         {
             return null;
         }
 
-        var pages = new List<List<(byte[], long, byte, long)>>();
+        var pages = new List<List<DecodedIntermediateEntry>>();
         int i = 0;
         while (i < entries.Count)
         {
@@ -781,8 +781,8 @@ internal static class IndexHelpers
     /// (OriginalIndex, declaration order); each entry index in
     /// <paramref name="original"/> is consumed at most once by a Replace.
     /// </summary>
-    public static List<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> ApplyIntermediateOps(
-        List<IndexLeafIncremental.DecodedIntermediateEntry> original,
+    public static List<DecodedIntermediateEntry> ApplyIntermediateOps(
+        List<DecodedIntermediateEntry> original,
         List<IntermediateOp> ops)
     {
         // Stable sort by OriginalIndex; declaration order preserved within ties.
@@ -798,7 +798,7 @@ internal static class IndexHelpers
             return c != 0 ? c : a.Order - b.Order;
         });
 
-        var result = new List<(byte[], long, byte, long)>(original.Count + ops.Count);
+        var result = new List<DecodedIntermediateEntry>(original.Count + ops.Count);
         int opCursor = 0;
         for (int origIdx = 0; origIdx < original.Count; origIdx++)
         {
@@ -819,7 +819,7 @@ internal static class IndexHelpers
                             return [];
                         }
 
-                        result.Add((op.NewKey, op.NewDataPage, op.NewDataRow, op.NewChildPage));
+                        result.Add(new DecodedIntermediateEntry(op.NewKey, op.NewDataPage, op.NewDataRow, op.NewChildPage));
                         replaced = true;
                         break;
 
@@ -837,20 +837,18 @@ internal static class IndexHelpers
                         // If the original was removed, insert in its place.
                         if (!replaced && !removed)
                         {
-                            IndexLeafIncremental.DecodedIntermediateEntry e = original[origIdx];
-                            result.Add((e.Key, e.DataPage, e.DataRow, e.ChildPage));
+                            result.Add(original[origIdx]);
                             replaced = true;
                         }
 
-                        result.Add((op.NewKey, op.NewDataPage, op.NewDataRow, op.NewChildPage));
+                        result.Add(new DecodedIntermediateEntry(op.NewKey, op.NewDataPage, op.NewDataRow, op.NewChildPage));
                         break;
                 }
             }
 
             if (!replaced && !removed)
             {
-                IndexLeafIncremental.DecodedIntermediateEntry e = original[origIdx];
-                result.Add((e.Key, e.DataPage, e.DataRow, e.ChildPage));
+                result.Add(original[origIdx]);
             }
         }
 

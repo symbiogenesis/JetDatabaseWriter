@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Internal.Models;
 
 /// <summary>
 /// Builds a complete JET index B-tree from a sorted list of leaf
@@ -252,7 +253,7 @@ internal static class IndexBTreeBuilder
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
         long parentTdefPage,
-        IReadOnlyList<(byte[] Key, long DataPage, byte DataRow, long ChildPage)> entries,
+        IReadOnlyList<DecodedIntermediateEntry> entries,
         long prevPage,
         long nextPage,
         long tailPage)
@@ -266,9 +267,9 @@ internal static class IndexBTreeBuilder
         }
 
         var packed = new List<IntermediateEntry>(entries.Count);
-        foreach ((byte[] key, long dp, byte dr, long childPage) in entries)
+        foreach (DecodedIntermediateEntry e in entries)
         {
-            packed.Add(new IntermediateEntry(new IndexLeafPageBuilder.LeafEntry(key, dp, dr), childPage));
+            packed.Add(new IntermediateEntry(new IndexLeafPageBuilder.LeafEntry(e.Key, e.DataPage, e.DataRow), e.ChildPage));
         }
 
         try
