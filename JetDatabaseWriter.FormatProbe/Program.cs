@@ -7,6 +7,7 @@ using System.Globalization;
 using System.Text;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;

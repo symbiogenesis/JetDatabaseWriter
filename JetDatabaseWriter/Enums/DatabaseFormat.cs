@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Core;
+namespace JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Specifies the JET database format.
