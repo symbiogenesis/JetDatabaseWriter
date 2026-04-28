@@ -272,7 +272,7 @@ public sealed class IndexMaintenanceTests
     {
         // The full Jackcess General Legacy port supports the entire BMP
         // (spaces, punctuation, accented characters). Strings that previously
-        // fell through to the stale-leaf path now participate in the W5
+        // fell through to the stale-leaf path now participate in the index maintenance
         // bulk B-tree rebuild, so the emitted leaf reflects all inserted rows.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
@@ -304,7 +304,7 @@ public sealed class IndexMaintenanceTests
         // MEMO columns route through the same General Legacy encoder as TEXT
         // (T_TEXT = 0x0A, T_MEMO = 0x0C both supported by IndexKeyEncoder).
         // Round-trip a memo-keyed index and confirm the bulk rebuild populated
-        // the leaf instead of leaving the W3 placeholder in place.
+        // the leaf instead of leaving the leaf-page emission placeholder in place.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 

@@ -9,7 +9,7 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Round-trip tests for the W4-C-1 / W4-C-2 incremental B-tree maintenance
+/// Round-trip tests for the single-leaf incremental incremental B-tree maintenance
 /// fast path. The fast path is engaged on insert/update/delete when the
 /// index B-tree fits on a single leaf page; otherwise the writer falls back
 /// to the bulk <c>MaintainIndexesAsync</c> rebuild. Tests cover:
@@ -273,7 +273,7 @@ public sealed class IncrementalIndexMaintenanceTests
     [Fact]
     public async Task FastPath_UniqueIndex_PreCheckStillFires()
     {
-        // The W15 pre-write unique-index check must still reject duplicates
+        // The pre-write unique check pre-write unique-index check must still reject duplicates
         // even when the post-mutation index maintenance is incremental.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;

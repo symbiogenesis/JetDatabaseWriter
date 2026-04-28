@@ -10,12 +10,12 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Round-trip tests for the W4-C-6 (leaf merge on delete underflow) path
+/// Round-trip tests for the leaf-merge (leaf merge on delete underflow) path
 /// inside <c>AccessWriter.TrySurgicalCrossLeafMaintainAsync</c>. When a
 /// per-leaf splice empties the affected leaf, the cross-leaf path drops
 /// the leaf from its parent intermediate and patches the leaf-sibling
 /// chain to skip it — the dead leaf is orphaned (Compact &amp; Repair
-/// reclaims it). Bails to W4-D when the dead leaf was its parent's
+/// reclaims it). Bails to bulk rebuild when the dead leaf was its parent's
 /// rightmost child (would shrink ancestor <c>tail_page</c>) or when the
 /// parent has only one child (would cascade-collapse the parent).
 /// </summary>
@@ -29,7 +29,7 @@ public sealed class IndexSurgicalLeafMergeTests
         // Non-unique index on Tag. 800 rows split 400/400 across Tag=0 and
         // Tag=1 → leaf 0 holds Tag=0, leaf 1 holds Tag=1; one intermediate
         // root with 2 entries. Deleting all Tag=0 empties leaf 0 (the
-        // leftmost). W4-C-6 conditions: parent count 2 (>= 2), deadIdx 0
+        // leftmost). leaf-merge conditions: parent count 2 (>= 2), deadIdx 0
         // (!= last) → merge engages. Dead leaf is orphaned (still 0x04
         // 0x01-tagged) so CountIndexPages stays equal.
         await using var stream = await CreateFreshAccdbStreamAsync();
@@ -97,7 +97,7 @@ public sealed class IndexSurgicalLeafMergeTests
         // can't strictly assert "page count unchanged" here (when the
         // delete change-set straddles two leaves and the descent picks
         // one of them, splice rejects the unresolved removes and falls
-        // through to W4-D bulk — a correctness path, just not the W4-C-6
+        // through to bulk rebuild bulk — a correctness path, just not the leaf-merge
         // surgical path). What we DO assert is that, regardless of which
         // path runs, the post-state is correct: 800 surviving rows, no
         // Tag=1 entries left, and a navigable tree.
@@ -156,7 +156,7 @@ public sealed class IndexSurgicalLeafMergeTests
         // and the merge path engages without a concurrent middle-leaf
         // mutation.
         //
-        // W4-C-6-v2 (2026-04-27): the parent intermediate (= root) drops
+        // the parent intermediate (= root) drops
         // its rightmost child entry AND its tail_page header is recomputed
         // to point at the surviving (former middle) leaf. Surgical engages
         // → zero new index pages appended (the orphaned dead leaf is
@@ -217,7 +217,7 @@ public sealed class IndexSurgicalLeafMergeTests
         // Insert 800 rows where every other row carries Desc="DEL".
         // DeleteRowsAsync(T, "Desc", "DEL") removes 400 rows spread evenly
         // across both leaves of the IX_Id index → cross-leaf change-set
-        // with no per-leaf underflow. W4-C-5 in-place rewrites both leaves.
+        // with no per-leaf underflow. cross-leaf surgical in-place rewrites both leaves.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 
@@ -271,7 +271,7 @@ public sealed class IndexSurgicalLeafMergeTests
     public async Task DeleteEmptiesLeaf_DataIntegrityRoundTrips()
     {
         // Functional verification: after a leaf-empty operation (path may
-        // engage W4-C-6 merge OR fall back to W4-D depending on leaf
+        // engage leaf-merge merge OR fall back to bulk rebuild depending on leaf
         // alignment), the index can still be read back AND a subsequent
         // mutation succeeds (the chain pointers were patched correctly
         // either way).
@@ -343,7 +343,7 @@ public sealed class IndexSurgicalLeafMergeTests
         // key into the rightmost leaf, splice empties it, and the merge
         // path engages without a concurrent left-sibling mutation.
         //
-        // W4-C-6-v2 (2026-04-27): the parent intermediate (= root) drops
+        // the parent intermediate (= root) drops
         // its rightmost child entry, leaving a single-entry root pointing
         // at the surviving (former leftmost) leaf, with tail_page
         // recomputed to that leaf's page number. Single-entry intermediates

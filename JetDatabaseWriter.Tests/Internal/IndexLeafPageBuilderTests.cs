@@ -125,7 +125,7 @@ public sealed class IndexLeafPageBuilderTests
     public void PrefixCompressionDisabled_PrefLenIsZero()
     {
         // Default overload (no enablePrefixCompression flag) keeps pref_len = 0
-        // even when entries share leading bytes — preserves the W3 byte layout
+        // even when entries share leading bytes — preserves the leaf-page emission byte layout
         // for callers that haven't opted in.
         byte[] k1 = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
         byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);

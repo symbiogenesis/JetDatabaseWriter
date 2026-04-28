@@ -11,14 +11,14 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Stress / round-trip tests for the W4-C-7 (intermediate split on
-/// overflow) path. Uses large TEXT index keys to force a small
+/// Stress / round-trip tests for the intermediate-split-on-overflow path.
+/// Uses large TEXT index keys to force a small
 /// per-page entry budget so multi-level trees with parent-of-leaf
 /// intermediates near capacity arise from manageable row counts.
-/// W4-C-7 v1 only handles parent-of-leaf overflow; higher-level
-/// (recursive) intermediate splits bail to W4-D. These tests verify
-/// data integrity round-trips through both surgical AND fallback
-/// paths so neither path corrupts the index when large multi-level
+/// Higher-level (recursive) intermediate splits are exercised separately;
+/// when the surgical paths bail the bulk rebuild handles the work. These
+/// tests verify data integrity round-trips through both surgical AND
+/// fallback paths so neither path corrupts the index when large multi-level
 /// trees experience cross-leaf mutations.
 /// </summary>
 public sealed class IndexSurgicalIntermediateSplitTests
@@ -31,8 +31,8 @@ public sealed class IndexSurgicalIntermediateSplitTests
         // 2 parent-of-leaf intermediates each holding ~11 leaf summaries,
         // OR root with 22 entries directly above leaves). Either way the
         // tree is multi-level. A subsequent cross-leaf delete may engage
-        // W4-C-5 (in-place rewrites) and possibly W4-C-7 if parent-of-leaf
-        // splits — or fall back to W4-D. We assert correctness either way.
+        // cross-leaf surgical (in-place rewrites) and possibly intermediate split if parent-of-leaf
+        // splits — or fall back to bulk rebuild. We assert correctness either way.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 
@@ -63,8 +63,8 @@ public sealed class IndexSurgicalIntermediateSplitTests
             // spread across many leaves. If their leaves' parent-of-leaf
             // intermediates need rewriting AND the rewrite happens to
             // overflow (rare for deletes but possible if max-key
-            // propagation widens entries), W4-C-7 fires; otherwise W4-C-5
-            // handles it in-place or W4-D rebuilds.
+            // propagation widens entries), intermediate split fires; otherwise cross-leaf surgical
+            // handles it in-place or bulk rebuild rebuilds.
             int deleted = await writer.DeleteRowsAsync("T", "Tag", 2, ct);
             Assert.Equal(80, deleted);
         }
@@ -87,7 +87,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
         // intermediate. With 200-byte keys and ~18-entry intermediate
         // capacity, after ~18 leaves' worth of bulk content the root
         // intermediate sits near capacity; subsequent splits need
-        // W4-C-7 OR fall through to W4-D.
+        // intermediate split OR fall through to bulk rebuild.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 
@@ -141,7 +141,7 @@ public sealed class IndexSurgicalIntermediateSplitTests
     public async Task LargeKeyMultiLevelTree_DeleteAndReinsert_NoCorruption()
     {
         // Delete-then-insert cycle on a multi-level large-key tree.
-        // Verifies that ANY combination of W4-C-5/6/7 + W4-D fallback
+        // Verifies that ANY combination of surgical + bulk rebuild fallback
         // leaves the tree in a consistent state across multiple round-
         // trips.
         await using var stream = await CreateFreshAccdbStreamAsync();

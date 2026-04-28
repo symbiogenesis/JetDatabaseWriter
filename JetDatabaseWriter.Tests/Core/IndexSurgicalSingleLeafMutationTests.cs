@@ -9,12 +9,12 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Round-trip tests for the W4-C-3 (surgical in-place leaf-local mutate) and
-/// W4-C-4 (surgical leaf split + propagate up) paths in
+/// Round-trip tests for the in-place leaf rewrite (surgical in-place leaf-local mutate) and
+/// leaf split (surgical leaf split + propagate up) paths in
 /// <c>AccessWriter.TrySurgicalMultiLevelMaintainAsync</c>. Distinguishes the
-/// surgical paths from the W4-D bulk rebuild by counting <c>0x03</c> /
+/// surgical paths from the bulk rebuild by counting <c>0x03</c> /
 /// <c>0x04</c> index pages before and after each mutation: surgical paths
-/// rewrite pages in place and never increase the count, while W4-D appends
+/// rewrite pages in place and never increase the count, while bulk rebuild appends
 /// a fresh tree and leaves old pages orphaned (still typed) so the count
 /// strictly increases.
 /// </summary>
@@ -27,7 +27,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     {
         // Multi-level tree (≈800 int entries spans several leaves and at
         // least one intermediate). Update a row whose key sits in a non-tail
-        // leaf and does NOT change the leaf's max key → W4-C-3 rewrites the
+        // leaf and does NOT change the leaf's max key → in-place leaf rewrite rewrites the
         // single affected leaf in place with no parent-summary update.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
@@ -81,7 +81,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     public async Task SurgicalInPlaceInsert_BetweenExistingKeys_AppendsZeroIndexPages()
     {
         // Insert a single row whose key lands in a middle leaf and stays
-        // strictly less than that leaf's existing max → W4-C-3 in-place
+        // strictly less than that leaf's existing max → in-place leaf rewrite in-place
         // leaf rewrite, no parent-summary change required.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
@@ -180,7 +180,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     public async Task SurgicalInsert_ChangingLeafMaxKey_PropagatesParentSummary()
     {
         // Insert a row whose key is greater than the affected leaf's CURRENT
-        // max but still strictly less than the next leaf's min → W4-C-3
+        // max but still strictly less than the next leaf's min → in-place leaf rewrite
         // in-place rewrite of the leaf PLUS in-place rewrite of the parent
         // intermediate to update its summary entry. Total index page delta:
         // still ZERO.
@@ -234,7 +234,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     {
         // Drive a non-tail leaf to the brink of one-page capacity, then
         // insert one more row that lands in that same leaf and forces
-        // overflow → W4-C-4 splits the leaf into two and rewrites the
+        // overflow → leaf split splits the leaf into two and rewrites the
         // parent intermediate in place to insert one new summary entry.
         // Total NEW index pages = exactly 1 (the new right half).
         await using var stream = await CreateFreshAccdbStreamAsync();
@@ -265,8 +265,8 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // Insert a small number of rows targeting ONLY the first leaf
         // (keys < ~3990, well below leaf-2's min of ~4000), enough to push
         // leaf 1 past one-page capacity but not past two-page capacity →
-        // W4-C-4 2-way split. The change-set must NOT span leaves (that
-        // bails to W4-D).
+        // leaf split 2-way split. The change-set must NOT span leaves (that
+        // bails to bulk rebuild).
         await using (var writer = await OpenWriterAsync(stream))
         {
             // ~30 inserts on top of leaf 1's existing ~400 entries pushes
@@ -285,8 +285,8 @@ public sealed class IndexSurgicalSingleLeafMutationTests
 
         int idxAfter = CountIndexPages(stream.ToArray());
 
-        // Surgical W4-C-4 split appends ONE new index page (the right half).
-        // W4-D bulk rebuild would append a whole fresh tree (3+ pages
+        // Surgical leaf split split appends ONE new index page (the right half).
+        // bulk rebuild would append a whole fresh tree (3+ pages
         // including a new intermediate root). Bound at <= 2 to allow some
         // slack for the optional intermediate prev/next-sibling repair.
         Assert.True(
@@ -303,7 +303,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     public async Task SurgicalBail_MultiLeafChangeSet_RoundTripsViaW4D()
     {
         // Insert rows whose keys span at least TWO leaves → surgical path
-        // bails (cannot be a single-leaf rewrite); W4-D bulk rebuild handles
+        // bails (cannot be a single-leaf rewrite); bulk rebuild handles
         // it. Verify only that the result is correct and the file is
         // readable — page-count delta is intentionally NOT asserted here.
         await using var stream = await CreateFreshAccdbStreamAsync();
@@ -329,7 +329,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         await using (var writer = await OpenWriterAsync(stream))
         {
             // Two inserts spanning the leaf boundary (key 50 in leaf 1, key
-            // 700 in a later leaf) → surgical bails to W4-D.
+            // 700 in a later leaf) → surgical bails to bulk rebuild.
             await writer.InsertRowsAsync("T", [[50_000], [60_000]], ct);
         }
 
@@ -344,7 +344,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     {
         // Build a tiny multi-leaf tree, then delete every row that lives on
         // one specific leaf → surgical path bails (empty-leaf underflow is
-        // W4-C-5 territory); W4-D rebuilds and the read-back stays correct.
+        // territory); bulk rebuild rebuilds and the read-back stays correct.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 

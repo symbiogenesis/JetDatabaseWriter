@@ -5,7 +5,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 
 /// <summary>
-/// W4-C-1 / W4-C-2 fast-path helper: in-place incremental insert and delete
+/// Single-leaf fast-path helper: in-place incremental insert and delete
 /// against a single-leaf JET index B-tree (Jet4 / ACE only). Decodes the
 /// existing leaf back into the per-entry tuples it would have been built from
 /// (honouring the §4.4 prefix compression header), splices the change into the
@@ -17,9 +17,9 @@ using System.Collections.Generic;
 /// leaf page (<c>page_type = 0x04</c>) and the resulting entry set still fits
 /// on one page. Any tree with one or more intermediate (<c>0x03</c>) levels —
 /// or any single-page tree whose post-mutation entry list overflows the
-/// payload area — falls back to the existing bulk
-/// <c>MaintainIndexesAsync</c> rebuild path. See
-/// <c>docs/design/index-and-relationship-format-notes.md</c> §7 (W4-C).
+/// payload area — falls back to the bulk <c>MaintainIndexesAsync</c> rebuild
+/// path or the multi-leaf surgical paths. See
+/// <c>docs/design/index-and-relationship-format-notes.md</c> §7.
 /// </para>
 /// </summary>
 internal static class IndexLeafIncremental
@@ -53,7 +53,7 @@ internal static class IndexLeafIncremental
     /// A decoded intermediate (<c>0x03</c>) page entry: the canonical
     /// (uncompressed) summary key bytes, the row pointer of the LAST entry on
     /// the referenced child page, and the absolute page number of that child.
-    /// Used by the W4-C-3 / W4-C-4 surgical multi-level mutation path so the
+    /// Used by the surgical multi-level mutation path so the
     /// writer can re-emit a single intermediate page in place after a
     /// summary-key change or a leaf-split insert.
     /// </summary>
@@ -111,8 +111,7 @@ internal static class IndexLeafIncremental
     /// Returns the page number recorded in the <c>tail_page</c> header
     /// field of any index page (offset 16, signed 32-bit little-endian per
     /// §4.1). On intermediates emitted by <see cref="IndexBTreeBuilder"/>
-    /// this is the absolute page number of the rightmost leaf (W18
-    /// 2026-04-26). On a single-leaf root it is 0 (the leaf is its own tail).
+    /// this is the absolute page number of the rightmost leaf. On a single-leaf root it is 0 (the leaf is its own tail).
     /// </summary>
     public static long ReadTailPage(byte[] page)
     {
@@ -408,11 +407,11 @@ internal static class IndexLeafIncremental
     }
 
     /// <summary>
-    /// W4-C-3 helper. Re-emits a leaf page in place at its existing position
+    /// Re-emits a leaf page in place at its existing position
     /// in the sibling-leaf chain, preserving its <c>prev_page</c> /
     /// <c>next_page</c> / <c>tail_page</c> header fields. Returns
     /// <see langword="null"/> when the spliced entry list overflows a single
-    /// page (caller falls back to W4-C-4 split or the W4-D bulk rebuild).
+    /// page (caller falls back to a leaf split or the bulk rebuild).
     /// </summary>
     public static byte[]? TryRebuildLeafWithSiblings(
         IndexLeafPageBuilder.LeafPageLayout layout,
@@ -445,7 +444,7 @@ internal static class IndexLeafIncremental
     /// Decodes every entry on a single intermediate (<c>0x03</c>) index page
     /// back into its canonical <c>(key, data_page, data_row, child_page)</c>
     /// tuple, re-prepending the §4.4 shared prefix to entries beyond the
-    /// first. Used by the W4-C-3 / W4-C-4 surgical multi-level mutation path
+    /// first. Used by the surgical multi-level mutation path
     /// when it needs to update a parent intermediate's stale summary entry or
     /// insert a new summary for a freshly-split leaf without rebuilding the
     /// whole tree.

@@ -10,14 +10,13 @@ using System.Collections.Generic;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Implements phase W9a of the index-writer roadmap (see
-/// <c>docs/design/index-and-relationship-format-notes.md</c>): the
-/// <c>MSysRelationships</c> catalog rows that the Microsoft Access
-/// Relationships designer reads. The per-TDEF foreign-key logical-index
-/// entries (with <c>index_type = 0x02</c>, <c>rel_idx_num</c>,
-/// <c>rel_tbl_page</c>) that drive runtime referential-integrity
-/// enforcement by the JET engine are <b>not</b> emitted by W9a; Microsoft
-/// Access regenerates them on the next Compact &amp; Repair pass.
+/// The writer emits the <c>MSysRelationships</c> catalog rows that the
+/// Microsoft Access Relationships designer reads, and (on Jet4 / ACE) the
+/// per-TDEF foreign-key logical-index entries (with <c>index_type = 0x02</c>,
+/// <c>rel_idx_num</c>, <c>rel_tbl_page</c>) that drive runtime referential-
+/// integrity enforcement by the JET engine. See
+/// <c>docs/design/index-and-relationship-format-notes.md</c> for the on-disk
+/// layout.
 /// </para>
 /// <para>
 /// The Access GUI convention used by these property names: dragging from
@@ -133,7 +132,7 @@ public sealed record RelationshipDefinition
     /// <c>grbit</c>; when <see langword="false"/>, the bit is set.
     /// </summary>
     /// <remarks>
-    /// W9a does not itself enforce referential integrity at insert/update/delete time —
+    /// does not itself enforce referential integrity at insert/update/delete time —
     /// this flag controls only what Microsoft Access does when it opens the file.
     /// </remarks>
     public bool EnforceReferentialIntegrity { get; init; } = true;

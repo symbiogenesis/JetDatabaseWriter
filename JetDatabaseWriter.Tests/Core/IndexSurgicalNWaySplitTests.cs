@@ -10,11 +10,11 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Round-trip tests for the W4-C-8 (N-way leaf and intermediate split) path.
-/// Before W4-C-8, both <c>TryGreedySplitInTwo</c> (leaf) and
+/// Round-trip tests for the N-way split (N-way leaf and intermediate split) path.
+/// Before N-way split, both <c>TryGreedySplitInTwo</c> (leaf) and
 /// <c>TryGreedySplitIntermediateInTwo</c> bailed when a single-leaf splice
 /// or single-intermediate update needed three or more pages, falling back
-/// to the W4-D bulk-rebuild path. W4-C-8 generalises both helpers to N-way
+/// to the bulk rebuild bulk-rebuild path. N-way split generalises both helpers to N-way
 /// (greedy left-fill, allocate the next page on overflow, repeat) and emits
 /// one Replace + N-1 InsertAfter ops on the parent intermediate so the
 /// surgical path engages instead. These tests force splices that span 3,
@@ -33,7 +33,7 @@ public sealed class IndexSurgicalNWaySplitTests
         // composite keys all land on the (initially empty) root leaf.
         // 40 × 260 = 10_400 bytes — comfortably exceeds 2 pages of leaf
         // payload (~4_080 bytes each on a 4_096-byte page). With the
-        // 2-way splitter this would bail to W4-D; with the N-way splitter
+        // 2-way splitter this would bail to bulk rebuild; with the N-way splitter
         // the splice succeeds surgically.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
@@ -154,8 +154,7 @@ public sealed class IndexSurgicalNWaySplitTests
         // a different leaf, so the parent gains exactly one summary entry
         // per batch). Step 2: a single batch into one of those leaves
         // produces a 3-way leaf split → pushes 2 new summaries into the
-        // (already-full) parent → parent itself splits N-way (W4-C-8 +
-        // W4-C-7-v2 interaction).
+        // (already-full) parent → parent itself splits N-way.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 
@@ -172,7 +171,7 @@ public sealed class IndexSurgicalNWaySplitTests
                 ct);
 
             // Seed: 300 rows in one bulk insert, distributed across many
-            // leaves (the W4-D bulk-rebuild path is engaged for this
+            // leaves (the bulk rebuild bulk-rebuild path is engaged for this
             // initial population on an empty tree).
             var seed = new object[300][];
             for (int i = 0; i < 300; i++)

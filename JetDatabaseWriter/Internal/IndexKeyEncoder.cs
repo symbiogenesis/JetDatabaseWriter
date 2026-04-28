@@ -6,28 +6,25 @@ using System.Globalization;
 using System.Numerics;
 
 /// <summary>
-/// JET index sort-key encoder for fixed-width numeric and date/time column types
-/// (W2 phase). Encodes a single column value into the per-entry byte sequence
+/// JET index sort-key encoder for fixed-width numeric and date/time column types.
+/// Encodes a single column value into the per-entry byte sequence
 /// described in <c>docs/design/index-and-relationship-format-notes.md</c> §4.3
 /// (entry flag byte) and §5 (per-type sort-key encoding).
 /// <para>
-/// Supported column types in W2: <c>T_BYTE (0x02)</c>, <c>T_INT (0x03)</c>,
+/// Supported column types: <c>T_BYTE (0x02)</c>, <c>T_INT (0x03)</c>,
 /// <c>T_LONG (0x04)</c>, <c>T_MONEY (0x05)</c>, <c>T_FLOAT (0x06)</c>,
-/// <c>T_DOUBLE (0x07)</c>, <c>T_DATETIME (0x08)</c>. W7 added partial
-/// support for <c>T_TEXT (0x0A)</c> using the "General Legacy"
-/// encoding documented in HACKING.md (digits and ASCII letters only;
-/// any character outside <c>0-9 / A-Z / a-z</c> throws
-/// <see cref="NotSupportedException"/>, which the W5 maintenance loop
-/// catches to leave the index leaf untouched). W12 adds <c>T_GUID (0x0F)</c>
-/// using the Jackcess "general binary entry" wrapping (16-byte big-endian
-/// payload packed into 9-byte length-suffixed segments; ascending leaves
+/// <c>T_DOUBLE (0x07)</c>, <c>T_DATETIME (0x08)</c>, <c>T_TEXT (0x0A)</c>
+/// using the "General Legacy" encoding documented in HACKING.md (digits and
+/// ASCII letters only; any character outside <c>0-9 / A-Z / a-z</c> throws
+/// <see cref="NotSupportedException"/>, which the index-maintenance loop
+/// catches to leave the index leaf untouched), <c>T_GUID (0x0F)</c> and
+/// <c>T_BINARY (0x09)</c> using the Jackcess "general binary entry" wrapping
+/// (payload packed into 9-byte length-suffixed segments; ascending leaves
 /// data bytes intact and intermediate length bytes at <c>0x09</c> with the
 /// final length byte at the actual segment length, descending bit-flips
 /// every data byte and the FINAL length byte but leaves intermediate length
-/// bytes at <c>0x09</c>). W19 extends the same general-binary-entry packing
-/// to <c>T_BINARY (0x09)</c> for variable-length binary index keys. MEMO,
-/// OLE, complex, and DATETIMEEXT are still deferred (no clean HACKING.md
-/// spec for any of them).
+/// bytes at <c>0x09</c>). MEMO, OLE, complex, and DATETIMEEXT are still
+/// deferred (no clean HACKING.md spec for any of them).
 /// </para>
 /// <para>
 /// The encoded layout is one flag byte (0x7F asc / 0x80 desc for non-null,
@@ -45,7 +42,7 @@ using System.Numerics;
 /// conventional B-tree encoding documented in HACKING.md and used by Jackcess.
 /// They have NOT been byte-compared against a real Access-authored index leaf
 /// (no fixture in this repo carries one for these specific types, and the
-/// writer pipeline that would let us synthesise one is W3+, which is what
+/// writer pipeline that would let us synthesise one is leaf-page emission, which is what
 /// uses this encoder). Round-trip via the in-repo reader still works because
 /// the reader does not consult leaf pages today; Microsoft Access itself is
 /// the only consumer that will exercise these bytes, and it must validate
@@ -90,7 +87,7 @@ internal static class IndexKeyEncoder
     /// the ascending encoding; <see langword="false"/> ones-complements every
     /// byte of the ascending form.</param>
     /// <exception cref="NotSupportedException">The column type is outside the
-    /// W2 supported set.</exception>
+    /// supported set.</exception>
     /// <exception cref="ArgumentException">The value cannot be coerced to the
     /// .NET representation expected by <paramref name="columnType"/>.</exception>
     public static byte[] EncodeEntry(byte columnType, object? value, bool ascending = true)
@@ -204,7 +201,7 @@ internal static class IndexKeyEncoder
     }
 
     /// <summary>
-    /// W12 — GUID sort-key encoding via the Jackcess "general binary entry"
+    /// GUID sort-key encoding via the Jackcess "general binary entry"
     /// wrapping. The 16 raw GUID bytes are taken in <b>display</b> order
     /// (i.e. <c>byte 3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15</c>
     /// of the in-row storage layout) so lexicographic byte comparison matches
@@ -256,7 +253,7 @@ internal static class IndexKeyEncoder
     }
 
     /// <summary>
-    /// W19 — Variable-length <c>T_BINARY (0x09)</c> sort-key encoding via the
+    /// Variable-length <c>T_BINARY (0x09)</c> sort-key encoding via the
     /// Jackcess general-binary-entry packing. Accepts <see cref="byte"/>[]
     /// (the canonical Access binary representation) and falls back to
     /// <see cref="Convert"/> coercion otherwise. Empty arrays are encoded as
@@ -342,7 +339,7 @@ internal static class IndexKeyEncoder
     }
 
     /// <summary>
-    /// W13 — Decimal (<c>T_NUMERIC = 0x10</c>) sort-key encoding via the Jackcess
+    /// Decimal (<c>T_NUMERIC = 0x10</c>) sort-key encoding via the Jackcess
     /// <c>FixedPointColumnDescriptor</c> / <c>LegacyFixedPointColumnDescriptor</c>
     /// layout. Produces the entry-flag byte (0x7F ascending non-null / 0x80
     /// descending non-null / 0x00 / 0xFF for null) followed by 17 bytes:
@@ -355,7 +352,7 @@ internal static class IndexKeyEncoder
     /// are multiplied by <c>10^(targetScale - naturalScale)</c> via
     /// <see cref="BigInteger"/> arithmetic; values whose mantissa exceeds the
     /// 16-byte (128-bit unsigned) field after scaling throw
-    /// <see cref="NotSupportedException"/>, which the W5 maintenance loop
+    /// <see cref="NotSupportedException"/>, which the index maintenance maintenance loop
     /// catches to fall through to the stale-leaf path.
     /// </para>
     /// <para>
@@ -467,15 +464,15 @@ internal static class IndexKeyEncoder
     }
 
     /// <summary>
-    /// W23 (2026-04-27) — Decimal sort-key wrapper that mirrors Microsoft Access
+    /// Decimal sort-key wrapper that mirrors Microsoft Access
     /// semantics for canonical scale: a <c>T_NUMERIC</c> column has a single
     /// declared scale that governs every cell, so the index encoder rescales
     /// each value to <paramref name="declaredScale"/> via
     /// <see cref="MidpointRounding.ToEven"/> rounding before delegating to
     /// <see cref="EncodeNumericEntry"/>. Removes the need for the per-rebuild
     /// snapshot pre-pass that previously computed
-    /// <c>max(naturalScale)</c> across the table — the W4-C / W4-D / W18
-    /// incremental fast paths now participate on numeric keys with no extra
+    /// <c>max(naturalScale)</c> across the table — the incremental fast paths
+    /// now participate on numeric keys with no extra
     /// I/O. Null / <see cref="DBNull"/> emit the standard null flag byte.
     /// </summary>
     public static byte[] EncodeNumericEntryAtDeclaredScale(object? value, bool ascending, byte declaredScale, bool legacy)

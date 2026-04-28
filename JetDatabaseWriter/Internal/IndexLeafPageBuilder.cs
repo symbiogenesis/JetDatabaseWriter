@@ -5,10 +5,10 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 
 /// <summary>
-/// Builds JET index leaf pages (page type <c>0x04</c>, W3 phase). Encodes the
+/// Builds JET index leaf pages (page type <c>0x04</c>). Encodes the
 /// fixed page header described in <c>docs/design/index-and-relationship-format-notes.md</c>
 /// §4.1, the entry-start bitmask in §4.2, and the per-entry record layout in
-/// §4.3 (excluding the intermediate-page child pointer — deferred to W4
+/// §4.3 (excluding the intermediate-page child pointer — deferred to
 /// <see cref="IndexBTreeBuilder"/>). §4.4 prefix compression is supported.
 /// <para>
 /// Both Jet4 / ACE (bitmask at <c>0x1B</c>, first entry at <c>0x1E0</c>) and
@@ -19,10 +19,10 @@ using System.Collections.Generic;
 /// <b>What this builder does NOT do</b> (deferred to later writer phases):
 /// </para>
 /// <list type="bullet">
-///   <item>B-tree splits or intermediate (<c>0x03</c>) page emission (W4).</item>
-///   <item>Tail-page chain maintenance (W4).</item>
-///   <item>Prefix compression — <c>pref_len</c> is always 0 (W4 optimization).</item>
-///   <item>Index maintenance on insert / update / delete (W5).</item>
+///   <item>B-tree splits or intermediate (<c>0x03</c>) page emission.</item>
+///   <item>Tail-page chain maintenance.</item>
+///   <item>Prefix compression — <c>pref_len</c> is always 0.</item>
+///   <item>Index maintenance on insert / update / delete.</item>
 /// </list>
 /// <para>
 /// As a result, a leaf page produced here is consistent with the matching
@@ -42,15 +42,15 @@ internal static class IndexLeafPageBuilder
     /// <summary>First-entry offset on a Jet4 leaf page (§4.2).</summary>
     internal const int Jet4FirstEntryOffset = 0x1E0;
 
-    /// <summary>Bitmask offset on a Jet3 leaf page (§4.2, W17a-confirmed).</summary>
+    /// <summary>Bitmask offset on a Jet3 leaf page (§4.2).</summary>
     internal const int Jet3BitmaskOffset = 0x16;
 
-    /// <summary>First-entry offset on a Jet3 leaf page (§4.2, W17a-confirmed).</summary>
+    /// <summary>First-entry offset on a Jet3 leaf page (§4.2).</summary>
     internal const int Jet3FirstEntryOffset = 0xF8;
 
     /// <summary>
     /// Per-format index page layout descriptor. The §4.1 page header is
-    /// identical between Jet3 and Jet4 / ACE (W17a probe-confirmed); only
+    /// identical between Jet3 and Jet4 / ACE; only
     /// the §4.2 entry-start bitmask offset and the first-entry offset
     /// differ, along with the database page size (2048 vs 4096).
     /// </summary>
@@ -113,13 +113,13 @@ internal static class IndexLeafPageBuilder
     /// <exception cref="ArgumentOutOfRangeException">The combined entry payload
     /// (sum of <c>EncodedKey.Length + 4</c> for each entry) exceeds the available
     /// payload area, which means the table is too large for a single-page
-    /// leaf and W4 (B-tree splits) is required.</exception>
+    /// leaf and B-tree builder (B-tree splits) is required.</exception>
     public static byte[] BuildJet4LeafPage(int pageSize, long parentTdefPage, IReadOnlyList<LeafEntry> entries)
         => BuildLeafPage(LeafPageLayout.Jet4, pageSize, parentTdefPage, entries, prevPage: 0, nextPage: 0, tailPage: 0, enablePrefixCompression: false);
 
     /// <summary>
     /// Builds a single Jet4 / ACE index leaf page with caller-supplied sibling
-    /// pointers. Used by <see cref="IndexBTreeBuilder"/> (W4) to chain a row of
+    /// pointers. Used by <see cref="IndexBTreeBuilder"/> to chain a row of
     /// leaf pages together.
     /// </summary>
     public static byte[] BuildJet4LeafPage(
@@ -157,7 +157,7 @@ internal static class IndexLeafPageBuilder
     /// page header, §4.2 entry-start bitmask, §4.3 per-entry record, and
     /// — when <paramref name="enablePrefixCompression"/> is <c>true</c>
     /// and at least two entries are supplied — the §4.4 shared-prefix
-    /// compression header. W17c (2026-04-26): the same code path now drives
+    /// compression header. Jet3 live-leaf: the same code path now drives
     /// Jet3 leaf pages, lifting the previous "Jet3 indexes are schema-only"
     /// limitation.
     /// </summary>
@@ -262,13 +262,13 @@ internal static class IndexLeafPageBuilder
     }
 
     /// <summary>
-    /// Builds an empty Jet3 (<c>.mdb</c> Access 97) index leaf page (W17b).
+    /// Builds an empty Jet3 (<c>.mdb</c> Access 97) index leaf page.
     /// Page header layout matches Jet4 (§4.1, probe-confirmed identical between
-    /// formats by W17a) but the entry-start bitmask lives at <c>0x16</c> and
+    /// formats by format probe) but the entry-start bitmask lives at <c>0x16</c> and
     /// the first entry begins at <c>0xF8</c> (§4.2). Thin wrapper over
     /// <see cref="BuildLeafPage"/> with an empty entry list — preserved for
-    /// the W17b create-time placeholder path; populated Jet3 leaf pages
-    /// (W17c, 2026-04-26) flow through <see cref="BuildLeafPage"/> directly.
+    /// the Jet3 empty-leaf create-time placeholder path; populated Jet3 leaf pages
+    /// flow through <see cref="BuildLeafPage"/> directly.
     /// </summary>
     /// <param name="pageSize">Database page size (2048 for Jet3).</param>
     /// <param name="parentTdefPage">Page number of the table's TDEF page.</param>

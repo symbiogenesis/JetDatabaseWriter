@@ -30,7 +30,7 @@ using System.Threading.Tasks;
 /// entry still equals the search key.
 /// </para>
 /// <para>
-/// <b>W18 (2026-04-26):</b> honours the §4.5 <c>tail_page</c> append
+/// <b>tail-page append:</b> honours the §4.5 <c>tail_page</c> append
 /// optimisation. When intermediate descent at any level finds that the
 /// search key sorts strictly greater than every summary on the page (i.e.
 /// would otherwise return "not present"), the seeker follows that page's
@@ -111,7 +111,7 @@ internal static class IndexBTreeSeeker
 
             // Intermediate descent: pick the first entry whose summary key is
             // >= searchKey and follow its child pointer. When every summary
-            // is < searchKey, fall through to the page's tail_page (W18) if
+            // is < searchKey, fall through to the page's tail_page if
             // non-zero — the rightmost leaf can hold append-only entries
             // whose key has not yet been promoted into the intermediate's
             // summary record.

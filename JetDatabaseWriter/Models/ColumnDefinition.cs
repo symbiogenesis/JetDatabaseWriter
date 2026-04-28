@@ -136,14 +136,11 @@ public sealed record ColumnDefinition
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Phase C2: declaring an attachment column establishes the parent TDEF
-    /// column descriptor (<c>col_type = 0x11</c>, <c>col_len = 4</c>, bitmask
-    /// <c>0x07</c>, 4-byte <c>misc</c> slot for the <c>ComplexID</c>). The
-    /// hidden flat child table and the <c>MSysComplexColumns</c> catalog row
-    /// are not yet emitted (Phase C3); calling
-    /// <see cref="IAccessWriter.CreateTableAsync(string, System.Collections.Generic.IReadOnlyList{ColumnDefinition}, System.Threading.CancellationToken)"/>
-    /// with an attachment column currently throws
-    /// <see cref="System.NotSupportedException"/>.
+    /// Declaring an attachment column emits the parent TDEF column descriptor
+    /// (<c>col_type = 0x11</c>, <c>col_len = 4</c>, bitmask <c>0x07</c>, 4-byte
+    /// <c>misc</c> slot for the <c>ComplexID</c>), allocates a fresh
+    /// per-database <c>ComplexID</c>, and emits the hidden flat child table
+    /// plus the <c>MSysComplexColumns</c> catalog row.
     /// </para>
     /// <para>
     /// Existing attachment columns read from an Access-authored database are
@@ -160,10 +157,11 @@ public sealed record ColumnDefinition
     /// child table. ACE (.accdb) only.
     /// </summary>
     /// <remarks>
-    /// Phase C2: same descriptor-only emission path as <see cref="IsAttachment"/>
-    /// — the hidden flat child table and <c>MSysComplexColumns</c> row are
-    /// Phase C3. Existing multi-value columns survive
-    /// <c>AddColumnAsync</c> / <c>DropColumnAsync</c> / <c>RenameColumnAsync</c>.
+    /// Declaring a multi-value column follows the same emission path as
+    /// <see cref="IsAttachment"/>: parent TDEF column descriptor plus a hidden
+    /// flat child table and an <c>MSysComplexColumns</c> catalog row. Existing
+    /// multi-value columns survive <c>AddColumnAsync</c> /
+    /// <c>DropColumnAsync</c> / <c>RenameColumnAsync</c>.
     /// </remarks>
     public bool IsMultiValue { get; init; }
 
@@ -181,7 +179,7 @@ public sealed record ColumnDefinition
     /// rewritten TDEF carries the same ID and continues to join to its
     /// <c>MSysComplexColumns</c> row + hidden flat table. New complex columns
     /// declared by the user via <see cref="IsAttachment"/> / <see cref="IsMultiValue"/>
-    /// leave this at <c>0</c>; Phase C3 will populate it on table creation.
+    /// leave this at <c>0</c>; the writer populates it on table creation.
     /// </summary>
     internal int ComplexId { get; init; }
 

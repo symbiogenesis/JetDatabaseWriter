@@ -10,15 +10,15 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Round-trip tests for the W4-C-8+ surgical cascading-underflow path
-/// shipped 2026-04-27. The previous implementation bailed
-/// <c>TryStageIntermediateRewritesAsync</c> to the W4-D bulk-rebuild
+/// Round-trip tests for the surgical cascading-underflow path that handles
+/// recursive intermediate collapse. The previous implementation routed
+/// <c>TryStageIntermediateRewritesAsync</c> to the bulk-rebuild
 /// fallback whenever a multi-group delete batch left an intermediate
-/// page with zero surviving children; the new code now handles three
+/// page with zero surviving children; the current code handles three
 /// shapes surgically (single-leaf collapse, contiguous run-of-leaves
 /// collapse, and full-subtree cascade up to the grandparent) plus
-/// recomputes the captured ancestor's <c>tail_page</c> via the new
-/// <c>GetEffectiveTailPageAsync</c> helper. Data must round-trip
+/// recomputes the captured ancestor's <c>tail_page</c> via
+/// <c>GetEffectiveTailPageAsync</c>. Data must round-trip
 /// regardless of whether the surgical path or the rebuild fallback
 /// actually runs.
 /// </summary>
@@ -91,7 +91,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
         // scattered survivors. This exercises the cascading-underflow
         // shape: every leaf either empties completely or loses most of
         // its entries, so the surgical maintenance path needs to either
-        // collapse entire subtrees in-place or fall back to the W4-D
+        // collapse entire subtrees in-place or fall back to the bulk
         // rebuild — either way the resulting index must be readable.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;

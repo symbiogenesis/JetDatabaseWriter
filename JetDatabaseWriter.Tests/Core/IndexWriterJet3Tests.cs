@@ -9,7 +9,7 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Round-trip tests for the W17b limitation lift: <see cref="IAccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, System.Threading.CancellationToken)"/>
+/// Round-trip tests for the Jet3 empty-leaf limitation lift: <see cref="IAccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, System.Threading.CancellationToken)"/>
 /// emits Jet3 (<c>.mdb</c> Access 97) real-idx (39 B) + logical-idx (20 B)
 /// descriptors and a schema-only empty Jet3 leaf page (page size 2048,
 /// bitmask at <c>0x16</c>, first entry at <c>0xF8</c>) per

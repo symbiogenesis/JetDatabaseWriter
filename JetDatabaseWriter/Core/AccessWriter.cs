@@ -38,13 +38,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Maximum number of rows a single JET data page may hold. JET row IDs
     /// encode the per-page row index as a single byte, so a page can address
     /// at most 256 row slots; Jackcess caps at 255 and we follow suit so the
-    /// <c>(byte)RowIndex</c> cast in the W5 index-rebuild path stays safe
+    /// <c>(byte)RowIndex</c> cast in the index-rebuild path stays safe
     /// under <c>&lt;CheckForOverflowUnderflow&gt;true</c>.
     /// </summary>
     private const int MaxRowsPerDataPage = 255;
 
     /// <summary>
-    /// Maximum recursion depth for cascade-delete / cascade-update chains (W10).
+    /// Maximum recursion depth for cascade-delete / cascade-update chains.
     /// Guards against pathological self-referential cycles. Real-world Access
     /// schemas almost never exceed depth 3.
     /// </summary>
@@ -350,28 +350,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new ArgumentException("At least one column is required", nameof(columns));
         }
 
-        // W8: pre-process column-level IsPrimaryKey shortcut. Synthesize one
+        // Pre-process the column-level IsPrimaryKey shortcut. Synthesize one
         // composite PK IndexDefinition (named "PrimaryKey") from columns
         // marked IsPrimaryKey=true, in declaration order, and force those
         // columns to IsNullable=false on the emitted TDEF. Mixing the
         // shortcut with an explicit PK IndexDefinition is rejected.
         (columns, indexes) = ApplyPrimaryKeyShortcut(columns, indexes);
 
-        // W17b (2026-04-26): the Jet3 (.mdb Access 97) IndexDefinition
-        // rejection has been lifted. The writer now emits the §3.1 39-byte
-        // real-idx descriptor and the §3.2 20-byte logical-idx entry, and
-        // W17c added live Jet3 leaf maintenance using the §4.2 layout
-        // (bitmask at 0x16, first entry at 0xF8) parameterised through
-        // IndexLeafPageBuilder.LeafPageLayout. Unsupported Jet4 key types
-        // (OLE / Attachment / Multi-Value) are rejected up-front below in
-        // ResolveIndexes per W18.
+        // Unsupported Jet4 key types (OLE / Attachment / Multi-Value) are
+        // rejected up-front below in ResolveIndexes.
 
         if (await GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) != null)
         {
             throw new InvalidOperationException($"Table '{tableName}' already exists.");
         }
 
-        // Phase C3: complex columns (Attachment / MultiValue) declared by the user have
+        // Complex columns (Attachment / MultiValue) declared by the user have
         // ComplexId = 0; allocate fresh per-database ComplexIDs, then emit the hidden
         // flat child table + MSysComplexColumns row per column AFTER the parent TDEF
         // is on disk. The round-trip preservation path on RewriteTableAsync supplies a
@@ -394,7 +388,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         long tdefPageNumber = await CreateTableInternalAsync(tableName, columns, indexes, catalogFlags: 0, cancellationToken).ConfigureAwait(false);
 
-        // Phase C3: emit the hidden flat child table + MSysComplexColumns row for every
+        // Emit the hidden flat child table + MSysComplexColumns row for every
         // user-declared complex column. Done after the parent table is on disk so the
         // catalog cache reflects the parent before flat-table inserts.
         if (complexAllocs is { Count: > 0 })
@@ -409,7 +403,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Internal table-creation helper that drives the same TDEF + leaf + catalog-row
     /// pipeline as <see cref="CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, CancellationToken)"/>
     /// but accepts an explicit <paramref name="catalogFlags"/> value so it can also
-    /// emit hidden system tables (e.g. the C3 complex-column flat tables that need
+    /// emit hidden system tables (e.g. complex-column flat tables that need
     /// <c>MSysObjects.Flags = 0x800A0000</c>). Returns the new TDEF page number.
     /// </summary>
     private async ValueTask<long> CreateTableInternalAsync(
@@ -424,13 +418,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         (byte[] tdefPage, int[] firstDpOffsets) = BuildTDefPageWithIndexOffsets(tableDef, resolvedIndexes);
         long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
-        // W3: emit one empty index leaf page per real index and patch its page
+        // Emit one empty index leaf page per real index and patch its page
         // number into the corresponding `first_dp` field of the real-idx physical
-        // descriptor. The leaf is empty because CreateTableAsync starts with no
-        // rows; subsequent inserts/updates/deletes do NOT maintain the leaf
-        // (W5 territory), so the index goes stale until Microsoft Access rebuilds
-        // it on the next Compact & Repair pass. See
-        // docs/design/index-and-relationship-format-notes.md §7 W2/W3.
+        // descriptor. The leaf starts empty because CreateTableAsync inserts no
+        // rows; subsequent inserts/updates/deletes maintain the B-tree via
+        // MaintainIndexesAsync. See
+        // docs/design/index-and-relationship-format-notes.md §7.
         if (resolvedIndexes.Count > 0)
         {
             IndexLeafPageBuilder.LeafPageLayout layout = _format == DatabaseFormat.Jet3Mdb
@@ -588,10 +581,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     ValidationText = src.ValidationText,
                     Description = src.Description,
 
-                    // Phase C9: forward complex-column flags so the rebuilt
-                    // TDEF re-emits T_ATTACHMENT / T_COMPLEX with the original
-                    // ComplexId in the misc slot. RewriteTableAsync uses the
-                    // preserved ComplexId to update MSysComplexColumns.ColumnName.
+                    // Forward complex-column flags so the rebuilt TDEF re-emits
+                    // T_ATTACHMENT / T_COMPLEX with the original ComplexId in
+                    // the misc slot. RewriteTableAsync uses the preserved
+                    // ComplexId to update MSysComplexColumns.ColumnName.
                     IsAttachment = src.IsAttachment,
                     IsMultiValue = src.IsMultiValue,
                     MultiValueElementType = src.MultiValueElementType,
@@ -612,8 +605,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 var result = new List<IndexDefinition>(existingIndexes.Count);
                 foreach (IndexMetadata idx in existingIndexes)
                 {
-                    // Forward Normal (W11: 1..N column) and PrimaryKey
-                    // (1..N column) indexes; FK forwarding is W9 territory.
+                    // Forward Normal (1..N column) and PrimaryKey indexes;
+                    // FK indexes are reconstructed from MSysRelationships.
                     if (idx.Kind != IndexKind.Normal && idx.Kind != IndexKind.PrimaryKey)
                     {
                         continue;
@@ -706,7 +699,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         List<(ColumnConstraint Constraint, long? PreviousValue)>? batchAutoCheckpoints = null;
         int inserted = 0;
 
-        // Materialize the batch so the W15 pre-write unique-index check sees
+        // Materialize the batch so the pre-write unique-index check sees
         // every pending row at once (it must catch intra-batch duplicates).
         // ApplyConstraintsAsync is run up front for the same reason —
         // auto-increment values must be assigned before the unique check.
@@ -727,7 +720,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 pendingRows.Add(row);
             }
 
-            // ── W15 — pre-write unique-index enforcement ────────────────
+            // Pre-write unique-index enforcement.
             await CheckUniqueIndexesPreInsertAsync(entry.TDefPage, tableDef, tableName, pendingRows, cancellationToken).ConfigureAwait(false);
 
             foreach (object[] row in pendingRows)
@@ -817,7 +810,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int inserted = 0;
 
         // Materialize the batch (see InsertRowsAsync(object[]) above) so the
-        // W15 pre-write unique check sees every pending row at once.
+        // pre-write unique check sees every pending row at once.
         var pendingRows = new List<object[]>();
         try
         {
@@ -836,7 +829,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 pendingRows.Add(mappedRow);
             }
 
-            // ── W15 — pre-write unique-index enforcement ────────────────
+            // Pre-write unique-index enforcement.
             await CheckUniqueIndexesPreInsertAsync(entry.TDefPage, tableDef, tableName, pendingRows, cancellationToken).ConfigureAwait(false);
 
             foreach (object[] mappedRow in pendingRows)
@@ -922,10 +915,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         List<RowLocation> locations = await GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         int total = Math.Min(snapshot.Rows.Count, locations.Count);
 
-        // ── W10 — FK enforcement ────────────────────────────────────────
-        // Build the list of new-row payloads up front so we can validate FK
-        // constraints (FK-side parent presence, PK-side cascade-or-reject)
-        // before mutating any disk page.
+        // FK enforcement: build the list of new-row payloads up front so we
+        // can validate FK constraints (FK-side parent presence, PK-side
+        // cascade-or-reject) before mutating any disk page.
         IReadOnlyList<FkRelationship> rels = await GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
 
@@ -1004,10 +996,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
         }
 
-        // ── W15 — pre-write unique-index enforcement ────────────────────
-        // After all FK checks succeed, validate that the post-update key set
-        // contains no duplicates for any unique index. The check sees the
-        // snapshot with pendingNewRows substituted at their original indices.
+        // Pre-write unique-index enforcement: after FK checks succeed,
+        // validate that the post-update key set contains no duplicates for
+        // any unique index. The check sees the snapshot with pendingNewRows
+        // substituted at their original indices.
         if (pendingNewRows.Count > 0)
         {
             await CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, snapshot, pendingNewRows, cancellationToken).ConfigureAwait(false);
@@ -1065,11 +1057,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         List<RowLocation> locations = await GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         int total = Math.Min(snapshot.Rows.Count, locations.Count);
 
-        // ── W10 — FK enforcement ────────────────────────────────────────
-        // Identify the rows we are about to delete; if any FK relationship
-        // names this table as the primary side, capture the deleted PK
-        // tuples and let EnforceFkOnPrimaryDeleteAsync cascade-delete
-        // dependent child rows (or throw when cascade is disabled).
+        // FK enforcement: identify the rows we are about to delete; if any
+        // FK relationship names this table as the primary side, capture the
+        // deleted PK tuples and let EnforceFkOnPrimaryDeleteAsync
+        // cascade-delete dependent child rows (or throw when cascade is
+        // disabled).
         var matchingIndices = new List<int>();
         for (int i = 0; i < total; i++)
         {
@@ -1105,10 +1097,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 cancellationToken).ConfigureAwait(false);
         }
 
-        // ── C5 — cascade flat-child rows for any complex columns on the
-        // parent BEFORE we mark the parent rows deleted (we need to read
-        // the parent's ConceptualTableID slots while the rows are still
-        // live).
+        // Cascade flat-child rows for any complex columns on the parent
+        // BEFORE we mark the parent rows deleted (we need to read the
+        // parent's ConceptualTableID slots while the rows are still live).
         if (matchingIndices.Count > 0)
         {
             var parentLocs = new List<RowLocation>(matchingIndices.Count);
@@ -1237,7 +1228,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     // ════════════════════════════════════════════════════════════════
-    // Foreign-key relationships (W9a — MSysRelationships row emission)
+    // Foreign-key relationships — MSysRelationships row emission
     // ════════════════════════════════════════════════════════════════
 
     /// <summary>
@@ -1251,12 +1242,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <remarks>
-    /// W9a (per <c>docs/design/index-and-relationship-format-notes.md</c> §7) emits
-    /// only the catalog rows that the Microsoft Access Relationships designer reads.
-    /// The per-TDEF FK logical-index entries (<c>index_type = 0x02</c>,
-    /// <c>rel_idx_num</c>, <c>rel_tbl_page</c>) that drive runtime referential-
-    /// integrity enforcement by the JET engine are not written; Microsoft Access
-    /// regenerates them on the next Compact &amp; Repair pass.
+    /// Per <c>docs/design/index-and-relationship-format-notes.md</c> §7. The
+    /// MSysRelationships catalog rows are what the Microsoft Access
+    /// Relationships designer reads. The per-TDEF FK logical-index entries
+    /// (<c>index_type = 0x02</c>, <c>rel_idx_num</c>, <c>rel_tbl_page</c>)
+    /// that drive runtime referential-integrity enforcement by the JET
+    /// engine are emitted by <see cref="EmitFkPerTdefEntriesAsync"/> on
+    /// Jet4 / ACE; on Jet3 they are skipped and Microsoft Access regenerates
+    /// them on the next Compact &amp; Repair pass.
     /// </remarks>
     public async ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken = default)
     {
@@ -1312,7 +1305,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         // grbit flag bits — values per Jackcess com.healthmarketscience.jackcess.impl.RelationshipImpl.
-        // (These are not yet documented in the format-probe appendix; W9b empirical verification pending.)
+        // (These are not yet documented in the format-probe appendix.)
         const uint NoRefIntegrityFlag = 0x00000002;
         const uint CascadeUpdatesFlag = 0x00000100;
         const uint CascadeDeletesFlag = 0x00001000;
@@ -1353,15 +1346,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             await InsertRowDataAsync(msysRelTdefPage, msysRelDef, values, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
-        // ── W9b: per-TDEF FK logical-idx entries ────────────────────────────
-        // Adds index_type=0x02 logical-idx entries on both PK-side and FK-side
-        // TDEFs with cross-referenced rel_idx_num / rel_tbl_page so the JET
-        // engine can locate the partner table without waiting for Microsoft
-        // Access Compact & Repair to regenerate them from the MSysRelationships
-        // rows above. See docs/design/index-and-relationship-format-notes.md
-        // §7 W9b. Jet3 uses a different (20-byte) logical-idx layout that this
-        // library does not yet exercise — skip silently to keep the W9a row
-        // emission working on .mdb (Access 97) databases.
+        // Per-TDEF FK logical-idx entries: add index_type=0x02 logical-idx
+        // entries on both PK-side and FK-side TDEFs with cross-referenced
+        // rel_idx_num / rel_tbl_page so the JET engine can locate the partner
+        // table without waiting for Microsoft Access Compact & Repair to
+        // regenerate them from the MSysRelationships rows above. See
+        // docs/design/index-and-relationship-format-notes.md §7. Jet3 uses a
+        // different (20-byte) logical-idx layout that this library does not
+        // yet exercise — skip silently to keep the catalog row emission
+        // working on .mdb (Access 97) databases.
         if (_format != DatabaseFormat.Jet3Mdb)
         {
             await EmitFkPerTdefEntriesAsync(
@@ -1390,7 +1383,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     // ════════════════════════════════════════════════════════════════
-    // W9b — per-TDEF FK logical-idx entries (Jet4 / ACE only)
+    // Per-TDEF FK logical-idx entries (Jet4 / ACE only)
     // ════════════════════════════════════════════════════════════════
 
     /// <summary>
@@ -1405,12 +1398,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Orchestrates the two-side W9b emission: pre-computes both sides' target
-    /// real-idx slots (sharing where possible), allocates empty leaf pages for
-    /// any newly-allocated real-idx slots, then mutates each TDEF in place to
-    /// append its FK logical-idx entry. Operates on single-page TDEFs only;
-    /// throws <see cref="NotSupportedException"/> if either TDEF is multi-page
-    /// or would overflow a single page after growth.
+    /// Orchestrates the two-side per-TDEF FK index emission: pre-computes
+    /// both sides' target real-idx slots (sharing where possible), allocates
+    /// empty leaf pages for any newly-allocated real-idx slots, then mutates
+    /// each TDEF in place to append its FK logical-idx entry. Operates on
+    /// single-page TDEFs only; throws <see cref="NotSupportedException"/> if
+    /// either TDEF is multi-page or would overflow a single page after growth.
     /// </summary>
     private async ValueTask EmitFkPerTdefEntriesAsync(
         RelationshipDefinition relationship,
@@ -1509,13 +1502,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             if (page[0] != 0x02)
             {
-                throw new InvalidOperationException($"W9b: page {tdefPage} is not a TDEF page.");
+                throw new InvalidOperationException($"page {tdefPage} is not a TDEF page.");
             }
 
             if (Ru32(page, 4) != 0)
             {
                 throw new NotSupportedException(
-                    $"W9b: TDEF at page {tdefPage} spans multiple pages; in-place FK index emission is not supported on multi-page TDEFs.");
+                    $"TDEF at page {tdefPage} spans multiple pages; in-place FK index emission is not supported on multi-page TDEFs.");
             }
 
             int numCols = Ru16(page, _tdNumCols);
@@ -1539,7 +1532,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             int realIdxDescStart = LocateRealIdxDescStart(page, numCols, numRealIdx);
             if (realIdxDescStart < 0)
             {
-                throw new InvalidOperationException("W9b: unable to walk TDEF column-name section.");
+                throw new InvalidOperationException("unable to walk TDEF column-name section.");
             }
 
             int sharedSlot = FindCoveringRealIdx(page, columnNumbers, realIdxDescStart, numRealIdx);
@@ -1561,7 +1554,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W9b: appends one FK logical-idx entry (and optionally a new real-idx
+    /// Appends one FK logical-idx entry (and optionally a new real-idx
     /// physical descriptor) to the TDEF at <paramref name="tdefPage"/>. The
     /// TDEF must fit on a single page after the addition.
     /// </summary>
@@ -1592,7 +1585,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (td[0] != 0x02 || Ru32(td, 4) != 0)
         {
             throw new NotSupportedException(
-                $"W9b: cannot mutate the TDEF at page {tdefPage} (multi-page chain or not a TDEF).");
+                $"cannot mutate the TDEF at page {tdefPage} (multi-page chain or not a TDEF).");
         }
 
         int numCols = Ru16(td, _tdNumCols);
@@ -1602,7 +1595,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             || numIdx < 0 || numIdx > 1000
             || numRealIdx < 0 || numRealIdx > 1000)
         {
-            throw new InvalidOperationException("W9b: TDEF reports out-of-range section counts.");
+            throw new InvalidOperationException("TDEF reports out-of-range section counts.");
         }
 
         const int RealIdxPhysSz = 52;
@@ -1611,7 +1604,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int realIdxDescStart = LocateRealIdxDescStart(td, numCols, numRealIdx);
         if (realIdxDescStart < 0)
         {
-            throw new InvalidOperationException("W9b: failed to walk TDEF column-name section.");
+            throw new InvalidOperationException("failed to walk TDEF column-name section.");
         }
 
         int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
@@ -1619,7 +1612,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int logIdxNamesLen = MeasureLogicalIdxNamesLength(td, logIdxNamesStart, numIdx);
         if (logIdxNamesLen < 0)
         {
-            throw new InvalidOperationException("W9b: failed to walk TDEF logical-idx-name section.");
+            throw new InvalidOperationException("failed to walk TDEF logical-idx-name section.");
         }
 
         int trailingStart = logIdxNamesStart + logIdxNamesLen;
@@ -1637,7 +1630,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int trailingLen = currentEnd - trailingStart;
         if (trailingLen < 0 || trailingStart + trailingLen > td.Length)
         {
-            throw new InvalidOperationException("W9b: TDEF trailing block overruns page.");
+            throw new InvalidOperationException("TDEF trailing block overruns page.");
         }
 
         byte[] nameBytes = Encoding.Unicode.GetBytes(indexName);
@@ -1650,7 +1643,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (currentEnd + totalGrowth > _pgSz)
         {
             throw new NotSupportedException(
-                "W9b: TDEF would exceed a single page after adding a foreign-key index entry. " +
+                "TDEF would exceed a single page after adding a foreign-key index entry. " +
                 "Multi-page TDEF growth is not supported.");
         }
 
@@ -1718,7 +1711,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // Append the new FK logical-idx entry.
         // bytes 0..3   unknown(4) — Jackcess emits a per-tdef cookie; zero is
-        //              consistent with this library's existing W1/W3/W8 emit.
+        //              consistent with this library's existing emit.
         // bytes 24..27 trailing(4) = 0
         int newLogEntry = newLogIdxStart + oldLogIdxLen;
         Wi32(newTd, newLogEntry + 4, numIdx);                  // index_num (next sequential)
@@ -1800,7 +1793,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     /// <summary>
     /// Materializes the existing logical-idx-name list (used to avoid name
-    /// collisions when appending a new W9b entry).
+    /// collisions when appending a new FK index entry).
     /// </summary>
     private List<string> ReadLogicalIdxNames(byte[] td, int logIdxNamesStart, int numIdx)
     {
@@ -1820,7 +1813,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W9b §3.3 sharing: returns the existing real-idx slot whose col_map
+    /// Real-idx sharing per §3.3: returns the existing real-idx slot whose col_map
     /// matches <paramref name="columnNumbers"/> exactly (in declaration
     /// order); -1 when no covering real-idx exists. Jet4 col_map is fixed at
     /// 10 slots × {col_num(2), col_order(1)}.
@@ -1894,28 +1887,28 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     // ════════════════════════════════════════════════════════════════
-    // W14 — Drop / Rename relationship
+    // Drop / Rename relationship
     // ════════════════════════════════════════════════════════════════
     //
-    // Reverses CreateRelationshipAsync (W9a + W9b):
+    // Reverses CreateRelationshipAsync:
     //   • DropRelationshipAsync removes every MSysRelationships row whose
     //     szRelationship matches and (Jet4/ACE) removes the matching FK
     //     logical-idx entry from each side's TDEF, then conservatively
     //     reclaims any trailing real-idx physical-descriptor slots that the
-    //     removal left unreferenced (W26 — common case: FK got the last slot
-    //     on its TDEF and the slot is reclaimed cleanly; non-trailing
-    //     orphans are still left for Compact & Repair to reclaim, since
-    //     mid-array compaction would require cross-TDEF rel_idx_num
-    //     renumbering on every other table that points at the slot).
+    //     removal left unreferenced (common case: FK got the last slot on
+    //     its TDEF and the slot is reclaimed cleanly; non-trailing orphans
+    //     are still left for Compact & Repair to reclaim, since mid-array
+    //     compaction would require cross-TDEF rel_idx_num renumbering on
+    //     every other table that points at the slot).
     //     ListIndexesAsync iterates by num_idx so the FK stops surfacing
     //     immediately regardless of whether the real-idx slot was reclaimed.
     //   • RenameRelationshipAsync rewrites the szRelationship column on
     //     every matching MSysRelationships row (read all 8 columns, mark
     //     deleted, re-insert with the new name and updateTDefRowCount=false)
-    //     and (Jet4/ACE, W26) updates the matching FK logical-idx name
-    //     cookie on each side's TDEF in place. Variable-length name
-    //     records: shrink/grow shifts the trailing variable-column block;
-    //     a grow that would push the TDEF past one page leaves the cookie
+    //     and (Jet4/ACE) updates the matching FK logical-idx name cookie on
+    //     each side's TDEF in place. Variable-length name records:
+    //     shrink/grow shifts the trailing variable-column block; a grow
+    //     that would push the TDEF past one page leaves the cookie
     //     unchanged (Access regenerates it from the catalog row on the
     //     next Compact & Repair pass).
 
@@ -2355,8 +2348,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         if (td[0] != 0x02 || Ru32(td, 4) != 0)
         {
-            // Multi-page TDEF — out of scope for in-place mutation, same
-            // contract as W9b emission.
+            // Multi-page TDEF — out of scope for in-place mutation.
             return -1;
         }
 
@@ -2454,7 +2446,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return -1;
         }
 
-        // Compute trailing block bounds (mirror of W9b EmitFkLogicalIdxAsync).
+        // Compute trailing block bounds (mirror of EmitFkLogicalIdxAsync).
         int trailingStart = logIdxNamesStart + logIdxNamesLen;
         int storedTdefLen = Ri32(td, 8);
         int currentEnd = storedTdefLen + 8;
@@ -2864,13 +2856,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     // ════════════════════════════════════════════════════════════════
-    // W10 — Foreign-key runtime enforcement on Insert / Update / Delete
+    // Foreign-key runtime enforcement on Insert / Update / Delete
     // ════════════════════════════════════════════════════════════════
     //
     // Honors the EnforceReferentialIntegrity / CascadeUpdates / CascadeDeletes
-    // flags that were emitted into MSysRelationships.grbit by W9a. When a
-    // relationship has EnforceReferentialIntegrity=false the row simply does
-    // not enter the enforced-set returned by GetEnforcedRelationshipsAsync.
+    // flags emitted into MSysRelationships.grbit by CreateRelationshipAsync.
+    // When a relationship has EnforceReferentialIntegrity=false the row
+    // simply does not enter the enforced-set returned by
+    // GetEnforcedRelationshipsAsync.
     //
     // Enforcement strategy is intentionally simple — there is no SQL engine
     // and no index seek; every check scans the relevant table snapshot once
@@ -2880,7 +2873,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     // augment the cached set after each successful insert so a row that
     // satisfies its own FK can be inserted.
     //
-    // See docs/design/index-and-relationship-format-notes.md §7 W10.
+    // See docs/design/index-and-relationship-format-notes.md §7.
 
     /// <summary>
     /// In-memory representation of a single enforced foreign-key relationship,
@@ -3031,7 +3024,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 DataRow head = rows[0];
                 int grbit = Convert.ToInt32(head["grbit"], CultureInfo.InvariantCulture);
 
-                // grbit bits per W9a (Jackcess RelationshipImpl):
+                // grbit bits (Jackcess RelationshipImpl):
                 //   0x00000002 NO_REFERENTIAL_INTEGRITY
                 //   0x00000100 CASCADE_UPDATES
                 //   0x00001000 CASCADE_DELETES
@@ -3753,7 +3746,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <see cref="FkRelationship.CascadeDeletes"/> is set, or throws when
     /// child rows still reference one of the deleted PK tuples.
     /// <para>
-    /// W22 (2026-04-26): when a covering FK-side real-idx is available
+    /// When a covering FK-side real-idx is available
     /// (<see cref="ResolveChildSeekIndexAsync"/>), each parent PK tuple is
     /// encoded once and seeked through <see cref="IndexBTreeSeeker.FindRowLocationsAsync"/>
     /// to locate dependent child rows in O(log N + K) page reads. Falls
@@ -3842,7 +3835,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            // ── W22 fast path: child-side index seek ──────────────────
+            // Fast path: child-side index seek.
             ChildSeekIndex? childSeek = await ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
             if (childSeek != null)
             {
@@ -3960,7 +3953,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W22 fast path for cascade-delete: locate dependent child rows by
+    /// Fast path for cascade-delete: locate dependent child rows by
     /// seeking the child (FK) table's covering index for each parent PK
     /// tuple. Returns <see langword="false"/> when the seek path cannot be
     /// completed (any parent key fails to encode, or any matched child row
@@ -4213,7 +4206,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            // ── W22 fast path: child-side index seek ──────────────────
+            // Fast path: child-side index seek.
             ChildSeekIndex? childSeek = await ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
             if (childSeek != null)
             {
@@ -4282,7 +4275,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W22 fast path for cascade-update: for each (oldKey, oldPkSubset, newPkSubset)
+    /// Fast path for cascade-update: for each (oldKey, oldPkSubset, newPkSubset)
     /// triplet, encode the OLD PK subset as a child-index seek key, locate
     /// every dependent child row in O(log N + K) page reads, fetch each
     /// matched row's full typed values, and rewrite it in place via
@@ -5210,7 +5203,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Rewinds each auto-increment counter listed in <paramref name="checkpoints"/>
     /// back to the value it held before <see cref="ApplyConstraintsAsync"/>
     /// advanced it. Used by the insert paths to undo counter advances when a
-    /// deferred constraint (currently the W11 post-write unique-index check
+    /// deferred constraint (the post-write unique-index check
     /// in <see cref="MaintainIndexesAsync"/>) rejects the row after it has
     /// already consumed an auto-number value.
     /// </summary>
@@ -5256,10 +5249,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
         }
 
-        // ── W15 — pre-write unique-index enforcement ────────────────────
-        // Reject duplicate keys before any disk page is mutated. The
-        // post-write check inside MaintainIndexesAsync still runs as
-        // defense-in-depth.
+        // Pre-write unique-index enforcement: reject duplicate keys before
+        // any disk page is mutated. The post-write check inside
+        // MaintainIndexesAsync still runs as defense-in-depth.
         try
         {
             await CheckUniqueIndexesPreInsertAsync(tdefPage, tableDef, tableName, [values], cancellationToken).ConfigureAwait(false);
@@ -5288,7 +5280,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 AugmentParentSetsAfterInsert(tableName, tableDef, values, fkCtx);
             }
 
-            // W4-C-1 fast path: try in-place leaf splice for the inserted
+            // fast path: try in-place leaf splice for the inserted
             // row before falling back to a full snapshot+rebuild.
             (RowLocation Loc, object[] Row)[] hintInserts = [(loc, values)];
             bool incremental = await TryMaintainIndexesIncrementalAsync(
@@ -5304,8 +5296,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
         catch
         {
-            // The row hit disk but a deferred constraint (currently the W11
-            // post-write unique-index check in MaintainIndexesAsync) rejected
+            // The row hit disk but a deferred constraint (the post-write
+            // unique-index check in MaintainIndexesAsync) rejected
             // it. Mark the row deleted and rewind the row count + auto-number
             // counters so the table is left exactly as it was before the call.
             await RollbackInsertedRowsAsync(tdefPage, [loc], cancellationToken).ConfigureAwait(false);
@@ -5435,7 +5427,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private static byte TypeCodeFromDefinition(ColumnDefinition column)
     {
-        // Complex columns (Phase C2): Attachment and Multi-value have dedicated
+        // Complex columns: Attachment and Multi-value have dedicated
         // type codes and override the CLR-driven mapping. The user picks one
         // explicitly via IsAttachment / IsMultiValue; declaring both is rejected
         // here so the writer never emits ambiguous descriptors.
@@ -5517,7 +5509,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <summary>
     /// Validates and returns the scale (0..28, &lt;= precision) declared on a
     /// <c>T_NUMERIC</c> column definition. Defaults to <c>0</c> (Access UI
-    /// default). The W23 incremental index path uses this value as the
+    /// default). The incremental index path uses this value as the
     /// canonical sort-key scale.
     /// </summary>
     private static byte ResolveNumericScale(ColumnDefinition definition)
@@ -5958,7 +5950,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// to enumerate <paramref name="tableName"/>'s logical indexes via the same parser
     /// that <see cref="IAccessReader.ListIndexesAsync"/> uses. Used by
     /// <see cref="RewriteTableAsync"/> to forward existing index definitions through
-    /// Add/Drop/Rename column operations (W5).
+    /// Add/Drop/Rename column operations.
     /// </summary>
     private async ValueTask<IReadOnlyList<IndexMetadata>> ReadIndexMetadataSnapshotAsync(string tableName, CancellationToken cancellationToken = default)
     {
@@ -5992,7 +5984,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// normal or primary-key index whose key columns all still exist
     /// (case-insensitive name match) in the rebuilt schema. Non-PK indexes
     /// must be single-column (multi-column non-PK indexes are not supported).
-    /// FK indexes are not forwarded today (W9 territory).
+    /// FK indexes are not forwarded today.
     /// </summary>
     private static List<IndexDefinition> DefaultIndexProjection(IReadOnlyList<IndexMetadata> existing, IReadOnlyList<ColumnDefinition> newDefs)
     {
@@ -6255,7 +6247,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // Snapshot existing rows AND existing indexes BEFORE we mutate the catalog,
         // so the snapshot reader sees the original schema and we can forward
-        // surviving index definitions to the rebuilt table (W5).
+        // surviving index definitions to the rebuilt table.
         using DataTable snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
         IReadOnlyList<IndexMetadata> existingIndexes = await ReadIndexMetadataSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
 
@@ -6287,7 +6279,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             await InsertRowDataAsync(tempEntry.TDefPage, tempDef, projected, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
-        // W5: rebuild forwarded indexes once after the bulk row copy completes,
+        // rebuild forwarded indexes once after the bulk row copy completes,
         // so we don't pay the rebuild cost per row.
         if (projectedIndexes.Count > 0 && snapshot.Rows.Count > 0)
         {
@@ -6298,7 +6290,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // Pre-compute the LvProp blob from the projected columns so the catalog rename
         // re-emits the persisted properties under the user-facing table name.
         //
-        // Phase C9: identify complex columns being dropped or renamed by this rewrite
+        // identify complex columns being dropped or renamed by this rewrite
         // BEFORE the cascade-skipping drop runs. Surviving complex columns (matched by
         // ComplexId between the existing and projected schemas) are preserved as-is —
         // their flat child tables and MSysComplexColumns rows stay attached to the
@@ -6404,7 +6396,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             case T_BINARY: baseDef = new ColumnDefinition(column.Name, typeof(byte[]), column.Size > 0 ? column.Size : 255); break;
             case T_OLE: baseDef = new ColumnDefinition(column.Name, typeof(byte[])); break;
             case T_ATTACHMENT:
-                // Phase C9 (2026-04-25): preserve attachment columns across
+                // preserve attachment columns across
                 // AddColumnAsync / DropColumnAsync / RenameColumnAsync. The parent
                 // TDEF descriptor round-trips with the ComplexID intact (ColumnInfo.Misc
                 // → ColumnDefinition.ComplexId → re-emitted into the rebuilt TDEF's
@@ -6467,7 +6459,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <paramref name="indexes"/>, the byte offset within the page of that
     /// real-index physical descriptor's <c>first_dp</c> field (§3.1). The
     /// caller uses these offsets to patch in the index leaf-page numbers
-    /// after the leafs themselves have been appended (W3).
+    /// after the leafs themselves have been appended.
     /// </summary>
     private (byte[] Page, int[] FirstDpOffsets) BuildTDefPageWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
     {
@@ -6476,7 +6468,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int numIdx = indexes.Count;
         bool jet4 = _format != DatabaseFormat.Jet3Mdb;
 
-        // W1 phase: one real-idx slot per logical-idx (no sharing). See
+        // One real-idx slot per logical-idx (no sharing). See
         // docs/design/index-and-relationship-format-notes.md §3.3.
         int numRealIdx = numIdx;
         int realIdxPhysSz = jet4 ? 52 : 39;
@@ -6500,7 +6492,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Wi32(page, _tdNumRealIdx, numRealIdx);
 
         // Leading real-index entries (Jet4: 12 bytes each; Jet3: 8 bytes each).
-        // Per mdbtools: unknown(4) + num_idx_rows(4) + unknown(4). Zeroed for W1.
+        // Per mdbtools: unknown(4) + num_idx_rows(4) + unknown(4). Zeroed.
         // Slot lives at _tdBlockEnd .. colStart and is already zero-initialised.
 
         int numVarCols = 0;
@@ -6568,7 +6560,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         Wu16(page, _tdNumCols - 2, numVarCols);
 
-        // ── Index sections (W1+W3: only Jet4/ACE supports this code path) ─────
+        // ── Index sections ─────
         int[] firstDpOffsets = numIdx > 0 ? new int[numIdx] : [];
         if (numIdx > 0)
         {
@@ -6587,7 +6579,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // and logical-idx entry. The Jet3 layouts (39 / 20 bytes) drop the
             // Jet4 leading 4-byte cookie + trailing tail, so every field shifts
             // left by 4 bytes; first_dp lives where Jet4 puts used_pages and
-            // there is no separate used_pages slot. See §3.1 / §3.2 (W17a).
+            // there is no separate used_pages slot. See §3.1 / §3.2.
             int physFirstDpOff = jet4 ? 38 : 34;
             int physFlagsOff = jet4 ? 42 : 38;
             int logIndexNumOff = jet4 ? 4 : 0;
@@ -6607,7 +6599,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 int phys = realIdxPhysStart + (i * realIdxPhysSz);
 
                 // col_map: 10 × { col_num(2), col_order(1) }. First N slots = our
-                // key columns (per-column ascending/descending per W11), remaining
+                // key columns (per-column ascending/descending), remaining
                 // slots filled with 0xFFFF.
                 for (int slot = 0; slot < 10; slot++)
                 {
@@ -6627,10 +6619,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     }
                 }
 
-                // The caller patches first_dp after appending the leaf page (W3).
+                // The caller patches first_dp after appending the leaf page.
                 // Per the §3.1 empirical correction, real Access fixtures emit
                 // flags = 0x00 even for PK indexes — uniqueness is signalled by
-                // index_type = 0x01 below, not the flag bit. W11: non-PK unique
+                // index_type = 0x01 below, not the flag bit. Non-PK unique
                 // indexes set flags bit 0x01 explicitly.
                 if (ri.IsUnique && !ri.IsPrimaryKey)
                 {
@@ -6649,7 +6641,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 Wi32(page, log + logIndexNum2Off, i);                 // index_num2 (one real per logical)
                 Wi32(page, log + logRelIdxNumOff, -1);                // rel_idx_num = 0xFFFFFFFF (not a FK)
 
-                // index_type: 0x01 for PK (W8), 0x00 for normal. FK (0x02) is W9.
+                // index_type: 0x01 for PK, 0x00 for normal. FK uses 0x02.
                 page[log + logIndexTypeOff] = (byte)(ri.IsPrimaryKey ? IndexKind.PrimaryKey : IndexKind.Normal);
             }
 
@@ -6685,7 +6677,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W8: synthesizes a primary-key <see cref="IndexDefinition"/> from any
+    /// synthesizes a primary-key <see cref="IndexDefinition"/> from any
     /// <see cref="ColumnDefinition.IsPrimaryKey"/> flags set on the supplied
     /// columns and forces those columns to <see cref="ColumnDefinition.IsNullable"/>
     /// = <c>false</c> on the returned column list (the JET TDEF flag bit
@@ -6814,10 +6806,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 throw new NotSupportedException($"IndexDefinition '{def.Name}' has {def.Columns.Count} columns; the JET col_map supports at most 10.");
             }
 
-            // W11 (2026-04-25): multi-column non-PK indexes are now accepted.
-            // The W1-era restriction (single column when not IsPrimaryKey)
-            // has been lifted; the W5 maintenance loop encodes per-column
-            // and concatenates to form the composite key.
+            // Multi-column non-PK indexes are accepted; the maintenance loop
+            // encodes per-column and concatenates to form the composite key.
             if (def.IsPrimaryKey)
             {
                 if (sawPk)
@@ -6841,7 +6831,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 ColumnInfo column = tableDef.FindColumn(columnName)
                     ?? throw new ArgumentException($"IndexDefinition '{def.Name}' references unknown column '{columnName}'.", nameof(indexes));
 
-                // W18 (2026-04-26): match Microsoft Access — neither the UI
+                // match Microsoft Access — neither the UI
                 // nor the engine permits CREATE INDEX over OLE Object,
                 // Attachment, or Multi-Value (Complex) columns. Previously
                 // these silently fell through to a "schema-only" path that
@@ -6866,7 +6856,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 colNums[k] = column.ColNum;
             }
 
-            // W11: per-column ascending direction. DescendingColumns is a
+            // per-column ascending direction. DescendingColumns is a
             // case-insensitive subset of Columns; any entry that does not
             // appear in Columns is rejected.
             bool[] ascending = new bool[def.Columns.Count];
@@ -6916,7 +6906,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Phase C1: scaffold mandatory ACCDB system tables (currently
+    /// scaffold mandatory ACCDB system tables (currently
     /// <c>MSysComplexColumns</c>) into a freshly-created database. Called
     /// from <see cref="CreateDatabaseAsync(string, DatabaseFormat, AccessWriterOptions?, CancellationToken)"/>
     /// after the bare 3-page empty database has been opened. ACCDB only —
@@ -6938,7 +6928,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Phase C10: per-kind <c>MSysComplexType_*</c> template tables. Each entry maps
+    /// per-kind <c>MSysComplexType_*</c> template tables. Each entry maps
     /// the canonical Access template name to the column schema Access emits for that
     /// template (verified against <c>ComplexFields.accdb</c> in
     /// <c>docs/design/format-probe-appendix-complex.md</c> §<c>MSysComplexType_*</c>).
@@ -6967,7 +6957,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     ];
 
     /// <summary>
-    /// Phase C10: scaffolds the nine <c>MSysComplexType_*</c> template tables
+    /// scaffolds the nine <c>MSysComplexType_*</c> template tables
     /// (<c>UnsignedByte</c>, <c>Short</c>, <c>Long</c>, <c>IEEESingle</c>,
     /// <c>IEEEDouble</c>, <c>GUID</c>, <c>Decimal</c>, <c>Text</c>, <c>Attachment</c>)
     /// into a freshly-created ACCDB so subsequent <see cref="EmitComplexColumnArtifactsAsync"/>
@@ -6999,7 +6989,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     /// <summary>
     /// Maps a user-declared complex column to the canonical
-    /// <c>MSysComplexType_*</c> template name (Phase C10). Returns <see langword="null"/>
+    /// <c>MSysComplexType_*</c> template name. Returns <see langword="null"/>
     /// when the column is not complex or its element type has no matching template.
     /// </summary>
     private static string? ResolveComplexTypeTemplateName(ColumnDefinition col)
@@ -7064,7 +7054,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Creates the empty <c>MSysComplexColumns</c> system table (Phase C1).
+    /// Creates the empty <c>MSysComplexColumns</c> system table.
     /// Schema verified against <c>ComplexFields.accdb</c> (see
     /// <c>docs/design/format-probe-appendix-complex.md</c> and
     /// <c>docs/design/complex-columns-format-notes.md</c> §2.2): four
@@ -7106,7 +7096,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly record struct ComplexColumnAllocation(int ColumnIndex, int ComplexId, int ConceptualTableId);
 
     /// <summary>
-    /// Phase C3 pre-flight for <see cref="CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, CancellationToken)"/>.
+    /// pre-flight for <see cref="CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, CancellationToken)"/>.
     /// Walks <paramref name="columns"/> for user-declared complex columns
     /// (<see cref="ColumnDefinition.IsAttachment"/> / <see cref="ColumnDefinition.IsMultiValue"/>
     /// where <c>ComplexId == 0</c>), validates the format, and allocates a
@@ -7229,7 +7219,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Phase C3 post-flight: for each user-declared complex column on the parent
+    /// post-flight: for each user-declared complex column on the parent
     /// table, build a hidden flat child table per <c>docs/design/complex-columns-format-notes.md</c>
     /// §2.3 / §2.4 and append the corresponding <c>MSysComplexColumns</c> row so
     /// readers can join parent rows to their child values.
@@ -7265,7 +7255,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 catalogFlags: 0x800A0000U,
                 cancellationToken).ConfigureAwait(false);
 
-            // Phase C10: resolve the matching MSysComplexType_* template id so the
+            // resolve the matching MSysComplexType_* template id so the
             // MSysComplexColumns row points at the canonical type-template table
             // instead of carrying the placeholder 0. Templates are scaffolded by
             // CreateDatabaseAsync and always present in Access-authored files; the
@@ -7302,7 +7292,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     /// <summary>
     /// Builds the flat-table column list and the system-managed indexes per
-    /// the per-kind schemas in the design doc §2.4 / §4.2 (Phase C7).
+    /// the per-kind schemas in the design doc §2.4 / §4.2.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -7572,7 +7562,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Resolves a hidden flat-child-table TDEF page back to its
     /// <c>MSysObjects.Name</c>. Used by <see cref="AddComplexItemCoreAsync"/>
     /// to drive <see cref="ApplyConstraintsAsync"/> for the autoincrement
-    /// scalar PK column emitted by Phase C7.
+    /// scalar PK column emitted by the complex-column scaffold.
     /// </summary>
     private async ValueTask<string> ResolveFlatTableNameAsync(long flatTdefPage, CancellationToken cancellationToken)
     {
@@ -7932,7 +7922,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Per-flat-table cost is O(P) where P is the database page count
     /// (full sequential scan, no index seek). Multiple complex columns on
     /// the same parent perform one scan each. This matches the existing
-    /// W10 cascade-delete cost profile and the C4 ConceptualTableID
+    /// cascade-delete cost profile and the C4 ConceptualTableID
     /// allocator.
     /// </remarks>
     private async ValueTask CascadeDeleteComplexChildrenAsync(
@@ -8116,8 +8106,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <c>RewriteTableAsync</c> path. The <paramref name="dropComplexChildren"/>
     /// flag is set to <see langword="false"/> by the rewrite path so that the
     /// hidden flat child tables and matching <c>MSysComplexColumns</c> rows for
-    /// surviving complex columns stay attached to the rebuilt parent
-    /// (Phase C9 — schema evolution on tables containing complex columns).
+    /// surviving complex columns stay attached to the rebuilt parent.
     /// </summary>
     private async ValueTask DropTableCoreAsync(string tableName, bool dropComplexChildren, CancellationToken cancellationToken)
     {
@@ -8174,7 +8163,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Phase C9 — surgically drops a single complex column's flat child table
+    /// surgically drops a single complex column's flat child table
     /// and its <c>MSysComplexColumns</c> row, identified by
     /// <paramref name="columnName"/> + <paramref name="complexId"/>. Used by the
     /// rewrite path when the user calls <c>DropColumnAsync</c> on an
@@ -8288,12 +8277,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Phase C9 — when the user renames a complex column, rewrite the
+    /// when the user renames a complex column, rewrite the
     /// matching <c>MSysComplexColumns</c> row's <c>ColumnName</c> field. The
     /// hidden flat child table's catalog name (<c>f_&lt;hex&gt;_&lt;oldName&gt;</c>)
     /// is left unchanged because it is opaque to readers — they resolve the
     /// flat name via <c>FlatTableID</c> → <c>MSysObjects</c>. This mirrors the
-    /// W14 <c>RenameRelationshipAsync</c> trade-off that leaves TDEF logical-idx
+    /// <c>RenameRelationshipAsync</c> trade-off that leaves TDEF logical-idx
     /// name cookies stale until Compact &amp; Repair.
     /// </summary>
     private async ValueTask RenameComplexColumnArtifactsAsync(string oldColumnName, string newColumnName, int complexId, CancellationToken cancellationToken)
@@ -8374,7 +8363,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Phase C6 — when dropping a parent table, also drop the hidden flat
+    /// when dropping a parent table, also drop the hidden flat
     /// child tables backing each Attachment / MultiValue column on the
     /// parent and remove the corresponding rows from
     /// <c>MSysComplexColumns</c>. Tolerates missing
@@ -9492,7 +9481,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// not implement; the cascade-seek caller falls back to the snapshot
     /// path in that case. Index-key column types (the focus of this helper)
     /// only include scalar fixed and var-inline kinds — JET indexes cannot
-    /// cover MEMO / OLE / Complex columns at all (rejected by W18 in
+    /// cover MEMO / OLE / Complex columns at all (rejected by
     /// <see cref="ResolveIndexes"/>) so the LVAL fall-through is safety
     /// netting, not the common path.
     /// </summary>
@@ -9744,7 +9733,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W5: rebuild every index B-tree on <paramref name="tableName"/> from the
+    /// rebuild every index B-tree on <paramref name="tableName"/> from the
     /// current row data. Called at the end of each public mutation method that
     /// touches table rows so that indexes stay live instead of going stale until
     /// Microsoft Access rebuilds them on Compact &amp; Repair.
@@ -9760,17 +9749,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// All key column types accepted by <see cref="ResolveIndexes"/> have
     /// matching <see cref="IndexKeyEncoder"/> support, so encoder rejection
     /// is treated as an unrecoverable programmer error and propagates to
-    /// the caller rather than silently leaving the leaf stale (the W18
+    /// the caller rather than silently leaving the leaf stale (the
     /// rejection of OLE / Attachment / Multi-Value keys at create time
     /// removed the only legitimate trigger for the prior silent-skip path).
     /// </para>
     /// </summary>
     private async ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
     {
-        // W17c (2026-04-26): Jet3 (.mdb Access 97) live leaf maintenance is now
+        // Jet3 (.mdb Access 97) live leaf maintenance is now
         // supported. The 39-byte real-idx + 20-byte logical-idx layouts
         // (§3.1 / §3.2) and the 0x16-bitmask / 0xF8-first-entry leaf layout
-        // (§4.2) are pinned by the W17a probe and emitted by the same code
+        // (§4.2) are pinned by the format probe and emitted by the same code
         // path Jet4/ACE uses, parameterised on `IndexLeafPageBuilder.LeafPageLayout`.
 
         // Read the TDEF page bytes (single-page TDEFs produced by this writer).
@@ -9799,7 +9788,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return;
         }
 
-        // §3.1 / §3.2 per-format sizes + offsets (W17a probe-confirmed for Jet3).
+        // §3.1 / §3.2 per-format sizes + offsets.
         int realIdxPhysSz = jet3 ? 39 : 52;
         int logIdxEntrySz = jet3 ? 20 : 28;
         int physFirstDpOff = jet3 ? 34 : 38;
@@ -9819,7 +9808,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int realIdxDescStart = namePos;
         int logIdxStart = realIdxDescStart + (numRealIdx * realIdxPhysSz);
 
-        // W11: per-real-idx, decode every populated col_map slot to recover the
+        // per-real-idx, decode every populated col_map slot to recover the
         // full (column, direction) list, the first_dp byte offset, and the unique
         // flag bit (real-idx flags & 0x01). PK uniqueness is signalled by the
         // logical-idx index_type discriminator below, not the flag bit.
@@ -9964,7 +9953,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             entries.Sort(static (a, b) => CompareKeyBytes(a.Key, b.Key));
 
-            // W11: unique-violation detection. Note this is a post-write check —
+            // unique-violation detection. Note this is a post-write check —
             // the offending row has already been persisted by the time we get
             // here, so throwing leaves the table in a state where the row exists
             // but the index is stale. The caller is expected to delete the
@@ -10007,7 +9996,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W4-C-1 / W4-C-2 fast path: when the change since the previous index
+    /// Incremental fast path: when the change since the previous index
     /// state is a small set of inserted and/or deleted rows AND every real-idx
     /// can be maintained without rereading the table snapshot, splice the
     /// change into each index in place rather than rebuilding the whole
@@ -10025,12 +10014,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Two flavours of fast path are attempted per real-idx:
     /// </para>
     /// <list type="bullet">
-    ///   <item><b>Single-leaf splice (§7 W4-C-1 / W4-C-2).</b> Root is a leaf
+    ///   <item><b>Single-leaf splice.</b> Root is a leaf
     ///   (<c>page_type = 0x04</c>) with no sibling pointers AND the
     ///   post-mutation entry list still fits on one page. The leaf is
     ///   decoded, spliced, and re-emitted as a single page; <c>first_dp</c>
     ///   is patched to the new leaf.</item>
-    ///   <item><b>Multi-level rebuild from existing tree (§7 W4 sub-phase D).</b>
+    ///   <item><b>Multi-level rebuild from existing tree.</b>
     ///   Root is an intermediate (<c>0x03</c>) page. We descend to the
     ///   leftmost leaf, walk the leaf-sibling chain to collect every entry,
     ///   splice the change-set in, and rebuild a fresh B-tree via
@@ -10042,14 +10031,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <para>
     /// Falls back when: format is Jet3 (no index emission); no indexes are
     /// declared; any index has a multi-page TDEF; any key column is
-    /// <c>T_NUMERIC</c> (the W13 canonical-scale pre-pass needs a full
+    /// <c>T_NUMERIC</c> (the canonical-scale pre-pass needs a full
     /// snapshot); the encoder rejects any value (text outside General
     /// Legacy, etc.); the index page chain is malformed; or the spliced
     /// entry list cannot be repacked (e.g. a single entry exceeds the
     /// payload area).
     /// </para>
     /// <para>
-    /// Pre-write unique-index enforcement is handled by W15
+    /// Pre-write unique-index enforcement is handled separately
     /// (<c>CheckUniqueIndexesPreInsertAsync</c> /
     /// <c>CheckUniqueIndexesPreUpdateAsync</c>) before any disk page is
     /// mutated, so this fast path does not re-check uniqueness — same model
@@ -10064,7 +10053,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         IReadOnlyList<(RowLocation Loc, object[] Row)>? deletedRows,
         CancellationToken cancellationToken)
     {
-        // W17d (2026-04-26): Jet3 (.mdb Access 97) participates in the
+        // Jet3 (.mdb Access 97) participates in the
         // incremental fast paths via the per-format LeafPageLayout descriptor
         // (page size 2048, bitmask at 0x16, first entry at 0xF8) and the §3.1
         // 39-byte real-idx physical descriptor (first_dp at phys+34 instead
@@ -10109,7 +10098,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        // §3.1 per-format real-idx physical descriptor sizes (W17a probe-confirmed for Jet3).
+        // §3.1 per-format real-idx physical descriptor sizes.
         // Jet4/ACE: 52 bytes — unknown(4) + col_map(30) + used_pages(4) + first_dp(4) + flags(1) + unknown(9).
         // Jet3:     39 bytes — unknown(4) + col_map(30) + first_dp(4) + flags(1) — no used_pages slot.
         int realIdxPhysSz = jet3 ? 39 : 52;
@@ -10221,11 +10210,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return false;
             }
 
-            // W4-C-3 / W4-C-4 (2026-04-27) — encode the deleted rows' keys too.
-            // The single-leaf and W4-D paths only need the (page, row) pointers
-            // (they re-derive the key from the live leaf entry); the surgical
-            // multi-level path needs the keys to perform a path-capturing
-            // descent that confirms every change targets the same leaf.
+            // Encode the deleted rows' keys too. The single-leaf and bulk
+            // paths only need the (page, row) pointers (they re-derive the
+            // key from the live leaf entry); the surgical multi-level path
+            // needs the keys to perform a path-capturing descent that
+            // confirms every change targets the same leaf.
             List<(byte[] Key, long DataPage, byte DataRow)> removeEntries = EncodeHintEntries(deletedRows, keyColInfos);
             if (delCount > 0 && removeEntries.Count != delCount)
             {
@@ -10249,14 +10238,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // collected entry list, and rebuild a fresh tree. Bails to
                 // bulk only when the encoder rejects a row or the page chain
                 // is malformed. Removes the "fall back to bulk for
-                // multi-level trees" branch documented in §7 W4 sub-phase D.
+                // multi-level trees" branch.
                 if (rootPage[0] != IndexLeafIncremental.PageTypeIntermediate
                     && rootPage[0] != IndexLeafPageBuilder.PageTypeLeaf)
                 {
                     return false;
                 }
 
-                // W18 (2026-04-26) — append-only tail-page fast path. When
+                // Append-only tail-page fast path. When
                 // the change-set is insert-only AND every new key sorts
                 // strictly after the current tail-leaf max key, splice the
                 // new entries into the tail leaf and rewrite that one page.
@@ -10264,9 +10253,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // intermediate writes — the rightmost intermediate summary
                 // becomes (one entry) stale, which the seeker compensates
                 // for by following the intermediate's tail_page header on
-                // overshoot. Falls through to W4-D on overflow, deletes,
-                // out-of-order inserts, missing tail_page, or any malformed
-                // page.
+                // overshoot. Falls through to the bulk rebuild on overflow,
+                // deletes, out-of-order inserts, missing tail_page, or any
+                // malformed page.
                 if (delCount == 0 && addEntries.Count > 0)
                 {
                     bool tailHandled = await TryAppendToTailLeafAsync(
@@ -10281,12 +10270,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     }
                 }
 
-                // W4-C-3 / W4-C-4 (2026-04-27) — surgical multi-level mutation.
+                // Surgical multi-level mutation.
                 // When every change in this batch lands on the SAME leaf and
-                // the spliced entry list either still fits one page (W4-C-3
-                // in-place rewrite) or splits cleanly into two pages whose
-                // new summary entries fit into the parent intermediate
-                // (W4-C-4 split + propagate up), mutate the affected leaf
+                // the spliced entry list either still fits one page or splits cleanly into two pages whose
+                // new summary entries fit into the parent intermediate,
+                // mutate the affected leaf
                 // (and possibly its right sibling + parent / ancestors) in
                 // place at their existing page numbers — no orphaned pages,
                 // no fresh page-range allocation. Returns true when handled,
@@ -10294,9 +10282,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // becomes empty, leaf needs 3+ pages, parent intermediate
                 // overflows, descent overshoots into a tail_page chain, or
                 // the encoder/IO chain hits a malformed page). The caller
-                // falls through to the W4-D bulk rebuild on false. See
-                // docs/design/index-and-relationship-format-notes.md §7
-                // (W4-C-3 / W4-C-4).
+                // falls through to the bulk rebuild on false. See
+                // docs/design/index-and-relationship-format-notes.md §7.
                 bool surgicalHandled = await TrySurgicalMultiLevelMaintainAsync(
                     layout,
                     tdefPage,
@@ -10309,12 +10296,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                // W4-C-5 (2026-04-27) — cross-leaf surgical mutation. When
-                // the change-set spans multiple leaves the W4-C-3/W4-C-4
-                // single-leaf path bails; group changes by target leaf and
+                // Cross-leaf surgical mutation. When
+                // the change-set spans multiple leaves the single-leaf paths
+                // bail; group changes by target leaf and
                 // mutate each leaf in place, aggregating per-parent summary
-                // updates. Bails on underflow (W4-C-6) or parent overflow
-                // (W4-C-7), in which case W4-D below resnaps the tree.
+                // updates. Bails on underflow or parent overflow,
+                // in which case the bulk path below resnaps the tree.
                 bool crossLeafHandled = await TrySurgicalCrossLeafMaintainAsync(
                     layout,
                     tdefPage,
@@ -10478,7 +10465,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W18 (2026-04-26) append-only tail-page fast path. When every key in
+    /// append-only tail-page fast path. When every key in
     /// <paramref name="addEntries"/> sorts strictly greater than the current
     /// tail-leaf max key, splice the new entries into the tail leaf and
     /// rewrite that one page in place — preserving the leaf's
@@ -10488,7 +10475,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <c>continue</c> to the next index slot); returns <see langword="false"/>
     /// when the fast path does not apply — missing root <c>tail_page</c>,
     /// any insert key &lt;= tail max, or the rewritten leaf overflows a
-    /// single page (the caller falls through to the W4-D descend-walk-rebuild
+    /// single page (the caller falls through to the descend-walk-rebuild
     /// path).
     /// <para>
     /// No sibling-chain or intermediate-summary updates are performed. The
@@ -10496,7 +10483,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// (its key is the OLD tail max, not the new one); the §4.5 design
     /// expects readers / seekers to compensate by following the
     /// intermediate's <c>tail_page</c> header on overshoot, which
-    /// <see cref="IndexBTreeSeeker"/> does as of W18.
+    /// <see cref="IndexBTreeSeeker"/> does.
     /// </para>
     /// </summary>
     private async ValueTask<bool> TryAppendToTailLeafAsync(
@@ -10534,7 +10521,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             // The tail leaf must be the rightmost leaf (next_page == 0). If
             // a previous fast-path append already grew the chain and the
-            // root's tail_page wasn't updated, give up — the W4-D path will
+            // root's tail_page wasn't updated, give up — the bulk path will
             // resync the whole tree.
             return false;
         }
@@ -10583,8 +10570,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
         catch (ArgumentOutOfRangeException)
         {
-            // Tail leaf would overflow a single page. Fall through to W4-D,
-            // which will resnap the tree (and emit a fresh tail leaf).
+            // Tail leaf would overflow a single page. Fall through to the
+            // bulk path, which will resnap the tree (and emit a fresh tail leaf).
             return false;
         }
 
@@ -10593,24 +10580,23 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W4-C-3 / W4-C-4 (2026-04-27) — surgical multi-level mutation of a
-    /// JET index B-tree. Replaces the W4-D fall-through "descend to leftmost
+    /// Surgical multi-level mutation of a
+    /// JET index B-tree. Replaces the bulk fall-through "descend to leftmost
     /// leaf, walk every leaf, splice, rebuild a fresh tree on a new page
     /// range" path with an in-place mutation when:
     /// <list type="bullet">
     ///   <item>Every change in the batch lands on the SAME leaf (verified by
     ///   path-capturing descent against each change-set key).</item>
-    ///   <item>The spliced entry list either still fits a single page (W4-C-3
-    ///   in-place leaf rewrite) or splits cleanly into exactly two pages
-    ///   (W4-C-4 split + propagate up).</item>
+    ///   <item>The spliced entry list either still fits a single page or splits cleanly into exactly two pages.</item>
     ///   <item>Any required parent intermediate updates (max-key replacement
-    ///   for W4-C-3, or insertion of one new summary entry for W4-C-4) fit
+    ///   for the in-place case, or insertion of one new summary entry for
+    ///   the split case) fit
     ///   into the existing intermediate page without overflow.</item>
     /// </list>
     /// On any bail trigger — multi-leaf change-set, leaf becomes empty,
     /// 3+ page split, parent intermediate overflow, descent overshoot into
     /// a tail-page chain, malformed page, or encoder rejection — returns
-    /// <see langword="false"/>; the caller falls through to the W4-D bulk
+    /// <see langword="false"/>; the caller falls through to the bulk
     /// rebuild. Pages are rewritten at their existing page numbers (no
     /// orphans) on success.
     /// </summary>
@@ -10697,7 +10683,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         if (spliced.Count == 0)
         {
-            // W4-C-5 leaf-becomes-empty underflow is out of scope this phase.
+            // Leaf-becomes-empty underflow is out of scope for this code path.
             return false;
         }
 
@@ -10707,7 +10693,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         byte[] oldMaxKey = existingLeafEntries[existingLeafEntries.Count - 1].Key;
 
-        // 5. W4-C-3 — try to fit the spliced entries on the original leaf page.
+        // 5. Try to fit the spliced entries on the original leaf page.
         byte[]? rebuilt = IndexLeafIncremental.TryRebuildLeafWithSiblings(
             layout, _pgSz, tdefPage, spliced, leafPrev, leafNext, leafTail);
         if (rebuilt != null)
@@ -10742,7 +10728,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return true;
         }
 
-        // 6. W4-C-4 / W4-C-8 — try an N-way leaf split (greedy left-fill).
+        // 6. Try an N-way leaf split (greedy left-fill).
         // Bails only if a single entry exceeds page payload area.
         List<List<IndexLeafPageBuilder.LeafEntry>>? splitPages = TryGreedySplitLeafInN(layout, _pgSz, spliced);
         if (splitPages is null)
@@ -10926,7 +10912,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             if (idx < 0)
             {
                 // Search key sorts strictly above every summary on this
-                // intermediate. The seeker would follow tail_page (W18) here,
+                // intermediate. The seeker would follow tail_page here,
                 // but the surgical path needs a clean (page, taken-index)
                 // pair at every level for an in-place ancestor rewrite — bail.
                 return 0;
@@ -10970,7 +10956,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// same child entry that was originally followed. Used to confirm that
     /// every change in the batch lands on the same leaf as the first one
     /// (surgical mutation requires this; multi-leaf change-sets bail to
-    /// W4-D).
+    /// the bulk path).
     /// </summary>
     private static bool ConfirmKeyTargetsSamePath(List<DescentStep> path, byte[] searchKey)
     {
@@ -10988,7 +10974,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W4-C-8 (2026-04-27): greedy left-fill N-way split of a spliced leaf
+    /// greedy left-fill N-way split of a spliced leaf
     /// entry list. Walks the input once, packing entries into a fresh page
     /// until the next entry would overflow, then opens a new page and
     /// continues. Returns <see langword="null"/> only when a single entry
@@ -11041,7 +11027,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (pages.Count < 2)
         {
             // Whole thing fits on one page — caller should have used the
-            // W4-C-3 in-place rewrite instead of asking for a split. Bail
+            // in-place rewrite instead of asking for a split. Bail
             // so the call site falls through cleanly.
             return null;
         }
@@ -11050,7 +11036,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W4-C-8 (2026-04-27): greedy left-fill N-way split of an
+    /// greedy left-fill N-way split of an
     /// INTERMEDIATE page's entry list. Each candidate page is validated by
     /// <see cref="IndexBTreeBuilder.TryBuildIntermediatePage"/> so the
     /// per-page byte budget — including the §4.4 prefix-compression savings
@@ -11116,15 +11102,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Computes the in-place rewrites required for a W4-C-3 max-key change.
-    /// At the parent-of-leaf level, replaces the entry at
+    /// Computes the in-place rewrites required for a max-key change at the
+    /// parent-of-leaf level. Replaces the entry at
     /// <c>path[^1].TakenIndex</c> with <paramref name="newSummary"/> (same
     /// child page, new key + summary row pointer). When that entry was the
     /// LAST on the parent intermediate, the parent's max key has changed
     /// too, so we walk up replacing the grandparent's entry that summarises
     /// this parent (and so on, up to the root). Returns <see langword="null"/>
     /// when any intermediate page would overflow on rebuild — caller bails
-    /// to W4-D rebuild without committing any partial state.
+    /// to bulk rebuild without committing any partial state.
     /// </summary>
     private List<(long PageNum, byte[] Bytes)>? PrepareAncestorReplaceWrites(
         IndexLeafPageBuilder.LeafPageLayout layout,
@@ -11184,18 +11170,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Computes the in-place rewrites required for a W4-C-4 / W4-C-8 leaf
+    /// Computes the in-place rewrites required for a leaf
     /// split. At the parent-of-leaf level, replaces the single entry at
     /// <c>path[^1].TakenIndex</c> with the <paramref name="leftSummary"/>
     /// followed by every entry in <paramref name="rightSummaries"/>
-    /// (one for the 2-way W4-C-4 case, N-1 for the N-way W4-C-8 case).
+    /// (one for the 2-way case, N-1 for the N-way case).
     /// When the original entry was the LAST on the parent, the parent's max
     /// key has changed too and we propagate via
     /// <see cref="PrepareAncestorReplaceWrites"/> using the right-most new
     /// summary's key. Returns <see langword="null"/> on overflow at any
     /// captured ancestor level (recursive intermediate split lives in the
     /// cross-leaf path's <see cref="TryStageIntermediateRewritesAsync"/>;
-    /// the single-leaf surgical path bails to W4-D when its parent
+    /// the single-leaf surgical path bails to the bulk rebuild when its parent
     /// overflows). Callers commit the writes after the leaf-side writes.
     /// </summary>
     private List<(long PageNum, byte[] Bytes)>? PrepareAncestorSplitWrites(
@@ -11273,7 +11259,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     // ════════════════════════════════════════════════════════════════
-    // W4-C-5 (2026-04-27) — cross-leaf surgical multi-level mutation
+    // cross-leaf surgical multi-level mutation
     // ════════════════════════════════════════════════════════════════
 
     /// <summary>
@@ -11307,7 +11293,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W4-C-5 cross-leaf surgical mutation. Invoked by
+    /// Cross-leaf surgical mutation. Invoked by
     /// <see cref="TryMaintainIndexesIncrementalAsync"/> AFTER the single-leaf
     /// surgical path (<see cref="TrySurgicalMultiLevelMaintainAsync"/>) has
     /// bailed. Groups every change-set key by its target leaf via
@@ -11317,21 +11303,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// when every leaf was mutated in place at its existing page number (with
     /// at most one new appended page per split); the caller MUST then NOT
     /// invoke <see cref="MaintainIndexesAsync"/>. Returns <see langword="false"/>
-    /// on any bail trigger — caller falls through to the W4-D bulk rebuild.
+    /// on any bail trigger — caller falls through to the bulk rebuild.
     /// <para>
     /// Maximum distinct target leaves in a single cross-leaf surgical batch.
-    /// Above this, the W4-D bulk path is faster (linear leaf-chain walk).
+    /// Above this, the bulk path is faster (linear leaf-chain walk).
     /// The cap is held as a local constant in the method body.
     /// </para>
     /// <list type="bullet">
-    ///   <item>More than 64 distinct target leaves
-    ///   (W4-D's linear leaf-chain walk is faster past this point).</item>
-    ///   <item>Any per-leaf splice produces an empty leaf (W4-C-6 underflow
-    ///   is the next sub-phase).</item>
+    ///   <item>More than 64 distinct target leaves.</item>
+    ///   <item>Any per-leaf splice produces an empty leaf.</item>
     ///   <item>Any per-leaf splice would need 3+ pages.</item>
     ///   <item>Any parent intermediate would overflow on its aggregated
-    ///   summary updates (W4-C-7 recursive intermediate split is the
-    ///   sub-phase after that).</item>
+    ///   summary updates.</item>
     ///   <item>A leaf split's right page would need a sibling-pointer patch
     ///   on a leaf that another group is also mutating (rare; would need
     ///   merged in-place writes).</item>
@@ -11372,10 +11355,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        // Single-leaf groups should have been handled by the W4-C-3/W4-C-4
-        // path. If we landed here with one group, the single-leaf path
+        // Single-leaf groups should have been handled by the single-leaf
+        // surgical path. If we landed here with one group, that path
         // bailed (e.g. parent overflow on summary insert, leaf underflow,
-        // etc.). The cross-leaf code below handles W4-C-6 leaf-merge
+        // etc.). The cross-leaf code below handles leaf-merge
         // (a one-group underflow case) too — only return false when there
         // are zero groups (no work to do, defensive).
         if (groups.Count == 0)
@@ -11397,7 +11380,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // ReplaceAt + InsertAfter for a split) coexist in declaration order.
         var parentOps = new Dictionary<long, List<IntermediateOp>>();
 
-        // W4-C-8+ run-stitching map: each emptying leaf records its
+        // run-stitching map: each emptying leaf records its
         // (prev, next) sibling pointers so the post-loop boundary pass
         // can correctly patch the surviving pages of contiguous emptying
         // runs (skipping over every dead leaf in the run).
@@ -11410,12 +11393,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         long nextAllocatedPageNumber = _stream.Length / _pgSz;
 
-        // ── Pre-pass: classify which leaves will empty out so the W4-C-6
+        // ── Pre-pass: classify which leaves will empty out so the
         // chain-detach logic below can tolerate a contiguous run of
         // emptying leaves. Without this set the
         // `groups.ContainsKey(neighbor)` guard bails on every internal
         // group whose immediate sibling is also being emptied — which is
-        // exactly the workload required to engage the W4-C-8+ recursive
+        // exactly the workload required to engage the recursive
         // intermediate-collapse path. With it, when both neighbours are
         // also empty-targets we simply skip patching their pointer-bytes
         // (they're being orphaned together; no surviving page needs to
@@ -11487,17 +11470,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             if (spliced.Count == 0)
             {
-                // ── W4-C-6 leaf-merge on underflow ───────────────────
+                // leaf-merge on underflow ───────────────────
                 // Drop this leaf entirely; surviving siblings absorb the
-                // logical key range. As of W4-C-6-v2 (2026-04-27) the
-                // dead-leaf-is-rightmost case is supported: tail_page is
+                // logical key range. The dead-leaf-is-rightmost case is
+                // supported: tail_page is
                 // recomputed on the parent intermediate AND propagated up
                 // every captured ancestor where the parent we mutated was
                 // the rightmost child (see TryStageIntermediateRewrites).
                 // Remaining caveats:
                 //   - Bail when the parent has only one child (removing
                 //     would empty the parent → cascade collapse, out of
-                //     scope; recursive intermediate collapse is W4-C-8+).
+                //     scope for this path).
                 //   - Bail when either leaf-chain neighbour is being
                 //     mutated by another group in this batch (would need
                 //     coordinated pointer/content writes).
@@ -11507,7 +11490,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     return false;
                 }
 
-                // W4-C-8+ (2026-04-27): a contiguous run of emptying
+                // a contiguous run of emptying
                 // leaves is allowed; we skip the pair-wise chain-detach
                 // here for any neighbour that is also being orphaned.
                 // The surviving boundary pointers are patched once after
@@ -11532,7 +11515,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 // Per-group pair-wise patches happen ONLY when both
                 // surviving neighbours are non-emptying (the standalone
-                // dead-leaf case shipped in W4-C-6 v1/v2). Runs of two
+                // dead-leaf case). Runs of two
                 // or more emptying leaves are stitched together below.
                 if (!prevAlsoEmptying && !nextAlsoEmptying)
                 {
@@ -11558,7 +11541,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // Stage parent Remove op. ApplyIntermediateOps drops the
                 // entry at OriginalIndex; the dead leaf page is orphaned
                 // (not appended to any free list — Compact & Repair sweeps
-                // it, same as W4-D bulk path orphans).
+                // it, same as bulk path orphans).
                 AddIntermediateOp(parentOps, mergeParent.PageNumber, new IntermediateOp(
                     OriginalIndex: mergeParent.TakenIndex,
                     Type: IntermediateOpType.Remove,
@@ -11574,7 +11557,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             DescentStep parentStep = group.Path[group.Path.Count - 1];
 
-            // ── Try W4-C-3 in-place rewrite first ──
+            // ── Try in-place rewrite first ──
             byte[]? rebuilt = IndexLeafIncremental.TryRebuildLeafWithSiblings(
                 layout, _pgSz, tdefPage, spliced, leafPrev, leafNext, leafTail);
             if (rebuilt != null)
@@ -11604,7 +11587,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            // ── W4-C-4 / W4-C-8 N-way split ──
+            // ── N-way split ──
             // Greedy left-fill into N pages; bails only if a single entry
             // exceeds the page payload area.
             List<List<IndexLeafPageBuilder.LeafEntry>>? splitPages = TryGreedySplitLeafInN(layout, _pgSz, spliced);
@@ -11660,7 +11643,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             // Patch leafNext.prev_page to point at the LAST new page.
             // If leafNext is itself a leaf in another group, we'd need
-            // coordinated writes — bail to keep this phase simple.
+            // coordinated writes — bail to keep this path simple.
             if (leafNext > 0)
             {
                 if (groups.ContainsKey(leafNext))
@@ -11701,7 +11684,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
         }
 
-        // ── W4-C-8+ run-boundary stitching ───────────────────────────
+        // run-boundary stitching ───────────────────────────
         // For each contiguous run of emptying leaves with at least one
         // surviving boundary on either side, patch the surviving page's
         // sibling pointer to skip OVER the entire run. Per-group patches
@@ -11760,13 +11743,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // ── Phase C: aggregate intermediate rewrites ─────────────────
         // For every parent intermediate that received ops, build a fresh
         // entry list, attempt to rebuild in place, and propagate any
-        // resulting max-key changes up the captured paths. W4-C-7:
-        // when an in-place rebuild overflows AND the page is a parent-
+        // resulting max-key changes up the captured paths.
+        // When an in-place rebuild overflows AND the page is a parent-
         // of-leaf intermediate (deepest captured level), greedy-split
         // the entries 2-way and either propagate to the grandparent or
         // (if this is the root) allocate a fresh root and patch first_dp.
-        // W4-C-7-v2 (2026-04-27): higher-level (non-parent-of-leaf)
-        // intermediates split too — the new helper looks up child
+        // Higher-level (non-parent-of-leaf)
+        // intermediates split too — the helper looks up child
         // intermediates' rightmost-leaf via either pending overrides,
         // staged rewrites, or a cache-backed read of the live page.
         var stagingState = new IntermediateStagingState
@@ -11858,7 +11841,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             await WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
         }
 
-        // W4-C-7: if the root intermediate split, patch the real-idx
+        // if the root intermediate split, patch the real-idx
         // first_dp slot on the TDEF page to point at the freshly-allocated
         // root. The new root page itself was already appended via
         // newPageAppends above, so the page number is stable.
@@ -11983,7 +11966,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Replace,
         InsertAfter,
 
-        /// <summary>W4-C-6: drop the entry at <c>OriginalIndex</c>. The
+        /// <summary>Drop the entry at <c>OriginalIndex</c>. The
         /// other tuple fields (<c>NewKey</c>, <c>NewDataPage</c>,
         /// <c>NewDataRow</c>, <c>NewChildPage</c>) are unused.</summary>
         Remove,
@@ -12101,12 +12084,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         /// <summary>Gets or sets the next page number to allocate from the end of the file.</summary>
         public long NextAllocatedPageNumber { get; set; }
 
-        /// <summary>Gets or sets the page number of the freshly-allocated root intermediate when the root split (W4-C-7).</summary>
+        /// <summary>Gets or sets the page number of the freshly-allocated root intermediate when the root split.</summary>
         public long? NewRootPage { get; set; }
     }
 
     /// <summary>
-    /// W4-C-7-v2 helper. Returns the effective <c>tail_page</c> (rightmost
+    /// helper. Returns the effective <c>tail_page</c> (rightmost
     /// leaf reachable through <paramref name="intermediatePage"/>'s subtree)
     /// taking pending mutations into account. Lookup priority:
     /// <list type="number">
@@ -12149,20 +12132,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Stage rewrites for every parent intermediate touched by per-leaf ops,
     /// then propagate any resulting max-key changes up each LeafGroup's
     /// captured path. Returns <see langword="false"/> on any unrecoverable
-    /// shared-ancestor conflict. W4-C-7-v1: when an in-place rebuild
+    /// shared-ancestor conflict. When an in-place rebuild
     /// overflows AND the page is a parent-of-leaf intermediate (deepest
     /// captured level whose children are leaves), greedy-split the entries
     /// 2-way and either propagate to the grandparent (Replace + InsertAfter)
     /// or, if the splitting page IS the root, allocate a new root
     /// intermediate with two summary entries pointing at the two halves and
-    /// signal the caller to patch <c>first_dp</c>. W4-C-7-v2 (2026-04-27):
-    /// higher-level intermediates (children are themselves intermediates)
+    /// signal the caller to patch <c>first_dp</c>. Higher-level intermediates
+    /// (children are themselves intermediates)
     /// also split in place — the left half's <c>tail_page</c> is computed by
     /// looking up the rightmost-child intermediate's effective tail via
     /// staged overrides, staged rewrites, or a cache-backed read of the
     /// live page. Recursive split through any number of levels (up to root
     /// reallocation) is supported; only 3+-page splits at any single level
-    /// (TryGreedySplitIntermediateInTwo overflow) still bail to W4-D.
+    /// (TryGreedySplitIntermediateInTwo overflow) still bail to the bulk path.
     /// </summary>
     private async ValueTask<bool> TryStageIntermediateRewritesAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
@@ -12177,10 +12160,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         stagingState.NewRootPage = null;
 
         // Track which intermediates are "parent-of-leaf" (children are
-        // leaves, NOT intermediates). These are the only pages W4-C-7 v1
-        // is willing to split — splitting a higher-level intermediate
+        // leaves, NOT intermediates). These are the only pages the leaf-split
+        // helper is willing to split — splitting a higher-level intermediate
         // requires reading its children's tail_page values to recompute
-        // the split halves' tail_page headers, which v1 punts on.
+        // the split halves' tail_page headers, handled by the recursive
+        // helper below.
         var parentOfLeaf = new HashSet<long>(parentOps.Keys);
 
         // Build a map of every intermediate page touched, keyed by page
@@ -12194,7 +12178,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var intermediateRefs = new Dictionary<long, DescentStep>(parentOps.Count * 2);
         var intermediateGrandparent = new Dictionary<long, (long ParentPage, int IndexInParent)>(parentOps.Count * 2);
 
-        // W4-C-6-v2 (2026-04-27) — tail_page propagation. When a per-leaf
+        // tail_page propagation. When a per-leaf
         // splice removes the parent's rightmost child entry (or a leaf
         // split appends a new rightmost child), the parent intermediate's
         // tail_page header must be recomputed to point at the NEW rightmost
@@ -12294,20 +12278,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             if (newEntries.Count == 0)
             {
-                // ── W4-C-8+ recursive intermediate collapse on cascading
-                // underflow (2026-04-27) ────────────────────────────────
+                // Recursive intermediate collapse on cascading
+                // underflow ──────────────────────────────────────────
                 // A multi-group delete batch removed every child of this
                 // intermediate. Cascade the removal up: stage a Remove op
                 // on the grandparent for the slot that referenced this
                 // page, then re-enqueue the grandparent so the loop picks
                 // up the new ops on a subsequent pass. The dead intermediate
-                // page is orphaned (same disposal model as W4-C-6 dead
-                // leaves and W4-D bulk-rebuild orphans — Compact & Repair
-                // sweeps it). When this collapse happens to the root (no
-                // grandparent) the entire tree has emptied; we still bail
-                // because emitting a fresh empty single-leaf root would
-                // require allocating a leaf page and patching first_dp,
-                // which the W4-D bulk path already does correctly.
+                // page is orphaned (same disposal model as dead leaves and
+                // bulk-rebuild orphans — Compact & Repair sweeps it). When
+                // this collapse happens to the root (no grandparent) the
+                // entire tree has emptied; we still bail because emitting
+                // a fresh empty single-leaf root would require allocating
+                // a leaf page and patching first_dp, which the bulk path
+                // already does correctly.
                 if (!intermediateGrandparent.TryGetValue(deepest, out (long ParentPage, int IndexInParent) gpCollapse))
                 {
                     return false;
@@ -12336,7 +12320,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             long origNext = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(12, 4));
             long origTail = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(16, 4));
 
-            // W4-C-6-v2: recompute tail_page based on the post-mutation
+            // Recompute tail_page based on the post-mutation
             // entry list. For parent-of-leaf intermediates the rightmost
             // leaf is always the LAST entry's ChildPage. For higher
             // intermediates we inherit the new tail from the rightmost
@@ -12344,7 +12328,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // when that child was rewritten or split earlier in this
             // batch), then falling back to GetEffectiveTailPageAsync
             // which reads the live or staged page header. The live-page
-            // fallback matters for the W4-C-8+ recursive-collapse case:
+            // fallback matters for the recursive-collapse case:
             // when a Remove drops the previous rightmost child entry
             // entirely, the new rightmost child may be an untouched
             // intermediate whose tail is only available on disk. The
@@ -12376,7 +12360,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 layout, _pgSz, tdefPage, newEntries, origPrev, origNext, newTail);
             if (rebuilt is null)
             {
-                // W4-C-7 / W4-C-8 (2026-04-27) — intermediate overflow.
+                // Intermediate overflow.
                 // Greedy left-fill split into N pages; each subsequent page
                 // is freshly allocated. For parent-of-leaf intermediates
                 // each split page's tail_page = its rightmost child's
@@ -12611,7 +12595,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return result;
         }
 
-        // W23 (2026-04-27): Jet4 .mdb uses the LegacyFixedPointColumnDescriptor
+        // Jet4 .mdb uses the LegacyFixedPointColumnDescriptor
         // byte-twiddling rules for T_NUMERIC keys; ACCDB / ACE uses the
         // post-2007 form. Mirrors the bulk path's `legacyNumeric` flag.
         bool legacyNumeric = _format == DatabaseFormat.Jet4Mdb;
@@ -12694,7 +12678,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W15: parse the TDEF page and return one descriptor per <em>unique</em>
+    /// parse the TDEF page and return one descriptor per <em>unique</em>
     /// real-idx slot (uniqueness is signalled either by the §3.1 real-idx
     /// <c>flags &amp; 0x01</c> bit or by an associated logical-idx entry whose
     /// <c>index_type = 0x01</c> primary-key discriminator). Returns an empty
@@ -12705,10 +12689,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         var result = new List<UniqueIndexDescriptor>();
 
-        // §3.1 / §3.2 per-format sizes + offsets (W17a probe-confirmed for Jet3,
-        // W17d wires Jet3 into the W15 pre-write unique check so the
-        // incremental fast path no longer relies on the W11 post-write check
-        // inside MaintainIndexesAsync to detect duplicates).
+        // §3.1 / §3.2 per-format sizes + offsets.
         bool jet3 = _format == DatabaseFormat.Jet3Mdb;
         int realIdxPhysSz = jet3 ? 39 : 52;
         int logIdxEntrySz = jet3 ? 20 : 28;
@@ -12855,7 +12836,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W15: encode the composite index key for one row using a previously
+    /// encode the composite index key for one row using a previously
     /// computed canonical numeric scale per key column.
     /// All key column types accepted by <see cref="ResolveIndexes"/> have
     /// matching <see cref="IndexKeyEncoder"/> support; any encoder failure
@@ -12892,16 +12873,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W15: pre-write unique-index validation for an insert batch. Loads the
+    /// pre-write unique-index validation for an insert batch. Loads the
     /// table snapshot once, encodes the existing-row keys + the pending-row
     /// keys for every unique index, and throws
     /// <see cref="InvalidOperationException"/> on the first collision (existing
     /// vs. pending or pending vs. pending). All key column types accepted by
     /// <see cref="ResolveIndexes"/> have matching <see cref="IndexKeyEncoder"/>
     /// support, so encoder rejection propagates as an unrecoverable error
-    /// rather than being silently skipped (W18 removed the only legitimate
-    /// trigger by rejecting OLE / Attachment / Multi-Value index keys at
-    /// create time).
+    /// rather than being silently skipped.
     /// <para>
     /// Pending rows MUST already have had <c>ApplyConstraintsAsync</c> applied
     /// (auto-increment values resolved, defaults substituted) — the encoder
@@ -12931,7 +12910,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W15: pre-write unique-index validation for an update batch. The caller
+    /// pre-write unique-index validation for an update batch. The caller
     /// supplies the table snapshot it already loaded (saving a redundant
     /// scan) plus the per-row replacement payloads keyed by snapshot row
     /// index.
@@ -12965,7 +12944,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// W15 core: builds the post-mutation effective row set (snapshot rows
+    /// core: builds the post-mutation effective row set (snapshot rows
     /// optionally replaced at <paramref name="replaceAtSnapshotIndex"/> plus
     /// <paramref name="pendingInsertRows"/> appended), encodes the composite
     /// key per unique index, and detects any collision. Throws

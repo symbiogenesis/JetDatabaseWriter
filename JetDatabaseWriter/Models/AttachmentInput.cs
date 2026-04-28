@@ -9,9 +9,8 @@ using System.Diagnostics.CodeAnalysis;
 /// for one file attached to a parent row's complex (Attachment) column.
 /// </summary>
 /// <remarks>
-/// Phase C4 of the complex-columns writer. See
-/// <c>docs/design/complex-columns-format-notes.md</c> §3 for the wrapper-encoded
-/// on-disk format the writer applies to <see cref="FileData"/>.
+/// See <c>docs/design/complex-columns-format-notes.md</c> §3 for the
+/// wrapper-encoded on-disk format the writer applies to <see cref="FileData"/>.
 /// </remarks>
 public sealed record AttachmentInput
 {
