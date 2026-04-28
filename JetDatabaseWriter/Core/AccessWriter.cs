@@ -79,7 +79,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly Dictionary<string, List<ColumnConstraint>> _constraints =
         new(StringComparer.OrdinalIgnoreCase);
 
-    private List<CatalogEntry>? _catalogCache;
     private long _cachedInsertTDefPage = -1;
     private long _cachedInsertPageNumber = -1;
 
@@ -2253,7 +2252,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string name = ReadColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    string name = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (string.IsNullOrEmpty(name) || !namePredicate(name))
                     {
                         continue;
@@ -2263,7 +2262,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     for (int c = 0; c < values.Length; c++)
                     {
                         ColumnInfo col = msysRelDef.Columns[c];
-                        string raw = ReadColumnValue(page, row.RowStart, row.RowSize, col);
+                        string raw = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, col);
                         values[c] = string.IsNullOrEmpty(raw)
                             ? DBNull.Value
                             : col.Type switch
@@ -2278,13 +2277,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     results.Add(new RelationshipRowSnapshot(
                         row,
                         name,
-                        ReadColumnValue(page, row.RowStart, row.RowSize, objCol),
-                        ReadColumnValue(page, row.RowStart, row.RowSize, refObjCol),
-                        ReadColumnValue(page, row.RowStart, row.RowSize, colCol),
-                        ReadColumnValue(page, row.RowStart, row.RowSize, refColCol),
-                        ParseInt32(ReadColumnValue(page, row.RowStart, row.RowSize, icolCol)),
-                        ParseInt32(ReadColumnValue(page, row.RowStart, row.RowSize, ccolCol)),
-                        ParseInt32(ReadColumnValue(page, row.RowStart, row.RowSize, grbitCol)),
+                        DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, objCol),
+                        DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, refObjCol),
+                        DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, colCol),
+                        DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, refColCol),
+                        ParseInt32(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, icolCol)),
+                        ParseInt32(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, ccolCol)),
+                        ParseInt32(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, grbitCol)),
                         values));
                 }
             }
@@ -4210,7 +4209,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string name = ReadColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    string name = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (!string.IsNullOrEmpty(name))
                     {
                         _ = names.Add(name);
@@ -5600,10 +5599,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return page;
     }
 
-    private static FileStream CreateStream(string path)
-    {
-        return new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.Asynchronous | FileOptions.RandomAccess);
-    }
+    private static FileStream CreateStream(string path) =>
+        OpenDatabaseFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
 
     private static async ValueTask VerifyPasswordOnOpenAsync(string path, AccessWriterOptions options, CancellationToken cancellationToken = default)
     {
@@ -6595,7 +6592,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 {
                     if (idCol != null)
                     {
-                        string idText = ReadColumnValue(page, row.RowStart, row.RowSize, idCol);
+                        string idText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idCol);
                         if (int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) && v > maxId)
                         {
                             maxId = v;
@@ -6604,7 +6601,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                     if (ctIdCol != null)
                     {
-                        string ctText = ReadColumnValue(page, row.RowStart, row.RowSize, ctIdCol);
+                        string ctText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, ctIdCol);
                         if (int.TryParse(ctText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int cv) && cv > maxId)
                         {
                             maxId = cv;
@@ -7011,19 +7008,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string rowName = ReadColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    string rowName = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
-                    string idText = ReadColumnValue(page, row.RowStart, row.RowSize, complexIdCol);
+                    string idText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, complexIdCol);
                     if (complexId != 0 && (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid) || rid != complexId))
                     {
                         continue;
                     }
 
-                    string flatText = ReadColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
+                    string flatText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
                     if (long.TryParse(flatText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long flatId))
                     {
                         return flatId & 0x00FFFFFFL;
@@ -7074,7 +7071,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     for (int p = 0; p < predIndexes.Length; p++)
                     {
                         ColumnInfo c = parentDef.Columns[predIndexes[p]];
-                        string actual = ReadColumnValue(page, row.RowStart, row.RowSize, c);
+                        string actual = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, c);
                         if (!string.Equals(actual, predValues[p], StringComparison.OrdinalIgnoreCase))
                         {
                             ok = false;
@@ -7222,7 +7219,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string text = ReadColumnValue(page, row.RowStart, row.RowSize, fkCol);
+                    string text = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
                     if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) && v > maxId)
                     {
                         maxId = v;
@@ -7458,7 +7455,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                     foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
                     {
-                        string fkText = ReadColumnValue(page, row.RowStart, row.RowSize, fkCol);
+                        string fkText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
                         if (int.TryParse(fkText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int fk)
                             && ids.Contains(fk))
                         {
@@ -7594,19 +7591,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string rowName = ReadColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    string rowName = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
-                    string idText = ReadColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
+                    string idText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
                     if (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid) || rid != complexId)
                     {
                         continue;
                     }
 
-                    string flatText = ReadColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
+                    string flatText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
                     if (long.TryParse(flatText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long fid))
                     {
                         flatTdefPage = fid & 0x00FFFFFFL;
@@ -7706,13 +7703,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string rowName = ReadColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    string rowName = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     if (!string.Equals(rowName, oldColumnName, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
-                    string idText = ReadColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
+                    string idText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
                     if (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid) || rid != complexId)
                     {
                         continue;
@@ -7721,7 +7718,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     var values = new object[msysCxDef.Columns.Count];
                     for (int i = 0; i < values.Length; i++)
                     {
-                        string text = ReadColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);
+                        string text = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);
                         values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
                     }
 
@@ -7827,8 +7824,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    string rowName = ReadColumnValue(page, row.RowStart, row.RowSize, nameCol);
-                    string idText = ReadColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
+                    string rowName = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
+                    string idText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
                     if (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid))
                     {
                         continue;
@@ -7839,7 +7836,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         continue;
                     }
 
-                    string flatText = ReadColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
+                    string flatText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
                     if (long.TryParse(flatText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long flatId))
                     {
                         _ = flatTdefPages.Add(flatId & 0x00FFFFFFL);
@@ -8098,7 +8095,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Inserts a row and returns its (page, row-index) location so the caller
     /// can mark it deleted if a subsequent step (e.g. unique-index rebuild)
     /// fails. Mirrors <see cref="InsertRowDataAsync"/> but exposes the
-    /// <see cref="RowLocation"/> of the freshly written row.
+    /// <see cref="AccessBase.RowLocation"/> of the freshly written row.
     /// </summary>
     private async ValueTask<RowLocation> InsertRowDataLocAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default)
     {
@@ -8637,45 +8634,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         BinaryPrimitives.WriteInt32LittleEndian(dest.Slice(12, 4), bits[2]);
     }
 
-    private void InvalidateCatalogCache()
-    {
-        _stateLock.EnterWriteLock();
-        try
-        {
-            _catalogCache = null;
-        }
-        finally
-        {
-            _stateLock.ExitWriteLock();
-        }
-    }
-
-    private List<CatalogEntry>? GetCatalogCache()
-    {
-        _stateLock.EnterReadLock();
-        try
-        {
-            return _catalogCache;
-        }
-        finally
-        {
-            _stateLock.ExitReadLock();
-        }
-    }
-
-    private void SetCatalogCache(List<CatalogEntry> cache)
-    {
-        _stateLock.EnterWriteLock();
-        try
-        {
-            _catalogCache = cache;
-        }
-        finally
-        {
-            _stateLock.ExitWriteLock();
-        }
-    }
-
     private bool TryGetCachedInsertPageNumber(long tdefPage, out long pageNumber)
     {
         _stateLock.EnterReadLock();
@@ -8746,10 +8704,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 {
                     PageNumber = row.PageNumber,
                     RowIndex = row.RowIndex,
-                    Name = ReadColumnValue(page, row.RowStart, row.RowSize, nameColumn),
-                    ObjectType = ParseInt32(ReadColumnValue(page, row.RowStart, row.RowSize, typeColumn)),
-                    Flags = ParseInt64(ReadColumnValue(page, row.RowStart, row.RowSize, flagsColumn!)),
-                    TDefPage = ParseInt64(ReadColumnValue(page, row.RowStart, row.RowSize, idColumn!)) & 0x00FFFFFFL,
+                    Name = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameColumn),
+                    ObjectType = ParseInt32(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, typeColumn)),
+                    Flags = ParseInt64(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flagsColumn!)),
+                    TDefPage = ParseInt64(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn!)) & 0x00FFFFFFL,
                 });
             }
 
@@ -8757,54 +8715,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         return result;
-    }
-
-    private string ReadColumnValue(byte[] page, int rowStart, int rowSize, ColumnInfo column)
-    {
-        if (column == null || rowSize < _numColsFldSz)
-        {
-            return string.Empty;
-        }
-
-        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout))
-        {
-            return string.Empty;
-        }
-
-        ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, column);
-        switch (slice.Kind)
-        {
-            case ColumnSliceKind.Bool:
-                return slice.BoolValue ? "True" : "False";
-
-            case ColumnSliceKind.Null:
-            case ColumnSliceKind.Empty:
-                return string.Empty;
-
-            case ColumnSliceKind.Fixed:
-                return ReadFixedString(page, rowStart + slice.DataStart, column.Type, slice.DataLen);
-
-            case ColumnSliceKind.Var:
-                if (slice.DataLen <= 0)
-                {
-                    return string.Empty;
-                }
-
-                switch (column.Type)
-                {
-                    case T_TEXT:
-                        return _format != DatabaseFormat.Jet3Mdb
-                            ? DecodeJet4Text(page, rowStart + slice.DataStart, slice.DataLen)
-                            : _ansiEncoding.GetString(page, rowStart + slice.DataStart, slice.DataLen);
-                    case T_BINARY:
-                        return ToHexStringNoSeparator(page.AsSpan(rowStart + slice.DataStart, slice.DataLen));
-                    default:
-                        return string.Empty;
-                }
-
-            default:
-                return string.Empty;
-        }
     }
 
     private int ParseInt32(string value)
@@ -8845,14 +8755,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         return result;
-    }
-
-    private IEnumerable<RowLocation> EnumerateLiveRowLocations(long pageNumber, byte[] page)
-    {
-        foreach (RowBound rb in EnumerateLiveRowBounds(page))
-        {
-            yield return new RowLocation(pageNumber, rb.RowIndex, rb.RowStart, rb.RowSize);
-        }
     }
 
     /// <summary>
@@ -12110,17 +12012,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Wu16(page, offsetPos, raw | 0x8000);
         await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         ReturnPage(page);
-    }
-
-    private readonly record struct RowLocation(long PageNumber, int RowIndex, int RowStart, int RowSize)
-    {
-        public long PageNumber { get; } = PageNumber;
-
-        public int RowIndex { get; } = RowIndex;
-
-        public int RowStart { get; } = RowStart;
-
-        public int RowSize { get; } = RowSize;
     }
 
     private sealed class CatalogRow

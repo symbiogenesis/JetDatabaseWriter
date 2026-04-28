@@ -55,10 +55,8 @@ using JetDatabaseWriter.Models;
 public sealed class AccessReader : AccessBase, IAccessReader
 {
     private readonly object _cacheLock = new();
-    private readonly object _catalogLock = new();
     private readonly bool _useLockFile;
     private readonly bool _strictParsing;
-    private volatile List<CatalogEntry>? _catalogCache;
     private volatile LruCache<long, byte[]>? _pageCache;
     private long _cacheHits;
     private long _cacheMisses;
@@ -1449,10 +1447,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 _pageCache = null;
             }
 
-            lock (_catalogLock)
-            {
-                _catalogCache?.Clear();
-            }
+            InvalidateCatalogCache();
         }
         finally
         {
@@ -1484,10 +1479,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return tableName != null && string.Equals(tableIdStr, tableName, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static FileStream CreateStream(string path, AccessReaderOptions options)
-    {
-        return new FileStream(path, FileMode.Open, options.FileAccess, options.FileShare, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
-    }
+    private static FileStream CreateStream(string path, AccessReaderOptions options) =>
+        OpenDatabaseFileStream(path, options.FileAccess, options.FileShare, FileOptions.Asynchronous | FileOptions.SequentialScan);
 
     private static string TypeCodeToName(byte t) => t switch
     {
@@ -1885,9 +1878,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
     private protected override async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
     {
-        if (_catalogCache != null)
+        List<CatalogEntry>? cached = GetCatalogCache();
+        if (cached != null)
         {
-            return _catalogCache;
+            return cached;
         }
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -1900,11 +1894,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             _ = diag.AppendLine("ERROR: Page 2 is not a valid TDEF page (null returned).");
             LastDiagnostics = diag.ToString();
-            lock (_catalogLock)
-            {
-                _catalogCache ??= [];
-                return _catalogCache;
-            }
+            var empty = new List<CatalogEntry>();
+            SetCatalogCache(empty);
+            return empty;
         }
 
         _ = diag.AppendLine($"MSysObjects cols ({msys.Columns.Count}): " +
@@ -1919,11 +1911,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             _ = diag.AppendLine("ERROR: Required catalog columns not found. Column name mismatch?");
             LastDiagnostics = diag.ToString();
-            lock (_catalogLock)
-            {
-                _catalogCache ??= [];
-                return _catalogCache;
-            }
+            var empty = new List<CatalogEntry>();
+            SetCatalogCache(empty);
+            return empty;
         }
 
         var result = new List<CatalogEntry>();
@@ -2004,11 +1994,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         LastDiagnostics = diag.ToString();
 
-        lock (_catalogLock)
-        {
-            _catalogCache ??= result;
-            return _catalogCache;
-        }
+        SetCatalogCache(result);
+        return result;
     }
 
     private void ValidateDatabaseFormat()

@@ -90,6 +90,7 @@ public abstract class AccessBase : IAccessBase
 
     private protected bool _disposed;
     private readonly SemaphoreSlim _ioGate = new(1, 1);
+    private volatile List<CatalogEntry>? _catalogCache;
 
     static AccessBase()
     {
@@ -1098,9 +1099,109 @@ public abstract class AccessBase : IAccessBase
         return new ColumnSlice(ColumnSliceKind.Var, dataStart, dataLen, false);
     }
 
+    /// <summary>
+    /// Yields <see cref="RowLocation"/>s (row index + start/size) for every live, non-overflow
+    /// row on <paramref name="page"/>, paired with <paramref name="pageNumber"/>. A thin wrapper
+    /// over <see cref="EnumerateLiveRowBounds(byte[])"/> for callers that need to round-trip
+    /// the originating page number (update / delete paths).
+    /// </summary>
+    private protected IEnumerable<RowLocation> EnumerateLiveRowLocations(long pageNumber, byte[] page)
+    {
+        foreach (RowBound rb in EnumerateLiveRowBounds(page))
+        {
+            yield return new RowLocation(pageNumber, rb.RowIndex, rb.RowStart, rb.RowSize);
+        }
+    }
+
+    /// <summary>
+    /// Reads a single column value as a string, supporting bool, fixed-width and inline-var
+    /// (T_TEXT / T_BINARY) columns. Variable-width MEMO / OLE / Complex columns are NOT
+    /// followed (they require LVAL chain traversal); those return <see cref="string.Empty"/>
+    /// here. Used by writer-side catalog walks that only need scalar metadata columns.
+    /// </summary>
+    private protected string DecodeSimpleColumnValue(byte[] page, int rowStart, int rowSize, ColumnInfo column)
+    {
+        if (column == null || rowSize < _numColsFldSz)
+        {
+            return string.Empty;
+        }
+
+        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout))
+        {
+            return string.Empty;
+        }
+
+        ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, column);
+        switch (slice.Kind)
+        {
+            case ColumnSliceKind.Bool:
+                return slice.BoolValue ? "True" : "False";
+
+            case ColumnSliceKind.Null:
+            case ColumnSliceKind.Empty:
+                return string.Empty;
+
+            case ColumnSliceKind.Fixed:
+                return ReadFixedString(page, rowStart + slice.DataStart, column.Type, slice.DataLen);
+
+            case ColumnSliceKind.Var:
+                if (slice.DataLen <= 0)
+                {
+                    return string.Empty;
+                }
+
+                switch (column.Type)
+                {
+                    case T_TEXT:
+                        return _format != DatabaseFormat.Jet3Mdb
+                            ? DecodeJet4Text(page, rowStart + slice.DataStart, slice.DataLen)
+                            : _ansiEncoding.GetString(page, rowStart + slice.DataStart, slice.DataLen);
+                    case T_BINARY:
+                        return ToHexStringNoSeparator(page.AsSpan(rowStart + slice.DataStart, slice.DataLen));
+                    default:
+                        return string.Empty;
+                }
+
+            default:
+                return string.Empty;
+        }
+    }
+
+    // ── Catalog cache ────────────────────────────────────────────────
+    // The cache is a single reference; volatile-write of a fully-built list is atomic
+    // in .NET, so a lock is unnecessary (subsequent readers see either the old or the
+    // new list, never a torn value).
+
+    /// <summary>Returns the cached catalog list, or <see langword="null"/> if not yet populated.</summary>
+    private protected List<CatalogEntry>? GetCatalogCache() => _catalogCache;
+
+    /// <summary>Stores the catalog list returned by <see cref="GetUserTablesAsync"/>.</summary>
+    private protected void SetCatalogCache(List<CatalogEntry> cache) => _catalogCache = cache;
+
+    /// <summary>Discards the cached catalog so the next <see cref="GetUserTablesAsync"/> call re-scans MSysObjects.</summary>
+    private protected void InvalidateCatalogCache() => _catalogCache = null;
+
+    // ── File-stream factory ──────────────────────────────────────────
+
+    /// <summary>
+    /// Opens a database file with the given access / share / option combination.
+    /// Used by both <see cref="AccessReader"/> (read-only sequential) and
+    /// <see cref="AccessWriter"/> (read-write random-access).
+    /// </summary>
+#pragma warning disable SA1204 // Static members ordered next to the related instance helpers
+    private protected static FileStream OpenDatabaseFileStream(string path, FileAccess access, FileShare share, FileOptions options)
+    {
+        return new FileStream(path, FileMode.Open, access, share, 4096, options);
+    }
+#pragma warning restore SA1204
+
     // ── Inner types ──────────────────────────────────────────────────
 
     private protected readonly record struct RowBound(int RowIndex, int RowStart, int RowSize);
+
+    /// <summary>Per-row coordinates that include the owning data page number — used by writer-side
+    /// scans that need to round-trip back to the page (update / delete / re-encrypt).</summary>
+    private protected readonly record struct RowLocation(long PageNumber, int RowIndex, int RowStart, int RowSize);
 
     private protected sealed record CatalogEntry(string Name, long TDefPage);
 
