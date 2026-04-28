@@ -302,7 +302,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     }
 
     [Fact]
-    public async Task SurgicalBail_MultiLeafChangeSet_RoundTripsViaW4D()
+    public async Task SurgicalBail_MultiLeafChangeSet_RoundTripsViaBulkRebuild()
     {
         // Insert rows whose keys span at least TWO leaves → surgical path
         // bails (cannot be a single-leaf rewrite); bulk rebuild handles
@@ -342,7 +342,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     }
 
     [Fact]
-    public async Task SurgicalBail_LeafBecomesEmpty_RoundTripsViaW4D()
+    public async Task SurgicalBail_LeafBecomesEmpty_RoundTripsViaBulkRebuild()
     {
         // Build a tiny multi-leaf tree, then delete every row that lives on
         // one specific leaf → surgical path bails (empty-leaf underflow is

@@ -283,7 +283,7 @@ public sealed class ComplexColumnsWriterTests
         Assert.Empty(info);
     }
 
-    // ── C10: MSysComplexType_* template tables ─────────────────────────────────
+    // ── MSysComplexType_* template tables ────────────────────────────────────────
 
     private static readonly string[] _expectedTemplateNames =
     [
@@ -394,7 +394,7 @@ public sealed class ComplexColumnsWriterTests
         await using var reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         // The MSysComplexColumns row for "Files" must reference a real template id
-        // (>0) instead of the pre-C10 placeholder 0.
+        // (>0) instead of a placeholder 0.
         DataTable? cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
         DataRow row = Assert.Single(
