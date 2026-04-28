@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Globalization;
 using System.Numerics;
 using JetDatabaseWriter.Internal.Helpers;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 
 /// <summary>
 /// JET index sort-key encoder for fixed-width numeric and date/time column types.
@@ -52,20 +53,8 @@ using JetDatabaseWriter.Internal.Helpers;
 /// </summary>
 internal static class IndexKeyEncoder
 {
-    // Column type codes — duplicated here so this file does not need to
-    // inherit from AccessBase (the constants there are private protected).
-    private const byte T_BOOL = 0x01;
-    private const byte T_BYTE = 0x02;
-    private const byte T_INT = 0x03;
-    private const byte T_LONG = 0x04;
-    private const byte T_MONEY = 0x05;
-    private const byte T_FLOAT = 0x06;
-    private const byte T_DOUBLE = 0x07;
-    private const byte T_DATETIME = 0x08;
-    private const byte T_BINARY = 0x09;
-    private const byte T_TEXT = 0x0A;
-    private const byte T_MEMO = 0x0C;
-    private const byte T_GUID = 0x0F;
+    // Column type codes are imported via `using static JetDatabaseWriter.Constants.ColumnTypes;`
+    // (mdbtools HACKING.md naming preserved on the constant declarations themselves).
 
     // Entry flag bytes — see §4.3.
     internal const byte FlagAscendingNonNull = 0x7F;

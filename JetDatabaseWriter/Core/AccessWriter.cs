@@ -17,6 +17,7 @@ using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 
 #pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
@@ -4165,7 +4166,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in rows)
         {
-            if (row.ObjectType == OBJ_TABLE
+            if (row.ObjectType == Constants.SystemObjects.UserTableType
                 && row.TDefPage > 0
                 && string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
             {
@@ -5737,7 +5738,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var result = new List<CatalogEntry>();
         foreach (CatalogRow row in rows)
         {
-            if (row.ObjectType != OBJ_TABLE)
+            if (row.ObjectType != Constants.SystemObjects.UserTableType)
             {
                 continue;
             }
@@ -5793,7 +5794,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         msys.SetValueByName(values, "Id", (int)tdefPageNumber);
         msys.SetValueByName(values, "ParentId", 0);
         msys.SetValueByName(values, "Name", tableName);
-        msys.SetValueByName(values, "Type", (short)OBJ_TABLE);
+        msys.SetValueByName(values, "Type", (short)Constants.SystemObjects.UserTableType);
         msys.SetValueByName(values, "DateCreate", now);
         msys.SetValueByName(values, "DateUpdate", now);
         msys.SetValueByName(values, "Flags", unchecked((int)catalogFlags));
@@ -5977,7 +5978,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         long? tdefPage = null;
         foreach (CatalogRow row in rows)
         {
-            if (row.ObjectType != OBJ_TABLE)
+            if (row.ObjectType != Constants.SystemObjects.UserTableType)
             {
                 continue;
             }
@@ -7507,7 +7508,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            if (row.ObjectType != OBJ_TABLE)
+            if (row.ObjectType != Constants.SystemObjects.UserTableType)
             {
                 continue;
             }
@@ -7645,7 +7646,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         List<CatalogRow> catalog = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in catalog)
         {
-            if (row.ObjectType != OBJ_TABLE)
+            if (row.ObjectType != Constants.SystemObjects.UserTableType)
             {
                 continue;
             }
@@ -7877,7 +7878,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         List<CatalogRow> catalog = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in catalog)
         {
-            if (row.ObjectType != OBJ_TABLE)
+            if (row.ObjectType != Constants.SystemObjects.UserTableType)
             {
                 continue;
             }

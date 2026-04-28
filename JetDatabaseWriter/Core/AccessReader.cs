@@ -19,6 +19,7 @@ using JetDatabaseWriter.Internal.Collections;
 using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 
 #pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API
 
@@ -1945,7 +1946,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 string nameStr = SafeGet(row, idxName);
                 string flagsStr = SafeGet(row, idxFlags);
 
-                if (!int.TryParse(typeStr, out int objType) || objType != OBJ_TABLE)
+                if (!int.TryParse(typeStr, out int objType) || objType != Constants.SystemObjects.UserTableType)
                 {
                     continue;
                 }
@@ -2474,7 +2475,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != OBJ_TABLE && objType != Constants.SystemObjects.LinkedOdbcType))
+            if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != Constants.SystemObjects.UserTableType && objType != Constants.SystemObjects.LinkedOdbcType))
             {
                 continue;
             }
