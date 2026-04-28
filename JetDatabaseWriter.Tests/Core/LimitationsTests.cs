@@ -208,12 +208,15 @@ public sealed class LimitationsTests : IDisposable
 
         string[] expected =
         [
+            "CalculatedResultType",
+            "CalculationExpression",
             "ClrType",
             "DefaultValue",
             "DefaultValueExpression",
             "Description",
             "IsAttachment",
             "IsAutoIncrement",
+            "IsCalculated",
             "IsHyperlink",
             "IsMultiValue",
             "IsNullable",
@@ -490,11 +493,39 @@ public sealed class LimitationsTests : IDisposable
     [Fact]
     public void SpecializedColumns_NoCalculatedColumnApi()
     {
-        // README: "No calculated columns (Access 2010+ expression columns)."
-        // The Jet-expression-string members (DefaultValueExpression / ValidationRuleExpression)
-        // are persisted-property strings, not Access-2010 calculated-column formulas.
-        AssertNoMemberMatching(typeof(ColumnDefinition), "Calculated");
-        AssertNoMemberMatching(typeof(ColumnDefinition), "Formula");
+        // Phase 1A status (see docs/design/calculated-columns-format-notes.md):
+        // calc-column metadata round-trips on read (ColumnMetadata.IsCalculated /
+        // .CalculationExpression / .CalculatedResultType), but writing calc
+        // columns (Phase 1B) and evaluating expressions client-side (Phase 2+)
+        // are not yet implemented. CreateTableAsync rejects IsCalculated=true
+        // with NotSupportedException; this pin asserts that contract until
+        // Phase 1B lifts it.
+        Assert.NotNull(typeof(ColumnDefinition).GetProperty("IsCalculated"));
+        Assert.NotNull(typeof(ColumnMetadata).GetProperty("IsCalculated"));
+        Assert.NotNull(typeof(ColumnMetadata).GetProperty("CalculationExpression"));
+    }
+
+    [Fact]
+    public async Task SpecializedColumns_CreateTableAsync_RejectsIsCalculated()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var writer = await OpenWriterAsync(stream);
+
+        var ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await writer.CreateTableAsync(
+                "CalcRejection",
+                [
+                    new("Id", typeof(int)) { IsAutoIncrement = true, IsPrimaryKey = true },
+                    new("Computed", typeof(string), maxLength: 100)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "[Id] & \" row\"",
+                        CalculatedResultType = 0x0A, // T_TEXT
+                    },
+                ],
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("Phase 1B", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

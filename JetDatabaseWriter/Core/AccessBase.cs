@@ -702,6 +702,14 @@ public abstract class AccessBase : IAccessBase
                 FixedOff = Ru16(td, o + _colFixedOff),
                 Size = Ru16(td, o + _colSzOff),
                 Flags = td[o + _colFlagsOff],
+
+                // Extra flags byte at descriptor offset 16 (Jet4/ACE only \u2014 the
+                // Jet3 18-byte descriptor has no such slot). Carries the Access
+                // 2010+ calculated-column marker (Jackcess CALCULATED_EXT_FLAG_MASK
+                // = 0xC0). Read unconditionally for Jet4/ACE so calc columns
+                // round-trip through the schema-rewrite path; harmless for cols
+                // Access wrote with the slot at zero.
+                ExtraFlags = _format != DatabaseFormat.Jet3Mdb && o + 16 < td.Length ? td[o + 16] : (byte)0,
                 Misc = Ri32(td, o + _colMiscOff),
 
                 // For T_NUMERIC the misc 4-byte slot reuses bytes 11/12

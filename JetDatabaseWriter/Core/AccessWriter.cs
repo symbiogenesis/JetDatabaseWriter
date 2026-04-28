@@ -357,6 +357,26 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new ArgumentException("At least one column is required", nameof(columns));
         }
 
+        // Calculated columns (Access 2010+ expression columns) are recognised
+        // on the read side (see ColumnMetadata.IsCalculated) but writing them
+        // is not yet implemented \u2014 the on-disk format requires emitting the
+        // extra-flags byte at descriptor offset 16, the Expression / ResultType
+        // properties in MSysObjects.LvProp, and the 23-byte calculated-value
+        // wrapper around every cached cell value (see Phase 1B in
+        // docs/design/calculated-columns-format-notes.md).
+        for (int i = 0; i < columns.Count; i++)
+        {
+            ColumnDefinition col = columns[i];
+            if (col.IsCalculated)
+            {
+                throw new NotSupportedException(
+                    $"Column '{col.Name}': writing calculated columns is not yet implemented (Phase 1B). " +
+                    "See docs/design/calculated-columns-format-notes.md for the implementation plan. " +
+                    "Reading calc-column metadata produced by Microsoft Access is supported via " +
+                    "ColumnMetadata.IsCalculated / .CalculationExpression / .CalculatedResultType.");
+            }
+        }
+
         // Pre-process the column-level IsPrimaryKey shortcut. Synthesize one
         // composite PK IndexDefinition (named "PrimaryKey") from columns
         // marked IsPrimaryKey=true, in declaration order, and force those

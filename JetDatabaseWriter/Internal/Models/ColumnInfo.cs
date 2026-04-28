@@ -16,6 +16,28 @@ internal sealed class ColumnInfo
 
     public byte Flags { get; set; }
 
+    /// <summary>
+    /// Gets or sets the byte at descriptor-relative offset 16 in the 25-byte
+    /// ACE column descriptor (Jackcess <c>OFFSET_COLUMN_EXT_FLAGS</c>). Only
+    /// populated for Jet4 / ACE files — the 18-byte Jet3 column descriptor has
+    /// no equivalent slot, so this stays at <c>0</c>. The high two bits
+    /// (<see cref="Constants.CalculatedColumn.ExtFlagMask"/>) mark Access 2010+
+    /// calculated (expression) columns; the low bit (<c>0x01</c>) is
+    /// Jackcess <c>COMPRESSED_UNICODE_EXT_FLAG_MASK</c>.
+    /// </summary>
+    public byte ExtraFlags { get; set; }
+
+    /// <summary>
+    /// Gets a value indicating whether the column is an Access 2010+ calculated
+    /// (expression) column — i.e. the <see cref="Constants.CalculatedColumn.ExtFlagMask"/>
+    /// bits are set in <see cref="ExtraFlags"/>. Calculated columns store every
+    /// value behind a 23-byte wrapper (see <c>CalculatedColumnUtil</c>) and
+    /// surface their original column type via the <c>ResultType</c> property in
+    /// <c>MSysObjects.LvProp</c>; the column-descriptor <c>col_type</c> byte
+    /// already mirrors that result type for the columns Access produces.
+    /// </summary>
+    public bool IsCalculated => (ExtraFlags & Constants.CalculatedColumn.ExtFlagMask) == Constants.CalculatedColumn.ExtFlagMask;
+
     public string Name { get; set; } = string.Empty;
 
     /// <summary>

@@ -649,7 +649,7 @@ The items below are **not yet implemented** and are the most likely places to hi
 - **Not yet validated end-to-end through Microsoft Access.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not been round-tripped through a Compact & Repair pass on Windows.
 
 ### Specialized column kinds
-- **No calculated columns** (Access 2010+ expression columns).
+- **Calculated columns (Access 2010+ expression columns) — read-only metadata.** The library reads calc-column flags and the `Expression` / `ResultType` properties produced by Microsoft Access and surfaces them via `ColumnMetadata.IsCalculated` / `.CalculationExpression` / `.CalculatedResultType`. **Writing** calc columns (Phase 1B — emitting the extra-flags byte, the `Expression`/`ResultType` LvProp entries, and the 23-byte calculated-value wrapper) and **client-side evaluation** of expressions (Phase 2+) are not yet implemented. `CreateTableAsync` throws `NotSupportedException` when `ColumnDefinition.IsCalculated = true`. See [docs/design/calculated-columns-format-notes.md](docs/design/calculated-columns-format-notes.md) for the implementation plan.
 
 ### Forms, reports, macros, queries, VBA
 - Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.

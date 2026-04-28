@@ -82,6 +82,33 @@ public sealed record ColumnMetadata
     public byte NumericScale { get; init; }
 
     /// <summary>
+    /// Gets a value indicating whether the column is an Access 2010+ calculated
+    /// (expression) column. Detected via the
+    /// <see cref="Constants.CalculatedColumn.ExtFlagMask"/> bits in the column
+    /// descriptor's extra-flags byte (Jackcess <c>CALCULATED_EXT_FLAG_MASK</c>).
+    /// When <see langword="true"/>, the cached value is wrapped in a 23-byte
+    /// envelope on disk and the original expression is exposed via
+    /// <see cref="CalculationExpression"/>. ACE (.accdb) only.
+    /// </summary>
+    public bool IsCalculated { get; init; }
+
+    /// <summary>
+    /// Gets the Jet/VBA expression Microsoft Access evaluates to compute this
+    /// column's value, sourced from the <see cref="Constants.ColumnPropertyNames.Expression"/>
+    /// property in <c>MSysObjects.LvProp</c>. <see langword="null"/> when the
+    /// column is not calculated or the property is absent.
+    /// </summary>
+    public string? CalculationExpression { get; init; }
+
+    /// <summary>
+    /// Gets the JET column-type code of the value the
+    /// <see cref="CalculationExpression"/> produces, sourced from the
+    /// <see cref="Constants.ColumnPropertyNames.ResultType"/> property. Zero
+    /// when the column is not calculated or the property is absent.
+    /// </summary>
+    public byte CalculatedResultType { get; init; }
+
+    /// <summary>
     /// Returns a compact human-readable description of the column in the form
     /// <c>"Name (TypeName, Size)"</c> — useful for diagnostics, log messages,
     /// and debugger output.
