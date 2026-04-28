@@ -1,6 +1,6 @@
 namespace JetDatabaseWriter.Models;
 
-using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Core.Interfaces;
 
 /// <summary>
 /// Name, stored row-count, and column-count for a single user table.

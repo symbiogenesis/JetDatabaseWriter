@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Models;
 
 using System;
 using System.Diagnostics.CodeAnalysis;
-using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Core.Interfaces;
 
 /// <summary>
 /// One attachment row decoded from the hidden flat child table of an

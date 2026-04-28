@@ -3,7 +3,7 @@ namespace JetDatabaseWriter.Tests.Core;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Core.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;

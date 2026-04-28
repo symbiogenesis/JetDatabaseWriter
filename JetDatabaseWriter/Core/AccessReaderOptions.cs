@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Core;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using JetDatabaseWriter.Core.Interfaces;
 using JetDatabaseWriter.Models;
 
 /// <summary>

@@ -9,6 +9,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Core.Interfaces;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Builders;

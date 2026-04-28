@@ -6,7 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
-using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Core.Interfaces;
 using JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>

@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Models;
 
 using System;
 using System.Diagnostics.CodeAnalysis;
-using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Core.Interfaces;
 
 /// <summary>
 /// Payload supplied to

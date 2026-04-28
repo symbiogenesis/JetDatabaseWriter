@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Builders;
-using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 using Xunit;
