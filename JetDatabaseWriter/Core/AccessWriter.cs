@@ -10455,7 +10455,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private sealed class LeafGroup(long leafPage, List<DescentStep> path)
     {
-
         /// <summary>Gets the page number of the target leaf.</summary>
         public long LeafPage { get; } = leafPage;
 

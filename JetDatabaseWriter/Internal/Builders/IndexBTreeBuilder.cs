@@ -45,7 +45,6 @@ internal static class IndexBTreeBuilder
     /// </summary>
     internal readonly struct BuildResult(IReadOnlyList<byte[]> pages, long rootPageNumber, long firstPageNumber)
     {
-
         /// <summary>Gets the rendered pages, indexed [0..N-1]. Page i lives at
         /// absolute database page number <see cref="FirstPageNumber"/> + i.</summary>
         public IReadOnlyList<byte[]> Pages { get; } = pages;

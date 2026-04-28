@@ -56,7 +56,6 @@ internal static class IndexLeafPageBuilder
     /// </summary>
     internal readonly struct LeafPageLayout(int bitmaskOffset, int firstEntryOffset)
     {
-
         /// <summary>Gets the Jet3 (<c>.mdb</c> Access 97) leaf page layout.</summary>
         public static LeafPageLayout Jet3 => new(Jet3BitmaskOffset, Jet3FirstEntryOffset);
 
@@ -77,7 +76,6 @@ internal static class IndexLeafPageBuilder
     /// </summary>
     internal readonly struct LeafEntry(byte[] encodedKey, long dataPage, byte dataRow)
     {
-
         /// <summary>Gets the flag byte + key bytes (per <see cref="IndexKeyEncoder"/>).</summary>
         public byte[] EncodedKey { get; } = encodedKey ?? throw new ArgumentNullException(nameof(encodedKey));
 
