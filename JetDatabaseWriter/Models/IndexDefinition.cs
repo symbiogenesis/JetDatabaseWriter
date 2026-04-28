@@ -10,14 +10,14 @@ using System.Collections.Generic;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Phases W1–W5 of the index-writer roadmap (see
-/// <c>docs/design/index-and-relationship-format-notes.md</c>) ship the TDEF
-/// schema metadata (real-index physical descriptor + logical-index entry +
-/// logical-index name), a single empty B-tree leaf page
-/// (<c>page_type = 0x04</c>) per index at table-creation time, and bulk
-/// B-tree rebuild on every subsequent row mutation. Phase W8 adds
-/// primary-key emission via <see cref="IsPrimaryKey"/>; the multi-column
-/// constructor exists primarily to support multi-column primary keys.
+/// The writer emits the TDEF schema metadata (real-index physical
+/// descriptor + logical-index entry + logical-index name) and a single empty
+/// B-tree leaf page (<c>page_type = 0x04</c>) per index at table-creation
+/// time, then maintains the B-tree on every subsequent row mutation.
+/// Primary keys are emitted via <see cref="IsPrimaryKey"/>; the multi-column
+/// constructor exists primarily to support multi-column primary keys. See
+/// <c>docs/design/index-and-relationship-format-notes.md</c> for the on-disk
+/// layout.
 /// </para>
 /// <para>
 /// Constraints (enforced at <c>CreateTableAsync</c> time):
@@ -26,17 +26,15 @@ using System.Collections.Generic;
 ///   <item><description>At most ten columns per index (the JET <c>col_map</c> width).</description></item>
 ///   <item><description>At most one PK per table.</description></item>
 ///   <item><description>PK key columns are forced non-nullable on the emitted TDEF.</description></item>
-///   <item><description>No foreign-key or relationship semantics (W9 territory).</description></item>
-///   <item><description>Jet4 / ACE only — Jet3 (<c>.mdb</c> Access 97) databases reject any non-empty index list with <see cref="System.NotSupportedException"/>.</description></item>
+///   <item><description>No foreign-key or relationship semantics — use <see cref="RelationshipDefinition"/>.</description></item>
 ///   <item><description>Every entry in <see cref="DescendingColumns"/> must also appear in <see cref="Columns"/> (case-insensitive).</description></item>
 /// </list>
 /// <para>
-/// W11 (2026-04-25) lifted the W1-era "non-PK indexes must be single column" /
-/// "ascending only" / "non-unique only" restrictions: <see cref="IsUnique"/>
-/// emits the real-idx <c>flags</c> bit <c>0x01</c> (W5 maintenance also throws
-/// on duplicate keys after the bulk B-tree rebuild), <see cref="DescendingColumns"/>
-/// emits <c>col_order = 0x02</c> in the matching col_map slots, and multi-column
-/// non-PK indexes are now accepted and maintained live.
+/// <see cref="IsUnique"/> emits the real-idx <c>flags</c> bit <c>0x01</c>
+/// (index maintenance also throws on duplicate keys after the bulk B-tree
+/// rebuild), <see cref="DescendingColumns"/> emits <c>col_order = 0x02</c>
+/// in the matching col_map slots, and multi-column non-PK indexes are
+/// supported and maintained live.
 /// </para>
 /// </remarks>
 public sealed record IndexDefinition
@@ -55,8 +53,7 @@ public sealed record IndexDefinition
 
     /// <summary>
     /// Initializes a new instance of the <see cref="IndexDefinition"/> class
-    /// referencing one or more columns. Multi-column non-PK indexes are
-    /// supported as of W11 (2026-04-25); see the type-level remarks for the
+    /// referencing one or more columns. See the type-level remarks for the
     /// emitted layout and the live B-tree maintenance contract.
     /// </summary>
     /// <param name="name">The logical-index name.</param>
@@ -108,7 +105,7 @@ public sealed record IndexDefinition
     /// Gets a value indicating whether this index enforces uniqueness. When
     /// <see langword="true"/> and <see cref="IsPrimaryKey"/> is
     /// <see langword="false"/>, the writer emits the real-idx <c>flags</c>
-    /// bit <c>0x01</c> on the matching physical descriptor (§3.1) and the W5
+    /// bit <c>0x01</c> on the matching physical descriptor (§3.1) and the index maintenance
     /// bulk-rebuild path throws <see cref="System.InvalidOperationException"/>
     /// when two live rows produce the same encoded key. Implicitly true for
     /// primary-key indexes — PKs signal uniqueness via the logical-idx

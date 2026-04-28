@@ -7,7 +7,7 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Unit tests for <see cref="IndexLeafIncremental"/> — the W4-C-1 / W4-C-2
+/// Unit tests for <see cref="IndexLeafIncremental"/> — the single-leaf incremental
 /// in-place leaf splice helper. Decode → splice → re-emit must round-trip
 /// back to entries that match the original input.
 /// </summary>

@@ -13,7 +13,7 @@ using Xunit;
 /// </summary>
 public sealed class CreateDatabaseTests
 {
-#pragma warning disable SA1202 // Phase 3 catalog name fixtures kept adjacent to the tests that consume them.
+#pragma warning disable SA1202 //  catalog name fixtures kept adjacent to the tests that consume them.
     private static readonly string[] FullCatalogColumnNames =
     [
         "Id", "ParentId", "Name", "Type", "DateCreate", "DateUpdate", "Owner",
@@ -349,7 +349,7 @@ public sealed class CreateDatabaseTests
 
     // ── Helpers ────────────────────────────────────────────────────────
 
-    // ── Phase 3: WriteFullCatalogSchema ───────────────────────────────
+    // ──  WriteFullCatalogSchema ───────────────────────────────
 
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
@@ -419,7 +419,7 @@ public sealed class CreateDatabaseTests
         var meta = await reader.GetColumnMetadataAsync("People", TestContext.Current.CancellationToken);
         Assert.Equal(["Id", "Name"], meta.ConvertAll(c => c.Name));
 
-        // None of the new property fields are populated yet (Phase 4 writes them).
+        // None of the new property fields are populated yet.
         Assert.All(meta, m =>
         {
             Assert.Null(m.DefaultValueExpression);

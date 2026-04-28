@@ -295,7 +295,7 @@ public sealed class IndexKeyEncoderTests
     [Fact]
     public void Text_Punctuation_NowEncodesViaSimpleHandler()
     {
-        // Pre-W7-full: punctuation threw. With the full Jackcess port,
+        // Pre-full text encoder: punctuation threw. With the full Jackcess port,
         // characters like '!' (S9) encode as a SIMPLE inline byte.
         byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, "!", ascending: true);
         Assert.Equal(new byte[] { 0x7F, 0x09, 0x01, 0x00 }, encoded);

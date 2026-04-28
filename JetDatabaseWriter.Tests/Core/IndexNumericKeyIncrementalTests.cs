@@ -10,10 +10,8 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Tests for W23 (2026-04-27) — drop the <c>T_NUMERIC</c> bail from the
-/// incremental B-tree fast paths (W4-C single-leaf splice, W4-C-3 / W4-C-4
-/// surgical multi-level mutation, W18 tail-page append, and W4-D
-/// descend-walk-rebuild). The fast paths now use the column's DECLARED
+/// Tests for T_NUMERIC incremental — drop the <c>T_NUMERIC</c> bail from the
+/// incremental B-tree fast paths. The fast paths now use the column's DECLARED
 /// scale (persisted at TDEF column-descriptor offsets 11/12 — the same
 /// bytes Microsoft Access uses) as the canonical sort-key scale; values
 /// whose natural scale exceeds the declared scale are rounded
@@ -69,11 +67,11 @@ public sealed class IndexNumericKeyIncrementalTests
     [Fact]
     public async Task IncrementalSingleLeafSplice_NumericKey_DoesNotAppendFreshTree()
     {
-        // W4-C single-leaf splice on a T_NUMERIC-keyed index. Before W23
+        // surgical single-leaf splice on a T_NUMERIC-keyed index. Before T_NUMERIC incremental
         // this bailed to the bulk path which always allocates a fresh
         // leaf (and possibly intermediates) at the end of the file.
-        // After W23 the path participates: one new leaf is appended per
-        // splice (same shape as the W4-C non-numeric fast path).
+        // After T_NUMERIC incremental the path participates: one new leaf is appended per
+        // splice (same shape as the surgical non-numeric fast path).
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 
@@ -100,7 +98,7 @@ public sealed class IndexNumericKeyIncrementalTests
         await using (var writer = await OpenWriterAsync(stream))
         {
             // One row insert that lands between two existing keys ⇒
-            // single-leaf splice (W4-C-1).
+            // single-leaf splice.
             await writer.InsertRowAsync("T", [2.00m], ct);
         }
 
@@ -109,7 +107,7 @@ public sealed class IndexNumericKeyIncrementalTests
         // The splice must be cheap: one extra leaf page (4096 bytes for
         // ACE) plus possibly a few small page-allocation bookkeeping
         // pages — definitely under one full page-table extent (8 pages
-        // = 32 KB). A regression to the bulk W4-D rebuild on every
+        // = 32 KB). A regression to the bulk bulk rebuild rebuild on every
         // mutation would re-emit the entire tree from a fresh
         // page-number range.
         Assert.True(
@@ -131,7 +129,7 @@ public sealed class IndexNumericKeyIncrementalTests
     [Fact]
     public async Task IncrementalTailAppend_NumericKey_RewritesTailLeafInPlace()
     {
-        // W18 append-only tail rewrite on a T_NUMERIC-keyed index. With
+        // append-only tail rewrite on a T_NUMERIC-keyed index. With
         // declared scale=2 every value is canonical at scale 2; the
         // append fast path engages because every new key sorts strictly
         // after the current tail max.
@@ -166,7 +164,7 @@ public sealed class IndexNumericKeyIncrementalTests
         long afterAppend = stream.Length;
 
         // Tail-leaf rewrite is in-place: at most a handful of overhead
-        // pages should be added. A bail to W4-D would re-emit the whole
+        // pages should be added. A bail to bulk rebuild would re-emit the whole
         // tree (~50+ leaves at this size).
         long delta = afterAppend - beforeAppend;
         Assert.True(
@@ -230,7 +228,7 @@ public sealed class IndexNumericKeyIncrementalTests
     {
         // 1.50 and 1.5 are the same numeric value at any scale ≥ 1.
         // With declared scale=2 (the column's canonical scale), the
-        // unique-index pre-insert check (W15) must catch the duplicate
+        // unique-index pre-insert check must catch the duplicate
         // before the row hits disk.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;

@@ -219,7 +219,7 @@ public interface IAccessWriter : IAccessBase
     /// Thrown when no relationship named <paramref name="relationshipName"/> exists.
     /// </exception>
     /// <remarks>
-    /// W14 limitations: the orphaned real-index slot whose backing leaf was created
+    /// limitations: the orphaned real-index slot whose backing leaf was created
     /// for the FK is left in place on the TDEF; Microsoft Access reclaims the
     /// disconnected slot during Compact &amp; Repair. The library does not roll back
     /// runtime cascade-update / cascade-delete enforcement that ran inside the

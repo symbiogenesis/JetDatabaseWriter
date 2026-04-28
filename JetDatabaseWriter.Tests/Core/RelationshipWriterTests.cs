@@ -10,13 +10,12 @@ using System.Threading.Tasks;
 using Xunit;
 
 /// <summary>
-/// W9a — round-trip tests for <see cref="AccessWriter.CreateRelationshipAsync"/>.
+/// relationship writer — round-trip tests for <see cref="AccessWriter.CreateRelationshipAsync"/>.
 /// Each test starts from a copy of <c>NorthwindTraders.accdb</c> (which already
 /// contains the <c>MSysRelationships</c> system table), creates two scratch
 /// tables, declares a relationship between them, and asserts that one row per
 /// FK column lands in <c>MSysRelationships</c> with the appendix-confirmed
-/// column layout. The per-TDEF FK logical-index entries are not exercised
-/// (W9a does not emit them).
+/// column layout. The per-TDEF FK logical-index entries are not exercised here.
 /// </summary>
 public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
@@ -227,7 +226,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     }
 
     // ════════════════════════════════════════════════════════════════
-    // W9b — per-TDEF FK logical-idx entry round-trip tests
+    // per-TDEF FK emission — per-TDEF FK logical-idx entry round-trip tests
     // ════════════════════════════════════════════════════════════════
 
     [Fact]
@@ -362,7 +361,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            // Parent declares an explicit PK on Id — the W9b emitter should
+            // Parent declares an explicit PK on Id — the per-TDEF FK emission emitter should
             // share that real-idx slot for the PK-side FK logical-idx entry
             // instead of allocating a fresh one.
             await writer.CreateTableAsync(

@@ -210,7 +210,7 @@ public sealed class PersistedColumnPropertiesTests
         Assert.Equal("name", name.Description);
     }
 
-    // ── Phase 2: round-trip preservation through schema mutations ──────
+    // ──  round-trip preservation through schema mutations ──────
 
     [Fact]
     public async Task AddColumnAsync_PreservesExistingLvProp()

@@ -9,7 +9,8 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Tests for the W18 phase (2026-04-26):
+/// Tests for the tail-page append optimisation and the matching key-type
+/// restriction:
 /// <list type="bullet">
 ///   <item><b>A — Indexable key types matched to Microsoft Access.</b>
 ///   <c>IndexDefinition</c> referencing an OLE / Attachment / Multi-Value
@@ -22,15 +23,15 @@ using Xunit;
 ///   intermediate-summary overshoot; an append-only fast path in the
 ///   incremental maintenance loop rewrites the tail leaf in place when
 ///   every new key sorts strictly after the current tail max — skipping
-///   the full descend-walk-rebuild that the prior W4 sub-phase D path
+///   the full descend-walk-rebuild that the prior bulk rebuild path
 ///   performed.</item>
 /// </list>
 /// <para>
-/// The fast path's signal is the rewritten tail-leaf page count: the W4-D
+/// The fast path's signal is the rewritten tail-leaf page count: the bulk rebuild
 /// path always allocates a fresh tree at the end of the file, so a
-/// successful W18 fast path leaves the file shorter than the equivalent
-/// W4-D rebuild (the new tail-leaf bytes overwrite the existing tail page
-/// number rather than appending fresh pages). A regression to W4-D would
+/// successful tail-page append fast path leaves the file shorter than the equivalent
+/// bulk rebuild rebuild (the new tail-leaf bytes overwrite the existing tail page
+/// number rather than appending fresh pages). A regression to bulk rebuild would
 /// allocate a fresh leaf chain plus intermediates, growing the file
 /// dramatically.
 /// </para>
@@ -170,11 +171,11 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
     {
         // Build a multi-level tree (700 INT rows → intermediate root over a
         // chain of leaves). Then append a single row whose key sorts
-        // strictly after every existing key. The W18 fast path must
+        // strictly after every existing key. The tail-page append fast path must
         // overwrite the existing tail leaf in place — file size grows by at
         // most one page (the rewritten tail leaf is *the same page*; only
         // the data page that got the new row appears at the end). A
-        // regression to W4-D would allocate ~50 fresh leaf + intermediate
+        // regression to bulk rebuild would allocate ~50 fresh leaf + intermediate
         // pages, growing the file by hundreds of KB.
         const int InitialRows = 700;
         await using var stream = await CreateFreshAccdbStreamAsync();
@@ -201,7 +202,7 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
 
         await using (var writer = await OpenWriterAsync(stream))
         {
-            // Strictly-greater-than current tree max. Triggers the W18
+            // Strictly-greater-than current tree max. Triggers the tail-page append
             // append-only fast path.
             await writer.InsertRowAsync("T", [InitialRows], ct);
         }
@@ -212,7 +213,7 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
         // The append-only fast path rewrites the tail leaf at its existing
         // page number (in place) and adds at most a single fresh data page
         // for the new row. Allow up to 4 fresh pages of slack for misc
-        // catalog churn (free-space patches, etc.) — a W4-D regression would
+        // catalog churn (free-space patches, etc.) — a bulk rebuild regression would
         // allocate dozens of pages (≥ 50 KB), well outside this bound.
         Assert.True(
             growth <= 4 * PageSize,
@@ -227,13 +228,13 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
     [Fact]
     public async Task InsertRow_OutOfOrderAfterMultiLevelTree_StillRoundTripsCorrectly()
     {
-        // The W18 fast path must NOT engage when the new key sorts within
+        // The tail-page append fast path must NOT engage when the new key sorts within
         // the existing range (its predicate requires every new key > tail
-        // max). The W4 sub-phase D path picks up the slack and the row
+        // max). The bulk rebuild path picks up the slack and the row
         // count must remain correct after the out-of-order insert. We
         // assert correctness rather than size because more than one
-        // fall-back path (single-leaf splice W4-C-1, multi-level rebuild
-        // W4-D) can fire depending on tree shape.
+        // fall-back path (single-leaf splice single-leaf splice, multi-level rebuild
+        // bulk rebuild) can fire depending on tree shape.
         const int InitialRows = 1400;
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
@@ -260,7 +261,7 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
         await using (var writer = await OpenWriterAsync(stream))
         {
             // Falls into a gap (id = 5 is well below the tree max) — fails
-            // the W18 append predicate and routes through the existing
+            // the tail-page append append predicate and routes through the existing
             // incremental fall-back paths.
             await writer.InsertRowAsync("T", [5], ct);
         }
@@ -275,7 +276,7 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
     {
         // Repeated append-only single-row inserts must each be handled by
         // the fast path. With ≥ 1.5 rows per page-aligned data page, a
-        // W4-D regression would balloon the file. Cap total growth at a
+        // bulk rebuild regression would balloon the file. Cap total growth at a
         // generous bound: 16 fresh data pages + 16 misc = 32 pages.
         const int InitialRows = 700;
         const int Appends = 50;

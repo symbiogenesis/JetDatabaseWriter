@@ -254,8 +254,7 @@ public sealed class PrimaryKeyWriterTests
                 ct);
         }
 
-        // Multi-column PK leaf is now maintained on bulk insert (W11
-        // composite-key path covers PK uniqueness too).
+        // Multi-column PK leaf is now maintained on bulk insert.
         Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
     }
 

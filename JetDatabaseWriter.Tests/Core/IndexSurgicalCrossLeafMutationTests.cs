@@ -10,18 +10,18 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Round-trip tests for the W4-C-5 (cross-leaf surgical multi-level mutation)
-/// path in <c>AccessWriter.TrySurgicalCrossLeafMaintainAsync</c>. The W4-C-3 /
-/// W4-C-4 single-leaf surgical path bails the moment two change-set keys
-/// descend to different leaves; W4-C-5 picks up that case by grouping the
+/// Round-trip tests for the cross-leaf surgical (cross-leaf surgical multi-level mutation)
+/// path in <c>AccessWriter.TrySurgicalCrossLeafMaintainAsync</c>. The in-place leaf rewrite /
+/// single-leaf surgical path bails the moment two change-set keys
+/// descend to different leaves; cross-leaf surgical picks up that case by grouping the
 /// change-set per target leaf and aggregating per-parent-intermediate
 /// summary updates into one rewrite per intermediate page.
 /// <para>
-/// As with the W4-C-3 / W4-C-4 tests, "did the surgical path engage?" is
+/// As with the single-leaf surgical tests, "did the surgical path engage?" is
 /// answered by counting <c>0x03</c> / <c>0x04</c> index pages in the
-/// post-mutation file: the W4-D bulk rebuild appends a fresh tree (count
+/// post-mutation file: the bulk rebuild appends a fresh tree (count
 /// strictly increases by &gt;= the number of leaves), while a successful
-/// W4-C-5 path appends at most one page per leaf split (zero on a pure
+/// path appends at most one page per leaf split (zero on a pure
 /// in-place batch).
 /// </para>
 /// </summary>
@@ -36,7 +36,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // under one intermediate root). Then in a SECOND writer session,
         // bulk-insert 2 rows whose keys land on different leaves AND are
         // strictly less than each leaf's existing max → no per-leaf splits,
-        // no parent-summary changes. W4-C-5 rewrites both leaves in place
+        // no parent-summary changes. cross-leaf surgical rewrites both leaves in place
         // at their existing page numbers.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
@@ -95,8 +95,8 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // leaf (no parent change). The cross-leaf path must rewrite both
         // leaves AND the shared parent intermediate exactly once. The tail
         // leaf's max is intentionally NOT touched (changing the tree's
-        // overall max would trigger the W18 tail-page descent overshoot
-        // and bail to W4-D, per W4-C-3 / W4-C-4 design).
+        // overall max would trigger the tail-page append tail-page descent overshoot
+        // and bail to bulk rebuild,-C-3 / leaf split design).
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 
@@ -209,8 +209,8 @@ public sealed class IndexSurgicalCrossLeafMutationTests
     public async Task CrossLeafBulkInsert_OneLeafSplits_AppendsAtMostOneIndexPage()
     {
         // Insert a batch such that one of the affected leaves overflows on
-        // splice (W4-C-4 2-way split per leaf) AND another leaf in the
-        // batch stays in-place. W4-C-5 should commit both: one new appended
+        // splice AND another leaf in the
+        // batch stays in-place. cross-leaf surgical should commit both: one new appended
         // page (the split's right half) plus rewrites of both leaves +
         // parent in place. Net delta on index page count: exactly +1.
         await using var stream = await CreateFreshAccdbStreamAsync();
@@ -261,7 +261,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // is loose; either way the count delta should be small and not
         // approach the bulk-rebuild leaf count).
         int delta = idxAfter - idxBefore;
-        Assert.True(delta <= 2, $"Expected ≤2 new index pages (W4-C-5 surgical), got {delta}.");
+        Assert.True(delta <= 2, $"Expected ≤2 new index pages, got {delta}.");
 
         await using var reader = await OpenReaderAsync(stream);
         DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);

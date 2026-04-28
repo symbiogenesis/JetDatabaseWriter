@@ -11,16 +11,16 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Round-trip tests for the W4-C-7-v2 (recursive higher-level intermediate
-/// split) path shipped 2026-04-27. The earlier W4-C-7-v1 only handled
-/// parent-of-leaf overflow; v2 lets ANY captured intermediate level split
+/// Round-trip tests for the recursive higher-level intermediate split path.
+/// The plain parent-of-leaf intermediate split only handles
+/// parent-of-leaf overflow; the recursive path lets ANY captured intermediate level split
 /// in place by computing the left half's <c>tail_page</c> from the
 /// rightmost child intermediate's effective tail (staged override, staged
 /// rewrite, or live page). These tests force a 3+ level tree via composite
 /// long-text keys so per-page entry budget is small enough that the
 /// non-parent-of-leaf intermediate level can overflow without inflating row
 /// counts to the millions, then verify that ALL row data round-trips
-/// across the surgical and the W4-D fallback paths interchangeably.
+/// across the surgical and the bulk rebuild fallback paths interchangeably.
 /// </summary>
 public sealed class IndexSurgicalRecursiveIntermediateSplitTests
 {
@@ -34,7 +34,8 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         // get a comfortably 3-level tree (root → mid intermediates →
         // parent-of-leaf → leaves). A subsequent cross-leaf delete by a
         // non-indexed Tag column may trigger leaf-merge plus mid-level
-        // intermediate updates that previously bailed in W4-C-7-v1.
+        // intermediate updates that require the recursive split path
+        // (which the plain parent-of-leaf split cannot reach).
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 
@@ -86,8 +87,8 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         // classic shape that engages a leaf split → propagated summary
         // insert into a parent-of-leaf intermediate near capacity → its
         // own split → propagated summary insert into the mid-level
-        // intermediate. W4-C-7-v1 bailed at the mid-level overflow; v2
-        // handles it in place.
+        // intermediate. The plain parent-of-leaf split bails at the
+        // mid-level overflow; the recursive path handles it in place.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;
 
@@ -145,7 +146,7 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
     public async Task DeepMultiLevelTree_DeleteAndReinsertCycle_NoCorruption()
     {
         // Delete-then-insert cycles on a deep multi-level tree. Verifies
-        // that any combination of W4-C-5/6/7-v2 + W4-D fallback leaves
+        // that any combination of surgical + bulk rebuild fallback leaves
         // the tree in a consistent state across multiple round-trips.
         // Uses composite keys so trees grow past root capacity at
         // manageable row counts.

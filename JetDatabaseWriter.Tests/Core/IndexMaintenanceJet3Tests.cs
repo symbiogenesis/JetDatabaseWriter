@@ -8,11 +8,11 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Round-trip tests for the W17c live Jet3 (<c>.mdb</c> Access 97) leaf
+/// Round-trip tests for the Jet3 live-leaf live Jet3 (<c>.mdb</c> Access 97) leaf
 /// maintenance path. Mirrors <see cref="IndexMaintenanceTests"/> but targets
 /// the Jet3 page-size / bitmask layout (page 2048, bitmask at <c>0x16</c>,
 /// first entry at <c>0xF8</c>) per <c>docs/design/index-and-relationship-format-notes.md</c>
-/// §4.2 / <c>format-probe-appendix-jet3-index.md</c>. The W17b empty leaf is
+/// §4.2 / <c>format-probe-appendix-jet3-index.md</c>. The Jet3 empty-leaf empty leaf is
 /// now populated by the bulk-rebuild path on every InsertRow*/UpdateRows/DeleteRows
 /// call rather than going stale until Microsoft Access Compact &amp; Repair.
 /// </summary>
@@ -157,8 +157,8 @@ public sealed class IndexMaintenanceJet3Tests
 
         await writer.InsertRowAsync("T", [1, "first"], ct);
 
-        // W15 pre-write enforcement detects the duplicate before any row is
-        // encoded. Jet3 now participates because the Jet3 logical-idx PK
+        // Pre-write enforcement detects the duplicate before any row is
+        // encoded. Jet3 participates because the Jet3 logical-idx PK
         // discriminator (index_type = 0x01 at byte 19) is read with the
         // same per-format offset path as the Jet4 emission.
         await Assert.ThrowsAsync<System.InvalidOperationException>(
@@ -224,7 +224,7 @@ public sealed class IndexMaintenanceJet3Tests
     [Fact]
     public async Task Jet3_W17d_IncrementalFastPath_SplicesSingleLeaf_OnInsertAndDelete()
     {
-        // The W17d single-leaf splice writes exactly ONE new leaf page per
+        // The single-leaf splice single-leaf splice writes exactly ONE new leaf page per
         // mutation (then patches first_dp on the TDEF). Compare the file
         // length before and after a small InsertRowAsync / DeleteRowsAsync
         // pair: the growth must be small (≤ a couple of pages — one leaf +
@@ -271,7 +271,7 @@ public sealed class IndexMaintenanceJet3Tests
         // A Jet3 leaf page (2048 bytes, payload area 0xF8..end ≈ 1880 bytes)
         // holds roughly ~200 INT entries before splitting. Bulk-load enough
         // rows up front to force an intermediate (0x03) root, then splice
-        // one more row through the W17d multi-level rebuild path. The
+        // one more row through the single-leaf splice multi-level rebuild path. The
         // resulting tree must still round-trip every (Id) row via the
         // reader.
         const int InitialRows = 400;
@@ -295,7 +295,7 @@ public sealed class IndexMaintenanceJet3Tests
 
             await writer.InsertRowsAsync("T", rows, ct);
 
-            // Splice one row through the W17d multi-level path.
+            // Splice one row through the single-leaf splice multi-level path.
             await writer.InsertRowAsync("T", [1], ct);
         }
 

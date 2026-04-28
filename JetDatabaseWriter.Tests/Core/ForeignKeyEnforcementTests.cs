@@ -438,7 +438,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Delete_PkSide_WithCascade_BulkSeeksChildIndex()
     {
-        // W22: covering child-side real-idx is present (auto-emitted on every
+        // covering child-side real-idx is present (auto-emitted on every
         // FK relationship in Jet4 / ACE), so cascade-delete should locate the
         // 200 dependent child rows via index-seek rather than the legacy
         // O(N) child snapshot scan. Functional verification only — proves the
@@ -493,7 +493,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Update_PkSide_WithCascade_BulkSeeksChildIndex()
     {
-        // W22: cascade-update via child-side index-seek. Move PK 7 → 999 and
+        // cascade-update via child-side index-seek. Move PK 7 → 999 and
         // assert all children that referenced 7 now reference 999, and the
         // rest are unchanged.
         var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);

@@ -10,15 +10,15 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Tests for the W19 phase (2026-04-26):
-/// <c>T_BINARY (0x09)</c> is now a fully supported index key column type.
+/// Tests for binary-key index support:
+/// <c>T_BINARY (0x09)</c> is a fully supported index key column type.
 /// Variable-length raw binary keys are encoded via the same Jackcess
 /// "general binary entry" packing already used for <c>T_GUID</c> — 8-byte
 /// zero-padded segments, intermediate length byte <c>0x09</c>, final length
 /// byte = remaining valid count, with descending flipping data bytes and
 /// the final length byte but leaving intermediate length bytes unflipped.
 /// <para>
-/// Prior to W19 an <see cref="IndexDefinition"/> over a <c>T_BINARY</c>
+/// Prior to binary-key index support an <see cref="IndexDefinition"/> over a <c>T_BINARY</c>
 /// column would throw <see cref="NotSupportedException"/> from
 /// <c>IndexKeyEncoder.EncodeEntry</c> on the first row insert that
 /// triggered <c>MaintainIndexesAsync</c>. These tests pin the new
@@ -36,7 +36,7 @@ public sealed class IndexBinaryKeyTests
     public async Task CreateTable_IndexOnBinaryColumn_BulkInsertRoundTrips()
     {
         // T_BINARY is byte[] with MaxLength in [1, 255]. The bulk maintenance
-        // loop encodes every snapshot row through IndexKeyEncoder; W19
+        // loop encodes every snapshot row through IndexKeyEncoder; binary-key indexes
         // wires T_BINARY into that switch so the create-then-insert flow
         // no longer throws NotSupportedException.
         await using var stream = await CreateFreshAccdbStreamAsync();
@@ -75,9 +75,9 @@ public sealed class IndexBinaryKeyTests
     [Fact]
     public async Task CreateTable_UniqueIndexOnBinary_DetectsDuplicate()
     {
-        // The W11 post-write unique check runs as part of the bulk
+        // The post-write unique check post-write unique check runs as part of the bulk
         // maintenance loop and uses the same encoder. With T_BINARY now
-        // supported the check fires; without W19 it would throw
+        // supported the check fires; without binary-key indexes it would throw
         // NotSupportedException before reaching the duplicate detection.
         await using var stream = await CreateFreshAccdbStreamAsync();
         var ct = TestContext.Current.CancellationToken;

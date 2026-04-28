@@ -180,7 +180,7 @@ internal sealed class ColumnPropertyBlock
             }
 
             // Jet3 may use a uint8 length prefix for property names; mdbtools uses uint16
-            // uniformly. Verify in Phase 0 (`format-notes.md` §4.4).
+            // uniformly. See `format-notes.md` §4.4.
             _ = isJet3;
 
             dest.Add(stringEncoding.GetString(blob, pos, nameLen));
