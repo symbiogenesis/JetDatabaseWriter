@@ -102,11 +102,7 @@ internal static class IndexBTreeBuilder
         }
 
         Guard.NotNull(entries, nameof(entries));
-
-        if (firstPageNumber < 0 || firstPageNumber > 0xFFFFFF)
-        {
-            throw new ArgumentOutOfRangeException(nameof(firstPageNumber), "Page number exceeds the 24-bit child-pointer range.");
-        }
+        Guard.InRange(firstPageNumber, 0, 0xFFFFFF, nameof(firstPageNumber));
 
         int entryAreaSize = pageSize - layout.FirstEntryOffset;
 

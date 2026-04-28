@@ -390,10 +390,7 @@ internal static class IndexKeyEncoder
         bool negative = (flags & unchecked((int)0x80000000)) != 0;
         int scale = (flags >> 16) & 0x7F;
 
-        if (targetScale < 0 || targetScale > 28)
-        {
-            throw new ArgumentOutOfRangeException(nameof(targetScale), targetScale, "targetScale must be in [0, 28].");
-        }
+        Guard.InRange(targetScale, 0, 28, nameof(targetScale));
 
         if (targetScale < scale)
         {
@@ -477,10 +474,7 @@ internal static class IndexKeyEncoder
     /// </summary>
     public static byte[] EncodeNumericEntryAtDeclaredScale(object? value, bool ascending, byte declaredScale, bool legacy)
     {
-        if (declaredScale > 28)
-        {
-            throw new ArgumentOutOfRangeException(nameof(declaredScale), declaredScale, "declaredScale must be in [0, 28].");
-        }
+        Guard.InRange(declaredScale, 0, 28, nameof(declaredScale));
 
         if (value is null || value is DBNull)
         {
