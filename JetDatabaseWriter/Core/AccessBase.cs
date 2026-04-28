@@ -464,6 +464,18 @@ public abstract class AccessBase : IAccessBase
         return sb.ToString();
     }
 
+    // ── File-stream factory ──────────────────────────────────────────
+
+    /// <summary>
+    /// Opens a database file with the given access / share / option combination.
+    /// Used by both <see cref="AccessReader"/> (read-only sequential) and
+    /// <see cref="AccessWriter"/> (read-write random-access).
+    /// </summary>
+    private protected static FileStream OpenDatabaseFileStream(string path, FileAccess access, FileShare share, FileOptions options)
+    {
+        return new FileStream(path, FileMode.Open, access, share, 4096, options);
+    }
+
     // ── Fixed-column string decoding ─────────────────────────────────
 
     internal static string ReadFixedString(byte[] row, int start, byte type, int size)
@@ -1159,20 +1171,6 @@ public abstract class AccessBase : IAccessBase
 
     /// <summary>Discards the cached catalog so the next <see cref="GetUserTablesAsync"/> call re-scans MSysObjects.</summary>
     private protected void InvalidateCatalogCache() => _catalogCache = null;
-
-    // ── File-stream factory ──────────────────────────────────────────
-
-    /// <summary>
-    /// Opens a database file with the given access / share / option combination.
-    /// Used by both <see cref="AccessReader"/> (read-only sequential) and
-    /// <see cref="AccessWriter"/> (read-write random-access).
-    /// </summary>
-#pragma warning disable SA1204 // Static members ordered next to the related instance helpers
-    private protected static FileStream OpenDatabaseFileStream(string path, FileAccess access, FileShare share, FileOptions options)
-    {
-        return new FileStream(path, FileMode.Open, access, share, 4096, options);
-    }
-#pragma warning restore SA1204
 
     // ── Inner types ──────────────────────────────────────────────────
 
