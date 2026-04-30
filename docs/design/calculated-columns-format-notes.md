@@ -161,6 +161,10 @@ Translate the most common subset of Jackcess `expr`:
   `ColName`, `[Table].[Col]` — only the row-local form matters because calc
   columns cannot reference other tables).
 
+#### Formula parsing library recommendation
+
+For parsing and validating calculated column expressions (which use Access/Excel-style formula syntax), we recommend using [ClosedXML.Parser](https://github.com/ClosedXML/ClosedXML.Parser). This .NET library is actively maintained, supports modern Excel formula syntax, and is suitable for parsing and validating expressions before storing them in the Access/ACE on-disk format. Note: You must still implement all Access/ACE-specific binary writing logic yourself; ClosedXML.Parser only handles formula parsing, not database serialization.
+
 Tests: golden expressions evaluated against an Access oracle.
 
 ### Phase 3 — Full VBA expression library + cross-table lookups
