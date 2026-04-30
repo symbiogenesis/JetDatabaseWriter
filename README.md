@@ -45,9 +45,9 @@ Install-Package JetDatabaseWriter
 
 | Consumer | Minimum version |
 |----------|----------------|
-| .NET | 10 (preferred), 9, 8, 7, 6, 5 |
-| .NET Core | 3.0 |
-| Mono | 6.4 |
+| .NET | 5+ |
+| .NET Core | 3.0+ |
+| Mono | 6.4+ |
 | Unity | 2021.2+ |
 
 ---
