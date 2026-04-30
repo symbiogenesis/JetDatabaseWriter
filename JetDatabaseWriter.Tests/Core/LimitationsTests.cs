@@ -525,7 +525,7 @@ public sealed class LimitationsTests : IDisposable
                 ],
                 TestContext.Current.CancellationToken));
 
-        Assert.Contains("Phase 1B", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("writing calculated columns is not yet implemented", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
