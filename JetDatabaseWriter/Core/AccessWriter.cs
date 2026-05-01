@@ -6104,7 +6104,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Dictionary<long, List<IntermediateOp>> parentOps,
         long parentPageNumber,
         int takenIndex,
-        List<List<IndexEntry>> splitPages,
+        SplitPages splitPages,
         long[] pageNumbers)
     {
         if (splitPages.Count != pageNumbers.Length || splitPages.Count == 0)
@@ -10513,7 +10513,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // 6. Try an N-way leaf split (greedy left-fill).
         // Bails only if a single entry exceeds page payload area.
-        List<List<IndexEntry>>? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, _pgSz, spliced);
+        SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, _pgSz, spliced);
         if (splitPages is null)
         {
             return false;
@@ -10554,12 +10554,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         // Build summaries (max key per page) for parent ops.
-        IndexEntry leftLast = splitPages[0][splitPages[0].Count - 1];
+        IndexEntry leftLast = splitPages.GetLastEntry(0);
         var leftSummary = new DecodedIntermediateEntry(leftLast, ChildPage: pageNumbers[0]);
         var rightSummaries = new DecodedIntermediateEntry[splitCount - 1];
         for (int p = 1; p < splitCount; p++)
         {
-            IndexEntry last = splitPages[p][splitPages[p].Count - 1];
+            IndexEntry last = splitPages.GetLastEntry(p);
             rightSummaries[p - 1] = new DecodedIntermediateEntry(last, ChildPage: pageNumbers[p]);
         }
 
@@ -11153,7 +11153,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // ── N-way split ──
             // Greedy left-fill into N pages; bails only if a single entry
             // exceeds the page payload area.
-            List<List<IndexEntry>>? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, _pgSz, spliced);
+            SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, _pgSz, spliced);
             if (splitPages is null)
             {
                 return false;
@@ -11885,7 +11885,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         parentOps,
                         gpSplit.ParentPage,
                         gpSplit.IndexInParent,
-                        splitInts.ConvertAll(s => s.ConvertAll(si => si.Entry)),
+                        new(splitInts.ConvertAll(s => s.ConvertAll(si => si.Entry))),
                         intPageNumbers);
 
                     if (!pending.Contains(gpSplit.ParentPage))

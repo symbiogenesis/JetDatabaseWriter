@@ -620,7 +620,7 @@ internal static class IndexHelpers
     /// actually require a split. The returned list always has
     /// <c>Count &gt;= 2</c> on success; every page is non-empty.
     /// </summary>
-    public static List<List<IndexEntry>>? TryGreedySplitLeafInN(
+    public static SplitPages? TryGreedySplitLeafInN(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
         List<IndexEntry> entries)
@@ -631,7 +631,7 @@ internal static class IndexHelpers
             return null;
         }
 
-        var pages = new List<List<IndexEntry>>();
+        var pages = new SplitPages();
         var current = new List<IndexEntry>();
         int currentSize = 0;
 
