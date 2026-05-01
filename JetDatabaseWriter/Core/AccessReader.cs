@@ -454,8 +454,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         cancellationToken.ThrowIfCancellationRequested();
 
         List<ColumnMetadata> meta = await GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var headers = meta.ConvertAll(m => m.Name);
-        var index = RowMapper<T>.BuildIndex(headers);
+        var fallbackHeaders = meta.ConvertAll(m => m.Name);
+        var index = RowMapper<T>.BuildIndex(fallbackHeaders);
 
         await foreach (object[] row in Rows(tableName, progress, cancellationToken).ConfigureAwait(false))
         {
@@ -1250,6 +1250,37 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved != null)
+        {
+            var resolvedHeaders = resolved.Value.Td.Columns.ConvertAll(column => column.Name);
+            var projectedColumns = new List<(string Name, ColumnInfo Column)>(resolvedHeaders.Count);
+            var fullIndex = RowMapper<T>.BuildIndex(resolvedHeaders);
+
+            for (int i = 0; i < resolvedHeaders.Count; i++)
+            {
+                if (fullIndex[i] != null)
+                {
+                    projectedColumns.Add((resolvedHeaders[i], resolved.Value.Td.Columns[i]));
+                }
+            }
+
+            bool canProject = projectedColumns.Count > 0
+                && projectedColumns.Count < resolvedHeaders.Count
+                && projectedColumns.TrueForAll(static projection => projection.Column.Type != T_COMPLEX && projection.Column.Type != T_ATTACHMENT);
+
+            if (canProject)
+            {
+                return await ReadProjectedTableAsync<T>(
+                    tableName,
+                    resolved.Value.Entry.TDefPage,
+                    resolved.Value.Td,
+                    projectedColumns,
+                    maxRows,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         List<ColumnMetadata> meta = await GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
         var headers = meta.ConvertAll(m => m.Name);
         var index = RowMapper<T>.BuildIndex(headers);
@@ -1267,6 +1298,125 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return items;
+    }
+
+    private async ValueTask<List<T>> ReadProjectedTableAsync<T>(
+        string tableName,
+        long tdefPage,
+        TableDef td,
+        List<(string Name, ColumnInfo Column)> projectedColumns,
+        uint? maxRows,
+        CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        var headers = new string[projectedColumns.Count];
+        for (int i = 0; i < projectedColumns.Count; i++)
+        {
+            headers[i] = projectedColumns[i].Name;
+        }
+
+        var index = RowMapper<T>.BuildIndex(headers);
+        var items = new List<T>();
+        bool hasVarCols = false;
+        for (int i = 0; i < td.Columns.Count; i++)
+        {
+            if (!td.Columns[i].IsFixed)
+            {
+                hasVarCols = true;
+                break;
+            }
+        }
+
+        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        foreach (long pageNumber in pageNumbers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            foreach (RowBound rb in EnumerateLiveRowBounds(page))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                object[]? projectedRow = await CrackProjectedRowAsync(
+                    page,
+                    rb.RowStart,
+                    rb.RowSize,
+                    td,
+                    projectedColumns,
+                    hasVarCols,
+                    cancellationToken).ConfigureAwait(false);
+                if (projectedRow == null)
+                {
+                    continue;
+                }
+
+                items.Add(RowMapper<T>.Map(projectedRow, index));
+                if (maxRows.HasValue && items.Count >= maxRows.Value)
+                {
+                    return items;
+                }
+            }
+        }
+
+        return items;
+    }
+
+    private async ValueTask<object[]?> CrackProjectedRowAsync(
+        byte[] page,
+        int rowStart,
+        int rowSize,
+        TableDef td,
+        List<(string Name, ColumnInfo Column)> projectedColumns,
+        bool hasVarCols,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (rowSize < _numColsFldSz)
+        {
+            return null;
+        }
+
+        int rawNumCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
+        if (rawNumCols == 0)
+        {
+            return null;
+        }
+
+        if (td.HasDeletedColumns && rawNumCols > td.Columns.Count)
+        {
+            throw new JetLimitationException(
+                $"Row has {rawNumCols} columns but current schema has {td.Columns.Count} with deleted-column gaps. " +
+                "This row predates schema changes and data may be misaligned. " +
+                "Solution: Compact & Repair the database in Microsoft Access to rebuild all rows.");
+        }
+
+        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarCols, out RowLayout layout))
+        {
+            return null;
+        }
+
+        var values = new object[projectedColumns.Count];
+        for (int i = 0; i < projectedColumns.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            ColumnInfo col = projectedColumns[i].Column;
+            ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, col);
+            string rawValue = slice.Kind switch
+            {
+                ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
+                ColumnSliceKind.Null => string.Empty,
+                ColumnSliceKind.Empty => string.Empty,
+                ColumnSliceKind.Fixed => ReadFixed(page, rowStart + slice.DataStart, col, slice.DataLen),
+                ColumnSliceKind.Var => await ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
+                _ => string.Empty,
+            };
+
+            values[i] = TypedValueParser.ParseValue(rawValue, ResolveClrType(col), _strictParsing);
+        }
+
+        return values;
     }
 
     /// <summary>
