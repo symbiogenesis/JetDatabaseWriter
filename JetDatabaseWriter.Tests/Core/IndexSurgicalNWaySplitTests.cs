@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
@@ -28,6 +29,7 @@ using Xunit;
 public sealed class IndexSurgicalNWaySplitTests
 {
     private static readonly string[] CompositeKeyColumns = ["K1", "K2"];
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
     [Fact]
     public async Task BulkInsert_LeafSpliceNeedsThreePages_AllRowsRoundTrip()
@@ -39,7 +41,6 @@ public sealed class IndexSurgicalNWaySplitTests
         // 2-way splitter this would bail to bulk rebuild; with the N-way splitter
         // the splice succeeds surgically.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
         const int rowCount = 40;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -73,7 +74,6 @@ public sealed class IndexSurgicalNWaySplitTests
         // leaf entries. Exercises the N-way splitter at scale; the cap
         // matches Access default behaviour (no artificial bail floor).
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
         const int rowCount = 200;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -110,7 +110,6 @@ public sealed class IndexSurgicalNWaySplitTests
         // resulting splice spans 3+ pages and engages the N-way split with
         // tail_page cascade up every captured ancestor.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -159,7 +158,6 @@ public sealed class IndexSurgicalNWaySplitTests
         // produces a 3-way leaf split → pushes 2 new summaries into the
         // (already-full) parent → parent itself splits N-way.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -232,7 +230,6 @@ public sealed class IndexSurgicalNWaySplitTests
         // test stresses the index by enforcing uniqueness; a duplicate
         // insertion against any of the post-split keys must throw.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
         const int rowCount = 80;
 
         await using (var writer = await OpenWriterAsync(stream))

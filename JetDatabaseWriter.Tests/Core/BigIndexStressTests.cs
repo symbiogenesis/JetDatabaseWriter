@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Core.Interfaces;
@@ -28,6 +29,8 @@ using Xunit;
 /// </summary>
 public sealed class BigIndexStressTests
 {
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
+
     /// <summary>
     /// Bulk-inserts enough unique integer keys to force the B-tree rebuild
     /// to emit at least one intermediate (non-leaf) index page in addition
@@ -42,11 +45,13 @@ public sealed class BigIndexStressTests
     /// the same scenario at 2000 rows over text keys.
     /// </remarks>
     /// <returns>A task representing the asynchronous test operation.</returns>
-    [Fact]
-    public async Task BulkInsert_UniqueIntIndex_ManyRows_ProducesMultiLevelBTree()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task BulkInsert_UniqueIntIndex_ManyRows_ProducesMultiLevelBTree(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
+        await using var stream = await CreateFreshStreamAsync(format);
+
         const int RowCount = 1500;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -87,7 +92,7 @@ public sealed class BigIndexStressTests
         // were emitted by the rebuild — that's the hallmark of a multi-leaf
         // (and therefore multi-level) B-tree.
         Assert.True(
-            CountLeafPages(stream.ToArray()) >= 2,
+            CountLeafPages(stream.ToArray(), format) >= 2,
             "Expected the bulk rebuild to emit multiple index leaf pages for a 1500-row unique index.");
     }
 
@@ -100,11 +105,12 @@ public sealed class BigIndexStressTests
     /// throw appears at the end of the call rather than mid-iteration.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
-    [Fact]
-    public async Task BulkInsert_UniqueIndex_DuplicateKeyInBatch_ThrowsOnRebuild()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task BulkInsert_UniqueIndex_DuplicateKeyInBatch_ThrowsOnRebuild(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using var writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
@@ -142,11 +148,12 @@ public sealed class BigIndexStressTests
     /// counter in a consistent state.
     /// </remarks>
     /// <returns>A task representing the asynchronous test operation.</returns>
-    [Fact]
-    public async Task AutoIncrement_AfterRejectedInsert_DoesNotSkipNextValue()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task AutoIncrement_AfterRejectedInsert_DoesNotSkipNextValue(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -197,11 +204,12 @@ public sealed class BigIndexStressTests
     /// Adapted from the second half of Jackcess <c>BigIndexTest.testBigIndex</c>.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
-    [Fact]
-    public async Task BulkInsert_ThenDeleteRange_LeavesConsistentIndex()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task BulkInsert_ThenDeleteRange_LeavesConsistentIndex(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
+        await using var stream = await CreateFreshStreamAsync(format);
         const int RowCount = 800;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -245,19 +253,20 @@ public sealed class BigIndexStressTests
 
     // ── helpers ─────────────────────────────────────────────────────────
 
-    private static int CountLeafPages(byte[] fileBytes)
+    private static int CountLeafPages(byte[] fileBytes, DatabaseFormat format)
     {
+        int pageSize = PageSizeOf(format);
         int n = 0;
-        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
+        for (int p = 0; p < fileBytes.Length / pageSize; p++)
         {
-            int o = p * Constants.PageSizes.Jet4;
+            int o = p * pageSize;
 
             // page_type=0x04 (leaf), page_flag=0x01 (live, not orphaned).
             if (fileBytes[o] == Constants.IndexLeafPage.PageTypeLeaf && fileBytes[o + 1] == 0x01)
             {
                 // Count only leafs that actually hold real entries (more than
                 // the implicit empty placeholder).
-                if (CountLeafEntries(fileBytes, o) > 1)
+                if (CountLeafEntries(fileBytes, o, format) > 1)
                 {
                     n++;
                 }
@@ -267,10 +276,10 @@ public sealed class BigIndexStressTests
         return n;
     }
 
-    private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
+    private static int CountLeafEntries(byte[] fileBytes, int leafOffset, DatabaseFormat format)
     {
         int count = 1;
-        for (int i = Constants.IndexLeafPage.Jet4BitmaskOffset; i < Constants.IndexLeafPage.Jet4FirstEntryOffset; i++)
+        for (int i = BitmaskOffset(format); i < FirstEntryOffset(format); i++)
         {
             byte b = fileBytes[leafOffset + i];
             for (int bit = 0; bit < 8; bit++)
@@ -285,12 +294,21 @@ public sealed class BigIndexStressTests
         return count;
     }
 
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
+    private static int PageSizeOf(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
+
+    private static int BitmaskOffset(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3BitmaskOffset : Constants.IndexLeafPage.Jet4BitmaskOffset;
+
+    private static int FirstEntryOffset(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3FirstEntryOffset : Constants.IndexLeafPage.Jet4FirstEntryOffset;
+
+    private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
-            DatabaseFormat.AceAccdb,
+            format,
             new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken))

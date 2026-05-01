@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Core;
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
@@ -33,6 +34,7 @@ public sealed class IndexBinaryKeyTests
 {
     private static readonly string[] CompositeKeyColumns = ["Tag", "Bin"];
     private static readonly string[] BinDescendingColumns = ["Bin"];
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
     [Fact]
     public async Task CreateTable_IndexOnBinaryColumn_BulkInsertRoundTrips()
@@ -41,7 +43,6 @@ public sealed class IndexBinaryKeyTests
         // loop encodes every snapshot row through IndexKeyEncoder, which must
         // accept T_BINARY so create-then-insert on a binary-key index round-trips.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -81,7 +82,6 @@ public sealed class IndexBinaryKeyTests
         // supported the check fires; without binary-key indexes it would throw
         // NotSupportedException before reaching the duplicate detection.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
 
@@ -110,7 +110,6 @@ public sealed class IndexBinaryKeyTests
         // round-trip alongside text without the multi-column path bailing
         // back to the schema-only fall-through.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -139,7 +138,6 @@ public sealed class IndexBinaryKeyTests
         // Descending binary keys exercise the post-loop bulk bit-flip path
         // (data bytes + final length byte flip; intermediate 0x09 stays).
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {

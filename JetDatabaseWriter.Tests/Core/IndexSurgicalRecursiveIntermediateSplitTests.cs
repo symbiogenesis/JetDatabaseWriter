@@ -4,6 +4,7 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
@@ -27,6 +28,7 @@ using Xunit;
 public sealed class IndexSurgicalRecursiveIntermediateSplitTests
 {
     private static readonly string[] CompositeKeyColumns = ["K1", "K2"];
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
     [Fact]
     public async Task DeepMultiLevelTree_BulkInsertThenCrossLeafDelete_DataRoundTrips()
@@ -39,7 +41,6 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         // intermediate updates that require the recursive split path
         // (which the plain parent-of-leaf split cannot reach).
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         const int rowCount = 600;
 
@@ -92,7 +93,6 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         // intermediate. The plain parent-of-leaf split bails at the
         // mid-level overflow; the recursive path handles it in place.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -153,7 +153,6 @@ public sealed class IndexSurgicalRecursiveIntermediateSplitTests
         // Uses composite keys so trees grow past root capacity at
         // manageable row counts.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         const int initialRows = 700;
 

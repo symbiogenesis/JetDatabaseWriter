@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Core.Interfaces;
@@ -30,6 +31,7 @@ public sealed class IndexWriterAdvancedTests
     private static readonly string[] DescendingB = ["B"];
     private static readonly string[] DescendingScore = ["Score"];
     private static readonly string[] DescendingMissing = ["B"];
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
     [Fact]
     public async Task CreateTable_WithUniqueSingleColumnIndex_RoundTripsIsUnique()
@@ -151,7 +153,6 @@ public sealed class IndexWriterAdvancedTests
     public async Task UniqueIndex_DuplicateInsert_ThrowsInvalidOperationException()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
 
@@ -172,7 +173,6 @@ public sealed class IndexWriterAdvancedTests
     public async Task UniqueIndex_NonDuplicateInserts_Succeed()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -199,7 +199,6 @@ public sealed class IndexWriterAdvancedTests
     public async Task MultiColumnIndex_BulkInsert_RebuildsLeafWithExpectedEntryCount()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -232,7 +231,6 @@ public sealed class IndexWriterAdvancedTests
     public async Task UniqueMultiColumnIndex_DuplicateCompositeKey_Throws()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
 
@@ -256,7 +254,6 @@ public sealed class IndexWriterAdvancedTests
     public async Task MultiColumnIndex_SurvivesAddColumn()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -283,7 +280,6 @@ public sealed class IndexWriterAdvancedTests
     public async Task DescendingIndex_SurvivesRenameColumn()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -309,7 +305,6 @@ public sealed class IndexWriterAdvancedTests
     public async Task GuidIndex_BulkInsert_RebuildsLeafWithExpectedEntryCount()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -337,7 +332,6 @@ public sealed class IndexWriterAdvancedTests
     public async Task UniqueGuidIndex_DuplicateInsert_Throws()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
 
@@ -359,7 +353,6 @@ public sealed class IndexWriterAdvancedTests
     public async Task DecimalIndex_BulkInsert_RebuildsLeafWithExpectedEntryCount()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -389,7 +382,6 @@ public sealed class IndexWriterAdvancedTests
     public async Task UniqueDecimalIndex_DuplicateInsert_Throws()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
 

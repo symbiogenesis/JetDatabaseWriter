@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Core;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
@@ -44,6 +45,7 @@ using Xunit;
 public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
 {
     private static readonly string[] MixedKeyColumns = ["Id", "Blob"];
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
     // ── A: reject indexes on OLE / Attachment / Multi-Value columns ──
 
@@ -180,7 +182,6 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
         // pages, growing the file by hundreds of KB.
         const int InitialRows = 700;
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -238,7 +239,6 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
         // bulk rebuild) can fire depending on tree shape.
         const int InitialRows = 1400;
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -282,7 +282,6 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
         const int InitialRows = 700;
         const int Appends = 50;
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -330,7 +329,6 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
         // or duplicated).
         const int InitialRows = 700;
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {

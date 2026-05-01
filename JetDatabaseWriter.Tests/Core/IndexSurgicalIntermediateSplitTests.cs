@@ -4,6 +4,7 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
@@ -25,6 +26,8 @@ using Xunit;
 /// </summary>
 public sealed class IndexSurgicalIntermediateSplitTests
 {
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
+
     [Fact]
     public async Task LargeKeyMultiLevelTree_BulkInsertThenCrossLeafDelete_DataRoundTrips()
     {
@@ -36,7 +39,6 @@ public sealed class IndexSurgicalIntermediateSplitTests
         // cross-leaf surgical (in-place rewrites) and possibly intermediate split if parent-of-leaf
         // splits — or fall back to bulk rebuild. We assert correctness either way.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -91,7 +93,6 @@ public sealed class IndexSurgicalIntermediateSplitTests
         // intermediate sits near capacity; subsequent splits need
         // intermediate split OR fall through to bulk rebuild.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -147,7 +148,6 @@ public sealed class IndexSurgicalIntermediateSplitTests
         // leaves the tree in a consistent state across multiple round-
         // trips.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {

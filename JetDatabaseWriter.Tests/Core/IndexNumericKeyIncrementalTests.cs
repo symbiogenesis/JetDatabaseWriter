@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
@@ -22,11 +23,12 @@ using Xunit;
 /// </summary>
 public sealed class IndexNumericKeyIncrementalTests
 {
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
+
     [Fact]
     public async Task ColumnMetadata_DecimalColumn_RoundTripsDeclaredPrecisionAndScale()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -51,7 +53,6 @@ public sealed class IndexNumericKeyIncrementalTests
     {
         // Access "Number → Decimal" UI default is precision=18, scale=0.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -76,7 +77,6 @@ public sealed class IndexNumericKeyIncrementalTests
         // After T_NUMERIC incremental the path participates: one new leaf is appended per
         // splice (same shape as the surgical non-numeric fast path).
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -137,7 +137,6 @@ public sealed class IndexNumericKeyIncrementalTests
         // append fast path engages because every new key sorts strictly
         // after the current tail max.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -183,7 +182,6 @@ public sealed class IndexNumericKeyIncrementalTests
     public async Task IncrementalDelete_NumericKey_DoesNotBailToBulk()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -234,7 +232,6 @@ public sealed class IndexNumericKeyIncrementalTests
         // unique-index pre-insert check must catch the duplicate
         // before the row hits disk.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
@@ -256,7 +253,6 @@ public sealed class IndexNumericKeyIncrementalTests
         // at scale=0, so 1.4 (rounds to 1) and 1.6 (rounds to 2) are
         // distinct, but 1.6 and 2.0 collide.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
@@ -275,7 +271,6 @@ public sealed class IndexNumericKeyIncrementalTests
     public async Task NumericPrecisionOutOfRange_ThrowsArgumentOutOfRange()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
 
@@ -290,7 +285,6 @@ public sealed class IndexNumericKeyIncrementalTests
     public async Task NumericScaleAboveDeclaredPrecision_ThrowsArgumentOutOfRange()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
 

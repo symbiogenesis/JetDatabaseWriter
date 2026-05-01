@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
@@ -22,12 +23,12 @@ public sealed class PreWriteUniqueEnforcementTests
 {
     private static readonly int[] ExpectedIds123 = [1, 2, 3];
     private static readonly string[] CompositeAB = ["A", "B"];
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
     [Fact]
     public async Task SingleInsert_DuplicateAgainstExisting_ThrowsAndLeavesTableUnchanged()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
@@ -57,7 +58,6 @@ public sealed class PreWriteUniqueEnforcementTests
     public async Task SingleInsert_DuplicateAgainstExisting_DoesNotConsumeAutoIncrement()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
@@ -90,7 +90,6 @@ public sealed class PreWriteUniqueEnforcementTests
     public async Task BatchInsert_IntraBatchDuplicate_ThrowsAndPersistsNoRows()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -125,7 +124,6 @@ public sealed class PreWriteUniqueEnforcementTests
     public async Task UpdateRows_CreatesDuplicate_ThrowsAndLeavesTableUnchanged()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -171,7 +169,6 @@ public sealed class PreWriteUniqueEnforcementTests
     public async Task MultiColumnUniqueIndex_DuplicateComposite_Throws()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
@@ -195,7 +192,6 @@ public sealed class PreWriteUniqueEnforcementTests
     public async Task PrimaryKey_DuplicateInsert_ThrowsBeforeWrite()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
@@ -214,7 +210,6 @@ public sealed class PreWriteUniqueEnforcementTests
     public async Task NonUniqueIndex_DuplicateInsert_IsAllowed()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {

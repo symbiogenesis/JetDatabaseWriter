@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Core;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
@@ -23,6 +24,8 @@ using Xunit;
 /// </summary>
 public sealed class IndexSurgicalSingleLeafMutationTests
 {
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
+
     [Fact]
     public async Task SurgicalInPlaceUpdate_OnMiddleLeaf_AppendsZeroIndexPages()
     {
@@ -31,7 +34,6 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // leaf and does NOT change the leaf's max key → in-place leaf rewrite rewrites the
         // single affected leaf in place with no parent-summary update.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -85,7 +87,6 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // strictly less than that leaf's existing max → in-place leaf rewrite in-place
         // leaf rewrite, no parent-summary change required.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -141,7 +142,6 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     public async Task SurgicalDelete_FromMiddleLeaf_AppendsZeroIndexPages()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -186,7 +186,6 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // intermediate to update its summary entry. Total index page delta:
         // still ZERO.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -239,7 +238,6 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // parent intermediate in place to insert one new summary entry.
         // Total NEW index pages = exactly 1 (the new right half).
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -308,7 +306,6 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // it. Verify only that the result is correct and the file is
         // readable — page-count delta is intentionally NOT asserted here.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -347,7 +344,6 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // one specific leaf → surgical path bails (empty-leaf underflow is
         // territory); bulk rebuild rebuilds and the read-back stays correct.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {

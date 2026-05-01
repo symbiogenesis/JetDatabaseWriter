@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
@@ -25,6 +26,7 @@ public sealed class PrimaryKeyWriterTests
 {
     private static readonly string[] CompositeOrderLine = ["OrderId", "LineNo"];
     private static readonly string[] CompositeAB = ["A", "B"];
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
     [Fact]
     public async Task CreateTable_WithSingleColumnPrimaryKey_ViaIndexDefinition_RoundTrips()
@@ -203,7 +205,6 @@ public sealed class PrimaryKeyWriterTests
     public async Task SinglePrimaryKey_OnInteger_ParticipatesInBulkRebuild()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -231,7 +232,6 @@ public sealed class PrimaryKeyWriterTests
     public async Task CompositePrimaryKey_OnInsert_ParticipatesInBulkRebuild()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -261,7 +261,6 @@ public sealed class PrimaryKeyWriterTests
     public async Task CompositePrimaryKey_OnUpdateAndDelete_LeafReflectsLatestState()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -303,7 +302,6 @@ public sealed class PrimaryKeyWriterTests
     public async Task CompositePrimaryKey_SurvivesAddColumn_LeafRebuilt()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -338,7 +336,6 @@ public sealed class PrimaryKeyWriterTests
     public async Task PrimaryKey_SurvivesAddColumn()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -365,7 +362,6 @@ public sealed class PrimaryKeyWriterTests
     public async Task PrimaryKey_DroppedWhenAnyKeyColumnIsDropped()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -393,7 +389,6 @@ public sealed class PrimaryKeyWriterTests
     public async Task PrimaryKey_RemapsRenamedKeyColumn()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
