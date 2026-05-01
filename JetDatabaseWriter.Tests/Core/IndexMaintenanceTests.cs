@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Core;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Core.Interfaces;
@@ -35,13 +36,14 @@ using Xunit;
 /// </summary>
 public sealed class IndexMaintenanceTests
 {
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
+
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task InsertRows_RebuildsIndexLeaf_WithExpectedEntryCount(DatabaseFormat format)
     {
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -73,7 +75,6 @@ public sealed class IndexMaintenanceTests
     public async Task InsertRow_Single_RebuildsIndexLeaf(DatabaseFormat format)
     {
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -96,7 +97,6 @@ public sealed class IndexMaintenanceTests
     public async Task UpdateRows_RebuildsIndexLeaf_PreservingRowCount(DatabaseFormat format)
     {
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -139,7 +139,6 @@ public sealed class IndexMaintenanceTests
     public async Task DeleteRows_RebuildsIndexLeaf_WithReducedEntryCount(DatabaseFormat format)
     {
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -174,7 +173,6 @@ public sealed class IndexMaintenanceTests
     public async Task AddColumn_PreservesExistingIndex(DatabaseFormat format)
     {
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -201,7 +199,6 @@ public sealed class IndexMaintenanceTests
     public async Task RenameColumn_RemapsIndexColumnReference(DatabaseFormat format)
     {
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -228,7 +225,6 @@ public sealed class IndexMaintenanceTests
     public async Task DropColumn_DropsIndexReferencingDroppedColumn(DatabaseFormat format)
     {
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -262,7 +258,6 @@ public sealed class IndexMaintenanceTests
         // Text indexes whose values are limited to digits + ASCII letters
         // are maintained on insert via the General Legacy sort-key encoder.
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -295,7 +290,6 @@ public sealed class IndexMaintenanceTests
         // fell through to the stale-leaf path now participate in the index maintenance
         // bulk B-tree rebuild, so the emitted leaf reflects all inserted rows.
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -328,7 +322,6 @@ public sealed class IndexMaintenanceTests
         // Round-trip a memo-keyed index and confirm the bulk rebuild populated
         // the leaf instead of leaving the leaf-page emission placeholder in place.
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -361,7 +354,6 @@ public sealed class IndexMaintenanceTests
         // 700 rows guarantees a multi-level tree on both formats.
         const int RowCount = 700;
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -404,7 +396,6 @@ public sealed class IndexMaintenanceTests
         // include the late insert.
         const int InitialRows = 700;
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -440,7 +431,6 @@ public sealed class IndexMaintenanceTests
     {
         const int InitialRows = 700;
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -473,7 +463,6 @@ public sealed class IndexMaintenanceTests
     public async Task PrimaryKey_InsertDuplicate_Throws(DatabaseFormat format)
     {
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using var writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
@@ -499,7 +488,6 @@ public sealed class IndexMaintenanceTests
         // confirm the incremental (non-rebuild) splice path works for both
         // insert and delete operations.
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -533,7 +521,6 @@ public sealed class IndexMaintenanceTests
         // The reader must still see the correct total row count after maintenance.
         const int InitialRows = 700;
         await using var stream = await CreateFreshStreamAsync(format);
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {

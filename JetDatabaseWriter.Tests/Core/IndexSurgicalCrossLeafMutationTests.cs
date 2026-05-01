@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
@@ -30,6 +31,8 @@ using Xunit;
 /// </summary>
 public sealed class IndexSurgicalCrossLeafMutationTests
 {
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
+
     [Fact]
     public async Task CrossLeafBulkInsert_TwoLeavesNoMaxChange_AppendsZeroIndexPages()
     {
@@ -40,7 +43,6 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // no parent-summary changes. cross-leaf surgical rewrites both leaves in place
         // at their existing page numbers.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -99,7 +101,6 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // overall max would trigger the tail-page append tail-page descent overshoot
         // and bail to bulk rebuild,-C-3 / leaf split design).
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -154,7 +155,6 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // inserted key is readable AND seekable via the index. (Filter via
         // LINQ over Rows, which exercises the post-mutation tree.)
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -215,7 +215,6 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // page (the split's right half) plus rewrites of both leaves +
         // parent in place. Net delta on index page count: exactly +1.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -281,7 +280,6 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         // size. Verifies the surgical path re-engages cleanly across
         // sequential calls and that the final data is consistent.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {

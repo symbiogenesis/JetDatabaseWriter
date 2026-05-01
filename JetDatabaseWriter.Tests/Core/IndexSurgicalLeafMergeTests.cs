@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Core;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
@@ -23,6 +24,8 @@ using Xunit;
 /// </summary>
 public sealed class IndexSurgicalLeafMergeTests
 {
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
+
     [Fact]
     public async Task DeleteAllInLeftmostLeaf_MergesIntoRightSibling_AppendsZeroIndexPages()
     {
@@ -33,7 +36,6 @@ public sealed class IndexSurgicalLeafMergeTests
         // (!= last) → merge engages. Dead leaf is orphaned (still 0x04
         // 0x01-tagged) so CountIndexPages stays equal.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -102,7 +104,6 @@ public sealed class IndexSurgicalLeafMergeTests
         // path runs, the post-state is correct: 800 surviving rows, no
         // Tag=1 entries left, and a navigable tree.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -162,7 +163,6 @@ public sealed class IndexSurgicalLeafMergeTests
         // → zero new index pages appended (the orphaned dead leaf is
         // reclaimed by Compact & Repair).
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         const int Total = 1200;
         const int LeftAndMidCount = 802; // matches the bulk builder split
@@ -219,7 +219,6 @@ public sealed class IndexSurgicalLeafMergeTests
         // across both leaves of the IX_Id index → cross-leaf change-set
         // with no per-leaf underflow. cross-leaf surgical in-place rewrites both leaves.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -276,7 +275,6 @@ public sealed class IndexSurgicalLeafMergeTests
         // mutation succeeds (the chain pointers were patched correctly
         // either way).
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -349,7 +347,6 @@ public sealed class IndexSurgicalLeafMergeTests
         // recomputed to that leaf's page number. Single-entry intermediates
         // are valid — the seeker descends through their lone child pointer.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         const int Total = 800;
         const int LeftLeafCount = 401; // matches the bulk builder split

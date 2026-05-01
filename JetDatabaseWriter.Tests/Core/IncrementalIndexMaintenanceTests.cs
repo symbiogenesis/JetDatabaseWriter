@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Core;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
@@ -28,11 +29,12 @@ using Xunit;
 /// </summary>
 public sealed class IncrementalIndexMaintenanceTests
 {
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
+
     [Fact]
     public async Task SingleInsert_AppendsExactlyOneNewLeafPage()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -72,7 +74,6 @@ public sealed class IncrementalIndexMaintenanceTests
         // inserts append exactly 5 new leaf pages (one per call), without
         // re-scanning the whole table for each.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -109,7 +110,6 @@ public sealed class IncrementalIndexMaintenanceTests
     public async Task SingleDelete_AppendsOneLeaf_WithReducedEntryCount()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -153,7 +153,6 @@ public sealed class IncrementalIndexMaintenanceTests
         // Update is delete+insert on the same call; the fast path receives
         // both in a single hint and emits one new leaf per index.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -202,14 +201,15 @@ public sealed class IncrementalIndexMaintenanceTests
         Assert.True(foundUpdated);
     }
 
-    [Fact]
-    public async Task FastPath_FallsBackToBulk_WhenLeafOverflows()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task FastPath_FallsBackToBulk_WhenLeafOverflows(DatabaseFormat format)
     {
         // Small page-fitting table → fast path. Then push enough rows in a
         // single batch to spill the leaf → bulk path takes over (multi-page
         // tree). The end result must still be correct.
-        await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -247,7 +247,6 @@ public sealed class IncrementalIndexMaintenanceTests
         // Text indexes are supported by the General Legacy encoder, so
         // single-row inserts should hit the fast path.
         await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -269,13 +268,14 @@ public sealed class IncrementalIndexMaintenanceTests
         Assert.Equal(3, dt!.Rows.Count);
     }
 
-    [Fact]
-    public async Task FastPath_UniqueIndex_PreCheckStillFires()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task FastPath_UniqueIndex_PreCheckStillFires(DatabaseFormat format)
     {
         // The pre-write unique check pre-write unique-index check must still reject duplicates
         // even when the post-mutation index maintenance is incremental.
-        await using var stream = await CreateFreshAccdbStreamAsync();
-        var ct = TestContext.Current.CancellationToken;
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using var writer = await OpenWriterAsync(stream);
         await writer.CreateTableAsync(
@@ -291,10 +291,10 @@ public sealed class IncrementalIndexMaintenanceTests
             await writer.InsertRowAsync("T", [1], ct));
     }
 
-    private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
+    private static int CountLeafEntries(byte[] fileBytes, int leafOffset, DatabaseFormat format)
     {
         int count = 1;
-        for (int i = Constants.IndexLeafPage.Jet4BitmaskOffset; i < Constants.IndexLeafPage.Jet4FirstEntryOffset; i++)
+        for (int i = BitmaskOffset(format); i < FirstEntryOffset(format); i++)
         {
             byte b = fileBytes[leafOffset + i];
             for (int bit = 0; bit < 8; bit++)
@@ -309,12 +309,13 @@ public sealed class IncrementalIndexMaintenanceTests
         return count;
     }
 
-    private static int CountLeafPages(byte[] fileBytes)
+    private static int CountLeafPages(byte[] fileBytes, DatabaseFormat format)
     {
+        int pageSize = PageSizeOf(format);
         int n = 0;
-        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
+        for (int p = 0; p < fileBytes.Length / pageSize; p++)
         {
-            int o = p * Constants.PageSizes.Jet4;
+            int o = p * pageSize;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
                 n++;
@@ -324,12 +325,13 @@ public sealed class IncrementalIndexMaintenanceTests
         return n;
     }
 
-    private static int GetLatestLeafEntryCount(byte[] fileBytes)
+    private static int GetLatestLeafEntryCount(byte[] fileBytes, DatabaseFormat format)
     {
+        int pageSize = PageSizeOf(format);
         int latest = -1;
-        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
+        for (int p = 0; p < fileBytes.Length / pageSize; p++)
         {
-            int o = p * Constants.PageSizes.Jet4;
+            int o = p * pageSize;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
                 latest = p;
@@ -337,15 +339,24 @@ public sealed class IncrementalIndexMaintenanceTests
         }
 
         Assert.True(latest >= 0, "Expected at least one index leaf page in the file.");
-        return CountLeafEntries(fileBytes, latest * Constants.PageSizes.Jet4);
+        return CountLeafEntries(fileBytes, latest * pageSize, format);
     }
 
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
+    private static int PageSizeOf(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
+
+    private static int BitmaskOffset(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3BitmaskOffset : Constants.IndexLeafPage.Jet4BitmaskOffset;
+
+    private static int FirstEntryOffset(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3FirstEntryOffset : Constants.IndexLeafPage.Jet4FirstEntryOffset;
+
+    private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
-            DatabaseFormat.AceAccdb,
+            format,
             new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken))
