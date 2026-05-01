@@ -9405,15 +9405,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         switch (type)
         {
             case T_BYTE:
-                return size >= 1 ? page[start] : (object?)null;
+                return size >= 1 ? page[start] : null;
             case T_INT:
-                return size >= 2 ? (short)BinaryPrimitives.ReadInt16LittleEndian(page.AsSpan(start, 2)) : (object?)null;
+                return size >= 2 ? BinaryPrimitives.ReadInt16LittleEndian(page.AsSpan(start, 2)) : null;
             case T_LONG:
-                return size >= 4 ? BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4)) : (object?)null;
+                return size >= 4 ? BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4)) : null;
             case T_FLOAT:
-                return size >= 4 ? ReadSingleLittleEndian(page.AsSpan(start, 4)) : (object?)null;
+                return size >= 4 ? ReadSingleLittleEndian(page.AsSpan(start, 4)) : null;
             case T_DOUBLE:
-                return size >= 8 ? ReadDoubleLittleEndian(page.AsSpan(start, 8)) : (object?)null;
+                return size >= 8 ? ReadDoubleLittleEndian(page.AsSpan(start, 8)) : null;
             case T_DATETIME:
                 {
                     if (size < 8)
@@ -9497,15 +9497,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 }
 
             case T_BYTE:
-                return size >= 1 ? page[start] : (object?)null;
+                return size >= 1 ? page[start] : null;
             case T_INT:
-                return size >= 2 ? (short)BinaryPrimitives.ReadInt16LittleEndian(page.AsSpan(start, 2)) : (object?)null;
+                return size >= 2 ? BinaryPrimitives.ReadInt16LittleEndian(page.AsSpan(start, 2)) : null;
             case T_LONG:
-                return size >= 4 ? BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4)) : (object?)null;
+                return size >= 4 ? BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4)) : null;
             case T_FLOAT:
-                return size >= 4 ? ReadSingleLittleEndian(page.AsSpan(start, 4)) : (object?)null;
+                return size >= 4 ? ReadSingleLittleEndian(page.AsSpan(start, 4)) : null;
             case T_DOUBLE:
-                return size >= 8 ? ReadDoubleLittleEndian(page.AsSpan(start, 8)) : (object?)null;
+                return size >= 8 ? ReadDoubleLittleEndian(page.AsSpan(start, 8)) : null;
             case T_DATETIME:
                 {
                     if (size < 8)
