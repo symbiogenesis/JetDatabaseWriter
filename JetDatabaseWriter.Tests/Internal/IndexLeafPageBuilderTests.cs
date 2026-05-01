@@ -16,17 +16,15 @@ using Xunit;
 /// </summary>
 public sealed class IndexLeafPageBuilderTests
 {
-    private const int PageSize = 4096;
-
     [Fact]
     public void EmptyPage_HasCorrectHeaderAndFreeSpace()
     {
-        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, parentTdefPage: 42, []);
+        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(Constants.PageSizes.Jet4, parentTdefPage: 42, []);
 
-        Assert.Equal(PageSize, page.Length);
+        Assert.Equal(Constants.PageSizes.Jet4, page.Length);
         Assert.Equal(0x04, page[0]);                                // page_type
         Assert.Equal(0x01, page[1]);                                // unknown
-        Assert.Equal(PageSize - 0x1E0, ReadU16(page, 2));           // free_space (entire payload area)
+        Assert.Equal(Constants.PageSizes.Jet4 - 0x1E0, ReadU16(page, 2));           // free_space (entire payload area)
         Assert.Equal(42, ReadI32(page, 4));                         // parent_page (TDEF)
         Assert.Equal(0, ReadI32(page, 8));                          // prev_page
         Assert.Equal(0, ReadI32(page, 12));                         // next_page
@@ -47,7 +45,7 @@ public sealed class IndexLeafPageBuilderTests
         byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 7, ascending: true); // T_LONG=7 → 5 bytes
         var entries = new[] { new IndexEntry(key, 0x123456, 9) };
 
-        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, parentTdefPage: 100, entries);
+        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(Constants.PageSizes.Jet4, parentTdefPage: 100, entries);
 
         // Key bytes copied at first-entry offset.
         for (int i = 0; i < key.Length; i++)
@@ -70,7 +68,7 @@ public sealed class IndexLeafPageBuilderTests
 
         // Free space accounts for header + 1 entry.
         int entryLen = key.Length + 4;
-        Assert.Equal(PageSize - 0x1E0 - entryLen, ReadU16(page, 2));
+        Assert.Equal(Constants.PageSizes.Jet4 - 0x1E0 - entryLen, ReadU16(page, 2));
     }
 
     [Fact]
@@ -86,7 +84,7 @@ public sealed class IndexLeafPageBuilderTests
             new IndexEntry(k3, 1, 2),
         };
 
-        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, parentTdefPage: 100, entries);
+        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(Constants.PageSizes.Jet4, parentTdefPage: 100, entries);
 
         // Each entry occupies key.Length + 4 = 9 bytes.
         // Entry 1 starts at 0x1E0 + 9; entry 2 at 0x1E0 + 18.
@@ -112,7 +110,7 @@ public sealed class IndexLeafPageBuilderTests
             entries[i] = entry;
         }
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, 100, entries));
+        Assert.Throws<ArgumentOutOfRangeException>(() => IndexLeafPageBuilder.BuildJet4LeafPage(Constants.PageSizes.Jet4, 100, entries));
     }
 
     [Fact]
@@ -121,7 +119,7 @@ public sealed class IndexLeafPageBuilderTests
         byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
         var entries = new[] { new IndexEntry(key, 0x1_000_000L, 0) };
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, 100, entries));
+        Assert.Throws<ArgumentOutOfRangeException>(() => IndexLeafPageBuilder.BuildJet4LeafPage(Constants.PageSizes.Jet4, 100, entries));
     }
 
     [Fact]
@@ -138,7 +136,7 @@ public sealed class IndexLeafPageBuilderTests
             new IndexEntry(k2, 1, 1),
         };
 
-        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, parentTdefPage: 100, entries);
+        byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(Constants.PageSizes.Jet4, parentTdefPage: 100, entries);
 
         Assert.Equal(0, ReadU16(page, 20));
     }
@@ -161,7 +159,7 @@ public sealed class IndexLeafPageBuilderTests
         ];
 
         byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(
-            PageSize,
+            Constants.PageSizes.Jet4,
             parentTdefPage: 100,
             entries,
             prevPage: 0,
@@ -192,7 +190,7 @@ public sealed class IndexLeafPageBuilderTests
 
         // Free space reflects the tighter packing: header consumed +
         // (5+4) + (1+4) + (1+4) = 19 bytes from the entry area.
-        Assert.Equal(PageSize - 0x1E0 - 19, ReadU16(page, 2));
+        Assert.Equal(Constants.PageSizes.Jet4 - 0x1E0 - 19, ReadU16(page, 2));
     }
 
     [Fact]
@@ -202,7 +200,7 @@ public sealed class IndexLeafPageBuilderTests
         var entries = new[] { new IndexEntry(key, 1, 0) };
 
         byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(
-            PageSize, 100, entries, 0, 0, 0, enablePrefixCompression: true);
+            Constants.PageSizes.Jet4, 100, entries, 0, 0, 0, enablePrefixCompression: true);
 
         Assert.Equal(0, ReadU16(page, 20));
     }
@@ -219,7 +217,7 @@ public sealed class IndexLeafPageBuilderTests
         ];
 
         byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(
-            PageSize, 100, entries, 0, 0, 0, enablePrefixCompression: true);
+            Constants.PageSizes.Jet4, 100, entries, 0, 0, 0, enablePrefixCompression: true);
 
         Assert.Equal(0, ReadU16(page, 20));
     }

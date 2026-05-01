@@ -16,9 +16,6 @@ using Xunit;
 /// </summary>
 public sealed class IndexBTreeBuilderTests
 {
-    private const int PageSize = 4096;
-    private const int FirstEntryOffset = 0x1E0;
-
     private const long ParentTdef = 100;
     private const long FirstPage = 50;
 
@@ -26,7 +23,7 @@ public sealed class IndexBTreeBuilderTests
     public void Empty_ProducesSingleEmptyLeaf_RootIsThatLeaf()
     {
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(
-            PageSize, ParentTdef, new List<IndexEntry>(), FirstPage);
+            Constants.PageSizes.Jet4, ParentTdef, new List<IndexEntry>(), FirstPage);
 
         Assert.Single(r.Pages);
         Assert.Equal(FirstPage, r.RootPageNumber);
@@ -43,7 +40,7 @@ public sealed class IndexBTreeBuilderTests
             entries.Add(new IndexEntry(key, 1, (byte)i));
         }
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
+        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, ParentTdef, entries, FirstPage);
 
         Assert.Single(r.Pages);
         Assert.Equal(FirstPage, r.RootPageNumber);
@@ -69,7 +66,7 @@ public sealed class IndexBTreeBuilderTests
             entries.Add(new IndexEntry(big, 1, (byte)i));
         }
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
+        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, ParentTdef, entries, FirstPage);
 
         // 3 leaves + 1 intermediate root = 4 pages.
         Assert.Equal(4, r.Pages.Count);
@@ -110,7 +107,7 @@ public sealed class IndexBTreeBuilderTests
             entries.Add(new IndexEntry(big, 1, (byte)i));
         }
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
+        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, ParentTdef, entries, FirstPage);
 
         byte[] intermediate = r.Pages[3];
 
@@ -125,13 +122,13 @@ public sealed class IndexBTreeBuilderTests
         // Entry 0 (full): key (200) + 3-byte BE data_page + 1-byte data_row + 4-byte child_page.
         int entry0KeyLen = 200;
         int entry0Stride = entry0KeyLen + 4 + 4;
-        int firstChildOffset = FirstEntryOffset + entry0KeyLen + 4;
+        int firstChildOffset = Constants.IndexLeafPage.Jet4FirstEntryOffset + entry0KeyLen + 4;
         Assert.Equal(FirstPage + 0, ReadI32(intermediate, firstChildOffset));
 
         // Entry 1 (compressed): key (200 - prefLen) + 4 + 4.
         int compressedKeyLen = 200 - prefLen;
         int compressedStride = compressedKeyLen + 4 + 4;
-        int entry1Start = FirstEntryOffset + entry0Stride;
+        int entry1Start = Constants.IndexLeafPage.Jet4FirstEntryOffset + entry0Stride;
         int secondChildOffset = entry1Start + compressedKeyLen + 4;
         Assert.Equal(FirstPage + 1, ReadI32(intermediate, secondChildOffset));
 
@@ -153,7 +150,7 @@ public sealed class IndexBTreeBuilderTests
             entries.Add(new IndexEntry(key, 1, (byte)i));
         }
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
+        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, ParentTdef, entries, FirstPage);
 
         Assert.Single(r.Pages);
         byte[] leaf = r.Pages[0];
@@ -165,11 +162,11 @@ public sealed class IndexBTreeBuilderTests
         // First entry: full 5-byte key + 4-byte rowptr at 0x1E0 (stride 9).
         // Entry 1 at offset 9, entry 2 at offset 14 — both compressed to 1 + 4 bytes.
         // Bitmask: byte 1 carries bits 1 (0x02) and 6 (0x40) → 0x42.
-        const int Jet4BitmaskOffset = 0x1B;
+        const int Jet4BitmaskOffset = Constants.IndexLeafPage.Jet4BitmaskOffset;
         Assert.Equal(0x42, leaf[Jet4BitmaskOffset + 1]);
 
         // Verify entry[1] starts at 0x1E0 + 9 and contains the suffix byte 0x02 (i=2).
-        Assert.Equal(0x02, leaf[FirstEntryOffset + 9]);
+        Assert.Equal(0x02, leaf[Constants.IndexLeafPage.Jet4FirstEntryOffset + 9]);
     }
 
     [Fact]
@@ -184,7 +181,7 @@ public sealed class IndexBTreeBuilderTests
             new(k2, 1, 1),
         ];
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
+        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, ParentTdef, entries, FirstPage);
 
         Assert.Single(r.Pages);
         Assert.Equal(0, ReadU16(r.Pages[0], 20));
@@ -213,7 +210,7 @@ public sealed class IndexBTreeBuilderTests
             entries.Add(new IndexEntry(big, 1, 0));
         }
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
+        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, ParentTdef, entries, FirstPage);
 
         Assert.Equal(expectedTotal, r.Pages.Count);
 

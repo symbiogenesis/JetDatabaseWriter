@@ -135,13 +135,12 @@ public sealed class IndexWriterJet3Tests
                 TestContext.Current.CancellationToken);
         }
 
-        const int PageSize = 2048;
         byte[] bytes = stream.ToArray();
         int leafCount = 0;
         int leafFreeSpace = -1;
-        for (int p = 0; p < bytes.Length / PageSize; p++)
+        for (int p = 0; p < bytes.Length / Constants.PageSizes.Jet3; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet3;
             if (bytes[o] == 0x04 && bytes[o + 1] == 0x01)
             {
                 leafCount++;
@@ -150,7 +149,7 @@ public sealed class IndexWriterJet3Tests
         }
 
         Assert.Equal(1, leafCount);
-        Assert.Equal(PageSize - 0xF8, leafFreeSpace);
+        Assert.Equal(Constants.PageSizes.Jet3 - 0xF8, leafFreeSpace);
     }
 
     [Fact]

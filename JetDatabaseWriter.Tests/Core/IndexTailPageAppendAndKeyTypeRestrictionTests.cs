@@ -43,10 +43,6 @@ using Xunit;
 /// </summary>
 public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
 {
-    private const int PageSize = 4096; // ACE
-    private const byte PageTypeIntermediate = 0x03;
-    private const byte PageTypeLeaf = 0x04;
-
     private static readonly string[] MixedKeyColumns = ["Id", "Blob"];
 
     // ── A: reject indexes on OLE / Attachment / Multi-Value columns ──
@@ -138,12 +134,12 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
             entries.Add(new IndexEntry(big, 1, (byte)i));
         }
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, parentTdef, entries, firstPage);
+        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, parentTdef, entries, firstPage);
 
         // Layout assumed by IndexBTreeBuilderTests: 3 leaves at pages 50..52,
         // 1 intermediate root at page 53.
         Assert.Equal(4, r.Pages.Count);
-        Assert.Equal(PageTypeIntermediate, r.Pages[3][0]);
+        Assert.Equal(Constants.IndexLeafPage.PageTypeIntermediate, r.Pages[3][0]);
 
         long tailPage = ReadI32(r.Pages[3], 16);
         Assert.Equal(firstPage + 2, tailPage); // rightmost leaf
@@ -164,10 +160,10 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
             new([0x7F, 0x80, 0x00, 0x00, 0x02], 1, 1),
         };
 
-        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, parentTdef, entries, firstPage);
+        IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, parentTdef, entries, firstPage);
 
         Assert.Single(r.Pages);
-        Assert.Equal(PageTypeLeaf, r.Pages[0][0]);
+        Assert.Equal(Constants.IndexLeafPage.PageTypeLeaf, r.Pages[0][0]);
         Assert.Equal(0, ReadI32(r.Pages[0], 16));
     }
 
@@ -221,8 +217,8 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
         // catalog churn (free-space patches, etc.) — a bulk rebuild regression would
         // allocate dozens of pages (≥ 50 KB), well outside this bound.
         Assert.True(
-            growth <= 4 * PageSize,
-            $"Expected append-only fast path to grow the file by ≤ 4 pages; grew by {growth} bytes ({growth / PageSize} pages).");
+            growth <= 4 * Constants.PageSizes.Jet4,
+            $"Expected append-only fast path to grow the file by ≤ 4 pages; grew by {growth} bytes ({growth / Constants.PageSizes.Jet4} pages).");
 
         // Row count must still be correct after the append.
         await using var reader = await OpenReaderAsync(stream);
@@ -317,8 +313,8 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
 
         long growth = stream.Length - sizeAfterBulk;
         Assert.True(
-            growth <= 32 * PageSize,
-            $"Expected {Appends} append-only inserts to stay on the fast path; total growth {growth} bytes ({growth / PageSize} pages).");
+            growth <= 32 * Constants.PageSizes.Jet4,
+            $"Expected {Appends} append-only inserts to stay on the fast path; total growth {growth} bytes ({growth / Constants.PageSizes.Jet4} pages).");
 
         await using var reader = await OpenReaderAsync(stream);
         var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);

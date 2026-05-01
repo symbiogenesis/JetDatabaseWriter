@@ -28,10 +28,6 @@ using Xunit;
 /// </summary>
 public sealed class IncrementalIndexMaintenanceTests
 {
-    private const int PageSize = 4096; // ACE
-    private const int LeafBitmaskOffset = 0x1B;
-    private const int LeafFirstEntryOffset = 0x1E0;
-
     [Fact]
     public async Task SingleInsert_AppendsExactlyOneNewLeafPage()
     {
@@ -298,7 +294,7 @@ public sealed class IncrementalIndexMaintenanceTests
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
     {
         int count = 1;
-        for (int i = LeafBitmaskOffset; i < LeafFirstEntryOffset; i++)
+        for (int i = Constants.IndexLeafPage.Jet4BitmaskOffset; i < Constants.IndexLeafPage.Jet4FirstEntryOffset; i++)
         {
             byte b = fileBytes[leafOffset + i];
             for (int bit = 0; bit < 8; bit++)
@@ -316,9 +312,9 @@ public sealed class IncrementalIndexMaintenanceTests
     private static int CountLeafPages(byte[] fileBytes)
     {
         int n = 0;
-        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet4;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
                 n++;
@@ -331,9 +327,9 @@ public sealed class IncrementalIndexMaintenanceTests
     private static int GetLatestLeafEntryCount(byte[] fileBytes)
     {
         int latest = -1;
-        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet4;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
                 latest = p;
@@ -341,7 +337,7 @@ public sealed class IncrementalIndexMaintenanceTests
         }
 
         Assert.True(latest >= 0, "Expected at least one index leaf page in the file.");
-        return CountLeafEntries(fileBytes, latest * PageSize);
+        return CountLeafEntries(fileBytes, latest * Constants.PageSizes.Jet4);
     }
 
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()

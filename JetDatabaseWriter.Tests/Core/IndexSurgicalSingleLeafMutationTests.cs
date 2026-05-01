@@ -23,8 +23,6 @@ using Xunit;
 /// </summary>
 public sealed class IndexSurgicalSingleLeafMutationTests
 {
-    private const int PageSize = 4096; // ACE
-
     [Fact]
     public async Task SurgicalInPlaceUpdate_OnMiddleLeaf_AppendsZeroIndexPages()
     {
@@ -386,9 +384,9 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     private static int CountIndexPages(byte[] fileBytes)
     {
         int n = 0;
-        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet4;
             byte t = fileBytes[o];
             if ((t == 0x03 || t == 0x04) && fileBytes[o + 1] == 0x01)
             {

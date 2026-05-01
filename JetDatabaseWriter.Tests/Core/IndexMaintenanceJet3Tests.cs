@@ -21,10 +21,6 @@ using Xunit;
 /// </summary>
 public sealed class IndexMaintenanceJet3Tests
 {
-    private const int PageSize = 2048; // Jet3
-    private const int LeafBitmaskOffset = 0x16;
-    private const int LeafFirstEntryOffset = 0xF8;
-
     [Fact]
     public async Task Jet3_InsertRows_RebuildsIndexLeaf_WithExpectedEntryCount()
     {
@@ -256,9 +252,9 @@ public sealed class IndexMaintenanceJet3Tests
         long fileLen = stream.Length;
         byte[] bytes = stream.GetBuffer();
         int latestEntryCount = -1;
-        for (int p = 0; p < fileLen / PageSize; p++)
+        for (int p = 0; p < fileLen / Constants.PageSizes.Jet3; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet3;
             if (bytes[o] == 0x04 && bytes[o + 1] == 0x01)
             {
                 latestEntryCount = CountLeafEntries(bytes, o);
@@ -306,9 +302,9 @@ public sealed class IndexMaintenanceJet3Tests
         // level path must be exercised.
         byte[] bytes = stream.GetBuffer();
         int intermediateCount = 0;
-        for (int p = 0; p < stream.Length / PageSize; p++)
+        for (int p = 0; p < stream.Length / Constants.PageSizes.Jet3; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet3;
             if (bytes[o] == 0x03 && bytes[o + 1] == 0x01)
             {
                 intermediateCount++;
@@ -333,7 +329,7 @@ public sealed class IndexMaintenanceJet3Tests
         // §4.2: one implicit first entry, plus one bit per subsequent entry
         // in the bitmask spanning [0x16 .. 0xF8) on Jet3.
         int count = 1;
-        for (int i = LeafBitmaskOffset; i < LeafFirstEntryOffset; i++)
+        for (int i = Constants.IndexLeafPage.Jet3BitmaskOffset; i < Constants.IndexLeafPage.Jet3FirstEntryOffset; i++)
         {
             byte b = fileBytes[leafOffset + i];
             for (int bit = 0; bit < 8; bit++)
@@ -351,9 +347,9 @@ public sealed class IndexMaintenanceJet3Tests
     private static int FindMaxLeafEntryCount(byte[] fileBytes)
     {
         int max = 0;
-        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet3; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet3;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
                 int n = CountLeafEntries(fileBytes, o);
@@ -370,9 +366,9 @@ public sealed class IndexMaintenanceJet3Tests
     private static int GetLatestLeafEntryCount(byte[] fileBytes)
     {
         int latest = -1;
-        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet3; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet3;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
                 latest = p;
@@ -380,7 +376,7 @@ public sealed class IndexMaintenanceJet3Tests
         }
 
         Assert.True(latest >= 0, "Expected at least one index leaf page in the file.");
-        return CountLeafEntries(fileBytes, latest * PageSize);
+        return CountLeafEntries(fileBytes, latest * Constants.PageSizes.Jet3);
     }
 
     private static async ValueTask<MemoryStream> CreateFreshJet3StreamAsync()

@@ -32,7 +32,7 @@ using Xunit;
 /// </summary>
 public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
-    private const int Jet4PageSize = 4096;
+    private const int Jet4PageSize = Constants.PageSizes.Jet4;
 
     // ═══════════════════════════════════════════════════════════════════
     // 1. CATALOG ACCESS — reader must decrypt page 2 to list tables

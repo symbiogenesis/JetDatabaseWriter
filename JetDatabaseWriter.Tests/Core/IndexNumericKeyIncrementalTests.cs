@@ -114,7 +114,7 @@ public sealed class IndexNumericKeyIncrementalTests
         // mutation would re-emit the entire tree from a fresh
         // page-number range.
         Assert.True(
-            lengthAfterSplice - lengthAfterBulk <= 8 * 4096,
+            lengthAfterSplice - lengthAfterBulk <= 8 * Constants.PageSizes.Jet4,
             $"Splice grew file by {lengthAfterSplice - lengthAfterBulk} bytes; expected ≤ 32 KB.");
 
         // Round-trip verification.
@@ -171,7 +171,7 @@ public sealed class IndexNumericKeyIncrementalTests
         // tree (~50+ leaves at this size).
         long delta = afterAppend - beforeAppend;
         Assert.True(
-            delta <= 8 * 4096,
+            delta <= 8 * Constants.PageSizes.Jet4,
             $"Append grew file by {delta} bytes; expected ≤ 32 KB (in-place tail rewrite).");
 
         await using var reader = await OpenReaderAsync(stream);
@@ -218,7 +218,7 @@ public sealed class IndexNumericKeyIncrementalTests
         long delta = afterDelete - beforeDelete;
 
         Assert.True(
-            delta <= 8 * 4096,
+            delta <= 8 * Constants.PageSizes.Jet4,
             $"Delete grew file by {delta} bytes; expected ≤ 32 KB (incremental rewrite).");
 
         await using var reader = await OpenReaderAsync(stream);
