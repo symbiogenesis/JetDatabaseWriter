@@ -8,6 +8,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -275,21 +276,12 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     /// </summary>
     private static void EncodeJet4Password(byte[] data, string password)
     {
-        byte[] jet4PwdMask =
-        [
-            0x86, 0xFB, 0xEC, 0x37, 0x5D, 0x44, 0x9C, 0xFA,
-            0xC6, 0x5E, 0x28, 0xE6, 0x13, 0xB6, 0x8A, 0x60,
-            0x54, 0x94, 0x7B, 0x36, 0xD1, 0xEC, 0xDF, 0xB1,
-            0x31, 0x6A, 0x13, 0x43, 0xEF, 0x31, 0xB1, 0x33,
-            0xA1, 0xFE, 0x6A, 0x7A, 0x42, 0x62, 0x04, 0xFE,
-        ];
-
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(password);
         var encoded = new byte[40];
         for (int i = 0; i < 40; i++)
         {
             byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
-            encoded[i] = (byte)(pwdByte ^ jet4PwdMask[i] ^ data[0x72 + (i % 4)]);
+            encoded[i] = (byte)(pwdByte ^ EncryptionManager.Jet4PasswordMask[i] ^ data[0x72 + (i % 4)]);
         }
 
         Buffer.BlockCopy(encoded, 0, data, 0x42, 40);

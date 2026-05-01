@@ -19,7 +19,7 @@ internal static class EncryptionManager
     // Jet3 XOR mask (128 bytes, applied cyclically to pages 1+ when the
     // Office97 password flag is set on a Jet3 .mdb). Sourced from mdbtools
     // HACKING.md.
-    private static readonly byte[] Jet3PageXorMask =
+    internal static readonly byte[] Jet3PageXorMask =
     [
         0xEC, 0x7B, 0x28, 0x07, 0x77, 0x26, 0x13, 0x82,
         0x75, 0x4E, 0x22, 0x04, 0x42, 0xCE, 0xB3, 0x19,
@@ -41,7 +41,7 @@ internal static class EncryptionManager
 
     // Jet4 password XOR mask (mdbtools / jackcess). Applied together with
     // the 4-byte creation date at offset 0x72 to decode the stored password.
-    private static readonly byte[] Jet4PasswordMask =
+    internal static readonly byte[] Jet4PasswordMask =
     [
         0x86, 0xFB, 0xEC, 0x37, 0x5D, 0x44, 0x9C, 0xFA,
         0xC6, 0x5E, 0x28, 0xE6, 0x13, 0xB6, 0x8A, 0x60,
@@ -52,7 +52,7 @@ internal static class EncryptionManager
 
     // ACE legacy password mask used for password-only ACCDB files
     // created via DBEngine.CompactDatabase(..., ";pwd=...").
-    private static readonly byte[] AccdbLegacyPasswordMask =
+    internal static readonly byte[] AccdbLegacyPasswordMask =
     [
         0x1F, 0x9B, 0xB7, 0xCA, 0xD4, 0x24, 0xD0, 0x07,
         0x49, 0x3E, 0x62, 0x1B, 0xF9, 0xD6, 0xB4, 0x9D,

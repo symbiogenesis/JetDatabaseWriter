@@ -8,6 +8,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -41,8 +42,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         // Jet3 encryption uses a simple XOR mask applied to every page.
         // Verify the reader detects and transparently decrypts XOR-masked databases.
         byte[] data = await CloneFileAsync(TestDatabases.Jet3Test);
-        byte[] xorMask = BuildJet3XorMask();
-        ApplyXorMask(data, xorMask);
+        ApplyXorMask(data, EncryptionManager.Jet3PageXorMask);
         SetJet3EncryptionFlag(data);
 
         await using var ms = ToStream(data);
@@ -215,7 +215,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         // The Jet3 XOR mask is symmetric — write-back must re-mask each page
         // so a fresh reader can decrypt it.
         byte[] data = await CloneFileAsync(TestDatabases.Jet3Test);
-        ApplyXorMask(data, BuildJet3XorMask());
+        ApplyXorMask(data, EncryptionManager.Jet3PageXorMask);
         SetJet3EncryptionFlag(data);
         string temp = WriteTempBytes(data, ".mdb");
 
@@ -414,35 +414,6 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         }
     }
 
-    /// <summary>
-    /// Builds the Jet3 XOR mask (128 bytes, applied cyclically across each 2048-byte page).
-    /// This is the well-known fixed mask from the mdbtools specification.
-    /// </summary>
-    private static byte[] BuildJet3XorMask()
-    {
-        // The Jet3 encryption mask is a fixed 128-byte pattern applied cyclically.
-        // Sourced from mdbtools HACKING.md.
-        return
-        [
-            0xEC, 0x7B, 0x28, 0x07, 0x77, 0x26, 0x13, 0x82,
-            0x75, 0x4E, 0x22, 0x04, 0x42, 0xCE, 0xB3, 0x19,
-            0xA1, 0x32, 0x75, 0x46, 0xE3, 0x66, 0x27, 0x37,
-            0x19, 0x9E, 0xA3, 0x56, 0x85, 0x3A, 0xD6, 0xDE,
-            0xEC, 0x03, 0xE6, 0xFC, 0xF8, 0x85, 0x8F, 0xA0,
-            0x1B, 0x20, 0xAD, 0xE5, 0x0E, 0x7A, 0xF7, 0x38,
-            0x54, 0xFC, 0x10, 0x4E, 0x25, 0x22, 0xBD, 0xC7,
-            0x5D, 0x62, 0x5E, 0x44, 0xBB, 0x6D, 0xCB, 0xB5,
-            0x90, 0x14, 0xDE, 0xC5, 0xD7, 0xA5, 0x4F, 0x84,
-            0xBE, 0xE5, 0x06, 0x62, 0xC5, 0xF1, 0xBB, 0xBB,
-            0xE3, 0xBB, 0x4C, 0xFD, 0x38, 0x7B, 0xDA, 0x88,
-            0x1F, 0x5C, 0x2E, 0x5A, 0x49, 0xEB, 0x47, 0xE2,
-            0xCA, 0xAD, 0xCE, 0x73, 0xBB, 0x25, 0xF9, 0xED,
-            0x47, 0x59, 0x4C, 0x42, 0xEF, 0xF0, 0xB1, 0x58,
-            0x45, 0x58, 0x5D, 0xF3, 0xBC, 0x27, 0xBC, 0x60,
-            0x19, 0xEB, 0xB1, 0xF9, 0x4F, 0x5D, 0xD1, 0x12,
-        ];
-    }
-
     /// <summary>XOR-masks a database byte array starting at page 1 (page 0 is the header).</summary>
     private static void ApplyXorMask(byte[] data, byte[] mask)
     {
@@ -468,23 +439,13 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
     /// </summary>
     private static void SetJet4PasswordFlag(byte[] data)
     {
-        // Jet4 password XOR mask (from mdbtools / jackcess specification)
-        byte[] jet4PwdMask =
-        [
-            0x86, 0xFB, 0xEC, 0x37, 0x5D, 0x44, 0x9C, 0xFA,
-            0xC6, 0x5E, 0x28, 0xE6, 0x13, 0xB6, 0x8A, 0x60,
-            0x54, 0x94, 0x7B, 0x36, 0xD1, 0xEC, 0xDF, 0xB1,
-            0x31, 0x6A, 0x13, 0x43, 0xEF, 0x31, 0xB1, 0x33,
-            0xA1, 0xFE, 0x6A, 0x7A, 0x42, 0x62, 0x04, 0xFE,
-        ];
-
         // Encode password "test" as UTF-16LE, XOR with masks, write to 0x42
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes("test");
         var encoded = new byte[40];
         for (int i = 0; i < 40; i++)
         {
             byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
-            encoded[i] = (byte)(pwdByte ^ jet4PwdMask[i] ^ data[0x72 + (i % 4)]);
+            encoded[i] = (byte)(pwdByte ^ EncryptionManager.Jet4PasswordMask[i] ^ data[0x72 + (i % 4)]);
         }
 
         Buffer.BlockCopy(encoded, 0, data, 0x42, 40);
@@ -528,21 +489,12 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
     /// </summary>
     private static void SetJet4Rc4EncryptionFlag(byte[] data, string password)
     {
-        byte[] jet4PwdMask =
-        [
-            0x86, 0xFB, 0xEC, 0x37, 0x5D, 0x44, 0x9C, 0xFA,
-            0xC6, 0x5E, 0x28, 0xE6, 0x13, 0xB6, 0x8A, 0x60,
-            0x54, 0x94, 0x7B, 0x36, 0xD1, 0xEC, 0xDF, 0xB1,
-            0x31, 0x6A, 0x13, 0x43, 0xEF, 0x31, 0xB1, 0x33,
-            0xA1, 0xFE, 0x6A, 0x7A, 0x42, 0x62, 0x04, 0xFE,
-        ];
-
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(password);
         var encoded = new byte[40];
         for (int i = 0; i < 40; i++)
         {
             byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
-            encoded[i] = (byte)(pwdByte ^ jet4PwdMask[i] ^ data[0x72 + (i % 4)]);
+            encoded[i] = (byte)(pwdByte ^ EncryptionManager.Jet4PasswordMask[i] ^ data[0x72 + (i % 4)]);
         }
 
         Buffer.BlockCopy(encoded, 0, data, 0x42, 40);
@@ -609,16 +561,6 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         // Access 2007+ AES-encrypts the .accdb by wrapping it in a CFB document.
         byte[] cfbMagic = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 
-        // Jet4/ACCDB password XOR mask (same scheme at offset 0x42 for all Jet4+ versions)
-        byte[] jet4PwdMask =
-        [
-            0x86, 0xFB, 0xEC, 0x37, 0x5D, 0x44, 0x9C, 0xFA,
-            0xC6, 0x5E, 0x28, 0xE6, 0x13, 0xB6, 0x8A, 0x60,
-            0x54, 0x94, 0x7B, 0x36, 0xD1, 0xEC, 0xDF, 0xB1,
-            0x31, 0x6A, 0x13, 0x43, 0xEF, 0x31, 0xB1, 0x33,
-            0xA1, 0xFE, 0x6A, 0x7A, 0x42, 0x62, 0x04, 0xFE,
-        ];
-
         // Write CFB magic
         Buffer.BlockCopy(cfbMagic, 0, data, 0, cfbMagic.Length);
 
@@ -628,7 +570,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         for (int i = 0; i < 40; i++)
         {
             byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
-            encoded[i] = (byte)(pwdByte ^ jet4PwdMask[i] ^ data[0x72 + (i % 4)]);
+            encoded[i] = (byte)(pwdByte ^ EncryptionManager.Jet4PasswordMask[i] ^ data[0x72 + (i % 4)]);
         }
 
         Buffer.BlockCopy(encoded, 0, data, 0x42, 40);
