@@ -1,5 +1,7 @@
 namespace JetDatabaseWriter.Internal.Models;
 
+using JetDatabaseWriter.Enums;
+
 /// <summary>
 /// Aggregated operation against an intermediate page: replace, insert
 /// after, or remove a summary entry at <paramref name="OriginalIndex"/>.
@@ -12,13 +14,3 @@ internal readonly record struct IntermediateOp(
     int OriginalIndex,
     IntermediateOpType Type,
     DecodedIntermediateEntry NewEntry);
-
-internal enum IntermediateOpType
-{
-    Replace,
-    InsertAfter,
-
-    /// <summary>Drop the entry at <c>OriginalIndex</c>. The
-    /// other tuple fields (<c>NewEntry</c>) are unused.</summary>
-    Remove,
-}
