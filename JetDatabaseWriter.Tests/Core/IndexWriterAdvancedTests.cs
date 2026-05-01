@@ -26,10 +26,6 @@ using Xunit;
 /// </summary>
 public sealed class IndexWriterAdvancedTests
 {
-    private const int PageSize = 4096;
-    private const int LeafBitmaskOffset = 0x1B;
-    private const int LeafFirstEntryOffset = 0x1E0;
-
     private static readonly string[] CompositeAB = ["A", "B"];
     private static readonly string[] DescendingB = ["B"];
     private static readonly string[] DescendingScore = ["Score"];
@@ -419,7 +415,7 @@ public sealed class IndexWriterAdvancedTests
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
     {
         int count = 1;
-        for (int i = LeafBitmaskOffset; i < LeafFirstEntryOffset; i++)
+        for (int i = Constants.IndexLeafPage.Jet4BitmaskOffset; i < Constants.IndexLeafPage.Jet4FirstEntryOffset; i++)
         {
             byte b = fileBytes[leafOffset + i];
             for (int bit = 0; bit < 8; bit++)
@@ -437,9 +433,9 @@ public sealed class IndexWriterAdvancedTests
     private static int FindMaxLeafEntryCount(byte[] fileBytes)
     {
         int max = 0;
-        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet4;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
                 int n = CountLeafEntries(fileBytes, o);

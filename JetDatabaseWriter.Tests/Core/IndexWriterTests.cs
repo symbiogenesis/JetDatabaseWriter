@@ -259,16 +259,15 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        const int PageSize = 4096; // ACE
         byte[] bytes = stream.ToArray();
-        int totalPages = bytes.Length / PageSize;
+        int totalPages = bytes.Length / Constants.PageSizes.Jet4;
 
         int leafCount = 0;
         int observedParent = -1;
         int observedFreeSpace = -1;
         for (int p = 0; p < totalPages; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet4;
             if (bytes[o] == 0x04 && bytes[o + 1] == 0x01)
             {
                 leafCount++;
@@ -279,7 +278,7 @@ public sealed class IndexWriterTests
 
         Assert.Equal(1, leafCount);
         Assert.True(observedParent > 0, "Index leaf parent_page must reference a TDEF page.");
-        Assert.Equal(PageSize - 0x1E0, observedFreeSpace);
+        Assert.Equal(Constants.PageSizes.Jet4 - 0x1E0, observedFreeSpace);
     }
 
     [Fact]
@@ -304,12 +303,11 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        const int PageSize = 4096;
         byte[] bytes = stream.ToArray();
         int leafCount = 0;
-        for (int p = 0; p < bytes.Length / PageSize; p++)
+        for (int p = 0; p < bytes.Length / Constants.PageSizes.Jet4; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet4;
             if (bytes[o] == 0x04 && bytes[o + 1] == 0x01)
             {
                 leafCount++;

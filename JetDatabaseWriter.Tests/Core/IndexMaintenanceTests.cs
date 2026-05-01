@@ -33,10 +33,6 @@ using Xunit;
 /// </summary>
 public sealed class IndexMaintenanceTests
 {
-    private const int PageSize = 4096; // ACE
-    private const int LeafBitmaskOffset = 0x1B;
-    private const int LeafFirstEntryOffset = 0x1E0;
-
     [Fact]
     public async Task InsertRows_RebuildsIndexLeaf_WithExpectedEntryCount()
     {
@@ -455,9 +451,9 @@ public sealed class IndexMaintenanceTests
     private static int FindLatestRootPageType(byte[] fileBytes)
     {
         int latest = -1;
-        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet4;
             byte t = fileBytes[o];
             if ((t == 0x03 || t == 0x04) && fileBytes[o + 1] == 0x01)
             {
@@ -465,7 +461,7 @@ public sealed class IndexMaintenanceTests
             }
         }
 
-        return latest < 0 ? -1 : fileBytes[latest * PageSize];
+        return latest < 0 ? -1 : fileBytes[latest * Constants.PageSizes.Jet4];
     }
 
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
@@ -473,7 +469,7 @@ public sealed class IndexMaintenanceTests
         // §4.2: one implicit first entry, plus one bit per subsequent entry
         // in the bitmask spanning [0x1B .. 0x1E0).
         int count = 1;
-        for (int i = LeafBitmaskOffset; i < LeafFirstEntryOffset; i++)
+        for (int i = Constants.IndexLeafPage.Jet4BitmaskOffset; i < Constants.IndexLeafPage.Jet4FirstEntryOffset; i++)
         {
             byte b = fileBytes[leafOffset + i];
             for (int bit = 0; bit < 8; bit++)
@@ -491,9 +487,9 @@ public sealed class IndexMaintenanceTests
     private static int FindMaxLeafEntryCount(byte[] fileBytes)
     {
         int max = 0;
-        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet4;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
                 int n = CountLeafEntries(fileBytes, o);
@@ -512,9 +508,9 @@ public sealed class IndexMaintenanceTests
         // The most-recently-written leaf is the one with the highest page number
         // — maintenance always appends new index pages to the end of the file.
         int latest = -1;
-        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet4;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
                 latest = p;
@@ -522,7 +518,7 @@ public sealed class IndexMaintenanceTests
         }
 
         Assert.True(latest >= 0, "Expected at least one index leaf page in the file.");
-        return CountLeafEntries(fileBytes, latest * PageSize);
+        return CountLeafEntries(fileBytes, latest * Constants.PageSizes.Jet4);
     }
 
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()

@@ -446,7 +446,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
     /// <summary>XOR-masks a database byte array starting at page 1 (page 0 is the header).</summary>
     private static void ApplyXorMask(byte[] data, byte[] mask)
     {
-        const int jet3PageSize = 2048;
+        const int jet3PageSize = Constants.PageSizes.Jet3;
 
         // Apply mask starting from page 1 (offset 2048) through the data
         for (int offset = jet3PageSize; offset < data.Length; offset++)
@@ -511,7 +511,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         // where PageNumber is a 4-byte little-endian integer.
         uint dbKey = BitConverter.ToUInt32(data, 0x3E);
 
-        int pageSize = 4096; // Jet4
+        int pageSize = Constants.PageSizes.Jet4;
         for (int pageNum = 1; pageNum * pageSize < data.Length; pageNum++)
         {
             int offset = pageNum * pageSize;
@@ -637,11 +637,10 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
         // as the reader: SHA256(TestDatabases.AesEncryptedPassword)[0..16].
         byte[] aesKey = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(TestDatabases.AesEncryptedPassword))[..16];
 
-        const int pageSize = 4096;
-        for (int page = 1; page * pageSize < data.Length; page++)
+        for (int page = 1; page * Constants.PageSizes.Jet4 < data.Length; page++)
         {
-            int offset = page * pageSize;
-            int length = Math.Min(pageSize, data.Length - offset);
+            int offset = page * Constants.PageSizes.Jet4;
+            int length = Math.Min(Constants.PageSizes.Jet4, data.Length - offset);
             if (length % 16 != 0)
             {
                 continue;

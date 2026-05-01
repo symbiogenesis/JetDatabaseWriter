@@ -28,10 +28,6 @@ using Xunit;
 /// </summary>
 public sealed class BigIndexStressTests
 {
-    private const int PageSize = 4096; // ACE
-    private const int LeafBitmaskOffset = 0x1B;
-    private const int LeafFirstEntryOffset = 0x1E0;
-
     /// <summary>
     /// Bulk-inserts enough unique integer keys to force the B-tree rebuild
     /// to emit at least one intermediate (non-leaf) index page in addition
@@ -252,12 +248,12 @@ public sealed class BigIndexStressTests
     private static int CountLeafPages(byte[] fileBytes)
     {
         int n = 0;
-        for (int p = 0; p < fileBytes.Length / PageSize; p++)
+        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
         {
-            int o = p * PageSize;
+            int o = p * Constants.PageSizes.Jet4;
 
             // page_type=0x04 (leaf), page_flag=0x01 (live, not orphaned).
-            if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
+            if (fileBytes[o] == Constants.IndexLeafPage.PageTypeLeaf && fileBytes[o + 1] == 0x01)
             {
                 // Count only leafs that actually hold real entries (more than
                 // the implicit empty placeholder).
@@ -274,7 +270,7 @@ public sealed class BigIndexStressTests
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
     {
         int count = 1;
-        for (int i = LeafBitmaskOffset; i < LeafFirstEntryOffset; i++)
+        for (int i = Constants.IndexLeafPage.Jet4BitmaskOffset; i < Constants.IndexLeafPage.Jet4FirstEntryOffset; i++)
         {
             byte b = fileBytes[leafOffset + i];
             for (int bit = 0; bit < 8; bit++)
