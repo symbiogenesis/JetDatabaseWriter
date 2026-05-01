@@ -9642,7 +9642,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             // Resolve every key column up front; if any column is missing from the
             // snapshot (deleted-column gap), skip rebuild for this index.
-            var keyColInfos = new List<(ColumnInfo Col, int SnapIdx, bool Ascending)>(rie.KeyColumns.Count);
+            var keyColInfos = new List<KeyColumnInfo>(rie.KeyColumns.Count);
             bool resolveFailed = false;
             foreach ((int colNum, bool ascending) in rie.KeyColumns)
             {
@@ -9653,7 +9653,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     break;
                 }
 
-                keyColInfos.Add((col, snapIdx, ascending));
+                var keyColInfo = new KeyColumnInfo(col, snapIdx, ascending);
+                keyColInfos.Add(keyColInfo);
             }
 
             if (resolveFailed)
@@ -9914,7 +9915,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             cancellationToken.ThrowIfCancellationRequested();
 
             // Resolve key columns to (ColumnInfo, snapshot index, ascending).
-            var keyColInfos = new List<(ColumnInfo Col, int SnapIdx, bool Ascending)>(rie.KeyColumns.Count);
+            var keyColInfos = new List<KeyColumnInfo>(rie.KeyColumns.Count);
             bool resolveFailed = false;
             foreach ((int colNum, bool ascending) in rie.KeyColumns)
             {
@@ -9925,7 +9926,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     break;
                 }
 
-                keyColInfos.Add((col, snapIdx, ascending));
+                keyColInfos.Add(new KeyColumnInfo(col, snapIdx, ascending));
             }
 
             if (resolveFailed)
@@ -12003,7 +12004,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private List<(byte[] Key, long DataPage, byte DataRow)> EncodeHintEntries(
         IReadOnlyList<(RowLocation Loc, object[] Row)>? rows,
-        List<(ColumnInfo Col, int SnapIdx, bool Ascending)> keyColInfos)
+        List<KeyColumnInfo> keyColInfos)
     {
         var result = new List<(byte[] Key, long DataPage, byte DataRow)>(rows?.Count ?? 0);
         if (rows == null || rows.Count == 0)
@@ -12211,7 +12212,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // Resolve every key column up front; if any column is missing from
             // the snapshot (deleted-column gap), skip — same fall-through model
             // as MaintainIndexesAsync.
-            var keyColInfos = new List<(ColumnInfo Col, int SnapIdx, bool Ascending)>(slot.KeyColumns.Count);
+            var keyColInfos = new List<KeyColumnInfo>(slot.KeyColumns.Count);
             bool resolveOk = true;
             foreach ((int colNum, bool ascending) in slot.KeyColumns)
             {
@@ -12221,7 +12222,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     break;
                 }
 
-                keyColInfos.Add((tableDef.Columns[snapIdx], snapIdx, ascending));
+                var keyColInfo = new KeyColumnInfo(tableDef.Columns[snapIdx], snapIdx, ascending);
+                keyColInfos.Add(keyColInfo);
             }
 
             if (!resolveOk)
@@ -12414,7 +12416,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    private sealed record UniqueIndexDescriptor(int RealIdxNum, string Name, IReadOnlyList<(ColumnInfo Col, int SnapIdx, bool Ascending)> KeyColumns);
+    private sealed record UniqueIndexDescriptor(int RealIdxNum, string Name, IReadOnlyList<KeyColumnInfo> KeyColumns);
 
     private sealed class ByteArrayEqualityComparer : IEqualityComparer<byte[]>
     {
@@ -12475,6 +12477,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         ReturnPage(page);
     }
+
+    private sealed record KeyColumnInfo(ColumnInfo Col, int SnapIdx, bool Ascending);
 
     private sealed class CatalogRow
     {
