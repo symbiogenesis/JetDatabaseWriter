@@ -132,7 +132,7 @@ public sealed class CompoundFileReaderTests
         // Lop off the last sector so the FAT-walked chain runs past EOF.
         byte[] truncated = new byte[full.Length - 512];
         Buffer.BlockCopy(full, 0, truncated, 0, truncated.Length);
-        using var ms = new MemoryStream(truncated);
+        await using var ms = new MemoryStream(truncated);
         await Assert.ThrowsAnyAsync<Exception>(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
@@ -146,7 +146,7 @@ public sealed class CompoundFileReaderTests
         byte[] data = await File.ReadAllBytesAsync(FixturePath(fileName), TestContext.Current.CancellationToken);
         data[0] ^= 0xFF;
 
-        using var ms = new MemoryStream(data);
+        await using var ms = new MemoryStream(data);
         _ = await Assert.ThrowsAsync<InvalidDataException>(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
@@ -162,7 +162,7 @@ public sealed class CompoundFileReaderTests
         data[0x1A] = 0x07;
         data[0x1B] = 0x00;
 
-        using var ms = new MemoryStream(data);
+        await using var ms = new MemoryStream(data);
         _ = await Assert.ThrowsAsync<InvalidDataException>(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
@@ -178,7 +178,7 @@ public sealed class CompoundFileReaderTests
         data[0x1E] = 0x07;
         data[0x1F] = 0x00;
 
-        using var ms = new MemoryStream(data);
+        await using var ms = new MemoryStream(data);
         _ = await Assert.ThrowsAsync<InvalidDataException>(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }

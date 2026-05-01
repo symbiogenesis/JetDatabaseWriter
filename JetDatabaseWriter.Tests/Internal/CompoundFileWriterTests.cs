@@ -40,7 +40,7 @@ public sealed class CompoundFileWriterTests
         byte[] cfb = CompoundFileWriter.Build([new("EncryptedPackage", payload)]);
         Assert.True(CompoundFileReader.HasCompoundFileMagic(cfb));
 
-        using var ms = new MemoryStream(cfb);
+        await using var ms = new MemoryStream(cfb);
         var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
 
         Assert.True(streams.ContainsKey("EncryptedPackage"));
@@ -61,7 +61,7 @@ public sealed class CompoundFileWriterTests
             new("EncryptedPackage", pkg),
         ]);
 
-        using var ms = new MemoryStream(cfb);
+        await using var ms = new MemoryStream(cfb);
         var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, streams.Count);
@@ -85,7 +85,7 @@ public sealed class CompoundFileWriterTests
 
         byte[] cfb = CompoundFileWriter.Build(entries);
 
-        using var ms = new MemoryStream(cfb);
+        await using var ms = new MemoryStream(cfb);
         var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
 
         Assert.Equal(streamCount, streams.Count);
@@ -135,7 +135,7 @@ public sealed class CompoundFileWriterTests
         };
 
         byte[] cfb = CompoundFileWriter.Build(entries);
-        using var ms = new MemoryStream(cfb);
+        await using var ms = new MemoryStream(cfb);
         var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
 
         Assert.Equal(["Alpha", "Bravo", "Charlie"], streams.Keys);

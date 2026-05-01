@@ -56,7 +56,7 @@ internal static class EncryptionConverter
 
             if (agileInner != null)
             {
-                using var innerStream = new MemoryStream(agileInner, writable: false);
+                await using var innerStream = new MemoryStream(agileInner, writable: false);
                 (byte[] inner, _) = await ReadDecryptedAsync(innerStream, password: default, cancellationToken).ConfigureAwait(false);
                 return (inner, AccessEncryptionFormat.AccdbAgile);
             }

@@ -4663,7 +4663,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         try
         {
             byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-            using var sourceStream = new MemoryStream(sourceBytes, writable: false);
+            await using var sourceStream = new MemoryStream(sourceBytes, writable: false);
 
             byte[] result = await ReencryptCoreAsync(
                 sourceStream,
