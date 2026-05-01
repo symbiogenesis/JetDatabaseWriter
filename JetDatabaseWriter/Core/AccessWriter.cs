@@ -11307,8 +11307,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             stagingState,
             newPageAppends,
             cancellationToken).ConfigureAwait(false);
-        nextAllocatedPageNumber = stagingState.NextAllocatedPageNumber;
-        long? newRootPage = stagingState.NewRootPage;
+
         if (!stagingOk)
         {
             return false;
@@ -11382,6 +11381,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             await WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
         }
+
+        long? newRootPage = stagingState.NewRootPage;
 
         // if the root intermediate split, patch the real-idx
         // first_dp slot on the TDEF page to point at the freshly-allocated
