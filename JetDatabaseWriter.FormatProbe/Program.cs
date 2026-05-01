@@ -53,9 +53,9 @@ return 0;
 static string FindRepoRoot()
 {
     string? d = AppContext.BaseDirectory;
-    while (d != null && !File.Exists(Path.Combine(d, "JetDatabaseReader.slnx")))
+    while (d != null && !File.Exists(Path.Combine(d, "JetDatabaseWriter.slnx")))
         d = Path.GetDirectoryName(d);
-    return d ?? throw new InvalidOperationException("Could not locate repo root (JetDatabaseReader.slnx).");
+    return d ?? throw new InvalidOperationException("Could not locate repo root (JetDatabaseWriter.slnx).");
 }
 
 static async Task WriteIndexAppendixAsync(string fixturePath, string outPath)
