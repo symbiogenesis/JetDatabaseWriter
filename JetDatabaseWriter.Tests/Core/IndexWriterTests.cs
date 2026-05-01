@@ -23,6 +23,11 @@ using Xunit;
 /// the last two tests in this class scan the on-disk byte stream to confirm
 /// that wiring.
 /// <para>
+/// Tests run against both Jet3 (<c>.mdb</c> Access 97, 2048-byte pages) and
+/// Jet4/ACE (<c>.accdb</c>, 4096-byte pages). The format is injected as a
+/// <c>[Theory]</c> parameter so every assertion exercises both page layouts.
+/// </para>
+/// <para>
 /// These tests do <em>not</em> assert any seek / lookup behaviour — the leaf is
 /// empty at table-creation time. Index maintenance on subsequent inserts is
 /// covered by <c>IndexMaintenanceTests</c> and <c>IndexWriterAdvancedTests</c>.
@@ -33,10 +38,12 @@ public sealed class IndexWriterTests
 {
     private static readonly string[] ExpectedIndexNames = ["IX_Name", "IX_Score", "IX_Id"];
 
-    [Fact]
-    public async Task CreateTable_WithSingleIndex_RoundTripsThroughListIndexes()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CreateTable_WithSingleIndex_RoundTripsThroughListIndexes(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         const string TableName = "Idx_Single";
         const string IndexName = "IX_Idx_Single_Name";
 
@@ -69,10 +76,12 @@ public sealed class IndexWriterTests
         Assert.True(col.IsAscending);
     }
 
-    [Fact]
-    public async Task CreateTable_WithMultipleIndexes_RoundTripsAll()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CreateTable_WithMultipleIndexes_RoundTripsAll(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         const string TableName = "Idx_Multi";
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -109,12 +118,14 @@ public sealed class IndexWriterTests
         Assert.Equal("Id", indexes[2].Columns[0].Name);
     }
 
-    [Fact]
-    public async Task CreateTable_NoIndexes_StillSucceedsAndExposesNoIndexes()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CreateTable_NoIndexes_StillSucceedsAndExposesNoIndexes(DatabaseFormat format)
     {
         // The new overload with an empty index list must produce byte-identical output
         // to the original column-only overload, and the reader must report no indexes.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         const string TableName = "Idx_Empty";
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -131,10 +142,12 @@ public sealed class IndexWriterTests
         Assert.Empty(indexes);
     }
 
-    [Fact]
-    public async Task CreateTable_IndexReferencesUnknownColumn_Throws()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CreateTable_IndexReferencesUnknownColumn_Throws(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         await using var writer = await OpenWriterAsync(stream);
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -145,10 +158,12 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken));
     }
 
-    [Fact]
-    public async Task CreateTable_DuplicateIndexNames_Throws()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CreateTable_DuplicateIndexNames_Throws(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         await using var writer = await OpenWriterAsync(stream);
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -165,11 +180,13 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken));
     }
 
-    [Fact]
-    public async Task CreateTable_WithIndex_DataInsertsAndReadsBack()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CreateTable_WithIndex_DataInsertsAndReadsBack(DatabaseFormat format)
     {
         // The heap data path must not be perturbed by the TDEF index sections.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         const string TableName = "Idx_Data";
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -206,12 +223,14 @@ public sealed class IndexWriterTests
         Assert.Equal([3, "gamma"], rows[2]);
     }
 
-    [Fact]
-    public async Task CreateTable_WithIndex_ColumnMetadataUnchanged()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CreateTable_WithIndex_ColumnMetadataUnchanged(DatabaseFormat format)
     {
         // Index emission must not alter the column descriptors / names that the
         // reader extracts from the same TDEF buffer.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         const string TableName = "Idx_Cols";
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -239,16 +258,19 @@ public sealed class IndexWriterTests
         Assert.Equal(typeof(double), meta[2].ClrType);
     }
 
-    [Fact]
-    public async Task CreateTable_WithIndex_EmitsLeafPageWithMatchingParent()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CreateTable_WithIndex_EmitsLeafPageWithMatchingParent(DatabaseFormat format)
     {
         // A single empty leaf page (page_type=0x04) is appended per index,
         // and its page number is patched into the real-idx physical descriptor's
         // first_dp field. We don't have a public API to read first_dp directly,
         // but we can verify by scanning the file for leaf pages and checking
         // their parent_page is non-zero — for a single-table single-index
-        // database, exactly one such page must exist.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        // database, exactly one such page must exist. The free_space header must
+        // equal pageSize - firstEntryOffset per the format-specific §4.2 layout.
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -260,14 +282,16 @@ public sealed class IndexWriterTests
         }
 
         byte[] bytes = stream.ToArray();
-        int totalPages = bytes.Length / Constants.PageSizes.Jet4;
+        int pageSize = PageSizeOf(format);
+        int firstEntryOffset = FirstEntryOffset(format);
+        int totalPages = bytes.Length / pageSize;
 
         int leafCount = 0;
         int observedParent = -1;
         int observedFreeSpace = -1;
         for (int p = 0; p < totalPages; p++)
         {
-            int o = p * Constants.PageSizes.Jet4;
+            int o = p * pageSize;
             if (bytes[o] == 0x04 && bytes[o + 1] == 0x01)
             {
                 leafCount++;
@@ -278,13 +302,15 @@ public sealed class IndexWriterTests
 
         Assert.Equal(1, leafCount);
         Assert.True(observedParent > 0, "Index leaf parent_page must reference a TDEF page.");
-        Assert.Equal(Constants.PageSizes.Jet4 - 0x1E0, observedFreeSpace);
+        Assert.Equal(pageSize - firstEntryOffset, observedFreeSpace);
     }
 
-    [Fact]
-    public async Task CreateTable_WithMultipleIndexes_EmitsOneLeafPagePerIndex()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CreateTable_WithMultipleIndexes_EmitsOneLeafPagePerIndex(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -304,10 +330,11 @@ public sealed class IndexWriterTests
         }
 
         byte[] bytes = stream.ToArray();
+        int pageSize = PageSizeOf(format);
         int leafCount = 0;
-        for (int p = 0; p < bytes.Length / Constants.PageSizes.Jet4; p++)
+        for (int p = 0; p < bytes.Length / pageSize; p++)
         {
-            int o = p * Constants.PageSizes.Jet4;
+            int o = p * pageSize;
             if (bytes[o] == 0x04 && bytes[o + 1] == 0x01)
             {
                 leafCount++;
@@ -317,12 +344,45 @@ public sealed class IndexWriterTests
         Assert.Equal(3, leafCount);
     }
 
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CreateTable_WithPrimaryKey_RoundTripsAsPkKind(DatabaseFormat format)
+    {
+        await using var stream = await CreateFreshStreamAsync(format);
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "Pk_Table",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("Name", typeof(string), maxLength: 50),
+                ],
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Pk_Table", TestContext.Current.CancellationToken);
+
+        IndexMetadata pk = Assert.Single(indexes);
+        Assert.Equal("PrimaryKey", pk.Name);
+        Assert.Equal(IndexKind.PrimaryKey, pk.Kind);
+        Assert.Equal("Id", Assert.Single(pk.Columns).Name);
+    }
+
+    private static int PageSizeOf(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
+
+    private static int FirstEntryOffset(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3FirstEntryOffset : Constants.IndexLeafPage.Jet4FirstEntryOffset;
+
+    private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
-            DatabaseFormat.AceAccdb,
+            format,
             new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken))
