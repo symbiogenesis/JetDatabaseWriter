@@ -503,9 +503,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // docs/design/index-and-relationship-format-notes.md §7.
         if (resolvedIndexes.Count > 0)
         {
-            IndexLeafPageBuilder.LeafPageLayout layout = _format == DatabaseFormat.Jet3Mdb
-                ? IndexLeafPageBuilder.LeafPageLayout.Jet3
-                : IndexLeafPageBuilder.LeafPageLayout.Jet4;
+            var layout = IndexLeafPageBuilder.GetLayout(_format);
+
             for (int i = 0; i < resolvedIndexes.Count; i++)
             {
                 byte[] leafPage = IndexLeafPageBuilder.BuildLeafPage(
@@ -9579,9 +9578,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         bool jet3 = _format == DatabaseFormat.Jet3Mdb;
-        IndexLeafPageBuilder.LeafPageLayout leafLayout = jet3
-            ? IndexLeafPageBuilder.LeafPageLayout.Jet3
-            : IndexLeafPageBuilder.LeafPageLayout.Jet4;
+        var leafLayout = IndexLeafPageBuilder.GetLayout(_format);
 
         int numCols = Ru16(tdefBuffer, _tdNumCols);
         int numIdx = Ri32(tdefBuffer, _tdNumCols + 2);
@@ -9852,9 +9849,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // intermediate pages are orphaned and reclaimed by Access on
         // Compact & Repair.
         bool jet3 = _format == DatabaseFormat.Jet3Mdb;
-        IndexLeafPageBuilder.LeafPageLayout layout = jet3
-            ? IndexLeafPageBuilder.LeafPageLayout.Jet3
-            : IndexLeafPageBuilder.LeafPageLayout.Jet4;
+        var layout = IndexLeafPageBuilder.GetLayout(_format);
 
         int addCount = insertedRows?.Count ?? 0;
         int delCount = deletedRows?.Count ?? 0;
