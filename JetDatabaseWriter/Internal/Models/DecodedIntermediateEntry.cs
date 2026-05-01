@@ -9,4 +9,4 @@ namespace JetDatabaseWriter.Internal.Models;
 /// writer can re-emit a single intermediate page in place after a
 /// summary-key change or a leaf-split insert.
 /// </summary>
-internal readonly record struct DecodedIntermediateEntry(byte[] Key, long DataPage, byte DataRow, long ChildPage);
+internal readonly record struct DecodedIntermediateEntry(IndexEntry Entry, long ChildPage);

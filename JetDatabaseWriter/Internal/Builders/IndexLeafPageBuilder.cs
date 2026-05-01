@@ -3,8 +3,8 @@ namespace JetDatabaseWriter.Internal.Builders;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Internal.Models;
 
 /// <summary>
 /// Builds JET index leaf pages (page type <c>0x04</c>). Encodes the
@@ -57,23 +57,6 @@ internal static class IndexLeafPageBuilder
     }
 
     /// <summary>
-    /// A single leaf entry: the encoded key block produced by
-    /// <see cref="IndexKeyEncoder.EncodeEntry(byte, object?, bool)"/> followed
-    /// by the row pointer (data page + data row).
-    /// </summary>
-    internal readonly struct LeafEntry(byte[] encodedKey, long dataPage, byte dataRow)
-    {
-        /// <summary>Gets the flag byte + key bytes (per <see cref="IndexKeyEncoder"/>).</summary>
-        public byte[] EncodedKey { get; } = encodedKey ?? throw new ArgumentNullException(nameof(encodedKey));
-
-        /// <summary>Gets the page number of the row this entry indexes (24-bit big-endian on disk).</summary>
-        public long DataPage { get; } = dataPage;
-
-        /// <summary>Gets the row index on the data page.</summary>
-        public byte DataRow { get; } = dataRow;
-    }
-
-    /// <summary>
     /// Builds a single Jet4 / ACE index leaf page. Returns a buffer of size
     /// <paramref name="pageSize"/> that the caller is expected to append via
     /// <c>AppendPageAsync</c>.
@@ -88,7 +71,7 @@ internal static class IndexLeafPageBuilder
     /// (sum of <c>EncodedKey.Length + 4</c> for each entry) exceeds the available
     /// payload area, which means the table is too large for a single-page
     /// leaf and B-tree builder (B-tree splits) is required.</exception>
-    public static byte[] BuildJet4LeafPage(int pageSize, long parentTdefPage, IReadOnlyList<LeafEntry> entries)
+    public static byte[] BuildJet4LeafPage(int pageSize, long parentTdefPage, IReadOnlyList<IndexEntry> entries)
         => BuildLeafPage(LeafPageLayout.Jet4, pageSize, parentTdefPage, entries, prevPage: 0, nextPage: 0, tailPage: 0, enablePrefixCompression: false);
 
     /// <summary>
@@ -99,7 +82,7 @@ internal static class IndexLeafPageBuilder
     public static byte[] BuildJet4LeafPage(
         int pageSize,
         long parentTdefPage,
-        IReadOnlyList<LeafEntry> entries,
+        IReadOnlyList<IndexEntry> entries,
         long prevPage,
         long nextPage,
         long tailPage)
@@ -110,7 +93,7 @@ internal static class IndexLeafPageBuilder
     /// pointers and optional shared-prefix compression (§4.4). When
     /// <paramref name="enablePrefixCompression"/> is <c>true</c> and at least
     /// two entries are supplied, the longest byte-wise prefix common to every
-    /// <see cref="LeafEntry.EncodedKey"/> is hoisted into the page header
+    /// <see cref="IndexEntry.Key"/> is hoisted into the page header
     /// (<c>pref_len</c> at offset 20) and stripped from every entry beyond
     /// the first. The first entry is always written whole because it carries
     /// the canonical bytes that subsequent entries logically prepend (§4.4).
@@ -118,7 +101,7 @@ internal static class IndexLeafPageBuilder
     public static byte[] BuildJet4LeafPage(
         int pageSize,
         long parentTdefPage,
-        IReadOnlyList<LeafEntry> entries,
+        IReadOnlyList<IndexEntry> entries,
         long prevPage,
         long nextPage,
         long tailPage,
@@ -139,7 +122,7 @@ internal static class IndexLeafPageBuilder
         LeafPageLayout layout,
         int pageSize,
         long parentTdefPage,
-        IReadOnlyList<LeafEntry> entries,
+        IReadOnlyList<IndexEntry> entries,
         long prevPage,
         long nextPage,
         long tailPage,
@@ -180,13 +163,13 @@ internal static class IndexLeafPageBuilder
 
         for (int i = 0; i < entries.Count; i++)
         {
-            LeafEntry e = entries[i];
+            IndexEntry e = entries[i];
 
             // §4.3 + §4.4: first entry includes the shared-prefix bytes; later
             // entries strip the leading prefLen bytes (the reader logically
             // re-prepends them on read).
             int keyOffset = i == 0 ? 0 : prefLen;
-            int keyLen = e.EncodedKey.Length - keyOffset;
+            int keyLen = e.Key.Length - keyOffset;
             int entryLen = keyLen + 3 + 1;
             int entryStart = payloadCursor;
 
@@ -196,7 +179,7 @@ internal static class IndexLeafPageBuilder
                 throw new ArgumentOutOfRangeException(nameof(entries), message);
             }
 
-            Buffer.BlockCopy(e.EncodedKey, keyOffset, page, entryStart, keyLen);
+            Buffer.BlockCopy(e.Key, keyOffset, page, entryStart, keyLen);
 
             // Data page: 24-bit big-endian.
             long dp = e.DataPage;
@@ -262,18 +245,18 @@ internal static class IndexLeafPageBuilder
         b[o + 2] = (byte)(value & 0xFF);
     }
 
-    private static int ComputeSharedPrefixLength(IReadOnlyList<LeafEntry> entries)
+    private static int ComputeSharedPrefixLength(IReadOnlyList<IndexEntry> entries)
     {
         if (entries.Count < 2)
         {
             return 0;
         }
 
-        byte[] first = entries[0].EncodedKey;
+        byte[] first = entries[0].Key;
         int prefixLen = first.Length;
         for (int i = 1; i < entries.Count && prefixLen > 0; i++)
         {
-            byte[] other = entries[i].EncodedKey;
+            byte[] other = entries[i].Key;
             int max = Math.Min(prefixLen, other.Length);
             int j = 0;
             while (j < max && first[j] == other[j])
@@ -299,6 +282,6 @@ internal static class IndexLeafPageBuilder
     /// supplied entries. Exposed for <see cref="IndexBTreeBuilder"/> so
     /// intermediate (<c>0x03</c>) pages can apply the same §4.4 compression.
     /// </summary>
-    internal static int ComputeSharedPrefixLengthExternal(IReadOnlyList<LeafEntry> entries)
+    internal static int ComputeSharedPrefixLengthExternal(IReadOnlyList<IndexEntry> entries)
         => ComputeSharedPrefixLength(entries);
 }

@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Internal;
 using System;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Builders;
+using JetDatabaseWriter.Internal.Models;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention.
@@ -44,7 +45,7 @@ public sealed class IndexLeafPageBuilderTests
     {
         // §4.3: first entry is implicit (no bit in §4.2 bitmask).
         byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 7, ascending: true); // T_LONG=7 → 5 bytes
-        var entries = new[] { new IndexLeafPageBuilder.LeafEntry(key, dataPage: 0x123456, dataRow: 9) };
+        var entries = new[] { new IndexEntry(key, 0x123456, 9) };
 
         byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, parentTdefPage: 100, entries);
 
@@ -80,9 +81,9 @@ public sealed class IndexLeafPageBuilderTests
         byte[] k3 = IndexKeyEncoder.EncodeEntry(0x04, 3, ascending: true);
         var entries = new[]
         {
-            new IndexLeafPageBuilder.LeafEntry(k1, 1, 0),
-            new IndexLeafPageBuilder.LeafEntry(k2, 1, 1),
-            new IndexLeafPageBuilder.LeafEntry(k3, 1, 2),
+            new IndexEntry(k1, 1, 0),
+            new IndexEntry(k2, 1, 1),
+            new IndexEntry(k3, 1, 2),
         };
 
         byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, parentTdefPage: 100, entries);
@@ -102,10 +103,10 @@ public sealed class IndexLeafPageBuilderTests
     public void EntriesExceedingPage_Throws()
     {
         byte[] bigKey = new byte[200];
-        var entry = new IndexLeafPageBuilder.LeafEntry(bigKey, 1, 0);
+        var entry = new IndexEntry(bigKey, 1, 0);
 
         // 4096 - 0x1E0 = 3616 bytes payload area. 200+4 = 204 per entry → ~17 fit.
-        var entries = new IndexLeafPageBuilder.LeafEntry[20];
+        var entries = new IndexEntry[20];
         for (int i = 0; i < entries.Length; i++)
         {
             entries[i] = entry;
@@ -118,7 +119,7 @@ public sealed class IndexLeafPageBuilderTests
     public void DataPageOverflow24Bit_Throws()
     {
         byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
-        var entries = new[] { new IndexLeafPageBuilder.LeafEntry(key, 0x1_000_000L, 0) };
+        var entries = new[] { new IndexEntry(key, 0x1_000_000L, 0) };
 
         Assert.Throws<ArgumentOutOfRangeException>(() => IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, 100, entries));
     }
@@ -133,8 +134,8 @@ public sealed class IndexLeafPageBuilderTests
         byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);
         var entries = new[]
         {
-            new IndexLeafPageBuilder.LeafEntry(k1, 1, 0),
-            new IndexLeafPageBuilder.LeafEntry(k2, 1, 1),
+            new IndexEntry(k1, 1, 0),
+            new IndexEntry(k2, 1, 1),
         };
 
         byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, parentTdefPage: 100, entries);
@@ -152,12 +153,12 @@ public sealed class IndexLeafPageBuilderTests
         byte[] k1 = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
         byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);
         byte[] k3 = IndexKeyEncoder.EncodeEntry(0x04, 3, ascending: true);
-        var entries = new[]
-        {
-            new IndexLeafPageBuilder.LeafEntry(k1, 1, 0),
-            new IndexLeafPageBuilder.LeafEntry(k2, 1, 1),
-            new IndexLeafPageBuilder.LeafEntry(k3, 1, 2),
-        };
+        IndexEntry[] entries =
+        [
+            new(k1, 1, 0),
+            new(k2, 1, 1),
+            new(k3, 1, 2),
+        ];
 
         byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(
             PageSize,
@@ -198,7 +199,7 @@ public sealed class IndexLeafPageBuilderTests
     public void PrefixCompressionEnabled_SingleEntry_LeavesPrefLenAtZero()
     {
         byte[] key = IndexKeyEncoder.EncodeEntry(0x04, 7, ascending: true);
-        var entries = new[] { new IndexLeafPageBuilder.LeafEntry(key, 1, 0) };
+        var entries = new[] { new IndexEntry(key, 1, 0) };
 
         byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(
             PageSize, 100, entries, 0, 0, 0, enablePrefixCompression: true);
@@ -211,11 +212,11 @@ public sealed class IndexLeafPageBuilderTests
     {
         byte[] k1 = [0x10, 0x20];
         byte[] k2 = [0x30, 0x40];
-        var entries = new[]
-        {
-            new IndexLeafPageBuilder.LeafEntry(k1, 1, 0),
-            new IndexLeafPageBuilder.LeafEntry(k2, 1, 1),
-        };
+        IndexEntry[] entries =
+        [
+            new(k1, 1, 0),
+            new(k2, 1, 1),
+        ];
 
         byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(
             PageSize, 100, entries, 0, 0, 0, enablePrefixCompression: true);

@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Internal;
 using System.Collections.Generic;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Builders;
+using JetDatabaseWriter.Internal.Models;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention
@@ -20,7 +21,7 @@ public sealed class IndexLeafIncrementalTests
     [Fact]
     public void DecodeEntries_RoundTripsThreeIntKeys()
     {
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>
+        var entries = new List<IndexEntry>
         {
             new(IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true), 100, 0),
             new(IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true), 100, 1),
@@ -30,12 +31,12 @@ public sealed class IndexLeafIncrementalTests
         byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(
             PageSize, ParentTdef, entries, prevPage: 0, nextPage: 0, tailPage: 0, enablePrefixCompression: true);
 
-        List<IndexLeafIncremental.DecodedEntry> decoded = IndexLeafIncremental.DecodeEntries(page, PageSize);
+        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(page, PageSize);
 
         Assert.Equal(3, decoded.Count);
         for (int i = 0; i < 3; i++)
         {
-            Assert.Equal(entries[i].EncodedKey, decoded[i].Key);
+            Assert.Equal(entries[i].Key, decoded[i].Key);
             Assert.Equal(entries[i].DataPage, decoded[i].DataPage);
             Assert.Equal(entries[i].DataRow, decoded[i].DataRow);
         }
@@ -45,7 +46,7 @@ public sealed class IndexLeafIncrementalTests
     public void DecodeEntries_EmptyLeaf_ReturnsEmptyList()
     {
         byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(PageSize, ParentTdef, []);
-        List<IndexLeafIncremental.DecodedEntry> decoded = IndexLeafIncremental.DecodeEntries(page, PageSize);
+        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(page, PageSize);
         Assert.Empty(decoded);
     }
 
@@ -76,17 +77,17 @@ public sealed class IndexLeafIncrementalTests
     [Fact]
     public void Splice_InsertSortsByKey()
     {
-        var existing = new List<IndexLeafIncremental.DecodedEntry>
+        var existing = new List<IndexEntry>
         {
             new(IndexKeyEncoder.EncodeEntry(0x04, 1, true), 100, 0),
             new(IndexKeyEncoder.EncodeEntry(0x04, 3, true), 100, 1),
         };
-        var adds = new List<(byte[], long, byte)>
+        var adds = new List<IndexEntry>
         {
-            (IndexKeyEncoder.EncodeEntry(0x04, 2, true), 100, 2),
+            new(IndexKeyEncoder.EncodeEntry(0x04, 2, true), 100, 2),
         };
 
-        List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(existing, adds, []);
+        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existing, adds, []);
         Assert.NotNull(spliced);
         Assert.Equal(3, spliced!.Count);
         Assert.Equal(0, spliced[0].DataRow);
@@ -97,14 +98,14 @@ public sealed class IndexLeafIncrementalTests
     [Fact]
     public void Splice_RemoveByPageRowPointer()
     {
-        var existing = new List<IndexLeafIncremental.DecodedEntry>
+        var existing = new List<IndexEntry>
         {
             new(IndexKeyEncoder.EncodeEntry(0x04, 1, true), 100, 0),
             new(IndexKeyEncoder.EncodeEntry(0x04, 2, true), 100, 1),
             new(IndexKeyEncoder.EncodeEntry(0x04, 3, true), 100, 2),
         };
 
-        List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(
+        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
             existing, [], [(100, 1)]);
 
         Assert.NotNull(spliced);
@@ -116,12 +117,12 @@ public sealed class IndexLeafIncrementalTests
     [Fact]
     public void Splice_ReturnsNullWhenRemoveTargetMissing()
     {
-        var existing = new List<IndexLeafIncremental.DecodedEntry>
+        var existing = new List<IndexEntry>
         {
             new(IndexKeyEncoder.EncodeEntry(0x04, 1, true), 100, 0),
         };
 
-        List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(
+        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
             existing, [], [(999, 99)]); // not present
 
         Assert.Null(spliced);
@@ -130,17 +131,17 @@ public sealed class IndexLeafIncrementalTests
     [Fact]
     public void Splice_CombinedInsertAndDelete()
     {
-        var existing = new List<IndexLeafIncremental.DecodedEntry>
+        var existing = new List<IndexEntry>
         {
             new(IndexKeyEncoder.EncodeEntry(0x04, 1, true), 100, 0),
             new(IndexKeyEncoder.EncodeEntry(0x04, 5, true), 100, 1),
         };
-        var adds = new List<(byte[], long, byte)>
+        var adds = new List<IndexEntry>
         {
-            (IndexKeyEncoder.EncodeEntry(0x04, 3, true), 100, 2),
+            new(IndexKeyEncoder.EncodeEntry(0x04, 3, true), 100, 2),
         };
 
-        List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(
+        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
             existing, adds, [(100, 0)]);
 
         Assert.NotNull(spliced);
@@ -152,7 +153,7 @@ public sealed class IndexLeafIncrementalTests
     [Fact]
     public void TryRebuildLeaf_RoundTripsThroughSeekableEncoding()
     {
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>
+        var entries = new List<IndexEntry>
         {
             new(IndexKeyEncoder.EncodeEntry(0x04, 1, true), 200, 0),
             new(IndexKeyEncoder.EncodeEntry(0x04, 2, true), 200, 1),
@@ -163,7 +164,7 @@ public sealed class IndexLeafIncrementalTests
         Assert.Equal(0x04, page![0]);
         Assert.True(IndexLeafIncremental.IsSingleRootLeaf(page));
 
-        List<IndexLeafIncremental.DecodedEntry> decoded = IndexLeafIncremental.DecodeEntries(page, PageSize);
+        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(page, PageSize);
         Assert.Equal(2, decoded.Count);
     }
 
@@ -173,10 +174,10 @@ public sealed class IndexLeafIncrementalTests
         // Build an entry list that vastly exceeds the leaf payload capacity.
         // Each int entry is ~9 bytes; 1000 entries blow past the ~3616-byte
         // payload area on a 4 KB page.
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>(1000);
+        var entries = new List<IndexEntry>(1000);
         for (int i = 0; i < 1000; i++)
         {
-            entries.Add(new IndexLeafPageBuilder.LeafEntry(
+            entries.Add(new IndexEntry(
                 IndexKeyEncoder.EncodeEntry(0x04, i, true), 100, 0));
         }
 
@@ -190,7 +191,7 @@ public sealed class IndexLeafIncrementalTests
         // Build a leaf with strongly-shared prefixes so prefix compression
         // kicks in, then splice-add a new entry and verify the canonical
         // bytes survive the compress→decompress round trip.
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>
+        var entries = new List<IndexEntry>
         {
             new(IndexKeyEncoder.EncodeEntry(0x04, 1000, true), 100, 0),
             new(IndexKeyEncoder.EncodeEntry(0x04, 1001, true), 100, 1),
@@ -200,25 +201,25 @@ public sealed class IndexLeafIncrementalTests
         byte[] page = IndexLeafPageBuilder.BuildJet4LeafPage(
             PageSize, ParentTdef, entries, 0, 0, 0, enablePrefixCompression: true);
 
-        List<IndexLeafIncremental.DecodedEntry> decoded = IndexLeafIncremental.DecodeEntries(page, PageSize);
+        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(page, PageSize);
         Assert.Equal(3, decoded.Count);
 
-        var adds = new List<(byte[], long, byte)>
+        var adds = new List<IndexEntry>
         {
-            (IndexKeyEncoder.EncodeEntry(0x04, 1003, true), 100, 3),
+            new(IndexKeyEncoder.EncodeEntry(0x04, 1003, true), 100, 3),
         };
 
-        List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(decoded, adds, []);
+        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(decoded, adds, []);
         Assert.NotNull(spliced);
 
         byte[]? newPage = IndexLeafIncremental.TryRebuildLeaf(PageSize, ParentTdef, spliced!);
         Assert.NotNull(newPage);
 
-        List<IndexLeafIncremental.DecodedEntry> reDecoded = IndexLeafIncremental.DecodeEntries(newPage!, PageSize);
+        List<IndexEntry> reDecoded = IndexLeafIncremental.DecodeEntries(newPage!, PageSize);
         Assert.Equal(4, reDecoded.Count);
         for (int i = 0; i < 4; i++)
         {
-            Assert.Equal(spliced[i].EncodedKey, reDecoded[i].Key);
+            Assert.Equal(spliced[i].Key, reDecoded[i].Key);
         }
     }
 
@@ -249,10 +250,10 @@ public sealed class IndexLeafIncrementalTests
         // confirm the first intermediate entry's child pointer matches the
         // first leaf's allocated page number (sequential allocation by the
         // builder starting at FirstPageNumber).
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>(800);
+        var entries = new List<IndexEntry>(800);
         for (int i = 0; i < 800; i++)
         {
-            entries.Add(new IndexLeafPageBuilder.LeafEntry(
+            entries.Add(new IndexEntry(
                 IndexKeyEncoder.EncodeEntry(0x04, i, true), 100 + (i / 10), (byte)(i % 10)));
         }
 

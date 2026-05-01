@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Internal.Builders;
+using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -128,13 +129,13 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
         const int parentTdef = 100;
         const long firstPage = 50;
 
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>();
+        var entries = new List<IndexEntry>();
         for (int i = 0; i < 40; i++)
         {
             byte[] big = new byte[200];
             big[0] = (byte)(i >> 8);
             big[1] = (byte)i;
-            entries.Add(new IndexLeafPageBuilder.LeafEntry(big, dataPage: 1, dataRow: (byte)i));
+            entries.Add(new IndexEntry(big, 1, (byte)i));
         }
 
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, parentTdef, entries, firstPage);
@@ -157,10 +158,10 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
         const int parentTdef = 100;
         const long firstPage = 50;
 
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>
+        var entries = new List<IndexEntry>
         {
-            new IndexLeafPageBuilder.LeafEntry([0x7F, 0x80, 0x00, 0x00, 0x01], 1, 0),
-            new IndexLeafPageBuilder.LeafEntry([0x7F, 0x80, 0x00, 0x00, 0x02], 1, 1),
+            new([0x7F, 0x80, 0x00, 0x00, 0x01], 1, 0),
+            new([0x7F, 0x80, 0x00, 0x00, 0x02], 1, 1),
         };
 
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, parentTdef, entries, firstPage);

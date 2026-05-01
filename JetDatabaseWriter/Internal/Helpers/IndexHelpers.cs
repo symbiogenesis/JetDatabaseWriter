@@ -601,7 +601,7 @@ internal static class IndexHelpers
     {
         for (int i = 0; i < entries.Count; i++)
         {
-            if (CompareKeyBytes(searchKey, entries[i].Key) <= 0)
+            if (CompareKeyBytes(searchKey, entries[i].Entry.Key) <= 0)
             {
                 return i;
             }
@@ -620,10 +620,10 @@ internal static class IndexHelpers
     /// actually require a split. The returned list always has
     /// <c>Count &gt;= 2</c> on success; every page is non-empty.
     /// </summary>
-    public static List<List<IndexLeafPageBuilder.LeafEntry>>? TryGreedySplitLeafInN(
+    public static List<List<IndexEntry>>? TryGreedySplitLeafInN(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
-        List<IndexLeafPageBuilder.LeafEntry> entries)
+        List<IndexEntry> entries)
     {
         int payloadArea = pageSize - layout.FirstEntryOffset;
         if (entries.Count < 2)
@@ -631,13 +631,13 @@ internal static class IndexHelpers
             return null;
         }
 
-        var pages = new List<List<IndexLeafPageBuilder.LeafEntry>>();
-        var current = new List<IndexLeafPageBuilder.LeafEntry>();
+        var pages = new List<List<IndexEntry>>();
+        var current = new List<IndexEntry>();
         int currentSize = 0;
 
         for (int i = 0; i < entries.Count; i++)
         {
-            int len = entries[i].EncodedKey.Length + 4;
+            int len = entries[i].Key.Length + 4;
             if (len > payloadArea)
             {
                 // A single entry's encoded key + slot offset exceeds an
@@ -648,7 +648,7 @@ internal static class IndexHelpers
             if (currentSize + len > payloadArea && current.Count > 0)
             {
                 pages.Add(current);
-                current = new List<IndexLeafPageBuilder.LeafEntry>();
+                current = new List<IndexEntry>();
                 currentSize = 0;
             }
 
@@ -819,7 +819,7 @@ internal static class IndexHelpers
                             return [];
                         }
 
-                        result.Add(new DecodedIntermediateEntry(op.NewKey, op.NewDataPage, op.NewDataRow, op.NewChildPage));
+                        result.Add(new DecodedIntermediateEntry(op.NewEntry, op.NewChildPage));
                         replaced = true;
                         break;
 
@@ -841,7 +841,7 @@ internal static class IndexHelpers
                             replaced = true;
                         }
 
-                        result.Add(new DecodedIntermediateEntry(op.NewKey, op.NewDataPage, op.NewDataRow, op.NewChildPage));
+                        result.Add(new DecodedIntermediateEntry(op.NewEntry, op.NewChildPage));
                         break;
                 }
             }

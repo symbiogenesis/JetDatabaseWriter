@@ -72,7 +72,7 @@ internal static class IndexBTreeBuilder
     public static BuildResult Build(
         int pageSize,
         long parentTdefPage,
-        IReadOnlyList<IndexLeafPageBuilder.LeafEntry> entries,
+        IReadOnlyList<IndexEntry> entries,
         long firstPageNumber)
         => Build(IndexLeafPageBuilder.LeafPageLayout.Jet4, pageSize, parentTdefPage, entries, firstPageNumber);
 
@@ -85,7 +85,7 @@ internal static class IndexBTreeBuilder
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
         long parentTdefPage,
-        IReadOnlyList<IndexLeafPageBuilder.LeafEntry> entries,
+        IReadOnlyList<IndexEntry> entries,
         long firstPageNumber)
     {
         if (pageSize <= layout.FirstEntryOffset)
@@ -113,8 +113,8 @@ internal static class IndexBTreeBuilder
             ? 1
             : Math.Max(1, ((entries.Count * 64) + entryAreaSize - 1) / entryAreaSize);
 
-        var leafGroups = new List<List<IndexLeafPageBuilder.LeafEntry>>(estLeafCount);
-        var leafLastEntries = new List<IndexLeafPageBuilder.LeafEntry>(estLeafCount);
+        var leafGroups = new List<List<IndexEntry>>(estLeafCount);
+        var leafLastEntries = new List<IndexEntry>(estLeafCount);
         if (entries.Count == 0)
         {
             leafGroups.Add([]);
@@ -124,12 +124,12 @@ internal static class IndexBTreeBuilder
         }
         else
         {
-            var current = new List<IndexLeafPageBuilder.LeafEntry>();
+            var current = new List<IndexEntry>();
             int currentSize = 0;
             for (int i = 0; i < entries.Count; i++)
             {
-                IndexLeafPageBuilder.LeafEntry e = entries[i];
-                int entryLen = e.EncodedKey.Length + 4;
+                IndexEntry e = entries[i];
+                int entryLen = e.Key.Length + 4;
                 if (entryLen > entryAreaSize)
                 {
                     throw new ArgumentOutOfRangeException(nameof(entries), $"Single index entry of {entryLen} bytes exceeds the {entryAreaSize}-byte payload area; one entry must fit on one page.");
@@ -192,7 +192,7 @@ internal static class IndexBTreeBuilder
         // as (base page, count) instead of a per-page array.
         long childPageBase = firstPageNumber;
         int childPageCount = leafCount;
-        IReadOnlyList<IndexLeafPageBuilder.LeafEntry> childLastEntries = leafLastEntries;
+        IReadOnlyList<IndexEntry> childLastEntries = leafLastEntries;
         long nextFreePage = firstPageNumber + leafCount;
 
         // tail-leaf is the rightmost leaf the builder just emitted
@@ -204,7 +204,7 @@ internal static class IndexBTreeBuilder
 
         while (childPageCount > 1)
         {
-            (List<List<IntermediateEntry>> groups, List<IndexLeafPageBuilder.LeafEntry> nextLevelLast) =
+            (List<List<IntermediateEntry>> groups, List<IndexEntry> nextLevelLast) =
                 PackIntermediate(childPageBase, childPageCount, childLastEntries, entryAreaSize);
 
             int levelCount = groups.Count;
@@ -243,7 +243,7 @@ internal static class IndexBTreeBuilder
     /// childPage)</c> tuples (sorted by summary key), preserving the supplied
     /// <c>prev_page</c> / <c>next_page</c> / <c>tail_page</c> headers. Returns
     /// <see langword="null"/> when the entry list overflows the per-page
-    /// payload area; callers fall back to <see cref="Build(IndexLeafPageBuilder.LeafPageLayout, int, long, IReadOnlyList{IndexLeafPageBuilder.LeafEntry}, long)"/>
+    /// payload area; callers fall back to <see cref="Build(IndexLeafPageBuilder.LeafPageLayout, int, long, IReadOnlyList{IndexEntry}, long)"/>
     /// (full-tree rebuild) on overflow.
     /// </summary>
     public static byte[]? TryBuildIntermediatePage(
@@ -266,7 +266,7 @@ internal static class IndexBTreeBuilder
         var packed = new List<IntermediateEntry>(entries.Count);
         foreach (DecodedIntermediateEntry e in entries)
         {
-            packed.Add(new IntermediateEntry(new IndexLeafPageBuilder.LeafEntry(e.Key, e.DataPage, e.DataRow), e.ChildPage));
+            packed.Add(new IntermediateEntry(e.Entry, e.ChildPage));
         }
 
         try
@@ -279,26 +279,26 @@ internal static class IndexBTreeBuilder
         }
     }
 
-    private readonly struct IntermediateEntry(IndexLeafPageBuilder.LeafEntry summary, long childPage)
+    private readonly struct IntermediateEntry(IndexEntry summary, long childPage)
     {
-        public IndexLeafPageBuilder.LeafEntry Summary { get; } = summary;
+        public IndexEntry Summary { get; } = summary;
 
         public long ChildPage { get; } = childPage;
 
-        public int OnDiskSize => Summary.EncodedKey.Length + 4 + 4; // key + (3B page + 1B row) + 4B child
+        public int OnDiskSize => Summary.Key.Length + 4 + 4; // key + (3B page + 1B row) + 4B child
     }
 
-    private static (List<List<IntermediateEntry>> Groups, List<IndexLeafPageBuilder.LeafEntry> LastPerGroup) PackIntermediate(
+    private static (List<List<IntermediateEntry>> Groups, List<IndexEntry> LastPerGroup) PackIntermediate(
         long childPageBase,
         int childPageCount,
-        IReadOnlyList<IndexLeafPageBuilder.LeafEntry> childLastEntries,
+        IReadOnlyList<IndexEntry> childLastEntries,
         int entryAreaSize)
     {
         // Rough capacity hint: assume ~64-byte average summary key ⇒ each
         // intermediate page holds entryAreaSize / (64 + 8) entries. Errs high.
         int estPagesAtThisLevel = Math.Max(1, ((childPageCount * 72) + entryAreaSize - 1) / entryAreaSize);
         var groups = new List<List<IntermediateEntry>>(estPagesAtThisLevel);
-        var lastPerGroup = new List<IndexLeafPageBuilder.LeafEntry>(estPagesAtThisLevel);
+        var lastPerGroup = new List<IndexEntry>(estPagesAtThisLevel);
 
         var current = new List<IntermediateEntry>();
         int currentSize = 0;
@@ -360,7 +360,7 @@ internal static class IndexBTreeBuilder
         for (int i = 0; i < entries.Count; i++)
         {
             IntermediateEntry e = entries[i];
-            byte[] key = e.Summary.EncodedKey;
+            byte[] key = e.Summary.Key;
             int keyOffset = i == 0 ? 0 : prefLen;
             int keyLen = key.Length - keyOffset;
             int entryLen = keyLen + 4 + 4;
@@ -419,11 +419,11 @@ internal static class IndexBTreeBuilder
             return 0;
         }
 
-        byte[] first = entries[0].Summary.EncodedKey;
+        byte[] first = entries[0].Summary.Key;
         int prefixLen = first.Length;
         for (int i = 1; i < entries.Count && prefixLen > 0; i++)
         {
-            byte[] other = entries[i].Summary.EncodedKey;
+            byte[] other = entries[i].Summary.Key;
             int max = Math.Min(prefixLen, other.Length);
             int j = 0;
             while (j < max && first[j] == other[j])

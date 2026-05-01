@@ -9723,10 +9723,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 }
             }
 
-            var leafEntries = new List<IndexLeafPageBuilder.LeafEntry>(entries.Count);
+            var leafEntries = new List<IndexEntry>(entries.Count);
             foreach ((byte[] key, long page, byte row) in entries)
             {
-                leafEntries.Add(new IndexLeafPageBuilder.LeafEntry(key, page, row));
+                leafEntries.Add(new IndexEntry(key, page, row));
             }
 
             long firstPageNumber = _stream.Length / _pgSz;
@@ -9954,7 +9954,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             // Encode the change-set keys for this index. Used by both the
             // single-leaf splice and the multi-level rebuild path below.
-            List<(byte[] Key, long DataPage, byte DataRow)> addEntries = EncodeHintEntries(insertedRows, keyColInfos);
+            var addEntries = EncodeHintEntries(insertedRows, keyColInfos);
             if (addCount > 0 && addEntries.Count != addCount)
             {
                 // Encoder rejected at least one row; bail to bulk.
@@ -9966,7 +9966,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // key from the live leaf entry); the surgical multi-level path
             // needs the keys to perform a path-capturing descent that
             // confirms every change targets the same leaf.
-            List<(byte[] Key, long DataPage, byte DataRow)> removeEntries = EncodeHintEntries(deletedRows, keyColInfos);
+            var removeEntries = EncodeHintEntries(deletedRows, keyColInfos);
             if (delCount > 0 && removeEntries.Count != delCount)
             {
                 return false;
@@ -10072,7 +10072,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     return false;
                 }
 
-                var allExisting = new List<IndexLeafIncremental.DecodedEntry>();
+                var allExisting = new List<IndexEntry>();
                 long walkPage = leftmostLeaf;
                 int safetyBudget = 1_000_000; // arbitrary upper bound on leaf count
                 while (walkPage > 0)
@@ -10103,7 +10103,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     walkPage = IndexLeafIncremental.ReadNextLeafPage(leaf);
                 }
 
-                List<IndexLeafPageBuilder.LeafEntry>? splicedAll = IndexLeafIncremental.Splice(allExisting, addEntries, removePtrs);
+                List<IndexEntry>? splicedAll = IndexLeafIncremental.Splice(allExisting, addEntries, removePtrs);
                 if (splicedAll is null)
                 {
                     return false;
@@ -10130,8 +10130,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            List<IndexLeafIncremental.DecodedEntry> existing = IndexLeafIncremental.DecodeEntries(layout, rootPage, _pgSz);
-            List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(existing, addEntries, removePtrs);
+            List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, rootPage, _pgSz);
+            List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existing, addEntries, removePtrs);
             if (spliced is null)
             {
                 return false;
@@ -10241,7 +10241,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
         byte[] rootPage,
-        List<(byte[] Key, long DataPage, byte DataRow)> addEntries,
+        List<IndexEntry> addEntries,
         CancellationToken cancellationToken)
     {
         long tailLeafPage = IndexLeafIncremental.ReadTailPage(rootPage);
@@ -10277,7 +10277,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        List<IndexLeafIncremental.DecodedEntry> existingTail = IndexLeafIncremental.DecodeEntries(layout, tailLeaf, _pgSz);
+        List<IndexEntry> existingTail = IndexLeafIncremental.DecodeEntries(layout, tailLeaf, _pgSz);
 
         // Every new key must sort strictly after the current tail max.
         // Empty tail leaf trivially satisfies the predicate.
@@ -10297,7 +10297,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // Splice() handles the (no-removes, sorted-merge) case efficiently;
         // since adds already sort > existing max, the stable merge produces
         // existing-then-new in the right order.
-        List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(
+        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
             existingTail,
             addEntries,
             Array.Empty<(long DataPage, byte DataRow)>());
@@ -10355,8 +10355,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         IndexLeafPageBuilder.LeafPageLayout layout,
         long tdefPage,
         long firstDp,
-        List<(byte[] Key, long DataPage, byte DataRow)> addEntries,
-        List<(byte[] Key, long DataPage, byte DataRow)> removeEntries,
+        List<IndexEntry> addEntries,
+        List<IndexEntry> removeEntries,
         CancellationToken cancellationToken)
     {
         if (addEntries.Count == 0 && removeEntries.Count == 0)
@@ -10412,7 +10412,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        List<IndexLeafIncremental.DecodedEntry> existingLeafEntries = IndexLeafIncremental.DecodeEntries(layout, leaf, _pgSz);
+        List<IndexEntry> existingLeafEntries = IndexLeafIncremental.DecodeEntries(layout, leaf, _pgSz);
         if (existingLeafEntries.Count == 0)
         {
             // Empty leaf — descent shouldn't normally land here. Bail.
@@ -10426,7 +10426,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             removePtrs.Add((dp, dr));
         }
 
-        List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(existingLeafEntries, addEntries, removePtrs);
+        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existingLeafEntries, addEntries, removePtrs);
         if (spliced is null)
         {
             return false;
@@ -10449,8 +10449,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             layout, _pgSz, tdefPage, spliced, leafPrev, leafNext, leafTail);
         if (rebuilt != null)
         {
-            IndexLeafPageBuilder.LeafEntry newLast = spliced[spliced.Count - 1];
-            bool maxUnchanged = IndexHelpers.CompareKeyBytes(newLast.EncodedKey, oldMaxKey) == 0;
+            IndexEntry newLast = spliced[spliced.Count - 1];
+            bool maxUnchanged = IndexHelpers.CompareKeyBytes(newLast.Key, oldMaxKey) == 0;
 
             if (maxUnchanged)
             {
@@ -10462,7 +10462,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // Max key changed → walk path replacing parent's summary entry
             // for this leaf (and propagating up while the change is to the
             // last summary on each ancestor).
-            var newSummary = new DecodedIntermediateEntry(newLast.EncodedKey, newLast.DataPage, newLast.DataRow, ChildPage: targetLeafPage);
+            var newSummary = new DecodedIntermediateEntry(new(newLast.Key, newLast.DataPage, newLast.DataRow), ChildPage: targetLeafPage);
             List<(long PageNum, byte[] Bytes)>? ancestorWrites = PrepareAncestorReplaceWrites(layout, tdefPage, path, newSummary);
             if (ancestorWrites is null)
             {
@@ -10481,7 +10481,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // 6. Try an N-way leaf split (greedy left-fill).
         // Bails only if a single entry exceeds page payload area.
-        List<List<IndexLeafPageBuilder.LeafEntry>>? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, _pgSz, spliced);
+        List<List<IndexEntry>>? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, _pgSz, spliced);
         if (splitPages is null)
         {
             return false;
@@ -10522,13 +10522,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         // Build summaries (max key per page) for parent ops.
-        IndexLeafPageBuilder.LeafEntry leftLast = splitPages[0][splitPages[0].Count - 1];
-        var leftSummary = new DecodedIntermediateEntry(leftLast.EncodedKey, leftLast.DataPage, leftLast.DataRow, ChildPage: pageNumbers[0]);
+        IndexEntry leftLast = splitPages[0][splitPages[0].Count - 1];
+        var leftSummary = new DecodedIntermediateEntry(leftLast, ChildPage: pageNumbers[0]);
         var rightSummaries = new DecodedIntermediateEntry[splitCount - 1];
         for (int p = 1; p < splitCount; p++)
         {
-            IndexLeafPageBuilder.LeafEntry last = splitPages[p][splitPages[p].Count - 1];
-            rightSummaries[p - 1] = new DecodedIntermediateEntry(last.EncodedKey, last.DataPage, last.DataRow, ChildPage: pageNumbers[p]);
+            IndexEntry last = splitPages[p][splitPages[p].Count - 1];
+            rightSummaries[p - 1] = new DecodedIntermediateEntry(last, ChildPage: pageNumbers[p]);
         }
 
         // Compute parent (and grandparent, ...) writes WITHOUT committing —
@@ -10829,7 +10829,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         public List<DescentStep> Path { get; } = path;
 
         /// <summary>Gets the encoded inserts that landed on this leaf.</summary>
-        public List<(byte[] Key, long DataPage, byte DataRow)> Adds { get; } = [];
+        public List<IndexEntry> Adds { get; } = [];
 
         /// <summary>Gets the row pointers whose entries should be removed from this leaf.</summary>
         public List<(long DataPage, byte DataRow)> RemovePtrs { get; } = [];
@@ -10874,8 +10874,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         long tdefPage,
         long firstDp,
         int firstDpOffset,
-        List<(byte[] Key, long DataPage, byte DataRow)> addEntries,
-        List<(byte[] Key, long DataPage, byte DataRow)> removeEntries,
+        List<IndexEntry> addEntries,
+        List<IndexEntry> removeEntries,
         CancellationToken cancellationToken)
     {
         const int MaxLeafGroupCount = 64;
@@ -10957,13 +10957,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                List<IndexLeafIncremental.DecodedEntry> preExisting = IndexLeafIncremental.DecodeEntries(layout, preBytes, _pgSz);
+                List<IndexEntry> preExisting = IndexLeafIncremental.DecodeEntries(layout, preBytes, _pgSz);
                 if (preExisting.Count == 0)
                 {
                     continue;
                 }
 
-                List<IndexLeafPageBuilder.LeafEntry>? preSpliced = IndexLeafIncremental.Splice(preExisting, pre.Adds, pre.RemovePtrs);
+                List<IndexEntry>? preSpliced = IndexLeafIncremental.Splice(preExisting, pre.Adds, pre.RemovePtrs);
                 if (preSpliced is { Count: 0 })
                 {
                     emptyingLeaves.Add(pre.LeafPage);
@@ -10995,13 +10995,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return false;
             }
 
-            List<IndexLeafIncremental.DecodedEntry> existing = IndexLeafIncremental.DecodeEntries(layout, leaf, _pgSz);
+            List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, leaf, _pgSz);
             if (existing.Count == 0)
             {
                 return false;
             }
 
-            List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(existing, group.Adds, group.RemovePtrs);
+            List<IndexEntry>? spliced = IndexLeafIncremental.Splice(existing, group.Adds, group.RemovePtrs);
             if (spliced is null)
             {
                 return false;
@@ -11088,9 +11088,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 IndexHelpers.AddIntermediateOp(parentOps, mergeParent.PageNumber, new IntermediateOp(
                     OriginalIndex: mergeParent.TakenIndex,
                     Type: IntermediateOpType.Remove,
-                    NewKey: [],
-                    NewDataPage: 0,
-                    NewDataRow: 0,
+                    NewEntry: default,
                     NewChildPage: 0));
 
                 continue;
@@ -11114,16 +11112,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 existingPageRewrites[group.LeafPage] = rebuilt;
 
-                IndexLeafPageBuilder.LeafEntry newLast = spliced[spliced.Count - 1];
-                if (IndexHelpers.CompareKeyBytes(newLast.EncodedKey, oldMaxKey) != 0)
+                IndexEntry newLast = spliced[spliced.Count - 1];
+                if (IndexHelpers.CompareKeyBytes(newLast.Key, oldMaxKey) != 0)
                 {
                     // Parent's summary entry for this leaf must be replaced.
                     IndexHelpers.AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
                         OriginalIndex: parentStep.TakenIndex,
                         Type: IntermediateOpType.Replace,
-                        NewKey: newLast.EncodedKey,
-                        NewDataPage: newLast.DataPage,
-                        NewDataRow: newLast.DataRow,
+                        NewEntry: newLast,
                         NewChildPage: group.LeafPage));
                 }
 
@@ -11133,7 +11129,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // ── N-way split ──
             // Greedy left-fill into N pages; bails only if a single entry
             // exceeds the page payload area.
-            List<List<IndexLeafPageBuilder.LeafEntry>>? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, _pgSz, spliced);
+            List<List<IndexEntry>>? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, _pgSz, spliced);
             if (splitPages is null)
             {
                 return false;
@@ -11206,23 +11202,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // summary, then insert one summary per right page (N-1 of them)
             // immediately after, in left-to-right order. ApplyIntermediateOps
             // preserves declaration order at the same OriginalIndex.
-            IndexLeafPageBuilder.LeafEntry leftLast = splitPages[0][splitPages[0].Count - 1];
+            // TODO: should NewChildPage just be set to leftLast.ChildPage?
+            IndexEntry leftLast = splitPages[0][splitPages[0].Count - 1];
             IndexHelpers.AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
                 OriginalIndex: parentStep.TakenIndex,
                 Type: IntermediateOpType.Replace,
-                NewKey: leftLast.EncodedKey,
-                NewDataPage: leftLast.DataPage,
-                NewDataRow: leftLast.DataRow,
+                NewEntry: leftLast,
                 NewChildPage: pageNumbers[0]));
             for (int p = 1; p < splitCount; p++)
             {
-                IndexLeafPageBuilder.LeafEntry pLast = splitPages[p][splitPages[p].Count - 1];
+                // TODO: should NewChildPage just be set to pLast.ChildPage?
+                IndexEntry pLast = splitPages[p][splitPages[p].Count - 1];
                 IndexHelpers.AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
                     OriginalIndex: parentStep.TakenIndex,
                     Type: IntermediateOpType.InsertAfter,
-                    NewKey: pLast.EncodedKey,
-                    NewDataPage: pLast.DataPage,
-                    NewDataRow: pLast.DataRow,
+                    NewEntry: pLast,
                     NewChildPage: pageNumbers[p]));
             }
         }
@@ -11420,8 +11414,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private async ValueTask<Dictionary<long, LeafGroup>?> GroupChangesByTargetLeafAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long firstDp,
-        List<(byte[] Key, long DataPage, byte DataRow)> addEntries,
-        List<(byte[] Key, long DataPage, byte DataRow)> removeEntries,
+        List<IndexEntry> addEntries,
+        List<IndexEntry> removeEntries,
         int maxLeafGroupCount,
         CancellationToken cancellationToken)
     {
@@ -11436,7 +11430,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return null;
             }
 
-            g.Adds.Add((key, dp, dr));
+            var decoded = new IndexEntry(key, dp, dr);
+            g.Adds.Add(decoded);
+
             if (groups.Count > maxLeafGroupCount)
             {
                 return null;
@@ -11717,9 +11713,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 IndexHelpers.AddIntermediateOp(parentOps, gpCollapse.ParentPage, new IntermediateOp(
                     OriginalIndex: gpCollapse.IndexInParent,
                     Type: IntermediateOpType.Remove,
-                    NewKey: [],
-                    NewDataPage: 0,
-                    NewDataRow: 0,
+                    NewEntry: default,
                     NewChildPage: 0));
 
                 if (!pending.Contains(gpCollapse.ParentPage))
@@ -11882,23 +11876,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     // then InsertAfter one summary per remaining split page
                     // in left-to-right order. Recurse into grandparent in
                     // case it also overflows.
+                    // TODO: should NewChildPage just be set to firstLast.ChildPage?
                     var firstLast = splitInts[0][splitInts[0].Count - 1];
                     IndexHelpers.AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
                         OriginalIndex: gpSplit.IndexInParent,
                         Type: IntermediateOpType.Replace,
-                        NewKey: firstLast.Key,
-                        NewDataPage: firstLast.DataPage,
-                        NewDataRow: firstLast.DataRow,
+                        NewEntry: firstLast.Entry,
                         NewChildPage: intPageNumbers[0]));
                     for (int p = 1; p < nSplit; p++)
                     {
+                        // TODO: should NewChildPage just be set to pLast.ChildPage?
                         var pLast = splitInts[p][splitInts[p].Count - 1];
                         IndexHelpers.AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
                             OriginalIndex: gpSplit.IndexInParent,
                             Type: IntermediateOpType.InsertAfter,
-                            NewKey: pLast.Key,
-                            NewDataPage: pLast.DataPage,
-                            NewDataRow: pLast.DataRow,
+                            NewEntry: pLast.Entry,
                             NewChildPage: intPageNumbers[p]));
                     }
 
@@ -11925,7 +11917,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     for (int p = 0; p < nSplit; p++)
                     {
                         var pLast = splitInts[p][splitInts[p].Count - 1];
-                        rootEntries.Add(new DecodedIntermediateEntry(pLast.Key, pLast.DataPage, pLast.DataRow, intPageNumbers[p]));
+                        rootEntries.Add(new DecodedIntermediateEntry(pLast.Entry, intPageNumbers[p]));
                     }
 
                     byte[]? newRootBytes;
@@ -11964,9 +11956,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // original last entry's key.
             var newMax = newEntries[newEntries.Count - 1];
             DecodedIntermediateEntry oldMax = refStep.Entries[refStep.Entries.Count - 1];
-            bool maxChanged = IndexHelpers.CompareKeyBytes(newMax.Key, oldMax.Key) != 0
-                || newMax.DataPage != oldMax.DataPage
-                || newMax.DataRow != oldMax.DataRow
+            bool maxChanged = IndexHelpers.CompareKeyBytes(newMax.Entry.Key, oldMax.Entry.Key) != 0
+                || newMax.Entry.DataPage != oldMax.Entry.DataPage
+                || newMax.Entry.DataRow != oldMax.Entry.DataRow
                 || newMax.ChildPage != oldMax.ChildPage;
 
             if (maxChanged && intermediateGrandparent.TryGetValue(deepest, out (long ParentPage, int IndexInParent) gp))
@@ -11974,12 +11966,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // Propagate: grandparent's summary entry for this
                 // intermediate (at IndexInParent) needs to carry the new
                 // max key (and same ChildPage = this intermediate page).
+                // TODO: should NewChildPage just be set to pLast.ChildPage?
                 IndexHelpers.AddIntermediateOp(parentOps, gp.ParentPage, new IntermediateOp(
                     OriginalIndex: gp.IndexInParent,
                     Type: IntermediateOpType.Replace,
-                    NewKey: newMax.Key,
-                    NewDataPage: newMax.DataPage,
-                    NewDataRow: newMax.DataRow,
+                    NewEntry: newMax.Entry,
                     NewChildPage: deepest));
 
                 if (!pending.Contains(gp.ParentPage))
@@ -12002,14 +11993,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// detects this by comparing <c>Count</c> to the input count and bailing
     /// to the bulk-rebuild path.
     /// </summary>
-    private List<(byte[] Key, long DataPage, byte DataRow)> EncodeHintEntries(
+    private List<IndexEntry> EncodeHintEntries(
         IReadOnlyList<(RowLocation Loc, object[] Row)>? rows,
         List<KeyColumnInfo> keyColInfos)
     {
-        var result = new List<(byte[] Key, long DataPage, byte DataRow)>(rows?.Count ?? 0);
+        var results = new List<IndexEntry>(rows?.Count ?? 0);
         if (rows == null || rows.Count == 0)
         {
-            return result;
+            return results;
         }
 
         // Jet4 .mdb uses the LegacyFixedPointColumnDescriptor
@@ -12060,7 +12051,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             if (encoderRejected)
             {
-                return result;
+                return results;
             }
 
             byte[] composite = new byte[totalLen];
@@ -12071,10 +12062,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 offset += perColumn[k].Length;
             }
 
-            result.Add((composite, loc.PageNumber, (byte)loc.RowIndex));
+            var result = new IndexEntry(composite, loc.PageNumber, (byte)loc.RowIndex);
+            results.Add(result);
         }
 
-        return result;
+        return results;
     }
 
     private record struct RealIdxEntry(IReadOnlyList<(int ColNum, bool Ascending)> KeyColumns, int FirstDpOffset, bool IsUnique);

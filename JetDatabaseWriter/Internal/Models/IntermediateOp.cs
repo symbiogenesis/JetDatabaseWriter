@@ -11,9 +11,7 @@ namespace JetDatabaseWriter.Internal.Models;
 internal readonly record struct IntermediateOp(
     int OriginalIndex,
     IntermediateOpType Type,
-    byte[] NewKey,
-    long NewDataPage,
-    byte NewDataRow,
+    IndexEntry NewEntry,
     long NewChildPage);
 
 internal enum IntermediateOpType

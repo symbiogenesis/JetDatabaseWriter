@@ -13,7 +13,7 @@ using JetDatabaseWriter.Internal.Models;
 /// existing leaf back into the per-entry tuples it would have been built from
 /// (honouring the §4.4 prefix compression header), splices the change into the
 /// sorted entry list, and re-emits the leaf via
-/// <see cref="IndexLeafPageBuilder.BuildJet4LeafPage(int, long, IReadOnlyList{IndexLeafPageBuilder.LeafEntry}, long, long, long, bool)"/>
+/// <see cref="IndexLeafPageBuilder.BuildJet4LeafPage(int, long, IReadOnlyList{IndexEntry}, long, long, long, bool)"/>
 /// with prefix compression enabled.
 /// <para>
 /// The fast path applies only when the index B-tree is rooted at a single
@@ -27,19 +27,6 @@ using JetDatabaseWriter.Internal.Models;
 /// </summary>
 internal static class IndexLeafIncremental
 {
-    /// <summary>
-    /// A decoded leaf entry: the canonical (uncompressed) key bytes plus the
-    /// <c>(data_page, data_row)</c> row pointer.
-    /// </summary>
-    internal readonly struct DecodedEntry(byte[] key, long dataPage, byte dataRow)
-    {
-        public byte[] Key { get; } = key;
-
-        public long DataPage { get; } = dataPage;
-
-        public byte DataRow { get; } = dataRow;
-    }
-
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="page"/> is an
     /// intermediate page (<c>page_type = 0x03</c>). Used by the multi-level
@@ -176,7 +163,7 @@ internal static class IndexLeafIncremental
     /// canonical (key, data_page, data_row) tuple, re-prepending the §4.4
     /// shared prefix to entries beyond the first.
     /// </summary>
-    public static List<DecodedEntry> DecodeEntries(byte[] page, int pageSize)
+    public static List<IndexEntry> DecodeEntries(byte[] page, int pageSize)
         => DecodeEntries(IndexLeafPageBuilder.LeafPageLayout.Jet4, page, pageSize);
 
     /// <summary>
@@ -184,9 +171,9 @@ internal static class IndexLeafIncremental
     /// callers that may target Jet3 leaf pages (§4.2 bitmask at <c>0x16</c>,
     /// first entry at <c>0xF8</c>).
     /// </summary>
-    public static List<DecodedEntry> DecodeEntries(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, int pageSize)
+    public static List<IndexEntry> DecodeEntries(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, int pageSize)
     {
-        var result = new List<DecodedEntry>();
+        var result = new List<IndexEntry>();
         int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(20, 2));
         int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
         int payloadEnd = pageSize - freeSpace;
@@ -236,7 +223,7 @@ internal static class IndexLeafIncremental
             int dpOff = entryStart + suffixLen;
             long dp = AccessBase.ReadUInt24BigEndian(page.AsSpan(dpOff, 3));
             byte dr = page[dpOff + 3];
-            result.Add(new DecodedEntry(canonical, dp, dr));
+            result.Add(new IndexEntry(canonical, dp, dr));
 
             isFirst = false;
             if (next < 0)
@@ -260,17 +247,17 @@ internal static class IndexLeafIncremental
     /// <param name="existing">Decoded entries from the live leaf.</param>
     /// <param name="adds">New entries to insert; need not be sorted.</param>
     /// <param name="removes">Row pointers whose entries should be removed.</param>
-    public static List<IndexLeafPageBuilder.LeafEntry>? Splice(
-        List<DecodedEntry> existing,
-        IReadOnlyList<(byte[] Key, long DataPage, byte DataRow)> adds,
+    public static List<IndexEntry>? Splice(
+        List<IndexEntry> existing,
+        IReadOnlyList<IndexEntry> adds,
         IReadOnlyList<(long DataPage, byte DataRow)> removes)
     {
-        var working = new List<(byte[] Key, long DataPage, byte DataRow)>(existing.Count + adds.Count);
+        var working = new List<IndexEntry>(existing.Count + adds.Count);
         if (removes.Count == 0)
         {
-            foreach (DecodedEntry e in existing)
+            foreach (IndexEntry e in existing)
             {
-                working.Add((e.Key, e.DataPage, e.DataRow));
+                working.Add(new IndexEntry(e.Key, e.DataPage, e.DataRow));
             }
         }
         else
@@ -284,7 +271,7 @@ internal static class IndexLeafIncremental
             }
 
             int removed = 0;
-            foreach (DecodedEntry e in existing)
+            foreach (IndexEntry e in existing)
             {
                 if (removeSet.Remove(EncodePtr(e.DataPage, e.DataRow)))
                 {
@@ -292,7 +279,7 @@ internal static class IndexLeafIncremental
                     continue;
                 }
 
-                working.Add((e.Key, e.DataPage, e.DataRow));
+                working.Add(new IndexEntry(e.Key, e.DataPage, e.DataRow));
             }
 
             if (removed != removes.Count)
@@ -304,28 +291,28 @@ internal static class IndexLeafIncremental
 
         foreach ((byte[] k, long dp, byte dr) in adds)
         {
-            working.Add((k, dp, dr));
+            working.Add(new IndexEntry(k, dp, dr));
         }
 
         // Stable sort by key bytes. Ties retain insertion order, which keeps
         // the (page, row) ordering of equal-key entries deterministic.
         // List<T>.Sort is not stable; emulate by tagging the original index.
-        var indexed = new (byte[] Key, long DataPage, byte DataRow, int Order)[working.Count];
+        var indexed = new (IndexEntry Entry, int Order)[working.Count];
         for (int i = 0; i < working.Count; i++)
         {
-            indexed[i] = (working[i].Key, working[i].DataPage, working[i].DataRow, i);
+            indexed[i] = (working[i], i);
         }
 
         Array.Sort(indexed, static (a, b) =>
         {
-            int c = CompareBytes(a.Key, b.Key);
+            int c = CompareBytes(a.Entry.Key, b.Entry.Key);
             return c != 0 ? c : a.Order - b.Order;
         });
 
-        var result = new List<IndexLeafPageBuilder.LeafEntry>(indexed.Length);
-        foreach ((byte[] k, long dp, byte dr, _) in indexed)
+        var result = new List<IndexEntry>(indexed.Length);
+        foreach ((IndexEntry entry, _) in indexed)
         {
-            result.Add(new IndexLeafPageBuilder.LeafEntry(k, dp, dr));
+            result.Add(entry);
         }
 
         return result;
@@ -339,18 +326,18 @@ internal static class IndexLeafIncremental
     public static byte[]? TryRebuildLeaf(
         int pageSize,
         long parentTdefPage,
-        IReadOnlyList<IndexLeafPageBuilder.LeafEntry> entries)
+        IReadOnlyList<IndexEntry> entries)
         => TryRebuildLeaf(IndexLeafPageBuilder.LeafPageLayout.Jet4, pageSize, parentTdefPage, entries);
 
     /// <summary>
-    /// Layout-aware overload of <see cref="TryRebuildLeaf(int, long, IReadOnlyList{IndexLeafPageBuilder.LeafEntry})"/>
+    /// Layout-aware overload of <see cref="TryRebuildLeaf(int, long, IReadOnlyList{IndexEntry})"/>
     /// for callers that may target Jet3 leaf pages.
     /// </summary>
     public static byte[]? TryRebuildLeaf(
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
         long parentTdefPage,
-        IReadOnlyList<IndexLeafPageBuilder.LeafEntry> entries)
+        IReadOnlyList<IndexEntry> entries)
     {
         try
         {
@@ -381,7 +368,7 @@ internal static class IndexLeafIncremental
         IndexLeafPageBuilder.LeafPageLayout layout,
         int pageSize,
         long parentTdefPage,
-        IReadOnlyList<IndexLeafPageBuilder.LeafEntry> entries,
+        IReadOnlyList<IndexEntry> entries,
         long prevPage,
         long nextPage,
         long tailPage)
@@ -475,7 +462,7 @@ internal static class IndexLeafIncremental
             long dp = ((long)page[trailerOff] << 16) | ((long)page[trailerOff + 1] << 8) | page[trailerOff + 2];
             byte dr = page[trailerOff + 3];
             long childPage = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(trailerOff + 4, 4));
-            result.Add(new DecodedIntermediateEntry(canonical, dp, dr, childPage));
+            result.Add(new DecodedIntermediateEntry(new(canonical, dp, dr), childPage));
 
             isFirst = false;
             if (next < 0)

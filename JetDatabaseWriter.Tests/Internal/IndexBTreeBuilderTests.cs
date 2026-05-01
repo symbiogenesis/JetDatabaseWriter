@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Internal;
 using System.Collections.Generic;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Builders;
+using JetDatabaseWriter.Internal.Models;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention.
@@ -25,7 +26,7 @@ public sealed class IndexBTreeBuilderTests
     public void Empty_ProducesSingleEmptyLeaf_RootIsThatLeaf()
     {
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(
-            PageSize, ParentTdef, new List<IndexLeafPageBuilder.LeafEntry>(), FirstPage);
+            PageSize, ParentTdef, new List<IndexEntry>(), FirstPage);
 
         Assert.Single(r.Pages);
         Assert.Equal(FirstPage, r.RootPageNumber);
@@ -35,11 +36,11 @@ public sealed class IndexBTreeBuilderTests
     [Fact]
     public void SmallEntrySet_FitsInOneLeaf_NoIntermediate()
     {
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>();
+        var entries = new List<IndexEntry>();
         for (int i = 0; i < 10; i++)
         {
             byte[] key = IndexKeyEncoder.EncodeEntry(0x04, i, ascending: true);
-            entries.Add(new IndexLeafPageBuilder.LeafEntry(key, dataPage: 1, dataRow: (byte)i));
+            entries.Add(new IndexEntry(key, 1, (byte)i));
         }
 
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
@@ -58,14 +59,14 @@ public sealed class IndexBTreeBuilderTests
     {
         // Force 2 leaves: each entry is ~200 bytes, area is 3616 bytes ⇒ ~18 entries fit.
         // 40 entries → 3 leaves (18 + 18 + 4) → 1 intermediate root.
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>();
+        var entries = new List<IndexEntry>();
         for (int i = 0; i < 40; i++)
         {
             // Embed i so each key is unique and ordered.
             byte[] big = new byte[200];
             big[0] = (byte)(i >> 8);
             big[1] = (byte)i;
-            entries.Add(new IndexLeafPageBuilder.LeafEntry(big, dataPage: 1, dataRow: (byte)i));
+            entries.Add(new IndexEntry(big, 1, (byte)i));
         }
 
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
@@ -100,13 +101,13 @@ public sealed class IndexBTreeBuilderTests
     [Fact]
     public void IntermediateRoot_EntriesPointToChildPagesInOrder()
     {
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>();
+        var entries = new List<IndexEntry>();
         for (int i = 0; i < 40; i++)
         {
             byte[] big = new byte[200];
             big[0] = (byte)(i >> 8);
             big[1] = (byte)i;
-            entries.Add(new IndexLeafPageBuilder.LeafEntry(big, dataPage: 1, dataRow: (byte)i));
+            entries.Add(new IndexEntry(big, 1, (byte)i));
         }
 
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
@@ -145,11 +146,11 @@ public sealed class IndexBTreeBuilderTests
         // Encoded T_LONG keys all share the leading 0x7F flag + 0x80 sign-flipped
         // high bytes (values 1..3 → bytes [0x7F 0x80 0x00 0x00 0x01..0x03]).
         // Common byte prefix is 4 bytes.
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>();
+        var entries = new List<IndexEntry>();
         for (int i = 1; i <= 3; i++)
         {
             byte[] key = IndexKeyEncoder.EncodeEntry(0x04, i, ascending: true);
-            entries.Add(new IndexLeafPageBuilder.LeafEntry(key, dataPage: 1, dataRow: (byte)i));
+            entries.Add(new IndexEntry(key, 1, (byte)i));
         }
 
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
@@ -177,11 +178,11 @@ public sealed class IndexBTreeBuilderTests
         // Two entries that diverge at byte 0 → no shared prefix.
         var k1 = new byte[] { 0x10, 0x20 };
         var k2 = new byte[] { 0x30, 0x40 };
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>
-        {
-            new IndexLeafPageBuilder.LeafEntry(k1, 1, 0),
-            new IndexLeafPageBuilder.LeafEntry(k2, 1, 1),
-        };
+        List<IndexEntry> entries =
+        [
+            new(k1, 1, 0),
+            new(k2, 1, 1),
+        ];
 
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
 
@@ -202,14 +203,14 @@ public sealed class IndexBTreeBuilderTests
         const int expectedLevel1 = 13;
         const int expectedTotal = expectedLeaves + expectedLevel1 + 1;
 
-        var entries = new List<IndexLeafPageBuilder.LeafEntry>(totalEntries);
+        var entries = new List<IndexEntry>(totalEntries);
         for (int i = 0; i < totalEntries; i++)
         {
             byte[] big = new byte[200];
             big[0] = (byte)((i >> 16) & 0xFF);
             big[1] = (byte)((i >> 8) & 0xFF);
             big[2] = (byte)(i & 0xFF);
-            entries.Add(new IndexLeafPageBuilder.LeafEntry(big, dataPage: 1, dataRow: 0));
+            entries.Add(new IndexEntry(big, 1, 0));
         }
 
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(PageSize, ParentTdef, entries, FirstPage);
