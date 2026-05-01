@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Internal.Builders;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Internal.Models;
 
@@ -55,6 +56,14 @@ internal static class IndexLeafPageBuilder
         /// <summary>Gets the byte offset of the first entry payload within the page.</summary>
         public int FirstEntryOffset { get; } = firstEntryOffset;
     }
+
+    /// <summary>
+    /// Returns the correct <see cref="LeafPageLayout"/> for the specified <see cref="DatabaseFormat"/>.
+    /// </summary>
+    /// <param name="format">The database format (Jet3 or Jet4/ACE).</param>
+    /// <returns>The corresponding <see cref="LeafPageLayout"/>.</returns>
+    public static LeafPageLayout GetLayout(DatabaseFormat format)
+        => format == DatabaseFormat.Jet3Mdb ? LeafPageLayout.Jet3 : LeafPageLayout.Jet4;
 
     /// <summary>
     /// Builds a single Jet4 / ACE index leaf page. Returns a buffer of size
