@@ -564,10 +564,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     throw new InvalidOperationException($"Column '{column.Name}' already exists in table '{tableName}'.");
                 }
 
-                return new List<ColumnDefinition>(existing)
-                {
-                    column,
-                };
+                return
+                [
+.. existing,                     column,
+                ];
             },
             (oldRow, _) =>
             {
@@ -11865,7 +11865,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         parentOps,
                         gpSplit.ParentPage,
                         gpSplit.IndexInParent,
-                        new(splitInts.ConvertAll(s => s.ConvertAll(si => si.Entry))),
+                        [.. splitInts.ConvertAll(s => s.ConvertAll(si => si.Entry))],
                         intPageNumbers);
 
                     if (!pending.Contains(gpSplit.ParentPage))

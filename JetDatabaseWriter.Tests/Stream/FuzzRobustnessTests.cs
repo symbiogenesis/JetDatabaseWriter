@@ -119,11 +119,10 @@ public sealed class FuzzRobustnessTests
             {
                 await writer.CreateTableAsync(
                     "T",
-                    new List<ColumnDefinition>
-                    {
+                    [
                         new("Id", typeof(int)),
                         new("Label", typeof(string), maxLength: 32),
-                    },
+                    ],
                     TestContext.Current.CancellationToken);
 
                 for (int i = 0; i < 5; i++)

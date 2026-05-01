@@ -41,11 +41,10 @@ public sealed class NonAsciiNamesTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new List<ColumnDefinition>
-                {
+                [
                     new("Id", typeof(int)),
                     new(ColumnName, typeof(string), maxLength: 50),
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(TableName, [1, "Größe"], TestContext.Current.CancellationToken);
@@ -88,11 +87,10 @@ public sealed class NonAsciiNamesTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new List<ColumnDefinition>
-                {
+                [
                     new("Id", typeof(int)),
                     new(ColumnName, typeof(string), maxLength: 50),
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(TableName, [1, "Océ"], TestContext.Current.CancellationToken);
@@ -135,11 +133,10 @@ public sealed class NonAsciiNamesTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new List<ColumnDefinition>
-                {
+                [
                     new("Id", typeof(int)),
                     new(ColumnName, typeof(string), maxLength: 50),
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(TableName, [1, "山田太郎"], TestContext.Current.CancellationToken);
@@ -179,11 +176,10 @@ public sealed class NonAsciiNamesTests
         {
             await writer.CreateTableAsync(
                 TableName,
-                new List<ColumnDefinition>
-                {
+                [
                     new("Id", typeof(int)),
                     new("Wert", typeof(int)),
-                },
+                ],
                 TestContext.Current.CancellationToken);
 
             for (int i = 1; i <= 5; i++)

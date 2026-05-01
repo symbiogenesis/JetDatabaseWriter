@@ -23,7 +23,7 @@ public sealed class IndexBTreeBuilderTests
     public void Empty_ProducesSingleEmptyLeaf_RootIsThatLeaf()
     {
         IndexBTreeBuilder.BuildResult r = IndexBTreeBuilder.Build(
-            Constants.PageSizes.Jet4, ParentTdef, new List<IndexEntry>(), FirstPage);
+            Constants.PageSizes.Jet4, ParentTdef, [], FirstPage);
 
         Assert.Single(r.Pages);
         Assert.Equal(FirstPage, r.RootPageNumber);

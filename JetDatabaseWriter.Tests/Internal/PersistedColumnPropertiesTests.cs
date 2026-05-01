@@ -312,7 +312,7 @@ public sealed class PersistedColumnPropertiesTests
         {
             await writer.CreateTableAsync(
                 "Plain",
-                new List<ColumnDefinition> { new("X", typeof(int)) },
+                [new("X", typeof(int))],
                 TestContext.Current.CancellationToken);
         }
 

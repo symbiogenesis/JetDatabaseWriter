@@ -151,8 +151,8 @@ public sealed class CreateDatabaseTests
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
-            await writer.CreateTableAsync("TableA", new List<ColumnDefinition> { new("X", typeof(int)) }, TestContext.Current.CancellationToken);
-            await writer.CreateTableAsync("TableB", new List<ColumnDefinition> { new("Y", typeof(string), 50) }, TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync("TableA", [new("X", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync("TableB", [new("Y", typeof(string), 50)], TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
@@ -200,7 +200,7 @@ public sealed class CreateDatabaseTests
         {
             await using (var writer = await AccessWriter.CreateDatabaseAsync(path, format, cancellationToken: TestContext.Current.CancellationToken))
             {
-                await writer.CreateTableAsync("T1", new List<ColumnDefinition> { new("Col", typeof(int)) }, TestContext.Current.CancellationToken);
+                await writer.CreateTableAsync("T1", [new("Col", typeof(int))], TestContext.Current.CancellationToken);
                 await writer.InsertRowAsync("T1", [42], TestContext.Current.CancellationToken);
             }
 
@@ -340,7 +340,7 @@ public sealed class CreateDatabaseTests
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
-            await writer.CreateTableAsync("ToDrop", new List<ColumnDefinition> { new("X", typeof(int)) }, TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync("ToDrop", [new("X", typeof(int))], TestContext.Current.CancellationToken);
             await writer.DropTableAsync("ToDrop", TestContext.Current.CancellationToken);
         }
 
