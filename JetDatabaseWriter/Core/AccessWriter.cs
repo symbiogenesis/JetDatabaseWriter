@@ -9415,60 +9415,52 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             case T_DOUBLE:
                 return size >= 8 ? ReadDoubleLittleEndian(page.AsSpan(start, 8)) : null;
             case T_DATETIME:
+                if (size < 8)
                 {
-                    if (size < 8)
-                    {
-                        return null;
-                    }
+                    return null;
+                }
 
-                    double oa = ReadDoubleLittleEndian(page.AsSpan(start, 8));
-                    try
-                    {
-                        return DateTime.FromOADate(oa);
-                    }
-                    catch (ArgumentException)
-                    {
-                        return null;
-                    }
+                double oa = ReadDoubleLittleEndian(page.AsSpan(start, 8));
+                try
+                {
+                    return DateTime.FromOADate(oa);
+                }
+                catch (ArgumentException)
+                {
+                    return null;
                 }
 
             case T_MONEY:
+                if (size < 8)
                 {
-                    if (size < 8)
-                    {
-                        return null;
-                    }
-
-                    long raw = BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8));
-                    return raw / 10000m;
+                    return null;
                 }
+
+                long raw = BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8));
+                return raw / 10000m;
 
             case T_GUID:
+                if (size < 16)
                 {
-                    if (size < 16)
-                    {
-                        return null;
-                    }
-
-                    byte[] g = new byte[16];
-                    Buffer.BlockCopy(page, start, g, 0, 16);
-                    return new Guid(g);
+                    return null;
                 }
+
+                byte[] g = new byte[16];
+                Buffer.BlockCopy(page, start, g, 0, 16);
+                return new Guid(g);
 
             case T_NUMERIC:
+                // 17-byte scaled decimal (1 sign byte + 16 magnitude bytes).
+                // Cascade enforcement on T_NUMERIC keys is rare but handle it
+                // for completeness; signal failure on malformed bytes so the
+                // caller falls back to the snapshot path rather than emit a
+                // bad value.
+                if (size < 17)
                 {
-                    // 17-byte scaled decimal (1 sign byte + 16 magnitude bytes).
-                    // Cascade enforcement on T_NUMERIC keys is rare but handle it
-                    // for completeness; signal failure on malformed bytes so the
-                    // caller falls back to the snapshot path rather than emit a
-                    // bad value.
-                    if (size < 17)
-                    {
-                        return null;
-                    }
-
-                    return null; // canonical-scale resolution requires column metadata; defer to snapshot
+                    return null;
                 }
+
+                return null; // canonical-scale resolution requires column metadata; defer to snapshot
 
             default:
                 return null;
@@ -9490,12 +9482,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     : _ansiEncoding.GetString(page, start, size);
 
             case T_BINARY:
-                {
-                    byte[] b = new byte[size];
-                    Buffer.BlockCopy(page, start, b, 0, size);
-                    return b;
-                }
-
+                byte[] b = new byte[size];
+                Buffer.BlockCopy(page, start, b, 0, size);
+                return b;
             case T_BYTE:
                 return size >= 1 ? page[start] : null;
             case T_INT:
@@ -9507,21 +9496,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             case T_DOUBLE:
                 return size >= 8 ? ReadDoubleLittleEndian(page.AsSpan(start, 8)) : null;
             case T_DATETIME:
+                if (size < 8)
                 {
-                    if (size < 8)
-                    {
-                        return null;
-                    }
+                    return null;
+                }
 
-                    double oa = ReadDoubleLittleEndian(page.AsSpan(start, 8));
-                    try
-                    {
-                        return DateTime.FromOADate(oa);
-                    }
-                    catch (ArgumentException)
-                    {
-                        return null;
-                    }
+                double oa = ReadDoubleLittleEndian(page.AsSpan(start, 8));
+                try
+                {
+                    return DateTime.FromOADate(oa);
+                }
+                catch (ArgumentException)
+                {
+                    return null;
                 }
 
             case T_MONEY:
