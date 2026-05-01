@@ -27,8 +27,8 @@ using JetDatabaseWriter.Internal.Helpers;
 /// </summary>
 internal static class CompoundFileWriter
 {
-    private const int EntriesPerFatSector = Constants.CompoundFile.SectorSize / 4;  // 1024
-    private const int EntriesPerDirSector = Constants.CompoundFile.SectorSize / Constants.CompoundFile.DirEntrySize; // 32
+    private const int EntriesPerFatSector = Constants.CompoundFile.V4SectorSize / 4;  // 1024
+    private const int EntriesPerDirSector = Constants.CompoundFile.V4SectorSize / Constants.CompoundFile.DirEntrySize; // 32
     private const int MaxHeaderDifatEntries = 109;
 
     /// <summary>
@@ -61,7 +61,7 @@ internal static class CompoundFileWriter
         for (int i = 0; i < streams.Count; i++)
         {
             int len = streams[i].Value?.Length ?? 0;
-            int sectors = len == 0 ? 0 : (len + Constants.CompoundFile.SectorSize - 1) / Constants.CompoundFile.SectorSize;
+            int sectors = len == 0 ? 0 : (len + Constants.CompoundFile.V4SectorSize - 1) / Constants.CompoundFile.V4SectorSize;
             streamSectors[i] = sectors;
             streamStart[i] = sectors == 0 ? unchecked((int)Constants.CompoundFile.EndOfChain) : sectorCursor;
             sectorCursor += sectors;
@@ -102,7 +102,7 @@ internal static class CompoundFileWriter
         }
 
         // ── Allocate the file buffer ───────────────────────────────────
-        long fileSize = Constants.CompoundFile.SectorSize + ((long)totalSectors * Constants.CompoundFile.SectorSize);
+        long fileSize = Constants.CompoundFile.V4SectorSize + ((long)totalSectors * Constants.CompoundFile.V4SectorSize);
         if (fileSize > int.MaxValue)
         {
             throw new NotSupportedException(
@@ -205,7 +205,7 @@ internal static class CompoundFileWriter
     }
 
     private static int SectorOffset(int sectorIndex) =>
-        Constants.CompoundFile.SectorSize + (sectorIndex * Constants.CompoundFile.SectorSize);
+        Constants.CompoundFile.V4SectorSize + (sectorIndex * Constants.CompoundFile.V4SectorSize);
 
     private static void WriteHeader(byte[] file, int[] fatSectorIds, int firstDirSector, int numDirSectors)
     {
@@ -213,9 +213,9 @@ internal static class CompoundFileWriter
 
         CompoundFileReader.CfbSignature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18, 2), 0x003E);  // minor version
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A, 2), 0x0004);  // major version (v4 = 4096-byte sectors)
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A, 2), Constants.CompoundFile.V4MajorVersion);  // major version (v4 = 4096-byte sectors)
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C, 2), 0xFFFE);  // little-endian byte order
-        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1E, 2), 0x000C);  // sector shift = 12 → 4096
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1E, 2), Constants.CompoundFile.V4SectorShift);  // sector shift = 12 → 4096
         BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x20, 2), 0x0006);  // mini sector shift = 6 → 64
         BinaryPrimitives.WriteInt32LittleEndian(h.Slice(0x28, 4), numDirSectors);
         BinaryPrimitives.WriteInt32LittleEndian(h.Slice(0x2C, 4), fatSectorIds.Length);
