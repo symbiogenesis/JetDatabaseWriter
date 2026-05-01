@@ -6084,6 +6084,46 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
+    /// <summary>
+    /// Adds parentOps Replace and InsertAfter operations for a split leaf/intermediate.
+    /// </summary>
+    private static void AddParentOp(
+        Dictionary<long, List<IntermediateOp>> parentOps,
+        long parentPageNumber,
+        int originalIndex,
+        IntermediateOpType type,
+        DecodedIntermediateEntry newEntry)
+    {
+        IndexHelpers.AddIntermediateOp(parentOps, parentPageNumber, new IntermediateOp(
+            OriginalIndex: originalIndex,
+            Type: type,
+            NewEntry: newEntry));
+    }
+
+    private static void AddParentOpsForSplitPages(
+        Dictionary<long, List<IntermediateOp>> parentOps,
+        long parentPageNumber,
+        int takenIndex,
+        List<List<IndexEntry>> splitPages,
+        long[] pageNumbers)
+    {
+        if (splitPages.Count != pageNumbers.Length || splitPages.Count == 0)
+        {
+            throw new ArgumentException("splitPages and pageNumbers must have the same nonzero length");
+        }
+
+        // Replace op for the leftmost split page
+        IndexEntry leftLast = splitPages[0][splitPages[0].Count - 1];
+        AddParentOp(parentOps, parentPageNumber, takenIndex, IntermediateOpType.Replace, new(leftLast, pageNumbers[0]));
+
+        // InsertAfter ops for the remaining split pages
+        for (int p = 1; p < splitPages.Count; p++)
+        {
+            IndexEntry pLast = splitPages[p][splitPages[p].Count - 1];
+            AddParentOp(parentOps, parentPageNumber, takenIndex, IntermediateOpType.InsertAfter, new(pLast, pageNumbers[p]));
+        }
+    }
+
     private async ValueTask<DataTable> ReadTableSnapshotAsync(string tableName, CancellationToken cancellationToken = default)
     {
         var options = new AccessReaderOptions
@@ -11077,10 +11117,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // entry at OriginalIndex; the dead leaf page is orphaned
                 // (not appended to any free list — Compact & Repair sweeps
                 // it, same as bulk path orphans).
-                IndexHelpers.AddIntermediateOp(parentOps, mergeParent.PageNumber, new IntermediateOp(
-                    OriginalIndex: mergeParent.TakenIndex,
-                    Type: IntermediateOpType.Remove,
-                    NewEntry: default));
+                AddParentOp(parentOps, mergeParent.PageNumber, mergeParent.TakenIndex, IntermediateOpType.Remove, default!);
 
                 continue;
             }
@@ -11107,10 +11144,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 if (IndexHelpers.CompareKeyBytes(newLast.Key, oldMaxKey) != 0)
                 {
                     // Parent's summary entry for this leaf must be replaced.
-                    IndexHelpers.AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
-                        OriginalIndex: parentStep.TakenIndex,
-                        Type: IntermediateOpType.Replace,
-                        NewEntry: new(newLast, group.LeafPage)));
+                    AddParentOp(parentOps, parentStep.PageNumber, parentStep.TakenIndex, IntermediateOpType.Replace, new(newLast, group.LeafPage));
                 }
 
                 continue;
@@ -11192,19 +11226,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // summary, then insert one summary per right page (N-1 of them)
             // immediately after, in left-to-right order. ApplyIntermediateOps
             // preserves declaration order at the same OriginalIndex.
-            IndexEntry leftLast = splitPages[0][splitPages[0].Count - 1];
-            IndexHelpers.AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
-                OriginalIndex: parentStep.TakenIndex,
-                Type: IntermediateOpType.Replace,
-                NewEntry: new(leftLast, pageNumbers[0])));
-            for (int p = 1; p < splitCount; p++)
-            {
-                IndexEntry pLast = splitPages[p][splitPages[p].Count - 1];
-                IndexHelpers.AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
-                    OriginalIndex: parentStep.TakenIndex,
-                    Type: IntermediateOpType.InsertAfter,
-                    NewEntry: new(pLast, pageNumbers[p])));
-            }
+            AddParentOpsForSplitPages(parentOps, parentStep.PageNumber, parentStep.TakenIndex, splitPages, pageNumbers);
         }
 
         // run-boundary stitching ───────────────────────────
@@ -11696,10 +11718,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     return false;
                 }
 
-                IndexHelpers.AddIntermediateOp(parentOps, gpCollapse.ParentPage, new IntermediateOp(
-                    OriginalIndex: gpCollapse.IndexInParent,
-                    Type: IntermediateOpType.Remove,
-                    NewEntry: default));
+                AddParentOp(parentOps, gpCollapse.ParentPage, gpCollapse.IndexInParent, IntermediateOpType.Remove, default!);
 
                 if (!pending.Contains(gpCollapse.ParentPage))
                 {
@@ -11861,19 +11880,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     // then InsertAfter one summary per remaining split page
                     // in left-to-right order. Recurse into grandparent in
                     // case it also overflows.
-                    var firstLast = splitInts[0][splitInts[0].Count - 1];
-                    IndexHelpers.AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
-                        OriginalIndex: gpSplit.IndexInParent,
-                        Type: IntermediateOpType.Replace,
-                        NewEntry: firstLast));
-                    for (int p = 1; p < nSplit; p++)
-                    {
-                        var pLast = splitInts[p][splitInts[p].Count - 1];
-                        IndexHelpers.AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
-                            OriginalIndex: gpSplit.IndexInParent,
-                            Type: IntermediateOpType.InsertAfter,
-                            NewEntry: pLast));
-                    }
+                    // Use helper for Replace + InsertAfter ops for split intermediate pages
+                    AddParentOpsForSplitPages(
+                        parentOps,
+                        gpSplit.ParentPage,
+                        gpSplit.IndexInParent,
+                        splitInts.ConvertAll(s => s.ConvertAll(si => si.Entry)),
+                        intPageNumbers);
 
                     if (!pending.Contains(gpSplit.ParentPage))
                     {
@@ -11944,10 +11957,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // Propagate: grandparent's summary entry for this
                 // intermediate (at IndexInParent) needs to carry the new
                 // max key (and same ChildPage = this intermediate page).
-                IndexHelpers.AddIntermediateOp(parentOps, gp.ParentPage, new IntermediateOp(
-                    OriginalIndex: gp.IndexInParent,
-                    Type: IntermediateOpType.Replace,
-                    NewEntry: newMax));
+                AddParentOp(parentOps, gp.ParentPage, gp.IndexInParent, IntermediateOpType.Replace, newMax);
 
                 if (!pending.Contains(gp.ParentPage))
                 {
