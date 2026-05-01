@@ -26,7 +26,6 @@ using JetDatabaseWriter.Exceptions;
 internal sealed class PageJournal
 {
     private readonly Dictionary<long, byte[]> _pages = [];
-    private readonly long _baseFileLengthBytes;
     private readonly int _pageSize;
     private readonly int _maxPages;
     private long _appendedCount;
@@ -48,13 +47,13 @@ internal sealed class PageJournal
         }
 #endif
 
-        _baseFileLengthBytes = baseFileLengthBytes;
+        BaseFileLengthBytes = baseFileLengthBytes;
         _pageSize = pageSize;
         _maxPages = maxPages;
     }
 
     /// <summary>Gets the file length captured when the transaction began.</summary>
-    public long BaseFileLengthBytes => _baseFileLengthBytes;
+    public long BaseFileLengthBytes { get; }
 
     /// <summary>Gets the number of distinct pages currently buffered in the journal.</summary>
     public int Count => _pages.Count;
@@ -63,7 +62,7 @@ internal sealed class PageJournal
     /// Gets the page number that the next <see cref="Append"/> call will assign,
     /// computed as <c>(BaseFileLengthBytes / pageSize) + appendedCount</c>.
     /// </summary>
-    public long NextAppendPageNumber => (_baseFileLengthBytes / _pageSize) + _appendedCount;
+    public long NextAppendPageNumber => (BaseFileLengthBytes / _pageSize) + _appendedCount;
 
     /// <summary>
     /// Buffers a write to <paramref name="pageNumber"/>. The supplied bytes are

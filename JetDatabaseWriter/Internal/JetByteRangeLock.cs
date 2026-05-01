@@ -48,12 +48,11 @@ internal sealed class JetByteRangeLock
 
     private readonly SafeFileHandle? _handle;
     private readonly int _lockTimeoutMs;
-    private readonly bool _enabled;
 
     private JetByteRangeLock(SafeFileHandle? handle, bool enabled, int lockTimeoutMs)
     {
         _handle = handle;
-        _enabled = enabled;
+        IsEnabled = enabled;
         _lockTimeoutMs = lockTimeoutMs;
     }
 
@@ -62,7 +61,7 @@ internal sealed class JetByteRangeLock
     /// hosts, when the backing <see cref="Stream"/> has no Win32 file handle, or when the
     /// caller opted out via options.
     /// </summary>
-    public bool IsEnabled => _enabled;
+    public bool IsEnabled { get; }
 
     /// <summary>
     /// Creates a <see cref="JetByteRangeLock"/> bound to the supplied database stream.
@@ -98,7 +97,7 @@ internal sealed class JetByteRangeLock
     /// <exception cref="IOException">Thrown if the lock cannot be acquired within the timeout.</exception>
     public IDisposable AcquirePageLock(long pageNumber, int pageSize)
     {
-        if (!_enabled)
+        if (!IsEnabled)
         {
             return NoOpDisposable.Instance;
         }
@@ -114,7 +113,7 @@ internal sealed class JetByteRangeLock
     /// </summary>
     public async ValueTask<IDisposable> AcquirePageLockAsync(long pageNumber, int pageSize, CancellationToken cancellationToken = default)
     {
-        if (!_enabled)
+        if (!IsEnabled)
         {
             return NoOpDisposable.Instance;
         }
@@ -137,7 +136,7 @@ internal sealed class JetByteRangeLock
     /// <returns>A disposable that releases the commit-lock sentinel; a no-op disposable on a disabled instance.</returns>
     public async ValueTask<IDisposable> AcquireCommitLockAsync(bool isAccdb, CancellationToken cancellationToken = default)
     {
-        if (!_enabled)
+        if (!IsEnabled)
         {
             return NoOpDisposable.Instance;
         }
@@ -241,7 +240,7 @@ internal sealed class JetByteRangeLock
 
     private void Release(long offset, long length)
     {
-        if (!_enabled || _handle is null || _handle.IsInvalid || _handle.IsClosed)
+        if (!IsEnabled || _handle is null || _handle.IsInvalid || _handle.IsClosed)
         {
             return;
         }

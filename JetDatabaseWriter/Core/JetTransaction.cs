@@ -31,28 +31,25 @@ using JetDatabaseWriter.Internal.Transactions;
 public sealed class JetTransaction : IAsyncDisposable
 {
     private readonly AccessWriter _writer;
-    private readonly PageJournal _journal;
-    private bool _committed;
-    private bool _rolledBack;
 
     internal JetTransaction(AccessWriter writer, PageJournal journal)
     {
         _writer = writer;
-        _journal = journal;
+        Journal = journal;
     }
 
     /// <summary>Gets a value indicating whether the transaction has been committed.</summary>
-    public bool IsCommitted => _committed;
+    public bool IsCommitted { get; private set; }
 
     /// <summary>Gets a value indicating whether the transaction has been rolled back.</summary>
-    public bool IsRolledBack => _rolledBack;
+    public bool IsRolledBack { get; private set; }
 
     /// <summary>Gets the number of distinct pages currently buffered in the journal.</summary>
-    public int JournaledPageCount => _journal.Count;
+    public int JournaledPageCount => Journal.Count;
 
-    internal PageJournal Journal => _journal;
+    internal PageJournal Journal { get; }
 
-    internal bool IsTerminated => _committed || _rolledBack;
+    internal bool IsTerminated => IsCommitted || IsRolledBack;
 
     /// <summary>
     /// Atomically writes every buffered page to the database file, applying
@@ -96,7 +93,7 @@ public sealed class JetTransaction : IAsyncDisposable
         }
     }
 
-    internal void MarkCommitted() => _committed = true;
+    internal void MarkCommitted() => IsCommitted = true;
 
-    internal void MarkRolledBack() => _rolledBack = true;
+    internal void MarkRolledBack() => IsRolledBack = true;
 }
