@@ -252,7 +252,13 @@ internal static class Constants
     public static class CompoundFile
     {
         /// <summary>CFB v4 sector size in bytes (4096).</summary>
-        public const int SectorSize = 4096;
+        public const int V4SectorSize = 4096;
+
+        /// <summary>Sector shift for v4 (log₂ of <see cref="V4SectorSize"/>): 2¹² = 4096.</summary>
+        public const ushort V4SectorShift = 12;
+
+        /// <summary>CFB major version for v4 (4096-byte sectors).</summary>
+        public const ushort V4MajorVersion = 4;
 
         /// <summary>Size of a single directory entry in bytes (128).</summary>
         public const int DirEntrySize = 128;

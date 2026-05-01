@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
+using JetDatabaseWriter;
 using JetDatabaseWriter.Internal;
 using Xunit;
 
@@ -117,11 +118,11 @@ public sealed class CompoundFileWriterTests
 
         // sectorShift at offset 0x1E (little-endian uint16); 12 == 4096-byte sectors.
         ushort sectorShift = (ushort)(cfb[0x1E] | (cfb[0x1F] << 8));
-        Assert.Equal(12, sectorShift);
+        Assert.Equal(Constants.CompoundFile.V4SectorShift, sectorShift);
 
         // majorVersion at offset 0x1A; v4 == 4.
         ushort majorVersion = (ushort)(cfb[0x1A] | (cfb[0x1B] << 8));
-        Assert.Equal(4, majorVersion);
+        Assert.Equal(Constants.CompoundFile.V4MajorVersion, majorVersion);
     }
 
     [Fact]
