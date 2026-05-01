@@ -56,11 +56,13 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 public sealed class AccessReader : AccessBase, IAccessReader
 {
     private readonly object _cacheLock = new();
+    private readonly SemaphoreSlim _ownedDataPageIndexGate = new(1, 1);
     private readonly bool _useLockFile;
     private readonly string? _lockFileUserName;
     private readonly string? _lockFileMachineName;
     private readonly bool _strictParsing;
     private LockFileSlotWriter? _lockFileSlot;
+    private volatile Dictionary<long, long[]>? _ownedDataPagesByTdef;
     private volatile LruCache<long, byte[]>? _pageCache;
     private long _cacheHits;
     private long _cacheMisses;
@@ -275,17 +277,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 _ = dt.Columns.Add(col.Name, typeof(string));
             }
 
-            long totalPages = _stream.Length / _pgSz;
+            IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-            for (long p = 3; p < totalPages; p++)
+            foreach (long pageNumber in pageNumbers)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-                if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != entry.TDefPage)
-                {
-                    continue;
-                }
+                byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
                 await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
                 {
@@ -373,17 +371,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         long count = 0;
         long tdefPage = resolved.Value.Entry.TDefPage;
-        long total = _stream.Length / _pgSz;
+        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
-        for (long p = 3; p < total; p++)
+        foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != tdefPage)
-            {
-                continue;
-            }
+            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
             int numRows = Ru16(page, _dpNumRows);
             for (int r = 0; r < numRows; r++)
@@ -430,17 +424,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var (entry, td) = resolved.Value;
         long rowCount = 0;
         Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
-        long total = _stream.Length / _pgSz;
+        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-        for (long p = 3; p < total; p++)
+        foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != entry.TDefPage)
-            {
-                continue;
-            }
+            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
             await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
             {
@@ -501,17 +491,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         var (entry, td) = resolved.Value;
         long rowCount = 0;
-        long total = _stream.Length / _pgSz;
+        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-        for (long p = 3; p < total; p++)
+        foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != entry.TDefPage)
-            {
-                continue;
-            }
+            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
             await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
             {
@@ -1223,23 +1209,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
 
             Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
-            long total = _stream.Length / _pgSz;
+            IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-            for (long p = 3; p < total; p++)
+            foreach (long pageNumber in pageNumbers)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-                if (page[0] != 0x01)
-                {
-                    continue;
-                }
-
-                long owner = Ri32(page, _dpTDefOff);
-                if (owner != entry.TDefPage)
-                {
-                    continue;
-                }
+                byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
                 await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
                 {
@@ -1323,23 +1299,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 _ = dt.Columns.Add(col.Name, typeof(string));
             }
 
-            long total = _stream.Length / _pgSz;
+            IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-            for (long p = 3; p < total; p++)
+            foreach (long pageNumber in pageNumbers)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-                if (page[0] != 0x01)
-                {
-                    continue;
-                }
-
-                long owner = Ri32(page, _dpTDefOff);
-                if (owner != entry.TDefPage)
-                {
-                    continue;
-                }
+                byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
                 await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
                 {
@@ -1480,6 +1446,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 _pageCache = null;
             }
 
+            _ownedDataPagesByTdef = null;
+            _ownedDataPageIndexGate.Dispose();
             InvalidateCatalogCache();
         }
         finally
@@ -1890,6 +1858,79 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return Encoding.UTF8.GetBytes(value);
     }
 
+    private async ValueTask<IReadOnlyList<long>> GetOwnedDataPagesAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        if (tdefPage <= 0)
+        {
+            return [];
+        }
+
+        Dictionary<long, long[]> pageIndex = await GetOwnedDataPageIndexAsync(cancellationToken).ConfigureAwait(false);
+        return pageIndex.TryGetValue(tdefPage, out long[]? pageNumbers)
+            ? pageNumbers
+            : [];
+    }
+
+    private async ValueTask<Dictionary<long, long[]>> GetOwnedDataPageIndexAsync(CancellationToken cancellationToken)
+    {
+        Dictionary<long, long[]>? cached = _ownedDataPagesByTdef;
+        if (cached != null)
+        {
+            return cached;
+        }
+
+        await _ownedDataPageIndexGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cached = _ownedDataPagesByTdef;
+            if (cached != null)
+            {
+                return cached;
+            }
+
+            var pagesByOwner = new Dictionary<long, List<long>>();
+            long totalPages = _stream.Length / _pgSz;
+
+            for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                if (page[0] != 0x01)
+                {
+                    continue;
+                }
+
+                long owner = Ri32(page, _dpTDefOff);
+                if (owner <= 0)
+                {
+                    continue;
+                }
+
+                if (!pagesByOwner.TryGetValue(owner, out List<long>? ownedPages))
+                {
+                    ownedPages = [];
+                    pagesByOwner.Add(owner, ownedPages);
+                }
+
+                ownedPages.Add(pageNumber);
+            }
+
+            cached = new Dictionary<long, long[]>(pagesByOwner.Count);
+            foreach ((long owner, List<long> ownedPages) in pagesByOwner)
+            {
+                cached.Add(owner, [.. ownedPages]);
+            }
+
+            _ownedDataPagesByTdef = cached;
+            return cached;
+        }
+        finally
+        {
+            _ownedDataPageIndexGate.Release();
+        }
+    }
+
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
     private protected override async ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
     {
@@ -1932,26 +1973,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         var result = new List<CatalogEntry>();
-        long totPages = _stream.Length / _pgSz;
-        int catPages = 0;
+        IReadOnlyList<long> catalogPageNumbers = await GetOwnedDataPagesAsync(2, cancellationToken).ConfigureAwait(false);
+        int catPages = catalogPageNumbers.Count;
         int allRows = 0;
 
-        for (long p = 3; p < totPages; p++)
+        foreach (long pageNumber in catalogPageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
-            {
-                continue;
-            }
-
-            if (Ri32(page, _dpTDefOff) != 2)
-            {
-                continue;
-            }
-
-            catPages++;
+            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
             await foreach (List<string> row in EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false))
             {
@@ -2273,16 +2303,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         TableDef td,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        long total = _stream.Length / _pgSz;
-        for (long p = 3; p < total; p++)
+        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await ReadPageCachedAsync(p, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != tdefPage)
-            {
-                continue;
-            }
+            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
             await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
             {
