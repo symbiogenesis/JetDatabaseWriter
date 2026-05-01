@@ -11,8 +11,7 @@ namespace JetDatabaseWriter.Internal.Models;
 internal readonly record struct IntermediateOp(
     int OriginalIndex,
     IntermediateOpType Type,
-    IndexEntry NewEntry,
-    long NewChildPage);
+    DecodedIntermediateEntry NewEntry);
 
 internal enum IntermediateOpType
 {
@@ -20,7 +19,6 @@ internal enum IntermediateOpType
     InsertAfter,
 
     /// <summary>Drop the entry at <c>OriginalIndex</c>. The
-    /// other tuple fields (<c>NewKey</c>, <c>NewDataPage</c>,
-    /// <c>NewDataRow</c>, <c>NewChildPage</c>) are unused.</summary>
+    /// other tuple fields (<c>NewEntry</c>) are unused.</summary>
     Remove,
 }

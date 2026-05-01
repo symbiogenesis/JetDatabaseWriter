@@ -819,7 +819,7 @@ internal static class IndexHelpers
                             return [];
                         }
 
-                        result.Add(new DecodedIntermediateEntry(op.NewEntry, op.NewChildPage));
+                        result.Add(op.NewEntry);
                         replaced = true;
                         break;
 
@@ -841,7 +841,7 @@ internal static class IndexHelpers
                             replaced = true;
                         }
 
-                        result.Add(new DecodedIntermediateEntry(op.NewEntry, op.NewChildPage));
+                        result.Add(op.NewEntry);
                         break;
                 }
             }

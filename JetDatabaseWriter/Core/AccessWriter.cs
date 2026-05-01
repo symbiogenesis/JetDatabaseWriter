@@ -11080,8 +11080,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 IndexHelpers.AddIntermediateOp(parentOps, mergeParent.PageNumber, new IntermediateOp(
                     OriginalIndex: mergeParent.TakenIndex,
                     Type: IntermediateOpType.Remove,
-                    NewEntry: default,
-                    NewChildPage: 0));
+                    NewEntry: default));
 
                 continue;
             }
@@ -11111,8 +11110,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     IndexHelpers.AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
                         OriginalIndex: parentStep.TakenIndex,
                         Type: IntermediateOpType.Replace,
-                        NewEntry: newLast,
-                        NewChildPage: group.LeafPage));
+                        NewEntry: new(newLast, group.LeafPage)));
                 }
 
                 continue;
@@ -11194,22 +11192,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // summary, then insert one summary per right page (N-1 of them)
             // immediately after, in left-to-right order. ApplyIntermediateOps
             // preserves declaration order at the same OriginalIndex.
-            // TODO: should NewChildPage just be set to leftLast.ChildPage?
             IndexEntry leftLast = splitPages[0][splitPages[0].Count - 1];
             IndexHelpers.AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
                 OriginalIndex: parentStep.TakenIndex,
                 Type: IntermediateOpType.Replace,
-                NewEntry: leftLast,
-                NewChildPage: pageNumbers[0]));
+                NewEntry: new(leftLast, pageNumbers[0])));
             for (int p = 1; p < splitCount; p++)
             {
-                // TODO: should NewChildPage just be set to pLast.ChildPage?
                 IndexEntry pLast = splitPages[p][splitPages[p].Count - 1];
                 IndexHelpers.AddIntermediateOp(parentOps, parentStep.PageNumber, new IntermediateOp(
                     OriginalIndex: parentStep.TakenIndex,
                     Type: IntermediateOpType.InsertAfter,
-                    NewEntry: pLast,
-                    NewChildPage: pageNumbers[p]));
+                    NewEntry: new(pLast, pageNumbers[p])));
             }
         }
 
@@ -11705,8 +11699,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 IndexHelpers.AddIntermediateOp(parentOps, gpCollapse.ParentPage, new IntermediateOp(
                     OriginalIndex: gpCollapse.IndexInParent,
                     Type: IntermediateOpType.Remove,
-                    NewEntry: default,
-                    NewChildPage: 0));
+                    NewEntry: default));
 
                 if (!pending.Contains(gpCollapse.ParentPage))
                 {
@@ -11868,22 +11861,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     // then InsertAfter one summary per remaining split page
                     // in left-to-right order. Recurse into grandparent in
                     // case it also overflows.
-                    // TODO: should NewChildPage just be set to firstLast.ChildPage?
                     var firstLast = splitInts[0][splitInts[0].Count - 1];
                     IndexHelpers.AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
                         OriginalIndex: gpSplit.IndexInParent,
                         Type: IntermediateOpType.Replace,
-                        NewEntry: firstLast.Entry,
-                        NewChildPage: intPageNumbers[0]));
+                        NewEntry: firstLast));
                     for (int p = 1; p < nSplit; p++)
                     {
-                        // TODO: should NewChildPage just be set to pLast.ChildPage?
                         var pLast = splitInts[p][splitInts[p].Count - 1];
                         IndexHelpers.AddIntermediateOp(parentOps, gpSplit.ParentPage, new IntermediateOp(
                             OriginalIndex: gpSplit.IndexInParent,
                             Type: IntermediateOpType.InsertAfter,
-                            NewEntry: pLast.Entry,
-                            NewChildPage: intPageNumbers[p]));
+                            NewEntry: pLast));
                     }
 
                     if (!pending.Contains(gpSplit.ParentPage))
@@ -11909,7 +11898,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     for (int p = 0; p < nSplit; p++)
                     {
                         var pLast = splitInts[p][splitInts[p].Count - 1];
-                        rootEntries.Add(new DecodedIntermediateEntry(pLast.Entry, intPageNumbers[p]));
+                        rootEntries.Add(pLast);
                     }
 
                     byte[]? newRootBytes;
@@ -11948,22 +11937,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // original last entry's key.
             var newMax = newEntries[newEntries.Count - 1];
             DecodedIntermediateEntry oldMax = refStep.Entries[refStep.Entries.Count - 1];
-            bool maxChanged = IndexHelpers.CompareKeyBytes(newMax.Entry.Key, oldMax.Entry.Key) != 0
-                || newMax.Entry.DataPage != oldMax.Entry.DataPage
-                || newMax.Entry.DataRow != oldMax.Entry.DataRow
-                || newMax.ChildPage != oldMax.ChildPage;
+            bool maxChanged = newMax != oldMax;
 
             if (maxChanged && intermediateGrandparent.TryGetValue(deepest, out (long ParentPage, int IndexInParent) gp))
             {
                 // Propagate: grandparent's summary entry for this
                 // intermediate (at IndexInParent) needs to carry the new
                 // max key (and same ChildPage = this intermediate page).
-                // TODO: should NewChildPage just be set to pLast.ChildPage?
                 IndexHelpers.AddIntermediateOp(parentOps, gp.ParentPage, new IntermediateOp(
                     OriginalIndex: gp.IndexInParent,
                     Type: IntermediateOpType.Replace,
-                    NewEntry: newMax.Entry,
-                    NewChildPage: deepest));
+                    NewEntry: newMax));
 
                 if (!pending.Contains(gp.ParentPage))
                 {
