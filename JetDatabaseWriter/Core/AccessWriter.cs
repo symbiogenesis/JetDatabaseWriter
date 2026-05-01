@@ -10160,22 +10160,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Descends an index B-tree from <paramref name="rootPage"/> through
-    /// successive intermediate (<c>0x03</c>) levels by following the first
-    /// child pointer of each intermediate, returning the page number of the
-    /// leftmost leaf (<c>0x04</c>). Returns 0 when the chain is malformed
-    /// (unknown page type, missing child pointer, or depth exceeds a sanity
-    /// cap), so the caller can fall back to the bulk-rebuild path.
+    /// Descends an index B-tree from <paramref name="rootPage"/> through intermediate (<c>0x03</c>) levels by following the first child pointer of each.
+    /// - Returns the page number of the leftmost leaf (<c>0x04</c>).
+    /// - Returns 0 if the chain is malformed (unknown page type, missing child pointer, or excessive depth),
+    ///   so the caller can fall back to the bulk-rebuild path.
     /// </summary>
-    private async ValueTask<long> DescendToLeftmostLeafAsync(long rootPage, CancellationToken cancellationToken)
-        => await DescendToLeftmostLeafAsync(IndexLeafPageBuilder.LeafPageLayout.Jet4, rootPage, cancellationToken).ConfigureAwait(false);
-
-    /// <summary>
-    /// Layout-aware overload of <see cref="DescendToLeftmostLeafAsync(long, CancellationToken)"/>
-    /// — needed so the Jet3 incremental path reads intermediate-page entries
-    /// at offset <c>0xF8</c> with the bitmask at <c>0x16</c> instead of the
-    /// Jet4 offsets <c>0x1E0</c> / <c>0x1B</c>.
-    /// </summary>
+    /// <param name="layout">Page layout descriptor (Jet3: offsets <c>0xF8</c>/<c>0x16</c>; Jet4: <c>0x1E0</c>/<c>0x1B</c>).</param>
+    /// <param name="rootPage">Root page number of the index B-tree.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     private async ValueTask<long> DescendToLeftmostLeafAsync(IndexLeafPageBuilder.LeafPageLayout layout, long rootPage, CancellationToken cancellationToken)
     {
         long current = rootPage;
@@ -10300,7 +10292,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         List<IndexEntry>? spliced = IndexLeafIncremental.Splice(
             existingTail,
             addEntries,
-            Array.Empty<(long DataPage, byte DataRow)>());
+            []);
         if (spliced is null)
         {
             return false;
