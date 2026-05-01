@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="SharpFuzz" Version="2.2.0" />
     <PackageReference Include="xunit.v3" Version="4.0.0-pre.81" />
   </ItemGroup>
 

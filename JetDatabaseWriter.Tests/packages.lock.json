@@ -20,6 +20,16 @@
         "resolved": "4.15.0",
         "contentHash": "ksGRAJcXQiYeq/aKsuV63HxHE08mlshoMQqLSwSOqDnh4KhyOIeI/qv777udSuFJU3KLbHxwW9lrxgqHl9jfxQ=="
       },
+      "SharpFuzz": {
+        "type": "Direct",
+        "requested": "[2.2.0, )",
+        "resolved": "2.2.0",
+        "contentHash": "xQQAMmdiY5AKNPVyjtABwXKrEyWcEaExvyxeAbraJsfthNl5YSM3E//Hipz2jMSe9tQ1fa1Fh/KEm2SKAbXpOQ==",
+        "dependencies": {
+          "SharpFuzz.Common": "2.2.0",
+          "dnlib": "4.4.0"
+        }
+      },
       "StyleCop.Analyzers": {
         "type": "Direct",
         "requested": "[1.2.0-beta.556, )",
@@ -37,6 +47,11 @@
         "dependencies": {
           "xunit.v3.mtp-v2": "[4.0.0-pre.81]"
         }
+      },
+      "dnlib": {
+        "type": "Transitive",
+        "resolved": "4.4.0",
+        "contentHash": "cKHI720q+zfEEvzklWVGt6B0TH3AibAyJbpUJl4U6KvTP13tycfnqJpkGHRZ/oQ45BTIoIxIwltHIJVDN+iCqQ=="
       },
       "Microsoft.ApplicationInsights": {
         "type": "Transitive",
@@ -104,6 +119,11 @@
         "type": "Transitive",
         "resolved": "5.0.0",
         "contentHash": "dDoKi0PnDz31yAyETfRntsLArTlVAVzUzCIvvEDsDsucrl33Dl8pIJG06ePTJTI3tGpeyHS9Cq7Foc/s4EeKcg=="
+      },
+      "SharpFuzz.Common": {
+        "type": "Transitive",
+        "resolved": "2.2.0",
+        "contentHash": "biITWpwnMR7HUp43lAGU97DWq/4LfyXqqhuOK0Z4IuRP97KjQMOe/GKq3wE1KY21gNrc7OPO9HbAtQUvMKTImA=="
       },
       "StyleCop.Analyzers.Unstable": {
         "type": "Transitive",
