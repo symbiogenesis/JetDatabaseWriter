@@ -52,18 +52,8 @@ internal static class AttachmentWrapper
         Buffer.BlockCopy(extBytes, 0, contentStream, 12, extBytes.Length);
         Buffer.BlockCopy(payload, 0, contentStream, headerLen, payload.Length);
 
-        byte[] body;
-        uint typeFlag;
-        if (compress)
-        {
-            body = RawDeflate(contentStream);
-            typeFlag = 1u;
-        }
-        else
-        {
-            body = contentStream;
-            typeFlag = 0u;
-        }
+        byte[] body = compress ? RawDeflate(contentStream) : contentStream;
+        uint typeFlag = compress ? 1u : 0u;
 
         byte[] wrapped = new byte[8 + body.Length];
         BinaryPrimitives.WriteUInt32LittleEndian(wrapped.AsSpan(0, 4), typeFlag);
@@ -112,8 +102,7 @@ internal static class AttachmentWrapper
         }
         else
         {
-            content = new byte[(int)dataLen];
-            Buffer.BlockCopy(wrapped, 8, content, 0, (int)dataLen);
+            content = wrapped.AsSpan(8, (int)dataLen).ToArray();
         }
 
         if (content.Length < 12)
@@ -129,12 +118,7 @@ internal static class AttachmentWrapper
         }
 
         fileExtension = DecodeExtension(content, 12, (int)extLen);
-        int payloadLen = content.Length - (int)headerLen;
-        payload = payloadLen > 0 ? new byte[payloadLen] : [];
-        if (payloadLen > 0)
-        {
-            Buffer.BlockCopy(content, (int)headerLen, payload, 0, payloadLen);
-        }
+        payload = content.AsSpan((int)headerLen).ToArray();
 
         return true;
     }
