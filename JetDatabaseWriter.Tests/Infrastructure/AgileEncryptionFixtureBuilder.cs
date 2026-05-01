@@ -24,23 +24,6 @@ using JetDatabaseWriter.Tests.Core;
 /// </summary>
 internal static class AgileEncryptionFixtureBuilder
 {
-    // ── Agile parameters (must match the XML descriptor we emit) ────────
-
-    private const int SaltSize = 16;
-    private const int BlockSize = 16;          // AES block
-    private const int KeyBytes = 32;           // AES-256
-    private const int HashBytes = 64;          // SHA-512
-    private const int SpinCount = 100_000;
-    private const int SegmentSize = 4096;
-
-    // ── CFB constants ───────────────────────────────────────────────────
-
-    private const uint FreeSect = 0xFFFFFFFFu;
-    private const uint EndOfChain = 0xFFFFFFFEu;
-    private const uint FatSect = 0xFFFFFFFDu;
-    private const int CfbSectorSize = 4096;    // major version 4
-    private const int DirEntrySize = 128;
-
     // CFB v4 magic signature (MS-CFB §2.2). Cached so we don't reallocate on every header write.
     private static readonly byte[] CfbMagic =
         [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
@@ -69,10 +52,10 @@ internal static class AgileEncryptionFixtureBuilder
     /// </summary>
     public static Parameters DeterministicParameters() => new()
     {
-        KeyDataSalt = Repeated(0x11, SaltSize),
-        PasswordSalt = Repeated(0x22, SaltSize),
-        VerifierHashInput = Repeated(0x33, SaltSize),
-        IntermediateKey = Repeated(0x44, KeyBytes),
+        KeyDataSalt = Repeated(0x11, Constants.AgileEncryption.SaltSize),
+        PasswordSalt = Repeated(0x22, Constants.AgileEncryption.SaltSize),
+        VerifierHashInput = Repeated(0x33, Constants.AgileEncryption.SaltSize),
+        IntermediateKey = Repeated(0x44, Constants.AgileEncryption.KeyBytes),
     };
 
     /// <summary>
@@ -84,7 +67,7 @@ internal static class AgileEncryptionFixtureBuilder
         byte[] encrypted = EncryptVerifierHashInput(p, password);
         byte[] derived = DeriveKey(password, p.PasswordSalt, BlockKeyVerifierHashInput);
         byte[] decrypted = AesCbc(encrypted, derived, p.PasswordSalt, encrypt: false);
-        return Truncate(decrypted, SaltSize);
+        return Truncate(decrypted, Constants.AgileEncryption.SaltSize);
     }
 
     /// <summary>
@@ -96,7 +79,7 @@ internal static class AgileEncryptionFixtureBuilder
         byte[] encrypted = EncryptVerifierHashValue(p, password);
         byte[] derived = DeriveKey(password, p.PasswordSalt, BlockKeyVerifierHashValue);
         byte[] decrypted = AesCbc(encrypted, derived, p.PasswordSalt, encrypt: false);
-        return Truncate(decrypted, HashBytes);
+        return Truncate(decrypted, Constants.AgileEncryption.HashBytes);
     }
 
     /// <summary>
@@ -106,10 +89,10 @@ internal static class AgileEncryptionFixtureBuilder
     {
         var p = new Parameters
         {
-            KeyDataSalt = RandomBytes(SaltSize),
-            PasswordSalt = RandomBytes(SaltSize),
-            VerifierHashInput = RandomBytes(SaltSize),
-            IntermediateKey = RandomBytes(KeyBytes),
+            KeyDataSalt = RandomBytes(Constants.AgileEncryption.SaltSize),
+            PasswordSalt = RandomBytes(Constants.AgileEncryption.SaltSize),
+            VerifierHashInput = RandomBytes(Constants.AgileEncryption.SaltSize),
+            IntermediateKey = RandomBytes(Constants.AgileEncryption.KeyBytes),
         };
 
         byte[] encryptionInfo = BuildEncryptionInfo(p, password);
@@ -134,8 +117,8 @@ internal static class AgileEncryptionFixtureBuilder
         // zero-valued placeholder for the HMAC value because its content
         // is not enforced by readers at open-time (only verified during
         // integrity check, which is optional for read-only access).
-        byte[] hmacKeyEnc = EncryptHmacField(p, RandomBytes(HashBytes), BlockKeyHmacKey);
-        byte[] hmacValueEnc = EncryptHmacField(p, new byte[HashBytes], BlockKeyHmacValue);
+        byte[] hmacKeyEnc = EncryptHmacField(p, RandomBytes(Constants.AgileEncryption.HashBytes), BlockKeyHmacKey);
+        byte[] hmacValueEnc = EncryptHmacField(p, new byte[Constants.AgileEncryption.HashBytes], BlockKeyHmacValue);
 
         string xml = BuildAgileXml(p, verifierEncInput, verifierEncValue, keyEncValue, hmacKeyEnc, hmacValueEnc);
 
@@ -168,14 +151,14 @@ internal static class AgileEncryptionFixtureBuilder
             "<encryption xmlns=\"http://schemas.microsoft.com/office/2006/encryption\" " +
             "xmlns:p=\"http://schemas.microsoft.com/office/2006/keyEncryptor/password\" " +
             "xmlns:c=\"http://schemas.microsoft.com/office/2006/keyEncryptor/certificate\">" +
-            $"<keyData saltSize=\"{SaltSize}\" blockSize=\"{BlockSize}\" keyBits=\"{KeyBytes * 8}\" " +
-            $"hashSize=\"{HashBytes}\" cipherAlgorithm=\"AES\" cipherChaining=\"ChainingModeCBC\" " +
+            $"<keyData saltSize=\"{Constants.AgileEncryption.SaltSize}\" blockSize=\"{Constants.AgileEncryption.BlockSize}\" keyBits=\"{Constants.AgileEncryption.KeyBytes * 8}\" " +
+            $"hashSize=\"{Constants.AgileEncryption.HashBytes}\" cipherAlgorithm=\"AES\" cipherChaining=\"ChainingModeCBC\" " +
             $"hashAlgorithm=\"SHA512\" saltValue=\"{keyDataSalt}\"/>" +
             $"<dataIntegrity encryptedHmacKey=\"{hmacKey}\" encryptedHmacValue=\"{hmacVal}\"/>" +
             "<keyEncryptors>" +
             "<keyEncryptor uri=\"http://schemas.microsoft.com/office/2006/keyEncryptor/password\">" +
-            $"<p:encryptedKey spinCount=\"{SpinCount}\" saltSize=\"{SaltSize}\" blockSize=\"{BlockSize}\" " +
-            $"keyBits=\"{KeyBytes * 8}\" hashSize=\"{HashBytes}\" cipherAlgorithm=\"AES\" " +
+            $"<p:encryptedKey spinCount=\"{Constants.AgileEncryption.SpinCount}\" saltSize=\"{Constants.AgileEncryption.SaltSize}\" blockSize=\"{Constants.AgileEncryption.BlockSize}\" " +
+            $"keyBits=\"{Constants.AgileEncryption.KeyBytes * 8}\" hashSize=\"{Constants.AgileEncryption.HashBytes}\" cipherAlgorithm=\"AES\" " +
             "cipherChaining=\"ChainingModeCBC\" hashAlgorithm=\"SHA512\" " +
             $"saltValue=\"{passwordSalt}\" encryptedVerifierHashInput=\"{verifierIn}\" " +
             $"encryptedVerifierHashValue=\"{verifierVal}\" encryptedKeyValue=\"{keyVal}\"/>" +
@@ -190,15 +173,15 @@ internal static class AgileEncryptionFixtureBuilder
 
     private static byte[] BuildEncryptedPackage(Parameters p, byte[] innerAccdb)
     {
-        // SegmentSize is a multiple of BlockSize, so only the trailing segment
+        // Constants.AgileEncryption.SegmentSize is a multiple of Constants.AgileEncryption.BlockSize, so only the trailing segment
         // can introduce padding. That lets us size the buffer in O(1).
-        int totalSegments = (innerAccdb.Length + SegmentSize - 1) / SegmentSize;
+        int totalSegments = (innerAccdb.Length + Constants.AgileEncryption.SegmentSize - 1) / Constants.AgileEncryption.SegmentSize;
         int paddedSegmentTotal = 0;
         if (totalSegments > 0)
         {
-            int lastLen = innerAccdb.Length - ((totalSegments - 1) * SegmentSize);
-            int paddedLastLen = ((lastLen + BlockSize - 1) / BlockSize) * BlockSize;
-            paddedSegmentTotal = ((totalSegments - 1) * SegmentSize) + paddedLastLen;
+            int lastLen = innerAccdb.Length - ((totalSegments - 1) * Constants.AgileEncryption.SegmentSize);
+            int paddedLastLen = (lastLen + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize * Constants.AgileEncryption.BlockSize;
+            paddedSegmentTotal = ((totalSegments - 1) * Constants.AgileEncryption.SegmentSize) + paddedLastLen;
         }
 
         byte[] result = new byte[8 + paddedSegmentTotal];
@@ -208,13 +191,13 @@ internal static class AgileEncryptionFixtureBuilder
         using var aes = Aes.Create();
         aes.Key = p.IntermediateKey;
 
-        Span<byte> tail = stackalloc byte[BlockSize * 2]; // generous enough for one padded last block group
+        Span<byte> tail = stackalloc byte[Constants.AgileEncryption.BlockSize * 2]; // generous enough for one padded last block group
         int writeOffset = 8;
         for (int seg = 0; seg < totalSegments; seg++)
         {
-            int offset = seg * SegmentSize;
-            int length = Math.Min(SegmentSize, innerAccdb.Length - offset);
-            int paddedLen = ((length + BlockSize - 1) / BlockSize) * BlockSize;
+            int offset = seg * Constants.AgileEncryption.SegmentSize;
+            int length = Math.Min(Constants.AgileEncryption.SegmentSize, innerAccdb.Length - offset);
+            int paddedLen = (length + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize * Constants.AgileEncryption.BlockSize;
 
             byte[] iv = SegmentIv(p.KeyDataSalt, seg);
 
@@ -256,11 +239,11 @@ internal static class AgileEncryptionFixtureBuilder
         keyDataSalt.CopyTo(data);
         BitConverter.TryWriteBytes(data[keyDataSalt.Length..], segmentIndex);
 
-        Span<byte> hash = stackalloc byte[HashBytes];
+        Span<byte> hash = stackalloc byte[Constants.AgileEncryption.HashBytes];
         SHA512.HashData(data, hash);
 
-        byte[] iv = new byte[BlockSize];
-        hash[..BlockSize].CopyTo(iv);
+        byte[] iv = new byte[Constants.AgileEncryption.BlockSize];
+        hash[..Constants.AgileEncryption.BlockSize].CopyTo(iv);
         return iv;
     }
 
@@ -307,11 +290,11 @@ internal static class AgileEncryptionFixtureBuilder
         keyDataSalt.CopyTo(data);
         blockKey.CopyTo(data[keyDataSalt.Length..]);
 
-        Span<byte> hash = stackalloc byte[HashBytes];
+        Span<byte> hash = stackalloc byte[Constants.AgileEncryption.HashBytes];
         SHA512.HashData(data, hash);
 
-        byte[] iv = new byte[BlockSize];
-        hash[..BlockSize].CopyTo(iv);
+        byte[] iv = new byte[Constants.AgileEncryption.BlockSize];
+        hash[..Constants.AgileEncryption.BlockSize].CopyTo(iv);
         return iv;
     }
 
@@ -330,13 +313,13 @@ internal static class AgileEncryptionFixtureBuilder
         salt.CopyTo(initialBuf);
         Encoding.Unicode.GetBytes(password, initialBuf[salt.Length..]);
 
-        Span<byte> h = stackalloc byte[HashBytes];
+        Span<byte> h = stackalloc byte[Constants.AgileEncryption.HashBytes];
         SHA512.HashData(initialBuf, h);
 
         // Iteration: H_{i+1} = H(uint32_le(i) || H_i). Fixed-size buffer, no allocations in loop.
-        Span<byte> iter = stackalloc byte[4 + HashBytes];
+        Span<byte> iter = stackalloc byte[4 + Constants.AgileEncryption.HashBytes];
         h.CopyTo(iter[4..]);
-        for (int i = 0; i < SpinCount; i++)
+        for (int i = 0; i < Constants.AgileEncryption.SpinCount; i++)
         {
             BitConverter.TryWriteBytes(iter[..4], i);
             SHA512.HashData(iter, h);
@@ -344,18 +327,18 @@ internal static class AgileEncryptionFixtureBuilder
         }
 
         // Final: H(H_spin || blockKey).
-        int finalLen = HashBytes + blockKey.Length;
+        int finalLen = Constants.AgileEncryption.HashBytes + blockKey.Length;
         Span<byte> finalBuf = finalLen <= 256 ? stackalloc byte[finalLen] : new byte[finalLen];
         h.CopyTo(finalBuf);
-        blockKey.CopyTo(finalBuf[HashBytes..]);
+        blockKey.CopyTo(finalBuf[Constants.AgileEncryption.HashBytes..]);
 
-        Span<byte> hf = stackalloc byte[HashBytes];
+        Span<byte> hf = stackalloc byte[Constants.AgileEncryption.HashBytes];
         SHA512.HashData(finalBuf, hf);
 
-        byte[] result = new byte[KeyBytes];
-        if (hf.Length >= KeyBytes)
+        byte[] result = new byte[Constants.AgileEncryption.KeyBytes];
+        if (hf.Length >= Constants.AgileEncryption.KeyBytes)
         {
-            hf[..KeyBytes].CopyTo(result);
+            hf[..Constants.AgileEncryption.KeyBytes].CopyTo(result);
         }
         else
         {
@@ -387,7 +370,7 @@ internal static class AgileEncryptionFixtureBuilder
         int totalDataSectors = 2 + eiSectors + epSectors;
 
         // One FAT sector holds 1024 entries (4096 / 4); ensure we don't overflow.
-        const int entriesPerFatSector = CfbSectorSize / 4;
+        const int entriesPerFatSector = Constants.CompoundFile.V4SectorSize / 4;
         if (totalDataSectors > entriesPerFatSector)
         {
             throw new InvalidOperationException(
@@ -397,7 +380,7 @@ internal static class AgileEncryptionFixtureBuilder
         // Compose file: Header (4096) | FAT | Dir | EI | EP. Allocated up
         // front so every section can be written in place — no intermediate
         // sector buffers, no final BlockCopy pass.
-        int fileSize = CfbSectorSize + ((1 + 1 + eiSectors + epSectors) * CfbSectorSize);
+        int fileSize = Constants.CompoundFile.V4SectorSize + ((1 + 1 + eiSectors + epSectors) * Constants.CompoundFile.V4SectorSize);
         byte[] file = new byte[fileSize];
 
         WriteHeader(file, fatSectorIndex, dirSectorIndex, totalDirSectors: 1);
@@ -405,24 +388,13 @@ internal static class AgileEncryptionFixtureBuilder
         // ── FAT sector ──────────────────────────────────────────────
         // FREESECT (0xFFFFFFFF) is all-ones, so a single byte-fill seeds
         // every entry; we then overwrite only the slots actually in use.
-        Span<byte> fatSpan = file.AsSpan(SectorOffset(fatSectorIndex), CfbSectorSize);
+        Span<byte> fatSpan = file.AsSpan(SectorOffset(fatSectorIndex), Constants.CompoundFile.V4SectorSize);
         fatSpan.Fill(0xFF);
-        BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(fatSectorIndex * 4, 4), FatSect);
-        BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(dirSectorIndex * 4, 4), EndOfChain);
+        BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(fatSectorIndex * 4, 4), Constants.CompoundFile.FatSect);
+        BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(dirSectorIndex * 4, 4), Constants.CompoundFile.EndOfChain);
 
-        for (int i = 0; i < eiSectors; i++)
-        {
-            int sec = eiStartSector + i;
-            uint next = (i == eiSectors - 1) ? EndOfChain : (uint)(sec + 1);
-            BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(sec * 4, 4), next);
-        }
-
-        for (int i = 0; i < epSectors; i++)
-        {
-            int sec = epStartSector + i;
-            uint next = (i == epSectors - 1) ? EndOfChain : (uint)(sec + 1);
-            BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(sec * 4, 4), next);
-        }
+        WriteFatChain(fatSpan, eiStartSector, eiSectors);
+        WriteFatChain(fatSpan, epStartSector, epSectors);
 
         // ── Directory sector ────────────────────────────────────────
         // Written straight into the file buffer; the rest of the sector
@@ -432,21 +404,21 @@ internal static class AgileEncryptionFixtureBuilder
         WriteRootEntry(file, dirOffset);
         WriteStreamEntry(
             file,
-            dirOffset + DirEntrySize,
+            dirOffset + Constants.CompoundFile.DirEntrySize,
             "EncryptionInfo",
             eiStartSector,
             encryptionInfo.Length,
-            leftSibling: FreeSect,
+            leftSibling: Constants.CompoundFile.FreeSect,
             rightSibling: 2);
         WriteStreamEntry(
             file,
-            dirOffset + (DirEntrySize * 2),
+            dirOffset + (Constants.CompoundFile.DirEntrySize * 2),
             "EncryptedPackage",
             (uint)epStartSector,
             encryptedPackage.Length,
-            leftSibling: FreeSect,
-            rightSibling: FreeSect);
-        WriteUnusedEntry(file, dirOffset + (DirEntrySize * 3));
+            leftSibling: Constants.CompoundFile.FreeSect,
+            rightSibling: Constants.CompoundFile.FreeSect);
+        WriteUnusedEntry(file, dirOffset + (Constants.CompoundFile.DirEntrySize * 3));
 
         Buffer.BlockCopy(encryptionInfo, 0, file, SectorOffset(eiStartSector), encryptionInfo.Length);
         Buffer.BlockCopy(encryptedPackage, 0, file, SectorOffset(epStartSector), encryptedPackage.Length);
@@ -454,9 +426,19 @@ internal static class AgileEncryptionFixtureBuilder
         return file;
     }
 
-    private static int SectorOffset(int sectorIndex) => CfbSectorSize + (sectorIndex * CfbSectorSize);
+    private static void WriteFatChain(Span<byte> fatSpan, int startSector, int sectorCount)
+    {
+        for (int i = 0; i < sectorCount; i++)
+        {
+            int sec = startSector + i;
+            uint next = (i == sectorCount - 1) ? Constants.CompoundFile.EndOfChain : (uint)(sec + 1);
+            BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(sec * 4, 4), next);
+        }
+    }
 
-    private static int SectorsFor(int byteLength) => (byteLength + CfbSectorSize - 1) / CfbSectorSize;
+    private static int SectorOffset(int sectorIndex) => Constants.CompoundFile.V4SectorSize + (sectorIndex * Constants.CompoundFile.V4SectorSize);
+
+    private static int SectorsFor(int byteLength) => (byteLength + Constants.CompoundFile.V4SectorSize - 1) / Constants.CompoundFile.V4SectorSize;
 
     private static void WriteHeader(byte[] file, int firstFatSector, int firstDirSector, int totalDirSectors)
     {
@@ -477,8 +459,8 @@ internal static class AgileEncryptionFixtureBuilder
         // 0x34 (transaction signature) and 0x38 (mini stream cutoff = 0 → all streams in regular FAT)
         // are left at their zero-init defaults.
         // 0x40 (# mini-FAT sectors) and 0x48 (# DIFAT sectors) stay at their zero-init defaults.
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x3C, 4), EndOfChain); // first mini-FAT sector
-        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x44, 4), EndOfChain); // first DIFAT sector
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x3C, 4), Constants.CompoundFile.EndOfChain); // first mini-FAT sector
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x44, 4), Constants.CompoundFile.EndOfChain); // first DIFAT sector
 
         // 0x4C..0xFF: DIFAT array (109 × 4 bytes). Slot 0 points at our single FAT sector;
         // the remaining 108 slots are FREESECT (0xFFFFFFFF), which we set with a single byte fill.
@@ -493,11 +475,11 @@ internal static class AgileEncryptionFixtureBuilder
             offset,
             "Root Entry",
             objectType: 5,
-            startSector: EndOfChain,
+            startSector: Constants.CompoundFile.EndOfChain,
             sizeLow: 0,
             sizeHigh: 0,
-            leftSibling: FreeSect,
-            rightSibling: FreeSect,
+            leftSibling: Constants.CompoundFile.FreeSect,
+            rightSibling: Constants.CompoundFile.FreeSect,
             child: 1);
     }
 
@@ -520,17 +502,17 @@ internal static class AgileEncryptionFixtureBuilder
             sizeHigh: (uint)((size >> 32) & 0xFFFFFFFFu),
             leftSibling: leftSibling,
             rightSibling: rightSibling,
-            child: FreeSect);
+            child: Constants.CompoundFile.FreeSect);
     }
 
     private static void WriteUnusedEntry(byte[] sector, int offset)
     {
-        Span<byte> e = sector.AsSpan(offset, DirEntrySize);
+        Span<byte> e = sector.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
         e.Clear();
         e[0x42] = 0x00; // unallocated
-        BitConverter.TryWriteBytes(e.Slice(0x44, 4), FreeSect);
-        BitConverter.TryWriteBytes(e.Slice(0x48, 4), FreeSect);
-        BitConverter.TryWriteBytes(e.Slice(0x4C, 4), FreeSect);
+        BitConverter.TryWriteBytes(e.Slice(0x44, 4), Constants.CompoundFile.FreeSect);
+        BitConverter.TryWriteBytes(e.Slice(0x48, 4), Constants.CompoundFile.FreeSect);
+        BitConverter.TryWriteBytes(e.Slice(0x4C, 4), Constants.CompoundFile.FreeSect);
     }
 
     private static void WriteDirEntry(
@@ -545,7 +527,7 @@ internal static class AgileEncryptionFixtureBuilder
         uint rightSibling,
         uint child)
     {
-        Span<byte> e = sector.AsSpan(offset, DirEntrySize);
+        Span<byte> e = sector.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
         e.Clear();
 
         byte[] nameBytes = Encoding.Unicode.GetBytes(name);
@@ -588,7 +570,7 @@ internal static class AgileEncryptionFixtureBuilder
 
     private static byte[] PadToBlock(byte[] data)
     {
-        int padded = ((data.Length + BlockSize - 1) / BlockSize) * BlockSize;
+        int padded = (data.Length + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize * Constants.AgileEncryption.BlockSize;
         if (padded == data.Length)
         {
             return data;
@@ -633,12 +615,12 @@ internal static class AgileEncryptionFixtureBuilder
     public sealed class Parameters
 #pragma warning restore CA1515
     {
-        public byte[] KeyDataSalt { get; init; } = new byte[SaltSize];
+        public byte[] KeyDataSalt { get; init; } = new byte[Constants.AgileEncryption.SaltSize];
 
-        public byte[] PasswordSalt { get; init; } = new byte[SaltSize];
+        public byte[] PasswordSalt { get; init; } = new byte[Constants.AgileEncryption.SaltSize];
 
-        public byte[] VerifierHashInput { get; init; } = new byte[SaltSize];
+        public byte[] VerifierHashInput { get; init; } = new byte[Constants.AgileEncryption.SaltSize];
 
-        public byte[] IntermediateKey { get; init; } = new byte[KeyBytes];
+        public byte[] IntermediateKey { get; init; } = new byte[Constants.AgileEncryption.KeyBytes];
     }
 }
