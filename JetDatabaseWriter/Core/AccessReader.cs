@@ -1596,24 +1596,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             : ReadFixedString(row, start, col.Type, sz);
     }
 
-    // Magic-byte signatures for OLE-wrapped file payloads. Ordered so the
-    // longest / most specific patterns are checked first when ambiguous.
-    private static ReadOnlySpan<byte> MagicJpeg => [0xFF, 0xD8, 0xFF];
-
-    private static ReadOnlySpan<byte> MagicPng => [0x89, 0x50, 0x4E, 0x47];
-
-    private static ReadOnlySpan<byte> MagicGif => [0x47, 0x49, 0x46];
-
-    private static ReadOnlySpan<byte> MagicBmp => [0x42, 0x4D];
-
-    private static ReadOnlySpan<byte> MagicPdf => [0x25, 0x50, 0x44, 0x46];
-
-    private static ReadOnlySpan<byte> MagicZip => [0x50, 0x4B, 0x03, 0x04];
-
-    private static ReadOnlySpan<byte> MagicOleCompound => [0xD0, 0xCF, 0x11, 0xE0];
-
-    private static ReadOnlySpan<byte> MagicRtf => [0x7B, 0x5C, 0x72, 0x74];
-
     /// <summary>
     /// Scans the first 512 bytes for known file magic numbers (images, PDFs, Office docs, archives).
     /// Typical Access OLE fields wrap files in an OLE container (~78-byte header),
@@ -1634,46 +1616,46 @@ public sealed class AccessReader : AccessBase, IAccessReader
             int fileLen = start + len - i;
 
             // ── Images ──
-            if (window.StartsWith(MagicJpeg))
+            if (window.StartsWith(Constants.OleMagicBytes.Jpeg))
             {
                 return "data:image/jpeg;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
-            if (window.StartsWith(MagicPng))
+            if (window.StartsWith(Constants.OleMagicBytes.Png))
             {
                 return "data:image/png;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
-            if (window.StartsWith(MagicGif))
+            if (window.StartsWith(Constants.OleMagicBytes.Gif))
             {
                 return "data:image/gif;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
-            if (window.StartsWith(MagicBmp))
+            if (window.StartsWith(Constants.OleMagicBytes.Bmp))
             {
                 return "data:image/bmp;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
             // ── Documents ──
-            if (window.StartsWith(MagicPdf))
+            if (window.StartsWith(Constants.OleMagicBytes.Pdf))
             {
                 return "data:application/pdf;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
             // ZIP (also DOCX/XLSX/PPTX). For simplicity, return generic zip MIME.
-            if (window.StartsWith(MagicZip))
+            if (window.StartsWith(Constants.OleMagicBytes.Zip))
             {
                 return "data:application/zip;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
             // DOC (Word 97-2003): OLE compound file.
-            if (window.StartsWith(MagicOleCompound))
+            if (window.StartsWith(Constants.OleMagicBytes.OleCompound))
             {
                 return "data:application/msword;base64," + Convert.ToBase64String(b, i, fileLen);
             }
 
             // RTF: {\rt
-            if (window.StartsWith(MagicRtf))
+            if (window.StartsWith(Constants.OleMagicBytes.Rtf))
             {
                 return "data:application/rtf;base64," + Convert.ToBase64String(b, i, fileLen);
             }

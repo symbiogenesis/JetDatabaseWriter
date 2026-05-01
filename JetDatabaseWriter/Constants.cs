@@ -1,5 +1,7 @@
 namespace JetDatabaseWriter;
 
+using System;
+
 /// <summary>
 /// Central container for project-wide constant values, grouped into nested
 /// static classes by topic.
@@ -269,6 +271,41 @@ internal static class Constants
         /// a reserved sentinel rather than an addressable sector index.
         /// </summary>
         public const uint FatSectMin = 0xFFFFFFFAu;
+    }
+
+    /// <summary>
+    /// Magic-byte signatures used to identify wrapped file payloads stored inside
+    /// JET OLE columns. Access embeds files in an OLE container header
+    /// (~78 bytes) before the actual file bytes, so the scanner probes a sliding
+    /// window over the first 512 bytes rather than checking only offset 0.
+    /// Patterns are ordered longest-first so the most-specific match wins when
+    /// two signatures share a common prefix.
+    /// </summary>
+    public static class OleMagicBytes
+    {
+        /// <summary>Gets the JPEG magic bytes: <c>FF D8 FF</c>.</summary>
+        public static ReadOnlySpan<byte> Jpeg => [0xFF, 0xD8, 0xFF];
+
+        /// <summary>Gets the PNG magic bytes: <c>89 50 4E 47</c> (<c>\x89PNG</c>).</summary>
+        public static ReadOnlySpan<byte> Png => [0x89, 0x50, 0x4E, 0x47];
+
+        /// <summary>Gets the GIF magic bytes: <c>47 49 46</c> (<c>GIF</c>).</summary>
+        public static ReadOnlySpan<byte> Gif => [0x47, 0x49, 0x46];
+
+        /// <summary>Gets the BMP magic bytes: <c>42 4D</c> (<c>BM</c>).</summary>
+        public static ReadOnlySpan<byte> Bmp => [0x42, 0x4D];
+
+        /// <summary>Gets the PDF magic bytes: <c>25 50 44 46</c> (<c>%PDF</c>).</summary>
+        public static ReadOnlySpan<byte> Pdf => [0x25, 0x50, 0x44, 0x46];
+
+        /// <summary>Gets the ZIP / OOXML (DOCX, XLSX, PPTX) magic bytes: <c>50 4B 03 04</c> (<c>PK\x03\x04</c>).</summary>
+        public static ReadOnlySpan<byte> Zip => [0x50, 0x4B, 0x03, 0x04];
+
+        /// <summary>Gets the OLE Compound File (DOC, XLS, PPT, …) magic bytes: <c>D0 CF 11 E0</c>.</summary>
+        public static ReadOnlySpan<byte> OleCompound => [0xD0, 0xCF, 0x11, 0xE0];
+
+        /// <summary>Gets the RTF magic bytes: <c>7B 5C 72 74</c> (<c>{\rt</c>).</summary>
+        public static ReadOnlySpan<byte> Rtf => [0x7B, 0x5C, 0x72, 0x74];
     }
 
     /// <summary>
