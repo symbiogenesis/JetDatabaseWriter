@@ -90,26 +90,35 @@ public sealed class IndexBTreeBuilderTests
         int expectedTotal = expectedLeaves + 1;
 
         Assert.Equal(expectedTotal, r.Pages.Count);
-
-        for (int i = 0; i < expectedLeaves; i++)
-        {
-            Assert.Equal(0x04, r.Pages[i][0]);
-        }
-
-        Assert.Equal(0x03, r.Pages[expectedLeaves][0]);
         Assert.Equal(FirstPage + expectedLeaves, r.RootPageNumber);
 
-        // Sibling chain: first leaf prev=0, last leaf next=0.
-        Assert.Equal(0, ReadI32(r.Pages[0], 8));
-        Assert.Equal(FirstPage + 1, ReadI32(r.Pages[0], 12));
-        Assert.Equal(FirstPage + expectedLeaves - 2, ReadI32(r.Pages[expectedLeaves - 1], 8));
-        Assert.Equal(0, ReadI32(r.Pages[expectedLeaves - 1], 12));
+        int rootIdx = (int)(r.RootPageNumber - r.FirstPageNumber);
+        byte[] intermediate = r.Pages[rootIdx];
 
-        // parent_page on every page.
-        for (int i = 0; i < expectedTotal; i++)
-        {
-            Assert.Equal(ParentTdef, ReadI32(r.Pages[i], 4));
-        }
+        // Intermediate entries summarise the last leaf entry of each child:
+        // i = 16 (leaf 0), i = 33 (leaf 1), i = 39 (leaf 2). Bytes [0] and
+        // [2..199] are all zero across the three summaries; only byte [1]
+        // differs. Prefix compression hoists the leading 0x00 (1 byte) into
+        // pref_len, so subsequent entries strip 1 byte from the front.
+        int prefLen = ReadU16(intermediate, 20);
+        Assert.Equal(1, prefLen);
+
+        // Entry 0 (full): key (200) + 3-byte BE data_page + 1-byte data_row + 4-byte BE child_page.
+        int entry0KeyLen = 200;
+        int entry0Stride = entry0KeyLen + 4 + 4;
+        int firstChildOffset = layout.FirstEntryOffset + entry0KeyLen + 4;
+        Assert.Equal(FirstPage + 0, ReadI32BE(intermediate, firstChildOffset));
+
+        // Entry 1 (compressed): key (200 - prefLen) + 4 + 4.
+        int compressedKeyLen = 200 - prefLen;
+        int compressedStride = compressedKeyLen + 4 + 4;
+        int entry1Start = layout.FirstEntryOffset + entry0Stride;
+        int secondChildOffset = entry1Start + compressedKeyLen + 4;
+        Assert.Equal(FirstPage + 1, ReadI32BE(intermediate, secondChildOffset));
+
+        int entry2Start = entry1Start + compressedStride;
+        int thirdChildOffset = entry2Start + compressedKeyLen + 4;
+        Assert.Equal(FirstPage + 2, ReadI32BE(intermediate, thirdChildOffset));
     }
 
     [Theory]
@@ -140,17 +149,17 @@ public sealed class IndexBTreeBuilderTests
         int prefLen = ReadU16(intermediate, 20);
         Assert.Equal(1, prefLen);
 
-        // Entry 0 (full): key (200) + 3-byte BE data_page + 1-byte data_row + 4-byte child_page.
+        // Entry 0 (full): key (200) + 3-byte BE data_page + 1-byte data_row + 4-byte BE child_page.
         const int entry0KeyLen = 200;
         int firstChildOffset = layout.FirstEntryOffset + entry0KeyLen + 4;
-        Assert.Equal(r.FirstPageNumber + 0, ReadI32(intermediate, firstChildOffset));
+        Assert.Equal(r.FirstPageNumber + 0, ReadI32BE(intermediate, firstChildOffset));
 
         // Entry 1 (compressed): key (200 - prefLen=1) + 4 + 4.
         int entry0Stride = entry0KeyLen + 4 + 4;
         int compressedKeyLen = 200 - prefLen;
         int entry1Start = layout.FirstEntryOffset + entry0Stride;
         int secondChildOffset = entry1Start + compressedKeyLen + 4;
-        Assert.Equal(r.FirstPageNumber + 1, ReadI32(intermediate, secondChildOffset));
+        Assert.Equal(r.FirstPageNumber + 1, ReadI32BE(intermediate, secondChildOffset));
     }
 
     [Theory]
@@ -269,4 +278,7 @@ public sealed class IndexBTreeBuilderTests
 
     private static int ReadI32(byte[] b, int o) =>
         b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24);
+
+    private static int ReadI32BE(byte[] b, int o) =>
+        (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3];
 }

@@ -129,7 +129,27 @@ internal static class IndexLeafIncremental
         }
 
         int childOff = entryEnd - 4;
-        return BinaryPrimitives.ReadUInt32LittleEndian(intermediatePage.AsSpan(childOff, 4));
+        return DecodeIntermediateChildPointer(intermediatePage, childOff);
+    }
+
+    /// <summary>
+    /// Reads the 4-byte big-endian child-page pointer at
+    /// <paramref name="offset"/> on an intermediate (<c>0x03</c>) page. The
+    /// 3-byte data-page summary preceding it on the same entry is also
+    /// big-endian, while every other 32-bit page-number field elsewhere on
+    /// the page (prev/next/tail/parent) is little-endian — that mixture is
+    /// the on-disk convention used by Microsoft Access-authored
+    /// intermediates and is now matched by
+    /// <see cref="IndexBTreeBuilder"/>.
+    /// </summary>
+    internal static long DecodeIntermediateChildPointer(byte[] page, int offset)
+    {
+        if (page == null || offset < 0 || offset + 4 > page.Length)
+        {
+            return 0;
+        }
+
+        return BinaryPrimitives.ReadUInt32BigEndian(page.AsSpan(offset, 4));
     }
 
     /// <summary>
@@ -429,7 +449,7 @@ internal static class IndexLeafIncremental
             int totalLen = entryEnd - entryStart;
 
             // Intermediate entry: [stripped key bytes] + 3-byte BE data page +
-            // 1-byte data row + 4-byte LE child page → suffix length = totalLen - 8.
+            // 1-byte data row + 4-byte BE child page → suffix length = totalLen - 8.
             int suffixLen = totalLen - 8;
             if (suffixLen < 0)
             {
@@ -461,7 +481,7 @@ internal static class IndexLeafIncremental
             int trailerOff = entryStart + suffixLen;
             long dp = ((long)page[trailerOff] << 16) | ((long)page[trailerOff + 1] << 8) | page[trailerOff + 2];
             byte dr = page[trailerOff + 3];
-            long childPage = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(trailerOff + 4, 4));
+            long childPage = DecodeIntermediateChildPointer(page, trailerOff + 4);
             result.Add(new DecodedIntermediateEntry(new(canonical, dp, dr), childPage));
 
             isFirst = false;
