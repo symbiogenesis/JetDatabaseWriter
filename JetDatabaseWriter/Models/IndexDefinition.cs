@@ -7,7 +7,7 @@ using JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>
 /// Defines a logical index that
-/// <see cref="IAccessWriter.CreateTableAsync(string, System.Collections.Generic.IReadOnlyList{ColumnDefinition}, System.Collections.Generic.IReadOnlyList{IndexDefinition}, System.Threading.CancellationToken)"/>
+/// <see cref="IAccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, System.Threading.CancellationToken)"/>
 /// emits into the new table's TDEF page chain.
 /// </summary>
 /// <remarks>
@@ -101,7 +101,7 @@ public sealed record IndexDefinition
     /// <see langword="true"/> and <see cref="IsPrimaryKey"/> is
     /// <see langword="false"/>, the writer emits the real-idx <c>flags</c>
     /// bit <c>0x01</c> on the matching physical descriptor (§3.1) and the index maintenance
-    /// bulk-rebuild path throws <see cref="System.InvalidOperationException"/>
+    /// bulk-rebuild path throws <see cref="InvalidOperationException"/>
     /// when two live rows produce the same encoded key. Implicitly true for
     /// primary-key indexes — PKs signal uniqueness via the logical-idx
     /// <c>index_type = 0x01</c> discriminator and Access leaves the

@@ -3,6 +3,7 @@
 // the shipping library. See docs/design/index-and-relationship-format-notes.md
 // and docs/design/complex-columns-format-notes.md for what these dumps validate.
 
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using JetDatabaseWriter;
@@ -362,7 +363,7 @@ static async Task<List<(long Id, string Name, int Type, long Flags, long TdefPag
     return result;
 }
 
-static string SafeGet(System.Collections.Generic.List<string> row, int i) =>
+static string SafeGet(List<string> row, int i) =>
     i >= 0 && i < row.Count ? row[i] ?? string.Empty : string.Empty;
 
 static long ParseLong(string s) =>

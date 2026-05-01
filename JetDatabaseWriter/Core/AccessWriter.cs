@@ -772,7 +772,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     /// <inheritdoc/>
     public ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object[]> rows, CancellationToken cancellationToken = default)
-        => RunAutoCommitAsync<int>(_ => InsertRowsCoreAsync(tableName, rows, cancellationToken), cancellationToken);
+        => RunAutoCommitAsync(_ => InsertRowsCoreAsync(tableName, rows, cancellationToken), cancellationToken);
 
     private async ValueTask<int> InsertRowsCoreAsync(string tableName, IEnumerable<object[]> rows, CancellationToken cancellationToken)
     {
@@ -865,7 +865,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <inheritdoc/>
     public ValueTask InsertRowAsync<T>(string tableName, T item, CancellationToken cancellationToken = default)
         where T : class, new()
-        => RunAutoCommitAsync(_ => InsertRowGenericCoreAsync<T>(tableName, item, cancellationToken), cancellationToken);
+        => RunAutoCommitAsync(_ => InsertRowGenericCoreAsync(tableName, item, cancellationToken), cancellationToken);
 
     private async ValueTask InsertRowGenericCoreAsync<T>(string tableName, T item, CancellationToken cancellationToken)
         where T : class, new()
@@ -890,7 +890,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <inheritdoc/>
     public ValueTask<int> InsertRowsAsync<T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken = default)
         where T : class, new()
-        => RunAutoCommitAsync<int>(_ => InsertRowsGenericCoreAsync<T>(tableName, items, cancellationToken), cancellationToken);
+        => RunAutoCommitAsync(_ => InsertRowsGenericCoreAsync(tableName, items, cancellationToken), cancellationToken);
 
     private async ValueTask<int> InsertRowsGenericCoreAsync<T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken)
         where T : class, new()
@@ -981,7 +981,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     /// <inheritdoc/>
     public ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object> updatedValues, CancellationToken cancellationToken = default)
-        => RunAutoCommitAsync<int>(_ => UpdateRowsCoreAsync(tableName, predicateColumn, predicateValue, updatedValues, cancellationToken), cancellationToken);
+        => RunAutoCommitAsync(_ => UpdateRowsCoreAsync(tableName, predicateColumn, predicateValue, updatedValues, cancellationToken), cancellationToken);
 
     private async ValueTask<int> UpdateRowsCoreAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object> updatedValues, CancellationToken cancellationToken)
     {
@@ -1144,7 +1144,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     /// <inheritdoc/>
     public ValueTask<int> DeleteRowsAsync(string tableName, string predicateColumn, object? predicateValue, CancellationToken cancellationToken = default)
-        => RunAutoCommitAsync<int>(_ => DeleteRowsCoreAsync(tableName, predicateColumn, predicateValue, cancellationToken), cancellationToken);
+        => RunAutoCommitAsync(_ => DeleteRowsCoreAsync(tableName, predicateColumn, predicateValue, cancellationToken), cancellationToken);
 
     private async ValueTask<int> DeleteRowsCoreAsync(string tableName, string predicateColumn, object? predicateValue, CancellationToken cancellationToken)
     {
@@ -2965,7 +2965,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// (Insert/Update/Delete) so the parent snapshot of a given table is
     /// loaded at most once per call even when many rows need checking.
     /// </summary>
-    private sealed class FkContext(IReadOnlyList<AccessWriter.FkRelationship> all)
+    private sealed class FkContext(IReadOnlyList<FkRelationship> all)
     {
         public IReadOnlyList<FkRelationship> All { get; } = all;
 
@@ -4864,7 +4864,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Generic-result variant of <see cref="RunAutoCommitAsync(System.Func{System.Threading.CancellationToken, System.Threading.Tasks.ValueTask}, System.Threading.CancellationToken)"/>.
+    /// Generic-result variant of <see cref="RunAutoCommitAsync(Func{CancellationToken, ValueTask}, CancellationToken)"/>.
     /// </summary>
     private async ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
     {

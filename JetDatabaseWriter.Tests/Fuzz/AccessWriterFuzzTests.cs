@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Fuzz;
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
@@ -141,7 +142,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
     {
         string predicateColumn = columns[0].Name;
         object? predicateValue = RandomValue(random, columns[0].ClrType);
-        var updatedValues = new System.Collections.Generic.Dictionary<string, object>();
+        var updatedValues = new Dictionary<string, object>();
         foreach (var col in columns)
         {
             updatedValues[col.Name] = RandomValue(random, col.ClrType) ?? DBNull.Value;

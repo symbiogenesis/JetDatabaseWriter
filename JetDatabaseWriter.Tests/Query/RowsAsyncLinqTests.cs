@@ -15,7 +15,7 @@ using Xunit;
 /// Coverage for the <see cref="IAccessReader.Rows(string, System.IProgress{long}?, System.Threading.CancellationToken)"/> /
 /// <see cref="IAccessReader.Rows{T}(string, System.IProgress{long}?, System.Threading.CancellationToken)"/> /
 /// <see cref="IAccessReader.RowsAsStrings(string, System.IProgress{long}?, System.Threading.CancellationToken)"/>
-/// surface composed with the standard <see cref="System.Linq.AsyncEnumerable"/> operators.
+/// surface composed with the standard <see cref="AsyncEnumerable"/> operators.
 /// </summary>
 public class RowsAsyncLinqTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

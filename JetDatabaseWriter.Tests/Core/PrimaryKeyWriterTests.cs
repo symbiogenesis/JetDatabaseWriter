@@ -287,7 +287,7 @@ public sealed class PrimaryKeyWriterTests
                 "T",
                 "OrderId",
                 1,
-                new System.Collections.Generic.Dictionary<string, object> { ["Note"] = "updated" },
+                new Dictionary<string, object> { ["Note"] = "updated" },
                 ct);
 
             _ = await writer.DeleteRowsAsync("T", "LineNo", 1, ct);

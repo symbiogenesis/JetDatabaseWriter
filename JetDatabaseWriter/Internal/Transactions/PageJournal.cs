@@ -7,15 +7,15 @@ using JetDatabaseWriter.Exceptions;
 
 /// <summary>
 /// In-memory journal of dirty pages produced inside an explicit
-/// <see cref="JetDatabaseWriter.Core.JetTransaction"/>. Page mutations are
+/// <see cref="Core.JetTransaction"/>. Page mutations are
 /// buffered (plaintext) instead of flushed to disk, then atomically replayed
-/// by <see cref="JetDatabaseWriter.Core.AccessWriter"/> at <c>CommitAsync</c>
+/// by <see cref="Core.AccessWriter"/> at <c>CommitAsync</c>
 /// time (or discarded by <c>RollbackAsync</c> / dispose).
 /// </summary>
 /// <remarks>
 /// <para>
 /// The journal stores **plaintext** page bytes. Page-level encryption is applied
-/// at commit time by <see cref="JetDatabaseWriter.Core.AccessBase.PrepareEncryptedPageForWrite"/>
+/// at commit time by <see cref="Core.AccessBase.PrepareEncryptedPageForWrite"/>
 /// — buffering encrypted bytes would make repeated writes to the same page
 /// (a common pattern inside large multi-row inserts) needlessly re-encrypt.
 /// </para>

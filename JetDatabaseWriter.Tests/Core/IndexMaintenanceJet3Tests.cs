@@ -315,7 +315,7 @@ public sealed class IndexMaintenanceJet3Tests
 
         // Reader sees every row back.
         await using var reader = await OpenReaderAsync(stream);
-        var rowsBack = new System.Collections.Generic.List<int>();
+        var rowsBack = new List<int>();
         await foreach (object[] row in reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken))
         {
             rowsBack.Add((int)row[0]);

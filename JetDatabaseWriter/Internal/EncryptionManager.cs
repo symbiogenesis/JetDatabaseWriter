@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Internal;
 
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -261,7 +262,7 @@ internal static class EncryptionManager
             return null;
         }
 
-        System.Collections.Generic.Dictionary<string, byte[]>? streams = null;
+        Dictionary<string, byte[]>? streams = null;
         try
         {
             streams = await CompoundFileReader.ReadStreamsAsync(stream, cancellationToken).ConfigureAwait(false);

@@ -1,12 +1,14 @@
 namespace JetDatabaseWriter.Models;
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading;
 using JetDatabaseWriter.Core.Interfaces;
 
 /// <summary>
 /// Payload supplied to
-/// <see cref="IAccessWriter.AddAttachmentAsync(string, string, System.Collections.Generic.IReadOnlyDictionary{string, object}, AttachmentInput, System.Threading.CancellationToken)"/>
+/// <see cref="IAccessWriter.AddAttachmentAsync(string, string, IReadOnlyDictionary{string, object}, AttachmentInput, CancellationToken)"/>
 /// for one file attached to a parent row's complex (Attachment) column.
 /// </summary>
 /// <remarks>

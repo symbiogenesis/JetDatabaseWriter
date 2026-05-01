@@ -1,11 +1,12 @@
 namespace JetDatabaseWriter.Models;
 
 using System;
+using System.Collections.Generic;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Core.Interfaces;
 
 /// <summary>
-/// Defines a column for use with <see cref="IAccessWriter.CreateTableAsync(string, System.Collections.Generic.IReadOnlyList{ColumnDefinition}, System.Threading.CancellationToken)"/>.
+/// Defines a column for use with <see cref="IAccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, System.Threading.CancellationToken)"/>.
 /// </summary>
 public sealed record ColumnDefinition
 {
@@ -127,7 +128,7 @@ public sealed record ColumnDefinition
     /// TDEF (any <see cref="IsNullable"/> = <c>true</c> is overridden).
     /// Mixing this shortcut with an explicit PK <see cref="IndexDefinition"/>
     /// in the same <c>CreateTableAsync</c> call throws
-    /// <see cref="System.ArgumentException"/>.
+    /// <see cref="ArgumentException"/>.
     /// </summary>
     public bool IsPrimaryKey { get; init; }
 
@@ -200,7 +201,7 @@ public sealed record ColumnDefinition
     /// / <c>T_NUMERIC</c> column. Default <c>0</c> matches the Microsoft
     /// Access "Number → Decimal" UI default. Persisted at descriptor-relative
     /// offset 12. Index encoders rescale every cell value to this scale via
-    /// <see cref="System.MidpointRounding.ToEven"/> rounding so a single
+    /// <see cref="MidpointRounding.ToEven"/> rounding so a single
     /// canonical scale governs the B-tree (mirroring Access, which stores
     /// every <c>T_NUMERIC</c> cell at the declared scale). Must satisfy
     /// <c>NumericScale &lt;= NumericPrecision</c>.

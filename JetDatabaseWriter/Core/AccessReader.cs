@@ -134,7 +134,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>Gets diagnostic output populated after each call to <see cref="ListTablesAsync"/>.</summary>
     public string LastDiagnostics { get; private set; } = string.Empty;
 
-    /// <summary>Gets the absolute path of the database backing this reader, or empty when opened from a stream. Used by <see cref="Internal.LinkedTableManager"/> to anchor relative source paths.</summary>
+    /// <summary>Gets the absolute path of the database backing this reader, or empty when opened from a stream. Used by <see cref="LinkedTableManager"/> to anchor relative source paths.</summary>
     internal string HostDatabasePath => _path;
 
     /// <summary>Gets the cached options used to re-open linked-source databases referenced by this reader.</summary>
@@ -1901,7 +1901,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var diag = new System.Text.StringBuilder();
+        var diag = new StringBuilder();
         _ = diag.AppendLine($"JET: {(_format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE")}  PageSize: {_pgSz}  TotalPages: {_stream.Length / _pgSz}");
 
         TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
@@ -2291,11 +2291,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    /// <summary>Loads the MSysObjects TableDef (page 2). Exposed for <see cref="Internal.LinkedTableManager"/>.</summary>
+    /// <summary>Loads the MSysObjects TableDef (page 2). Exposed for <see cref="LinkedTableManager"/>.</summary>
     internal ValueTask<TableDef?> GetMSysObjectsTableDefAsync(CancellationToken cancellationToken) =>
         ReadTableDefAsync(2, cancellationToken);
 
-    /// <summary>Enumerates every row of MSysObjects. Exposed for <see cref="Internal.LinkedTableManager"/>.</summary>
+    /// <summary>Enumerates every row of MSysObjects. Exposed for <see cref="LinkedTableManager"/>.</summary>
     internal IAsyncEnumerable<List<string>> EnumerateMSysObjectsRowsAsync(TableDef msys, CancellationToken cancellationToken) =>
         EnumerateRowsForTdefAsync(2, msys, cancellationToken);
 
