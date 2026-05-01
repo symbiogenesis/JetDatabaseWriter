@@ -31,10 +31,12 @@ public sealed class IncrementalIndexMaintenanceTests
 {
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
-    [Fact]
-    public async Task SingleInsert_AppendsExactlyOneNewLeafPage()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task SingleInsert_AppendsExactlyOneNewLeafPage(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -45,14 +47,14 @@ public sealed class IncrementalIndexMaintenanceTests
                 ct);
         }
 
-        int leafCountBefore = CountLeafPages(stream.ToArray());
+        int leafCountBefore = CountLeafPages(stream.ToArray(), format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
             await writer.InsertRowAsync("T", [42], ct);
         }
 
-        int leafCountAfter = CountLeafPages(stream.ToArray());
+        int leafCountAfter = CountLeafPages(stream.ToArray(), format);
 
         // Fast path appends one leaf per InsertRowAsync call. The bulk path
         // would also append one leaf for a single-leaf tree, but the win is
@@ -67,13 +69,15 @@ public sealed class IncrementalIndexMaintenanceTests
         Assert.Equal(42, dt.Rows[0]["Id"]);
     }
 
-    [Fact]
-    public async Task RepeatedSingleInserts_EachAppendsOneLeaf_AllRowsReadable()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task RepeatedSingleInserts_EachAppendsOneLeaf_AllRowsReadable(DatabaseFormat format)
     {
         // Demonstrates the fast path advantage: 5 sequential single-row
         // inserts append exactly 5 new leaf pages (one per call), without
         // re-scanning the whole table for each.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -84,7 +88,7 @@ public sealed class IncrementalIndexMaintenanceTests
                 ct);
         }
 
-        int leafCountBefore = CountLeafPages(stream.ToArray());
+        int leafCountBefore = CountLeafPages(stream.ToArray(), format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -94,11 +98,11 @@ public sealed class IncrementalIndexMaintenanceTests
             }
         }
 
-        int leafCountAfter = CountLeafPages(stream.ToArray());
+        int leafCountAfter = CountLeafPages(stream.ToArray(), format);
         Assert.Equal(leafCountBefore + 5, leafCountAfter);
 
         // Latest leaf must hold all 5 entries.
-        Assert.Equal(5, GetLatestLeafEntryCount(stream.ToArray()));
+        Assert.Equal(5, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);
         DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
@@ -106,10 +110,12 @@ public sealed class IncrementalIndexMaintenanceTests
         Assert.Equal(5, dt!.Rows.Count);
     }
 
-    [Fact]
-    public async Task SingleDelete_AppendsOneLeaf_WithReducedEntryCount()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task SingleDelete_AppendsOneLeaf_WithReducedEntryCount(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -129,7 +135,7 @@ public sealed class IncrementalIndexMaintenanceTests
                 ct);
         }
 
-        int leafCountBefore = CountLeafPages(stream.ToArray());
+        int leafCountBefore = CountLeafPages(stream.ToArray(), format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -137,9 +143,9 @@ public sealed class IncrementalIndexMaintenanceTests
             Assert.Equal(1, deleted);
         }
 
-        int leafCountAfter = CountLeafPages(stream.ToArray());
+        int leafCountAfter = CountLeafPages(stream.ToArray(), format);
         Assert.Equal(leafCountBefore + 1, leafCountAfter);
-        Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray()));
+        Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);
         DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
@@ -147,12 +153,14 @@ public sealed class IncrementalIndexMaintenanceTests
         Assert.Equal(3, dt!.Rows.Count);
     }
 
-    [Fact]
-    public async Task UpdateRow_FastPath_RowReadableWithNewValue()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task UpdateRow_FastPath_RowReadableWithNewValue(DatabaseFormat format)
     {
         // Update is delete+insert on the same call; the fast path receives
         // both in a single hint and emits one new leaf per index.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -182,7 +190,7 @@ public sealed class IncrementalIndexMaintenanceTests
             Assert.Equal(1, updated);
         }
 
-        Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray()));
+        Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);
         DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
@@ -241,12 +249,14 @@ public sealed class IncrementalIndexMaintenanceTests
         Assert.Equal(801, dt!.Rows.Count);
     }
 
-    [Fact]
-    public async Task FastPath_TextIndex_InsertReadableAfterIncrementalMaintenance()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task FastPath_TextIndex_InsertReadableAfterIncrementalMaintenance(DatabaseFormat format)
     {
         // Text indexes are supported by the General Legacy encoder, so
         // single-row inserts should hit the fast path.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -260,7 +270,7 @@ public sealed class IncrementalIndexMaintenanceTests
             await writer.InsertRowAsync("T", ["gamma"], ct);
         }
 
-        Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray()));
+        Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);
         DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);

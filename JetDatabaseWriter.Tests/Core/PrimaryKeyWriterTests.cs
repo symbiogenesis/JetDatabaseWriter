@@ -201,10 +201,12 @@ public sealed class PrimaryKeyWriterTests
         Assert.Equal("IX_Score", normal.Name);
     }
 
-    [Fact]
-    public async Task SinglePrimaryKey_OnInteger_ParticipatesInBulkRebuild()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task SinglePrimaryKey_OnInteger_ParticipatesInBulkRebuild(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -225,13 +227,15 @@ public sealed class PrimaryKeyWriterTests
 
         // PK leaf was rebuilt in bulk → most-recent leaf reports 3 entries
         // (maintenance applies to single-column PKs the same as normal IXes).
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
     }
 
-    [Fact]
-    public async Task CompositePrimaryKey_OnInsert_ParticipatesInBulkRebuild()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CompositePrimaryKey_OnInsert_ParticipatesInBulkRebuild(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -254,13 +258,15 @@ public sealed class PrimaryKeyWriterTests
         }
 
         // Multi-column PK leaf is now maintained on bulk insert.
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
     }
 
-    [Fact]
-    public async Task CompositePrimaryKey_OnUpdateAndDelete_LeafReflectsLatestState()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CompositePrimaryKey_OnUpdateAndDelete_LeafReflectsLatestState(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -295,13 +301,15 @@ public sealed class PrimaryKeyWriterTests
         // After delete the latest (highest-page-number) leaf is the current
         // root and reports a single remaining entry; older leaves are
         // orphaned for Compact & Repair.
-        Assert.Equal(1, FindLatestLeafEntryCount(stream.ToArray()));
+        Assert.Equal(1, FindLatestLeafEntryCount(stream.ToArray(), format));
     }
 
-    [Fact]
-    public async Task CompositePrimaryKey_SurvivesAddColumn_LeafRebuilt()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CompositePrimaryKey_SurvivesAddColumn_LeafRebuilt(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
         {
@@ -329,7 +337,7 @@ public sealed class PrimaryKeyWriterTests
 
         // RewriteTableAsync forwards the composite PK and rebuilds the leaf
         // for the rewritten table.
-        Assert.Equal(2, FindLatestLeafEntryCount(stream.ToArray()));
+        Assert.Equal(2, FindLatestLeafEntryCount(stream.ToArray(), format));
     }
 
     [Fact]
@@ -473,10 +481,10 @@ public sealed class PrimaryKeyWriterTests
 
     // --- helpers (page scanning) ---------------------------------------------
 
-    private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
+    private static int CountLeafEntries(byte[] fileBytes, int leafOffset, DatabaseFormat format)
     {
         int count = 1;
-        for (int i = Constants.IndexLeafPage.Jet4BitmaskOffset; i < Constants.IndexLeafPage.Jet4FirstEntryOffset; i++)
+        for (int i = BitmaskOffset(format); i < FirstEntryOffset(format); i++)
         {
             byte b = fileBytes[leafOffset + i];
             for (int bit = 0; bit < 8; bit++)
@@ -491,15 +499,16 @@ public sealed class PrimaryKeyWriterTests
         return count;
     }
 
-    private static int FindMaxLeafEntryCount(byte[] fileBytes)
+    private static int FindMaxLeafEntryCount(byte[] fileBytes, DatabaseFormat format)
     {
+        int pageSize = PageSizeOf(format);
         int max = 0;
-        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
+        for (int p = 0; p < fileBytes.Length / pageSize; p++)
         {
-            int o = p * Constants.PageSizes.Jet4;
+            int o = p * pageSize;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
-                int n = CountLeafEntries(fileBytes, o);
+                int n = CountLeafEntries(fileBytes, o, format);
                 if (n > max)
                 {
                     max = n;
@@ -510,19 +519,45 @@ public sealed class PrimaryKeyWriterTests
         return max;
     }
 
-    private static int FindLatestLeafEntryCount(byte[] fileBytes)
+    private static int FindLatestLeafEntryCount(byte[] fileBytes, DatabaseFormat format)
     {
+        int pageSize = PageSizeOf(format);
         int latest = -1;
-        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
+        for (int p = 0; p < fileBytes.Length / pageSize; p++)
         {
-            int o = p * Constants.PageSizes.Jet4;
+            int o = p * pageSize;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
                 latest = p;
             }
         }
 
-        return latest < 0 ? 0 : CountLeafEntries(fileBytes, latest * Constants.PageSizes.Jet4);
+        return latest < 0 ? 0 : CountLeafEntries(fileBytes, latest * pageSize, format);
+    }
+
+    private static int PageSizeOf(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
+
+    private static int BitmaskOffset(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3BitmaskOffset : Constants.IndexLeafPage.Jet4BitmaskOffset;
+
+    private static int FirstEntryOffset(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3FirstEntryOffset : Constants.IndexLeafPage.Jet4FirstEntryOffset;
+
+    private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
+    {
+        var ms = new MemoryStream();
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            format,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken))
+        {
+        }
+
+        ms.Position = 0;
+        return ms;
     }
 
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
