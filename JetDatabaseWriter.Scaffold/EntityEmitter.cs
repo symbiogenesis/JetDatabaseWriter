@@ -152,6 +152,8 @@ internal static class EntityEmitter
         // Remove the unwanted blank line before the very first property (after open brace)
         source = source.Replace("{" + eol + eol + "    /// <summary>", "{" + eol + "    /// <summary>", StringComparison.Ordinal);
 
+        source = source.TrimEnd('\r', '\n') + eol;
+
         return source;
     }
 

@@ -93,6 +93,14 @@ public class EntityEmitterTests
     }
 
     [Fact]
+    public void Emit_Ends_With_Single_Final_Newline()
+    {
+        string result = EntityEmitter.Emit("Customer", SimpleColumns, "MyApp.Models", useRecords: false, nullable: false);
+
+        Assert.EndsWith("}\r\n", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Emit_Contains_Using_System()
     {
         string result = EntityEmitter.Emit("Customer", SimpleColumns, "MyApp.Models", useRecords: false, nullable: false);
