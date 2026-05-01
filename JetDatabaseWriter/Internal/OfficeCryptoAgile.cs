@@ -21,15 +21,6 @@ using JetDatabaseWriter.Internal.Helpers;
 /// </summary>
 internal static class OfficeCryptoAgile
 {
-    // Fresh-encryption parameters. Match the descriptors emitted by Office
-    // 2016+ for password-protected .accdb files.
-    private const int EncryptSaltSize = 16;
-    private const int EncryptBlockSize = 16;       // AES block
-    private const int EncryptKeyBytes = 32;        // AES-256
-    private const int EncryptHashBytes = 64;       // SHA-512
-    private const int EncryptSpinCount = 100_000;
-    private const int EncryptSegmentSize = 4096;
-
     // Agile spec block-key constants (ECMA-376 §2.3.4.13 — "Password Verifier").
     private static readonly byte[] BlockKeyVerifierHashInput =
         [0xFE, 0xA7, 0xD2, 0x76, 0x3B, 0x4B, 0x9E, 0x79];
@@ -100,7 +91,7 @@ internal static class OfficeCryptoAgile
 
     /// <summary>
     /// Encrypts <paramref name="innerPackage"/> with a freshly-generated set of
-    /// Agile parameters (AES-256-CBC, SHA-512, <see cref="EncryptSpinCount"/>
+    /// Agile parameters (AES-256-CBC, SHA-512, <see cref="Constants.AgileEncryption.SpinCount"/>
     /// PBKDF iterations) and returns the resulting <c>EncryptionInfo</c>
     /// descriptor and <c>EncryptedPackage</c> stream bytes.
     /// </summary>
@@ -115,10 +106,10 @@ internal static class OfficeCryptoAgile
         {
             // Fresh random material on every encrypt: salts and the
             // intermediate key must never be reused across sessions.
-            byte[] keyDataSalt = RandomBytes(EncryptSaltSize);
-            byte[] passwordSalt = RandomBytes(EncryptSaltSize);
-            byte[] verifierHashInput = RandomBytes(EncryptSaltSize);
-            byte[] intermediateKey = RandomBytes(EncryptKeyBytes);
+            byte[] keyDataSalt = RandomBytes(Constants.AgileEncryption.SaltSize);
+            byte[] passwordSalt = RandomBytes(Constants.AgileEncryption.SaltSize);
+            byte[] verifierHashInput = RandomBytes(Constants.AgileEncryption.SaltSize);
+            byte[] intermediateKey = RandomBytes(Constants.AgileEncryption.KeyBytes);
 
             // Pre-derive the three password-bound keys once: each PBKDF
             // iteration is 100k SHA-512s, so we share the iterated state
@@ -131,7 +122,7 @@ internal static class OfficeCryptoAgile
             byte[] verifierInputCipher = AesCbcRaw(
                 PadToBlock(verifierHashInput),
                 verifierInputKey,
-                NormalizeIv(passwordSalt, EncryptBlockSize),
+                NormalizeIv(passwordSalt, Constants.AgileEncryption.BlockSize),
                 encrypt: true);
 
             byte[] verifierHash;
@@ -143,25 +134,25 @@ internal static class OfficeCryptoAgile
             byte[] verifierHashCipher = AesCbcRaw(
                 PadToBlock(verifierHash),
                 verifierHashKey,
-                NormalizeIv(passwordSalt, EncryptBlockSize),
+                NormalizeIv(passwordSalt, Constants.AgileEncryption.BlockSize),
                 encrypt: true);
 
             byte[] keyValueCipher = AesCbcRaw(
                 PadToBlock(intermediateKey),
                 keyValueKey,
-                NormalizeIv(passwordSalt, EncryptBlockSize),
+                NormalizeIv(passwordSalt, Constants.AgileEncryption.BlockSize),
                 encrypt: true);
 
             // dataIntegrity placeholder: random HMAC key wrapped with the
             // intermediate key + spec-derived IV; placeholder zero HMAC value.
             byte[] hmacKeyCipher = AesCbcRaw(
-                PadToBlock(RandomBytes(EncryptHashBytes)),
+                PadToBlock(RandomBytes(Constants.AgileEncryption.HashBytes)),
                 intermediateKey,
                 HmacIv(keyDataSalt, BlockKeyHmacKey),
                 encrypt: true);
 
             byte[] hmacValueCipher = AesCbcRaw(
-                PadToBlock(new byte[EncryptHashBytes]),
+                PadToBlock(new byte[Constants.AgileEncryption.HashBytes]),
                 intermediateKey,
                 HmacIv(keyDataSalt, BlockKeyHmacValue),
                 encrypt: true);
@@ -549,7 +540,7 @@ internal static class OfficeCryptoAgile
 
         // Iterate: H_(i+1) = SHA512(uint32_le(i) || H_i).
         byte[] iter = new byte[4 + h.Length];
-        for (int i = 0; i < EncryptSpinCount; i++)
+        for (int i = 0; i < Constants.AgileEncryption.SpinCount; i++)
         {
             BinaryPrimitives.WriteInt32LittleEndian(iter.AsSpan(0, 4), i);
 
@@ -573,14 +564,14 @@ internal static class OfficeCryptoAgile
         Buffer.BlockCopy(blockKey, 0, buf, iteratedHash.Length, blockKey.Length);
         byte[] hf = sha.ComputeHash(buf);
 
-        if (hf.Length >= EncryptKeyBytes)
+        if (hf.Length >= Constants.AgileEncryption.KeyBytes)
         {
-            return Truncate(hf, EncryptKeyBytes);
+            return Truncate(hf, Constants.AgileEncryption.KeyBytes);
         }
 
-        byte[] padded = new byte[EncryptKeyBytes];
+        byte[] padded = new byte[Constants.AgileEncryption.KeyBytes];
         Buffer.BlockCopy(hf, 0, padded, 0, hf.Length);
-        for (int i = hf.Length; i < EncryptKeyBytes; i++)
+        for (int i = hf.Length; i < Constants.AgileEncryption.KeyBytes; i++)
         {
             padded[i] = 0x36;
         }
@@ -591,19 +582,19 @@ internal static class OfficeCryptoAgile
     private static byte[] EncryptPackage(byte[] intermediateKey, byte[] keyDataSalt, byte[] plaintext)
     {
         // 8-byte little-endian decrypted size prefix + per-segment AES-CBC.
-        int totalSegments = (plaintext.Length + EncryptSegmentSize - 1) / EncryptSegmentSize;
+        int totalSegments = (plaintext.Length + Constants.AgileEncryption.SegmentSize - 1) / Constants.AgileEncryption.SegmentSize;
 
         // Only the trailing segment can introduce padding.
         int paddedTail = 0;
         if (totalSegments > 0)
         {
-            int lastLen = plaintext.Length - ((totalSegments - 1) * EncryptSegmentSize);
-            paddedTail = ((lastLen + EncryptBlockSize - 1) / EncryptBlockSize) * EncryptBlockSize;
+            int lastLen = plaintext.Length - ((totalSegments - 1) * Constants.AgileEncryption.SegmentSize);
+            paddedTail = ((lastLen + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize) * Constants.AgileEncryption.BlockSize;
         }
 
         int paddedTotal = totalSegments == 0
             ? 0
-            : ((totalSegments - 1) * EncryptSegmentSize) + paddedTail;
+            : ((totalSegments - 1) * Constants.AgileEncryption.SegmentSize) + paddedTail;
 
         byte[] result = new byte[8 + paddedTotal];
         long size = plaintext.Length;
@@ -623,14 +614,14 @@ internal static class OfficeCryptoAgile
         int writeOffset = 8;
         for (int seg = 0; seg < totalSegments; seg++)
         {
-            int offset = seg * EncryptSegmentSize;
-            int segLen = Math.Min(EncryptSegmentSize, plaintext.Length - offset);
-            int paddedLen = ((segLen + EncryptBlockSize - 1) / EncryptBlockSize) * EncryptBlockSize;
+            int offset = seg * Constants.AgileEncryption.SegmentSize;
+            int segLen = Math.Min(Constants.AgileEncryption.SegmentSize, plaintext.Length - offset);
+            int paddedLen = ((segLen + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize) * Constants.AgileEncryption.BlockSize;
 
             byte[] block = new byte[paddedLen];
             Buffer.BlockCopy(plaintext, offset, block, 0, segLen);
 
-            aes.IV = SegmentIv(keyDataSalt, seg, EncryptBlockSize);
+            aes.IV = SegmentIv(keyDataSalt, seg, Constants.AgileEncryption.BlockSize);
             using ICryptoTransform t = aes.CreateEncryptor();
             byte[] cipher = t.TransformFinalBlock(block, 0, paddedLen);
             Buffer.BlockCopy(cipher, 0, result, writeOffset, paddedLen);
@@ -652,12 +643,12 @@ internal static class OfficeCryptoAgile
             hash = sha.ComputeHash(data);
         }
 
-        return Truncate(hash, EncryptBlockSize);
+        return Truncate(hash, Constants.AgileEncryption.BlockSize);
     }
 
     private static byte[] PadToBlock(byte[] data)
     {
-        int padded = ((data.Length + EncryptBlockSize - 1) / EncryptBlockSize) * EncryptBlockSize;
+        int padded = ((data.Length + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize) * Constants.AgileEncryption.BlockSize;
         if (padded == data.Length)
         {
             return data;
@@ -689,17 +680,17 @@ internal static class OfficeCryptoAgile
             "<encryption xmlns=\"http://schemas.microsoft.com/office/2006/encryption\" " +
             "xmlns:p=\"http://schemas.microsoft.com/office/2006/keyEncryptor/password\" " +
             "xmlns:c=\"http://schemas.microsoft.com/office/2006/keyEncryptor/certificate\">" +
-            $"<keyData saltSize=\"{EncryptSaltSize}\" blockSize=\"{EncryptBlockSize}\" " +
-            $"keyBits=\"{EncryptKeyBytes * 8}\" hashSize=\"{EncryptHashBytes}\" " +
+            $"<keyData saltSize=\"{Constants.AgileEncryption.SaltSize}\" blockSize=\"{Constants.AgileEncryption.BlockSize}\" " +
+            $"keyBits=\"{Constants.AgileEncryption.KeyBytes * 8}\" hashSize=\"{Constants.AgileEncryption.HashBytes}\" " +
             "cipherAlgorithm=\"AES\" cipherChaining=\"ChainingModeCBC\" hashAlgorithm=\"SHA512\" " +
             $"saltValue=\"{Convert.ToBase64String(keyDataSalt)}\"/>" +
             $"<dataIntegrity encryptedHmacKey=\"{Convert.ToBase64String(hmacKeyCipher)}\" " +
             $"encryptedHmacValue=\"{Convert.ToBase64String(hmacValueCipher)}\"/>" +
             "<keyEncryptors>" +
             "<keyEncryptor uri=\"http://schemas.microsoft.com/office/2006/keyEncryptor/password\">" +
-            $"<p:encryptedKey spinCount=\"{EncryptSpinCount}\" saltSize=\"{EncryptSaltSize}\" " +
-            $"blockSize=\"{EncryptBlockSize}\" keyBits=\"{EncryptKeyBytes * 8}\" " +
-            $"hashSize=\"{EncryptHashBytes}\" cipherAlgorithm=\"AES\" cipherChaining=\"ChainingModeCBC\" " +
+            $"<p:encryptedKey spinCount=\"{Constants.AgileEncryption.SpinCount}\" saltSize=\"{Constants.AgileEncryption.SaltSize}\" " +
+            $"blockSize=\"{Constants.AgileEncryption.BlockSize}\" keyBits=\"{Constants.AgileEncryption.KeyBytes * 8}\" " +
+            $"hashSize=\"{Constants.AgileEncryption.HashBytes}\" cipherAlgorithm=\"AES\" cipherChaining=\"ChainingModeCBC\" " +
             $"hashAlgorithm=\"SHA512\" saltValue=\"{Convert.ToBase64String(passwordSalt)}\" " +
             $"encryptedVerifierHashInput=\"{Convert.ToBase64String(verifierInputCipher)}\" " +
             $"encryptedVerifierHashValue=\"{Convert.ToBase64String(verifierHashCipher)}\" " +

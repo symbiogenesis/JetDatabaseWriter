@@ -343,4 +343,35 @@ internal static class Constants
         /// <summary>First-entry offset on a Jet3 leaf page (§4.2).</summary>
         public const int Jet3FirstEntryOffset = 0xF8;
     }
+
+    /// <summary>
+    /// Fixed algorithm parameters for ECMA-376 §2.3.4 "Agile" encryption
+    /// (AES-256-CBC + SHA-512 + PBKDF spin loop) as used by Access 2010 SP1+
+    /// and Microsoft 365. These values must agree with the XML descriptor
+    /// emitted into the <c>EncryptionInfo</c> stream.
+    /// </summary>
+    public static class AgileEncryption
+    {
+        /// <summary>Salt length in bytes (16).</summary>
+        public const int SaltSize = 16;
+
+        /// <summary>AES block size in bytes (16).</summary>
+        public const int BlockSize = 16;
+
+        /// <summary>AES-256 key length in bytes (32).</summary>
+        public const int KeyBytes = 32;
+
+        /// <summary>SHA-512 digest length in bytes (64).</summary>
+        public const int HashBytes = 64;
+
+        /// <summary>PBKDF spin count (100 000 iterations).</summary>
+        public const int SpinCount = 100_000;
+
+        /// <summary>
+        /// Encrypted-package segment size in bytes (4096). Each segment of the
+        /// plaintext is encrypted independently with a per-segment IV derived
+        /// from the key-data salt and the segment index.
+        /// </summary>
+        public const int SegmentSize = 4096;
+    }
 }
