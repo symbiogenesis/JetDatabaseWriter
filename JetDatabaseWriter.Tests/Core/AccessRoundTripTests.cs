@@ -352,6 +352,14 @@ public sealed class AccessRoundTripTests
 
         public ValueTask DisposeAsync()
         {
+            // Diagnostic: leave the work dir so failing tests can be
+            // inspected. Path is logged via Console.WriteLine below.
+            Console.WriteLine($"DIAG_RT_KEEP {WorkDir}");
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask DisposeAsyncOriginal()
+        {
             try
             {
                 if (Directory.Exists(WorkDir))

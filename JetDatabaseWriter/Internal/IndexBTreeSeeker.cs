@@ -378,7 +378,7 @@ internal static class IndexBTreeSeeker
             if (cmp <= 0)
             {
                 int childPtrOffset = entryStart + suffixLen + 4;
-                return BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(childPtrOffset, 4));
+                return IndexLeafIncremental.DecodeIntermediateChildPointer(page, childPtrOffset);
             }
 
             if (next < 0)

@@ -379,8 +379,13 @@ internal static class IndexBTreeBuilder
             WriteUInt24Be(page, rpOff, (int)dp);
             page[rpOff + 3] = e.Summary.DataRow;
 
-            // 4-byte child page pointer (little-endian, like every other 32-bit
-            // page-number field in the JET on-disk format).
+            // 4-byte child page pointer. Written big-endian to match the
+            // on-disk format used by Microsoft Access-authored intermediate
+            // pages (the 3-byte data-page summary preceding it is also
+            // big-endian, despite every other 32-bit page-number field on
+            // index pages being little-endian). The reader (IndexLeafIncremental.
+            // DecodeIntermediateChildPointer) accepts both endiannesses for
+            // back-compat with previously-written test fixtures.
             long cp = e.ChildPage;
             if (cp < 0 || cp > 0xFFFFFFFFL)
             {
@@ -388,7 +393,7 @@ internal static class IndexBTreeBuilder
             }
 
             int cpOff = rpOff + 4;
-            BinaryPrimitives.WriteUInt32LittleEndian(page.AsSpan(cpOff, 4), (uint)cp);
+            BinaryPrimitives.WriteUInt32BigEndian(page.AsSpan(cpOff, 4), (uint)cp);
 
             // §4.2 bitmask: every entry except the first sets a bit at its start
             // offset relative to the first-entry offset, LSB-first.
