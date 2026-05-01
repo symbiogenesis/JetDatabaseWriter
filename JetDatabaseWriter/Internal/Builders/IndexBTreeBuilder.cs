@@ -109,18 +109,22 @@ internal static class IndexBTreeBuilder
         // Rough capacity estimate: assume average entry ~64 bytes ⇒
         // entryAreaSize / 64 entries per leaf. Errs on the high side which is
         // cheap; underestimating just causes extra resizes.
-        int estLeafCount = entries.Count == 0
+
+        // Step 1: Pack entries into split pages (SplitPages) greedily, in input order.
+        // Each inner list in SplitPages contains the IndexEntry objects for a single page after splitting.
+        // This is sometimes called a "leaf group" in legacy comments, but that term is non-standard and discouraged.
+        int estSplitPageCount = entries.Count == 0
             ? 1
             : Math.Max(1, ((entries.Count * 64) + entryAreaSize - 1) / entryAreaSize);
 
-        var leafGroups = new List<List<IndexEntry>>(estLeafCount);
-        var leafLastEntries = new List<IndexEntry>(estLeafCount);
+        var splitPages = new SplitPages(estSplitPageCount);
+        var splitPageLastEntries = new List<IndexEntry>(estSplitPageCount);
         if (entries.Count == 0)
         {
-            leafGroups.Add([]);
+            splitPages.Add([]);
 
-            // No leaf-last entry for an empty placeholder; the leafCount == 1
-            // path below short-circuits before consulting leafLastEntries.
+            // No last entry for an empty placeholder;
+            // the splitPageCount == 1 path below short-circuits before consulting splitPageLastEntries.
         }
         else
         {
@@ -137,8 +141,8 @@ internal static class IndexBTreeBuilder
 
                 if (currentSize + entryLen > entryAreaSize)
                 {
-                    leafGroups.Add(current);
-                    leafLastEntries.Add(current[current.Count - 1]);
+                    splitPages.Add(current);
+                    splitPageLastEntries.Add(current[current.Count - 1]);
                     current = [];
                     currentSize = 0;
                 }
@@ -147,31 +151,30 @@ internal static class IndexBTreeBuilder
                 currentSize += entryLen;
             }
 
-            leafGroups.Add(current);
-            leafLastEntries.Add(current[current.Count - 1]);
+            splitPages.Add(current);
+            splitPageLastEntries.Add(current[current.Count - 1]);
         }
 
-        // ── Step 2: Validate leaf page-number range. Pages are sequential
-        // starting at firstPageNumber, so we never need to materialise the
-        // per-page array — the i'th leaf lives at firstPageNumber + i.
-        int leafCount = leafGroups.Count;
-        if (firstPageNumber + leafCount - 1 > 0xFFFFFF)
+        // Step 2: Validate split page-number range. Pages are sequential starting at firstPageNumber,
+        // so we never need to materialize the per-page array — the i'th split page lives at firstPageNumber + i.
+        int splitPageCount = splitPages.Count;
+        if (firstPageNumber + splitPageCount - 1 > 0xFFFFFF)
         {
             throw new ArgumentOutOfRangeException(nameof(firstPageNumber), "Allocated page numbers exceed the 24-bit child-pointer range.");
         }
 
-        // ── Step 3: Render leaves with prev/next sibling chain. ───────────
+        // Step 3: Render split pages (leaves) with prev/next sibling chain.
         // Pre-size pages list assuming up to ~10% intermediates above the leaves.
-        var pages = new List<byte[]>(leafCount + Math.Max(1, leafCount / 10));
-        for (int i = 0; i < leafCount; i++)
+        var pages = new List<byte[]>(splitPageCount + Math.Max(1, splitPageCount / 10));
+        for (int i = 0; i < splitPageCount; i++)
         {
             long prev = i == 0 ? 0 : firstPageNumber + i - 1;
-            long next = i == leafCount - 1 ? 0 : firstPageNumber + i + 1;
+            long next = i == splitPageCount - 1 ? 0 : firstPageNumber + i + 1;
             byte[] leaf = IndexLeafPageBuilder.BuildLeafPage(
                 layout,
                 pageSize,
                 parentTdefPage,
-                leafGroups[i],
+                splitPages[i],
                 prevPage: prev,
                 nextPage: next,
                 tailPage: 0,
@@ -179,28 +182,28 @@ internal static class IndexBTreeBuilder
             pages.Add(leaf);
         }
 
-        // Single leaf is its own root — no intermediates needed.
-        if (leafCount == 1)
+        // Single split page is its own root — no intermediates needed.
+        if (splitPageCount == 1)
         {
             return new BuildResult(pages, firstPageNumber, firstPageNumber);
         }
 
-        // ── Step 4: Build intermediate levels until we reach a single root.
-        // Each intermediate entry summarises the LAST entry of its child page
+        // Step 4: Build intermediate levels until we reach a single root.
+        // Each intermediate entry summarizes the LAST entry of its child page
         // and appends the 4-byte child page pointer (§4.3). The child pages
         // of every level are themselves sequential, so we track each level
         // as (base page, count) instead of a per-page array.
         long childPageBase = firstPageNumber;
-        int childPageCount = leafCount;
-        IReadOnlyList<IndexEntry> childLastEntries = leafLastEntries;
-        long nextFreePage = firstPageNumber + leafCount;
+        int childPageCount = splitPageCount;
+        IReadOnlyList<IndexEntry> childLastEntries = splitPageLastEntries;
+        long nextFreePage = firstPageNumber + splitPageCount;
 
-        // tail-leaf is the rightmost leaf the builder just emitted
-        // (firstPageNumber + leafCount - 1). Stamp it into every
+        // tail-leaf is the rightmost split page the builder just emitted
+        // (firstPageNumber + splitPageCount - 1). Stamp it into every
         // intermediate-page tail_page header so the seeker can jump directly
         // to the tail without descending the tree, and so the append-only
         // incremental fast path can locate it from the root in one read.
-        long tailLeafPage = firstPageNumber + leafCount - 1;
+        long tailLeafPage = firstPageNumber + splitPageCount - 1;
 
         while (childPageCount > 1)
         {
