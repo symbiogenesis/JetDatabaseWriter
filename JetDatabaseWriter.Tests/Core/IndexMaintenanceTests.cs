@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Core;
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
@@ -20,6 +21,7 @@ using Xunit;
 /// <see cref="IAccessWriter.AddColumnAsync"/> /
 /// <see cref="IAccessWriter.DropColumnAsync"/> /
 /// <see cref="IAccessWriter.RenameColumnAsync"/>.
+/// Tests run against both Jet3 and Jet4/ACE formats via <c>[Theory]</c> parameters.
 /// <para>
 /// The library does not expose an internal API to walk an index B-tree, so
 /// these tests verify maintenance by scanning the on-disk byte stream for
@@ -33,10 +35,12 @@ using Xunit;
 /// </summary>
 public sealed class IndexMaintenanceTests
 {
-    [Fact]
-    public async Task InsertRows_RebuildsIndexLeaf_WithExpectedEntryCount()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task InsertRows_RebuildsIndexLeaf_WithExpectedEntryCount(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -60,13 +64,15 @@ public sealed class IndexMaintenanceTests
         // The most-recent rebuild produced a leaf with 3 entries; orphaned
         // earlier leafs still show 1 (implicit empty), so MAX is the right
         // signal for the post-grow state.
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
     }
 
-    [Fact]
-    public async Task InsertRow_Single_RebuildsIndexLeaf()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task InsertRow_Single_RebuildsIndexLeaf(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -81,13 +87,15 @@ public sealed class IndexMaintenanceTests
             await writer.InsertRowAsync("T", [7], ct);
         }
 
-        Assert.Equal(2, FindMaxLeafEntryCount(stream.ToArray()));
+        Assert.Equal(2, FindMaxLeafEntryCount(stream.ToArray(), format));
     }
 
-    [Fact]
-    public async Task UpdateRows_RebuildsIndexLeaf_PreservingRowCount()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task UpdateRows_RebuildsIndexLeaf_PreservingRowCount(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -122,13 +130,15 @@ public sealed class IndexMaintenanceTests
         }
 
         // Row count unchanged; the rebuilt leaf still has 3 entries.
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
     }
 
-    [Fact]
-    public async Task DeleteRows_RebuildsIndexLeaf_WithReducedEntryCount()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task DeleteRows_RebuildsIndexLeaf_WithReducedEntryCount(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -155,13 +165,15 @@ public sealed class IndexMaintenanceTests
 
         // The latest leaf (highest page number) is the post-delete rebuild
         // and must report the reduced row count of 3.
-        Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray()));
+        Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
     }
 
-    [Fact]
-    public async Task AddColumn_PreservesExistingIndex()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task AddColumn_PreservesExistingIndex(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -183,10 +195,12 @@ public sealed class IndexMaintenanceTests
         Assert.Equal("Id", indexes[0].Columns[0].Name);
     }
 
-    [Fact]
-    public async Task RenameColumn_RemapsIndexColumnReference()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task RenameColumn_RemapsIndexColumnReference(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -208,10 +222,12 @@ public sealed class IndexMaintenanceTests
         Assert.Equal("Identifier", indexes[0].Columns[0].Name);
     }
 
-    [Fact]
-    public async Task DropColumn_DropsIndexReferencingDroppedColumn()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task DropColumn_DropsIndexReferencingDroppedColumn(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -238,12 +254,14 @@ public sealed class IndexMaintenanceTests
         Assert.Equal("IX_Id", indexes[0].Name);
     }
 
-    [Fact]
-    public async Task InsertRows_TextIndex_GeneralLegacyKeys_RebuildsLeaf()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task InsertRows_TextIndex_GeneralLegacyKeys_RebuildsLeaf(DatabaseFormat format)
     {
         // Text indexes whose values are limited to digits + ASCII letters
         // are maintained on insert via the General Legacy sort-key encoder.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -264,17 +282,19 @@ public sealed class IndexMaintenanceTests
                 ct);
         }
 
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
     }
 
-    [Fact]
-    public async Task InsertRows_TextIndex_UnicodeAndPunctuation_RebuildsLeaf()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task InsertRows_TextIndex_UnicodeAndPunctuation_RebuildsLeaf(DatabaseFormat format)
     {
         // The full Jackcess General Legacy port supports the entire BMP
         // (spaces, punctuation, accented characters). Strings that previously
         // fell through to the stale-leaf path now participate in the index maintenance
         // bulk B-tree rebuild, so the emitted leaf reflects all inserted rows.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -295,17 +315,19 @@ public sealed class IndexMaintenanceTests
                 ct);
         }
 
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
     }
 
-    [Fact]
-    public async Task InsertRows_MemoIndex_RebuildsLeafViaSameEncoder()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task InsertRows_MemoIndex_RebuildsLeafViaSameEncoder(DatabaseFormat format)
     {
         // MEMO columns route through the same General Legacy encoder as TEXT
         // (T_TEXT = 0x0A, T_MEMO = 0x0C both supported by IndexKeyEncoder).
         // Round-trip a memo-keyed index and confirm the bulk rebuild populated
         // the leaf instead of leaving the leaf-page emission placeholder in place.
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -326,18 +348,19 @@ public sealed class IndexMaintenanceTests
                 ct);
         }
 
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
     }
 
-    [Fact]
-    public async Task InsertRows_LargeBatch_GrowsToMultiLevelTree_AndStaysEnumerable()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task InsertRows_LargeBatch_GrowsToMultiLevelTree_AndStaysEnumerable(DatabaseFormat format)
     {
         // Forces a multi-level B-tree by inserting more entries than fit on a
-        // single 4 KB leaf (~400 int entries). Verifies that the resulting
-        // tree (intermediate root over a chain of leaves) round-trips
-        // correctly through the reader.
+        // single leaf for either format (~400 for Jet4, ~200 for Jet3).
+        // 700 rows guarantees a multi-level tree on both formats.
         const int RowCount = 700;
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -357,7 +380,7 @@ public sealed class IndexMaintenanceTests
             await writer.InsertRowsAsync("T", rows, ct);
         }
 
-        Assert.Equal(0x03, FindLatestRootPageType(stream.ToArray()));
+        Assert.Equal(0x03, FindLatestRootPageType(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);
         var indexes = await reader.ListIndexesAsync("T", ct);
@@ -370,15 +393,17 @@ public sealed class IndexMaintenanceTests
         Assert.Equal(RowCount, rowsRead.Rows.Count);
     }
 
-    [Fact]
-    public async Task InsertRow_AfterMultiLevelTreeExists_RebuildsViaIncrementalPath()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task InsertRow_AfterMultiLevelTreeExists_RebuildsViaIncrementalPath(DatabaseFormat format)
     {
         // Build a multi-level tree, then add a single row. The incremental
         // path must descend into the tree, walk the leaf chain, splice in
         // the new entry, and emit a fresh root. The reader's row count must
         // include the late insert.
         const int InitialRows = 700;
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -401,18 +426,20 @@ public sealed class IndexMaintenanceTests
             await writer.InsertRowAsync("T", [InitialRows], ct);
         }
 
-        Assert.Equal(0x03, FindLatestRootPageType(stream.ToArray()));
+        Assert.Equal(0x03, FindLatestRootPageType(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);
         var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
         Assert.Equal(InitialRows + 1, rowsRead.Rows.Count);
     }
 
-    [Fact]
-    public async Task DeleteRows_AfterMultiLevelTreeExists_ShrinksTreeAndStaysConsistent()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task DeleteRows_AfterMultiLevelTreeExists_ShrinksTreeAndStaysConsistent(DatabaseFormat format)
     {
         const int InitialRows = 700;
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         var ct = TestContext.Current.CancellationToken;
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -440,6 +467,104 @@ public sealed class IndexMaintenanceTests
         Assert.Equal(InitialRows - 1, rowsRead.Rows.Count);
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task PrimaryKey_InsertDuplicate_Throws(DatabaseFormat format)
+    {
+        await using var stream = await CreateFreshStreamAsync(format);
+        var ct = TestContext.Current.CancellationToken;
+
+        await using var writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            "T",
+            [new ColumnDefinition("Id", typeof(int))],
+            [new IndexDefinition("PK_T", "Id") { IsPrimaryKey = true }],
+            ct);
+
+        await writer.InsertRowAsync("T", [1], ct);
+
+        // Inserting the same PK value a second time must throw.
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => writer.InsertRowAsync("T", [1], ct).AsTask());
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task IncrementalFastPath_SplicesSingleLeaf_OnInsertAndDelete(DatabaseFormat format)
+    {
+        // Start with a few rows so the leaf is non-empty, then exercise a
+        // single-row insert and a single-row delete on the same leaf to
+        // confirm the incremental (non-rebuild) splice path works for both
+        // insert and delete operations.
+        await using var stream = await CreateFreshStreamAsync(format);
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
+                ct);
+
+            await writer.InsertRowsAsync("T", [[10], [20], [30]], ct);
+
+            // Single insert → incremental splice.
+            await writer.InsertRowAsync("T", [25], ct);
+
+            // Single delete → incremental splice.
+            int deleted = await writer.DeleteRowsAsync("T", "Id", 10, ct);
+            Assert.Equal(1, deleted);
+        }
+
+        // 3 original + 1 insert − 1 delete = 3 remaining.
+        Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task IncrementalFastPath_RebuildsMultiLevelTree(DatabaseFormat format)
+    {
+        // Build a multi-level tree (700 rows for both formats), then exercise
+        // the incremental path by inserting and deleting one more row.
+        // The reader must still see the correct total row count after maintenance.
+        const int InitialRows = 700;
+        await using var stream = await CreateFreshStreamAsync(format);
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
+                ct);
+
+            var rows = new List<object[]>(InitialRows);
+            for (int i = 0; i < InitialRows; i++)
+            {
+                rows.Add([i]);
+            }
+
+            await writer.InsertRowsAsync("T", rows, ct);
+
+            // Late insert: incremental descent into multi-level tree.
+            await writer.InsertRowAsync("T", [InitialRows], ct);
+
+            // Late delete: incremental splice.
+            int deleted = await writer.DeleteRowsAsync("T", "Id", 0, ct);
+            Assert.Equal(1, deleted);
+        }
+
+        // Net: InitialRows + 1 insert − 1 delete = InitialRows.
+        await using var reader = await OpenReaderAsync(stream);
+        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        Assert.Equal(InitialRows, rowsRead.Rows.Count);
+    }
+
     /// <summary>
     /// Returns the page type byte (<c>0x03</c> for intermediate,
     /// <c>0x04</c> for leaf) of the highest-page-numbered index page in the
@@ -448,12 +573,13 @@ public sealed class IndexMaintenanceTests
     /// so the highest-numbered index page is the current root. Returns -1
     /// when no index page is found.
     /// </summary>
-    private static int FindLatestRootPageType(byte[] fileBytes)
+    private static int FindLatestRootPageType(byte[] fileBytes, DatabaseFormat format)
     {
+        int pageSize = PageSizeOf(format);
         int latest = -1;
-        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
+        for (int p = 0; p < fileBytes.Length / pageSize; p++)
         {
-            int o = p * Constants.PageSizes.Jet4;
+            int o = p * pageSize;
             byte t = fileBytes[o];
             if ((t == 0x03 || t == 0x04) && fileBytes[o + 1] == 0x01)
             {
@@ -461,15 +587,17 @@ public sealed class IndexMaintenanceTests
             }
         }
 
-        return latest < 0 ? -1 : fileBytes[latest * Constants.PageSizes.Jet4];
+        return latest < 0 ? -1 : fileBytes[latest * pageSize];
     }
 
-    private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
+    private static int CountLeafEntries(byte[] fileBytes, int leafOffset, DatabaseFormat format)
     {
         // §4.2: one implicit first entry, plus one bit per subsequent entry
-        // in the bitmask spanning [0x1B .. 0x1E0).
+        // in the bitmask.
+        int bitmaskOffset = BitmaskOffset(format);
+        int firstEntryOffset = FirstEntryOffset(format);
         int count = 1;
-        for (int i = Constants.IndexLeafPage.Jet4BitmaskOffset; i < Constants.IndexLeafPage.Jet4FirstEntryOffset; i++)
+        for (int i = bitmaskOffset; i < firstEntryOffset; i++)
         {
             byte b = fileBytes[leafOffset + i];
             for (int bit = 0; bit < 8; bit++)
@@ -484,15 +612,16 @@ public sealed class IndexMaintenanceTests
         return count;
     }
 
-    private static int FindMaxLeafEntryCount(byte[] fileBytes)
+    private static int FindMaxLeafEntryCount(byte[] fileBytes, DatabaseFormat format)
     {
+        int pageSize = PageSizeOf(format);
         int max = 0;
-        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
+        for (int p = 0; p < fileBytes.Length / pageSize; p++)
         {
-            int o = p * Constants.PageSizes.Jet4;
+            int o = p * pageSize;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
-                int n = CountLeafEntries(fileBytes, o);
+                int n = CountLeafEntries(fileBytes, o, format);
                 if (n > max)
                 {
                     max = n;
@@ -503,14 +632,15 @@ public sealed class IndexMaintenanceTests
         return max;
     }
 
-    private static int GetLatestLeafEntryCount(byte[] fileBytes)
+    private static int GetLatestLeafEntryCount(byte[] fileBytes, DatabaseFormat format)
     {
         // The most-recently-written leaf is the one with the highest page number
         // — maintenance always appends new index pages to the end of the file.
+        int pageSize = PageSizeOf(format);
         int latest = -1;
-        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
+        for (int p = 0; p < fileBytes.Length / pageSize; p++)
         {
-            int o = p * Constants.PageSizes.Jet4;
+            int o = p * pageSize;
             if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
             {
                 latest = p;
@@ -518,15 +648,24 @@ public sealed class IndexMaintenanceTests
         }
 
         Assert.True(latest >= 0, "Expected at least one index leaf page in the file.");
-        return CountLeafEntries(fileBytes, latest * Constants.PageSizes.Jet4);
+        return CountLeafEntries(fileBytes, latest * pageSize, format);
     }
 
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
+    private static int PageSizeOf(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
+
+    private static int BitmaskOffset(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3BitmaskOffset : Constants.IndexLeafPage.Jet4BitmaskOffset;
+
+    private static int FirstEntryOffset(DatabaseFormat fmt) =>
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3FirstEntryOffset : Constants.IndexLeafPage.Jet4FirstEntryOffset;
+
+    private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
-            DatabaseFormat.AceAccdb,
+            format,
             new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken))

@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
-using JetDatabaseWriter.Models;
 using Xunit;
 
 #pragma warning disable CA5394 // System.Random is fine — no security context here, just deterministic fuzz seeds.
