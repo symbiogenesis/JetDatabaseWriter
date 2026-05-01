@@ -668,9 +668,6 @@ All password-protected formats produced by Microsoft Access from Access 97 throu
 
 The items below are **not yet implemented** and are the most likely places to hit a wall.
 
-### Primary & foreign keys
-- **Not yet validated end-to-end through Microsoft Access.** Files produced with `IndexDefinition` lists or `CreateRelationshipAsync` have not been round-tripped through a Compact & Repair pass on Windows.
-
 ### Specialized column kinds
 - **Calculated columns (Access 2010+ expression columns) — read-only metadata.** The library reads calc-column flags and the `Expression` / `ResultType` properties produced by Microsoft Access and surfaces them via `ColumnMetadata.IsCalculated` / `.CalculationExpression` / `.CalculatedResultType`. **Writing** calc columns (Phase 1B — emitting the extra-flags byte, the `Expression`/`ResultType` LvProp entries, and the 23-byte calculated-value wrapper) and **client-side evaluation** of expressions (Phase 2+) are not yet implemented. `CreateTableAsync` throws `NotSupportedException` when `ColumnDefinition.IsCalculated = true`. See [docs/design/calculated-columns-format-notes.md](docs/design/calculated-columns-format-notes.md) for the implementation plan.
 
