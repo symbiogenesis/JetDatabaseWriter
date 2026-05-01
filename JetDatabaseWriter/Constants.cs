@@ -200,6 +200,19 @@ internal static class Constants
         /// <summary>MSysObjects.Type value for a regular user table (mdbtools <c>OBJ_TABLE</c> / <c>MDB_TABLE_USER</c>).</summary>
         public const int UserTableType = 1;
 
+        /// <summary>
+        /// Well-known <c>MSysObjects.Id</c> of the <c>"Tables"</c>
+        /// pseudo-object (Type = 3) that owns every user table. New
+        /// user-table catalog rows MUST set <c>ParentId</c> to this value
+        /// — Microsoft Access enumerates tables via the
+        /// <c>(ParentId, Name)</c> index and silently filters out rows whose
+        /// <c>ParentId</c> does not point at one of the well-known
+        /// containers, so a row with <c>ParentId = 0</c> is invisible to
+        /// Access even though it is physically present in MSysObjects.
+        /// Jackcess names this <c>SYS_PARENT_ID_TABLES</c>.
+        /// </summary>
+        public const int TablesParentId = 0x0F00_0001;
+
         /// <summary>MSysObjects.Type value for a linked Jet/Access table (mdbtools <c>MDB_TABLE_LINK</c>).</summary>
         public const int LinkedTableType = 4;
 

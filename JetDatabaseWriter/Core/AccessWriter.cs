@@ -99,6 +99,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private long _cachedInsertTDefPage = -1;
     private long _cachedInsertPageNumber = -1;
 
+    // Records the most recent reason TryMaintainIndexesIncrementalAsync
+    // returned false. Diagnostic-only; not part of the public contract.
+    private string? _lastIncrementalBail;
+
     private AccessWriter(
         string path,
         Stream stream,
@@ -1280,7 +1284,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         DateTime now = DateTime.UtcNow;
 
         msys.SetValueByName(values, "Id", 0);
-        msys.SetValueByName(values, "ParentId", 0);
+        msys.SetValueByName(values, "ParentId", Constants.SystemObjects.TablesParentId);
         msys.SetValueByName(values, "Name", linkedTableName);
         msys.SetValueByName(values, "Type", (short)Constants.SystemObjects.LinkedTableType);
         msys.SetValueByName(values, "DateCreate", now);
@@ -1329,7 +1333,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         DateTime now = DateTime.UtcNow;
 
         msys.SetValueByName(values, "Id", 0);
-        msys.SetValueByName(values, "ParentId", 0);
+        msys.SetValueByName(values, "ParentId", Constants.SystemObjects.TablesParentId);
         msys.SetValueByName(values, "Name", linkedTableName);
         msys.SetValueByName(values, "Type", (short)Constants.SystemObjects.LinkedOdbcType);
         msys.SetValueByName(values, "DateCreate", now);
@@ -1457,7 +1461,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             msysRelDef.SetValueByName(values, "szReferencedObject", relationship.PrimaryTable);
             msysRelDef.SetValueByName(values, "szRelationship", relationship.Name);
 
-            await InsertRowDataAsync(msysRelTdefPage, msysRelDef, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await InsertSystemRowAndMaintainAsync(msysRelTdefPage, msysRelDef, Constants.SystemTableNames.Relationships, values, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
         // Per-TDEF FK logical-idx entries: add index_type=0x02 logical-idx
@@ -2202,7 +2206,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             rowValues[szRelIdx] = newName;
 
             await MarkRowDeletedAsync(row.Location.PageNumber, row.Location.RowIndex, cancellationToken).ConfigureAwait(false);
-            await InsertRowDataAsync(msysRelTdefPage, msysRelDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await InsertSystemRowAndMaintainAsync(msysRelTdefPage, msysRelDef, Constants.SystemTableNames.Relationships, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
         // Update the TDEF logical-idx name cookies on both sides so the
@@ -6251,7 +6255,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         DateTime now = DateTime.UtcNow;
 
         msys.SetValueByName(values, "Id", (int)tdefPageNumber);
-        msys.SetValueByName(values, "ParentId", 0);
+        msys.SetValueByName(values, "ParentId", Constants.SystemObjects.TablesParentId);
         msys.SetValueByName(values, "Name", tableName);
         msys.SetValueByName(values, "Type", (short)Constants.SystemObjects.UserTableType);
         msys.SetValueByName(values, "DateCreate", now);
@@ -6267,7 +6271,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             msys.SetValueByName(values, "LvProp", lvProp);
         }
 
-        await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+        // Insert the new MSysObjects row, then splice its index entry into
+        // the rightmost leaf of every real-idx slot WITHOUT re-encoding any
+        // pre-existing entries. This keeps Microsoft Access's PK Id index
+        // pointing at the new TDEF row so DAO Compact &amp; Repair can locate
+        // it, while preserving the byte-for-byte content of Access-authored
+        // catalog rows the writer cannot losslessly re-encode (e.g. the
+        // special "Databases" properties row's LvProp blob). See
+        // docs/design/catalog-index-maintenance-notes.md.
+        RowLocation loc = await InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
+        _ = await TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask RewriteTableAsync(
@@ -7254,7 +7267,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         msysComplex.SetValueByName(values, "ConceptualTableID", conceptualTableId);
         msysComplex.SetValueByName(values, "ComplexID", complexId);
 
-        await InsertRowDataAsync(pg, msysComplex, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await InsertSystemRowAndMaintainAsync(pg, msysComplex, Constants.SystemTableNames.ComplexColumns, values, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     // ── Row-level APIs for complex (Attachment / MultiValue) columns ──
@@ -8556,6 +8569,133 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
+    /// Inserts one row into a system table (MSysObjects, MSysRelationships,
+    /// MSysComplexColumns, …) and refreshes that table's indexes so external
+    /// readers (Microsoft Access / DAO Compact &amp; Repair) can locate the
+    /// new row through the catalog indexes. Bare <see cref="InsertRowDataAsync"/>
+    /// only writes the data row; index leaves are not maintained, so DAO
+    /// walking via <c>ParentIdName</c> / <c>Id</c> never sees the row and the
+    /// catalog appears empty from outside.
+    /// </summary>
+    /// <remarks>
+    /// User-row inserts are batched by <see cref="InsertRowsAsync(string, IEnumerable{object[]}, CancellationToken)"/>
+    /// for performance; system-table inserts are infrequent and can afford to
+    /// pay the per-call index-maintenance cost.
+    /// </remarks>
+    private async ValueTask InsertSystemRowAndMaintainAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string tableName,
+        object[] values,
+        bool updateTDefRowCount = true,
+        CancellationToken cancellationToken = default)
+    {
+        RowLocation loc = await InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken).ConfigureAwait(false);
+
+        // Skip maintenance when the system-table TDEF has no allocated index
+        // leaves yet (writer-created blank databases bootstrap MSysObjects
+        // with degenerate / placeholder real-idx slots whose first_dp values
+        // are not valid page numbers; calling MaintainIndexesAsync against
+        // those would attempt to read non-existent pages). Access-authored
+        // databases (Northwind, etc.) always have valid first_dp values, so
+        // the maintenance path runs as expected and external readers / DAO
+        // Compact &amp; Repair see the new system-table rows through the
+        // catalog indexes.
+        if (!await SystemTableHasMaintainableIndexesAsync(tdefPage, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var hint = new List<(RowLocation Loc, object[] Row)>(1) { (loc, values) };
+        try
+        {
+            bool incremental = await TryMaintainIndexesIncrementalAsync(
+                tdefPage,
+                tableDef,
+                hint,
+                deletedRows: null,
+                cancellationToken).ConfigureAwait(false);
+            if (!incremental)
+            {
+                await MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            // Defensive: writer-bootstrapped system tables may carry index
+            // descriptors that point at unallocated / out-of-range pages
+            // (the writer's blank-database template is intentionally minimal
+            // and never exercises catalog-index reads on its own). Swallow
+            // the page-read failure rather than corrupting an otherwise
+            // healthy mutation — readers that walk data pages directly
+            // (this library's AccessReader) still see the new row.
+        }
+        catch (InvalidOperationException)
+        {
+            // Same rationale: malformed real-idx / leaf chain on a
+            // bootstrapped catalog table is not a reason to fail an insert.
+        }
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when every real-idx slot on <paramref name="tdefPage"/>
+    /// references a valid in-range data page through its <c>first_dp</c>
+    /// pointer. Used by <see cref="InsertSystemRowAndMaintainAsync"/> to
+    /// avoid index maintenance on writer-bootstrapped system tables whose
+    /// real-idx descriptors point at unallocated pages.
+    /// </summary>
+    private async ValueTask<bool> SystemTableHasMaintainableIndexesAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        bool jet3 = _format == DatabaseFormat.Jet3Mdb;
+        int realIdxPhysSz = jet3 ? 39 : 52;
+        int physFirstDpOff = jet3 ? 34 : 38;
+
+        byte[] page = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (page[0] != 0x02 || Ru32(page, 4) != 0)
+            {
+                return false;
+            }
+
+            int numCols = Ru16(page, _tdNumCols);
+            int numRealIdx = Ri32(page, _tdNumRealIdx);
+            if (numCols < 0 || numCols > 4096 || numRealIdx <= 0 || numRealIdx > 1000)
+            {
+                return false;
+            }
+
+            int realIdxDescStart = LocateRealIdxDescStart(page, numCols, numRealIdx);
+            if (realIdxDescStart < 0)
+            {
+                return false;
+            }
+
+            long totalPages = _stream.Length / _pgSz;
+            for (int ri = 0; ri < numRealIdx; ri++)
+            {
+                int phys = realIdxDescStart + (ri * realIdxPhysSz);
+                if (phys + realIdxPhysSz > page.Length)
+                {
+                    return false;
+                }
+
+                long firstDp = (uint)Ri32(page, phys + physFirstDpOff);
+                if (firstDp <= 0 || firstDp >= totalPages)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        finally
+        {
+            ReturnPage(page);
+        }
+    }
+
+    /// <summary>
     /// Inserts a row and returns its (page, row-index) location so the caller
     /// can mark it deleted if a subsequent step (e.g. unique-index rebuild)
     /// fails. Mirrors <see cref="InsertRowDataAsync"/> but exposes the
@@ -9803,6 +9943,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         IReadOnlyList<(RowLocation Loc, object[] Row)>? deletedRows,
         CancellationToken cancellationToken)
     {
+        _lastIncrementalBail = null;
+
         // Jet3 (.mdb Access 97) participates in the
         // incremental fast paths via the per-format LeafPageLayout descriptor
         // (page size 2048, bitmask at 0x16, first entry at 0xF8) and the §3.1
@@ -9845,6 +9987,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         if (numIdx > 1000 || numRealIdx > 1000)
         {
+            _lastIncrementalBail = $"NumIdx_TooMany numIdx={numIdx} numRealIdx={numRealIdx}";
             return false;
         }
 
@@ -9859,6 +10002,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             if (ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
             {
+                _lastIncrementalBail = $"C0 col-name walk i={i} namePos={namePos}";
                 return false;
             }
         }
@@ -9872,6 +10016,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             int phys = realIdxDescStart + (ri * realIdxPhysSz);
             if (phys + realIdxPhysSz > tdefBuffer.Length)
             {
+                _lastIncrementalBail = $"C1 ri={ri} phys={phys} bufLen={tdefBuffer.Length}";
                 return false;
             }
 
@@ -9930,6 +10075,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             if (resolveFailed)
             {
+                _lastIncrementalBail = "C2 resolveFailed";
                 return false;
             }
 
@@ -9937,6 +10083,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             long firstDp = (uint)Ri32(tdefBuffer, rie.FirstDpOffset);
             if (firstDp <= 0)
             {
+                _lastIncrementalBail = $"C3 firstDp={firstDp}";
                 return false;
             }
 
@@ -9957,6 +10104,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             if (addCount > 0 && addEntries.Count != addCount)
             {
                 // Encoder rejected at least one row; bail to bulk.
+                _lastIncrementalBail = $"C4 addEntries.Count={addEntries.Count} addCount={addCount}";
                 return false;
             }
 
@@ -9968,6 +10116,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             List<(byte[] Key, long DataPage, byte DataRow)> removeEntries = EncodeHintEntries(deletedRows, keyColInfos);
             if (delCount > 0 && removeEntries.Count != delCount)
             {
+                _lastIncrementalBail = "C5";
                 return false;
             }
 
@@ -9992,6 +10141,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 if (rootPage[0] != Constants.IndexLeafPage.PageTypeIntermediate
                     && rootPage[0] != Constants.IndexLeafPage.PageTypeLeaf)
                 {
+                    _lastIncrementalBail = $"C6 rootPage[0]={rootPage[0]:X2}";
                     return false;
                 }
 
@@ -10068,6 +10218,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 long leftmostLeaf = await DescendToLeftmostLeafAsync(layout, firstDp, cancellationToken).ConfigureAwait(false);
                 if (leftmostLeaf <= 0)
                 {
+                    _lastIncrementalBail = $"C7 firstDp={firstDp}";
                     return false;
                 }
 
@@ -10078,6 +10229,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 {
                     if (--safetyBudget <= 0)
                     {
+                        _lastIncrementalBail = "C8 safetyBudget";
                         return false;
                     }
 
@@ -10095,6 +10247,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                     if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
                     {
+                        _lastIncrementalBail = $"C9 walkPage={walkPage} leaf[0]={leaf[0]:X2}";
                         return false;
                     }
 
@@ -10105,6 +10258,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 List<IndexLeafPageBuilder.LeafEntry>? splicedAll = IndexLeafIncremental.Splice(allExisting, addEntries, removePtrs);
                 if (splicedAll is null)
                 {
+                    _lastIncrementalBail = $"C10 allExisting={allExisting.Count}";
                     return false;
                 }
 
@@ -10114,8 +10268,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 {
                     mlBuild = IndexBTreeBuilder.Build(layout, _pgSz, tdefPage, splicedAll, firstNewPage);
                 }
-                catch (ArgumentOutOfRangeException)
+                catch (ArgumentOutOfRangeException ex)
                 {
+                    _lastIncrementalBail = $"C11 {ex.Message}";
                     return false;
                 }
 
@@ -10133,12 +10288,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(existing, addEntries, removePtrs);
             if (spliced is null)
             {
+                _lastIncrementalBail = $"C12 existing={existing.Count}";
                 return false;
             }
 
             byte[]? newLeaf = IndexLeafIncremental.TryRebuildLeaf(layout, _pgSz, tdefPage, spliced);
             if (newLeaf is null)
             {
+                _lastIncrementalBail = $"C13 spliced={spliced.Count}";
                 return false;
             }
 
@@ -12073,6 +12230,436 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Splices a single new catalog row's index entry into the rightmost
+    /// (tail) leaf of every real-idx slot on a system table's index B-tree
+    /// without re-encoding any pre-existing entries.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Used by <c>InsertCatalogEntryAsync</c> for MSysObjects to keep
+    /// Microsoft Access's PK Id index consistent with the new TDEF row, while
+    /// preserving the byte-for-byte content of every other leaf page on the
+    /// index — including Access-authored leaves that hold special rows
+    /// (e.g. the <c>Databases</c> properties row) whose Lv/LvProp blobs the
+    /// writer cannot losslessly re-encode. See
+    /// <c>docs/design/catalog-index-maintenance-notes.md</c>.
+    /// </para>
+    /// <para>
+    /// Phase C1 scope (tail-leaf-only):
+    /// <list type="bullet">
+    ///   <item>Descends to the rightmost leaf by following each
+    ///   intermediate's LAST child pointer.</item>
+    ///   <item>Splices when the new key sorts strictly greater than every
+    ///   existing entry on the tail leaf and the rewritten leaf still fits
+    ///   on one page.</item>
+    ///   <item>Returns <see langword="false"/> on any unsupported case
+    ///   (non-Jet4 format, malformed page, key not greater than tail max,
+    ///   tail leaf overflow, or descent encountering a non-tail leaf).</item>
+    /// </list>
+    /// On <see langword="false"/> the caller should treat the catalog index
+    /// as un-maintained for this row (the row is still present on disk;
+    /// downstream Compact &amp; Repair may report JET <c>-1601</c>).
+    /// </para>
+    /// </remarks>
+    private async ValueTask<bool> TrySpliceCatalogIndexEntryAsync(
+        long tdefPage,
+        TableDef tableDef,
+        RowLocation newRowLoc,
+        object[] newRowValues,
+        CancellationToken cancellationToken)
+    {
+        // Phase C1 targets ACCDB / Jet4 only. Jet3 catalog index format
+        // differs (39-byte real-idx descriptor, different sort-key encoding)
+        // and is left to a future phase.
+        if (_format == DatabaseFormat.Jet3Mdb)
+        {
+            return false;
+        }
+
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.LeafPageLayout.Jet4;
+        const int RealIdxPhysSz = 52;
+        const int PhysFirstDpOff = 38;
+
+        _lastIncrementalBail = null;
+
+        byte[] tdefPageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] tdefBuf;
+        try
+        {
+            tdefBuf = (byte[])tdefPageBytes.Clone();
+        }
+        finally
+        {
+            ReturnPage(tdefPageBytes);
+        }
+
+        int numCols = Ru16(tdefBuf, _tdNumCols);
+        int numIdx = Ri32(tdefBuf, _tdNumCols + 2);
+        int numRealIdx = Ri32(tdefBuf, _tdNumRealIdx);
+        if (numIdx <= 0 || numRealIdx <= 0)
+        {
+            _lastIncrementalBail = $"S0 numIdx={numIdx} numRealIdx={numRealIdx}";
+            return true;
+        }
+
+        if (numIdx > 1000 || numRealIdx > 1000)
+        {
+            _lastIncrementalBail = "S1 too many idx";
+            return false;
+        }
+
+        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
+        int namePos = colStart + (numCols * _colDescSz);
+        for (int i = 0; i < numCols; i++)
+        {
+            if (ReadColumnName(tdefBuf, ref namePos, out _) < 0)
+            {
+                return false;
+            }
+        }
+
+        int realIdxDescStart = namePos;
+        var snapshotIndexByColNum = new Dictionary<int, int>(tableDef.Columns.Count);
+        for (int c = 0; c < tableDef.Columns.Count; c++)
+        {
+            snapshotIndexByColNum[tableDef.Columns[c].ColNum] = c;
+        }
+
+        bool legacyNumeric = _format == DatabaseFormat.Jet4Mdb;
+
+        for (int ri = 0; ri < numRealIdx; ri++)
+        {
+            int phys = realIdxDescStart + (ri * RealIdxPhysSz);
+            if (phys + RealIdxPhysSz > tdefBuf.Length)
+            {
+                return false;
+            }
+
+            var keyCols = new List<(int ColNum, bool Ascending)>(10);
+            for (int slot = 0; slot < 10; slot++)
+            {
+                int so = phys + 4 + (slot * 3);
+                int cn = Ru16(tdefBuf, so);
+                if (cn == 0xFFFF)
+                {
+                    continue;
+                }
+
+                byte order = tdefBuf[so + 2];
+                keyCols.Add((cn, order != 0x02));
+            }
+
+            if (keyCols.Count == 0)
+            {
+                continue;
+            }
+
+            long firstDp = (uint)Ri32(tdefBuf, phys + PhysFirstDpOff);
+            if (firstDp <= 0)
+            {
+                _lastIncrementalBail = $"S2 ri={ri} firstDp=0";
+                continue;
+            }
+
+            // Resolve key columns to TDEF ColumnInfos.
+            var keyColInfos = new List<(ColumnInfo Col, int SnapIdx, bool Ascending)>(keyCols.Count);
+            bool resolveFailed = false;
+            foreach ((int colNum, bool ascending) in keyCols)
+            {
+                ColumnInfo? col = tableDef.Columns.Find(c => c.ColNum == colNum);
+                if (col is null || !snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
+                {
+                    resolveFailed = true;
+                    break;
+                }
+
+                keyColInfos.Add((col, snapIdx, ascending));
+            }
+
+            if (resolveFailed)
+            {
+                _lastIncrementalBail = $"S3 ri={ri} resolveFailed";
+                return false;
+            }
+
+            // Encode the composite key for the new row.
+            byte[][] perColumn = new byte[keyColInfos.Count][];
+            int totalLen = 0;
+            bool encErr = false;
+            for (int k = 0; k < keyColInfos.Count; k++)
+            {
+                (ColumnInfo col, int snapIdx, bool ascending) = keyColInfos[k];
+                if (snapIdx >= newRowValues.Length)
+                {
+                    encErr = true;
+                    break;
+                }
+
+                object? val = newRowValues[snapIdx] is DBNull ? null : newRowValues[snapIdx];
+                try
+                {
+                    perColumn[k] = col.Type == T_NUMERIC
+                        ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(val, ascending, col.NumericScale, legacyNumeric)
+                        : IndexKeyEncoder.EncodeEntry(col.Type, val, ascending);
+                }
+                catch (NotSupportedException)
+                {
+                    encErr = true;
+                    break;
+                }
+                catch (ArgumentException)
+                {
+                    encErr = true;
+                    break;
+                }
+                catch (OverflowException)
+                {
+                    encErr = true;
+                    break;
+                }
+
+                totalLen += perColumn[k].Length;
+            }
+
+            if (encErr)
+            {
+                _lastIncrementalBail = $"S4 ri={ri} encErr";
+                return false;
+            }
+
+            byte[] composite = new byte[totalLen];
+            int compositeOff = 0;
+            for (int k = 0; k < perColumn.Length; k++)
+            {
+                Buffer.BlockCopy(perColumn[k], 0, composite, compositeOff, perColumn[k].Length);
+                compositeOff += perColumn[k].Length;
+            }
+
+            // Descend by binary-searching child summaries: at each
+            // intermediate, pick the first entry whose canonical key is
+            // >= the new composite key, and follow that child. When every
+            // summary on the page is < composite, follow tail_page (or the
+            // last child as fallback). This lands on the leaf that should
+            // hold the new entry's sorted insertion point.
+            long currentPage = firstDp;
+            int depth;
+            for (depth = 0; depth < 32; depth++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                byte[] pageBytes = await ReadPageAsync(currentPage, cancellationToken).ConfigureAwait(false);
+                byte[] page;
+                try
+                {
+                    page = (byte[])pageBytes.Clone();
+                }
+                finally
+                {
+                    ReturnPage(pageBytes);
+                }
+
+                byte pageType = page[0];
+                if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
+                {
+                    break;
+                }
+
+                if (pageType != Constants.IndexLeafPage.PageTypeIntermediate)
+                {
+                    _lastIncrementalBail = $"S5 ri={ri} depth={depth} page={currentPage} type=0x{pageType:X2}";
+                    return false;
+                }
+
+                long? nextChild = SelectChildForKey(layout, page, _pgSz, composite);
+                if (nextChild is null)
+                {
+                    long tail = IndexLeafIncremental.ReadTailPage(page);
+                    nextChild = tail > 0 ? tail : ReadLastChildPointer(page, _pgSz, layout);
+                }
+
+                if (nextChild.GetValueOrDefault() == 0)
+                {
+                    _lastIncrementalBail = $"S6 ri={ri} depth={depth} page={currentPage} noChild";
+                    return false;
+                }
+
+                currentPage = nextChild.Value;
+            }
+
+            if (depth >= 32)
+            {
+                _lastIncrementalBail = $"S7 ri={ri} depthExceeded";
+                return false;
+            }
+
+            long targetLeafPage = currentPage;
+            byte[] leafPageBytes = await ReadPageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
+            byte[] leaf;
+            try
+            {
+                leaf = (byte[])leafPageBytes.Clone();
+            }
+            finally
+            {
+                ReturnPage(leafPageBytes);
+            }
+
+            if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                _lastIncrementalBail = $"S8 ri={ri} targetLeafPage={targetLeafPage} type=0x{leaf[0]:X2}";
+                return false;
+            }
+
+            // If the descent landed before the true tail of a sibling
+            // chain (Access can store mostly-monotonic data with stale
+            // intermediate summaries plus a rightward chain), walk
+            // next_page while every existing entry on the current leaf
+            // is < composite. That way we still find the correct
+            // insertion leaf.
+            int chainBudget = 1_000_000;
+            while (true)
+            {
+                long nextLeaf = IndexLeafIncremental.ReadNextLeafPage(leaf);
+                if (nextLeaf <= 0)
+                {
+                    break;
+                }
+
+                List<IndexLeafIncremental.DecodedEntry> probe = IndexLeafIncremental.DecodeEntries(layout, leaf, _pgSz);
+                if (probe.Count == 0 || IndexHelpers.CompareKeyBytes(composite, probe[probe.Count - 1].Key) <= 0)
+                {
+                    // composite belongs in this leaf (or earlier).
+                    break;
+                }
+
+                if (--chainBudget <= 0)
+                {
+                    _lastIncrementalBail = $"S8b ri={ri} chainBudget exhausted";
+                    return false;
+                }
+
+                targetLeafPage = nextLeaf;
+                byte[] nb = await ReadPageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    leaf = (byte[])nb.Clone();
+                }
+                finally
+                {
+                    ReturnPage(nb);
+                }
+
+                if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
+                {
+                    _lastIncrementalBail = $"S8c ri={ri} walkedTo={targetLeafPage} type=0x{leaf[0]:X2}";
+                    return false;
+                }
+            }
+
+            long leafPrev = IndexLeafIncremental.ReadPrevPage(leaf);
+            long leafNext = IndexLeafIncremental.ReadNextLeafPage(leaf);
+            long leafTail = IndexLeafIncremental.ReadTailPage(leaf);
+
+            List<IndexLeafIncremental.DecodedEntry> existing = IndexLeafIncremental.DecodeEntries(layout, leaf, _pgSz);
+
+            var addEntries = new List<(byte[] Key, long DataPage, byte DataRow)>(1)
+            {
+                (composite, newRowLoc.PageNumber, (byte)newRowLoc.RowIndex),
+            };
+
+            List<IndexLeafPageBuilder.LeafEntry>? spliced = IndexLeafIncremental.Splice(
+                existing,
+                addEntries,
+                Array.Empty<(long DataPage, byte DataRow)>());
+            if (spliced is null)
+            {
+                _lastIncrementalBail = $"S11 ri={ri} splice null";
+                return false;
+            }
+
+            byte[] rewritten;
+            try
+            {
+                rewritten = IndexLeafPageBuilder.BuildLeafPage(
+                    layout,
+                    _pgSz,
+                    tdefPage,
+                    spliced,
+                    prevPage: leafPrev,
+                    nextPage: leafNext,
+                    tailPage: leafTail,
+                    enablePrefixCompression: true);
+            }
+            catch (ArgumentOutOfRangeException ex)
+            {
+                // Leaf overflow → would require a leaf split + parent
+                // separator promotion. Out of scope for Phase C1.
+                _lastIncrementalBail = $"S12 ri={ri} overflow {ex.Message}";
+                return false;
+            }
+
+            await WritePageAsync(targetLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Reads the 4-byte big-endian child-page pointer at the END of the LAST
+    /// entry on an intermediate (<c>0x03</c>) page. Each intermediate entry
+    /// trails with <c>[3 B BE data page][1 B data row][4 B BE child page]</c>;
+    /// the bitmask-driven entry layout means the last entry ends exactly at
+    /// <c>payloadEnd</c>, so the child pointer occupies
+    /// <c>[payloadEnd-4, payloadEnd)</c>.
+    /// </summary>
+    private static long ReadLastChildPointer(byte[] page, int pageSize, IndexLeafPageBuilder.LeafPageLayout layout)
+    {
+        if (page == null || page.Length < pageSize)
+        {
+            return 0;
+        }
+
+        int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+        int payloadEnd = pageSize - freeSpace;
+        if (payloadEnd < layout.FirstEntryOffset + 8)
+        {
+            return 0;
+        }
+
+        return IndexLeafIncremental.DecodeIntermediateChildPointer(page, payloadEnd - 4);
+    }
+
+    /// <summary>
+    /// Selects the child page on an intermediate (<c>0x03</c>) index page
+    /// whose subtree should hold an entry with the given canonical
+    /// <paramref name="searchKey"/>. Each intermediate entry summarises its
+    /// child page's MAX key, so the descent picks the FIRST entry whose
+    /// summary key is &gt;= <paramref name="searchKey"/>. Returns
+    /// <see langword="null"/> when every summary on the page sorts strictly
+    /// less than the search key (caller follows <c>tail_page</c> or the last
+    /// child as a fallback).
+    /// </summary>
+    private static long? SelectChildForKey(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        byte[] page,
+        int pageSize,
+        byte[] searchKey)
+    {
+        List<DecodedIntermediateEntry> entries =
+            IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+        for (int i = 0; i < entries.Count; i++)
+        {
+            int cmp = IndexHelpers.CompareKeyBytes(searchKey, entries[i].Key);
+            if (cmp <= 0)
+            {
+                return entries[i].ChildPage;
+            }
+        }
+
+        return null;
     }
 
     private record struct RealIdxEntry(IReadOnlyList<(int ColNum, bool Ascending)> KeyColumns, int FirstDpOffset, bool IsUnique);
