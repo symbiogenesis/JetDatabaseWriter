@@ -3542,6 +3542,32 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
+    /// Resolves key column infos from index key columns, table columns, and snapshot index mapping.
+    /// Returns false if any column cannot be resolved.
+    /// </summary>
+    private static bool TryResolveKeyColumnInfos(
+        IReadOnlyList<IndexKeyColumn> indexKeyColumns,
+        List<ColumnInfo> tableColumns,
+        Dictionary<int, int> snapshotIndexByColNum,
+        out List<KeyColumnInfo> keyColInfos)
+    {
+        keyColInfos = new List<KeyColumnInfo>(indexKeyColumns.Count);
+        foreach (var (colNum, ascending) in indexKeyColumns)
+        {
+            ColumnInfo? col = tableColumns.Find(c => c.ColNum == colNum);
+            if (col is null || !snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
+            {
+                keyColInfos = null!;
+                return false;
+            }
+
+            keyColInfos.Add(new KeyColumnInfo(tableColumns[snapIdx], snapIdx, ascending));
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// After a successful insert, augments any cached parent-key sets that
     /// reference <paramref name="primaryTable"/> with the row's PK tuple so
     /// subsequent inserts within the same call (self-references and bulk
@@ -9611,7 +9637,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 break;
             }
 
-            var keyCols = new List<(int ColNum, bool Ascending)>(10);
+            var keyCols = new List<IndexKeyColumn>(10);
             for (int slot = 0; slot < 10; slot++)
             {
                 int so = phys + 4 + (slot * 3);
@@ -9622,7 +9648,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 }
 
                 byte order = tdefBuffer[so + 2];
-                keyCols.Add((cn, order != 0x02));
+                keyCols.Add(new IndexKeyColumn(cn, order != 0x02));
             }
 
             if (keyCols.Count == 0)
@@ -9682,22 +9708,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             // Resolve every key column up front; if any column is missing from the
             // snapshot (deleted-column gap), skip rebuild for this index.
-            var keyColInfos = new List<KeyColumnInfo>(rie.KeyColumns.Count);
-            bool resolveFailed = false;
-            foreach ((int colNum, bool ascending) in rie.KeyColumns)
-            {
-                ColumnInfo? col = tableDef.Columns.Find(c => c.ColNum == colNum);
-                if (col is null || !snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
-                {
-                    resolveFailed = true;
-                    break;
-                }
-
-                var keyColInfo = new KeyColumnInfo(col, snapIdx, ascending);
-                keyColInfos.Add(keyColInfo);
-            }
-
-            if (resolveFailed)
+            if (!TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
             {
                 continue;
             }
@@ -9916,7 +9927,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return false;
             }
 
-            var keyCols = new List<(int ColNum, bool Ascending)>(10);
+            var keyCols = new List<IndexKeyColumn>(10);
             for (int slot = 0; slot < 10; slot++)
             {
                 int so = phys + 4 + (slot * 3);
@@ -9927,7 +9938,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 }
 
                 byte order = tdefBuffer[so + 2];
-                keyCols.Add((cn, order != 0x02));
+                keyCols.Add(new(cn, order != 0x02));
             }
 
             if (keyCols.Count == 0)
@@ -9955,21 +9966,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             cancellationToken.ThrowIfCancellationRequested();
 
             // Resolve key columns to (ColumnInfo, snapshot index, ascending).
-            var keyColInfos = new List<KeyColumnInfo>(rie.KeyColumns.Count);
-            bool resolveFailed = false;
-            foreach ((int colNum, bool ascending) in rie.KeyColumns)
-            {
-                ColumnInfo? col = tableDef.Columns.Find(c => c.ColNum == colNum);
-                if (col is null || !snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
-                {
-                    resolveFailed = true;
-                    break;
-                }
-
-                keyColInfos.Add(new KeyColumnInfo(col, snapIdx, ascending));
-            }
-
-            if (resolveFailed)
+            if (!TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
             {
                 return false;
             }
@@ -12055,7 +12052,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return results;
     }
 
-    private record struct RealIdxEntry(IReadOnlyList<(int ColNum, bool Ascending)> KeyColumns, int FirstDpOffset, bool IsUnique);
+    private record struct IndexKeyColumn(int ColNum, bool Ascending);
+
+    private record struct KeyColumnInfo(ColumnInfo Col, int SnapIdx, bool Ascending);
+
+    private record struct RealIdxEntry(IReadOnlyList<IndexKeyColumn> IndexKeyColumns, int FirstDpOffset, bool IsUnique);
+
+    private record struct UniqueIndexDescriptor(int RealIdxNum, string Name, IReadOnlyList<KeyColumnInfo> KeyColumns);
 
     /// <summary>
     /// parse the TDEF page and return one descriptor per <em>unique</em>
@@ -12122,7 +12125,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 break;
             }
 
-            var keyCols = new List<(int ColNum, bool Ascending)>(10);
+            var keyCols = new List<IndexKeyColumn>(10);
             for (int slot = 0; slot < 10; slot++)
             {
                 int so = phys + 4 + (slot * 3);
@@ -12133,7 +12136,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 }
 
                 byte order = tdefBuffer[so + 2];
-                keyCols.Add((cn, order != 0x02));
+                keyCols.Add(new(cn, order != 0x02));
             }
 
             if (keyCols.Count == 0)
@@ -12190,21 +12193,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // Resolve every key column up front; if any column is missing from
             // the snapshot (deleted-column gap), skip — same fall-through model
             // as MaintainIndexesAsync.
-            var keyColInfos = new List<KeyColumnInfo>(slot.KeyColumns.Count);
-            bool resolveOk = true;
-            foreach ((int colNum, bool ascending) in slot.KeyColumns)
-            {
-                if (!snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
-                {
-                    resolveOk = false;
-                    break;
-                }
-
-                var keyColInfo = new KeyColumnInfo(tableDef.Columns[snapIdx], snapIdx, ascending);
-                keyColInfos.Add(keyColInfo);
-            }
-
-            if (!resolveOk)
+            if (!TryResolveKeyColumnInfos(slot.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
             {
                 continue;
             }
@@ -12394,8 +12383,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    private sealed record UniqueIndexDescriptor(int RealIdxNum, string Name, IReadOnlyList<KeyColumnInfo> KeyColumns);
-
     private sealed class ByteArrayEqualityComparer : IEqualityComparer<byte[]>
     {
         public static readonly ByteArrayEqualityComparer Instance = new();
@@ -12455,8 +12442,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         ReturnPage(page);
     }
-
-    private sealed record KeyColumnInfo(ColumnInfo Col, int SnapIdx, bool Ascending);
 
     private sealed class CatalogRow
     {
