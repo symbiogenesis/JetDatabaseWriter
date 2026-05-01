@@ -43,7 +43,7 @@ public sealed class CompoundFileReaderTests
     }
 
     public static TheoryData<string> HeaderFixtureFiles() =>
-        new() { "TestStream_v3_0.cfs", "TestStream_v4_0.cfs" };
+        ["TestStream_v3_0.cfs", "TestStream_v4_0.cfs"];
 
     [Theory]
     [MemberData(nameof(TestStreamFixtures))]

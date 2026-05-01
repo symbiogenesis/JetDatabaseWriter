@@ -169,8 +169,8 @@ public sealed class PersistedColumnPropertiesTests
     // LVAL chain support is not yet implemented). With UTF-16LE encoding the four
     // long strings on one column plus a description on a second column total ~190
     // bytes for the LvProp blob.
-    private static List<ColumnDefinition> SampleColumnsWithProperties() => new()
-    {
+    private static List<ColumnDefinition> SampleColumnsWithProperties() =>
+    [
         new("Qty", typeof(int))
         {
             DefaultValueExpression = "0",
@@ -182,7 +182,7 @@ public sealed class PersistedColumnPropertiesTests
         {
             Description = "name",
         },
-    };
+    ];
 
     [Theory]
     [InlineData(DatabaseFormat.Jet4Mdb)]

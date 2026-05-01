@@ -139,8 +139,7 @@ public sealed class FuzzRobustnessTests
         }
 
         // Truncate at 1/4, 1/2, 3/4, and one byte short of full length.
-        int[] cuts = [golden.Length / 4, golden.Length / 2, golden.Length * 3 / 4, golden.Length - 1];
-        foreach (int cut in cuts)
+        foreach (int cut in (int[])[golden.Length / 4, golden.Length / 2, golden.Length * 3 / 4, golden.Length - 1])
         {
             if (cut <= 0)
             {

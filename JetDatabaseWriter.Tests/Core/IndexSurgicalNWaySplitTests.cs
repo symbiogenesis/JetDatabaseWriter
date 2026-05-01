@@ -259,8 +259,7 @@ public sealed class IndexSurgicalNWaySplitTests
         // multi-page leaf groups — must throw.
         await using (var writer = await OpenWriterAsync(stream))
         {
-            int[] sampleIndexes = [0, 7, 13, 25, 41, 67, rowCount - 1];
-            foreach (int i in sampleIndexes)
+            foreach (int i in (int[])[0, 7, 13, 25, 41, 67, rowCount - 1])
             {
                 await Assert.ThrowsAsync<System.InvalidOperationException>(async () =>
                     await writer.InsertRowAsync(

@@ -648,7 +648,7 @@ internal static class IndexHelpers
             if (currentSize + len > payloadArea && current.Count > 0)
             {
                 pages.Add(current);
-                current = new List<IndexEntry>();
+                current = [];
                 currentSize = 0;
             }
 

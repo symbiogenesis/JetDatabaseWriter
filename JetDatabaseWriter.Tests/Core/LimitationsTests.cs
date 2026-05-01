@@ -720,16 +720,16 @@ public sealed class LimitationsTests : IDisposable
     /// <inheritdoc />
     public void Dispose()
     {
-        foreach (string f in _tempFiles)
+        foreach (string file in _tempFiles)
         {
             try
             {
-                if (File.Exists(f))
+                if (File.Exists(file))
                 {
-                    File.Delete(f);
+                    File.Delete(file);
                 }
 
-                string lockPath = Path.ChangeExtension(f, Path.GetExtension(f) == ".accdb" ? ".laccdb" : ".ldb");
+                string lockPath = Path.ChangeExtension(file, Path.GetExtension(file) == ".accdb" ? ".laccdb" : ".ldb");
                 if (File.Exists(lockPath))
                 {
                     File.Delete(lockPath);

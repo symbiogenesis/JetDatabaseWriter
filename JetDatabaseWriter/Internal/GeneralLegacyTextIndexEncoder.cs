@@ -102,8 +102,10 @@ internal static class GeneralLegacyTextIndexEncoder
             text = text.Substring(0, len);
         }
 
-        var bout = new List<byte>(text.Length + 4);
-        bout.Add(ascending ? FlagAscendingNonNull : FlagDescendingNonNull);
+        var bout = new List<byte>(text.Length + 4)
+        {
+            ascending ? FlagAscendingNonNull : FlagDescendingNonNull,
+        };
 
         // Position immediately AFTER the start flag — the start flag is never
         // bit-flipped by the descending pass.

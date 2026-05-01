@@ -264,11 +264,9 @@ internal static class CompoundFileReader
 
             // Pass the exact size so the chain readers can size the
             // destination buffer precisely and avoid a tail Array.Resize.
-            byte[] data = size < hdr.MiniStreamCutoff
+            streams[name] = size < hdr.MiniStreamCutoff
                 ? ReadMiniChain(miniStream, startSector, hdr.MiniSectorSize, miniFat, size)
                 : await ReadChainAsync(stream, startSector, hdr.SectorSize, fat, cancellationToken, size).ConfigureAwait(false);
-
-            streams[name] = data;
         }
 
         return streams;

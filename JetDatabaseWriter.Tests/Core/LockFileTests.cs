@@ -643,11 +643,11 @@ public sealed class LockFileTests : IDisposable
 
     public void Dispose()
     {
-        foreach (string f in _tempFiles)
+        foreach (string file in _tempFiles)
         {
             try
             {
-                File.Delete(f);
+                File.Delete(file);
             }
             catch (IOException)
             {
@@ -671,12 +671,11 @@ public sealed class LockFileTests : IDisposable
             return null;
         }
 
-        string[] files = Directory.GetFiles(dbDir, $"*{extension}");
-        foreach (string f in files)
+        foreach (string file in Directory.GetFiles(dbDir, $"*{extension}"))
         {
-            if (await TestDatabases.IsReadableAsync(f))
+            if (await TestDatabases.IsReadableAsync(file))
             {
-                return f;
+                return file;
             }
         }
 

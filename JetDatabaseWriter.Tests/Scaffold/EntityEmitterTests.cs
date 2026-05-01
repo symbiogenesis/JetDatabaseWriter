@@ -201,7 +201,7 @@ public class EntityEmitterTests
     [Fact]
     public void Emit_Empty_Columns_Produces_Empty_Class()
     {
-        string result = EntityEmitter.Emit("Empty", new List<ColumnMetadata>(), "NS", useRecords: false, nullable: false);
+        string result = EntityEmitter.Emit("Empty", [], "NS", useRecords: false, nullable: false);
 
         Assert.Contains("public sealed class Empty", result, StringComparison.Ordinal);
         Assert.DoesNotContain("get; set;", result, StringComparison.Ordinal);

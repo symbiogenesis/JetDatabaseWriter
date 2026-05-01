@@ -564,9 +564,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     throw new InvalidOperationException($"Column '{column.Name}' already exists in table '{tableName}'.");
                 }
 
-                var next = new List<ColumnDefinition>(existing);
-                next.Add(column);
-                return next;
+                return new List<ColumnDefinition>(existing)
+                {
+                    column,
+                };
             },
             (oldRow, _) =>
             {
@@ -808,7 +809,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     await ApplyConstraintsAsync(tableName, tableDef, row, cancellationToken).ConfigureAwait(false);
                 if (rowCp != null)
                 {
-                    (batchAutoCheckpoints ??= new List<(ColumnConstraint, long?)>()).AddRange(rowCp);
+                    (batchAutoCheckpoints ??= []).AddRange(rowCp);
                 }
 
                 pendingRows.Add(row);
@@ -925,7 +926,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     await ApplyConstraintsAsync(tableName, tableDef, mappedRow, cancellationToken).ConfigureAwait(false);
                 if (rowCp != null)
                 {
-                    (batchAutoCheckpoints ??= new List<(ColumnConstraint, long?)>()).AddRange(rowCp);
+                    (batchAutoCheckpoints ??= []).AddRange(rowCp);
                 }
 
                 pendingRows.Add(mappedRow);
@@ -2059,7 +2060,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             (string Pk, string Fk) key = (row.SzReferencedObject, row.SzObject);
             if (!byTablePair.TryGetValue(key, out List<RelationshipRowSnapshot>? group))
             {
-                group = new List<RelationshipRowSnapshot>();
+                group = [];
                 byTablePair[key] = group;
             }
 
@@ -2218,7 +2219,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 (string Pk, string Fk) key = (row.SzReferencedObject, row.SzObject);
                 if (!byTablePair.TryGetValue(key, out List<RelationshipRowSnapshot>? group))
                 {
-                    group = new List<RelationshipRowSnapshot>();
+                    group = [];
                     byTablePair[key] = group;
                 }
 
@@ -3035,7 +3036,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 if (!groups.TryGetValue(name, out List<DataRow>? list))
                 {
-                    list = new List<DataRow>();
+                    list = [];
                     groups[name] = list;
                 }
 
@@ -3893,7 +3894,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             if (!matchedByPage.TryGetValue(dp, out HashSet<int>? rs))
             {
-                rs = new HashSet<int>();
+                rs = [];
                 matchedByPage[dp] = rs;
             }
 
@@ -4214,7 +4215,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             if (!locationsByPage.TryGetValue(dp, out HashSet<int>? rs))
             {
-                rs = new HashSet<int>();
+                rs = [];
                 locationsByPage[dp] = rs;
             }
 
@@ -6451,7 +6452,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // rebuilt parent. Dropped complex columns get their flat child + catalog row
         // removed surgically; renamed complex columns get their MSysComplexColumns row
         // rewritten with the new ColumnName.
-        Dictionary<int, ColumnDefinition> newComplexById = new Dictionary<int, ColumnDefinition>();
+        Dictionary<int, ColumnDefinition> newComplexById = [];
         foreach (ColumnDefinition c in newDefs)
         {
             if ((c.IsAttachment || c.IsMultiValue) && c.ComplexId != 0)
@@ -7886,7 +7887,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             if (flatPagesByCol.ContainsKey(col.ColNum))
             {
-                idsByCol[col.ColNum] = new HashSet<int>();
+                idsByCol[col.ColNum] = [];
             }
         }
 
@@ -8323,7 +8324,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             if (!lookup.TryGetValue(col.Name, out HashSet<int>? ids))
             {
-                ids = new HashSet<int>();
+                ids = [];
                 lookup[col.Name] = ids;
             }
 

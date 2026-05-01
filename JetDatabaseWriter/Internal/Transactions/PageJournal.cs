@@ -25,7 +25,7 @@ using JetDatabaseWriter.Exceptions;
 /// </remarks>
 internal sealed class PageJournal
 {
-    private readonly Dictionary<long, byte[]> _pages = new();
+    private readonly Dictionary<long, byte[]> _pages = [];
     private readonly long _baseFileLengthBytes;
     private readonly int _pageSize;
     private readonly int _maxPages;

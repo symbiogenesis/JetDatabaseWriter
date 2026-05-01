@@ -119,7 +119,7 @@ public sealed class IndexNumericKeyIncrementalTests
 
         // Round-trip verification.
         await using var reader = await OpenReaderAsync(stream);
-        List<object[]> rows = new();
+        List<object[]> rows = [];
         await foreach (object[] row in reader.Rows("T", cancellationToken: ct))
         {
             rows.Add(row);

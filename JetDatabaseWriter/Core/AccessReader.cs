@@ -922,10 +922,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         // Section walk mirrors AccessBase.ReadTableDefAsync and FormatProbe.
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
-        int namesStart = colStart + (numCols * _colDescSz);
 
         // Walk column-name length-prefix block to find where it ends.
-        int pos = namesStart;
+        int pos = colStart + (numCols * _colDescSz);
         for (int i = 0; i < numCols; i++)
         {
             if (ReadColumnName(td, ref pos, out _) < 0)
