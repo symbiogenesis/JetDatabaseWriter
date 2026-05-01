@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Core;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Internal.Transactions;
 
 /// <summary>
@@ -23,7 +24,7 @@ using JetDatabaseWriter.Internal.Transactions;
 /// <para>
 /// The journal grows in process memory at <c>PageSize</c> bytes per dirty page.
 /// <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> caps the journal;
-/// exceeding the cap throws <see cref="JetDatabaseWriter.Exceptions.JetLimitationException"/>
+/// exceeding the cap throws <see cref="JetLimitationException"/>
 /// from the next page write, and the transaction is automatically rolled back.
 /// </para>
 /// </remarks>

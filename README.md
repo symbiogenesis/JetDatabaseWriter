@@ -7,10 +7,39 @@
 
 Pure-managed .NET library for reading and writing Microsoft Access JET databases — no OleDB, ODBC, or ACE/Jet driver installation required.
 
----
 
 ## Features
 
+
+---
+
+## Transactions
+
+`AccessWriter` supports explicit transactions for atomic multi-row/page operations. All page mutations are buffered in memory until committed or rolled back.
+
+```csharp
+await using var writer = await AccessWriter.OpenAsync("database.mdb");
+
+// Transaction with commit/rollback
+await using (var tx = await writer.BeginTransactionAsync())
+{
+    try
+    {
+        await writer.InsertRowAsync("Contacts", new object[] { 7, "Grace", "grace@example.com", 90.0m });
+        await writer.UpdateRowsAsync("Contacts", "ContactID", 2, new Dictionary<string, object> { ["Score"] = 93.5m });
+        await tx.CommitAsync(); // Writes all changes atomically
+    }
+    catch
+    {
+        await tx.RollbackAsync(); // Discards all changes if an error occurs
+        throw;
+    }
+}
+```
+
+If you do not call `CommitAsync`, the transaction is rolled back automatically when disposed.
+
+---
 | | |
 |---|---|
 | ✅ **Pure managed .NET** | No OleDB, ODBC, or ACE/Jet driver — runs anywhere .NET runs |
