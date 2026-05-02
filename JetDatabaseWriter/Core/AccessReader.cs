@@ -936,10 +936,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             numRealIdx = 0;
         }
 
-        bool jet4 = _format != DatabaseFormat.Jet3Mdb;
-        int realIdxPhysSz = jet4 ? Constants.TableDefinition.Jet4.RealIdx.PhysSize : Constants.TableDefinition.Jet3.RealIdx.PhysSize;
-        int logIdxEntrySz = jet4 ? Constants.TableDefinition.Jet4.LogicalIdx.EntrySize : Constants.TableDefinition.Jet3.LogicalIdx.EntrySize;
-
         // Section walk mirrors AccessBase.ReadTableDefAsync and FormatProbe.
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
 
@@ -954,8 +950,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         int realIdxDescStart = pos;
-        int logicalIdxStart = realIdxDescStart + (numRealIdx * realIdxPhysSz);
-        int logicalIdxNamesStart = logicalIdxStart + (numIdx * logIdxEntrySz);
+        var (_, logicalIdxStart, logicalIdxNamesStart) = _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
 
         if (logicalIdxNamesStart > td.Length)
         {
@@ -987,93 +982,30 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var result = new List<IndexMetadata>(numIdx);
         for (int i = 0; i < numIdx; i++)
         {
-            int entryStart = logicalIdxStart + (i * logIdxEntrySz);
-            if (entryStart + logIdxEntrySz > td.Length)
+            if (!_indexLayout.TryReadLogicalEntry(td, logicalIdxStart, i, out IndexLayout.LogicalIdxEntry entry))
             {
                 break;
             }
 
-            int indexNum = jet4
-                ? Ri32(td, entryStart + Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset)
-                : Ri32(td, entryStart + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset);
-            int realIdxNum = jet4
-                ? Ri32(td, entryStart + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset)
-                : Ri32(td, entryStart + Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset);
-            int relIdxNum = jet4
-                ? Ri32(td, entryStart + Constants.TableDefinition.Jet4.LogicalIdx.RelIdxNumOffset)
-                : Ri32(td, entryStart + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset);
-            int relTblPage = jet4
-                ? Ri32(td, entryStart + Constants.TableDefinition.Jet4.LogicalIdx.RelTblPageOffset)
-                : Ri32(td, entryStart + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset);
-            byte cascadeUps = jet4
-                ? td[entryStart + Constants.TableDefinition.Jet4.LogicalIdx.CascadeUpsOffset]
-                : td[entryStart + Constants.TableDefinition.Jet3.LogicalIdx.CascadeUpsOffset];
-            byte cascadeDels = jet4
-                ? td[entryStart + Constants.TableDefinition.Jet4.LogicalIdx.CascadeDelsOffset]
-                : td[entryStart + Constants.TableDefinition.Jet3.LogicalIdx.CascadeDelsOffset];
-            byte indexType = jet4
-                ? td[entryStart + Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset]
-                : td[entryStart + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset];
+            var (_, indexNum, realIdxNum, relIdxNum, relTblPage, cascadeUps, cascadeDels, indexType) = entry;
 
             // Read the col_map for the backing real-idx entry to recover key columns.
             var keyColumns = new List<IndexColumnReference>();
             byte flags = 0x00;
-            if (numRealIdx > 0 && realIdxNum >= 0 && realIdxNum < numRealIdx)
+            if (numRealIdx > 0 && realIdxNum >= 0 && realIdxNum < numRealIdx
+                && _indexLayout.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, realIdxNum, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn> kcs))
             {
-                int physStart = realIdxDescStart + (realIdxNum * realIdxPhysSz);
-                if (physStart + realIdxPhysSz <= td.Length)
+                foreach ((int cn, bool ascending) in kcs)
                 {
-                    if (jet4)
+                    keyColumns.Add(new IndexColumnReference
                     {
-                        // 10 col_map slots: each {col_num(2), col_order(1)}.
-                        for (int slot = 0; slot < 10; slot++)
-                        {
-                            int so = physStart + 4 + (slot * 3);
-                            int cn = Ru16(td, so);
-                            byte order = td[so + 2];
-                            if (cn == 0xFFFF)
-                            {
-                                continue;
-                            }
-
-                            keyColumns.Add(new IndexColumnReference
-                            {
-                                Name = colNumToName.TryGetValue(cn, out string? n) ? n : string.Empty,
-                                ColumnNumber = cn,
-                                IsAscending = order == 0x01,
-                            });
-                        }
-
-                        flags = td[physStart + Constants.TableDefinition.Jet4.RealIdx.FlagsOffset];
-                    }
-                    else
-                    {
-                        // Jet3 layout: HACKING.md is incomplete; emit a best-effort col_map walk
-                        // limited to the documented 10-slot block at offset 4 (still 3 bytes/slot).
-                        for (int slot = 0; slot < 10; slot++)
-                        {
-                            int so = physStart + 4 + (slot * 3);
-                            if (so + 3 > physStart + realIdxPhysSz)
-                            {
-                                break;
-                            }
-
-                            int cn = Ru16(td, so);
-                            byte order = td[so + 2];
-                            if (cn == 0xFFFF)
-                            {
-                                continue;
-                            }
-
-                            keyColumns.Add(new IndexColumnReference
-                            {
-                                Name = colNumToName.TryGetValue(cn, out string? n) ? n : string.Empty,
-                                ColumnNumber = cn,
-                                IsAscending = order == 0x01,
-                            });
-                        }
-                    }
+                        Name = colNumToName.TryGetValue(cn, out string? n) ? n : string.Empty,
+                        ColumnNumber = cn,
+                        IsAscending = ascending,
+                    });
                 }
+
+                flags = slot.Flags;
             }
 
             IndexKind kind = indexType switch

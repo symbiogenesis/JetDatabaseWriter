@@ -531,6 +531,26 @@ internal static class Constants
         /// </summary>
         public const int RowCountOffset = 16;
 
+        /// <summary>
+        /// Size in bytes of one <c>col_map</c> slot within a real-idx physical
+        /// descriptor: <c>{col_num(2), col_order(1)}</c>. Format-invariant
+        /// across Jet3 and Jet4/ACE.
+        /// </summary>
+        public const int ColMapSlotSize = 3;
+
+        /// <summary>
+        /// Number of <c>col_map</c> slots in a real-idx physical descriptor
+        /// (always 10). Format-invariant across Jet3 and Jet4/ACE.
+        /// </summary>
+        public const int ColMapSlotCount = 10;
+
+        /// <summary>
+        /// Sentinel <c>col_num</c> value marking an unused <c>col_map</c> slot
+        /// within a real-idx physical descriptor. Format-invariant across Jet3
+        /// and Jet4/ACE.
+        /// </summary>
+        public const ushort ColMapPaddingSlot = 0xFFFF;
+
         /// <summary>Jet3 (.mdb, Access 97) TDEF index-section sizes per HACKING.md.</summary>
         public static class Jet3
         {

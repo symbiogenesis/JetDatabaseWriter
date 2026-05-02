@@ -49,6 +49,14 @@ public abstract class AccessBase : IAccessBase
     // Per-real-index entry size (skipped during column parsing)
     private protected readonly int _realIdxEntrySz;
 
+    /// <summary>
+    /// Per-format byte offsets and entry sizes for the TDEF page's real-idx
+    /// physical descriptor (§3.1) and logical-idx entry (§3.2) sections.
+    /// Populated once at construction so reader/writer call sites do not need
+    /// to inline `jet3 ? ... : ...` ternaries on every access.
+    /// </summary>
+    private protected readonly IndexLayout _indexLayout;
+
     // Row field sizes (differ between Jet3 and Jet4)
     private protected readonly int _numColsFldSz;  // 1 or 2
     private protected readonly int _varEntrySz;    // 1 or 2  (var_table entry)
@@ -212,6 +220,8 @@ public abstract class AccessBase : IAccessBase
             _eodFldSz = 1;
             _varLenFldSz = 1;
         }
+
+        _indexLayout = IndexLayout.For(_format);
     }
 
     /// <inheritdoc/>

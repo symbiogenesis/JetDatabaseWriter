@@ -3404,7 +3404,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// Returns false if any column cannot be resolved.
     /// </summary>
     private static bool TryResolveKeyColumnInfos(
-        IReadOnlyList<IndexKeyColumn> indexKeyColumns,
+        IReadOnlyList<IndexLayout.KeyColumn> indexKeyColumns,
         List<ColumnInfo> tableColumns,
         Dictionary<int, int> snapshotIndexByColNum,
         out List<KeyColumnInfo> keyColInfos)
@@ -6497,8 +6497,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // One real-idx slot per logical-idx (no sharing). See
         // docs/design/index-and-relationship-format-notes.md §3.3.
         int numRealIdx = numIdx;
-        int realIdxPhysSz = jet4 ? Constants.TableDefinition.Jet4.RealIdx.PhysSize : Constants.TableDefinition.Jet3.RealIdx.PhysSize;
-        int logIdxEntrySz = jet4 ? Constants.TableDefinition.Jet4.LogicalIdx.EntrySize : Constants.TableDefinition.Jet3.LogicalIdx.EntrySize;
 
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
         int namePos = colStart + (numCols * _colDescSz);
@@ -6591,8 +6589,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (numIdx > 0)
         {
             int realIdxPhysStart = namePos;
-            int logIdxStart = realIdxPhysStart + (numRealIdx * realIdxPhysSz);
-            int logIdxNameStart = logIdxStart + (numIdx * logIdxEntrySz);
+            var (_, logIdxStart, logIdxNameStart) = _indexLayout.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
 
             // Bound check (logical-index name byte count is variable; account for it below).
             int totalIdxBytesLowerBound = logIdxNameStart - realIdxPhysStart;
@@ -6600,18 +6597,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             {
                 throw new NotSupportedException("Table definition (with indexes) does not fit within a single TDEF page.");
             }
-
-            // Per-format field offsets within the real-idx physical descriptor
-            // and logical-idx entry. The Jet3 layouts (39 / 20 bytes) drop the
-            // Jet4 leading 4-byte cookie + trailing tail, so every field shifts
-            // left by 4 bytes; first_dp lives where Jet4 puts used_pages and
-            // there is no separate used_pages slot. See §3.1 / §3.2.
-            int physFirstDpOff = jet4 ? Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset : Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset;
-            int physFlagsOff = jet4 ? Constants.TableDefinition.Jet4.RealIdx.FlagsOffset : Constants.TableDefinition.Jet3.RealIdx.FlagsOffset;
-            int logIndexNumOff = jet4 ? Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset : Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset;
-            int logIndexNum2Off = jet4 ? Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset : Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset;
-            int logRelIdxNumOff = jet4 ? Constants.TableDefinition.Jet4.LogicalIdx.RelIdxNumOffset : Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset;
-            int logIndexTypeOff = jet4 ? Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset : Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset;
 
             for (int i = 0; i < numIdx; i++)
             {
@@ -6622,14 +6607,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 //                     + first_dp(4) + flags(1) + unknown(9).
                 // §3.1 Jet3 (39 bytes): unknown(4) + col_map(30) + first_dp(4)
                 //                     + flags(1).
-                int phys = realIdxPhysStart + (i * realIdxPhysSz);
+                int phys = _indexLayout.RealIdxPhysOffset(realIdxPhysStart, i);
 
                 // col_map: 10 × { col_num(2), col_order(1) }. First N slots = our
                 // key columns (per-column ascending/descending), remaining
                 // slots filled with 0xFFFF.
-                for (int slot = 0; slot < 10; slot++)
+                for (int slot = 0; slot < IndexLayout.ColMapSlotCount; slot++)
                 {
-                    int so = phys + 4 + (slot * 3);
+                    int so = IndexLayout.ColMapSlotOffset(phys, slot);
                     if (slot < ri.ColumnNumbers.Count)
                     {
                         Wu16(page, so, ri.ColumnNumbers[slot]);
@@ -6640,7 +6625,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     }
                     else
                     {
-                        Wu16(page, so, 0xFFFF);
+                        Wu16(page, so, IndexLayout.ColMapPaddingSlot);
                         page[so + 2] = 0x00;
                     }
                 }
@@ -6652,23 +6637,23 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // indexes set flags bit 0x01 explicitly.
                 if (ri.IsUnique && !ri.IsPrimaryKey)
                 {
-                    page[phys + physFlagsOff] = 0x01;
+                    page[_indexLayout.FlagsAbsoluteOffset(phys)] = 0x01;
                 }
 
-                firstDpOffsets[i] = phys + physFirstDpOff;
+                firstDpOffsets[i] = _indexLayout.FirstDpAbsoluteOffset(phys);
 
                 // ── Logical-index entry ─────────────────────────────────────
                 // §3.2 Jet4 (28 bytes): unknown(4) + index_num(4) + index_num2(4)
                 //   + rel_tbl_type(1) + rel_idx_num(4) + rel_tbl_page(4)
                 //   + cascade_ups(1) + cascade_dels(1) + index_type(1) + trailing(4).
                 // §3.2 Jet3 (20 bytes): same fields, no leading cookie / trailing tail.
-                int log = logIdxStart + (i * logIdxEntrySz);
-                Wi32(page, log + logIndexNumOff, i);                  // index_num
-                Wi32(page, log + logIndexNum2Off, i);                 // index_num2 (one real per logical)
-                Wi32(page, log + logRelIdxNumOff, -1);                // rel_idx_num = 0xFFFFFFFF (not a FK)
+                int log = _indexLayout.LogicalIdxFieldsOffset(logIdxStart, i);
+                Wi32(page, log + IndexLayout.IndexNumFieldOffset, i);     // index_num
+                Wi32(page, log + IndexLayout.IndexNum2FieldOffset, i);    // index_num2 (one real per logical)
+                Wi32(page, log + IndexLayout.RelIdxNumFieldOffset, -1);   // rel_idx_num = 0xFFFFFFFF (not a FK)
 
                 // index_type: 0x01 for PK, 0x00 for normal. FK uses 0x02.
-                page[log + logIndexTypeOff] = (byte)(ri.IsPrimaryKey ? IndexKind.PrimaryKey : IndexKind.Normal);
+                page[log + IndexLayout.IndexTypeFieldOffset] = (byte)(ri.IsPrimaryKey ? IndexKind.PrimaryKey : IndexKind.Normal);
             }
 
             // Logical-index names — same length-prefix encoding as column names.
@@ -8570,10 +8555,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private async ValueTask<bool> SystemTableHasMaintainableIndexesAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        bool jet3 = _format == DatabaseFormat.Jet3Mdb;
-        int realIdxPhysSz = jet3 ? Constants.TableDefinition.Jet3.RealIdx.PhysSize : Constants.TableDefinition.Jet4.RealIdx.PhysSize;
-        int physFirstDpOff = jet3 ? Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset : Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset;
-
         byte[] page = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
@@ -8598,13 +8579,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             long totalPages = _stream.Length / _pgSz;
             for (int ri = 0; ri < numRealIdx; ri++)
             {
-                int phys = realIdxDescStart + (ri * realIdxPhysSz);
-                if (phys + realIdxPhysSz > page.Length)
+                if (!_indexLayout.TryReadRealIdxSlot(page, realIdxDescStart, ri, out IndexLayout.RealIdxSlot slot))
                 {
                     return false;
                 }
 
-                long firstDp = (uint)Ri32(page, phys + physFirstDpOff);
+                long firstDp = (uint)Ri32(page, slot.FirstDpOffset);
                 if (firstDp <= 0 || firstDp >= totalPages)
                 {
                     return false;
@@ -9467,8 +9447,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ReturnPage(tdefPageBytes);
         }
 
-        bool jet3 = _format == DatabaseFormat.Jet3Mdb;
-        var leafLayout = IndexLeafPageBuilder.GetLayout(_format);
+        IndexLeafPageBuilder.LeafPageLayout leafLayout = IndexLeafPageBuilder.GetLayout(_format);
 
         int numCols = Ru16(tdefBuffer, _tdNumCols);
         int numIdx = Ri32(tdefBuffer, _tdNumCols + 2);
@@ -9478,13 +9457,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return;
         }
 
-        // §3.1 / §3.2 per-format sizes + offsets.
-        int realIdxPhysSz = jet3 ? Constants.TableDefinition.Jet3.RealIdx.PhysSize : Constants.TableDefinition.Jet4.RealIdx.PhysSize;
-        int logIdxEntrySz = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.EntrySize : Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
-        int physFirstDpOff = jet3 ? Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset : Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset;
-        int physFlagsOff = jet3 ? Constants.TableDefinition.Jet3.RealIdx.FlagsOffset : Constants.TableDefinition.Jet4.RealIdx.FlagsOffset;
-        int logIndexNum2Off = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset : Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset;
-        int logIndexTypeOff = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset : Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset;
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
         int namePos = colStart + (numCols * _colDescSz);
         for (int i = 0; i < numCols; i++)
@@ -9496,7 +9468,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int realIdxDescStart = namePos;
-        int logIdxStart = realIdxDescStart + (numRealIdx * realIdxPhysSz);
+        int logIdxStart = _indexLayout.LogicalIdxStart(realIdxDescStart, numRealIdx);
 
         // per-real-idx, decode every populated col_map slot to recover the
         // full (column, direction) list, the first_dp byte offset, and the unique
@@ -9505,24 +9477,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var realIdxByNum = new Dictionary<int, RealIdxEntry>();
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            int phys = realIdxDescStart + (ri * realIdxPhysSz);
-            if (phys + realIdxPhysSz > tdefBuffer.Length)
+            if (!_indexLayout.TryReadRealIdxSlotWithKeyColumns(tdefBuffer, realIdxDescStart, ri, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn> keyCols))
             {
                 break;
-            }
-
-            var keyCols = new List<IndexKeyColumn>(10);
-            for (int slot = 0; slot < 10; slot++)
-            {
-                int so = phys + 4 + (slot * 3);
-                int cn = Ru16(tdefBuffer, so);
-                if (cn == 0xFFFF)
-                {
-                    continue;
-                }
-
-                byte order = tdefBuffer[so + 2];
-                keyCols.Add(new IndexKeyColumn(cn, order != 0x02));
             }
 
             if (keyCols.Count == 0)
@@ -9530,8 +9487,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            byte flagsByte = tdefBuffer[phys + physFlagsOff];
-            realIdxByNum[ri] = new RealIdxEntry(keyCols, phys + physFirstDpOff, (flagsByte & 0x01) != 0);
+            realIdxByNum[ri] = new RealIdxEntry(keyCols, slot.FirstDpOffset, slot.IsUnique);
         }
 
         if (realIdxByNum.Count == 0)
@@ -9544,14 +9500,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // the real-idx to unique even when the flags byte is 0x00 (per §3.1).
         for (int li = 0; li < numIdx; li++)
         {
-            int entryStart = logIdxStart + (li * logIdxEntrySz);
-            if (entryStart + logIdxEntrySz > tdefBuffer.Length)
+            if (!_indexLayout.TryReadLogicalEntry(tdefBuffer, logIdxStart, li, out IndexLayout.LogicalIdxEntry entry))
             {
                 break;
             }
 
-            int realIdxNum = Ri32(tdefBuffer, entryStart + logIndexNum2Off);
-            byte indexType = tdefBuffer[entryStart + logIndexTypeOff];
+            int realIdxNum = entry.IndexNum2;
+            byte indexType = entry.IndexType;
             if (indexType == (byte)IndexKind.PrimaryKey
                 && realIdxByNum.TryGetValue(realIdxNum, out RealIdxEntry rie))
             {
@@ -9740,7 +9695,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // calls fork on `jet3`. Same disposal model as Jet4 — old leaf /
         // intermediate pages are orphaned and reclaimed by Access on
         // Compact & Repair.
-        bool jet3 = _format == DatabaseFormat.Jet3Mdb;
+        IndexLayout idxLayout = _indexLayout;
         var layout = IndexLeafPageBuilder.GetLayout(_format);
 
         int addCount = insertedRows?.Count ?? 0;
@@ -9778,10 +9733,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // §3.1 per-format real-idx physical descriptor sizes.
         // Jet4/ACE: 52 bytes — unknown(4) + col_map(30) + used_pages(4) + first_dp(4) + flags(1) + unknown(9).
         // Jet3:     39 bytes — unknown(4) + col_map(30) + first_dp(4) + flags(1) — no used_pages slot.
-        int realIdxPhysSz = jet3 ? Constants.TableDefinition.Jet3.RealIdx.PhysSize : Constants.TableDefinition.Jet4.RealIdx.PhysSize;
-        int physFirstDpOff = jet3 ? Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset : Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset;
-        int logIdxEntrySz = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.EntrySize : Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
-        int logIndexTypeOff = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset : Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset;
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
         int namePos = colStart + (numCols * _colDescSz);
         for (int i = 0; i < numCols; i++)
@@ -9794,7 +9745,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int realIdxDescStart = namePos;
-        int logIdxStart = realIdxDescStart + (numRealIdx * realIdxPhysSz);
+        int logIdxStart = idxLayout.LogicalIdxStart(realIdxDescStart, numRealIdx);
 
         // Access Compact & Repair has rejected incrementally maintained
         // relationship-backed indexes in probe validation; keep those tables
@@ -9802,14 +9753,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // against Access-authored repair output.
         for (int li = 0; li < numIdx; li++)
         {
-            int entryStart = logIdxStart + (li * logIdxEntrySz);
-            if (entryStart + logIdxEntrySz > tdefBuffer.Length)
+            if (!idxLayout.TryReadLogicalEntry(tdefBuffer, logIdxStart, li, out IndexLayout.LogicalIdxEntry entry))
             {
-                _lastIncrementalBail = $"C1b li={li} entryStart={entryStart} bufLen={tdefBuffer.Length}";
+                _lastIncrementalBail = $"C1b li={li} logIdxStart={logIdxStart} bufLen={tdefBuffer.Length}";
                 return false;
             }
 
-            if (tdefBuffer[entryStart + logIndexTypeOff] == (byte)IndexKind.ForeignKey)
+            if (entry.IndexType == (byte)IndexKind.ForeignKey)
             {
                 _lastIncrementalBail = "C1c foreign-key logical index present";
                 return false;
@@ -9820,25 +9770,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var slots = new List<RealIdxEntry>(numRealIdx);
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            int phys = realIdxDescStart + (ri * realIdxPhysSz);
-            if (phys + realIdxPhysSz > tdefBuffer.Length)
+            if (!idxLayout.TryReadRealIdxSlotWithKeyColumns(tdefBuffer, realIdxDescStart, ri, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn> keyCols))
             {
-                _lastIncrementalBail = $"C1 ri={ri} phys={phys} bufLen={tdefBuffer.Length}";
+                _lastIncrementalBail = $"C1 ri={ri} realIdxDescStart={realIdxDescStart} bufLen={tdefBuffer.Length}";
                 return false;
-            }
-
-            var keyCols = new List<IndexKeyColumn>(10);
-            for (int slot = 0; slot < 10; slot++)
-            {
-                int so = phys + 4 + (slot * 3);
-                int cn = Ru16(tdefBuffer, so);
-                if (cn == 0xFFFF)
-                {
-                    continue;
-                }
-
-                byte order = tdefBuffer[so + 2];
-                keyCols.Add(new(cn, order != 0x02));
             }
 
             if (keyCols.Count == 0)
@@ -9846,7 +9781,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            slots.Add(new RealIdxEntry(keyCols, phys + physFirstDpOff, IsUnique: false));
+            slots.Add(new RealIdxEntry(keyCols, slot.FirstDpOffset, IsUnique: false));
         }
 
         if (slots.Count == 0)
@@ -11959,11 +11894,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return results;
     }
 
-    private record struct IndexKeyColumn(int ColNum, bool Ascending);
-
     private record struct KeyColumnInfo(ColumnInfo Col, int SnapIdx, bool Ascending);
 
-    private record struct RealIdxEntry(IReadOnlyList<IndexKeyColumn> IndexKeyColumns, int FirstDpOffset, bool IsUnique);
+    private record struct RealIdxEntry(IReadOnlyList<IndexLayout.KeyColumn> IndexKeyColumns, int FirstDpOffset, bool IsUnique);
 
     private record struct UniqueIndexDescriptor(int RealIdxNum, string Name, IReadOnlyList<KeyColumnInfo> KeyColumns);
 
@@ -12409,14 +12342,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         var result = new List<UniqueIndexDescriptor>();
 
-        // §3.1 / §3.2 per-format sizes + offsets.
-        bool jet3 = _format == DatabaseFormat.Jet3Mdb;
-        int realIdxPhysSz = jet3 ? Constants.TableDefinition.Jet3.RealIdx.PhysSize : Constants.TableDefinition.Jet4.RealIdx.PhysSize;
-        int logIdxEntrySz = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.EntrySize : Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
-        int physFlagsOff = jet3 ? Constants.TableDefinition.Jet3.RealIdx.FlagsOffset : Constants.TableDefinition.Jet4.RealIdx.FlagsOffset;
-        int logIndexNum2Off = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset : Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset;
-        int logIndexTypeOff = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset : Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset;
-
         byte[] tdefPageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] tdefBuffer;
         try
@@ -12447,7 +12372,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int realIdxDescStart = namePos;
-        int logIdxStart = realIdxDescStart + (numRealIdx * realIdxPhysSz);
+        var (_, logIdxStart, logIdxNamesStart) = _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
 
         // Decode every real-idx slot's key columns + flag bit. Reuses the
         // RealIdxEntry shape from MaintainIndexesAsync; FirstDpOffset is
@@ -12456,24 +12381,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var realIdxSlots = new Dictionary<int, RealIdxEntry>();
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            int phys = realIdxDescStart + (ri * realIdxPhysSz);
-            if (phys + realIdxPhysSz > tdefBuffer.Length)
+            if (!_indexLayout.TryReadRealIdxSlotWithKeyColumns(tdefBuffer, realIdxDescStart, ri, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn> keyCols))
             {
                 break;
-            }
-
-            var keyCols = new List<IndexKeyColumn>(10);
-            for (int slot = 0; slot < 10; slot++)
-            {
-                int so = phys + 4 + (slot * 3);
-                int cn = Ru16(tdefBuffer, so);
-                if (cn == 0xFFFF)
-                {
-                    continue;
-                }
-
-                byte order = tdefBuffer[so + 2];
-                keyCols.Add(new(cn, order != 0x02));
             }
 
             if (keyCols.Count == 0)
@@ -12481,27 +12391,25 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            realIdxSlots[ri] = new RealIdxEntry(keyCols, FirstDpOffset: 0, IsUnique: (tdefBuffer[phys + physFlagsOff] & 0x01) != 0);
+            realIdxSlots[ri] = new RealIdxEntry(keyCols, FirstDpOffset: 0, IsUnique: slot.IsUnique);
         }
 
         // Walk the logical-idx entries to (a) promote any real-idx that backs a
         // PK logical-idx to unique, and (b) capture a best-effort name for each
         // unique real-idx (first logical-idx referencing it wins).
-        int logIdxNamesStart = logIdxStart + (numIdx * logIdxEntrySz);
         List<string> logIdxNames = ReadLogicalIdxNames(tdefBuffer, logIdxNamesStart, numIdx);
 
         var pkRealIdxNums = new HashSet<int>();
         var nameByRealIdx = new Dictionary<int, string>();
         for (int li = 0; li < numIdx; li++)
         {
-            int entryStart = logIdxStart + (li * logIdxEntrySz);
-            if (entryStart + logIdxEntrySz > tdefBuffer.Length)
+            if (!_indexLayout.TryReadLogicalEntry(tdefBuffer, logIdxStart, li, out IndexLayout.LogicalIdxEntry entry))
             {
                 break;
             }
 
-            int realIdxNum = Ri32(tdefBuffer, entryStart + logIndexNum2Off);
-            byte indexType = tdefBuffer[entryStart + logIndexTypeOff];
+            int realIdxNum = entry.IndexNum2;
+            byte indexType = entry.IndexType;
             if (indexType == (byte)IndexKind.PrimaryKey)
             {
                 pkRealIdxNums.Add(realIdxNum);
