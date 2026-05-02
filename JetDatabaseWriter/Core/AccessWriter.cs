@@ -9452,9 +9452,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             bool hasVarColumns = false;
-            for (int i = 0; i < tableDef.Columns.Count; i++)
+            foreach (var column in tableDef.Columns)
             {
-                if (!tableDef.Columns[i].IsFixed)
+                if (!column.IsFixed)
                 {
                     hasVarColumns = true;
                     break;
@@ -9489,30 +9489,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         result[i] = null;
                         break;
 
+                    // Fixed and Var share the decoder; types it can't decode (T_NUMERIC, T_MEMO/OLE/COMPLEX/ATTACHMENT)
+                    // return null and force the caller to the snapshot path.
                     case ColumnSliceKind.Fixed:
-                        {
-                            object? v = TryDecodeFixedTyped(pageBytes, loc.RowStart + slice.DataStart, col.Type, slice.DataLen);
-                            if (v == null && col.Type != T_BOOL)
-                            {
-                                return null;
-                            }
-
-                            result[i] = v;
-                        }
-
-                        break;
-
                     case ColumnSliceKind.Var:
+                        result[i] = TryDecodeColumnSlice(pageBytes, loc.RowStart + slice.DataStart, col.Type, slice.DataLen);
+                        if (result[i] is null)
                         {
-                            object? v = TryDecodeVarInlineTyped(pageBytes, loc.RowStart + slice.DataStart, col.Type, slice.DataLen);
-                            if (v == null)
-                            {
-                                // T_MEMO / T_OLE / T_COMPLEX / T_ATTACHMENT
-                                // — caller falls back to snapshot path.
-                                return null;
-                            }
-
-                            result[i] = v;
+                            return null;
                         }
 
                         break;
@@ -9531,79 +9515,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <summary>
-    /// Decodes a fixed-area slice into the canonical CLR object the
-    /// public InsertRow API accepts back. Returns <see langword="null"/>
-    /// only on unsupported / malformed types — callers treat that as
-    /// "fall back to snapshot path".
+    /// Decodes a fixed-area or var-inline column slice into the canonical
+    /// CLR object the public InsertRow API accepts back. Returns
+    /// <see langword="null"/> on unsupported / malformed types so callers
+    /// fall back to the snapshot path. T_NUMERIC always returns null here
+    /// (canonical-scale resolution requires column metadata); T_MEMO / T_OLE /
+    /// T_COMPLEX / T_ATTACHMENT also return null since they require LVAL
+    /// chain traversal.
     /// </summary>
-    private static object? TryDecodeFixedTyped(byte[] page, int start, byte type, int size)
-    {
-        switch (type)
-        {
-            case T_BYTE:
-                return size >= 1 ? page[start] : null;
-            case T_INT:
-                return size >= 2 ? BinaryPrimitives.ReadInt16LittleEndian(page.AsSpan(start, 2)) : null;
-            case T_LONG:
-                return size >= 4 ? BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4)) : null;
-            case T_FLOAT:
-                return size >= 4 ? ReadSingleLittleEndian(page.AsSpan(start, 4)) : null;
-            case T_DOUBLE:
-                return size >= 8 ? ReadDoubleLittleEndian(page.AsSpan(start, 8)) : null;
-            case T_DATETIME:
-                if (size < 8)
-                {
-                    return null;
-                }
-
-                double oa = ReadDoubleLittleEndian(page.AsSpan(start, 8));
-                try
-                {
-                    return DateTime.FromOADate(oa);
-                }
-                catch (ArgumentException)
-                {
-                    return null;
-                }
-
-            case T_MONEY:
-                if (size < 8)
-                {
-                    return null;
-                }
-
-                long raw = BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8));
-                return raw / 10000m;
-
-            case T_GUID:
-                if (size < 16)
-                {
-                    return null;
-                }
-
-                byte[] g = new byte[16];
-                Buffer.BlockCopy(page, start, g, 0, 16);
-                return new Guid(g);
-
-            case T_NUMERIC:
-                // 17-byte scaled decimal (1 sign byte + 16 magnitude bytes).
-                // Cascade enforcement on T_NUMERIC keys is rare but handle it
-                // for completeness; signal failure on malformed bytes so the
-                // caller falls back to the snapshot path rather than emit a
-                // bad value.
-                if (size < 17)
-                {
-                    return null;
-                }
-
-                return null; // canonical-scale resolution requires column metadata; defer to snapshot
-
-            default:
-                return null;
-        }
-    }
-
-    private object? TryDecodeVarInlineTyped(byte[] page, int start, byte type, int size)
+    private object? TryDecodeColumnSlice(byte[] page, int start, byte type, int size)
     {
         if (size <= 0)
         {
@@ -9612,17 +9532,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         switch (type)
         {
-            case T_TEXT:
-                return _format != DatabaseFormat.Jet3Mdb
-                    ? DecodeJet4Text(page, start, size)
-                    : _ansiEncoding.GetString(page, start, size);
-
-            case T_BINARY:
-                byte[] b = new byte[size];
-                Buffer.BlockCopy(page, start, b, 0, size);
-                return b;
             case T_BYTE:
-                return size >= 1 ? page[start] : null;
+                return page[start];
             case T_INT:
                 return size >= 2 ? BinaryPrimitives.ReadInt16LittleEndian(page.AsSpan(start, 2)) : null;
             case T_LONG:
@@ -9631,38 +9542,39 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return size >= 4 ? ReadSingleLittleEndian(page.AsSpan(start, 4)) : null;
             case T_DOUBLE:
                 return size >= 8 ? ReadDoubleLittleEndian(page.AsSpan(start, 8)) : null;
+            case T_MONEY:
+                return size >= 8 ? BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8)) / 10000m : null;
+
             case T_DATETIME:
                 if (size < 8)
                 {
                     return null;
                 }
 
-                double oa = ReadDoubleLittleEndian(page.AsSpan(start, 8));
                 try
                 {
-                    return DateTime.FromOADate(oa);
+                    return DateTime.FromOADate(ReadDoubleLittleEndian(page.AsSpan(start, 8)));
                 }
                 catch (ArgumentException)
                 {
                     return null;
                 }
 
-            case T_MONEY:
-                if (size < 8)
-                {
-                    return null;
-                }
-
-                return BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8)) / 10000m;
             case T_GUID:
                 if (size < 16)
                 {
                     return null;
                 }
 
-                byte[] g = new byte[16];
-                Buffer.BlockCopy(page, start, g, 0, 16);
-                return new Guid(g);
+                return new Guid(page.AsSpan(start, 16));
+
+            case T_TEXT:
+                return _format != DatabaseFormat.Jet3Mdb
+                    ? DecodeJet4Text(page, start, size)
+                    : _ansiEncoding.GetString(page, start, size);
+
+            case T_BINARY:
+                return page.AsSpan(start, size).ToArray();
 
             // T_MEMO / T_OLE / T_COMPLEX / T_ATTACHMENT / T_NUMERIC — not
             // index-keyable in any case, fall back to snapshot.
