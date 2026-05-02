@@ -482,12 +482,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         cancellationToken.ThrowIfCancellationRequested();
 
         List<ColumnMetadata> meta = await GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var fallbackHeaders = meta.ConvertAll(m => m.Name);
-        var index = RowMapper<T>.BuildIndex(fallbackHeaders);
-
+        var factory = RowMapper<T>.Build(meta);
         await foreach (object[] row in Rows(tableName, progress, cancellationToken).ConfigureAwait(false))
         {
-            yield return RowMapper<T>.Map(row, index);
+            yield return factory(row);
         }
     }
 
@@ -1269,10 +1267,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             if (canUseDirectMap && projectedColumns.Count == resolvedHeaders.Count)
             {
+                var fullFactory = RowMapper<T>.Build(resolved.Value.Td);
                 return await ReadMappedTableAsync(
                     resolved.Value.Entry.TDefPage,
                     resolved.Value.Td,
-                    fullIndex,
+                    fullFactory,
                     maxRows,
                     cancellationToken).ConfigureAwait(false);
             }
@@ -1292,14 +1291,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         List<ColumnMetadata> meta = await GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var headers = meta.ConvertAll(m => m.Name);
-        var index = RowMapper<T>.BuildIndex(headers);
+        var factoryFallback = RowMapper<T>.Build(meta);
         var items = new List<T>();
         int count = 0;
 
         await foreach (object[] row in Rows(tableName, cancellationToken: cancellationToken).ConfigureAwait(false))
         {
-            items.Add(RowMapper<T>.Map(row, index));
+            items.Add(factoryFallback(row));
             count++;
             if (maxRows.HasValue && count >= maxRows.Value)
             {
@@ -1313,7 +1311,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private async ValueTask<List<T>> ReadMappedTableAsync<T>(
         long tdefPage,
         TableDef td,
-        RowMapper<T>.Accessor?[] index,
+        Func<object?[], T> factory,
         uint? maxRows,
         CancellationToken cancellationToken)
         where T : class, new()
@@ -1351,7 +1349,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                items.Add(RowMapper<T>.Map(row, index));
+                items.Add(factory(row));
                 if (maxRows.HasValue && items.Count >= maxRows.Value)
                 {
                     return items;
@@ -1372,12 +1370,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         where T : class, new()
     {
         var headers = new string[projectedColumns.Count];
+        var projectedSourceTypes = new Type[projectedColumns.Count];
         for (int i = 0; i < projectedColumns.Count; i++)
         {
             headers[i] = projectedColumns[i].Name;
+            projectedSourceTypes[i] = JetTypeInfo.ResolveClrType(projectedColumns[i].Column);
         }
 
-        var index = RowMapper<T>.BuildIndex(headers);
+        var factory = RowMapper<T>.Build(headers, projectedSourceTypes);
         var items = new List<T>();
         bool hasVarCols = false;
         for (int i = 0; i < td.Columns.Count; i++)
@@ -1412,7 +1412,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                items.Add(RowMapper<T>.Map(projectedRow, index));
+                items.Add(factory(projectedRow));
                 if (maxRows.HasValue && items.Count >= maxRows.Value)
                 {
                     return items;

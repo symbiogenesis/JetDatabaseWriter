@@ -2,14 +2,16 @@ namespace JetDatabaseWriter.Benchmarks;
 
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Internal.Models;
 
 [MemoryDiagnoser]
 public class RowMapperBenchmarks
 {
     private RowMapper<SampleEntity>.Accessor?[] _index = null!;
     private object[] _row = null!;
-    private SampleEntity _entity = null!;
     private string[] _headers = null!;
+    private TableDef _tableDef = null!;
+    private SampleEntity _entity = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -17,6 +19,17 @@ public class RowMapperBenchmarks
         _headers = ["Id", "Name", "Value", "Description", "IsActive"];
         _index = RowMapper<SampleEntity>.BuildIndex(_headers);
         _row = [42, "TestName", 3.14, "A description", true];
+        _tableDef = new TableDef
+        {
+            Columns =
+            [
+                new ColumnInfo { Name = "Id" },
+                new ColumnInfo { Name = "Name" },
+                new ColumnInfo { Name = "Value" },
+                new ColumnInfo { Name = "Description" },
+                new ColumnInfo { Name = "IsActive" },
+            ],
+        };
         _entity = new SampleEntity
         {
             Id = 42,
@@ -34,7 +47,7 @@ public class RowMapperBenchmarks
     public SampleEntity Map() => RowMapper<SampleEntity>.Map(_row, _index);
 
     [Benchmark]
-    public object[] ToRow() => RowMapper<SampleEntity>.ToRow(_entity, _index);
+    public object[] ToRow() => RowMapper<SampleEntity>.ToRow(_tableDef, _entity);
 
     [Benchmark]
     public SampleEntity MapWithConversion()
