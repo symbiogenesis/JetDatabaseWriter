@@ -2708,21 +2708,37 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // WrapHyperlinkColumns) gated by the per-table HasComplexColumns /
     // HasHyperlinkColumns flags.
 
-    private async ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
+    private ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
         if (!TryCrackRowSync(page, rowStart, rowSize, td, out object?[]? row, out bool needsLongValue))
         {
-            return null;
+            return new ValueTask<object?[]?>((object?[]?)null);
         }
 
+        // Fast path: no T_MEMO/T_OLE LVAL chain walk needed — return a
+        // sync-completed ValueTask so the caller never builds an async
+        // state machine for fixed-only / inline-only rows (Phase 4 of
+        // typed-row-read-perf-plan).
         if (!needsLongValue)
         {
-            return row;
+            return new ValueTask<object?[]?>(row);
         }
 
-        for (int i = 0; i < row!.Length; i++)
+        return ResolveLongValueRefsAsync(row!, page, cancellationToken);
+    }
+
+    /// <summary>
+    /// Async slow-path that walks the LVAL chain for any
+    /// <see cref="LongValueRef"/> sentinels left in <paramref name="row"/>
+    /// by <see cref="TryCrackRowSync"/>. Only invoked when at least one
+    /// such sentinel was emitted — fixed-only / inline-only rows skip this
+    /// entirely and never allocate an async state machine.
+    /// </summary>
+    private async ValueTask<object?[]?> ResolveLongValueRefsAsync(object?[] row, byte[] page, CancellationToken cancellationToken)
+    {
+        for (int i = 0; i < row.Length; i++)
         {
             if (row[i] is LongValueRef lvr)
             {

@@ -205,13 +205,45 @@ Notes:
   decoding.
 
 ### Phase 4 — Per-page enumerator (kill async-per-row overhead)
-- [ ] Replace per-row `IAsyncEnumerable<object?[]>` with per-page
+- [x] Replace per-row `IAsyncEnumerable<object?[]>` with per-page
   `ValueTask<PageRows>` returning a small struct holding the decoded
   `object?[][]` (or an `ArrayPool`-backed buffer) for that page; expose to
   callers as `IAsyncEnumerable<object?[]>` via a thin wrapper.
 - [ ] Pool the per-row `object?[]` via `ArrayPool<object?>` for internal
   consumers (e.g., `DataTable` builder, `Rows<T>()` mapper) where the array
   doesn't escape the loop iteration.
+
+#### Notes
+- Implemented as a sync-fast-path on the existing per-row entry point
+  rather than a separate per-page batching layer — same async-elimination
+  win, smaller surface change. `CrackRowTypedAsync` in
+  [AccessReader.cs](JetDatabaseWriter/Core/AccessReader.cs) is no longer
+  marked `async`; it inspects the `needsLongValue` flag returned by
+  `TryCrackRowSync` and:
+  - returns a sync-completed `ValueTask<object?[]?>` when the row has
+    no LVAL refs (the fixed-only / inline-only hot path), so the calling
+    `await` in `Rows()` / `ReadDataTableAsync` never builds an async
+    state machine for that row;
+  - hops into a new `ResolveLongValueRefsAsync` helper (still `async`)
+    when at least one `LongValueRef` sentinel was emitted.
+- The C# async-iterator state machine in `Rows()` checks
+  `awaiter.IsCompleted` on a sync-completed `ValueTask` and skips
+  suspend/resume entirely, so the per-row `await CrackRowTypedAsync(...)`
+  collapses to an inline call on the hot path.
+- `ArrayPool<object?>` pooling is intentionally **not** done. The
+  `object[]` row escapes via `yield return` in the public `Rows(string)`
+  enumerator, and `Rows<T>()` currently routes through that same
+  enumerator, so the array crosses the trust boundary and cannot be
+  safely returned to a pool. Adopting pooling would require either
+  splitting `Rows<T>()` off the public `Rows()` path (significant
+  duplication) or copying-and-returning inside `ReadDataTableAsync`
+  (which would also need a non-`Rows.Add(object[])` overload to handle
+  the pool's over-provisioned buffers). The cost/benefit didn't warrant
+  the change — leaving this bullet open for a future revisit if profiling
+  shows row-array allocation is still material after Phase 5.
+- Test result after the change: 2548/2550 pass, same two pre-existing
+  DAO Compact baseline failures noted in `/memories/repo/round-trip-tests.md`.
+  No new regressions.
 
 ### Phase 5 — RowMapper<T> fast path
 - [ ] In `RowMapper<T>.BuildIndex`, accept `Type[] sourceTypes` (the per-
