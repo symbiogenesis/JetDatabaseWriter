@@ -57,12 +57,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 {
     private readonly AsyncReentrantOperationGate _operationGate = new();
     private readonly SemaphoreSlim _ownedDataPageIndexGate = new(1, 1);
-    private readonly bool _useLockFile;
-    private readonly string? _lockFileUserName;
-    private readonly string? _lockFileMachineName;
+    private readonly LockFileCoordinator _lockFile;
     private readonly bool _strictParsing;
     private readonly LruCache<long, byte[]>? _pageCache;
-    private LockFileSlotWriter? _lockFileSlot;
     private volatile Dictionary<long, long[]>? _ownedDataPagesByTdef;
 
     /// <summary>
@@ -78,9 +75,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         Guard.NotNull(options, nameof(options));
 
-        _useLockFile = options.UseLockFile && !string.IsNullOrEmpty(path);
-        _lockFileUserName = options.LockFileUserName;
-        _lockFileMachineName = options.LockFileMachineName;
+        _lockFile = new LockFileCoordinator(
+            path,
+            nameof(AccessReader),
+            enabled: options.UseLockFile,
+            userName: options.LockFileUserName,
+            machineName: options.LockFileMachineName);
         _strictParsing = options.StrictParsing;
         LinkedSourcePathValidator = options.LinkedSourcePathValidator;
         LinkedSourcePathAllowlist = LinkedTableManager.NormalizeAllowlist(options.LinkedSourcePathAllowlist, path);
@@ -116,15 +116,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ValidateDatabaseFormat();
         }
 
-        if (_useLockFile)
-        {
-            _lockFileSlot = LockFileSlotWriter.Open(
-                _path,
-                nameof(AccessReader),
-                respectExisting: false,
-                machineName: _lockFileMachineName,
-                userName: _lockFileUserName);
-        }
+        _lockFile.Acquire();
 
         _byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
     }
@@ -1782,11 +1774,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             await waitForOperations.ConfigureAwait(false);
 
-            if (_useLockFile)
-            {
-                _lockFileSlot?.Dispose();
-                _lockFileSlot = null;
-            }
+            _lockFile.Dispose();
 
             _pageCache?.Clear();
 

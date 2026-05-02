@@ -43,10 +43,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private const int CascadeMaxDepth = 64;
 
     private readonly ReadOnlyMemory<char> _password;
-    private readonly bool _useLockFile;
-    private readonly bool _respectExistingLockFile;
-    private readonly string? _lockFileUserName;
-    private readonly string? _lockFileMachineName;
+    private readonly LockFileCoordinator _lockFile;
     private readonly bool _useByteRangeLocks;
     private readonly int _lockTimeoutMilliseconds;
     private readonly int _maxTransactionPageBudget;
@@ -69,8 +66,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private readonly Dictionary<string, List<ColumnConstraint>> _constraints =
         new(StringComparer.OrdinalIgnoreCase);
-
-    private LockFileSlotWriter? _lockFileSlot;
 
     // Active explicit transaction. Writer disposal rolls back any in-flight
     // transaction through JetTransaction.DisposeAsync before clearing the
@@ -102,10 +97,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         : base(stream, header, path)
     {
         _password = password;
-        _useLockFile = useLockFile && !string.IsNullOrEmpty(path);
-        _respectExistingLockFile = respectExistingLockFile;
-        _lockFileUserName = lockFileUserName;
-        _lockFileMachineName = lockFileMachineName;
+        _lockFile = new LockFileCoordinator(
+            path,
+            nameof(AccessWriter),
+            enabled: useLockFile,
+            respectExisting: respectExistingLockFile,
+            userName: lockFileUserName,
+            machineName: lockFileMachineName);
         _useByteRangeLocks = useByteRangeLocks;
         _lockTimeoutMilliseconds = lockTimeoutMilliseconds;
         _maxTransactionPageBudget = maxTransactionPageBudget;
@@ -132,15 +130,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         (_pageKeys.Rc4DbKey, _pageKeys.AesPageKey) =
             EncryptionManager.ResolveReaderPageKeys(header, _format, isLegacyAesCfb, password);
 
-        if (_useLockFile)
-        {
-            _lockFileSlot = LockFileSlotWriter.Open(
-                _path,
-                nameof(AccessWriter),
-                respectExisting: _respectExistingLockFile,
-                machineName: _lockFileMachineName,
-                userName: _lockFileUserName);
-        }
+        _lockFile.Acquire();
 
         _byteRangeLock = JetByteRangeLock.Create(stream, _useByteRangeLocks, _lockTimeoutMilliseconds);
     }
@@ -4515,16 +4505,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // Lockfile honouring: respect any existing lockfile while we rewrite.
         bool useLockFile = options?.UseLockFile ?? true;
         bool respectLockFile = options?.RespectExistingLockFile ?? true;
-        LockFileSlotWriter? lockSlot = null;
-        if (useLockFile)
-        {
-            lockSlot = LockFileSlotWriter.Open(
-                path,
-                nameof(AccessWriter),
-                respectExisting: respectLockFile,
-                machineName: options?.LockFileMachineName,
-                userName: options?.LockFileUserName);
-        }
+        var lockFile = new LockFileCoordinator(
+            path,
+            nameof(AccessWriter),
+            enabled: useLockFile,
+            respectExisting: respectLockFile,
+            userName: options?.LockFileUserName,
+            machineName: options?.LockFileMachineName);
+        lockFile.Acquire();
 
         try
         {
@@ -4566,7 +4554,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
         finally
         {
-            lockSlot?.Dispose();
+            lockFile.Dispose();
         }
     }
 
@@ -4991,11 +4979,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
         }
 
-        if (_useLockFile)
-        {
-            _lockFileSlot?.Dispose();
-            _lockFileSlot = null;
-        }
+        _lockFile.Dispose();
 
         // For Agile-encrypted databases the underlying _stream is an in-memory
         // copy of the *decrypted* ACCDB. Re-encrypt it before tearing down so
