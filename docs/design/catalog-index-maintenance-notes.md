@@ -58,7 +58,17 @@ The remaining failure is in the **`ParentIdName` composite leaf rewrite**. Bisec
 
 Root cause (corrected 2026-05-02): the original 2026-05-01 hypothesis blamed an unmodelled per-entry incremental prefix compression scheme. That hypothesis was wrong — the symptom was actually a 4-byte header offset error in our writer/reader (we were reading the Jet4/ACE leaf header at Jet3 offsets, so `pref_len` came back as `0` from the wrong byte). That offset bug has been fixed: `Constants.IndexLeafPage` now exposes per-format offsets and `IndexLeafPageBuilder.LeafPageLayout` carries them through every writer + reader path. See [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.1 (per-format offset table) and §4.4.2 (withdrawn hypothesis).
 
-The header-offset fix did not by itself green the two gating tests — the splice still produces a leaf DAO Compact rejects with `Could not find the object 'MSysDb'`. The remaining bug is in the splice itself: candidate suspects are (a) the composite key encoding for the new MSysObjects row not matching Access's encoding for `(ParentId, Name)` sort, (b) the page-shared prefix being recomputed to a value Access did not produce, or (c) an entry-start bitmask / row-pointer encoding mismatch when the new entry breaks the existing prefix invariant. Byte-level diff of the spliced vs original `MSysObjects.ParentIdName` tail leaf is the next investigation step.
+The header-offset fix did not by itself green the two gating tests — the splice still produces a leaf DAO Compact rejects with `Could not find the object 'MSysDb'`.
+
+**Byte-level diff (2026-05-02).** A raw-byte decode of the spliced `Id` PK leaf (page 8, orig 239 entries pref=0 → spliced 241 entries pref=1) and the spliced `ParentIdName` middle composite leaf (page 2790, orig 114 entries pref=1 → spliced 116 entries pref=4) against the original `NorthwindTraders.accdb` confirms:
+- All original entries on both pages decode losslessly after the splice (canonical-key reconstruction with the new shared prefix matches the orig canonical keys byte-for-byte).
+- The two new entries on each page sort correctly relative to their neighbours under big-endian byte comparison.
+- The page-shared prefix is recomputed to the longest common prefix of the new entry set; the entry-start bitmask matches the actual variable-length entry stride; the parent intermediate page (p.7) is byte-identical to the original; pages 2676 / 2677 / 2996 are unchanged.
+
+The leaf-page on-disk layout is therefore not the bug. The remaining suspects have shifted off the splice writer itself onto:
+- (a) the new `MSysObjects` row's `ParentId` / `Name` field encoding in the data row (the composite key we splice must agree byte-for-byte with what a re-scan of the row would produce — any mismatch in `ParentId` BE-encoding, `Name` `GeneralLegacy` text encoding, or trailing `01 00` terminator would manifest as "the index points at row X but row X has a different sort key");
+- (b) the index `used_pages` / `usage_map` summary on the index definition not being marked dirty, so DAO's Compact pass reads stale free-page accounting;
+- (c) the `MSysObjects.Id` autonumber counter (DBA `next-id`) not being advanced past the spliced IDs (we allocated IDs 3008 / 3010 but the on-page counter may still report the pre-splice max).
 
 Earlier, the previous (full-rebuild) `InsertSystemRowAndMaintainAsync` path was rejected for a different reason — it re-encodes every existing row, dropping content the writer cannot losslessly emit (the special "Databases" properties row's LvProp blob). That rejection still holds. Phase C1's incremental design is the correct shape; only the leaf decoder/encoder is incomplete.
 
