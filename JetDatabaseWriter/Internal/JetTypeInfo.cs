@@ -1,6 +1,8 @@
 namespace JetDatabaseWriter.Internal;
 
 using System;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
 /// <summary>
@@ -56,11 +58,13 @@ internal static class JetTypeInfo
         => type is T_TEXT or T_BINARY or T_MEMO or T_OLE;
 
     /// <summary>
-    /// Returns the CLR type used when projecting a TDEF column descriptor
-    /// back to a public <c>ColumnDefinition</c>. Returns <see langword="null"/>
-    /// for the magic complex-column codes (<c>T_COMPLEX</c> /
-    /// <c>T_ATTACHMENT</c>) which require additional fields beyond a CLR
-    /// type — callers must handle them separately — and for unknown codes.
+    /// Returns the CLR type used when projecting a TDEF column descriptor back
+    /// to a public <c>ColumnDefinition</c>. Complex-column codes (<c>T_COMPLEX</c>
+    /// / <c>T_ATTACHMENT</c>) map to <see cref="byte"/>[] — the surface CLR type the
+    /// reader resolves them to after joining the hidden flat child table — but
+    /// callers that need the additional metadata (ComplexId, IsAttachment,
+    /// IsMultiValue) must still special-case those codes before reaching this
+    /// projection. Returns <see langword="null"/> for unknown codes.
     /// </summary>
     public static Type? GetClrType(byte type) => type switch
     {
@@ -78,6 +82,56 @@ internal static class JetTypeInfo
         T_MEMO => typeof(string),
         T_BINARY => typeof(byte[]),
         T_OLE => typeof(byte[]),
+        T_ATTACHMENT => typeof(byte[]),
+        T_COMPLEX => typeof(byte[]),
         _ => null,
+    };
+
+    /// <summary>
+    /// Returns the human-friendly Access display name for a JET column-type code
+    /// (e.g. <c>"Long Integer"</c> for <c>T_LONG</c>). Unknown codes surface as
+    /// the hex representation <c>"0xNN"</c>. Mirrors Access's UI labels and the
+    /// names exposed by the legacy DAO/ADO type-name properties.
+    /// </summary>
+    public static string GetTypeDisplayName(byte type) => type switch
+    {
+        T_BOOL => "Yes/No",
+        T_BYTE => "Byte",
+        T_INT => "Integer",
+        T_LONG => "Long Integer",
+        T_MONEY => "Currency",
+        T_FLOAT => "Single",
+        T_DOUBLE => "Double",
+        T_DATETIME => "Date/Time",
+        T_BINARY => "Binary",
+        T_TEXT => "Text",
+        T_OLE => "OLE Object",
+        T_MEMO => "Memo",
+        T_GUID => "GUID",
+        T_NUMERIC => "Decimal",
+        T_ATTACHMENT => "Attachment",
+        T_COMPLEX => "Complex",
+        T_DATETIMEEXT => "Date/Time Extended",
+        _ => $"0x{type:X2}",
+    };
+
+    /// <summary>
+    /// Returns the user-facing <see cref="ColumnSize"/> for a column.
+    /// <paramref name="declaredSize"/> is the on-disk descriptor size (the
+    /// per-column <c>size</c> field) used for variable-width types like
+    /// <c>T_TEXT</c> (Jet4 stores chars * 2 there) and unknown fixed types.
+    /// </summary>
+    public static ColumnSize GetColumnSize(byte type, int declaredSize) => type switch
+    {
+        T_BOOL => ColumnSize.FromBits(1),
+        T_BYTE => ColumnSize.FromBytes(1),
+        T_INT => ColumnSize.FromBytes(2),
+        T_LONG or T_FLOAT => ColumnSize.FromBytes(4),
+        T_MONEY or T_DOUBLE or T_DATETIME => ColumnSize.FromBytes(8),
+        T_GUID => ColumnSize.FromBytes(16),
+        T_NUMERIC => ColumnSize.FromBytes(17),
+        T_TEXT => ColumnSize.FromChars(declaredSize > 0 ? declaredSize / 2 : 255),
+        T_MEMO or T_OLE or T_ATTACHMENT or T_COMPLEX => ColumnSize.Lval,
+        _ => declaredSize > 0 ? ColumnSize.FromBytes(declaredSize) : ColumnSize.Variable,
     };
 }

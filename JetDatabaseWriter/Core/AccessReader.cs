@@ -581,7 +581,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 IsFixedLength = col.IsFixed,
                 IsHyperlink = IsHyperlinkColumn(col),
                 Ordinal = index,
-                Size = SizeForColumn(col),
+                Size = JetTypeInfo.GetColumnSize(col.Type, col.Size),
                 DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, _format),
                 ValidationRuleExpression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, _format),
                 ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, _format),
@@ -1535,7 +1535,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
                 ColumnSliceKind.Null => string.Empty,
                 ColumnSliceKind.Empty => string.Empty,
-                ColumnSliceKind.Fixed => ReadFixed(page, rowStart + slice.DataStart, col, slice.DataLen),
+                ColumnSliceKind.Fixed => ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true),
                 ColumnSliceKind.Var => await ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
                 _ => string.Empty,
             };
@@ -1558,7 +1558,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ColumnSliceKind.Bool => slice.BoolValue,
             ColumnSliceKind.Null => DBNull.Value,
             ColumnSliceKind.Empty => DBNull.Value,
-            ColumnSliceKind.Fixed => ParseColumnValue(ReadFixed(page, rowStart + slice.DataStart, col, slice.DataLen), col),
+            ColumnSliceKind.Fixed => ParseColumnValue(ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true), col),
             ColumnSliceKind.Var => await ReadVarValueAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
             _ => DBNull.Value,
         };
@@ -1815,61 +1815,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private static FileStream CreateStream(string path, AccessReaderOptions options) =>
         OpenDatabaseFileStream(path, options.FileAccess, options.FileShare, FileOptions.Asynchronous | FileOptions.SequentialScan);
 
-    private static string TypeCodeToName(byte t) => t switch
-    {
-        T_BOOL => "Yes/No",
-        T_BYTE => "Byte",
-        T_INT => "Integer",
-        T_LONG => "Long Integer",
-        T_MONEY => "Currency",
-        T_FLOAT => "Single",
-        T_DOUBLE => "Double",
-        T_DATETIME => "Date/Time",
-        T_BINARY => "Binary",
-        T_TEXT => "Text",
-        T_OLE => "OLE Object",
-        T_MEMO => "Memo",
-        T_GUID => "GUID",
-        T_NUMERIC => "Decimal",
-        T_ATTACHMENT => "Attachment",
-        T_COMPLEX => "Complex",
-        T_DATETIMEEXT => "Date/Time Extended",
-        _ => $"0x{t:X2}",
-    };
-
-    private static ColumnSize SizeForColumn(ColumnInfo col) => col.Type switch
-    {
-        T_BOOL => ColumnSize.FromBits(1),
-        T_BYTE => ColumnSize.FromBytes(1),
-        T_INT => ColumnSize.FromBytes(2),
-        T_LONG or T_FLOAT => ColumnSize.FromBytes(4),
-        T_MONEY or T_DOUBLE or T_DATETIME => ColumnSize.FromBytes(8),
-        T_GUID => ColumnSize.FromBytes(16),
-        T_NUMERIC => ColumnSize.FromBytes(17),
-        T_TEXT => ColumnSize.FromChars(col.Size > 0 ? col.Size / 2 : 255),
-        T_MEMO or T_OLE or T_ATTACHMENT or T_COMPLEX => ColumnSize.Lval,
-        _ => col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable,
-    };
-
-    private static Type TypeCodeToClrType(byte typeCode) => typeCode switch
-    {
-        T_BOOL => typeof(bool),
-        T_BYTE => typeof(byte),
-        T_INT => typeof(short),
-        T_LONG => typeof(int),
-        T_MONEY => typeof(decimal),
-        T_FLOAT => typeof(float),
-        T_DOUBLE => typeof(double),
-        T_DATETIME => typeof(DateTime),
-        T_GUID => typeof(Guid),
-        T_NUMERIC => typeof(decimal),
-        T_BINARY => typeof(byte[]),
-        T_OLE => typeof(byte[]),
-        T_ATTACHMENT => typeof(byte[]),
-        T_COMPLEX => typeof(byte[]),
-        _ => typeof(string),
-    };
-
     /// <summary>
     /// Returns <see langword="true"/> when the column is a MEMO whose TDEF flag
     /// byte has Jackcess <c>HYPERLINK_FLAG_MASK = 0x80</c> set — Microsoft Access
@@ -1880,21 +1825,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         col.Type == T_MEMO && (col.Flags & 0x80) != 0;
 
     private static Type ResolveClrType(ColumnInfo col) =>
-        IsHyperlinkColumn(col) ? typeof(Hyperlink) : TypeCodeToClrType(col.Type);
+        IsHyperlinkColumn(col) ? typeof(Hyperlink) : JetTypeInfo.GetClrType(col.Type) ?? typeof(string);
 
     private static string ResolveTypeName(ColumnInfo col) =>
-        IsHyperlinkColumn(col) ? "Hyperlink" : TypeCodeToName(col.Type);
-
-    private static string ReadFixed(byte[] row, int start, ColumnInfo col, int sz)
-    {
-        // T_NUMERIC overflow / scale>28 is surfaced as JetLimitationException on
-        // the reader path (callers rely on this contract). The shared
-        // AccessBase.ReadFixedString silently returns empty in those cases, so
-        // dispatch T_NUMERIC to the reader-local copy.
-        return col.Type == T_NUMERIC
-            ? ReadNumeric(row, start)
-            : ReadFixedString(row, start, col.Type, sz);
-    }
+        IsHyperlinkColumn(col) ? "Hyperlink" : JetTypeInfo.GetTypeDisplayName(col.Type);
 
     /// <summary>
     /// Unwraps common OLE 1.0 package envelopes and scans the resulting payload
@@ -2140,43 +2074,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         offset += terminator + 1;
         return true;
-    }
-
-    /// <summary>
-    /// Reads a Jet NUMERIC (17 bytes):
-    ///   [precision(1)][scale(1)][sign(1)][pad(1)][96-bit LE integer: lo(4)+mid(4)+hi(4)]
-    /// Uses the <see cref="decimal(int,int,int,bool,byte)"/> constructor which accepts any
-    /// 96-bit integer directly — no manual multiply-chain needed.
-    /// </summary>
-    private static string ReadNumeric(byte[] b, int start)
-    {
-        if (start + 16 > b.Length)
-        {
-            return string.Empty;
-        }
-
-        byte scale = b[start + 1];
-        bool neg = b[start + 2] != 0;
-        uint lo = Ru32(b, start + 4);
-        uint mid = Ru32(b, start + 8);
-        uint hi = Ru32(b, start + 12);
-
-        // decimal(int lo, int mid, int hi, bool isNegative, byte scale) requires scale ≤ 28
-        if (scale > 28)
-        {
-            throw new JetLimitationException(
-                $"T_NUMERIC scale {scale} exceeds the .NET decimal maximum of 28.");
-        }
-
-        try
-        {
-            return new decimal((int)lo, (int)mid, (int)hi, neg, scale).ToString("G", CultureInfo.InvariantCulture);
-        }
-        catch (OverflowException ex)
-        {
-            throw new JetLimitationException(
-                $"T_NUMERIC value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})", ex);
-        }
     }
 
     private static object[] ConvertRowToTyped(List<string> row, List<ColumnInfo> columns, string? tableName = null, Dictionary<int, Dictionary<int, byte[]>>? complexData = null, bool strictParsing = true)
@@ -2745,7 +2642,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     break;
 
                 case ColumnSliceKind.Fixed:
-                    result.Add(ReadFixed(page, rowStart + slice.DataStart, col, slice.DataLen));
+                    result.Add(ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true));
                     break;
 
                 case ColumnSliceKind.Var:
@@ -2804,7 +2701,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                         // 4 bytes for COMPLEX/ATTACHMENT (the complex-id int32)
                         // since they have no fixed-area size of their own.
                         int required = col.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(col.Type);
-                        return len >= required ? ReadFixed(row, start, col, required) : string.Empty;
+                        return len >= required ? ReadFixedString(row, start, col.Type, required, strictNumeric: true) : string.Empty;
                     }
 
                 default:

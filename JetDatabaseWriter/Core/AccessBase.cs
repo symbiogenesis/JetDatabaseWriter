@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core.Interfaces;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Internal.Transactions;
@@ -485,7 +486,14 @@ public abstract class AccessBase : IAccessBase
 
     // ── Fixed-column string decoding ─────────────────────────────────
 
-    internal static string ReadFixedString(byte[] row, int start, byte type, int size)
+    /// <summary>
+    /// Formats a fixed-width JET column value as a culture-invariant string.
+    /// When <paramref name="strictNumeric"/> is <see langword="true"/>, T_NUMERIC values
+    /// that overflow .NET's <see cref="decimal"/> range or carry an out-of-range scale
+    /// surface as <see cref="JetLimitationException"/> instead of being silently elided
+    /// to the empty string — the contract the typed reader path relies on.
+    /// </summary>
+    internal static string ReadFixedString(byte[] row, int start, byte type, int size, bool strictNumeric = false)
     {
         try
         {
@@ -508,7 +516,7 @@ public abstract class AccessBase : IAccessBase
                 case T_GUID:
                     return new Guid(row.AsSpan(start, 16)).ToString("B");
                 case T_NUMERIC:
-                    return ReadNumericString(row, start);
+                    return ReadNumericString(row, start, strictNumeric);
                 case T_COMPLEX:
                 case T_ATTACHMENT:
                     return size >= 4 ? $"__CX:{Ri32(row, start)}__" : string.Empty;
@@ -530,10 +538,26 @@ public abstract class AccessBase : IAccessBase
         }
     }
 
-    private protected static string ReadNumericString(byte[] b, int start)
+    /// <summary>
+    /// Reads a Jet T_NUMERIC value (17 bytes:
+    /// <c>[precision][scale][sign][pad][lo:4][mid:4][hi:4]</c>). When <paramref name="strict"/>
+    /// is <see langword="false"/> (the default, used by lossy diagnostics paths) returns the
+    /// empty string for scale > 28, OLE-decimal overflow, or insufficient bytes. When
+    /// <see langword="true"/> (the typed-reader path) those conditions throw
+    /// <see cref="JetLimitationException"/> so the caller can surface the schema mismatch.
+    /// </summary>
+    private protected static string ReadNumericString(byte[] b, int start, bool strict = false)
     {
-        if (start + 16 >= b.Length)
+        // Need bytes [start, start+15] — 16 total — even though the on-disk
+        // T_NUMERIC slot is 17 bytes (the precision byte at offset 0 is currently unused).
+        if (start + 16 > b.Length)
         {
+            if (strict)
+            {
+                throw new JetLimitationException(
+                    $"T_NUMERIC slot at offset {start} extends past the row buffer (need 16 bytes, have {Math.Max(0, b.Length - start)}).");
+            }
+
             return string.Empty;
         }
 
@@ -545,6 +569,12 @@ public abstract class AccessBase : IAccessBase
 
         if (scale > 28)
         {
+            if (strict)
+            {
+                throw new JetLimitationException(
+                    $"T_NUMERIC scale {scale} exceeds the .NET decimal maximum of 28.");
+            }
+
             return string.Empty;
         }
 
@@ -552,8 +582,14 @@ public abstract class AccessBase : IAccessBase
         {
             return new decimal((int)lo, (int)mid, (int)hi, negative, scale).ToString("G", System.Globalization.CultureInfo.InvariantCulture);
         }
-        catch (OverflowException)
+        catch (OverflowException ex)
         {
+            if (strict)
+            {
+                throw new JetLimitationException(
+                    $"T_NUMERIC value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})", ex);
+            }
+
             return string.Empty;
         }
     }
