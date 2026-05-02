@@ -76,14 +76,40 @@ Notes:
   for the post-Phase 1 comparison.
 
 ### Phase 1 — Typed fixed-width decode (biggest win)
-- [ ] Add `internal static object ReadFixedTyped(byte[] row, int start, byte type, int size, bool strictNumeric)`
+- [x] Add `internal static object ReadFixedTyped(byte[] row, int start, byte type, int size, bool strictNumeric)`
   in [AccessBase.cs](JetDatabaseWriter/Core/AccessBase.cs) returning the
   boxed primitive directly: `byte`, `short`, `int`, `float`, `double`,
   `DateTime`, `decimal` (money + numeric), `Guid`, complex-id marker
   sentinel.
-- [ ] Unit-test `ReadFixedTyped` parity with `ReadFixedString` →
+- [x] Unit-test `ReadFixedTyped` parity with `ReadFixedString` →
   `TypedValueParser.ParseValue` for every JET type (incl. T_NUMERIC strict
   overflow, T_DATETIME OADate edges, T_MONEY scale=4).
+
+#### Notes
+- Tests live in
+  [ReadFixedTypedTests.cs](JetDatabaseWriter.Tests/Core/ReadFixedTypedTests.cs)
+  (46 cases, all green).
+- The typed path **fixes three latent correctness bugs** in the legacy
+  round-trip that are masked today by the `string.Empty → DBNull` fallback:
+  - `T_INT` negative shorts: legacy `(short)Ru16(...)` throws under
+    `<CheckForOverflowUnderflow>true` and collapses to `DBNull`. Typed
+    path uses `BinaryPrimitives.ReadInt16LittleEndian` and returns the
+    correct value.
+  - `T_NUMERIC` mantissas with the high bit set (e.g. `decimal.MaxValue`):
+    legacy `(int)uint` cast throws and collapses to `DBNull`. Typed path
+    uses `unchecked((int)lo/mid/hi)` to preserve the bit pattern.
+  - `T_DATETIME` sub-second precision: legacy formats with
+    `"yyyy-MM-dd HH:mm:ss"` and re-parses, dropping milliseconds. Typed
+    path returns the un-truncated `DateTime` straight from
+    `DateTime.FromOADate(...)`.
+- These divergences are pinned by named tests
+  (`Int_Negative_TypedKeepsValue_RoundTripDropsToDBNull`,
+  `Numeric_DecimalMaxValue_TypedKeepsValue_RoundTripDropsToDBNull`,
+  `DateTime_SubSecondPrecision_TypedKeepsItRoundTripDoesNot`) so the
+  contract is documented, not accidental.
+- `ReadFixedString` is left unchanged — `RowsAsStrings` and the diagnostics
+  paths still go through it, so the legacy bugs remain to be fixed there
+  in a separate work item if desired.
 
 ### Phase 2 — Typed row cracker
 - [ ] Add `CrackRowTyped` that fills an `object?[]` directly (no

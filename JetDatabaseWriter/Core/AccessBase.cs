@@ -595,6 +595,147 @@ public abstract class AccessBase : IAccessBase
         }
     }
 
+    // ── Fixed-column typed decoding ──────────────────────────────────
+
+    /// <summary>
+    /// Decodes a fixed-width JET column value directly to its boxed CLR primitive,
+    /// bypassing the lossy <see cref="ReadFixedString"/> + <c>TypedValueParser.ParseValue</c>
+    /// round-trip used by the diagnostics path. The typed-reader hot path uses this
+    /// to avoid per-column culture-invariant string formatting and re-parsing.
+    /// <para>
+    /// Type mapping mirrors <c>JetTypeInfo.GetClrType</c>:
+    /// <c>T_BYTE → byte</c>, <c>T_INT → short</c>, <c>T_LONG → int</c>,
+    /// <c>T_FLOAT → float</c>, <c>T_DOUBLE → double</c>,
+    /// <c>T_DATETIME → DateTime</c> (un-truncated; <see cref="ReadFixedString"/>
+    /// formats with <c>"yyyy-MM-dd HH:mm:ss"</c> and loses sub-second precision —
+    /// the typed path keeps full precision),
+    /// <c>T_MONEY → decimal</c>, <c>T_GUID → Guid</c>,
+    /// <c>T_NUMERIC → decimal</c>,
+    /// <c>T_COMPLEX</c>/<c>T_ATTACHMENT → "__CX:N__"</c> string sentinel
+    /// (matching <see cref="ReadFixedString"/>; replaced by direct id storage in
+    /// a later phase), and unknown types fall through to the same hex-string
+    /// representation <see cref="ReadFixedString"/> emits.
+    /// </para>
+    /// <para>
+    /// Returns <see cref="DBNull.Value"/> when the underlying byte access throws
+    /// (<see cref="ArgumentException"/>, <see cref="IndexOutOfRangeException"/>,
+    /// <see cref="OverflowException"/>) — matching the empty-string-then-DBNull
+    /// behaviour of the round-trip path. When <paramref name="strictNumeric"/>
+    /// is <see langword="true"/>, T_NUMERIC values that overflow or carry an
+    /// out-of-range scale surface as <see cref="JetLimitationException"/>; with
+    /// <see langword="false"/> they collapse to <see cref="DBNull.Value"/>.
+    /// </para>
+    /// </summary>
+    internal static object ReadFixedTyped(byte[] row, int start, byte type, int size, bool strictNumeric = false)
+    {
+        try
+        {
+            switch (type)
+            {
+                case T_BYTE:
+                    return row[start];
+                case T_INT:
+                    // BinaryPrimitives.ReadInt16LittleEndian sign-extends correctly
+                    // under <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>;
+                    // the legacy "(short)Ru16(...)" cast throws OverflowException for
+                    // values with the high bit set and ReadFixedString silently maps
+                    // those to string.Empty → DBNull. The typed path keeps the value.
+                    return BinaryPrimitives.ReadInt16LittleEndian(row.AsSpan(start, 2));
+                case T_LONG:
+                    return Ri32(row, start);
+                case T_FLOAT:
+                    return ReadSingleLittleEndian(row.AsSpan(start, 4));
+                case T_DOUBLE:
+                    return ReadDoubleLittleEndian(row.AsSpan(start, 8));
+                case T_DATETIME:
+                    return DateTime.FromOADate(ReadDoubleLittleEndian(row.AsSpan(start, 8)));
+                case T_MONEY:
+                    return decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(row.AsSpan(start, 8)));
+                case T_GUID:
+                    return new Guid(row.AsSpan(start, 16));
+                case T_NUMERIC:
+                    return ReadNumericTyped(row, start, strictNumeric);
+                case T_COMPLEX:
+                case T_ATTACHMENT:
+                    return size >= 4 ? $"__CX:{Ri32(row, start)}__" : DBNull.Value;
+                default:
+                    return ToHexStringNoSeparator(row.AsSpan(start, Math.Min(size, 8)));
+            }
+        }
+        catch (ArgumentException)
+        {
+            return DBNull.Value;
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return DBNull.Value;
+        }
+        catch (OverflowException)
+        {
+            return DBNull.Value;
+        }
+    }
+
+    /// <summary>
+    /// Typed counterpart to <see cref="ReadNumericString"/>: returns the boxed
+    /// <see cref="decimal"/> directly. Strict-mode failure modes (insufficient
+    /// bytes, scale > 28, decimal overflow) throw <see cref="JetLimitationException"/>
+    /// to match the contract the typed reader path relies on; non-strict failures
+    /// collapse to <see cref="DBNull.Value"/> (the typed analogue of
+    /// <see cref="ReadNumericString"/>'s empty-string return).
+    /// </summary>
+    private static object ReadNumericTyped(byte[] b, int start, bool strict)
+    {
+        if (start + 16 > b.Length)
+        {
+            if (strict)
+            {
+                throw new JetLimitationException(
+                    $"T_NUMERIC slot at offset {start} extends past the row buffer (need 16 bytes, have {Math.Max(0, b.Length - start)}).");
+            }
+
+            return DBNull.Value;
+        }
+
+        byte scale = b[start + 1];
+        bool negative = b[start + 2] != 0;
+        uint lo = Ru32(b, start + 4);
+        uint mid = Ru32(b, start + 8);
+        uint hi = Ru32(b, start + 12);
+
+        if (scale > 28)
+        {
+            if (strict)
+            {
+                throw new JetLimitationException(
+                    $"T_NUMERIC scale {scale} exceeds the .NET decimal maximum of 28.");
+            }
+
+            return DBNull.Value;
+        }
+
+        try
+        {
+            // Bit-pattern reinterpretation: uint → int must be unchecked because
+            // the project sets <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>
+            // and the high-bit-set forms (e.g. decimal.MaxValue's 0xFFFFFFFF lo/mid/hi)
+            // would otherwise throw. The legacy ReadNumericString trips this same
+            // checked-cast and silently collapses to string.Empty → DBNull; the
+            // typed path keeps the value.
+            return new decimal(unchecked((int)lo), unchecked((int)mid), unchecked((int)hi), negative, scale);
+        }
+        catch (OverflowException ex)
+        {
+            if (strict)
+            {
+                throw new JetLimitationException(
+                    $"T_NUMERIC value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})", ex);
+            }
+
+            return DBNull.Value;
+        }
+    }
+
     // ── Page I/O ─────────────────────────────────────────────────────
 
     private protected async ValueTask<byte[]> ReadPageAsync(long n, CancellationToken cancellationToken = default)
