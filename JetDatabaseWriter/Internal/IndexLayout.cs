@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Internal.Models;
 
 /// <summary>
 /// Encapsulates the per-format byte offsets and entry sizes for a TDEF
@@ -369,6 +370,18 @@ internal readonly struct IndexLayout
     {
         /// <summary>Gets a value indicating whether the unique flag bit (0x01) is set.</summary>
         public bool IsUnique => (Flags & 0x01) != 0;
+
+        /// <summary>
+        /// Lifts this raw slot into a <see cref="RealIdxEntry"/> by attaching
+        /// the decoded <paramref name="keyColumns"/>. By default the entry's
+        /// <see cref="RealIdxEntry.IsUnique"/> mirrors this slot's
+        /// <see cref="IsUnique"/> (the real-idx <c>flags &amp; 0x01</c> bit);
+        /// pass <paramref name="overrideUnique"/> to substitute (e.g.
+        /// <c>false</c> when the caller will resolve uniqueness later, or
+        /// <c>true</c> when an associated logical-idx PK promotes the slot).
+        /// </summary>
+        public RealIdxEntry ToEntry(IReadOnlyList<KeyColumn> keyColumns, bool? overrideUnique = null)
+            => new(keyColumns, FirstDpOffset, overrideUnique ?? IsUnique);
     }
 
     /// <summary>
@@ -384,4 +397,84 @@ internal readonly struct IndexLayout
         byte CascadeUps,
         byte CascadeDels,
         byte IndexType);
+
+    /// <summary>
+    /// One real-idx slot decoded into its full <c>col_map</c> key list, the
+    /// absolute byte offset of its <c>first_dp</c> field within the TDEF
+    /// buffer, and the resolved unique flag (real-idx <c>flags &amp; 0x01</c>
+    /// OR an associated logical-idx with <c>index_type = 0x01</c>). Used by
+    /// the writer's index-maintenance and unique-check paths to carry
+    /// per-real-idx state without re-decoding the TDEF block.
+    /// </summary>
+    public readonly record struct RealIdxEntry(
+        IReadOnlyList<KeyColumn> IndexKeyColumns,
+        int FirstDpOffset,
+        bool IsUnique);
+
+    /// <summary>
+    /// One real-idx key column resolved against the table's
+    /// <see cref="ColumnInfo"/> list: the column descriptor, the row-snapshot
+    /// index (which differs from <c>ColNum</c> when columns have been
+    /// deleted), and the ascending/descending direction copied from the
+    /// originating <c>col_map</c> slot.
+    /// </summary>
+    public readonly record struct KeyColumnInfo(ColumnInfo Col, int SnapIdx, bool Ascending);
+
+    /// <summary>
+    /// One unique real-idx slot bundled with a best-effort logical-idx name
+    /// (used in error messages) and the resolved <see cref="KeyColumnInfo"/>
+    /// list. Produced by the writer's pre-write unique-index loader and
+    /// consumed by the composite-key encoder + collision detector.
+    /// </summary>
+    public readonly record struct UniqueIndexDescriptor(
+        int RealIdxNum,
+        string Name,
+        IReadOnlyList<KeyColumnInfo> KeyColumns);
+
+    /// <summary>
+    /// Resolves an index's <see cref="KeyColumn"/> list against a table's
+    /// <see cref="ColumnInfo"/> list, producing one <see cref="KeyColumnInfo"/>
+    /// per key column. Returns <see langword="false"/> when any
+    /// <c>ColNum</c> cannot be located (e.g. snapshot reflects a column
+    /// deletion that has not yet been propagated to the index slot); on
+    /// failure <paramref name="keyColInfos"/> is set to an empty list.
+    /// </summary>
+    public static bool TryResolveKeyColumnInfos(
+        IReadOnlyList<KeyColumn> indexKeyColumns,
+        IReadOnlyList<ColumnInfo> tableColumns,
+        IReadOnlyDictionary<int, int> snapshotIndexByColNum,
+        out List<KeyColumnInfo> keyColInfos)
+    {
+        var infos = new List<KeyColumnInfo>(indexKeyColumns.Count);
+        for (int i = 0; i < indexKeyColumns.Count; i++)
+        {
+            (int colNum, bool ascending) = indexKeyColumns[i];
+            if (!snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
+            {
+                keyColInfos = [];
+                return false;
+            }
+
+            ColumnInfo? col = null;
+            for (int c = 0; c < tableColumns.Count; c++)
+            {
+                if (tableColumns[c].ColNum == colNum)
+                {
+                    col = tableColumns[c];
+                    break;
+                }
+            }
+
+            if (col is null)
+            {
+                keyColInfos = [];
+                return false;
+            }
+
+            infos.Add(new KeyColumnInfo(tableColumns[snapIdx], snapIdx, ascending));
+        }
+
+        keyColInfos = infos;
+        return true;
+    }
 }

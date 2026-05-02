@@ -20,6 +20,9 @@ using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Internal.Transactions;
 using JetDatabaseWriter.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using KeyColumnInfo = JetDatabaseWriter.Internal.IndexLayout.KeyColumnInfo;
+using RealIdxEntry = JetDatabaseWriter.Internal.IndexLayout.RealIdxEntry;
+using UniqueIndexDescriptor = JetDatabaseWriter.Internal.IndexLayout.UniqueIndexDescriptor;
 
 #pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
@@ -3397,32 +3400,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             ctx.ChildSeekIndexes[rel.Name] = resolved;
         }
-    }
-
-    /// <summary>
-    /// Resolves key column infos from index key columns, table columns, and snapshot index mapping.
-    /// Returns false if any column cannot be resolved.
-    /// </summary>
-    private static bool TryResolveKeyColumnInfos(
-        IReadOnlyList<IndexLayout.KeyColumn> indexKeyColumns,
-        List<ColumnInfo> tableColumns,
-        Dictionary<int, int> snapshotIndexByColNum,
-        out List<KeyColumnInfo> keyColInfos)
-    {
-        keyColInfos = new List<KeyColumnInfo>(indexKeyColumns.Count);
-        foreach (var (colNum, ascending) in indexKeyColumns)
-        {
-            ColumnInfo? col = tableColumns.Find(c => c.ColNum == colNum);
-            if (col is null || !snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
-            {
-                keyColInfos = null!;
-                return false;
-            }
-
-            keyColInfos.Add(new KeyColumnInfo(tableColumns[snapIdx], snapIdx, ascending));
-        }
-
-        return true;
     }
 
     /// <summary>
@@ -9487,7 +9464,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            realIdxByNum[ri] = new RealIdxEntry(keyCols, slot.FirstDpOffset, slot.IsUnique);
+            realIdxByNum[ri] = slot.ToEntry(keyCols);
         }
 
         if (realIdxByNum.Count == 0)
@@ -9537,7 +9514,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             // Resolve every key column up front; if any column is missing from the
             // snapshot (deleted-column gap), skip rebuild for this index.
-            if (!TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
+            if (!IndexLayout.TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
             {
                 continue;
             }
@@ -9781,7 +9758,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            slots.Add(new RealIdxEntry(keyCols, slot.FirstDpOffset, IsUnique: false));
+            slots.Add(slot.ToEntry(keyCols, overrideUnique: false));
         }
 
         if (slots.Count == 0)
@@ -9801,7 +9778,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             cancellationToken.ThrowIfCancellationRequested();
 
             // Resolve key columns to (ColumnInfo, snapshot index, ascending).
-            if (!TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
+            if (!IndexLayout.TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
             {
                 _lastIncrementalBail = "C2 resolveFailed";
                 return false;
@@ -11894,12 +11871,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return results;
     }
 
-    private record struct KeyColumnInfo(ColumnInfo Col, int SnapIdx, bool Ascending);
-
-    private record struct RealIdxEntry(IReadOnlyList<IndexLayout.KeyColumn> IndexKeyColumns, int FirstDpOffset, bool IsUnique);
-
-    private record struct UniqueIndexDescriptor(int RealIdxNum, string Name, IReadOnlyList<KeyColumnInfo> KeyColumns);
-
     /// <summary>
     /// Reads the 4-byte big-endian child-page pointer at the END of the LAST
     /// entry on an intermediate (<c>0x03</c>) page. Each intermediate entry
@@ -12376,8 +12347,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // Decode every real-idx slot's key columns + flag bit. Reuses the
         // RealIdxEntry shape from MaintainIndexesAsync; FirstDpOffset is
-        // unused on this path (we don't rewrite first_dp here) so it's left
-        // at 0.
+        // unused on this path (we don't rewrite first_dp here).
         var realIdxSlots = new Dictionary<int, RealIdxEntry>();
         for (int ri = 0; ri < numRealIdx; ri++)
         {
@@ -12391,7 +12361,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            realIdxSlots[ri] = new RealIdxEntry(keyCols, FirstDpOffset: 0, IsUnique: slot.IsUnique);
+            realIdxSlots[ri] = slot.ToEntry(keyCols);
         }
 
         // Walk the logical-idx entries to (a) promote any real-idx that backs a
@@ -12438,7 +12408,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // Resolve every key column up front; if any column is missing from
             // the snapshot (deleted-column gap), skip — same fall-through model
             // as MaintainIndexesAsync.
-            if (!TryResolveKeyColumnInfos(slot.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
+            if (!IndexLayout.TryResolveKeyColumnInfos(slot.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
             {
                 continue;
             }
