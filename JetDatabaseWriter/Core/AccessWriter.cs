@@ -10027,6 +10027,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // Jet3:     39 bytes — unknown(4) + col_map(30) + first_dp(4) + flags(1) — no used_pages slot.
         int realIdxPhysSz = jet3 ? 39 : 52;
         int physFirstDpOff = jet3 ? 34 : 38;
+        int logIdxEntrySz = jet3 ? 20 : 28;
+        int logIndexTypeOff = jet3 ? 19 : 23;
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
         int namePos = colStart + (numCols * _colDescSz);
         for (int i = 0; i < numCols; i++)
@@ -10039,6 +10041,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int realIdxDescStart = namePos;
+        int logIdxStart = realIdxDescStart + (numRealIdx * realIdxPhysSz);
+
+        // Access Compact & Repair has rejected incrementally maintained
+        // relationship-backed indexes in probe validation; keep those tables
+        // on the bulk rebuild path until the FK incremental layout is proven
+        // against Access-authored repair output.
+        for (int li = 0; li < numIdx; li++)
+        {
+            int entryStart = logIdxStart + (li * logIdxEntrySz);
+            if (entryStart + logIdxEntrySz > tdefBuffer.Length)
+            {
+                _lastIncrementalBail = $"C1b li={li} entryStart={entryStart} bufLen={tdefBuffer.Length}";
+                return false;
+            }
+
+            if (tdefBuffer[entryStart + logIndexTypeOff] == (byte)IndexKind.ForeignKey)
+            {
+                _lastIncrementalBail = "C1c foreign-key logical index present";
+                return false;
+            }
+        }
 
         // Decode every real-idx slot's key columns + first_dp offset.
         var slots = new List<RealIdxEntry>(numRealIdx);
