@@ -917,8 +917,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         bool jet4 = _format != DatabaseFormat.Jet3Mdb;
-        int realIdxPhysSz = jet4 ? 52 : 39;
-        int logIdxEntrySz = jet4 ? 28 : 20;
+        int realIdxPhysSz = jet4 ? Constants.TableDefinition.Jet4.RealIdx.PhysSize : Constants.TableDefinition.Jet3.RealIdx.PhysSize;
+        int logIdxEntrySz = jet4 ? Constants.TableDefinition.Jet4.LogicalIdx.EntrySize : Constants.TableDefinition.Jet3.LogicalIdx.EntrySize;
 
         // Section walk mirrors AccessBase.ReadTableDefAsync and FormatProbe.
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
@@ -973,13 +973,27 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 break;
             }
 
-            int indexNum = jet4 ? Ri32(td, entryStart + 4) : Ri32(td, entryStart + 0);
-            int realIdxNum = jet4 ? Ri32(td, entryStart + 8) : Ri32(td, entryStart + 4);
-            int relIdxNum = jet4 ? Ri32(td, entryStart + 13) : Ri32(td, entryStart + 9);
-            int relTblPage = jet4 ? Ri32(td, entryStart + 17) : Ri32(td, entryStart + 13);
-            byte cascadeUps = jet4 ? td[entryStart + 21] : td[entryStart + 17];
-            byte cascadeDels = jet4 ? td[entryStart + 22] : td[entryStart + 18];
-            byte indexType = jet4 ? td[entryStart + 23] : td[entryStart + 19];
+            int indexNum = jet4
+                ? Ri32(td, entryStart + Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset)
+                : Ri32(td, entryStart + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset);
+            int realIdxNum = jet4
+                ? Ri32(td, entryStart + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset)
+                : Ri32(td, entryStart + Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset);
+            int relIdxNum = jet4
+                ? Ri32(td, entryStart + Constants.TableDefinition.Jet4.LogicalIdx.RelIdxNumOffset)
+                : Ri32(td, entryStart + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset);
+            int relTblPage = jet4
+                ? Ri32(td, entryStart + Constants.TableDefinition.Jet4.LogicalIdx.RelTblPageOffset)
+                : Ri32(td, entryStart + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset);
+            byte cascadeUps = jet4
+                ? td[entryStart + Constants.TableDefinition.Jet4.LogicalIdx.CascadeUpsOffset]
+                : td[entryStart + Constants.TableDefinition.Jet3.LogicalIdx.CascadeUpsOffset];
+            byte cascadeDels = jet4
+                ? td[entryStart + Constants.TableDefinition.Jet4.LogicalIdx.CascadeDelsOffset]
+                : td[entryStart + Constants.TableDefinition.Jet3.LogicalIdx.CascadeDelsOffset];
+            byte indexType = jet4
+                ? td[entryStart + Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset]
+                : td[entryStart + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset];
 
             // Read the col_map for the backing real-idx entry to recover key columns.
             var keyColumns = new List<IndexColumnReference>();
@@ -1010,7 +1024,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                             });
                         }
 
-                        flags = td[physStart + 42];
+                        flags = td[physStart + Constants.TableDefinition.Jet4.RealIdx.FlagsOffset];
                     }
                     else
                     {

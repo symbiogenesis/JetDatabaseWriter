@@ -34,24 +34,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 {
     private const int MaxInlineMemoBytes = 1024;
     private const int MaxInlineOleBytes = 256;
-    private const int TDefRowCountOffset = 16;
-
-    /// <summary>
-    /// Maximum payload size for a MEMO / OLE / Attachment value. The on-disk
-    /// LVAL header dedicates a 24-bit field to the total length, so values
-    /// strictly larger than 16,777,215 bytes cannot be addressed regardless
-    /// of the chosen storage form (inline / single-page / chained).
-    /// </summary>
-    private const int MaxLvalPayloadBytes = (1 << 24) - 1;
-
-    /// <summary>
-    /// Maximum number of rows a single JET data page may hold. JET row IDs
-    /// encode the per-page row index as a single byte, so a page can address
-    /// at most 256 row slots; Jackcess caps at 255 and we follow suit so the
-    /// <c>(byte)RowIndex</c> cast in the index-rebuild path stays safe
-    /// under <c>&lt;CheckForOverflowUnderflow&gt;true</c>.
-    /// </summary>
-    private const int MaxRowsPerDataPage = 255;
 
     /// <summary>
     /// Maximum recursion depth for cascade-delete / cascade-update chains.
@@ -59,16 +41,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// schemas almost never exceed depth 3.
     /// </summary>
     private const int CascadeMaxDepth = 64;
-
-    /// <summary>
-    /// Size of one Jet4/ACE real-idx physical descriptor (col_map + flags).
-    /// </summary>
-    private const int RealIdxPhysSz = 52;
-
-    /// <summary>
-    /// Size of one Jet4/ACE logical-idx entry inside a TDEF.
-    /// </summary>
-    private const int LogIdxEntrySz = 28;
 
     private readonly ReadOnlyMemory<char> _password;
     private readonly bool _useLockFile;
@@ -576,10 +548,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     throw new InvalidOperationException($"Column '{column.Name}' already exists in table '{tableName}'.");
                 }
 
-                return
-                [
-.. existing,                     column,
-                ];
+                return [.. existing, column];
             },
             (oldRow, _) =>
             {
@@ -1730,8 +1699,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new InvalidOperationException("failed to walk TDEF column-name section.");
         }
 
-        int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
-        int logIdxNamesStart = logIdxStart + (numIdx * LogIdxEntrySz);
+        int logIdxStart = realIdxDescStart + (numRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
+        int logIdxNamesStart = logIdxStart + (numIdx * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
         int logIdxNamesLen = MeasureLogicalIdxNamesLength(td, logIdxNamesStart, numIdx);
         if (logIdxNamesLen < 0)
         {
@@ -1760,8 +1729,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int nameRecordSize = 2 + nameBytes.Length;
 
         int deltaRealIdxSkip = allocateNewRealIdx ? _realIdxEntrySz : 0;
-        int deltaRealIdxPhys = allocateNewRealIdx ? RealIdxPhysSz : 0;
-        int totalGrowth = deltaRealIdxSkip + deltaRealIdxPhys + LogIdxEntrySz + nameRecordSize;
+        int deltaRealIdxPhys = allocateNewRealIdx ? Constants.TableDefinition.Jet4.RealIdx.PhysSize : 0;
+        int totalGrowth = deltaRealIdxSkip + deltaRealIdxPhys + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize + nameRecordSize;
 
         if (currentEnd + totalGrowth > _pgSz)
         {
@@ -1792,7 +1761,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // Real-idx physical descriptors (existing slots).
         int newRealIdxDescStart = newColNamesStart + colNamesLen;
-        int oldRealIdxPhysLen = numRealIdx * RealIdxPhysSz;
+        int oldRealIdxPhysLen = numRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize;
         Buffer.BlockCopy(td, realIdxDescStart, newTd, newRealIdxDescStart, oldRealIdxPhysLen);
 
         // Append a new real-idx physical descriptor when allocating a new slot.
@@ -1829,7 +1798,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // Logical-idx entries (existing).
         int newLogIdxStart = newRealIdxDescStart + oldRealIdxPhysLen + deltaRealIdxPhys;
-        int oldLogIdxLen = numIdx * LogIdxEntrySz;
+        int oldLogIdxLen = numIdx * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
         Buffer.BlockCopy(td, logIdxStart, newTd, newLogIdxStart, oldLogIdxLen);
 
         // Append the new FK logical-idx entry.
@@ -1847,7 +1816,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         newTd[newLogEntry + 23] = 0x02;                        // index_type = FK
 
         // Logical-idx names (existing).
-        int newLogIdxNamesStart = newLogEntry + LogIdxEntrySz;
+        int newLogIdxNamesStart = newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
         Buffer.BlockCopy(td, logIdxNamesStart, newTd, newLogIdxNamesStart, logIdxNamesLen);
 
         // Append the new logical-idx name (UTF-16 length-prefixed).
@@ -1945,8 +1914,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            int phys = realIdxDescStart + (ri * RealIdxPhysSz);
-            if (phys + RealIdxPhysSz > td.Length)
+            int phys = realIdxDescStart + (ri * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
+            if (phys + Constants.TableDefinition.Jet4.RealIdx.PhysSize > td.Length)
             {
                 break;
             }
@@ -2348,14 +2317,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // overlapping regions). Step 1 collapses the 28-byte logical-idx
         // entry; step 2 collapses the variable-length name. The trailing
         // variable-length-column block rides along with the second shift.
-        int removedEntryStart = layout.LogIdxStart + (matchEntryIdx * LogIdxEntrySz);
-        int afterEntry = removedEntryStart + LogIdxEntrySz;
+        int removedEntryStart = layout.LogIdxStart + (matchEntryIdx * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
+        int afterEntry = removedEntryStart + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
 
         // Step 1 — drop the 28-byte logical-idx entry.
         Buffer.BlockCopy(td, afterEntry, td, removedEntryStart, layout.CurrentEnd - afterEntry);
-        int shiftedNameStart = removedNameStart - LogIdxEntrySz;
+        int shiftedNameStart = removedNameStart - Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
         int afterName = shiftedNameStart + removedNameLen;
-        int endAfterStep1 = layout.CurrentEnd - LogIdxEntrySz;
+        int endAfterStep1 = layout.CurrentEnd - Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
 
         // Step 2 — drop the name record.
         Buffer.BlockCopy(td, afterName, td, shiftedNameStart, endAfterStep1 - afterName);
@@ -2415,7 +2384,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var referenced = new bool[layout.NumRealIdx];
         for (int li = 0; li < layout.NumIdx; li++)
         {
-            int e = layout.LogIdxStart + (li * LogIdxEntrySz);
+            int e = layout.LogIdxStart + (li * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
             int realIdxNum = Ri32(td, e + 8);
             if (realIdxNum >= 0 && realIdxNum < layout.NumRealIdx)
             {
@@ -2450,13 +2419,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // trailing N × 52 bytes of physical descriptors. Compute the new
         // boundaries.
         int newRealIdxDescStart = layout.RealIdxDescStart - (reclaim * _realIdxEntrySz);
-        int newPhysEnd = newRealIdxDescStart + ((layout.NumRealIdx - reclaim) * RealIdxPhysSz);
-        int oldPhysEnd = newRealIdxDescStart + (layout.NumRealIdx * RealIdxPhysSz);
+        int newPhysEnd = newRealIdxDescStart + ((layout.NumRealIdx - reclaim) * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
+        int oldPhysEnd = newRealIdxDescStart + (layout.NumRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
 
         // Step 2 — drop the trailing N × 52-byte physical descriptors by
         // left-shifting the logical-idx entries + names + variable-col block.
         Buffer.BlockCopy(td, oldPhysEnd, td, newPhysEnd, endAfterStep1 - oldPhysEnd);
-        int finalEnd = endAfterStep1 - (reclaim * RealIdxPhysSz);
+        int finalEnd = endAfterStep1 - (reclaim * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
 
         // Zero the freed tail so the on-disk page matches the prior
         // fresh-buffer behavior (bytes past the new end are padding).
@@ -2599,8 +2568,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        int logIdxStart = realIdxDescStart + (numRealIdx * RealIdxPhysSz);
-        int logIdxNamesStart = logIdxStart + (numIdx * LogIdxEntrySz);
+        int logIdxStart = realIdxDescStart + (numRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
+        int logIdxNamesStart = logIdxStart + (numIdx * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
         int logIdxNamesLen = MeasureLogicalIdxNamesLength(td, logIdxNamesStart, numIdx);
         if (logIdxNamesLen < 0)
         {
@@ -2653,7 +2622,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         realIdxNum = -1;
         for (int li = 0; li < layout.NumIdx; li++)
         {
-            int e = layout.LogIdxStart + (li * LogIdxEntrySz);
+            int e = layout.LogIdxStart + (li * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
             byte indexType = td[e + 23];
             if (indexType != 0x02)
             {
@@ -2672,7 +2641,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            int phys = layout.RealIdxDescStart + (rin * RealIdxPhysSz);
+            int phys = layout.RealIdxDescStart + (rin * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
             if (!IndexHelpers.RealIdxColMapMatches(td, phys, columnNumbers))
             {
                 continue;
@@ -3306,7 +3275,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return null;
         }
 
-        const int RealIdxPhysSz = 52;
+        const int RealIdxPhysSz = Constants.TableDefinition.Jet4.RealIdx.PhysSize;
         for (int ri = 0; ri < numRealIdx; ri++)
         {
             int phys = realIdxDescStart + (ri * RealIdxPhysSz);
@@ -5892,10 +5861,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private async ValueTask<byte[]> EncodeAsLvalChainAsync(byte[] data, CancellationToken cancellationToken)
     {
-        if (data.Length > MaxLvalPayloadBytes)
+        if (data.Length > Constants.LongValue.MaxPayloadBytes)
         {
             throw new JetLimitationException(
-                $"Long value is {data.Length} bytes, which exceeds the JET 24-bit LVAL length limit of {MaxLvalPayloadBytes} bytes.");
+                $"Long value is {data.Length} bytes, which exceeds the JET 24-bit LVAL length limit of {Constants.LongValue.MaxPayloadBytes} bytes.");
         }
 
         // One row per LVAL page. The row table costs 2 bytes for a single offset.
@@ -6523,8 +6492,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // One real-idx slot per logical-idx (no sharing). See
         // docs/design/index-and-relationship-format-notes.md §3.3.
         int numRealIdx = numIdx;
-        int realIdxPhysSz = jet4 ? 52 : 39;
-        int logIdxEntrySz = jet4 ? 28 : 20;
+        int realIdxPhysSz = jet4 ? Constants.TableDefinition.Jet4.RealIdx.PhysSize : Constants.TableDefinition.Jet3.RealIdx.PhysSize;
+        int logIdxEntrySz = jet4 ? Constants.TableDefinition.Jet4.LogicalIdx.EntrySize : Constants.TableDefinition.Jet3.LogicalIdx.EntrySize;
 
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
         int namePos = colStart + (numCols * _colDescSz);
@@ -6632,12 +6601,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // Jet4 leading 4-byte cookie + trailing tail, so every field shifts
             // left by 4 bytes; first_dp lives where Jet4 puts used_pages and
             // there is no separate used_pages slot. See §3.1 / §3.2.
-            int physFirstDpOff = jet4 ? 38 : 34;
-            int physFlagsOff = jet4 ? 42 : 38;
-            int logIndexNumOff = jet4 ? 4 : 0;
-            int logIndexNum2Off = jet4 ? 8 : 4;
-            int logRelIdxNumOff = jet4 ? 13 : 9;
-            int logIndexTypeOff = jet4 ? 23 : 19;
+            int physFirstDpOff = jet4 ? Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset : Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset;
+            int physFlagsOff = jet4 ? Constants.TableDefinition.Jet4.RealIdx.FlagsOffset : Constants.TableDefinition.Jet3.RealIdx.FlagsOffset;
+            int logIndexNumOff = jet4 ? Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset : Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset;
+            int logIndexNum2Off = jet4 ? Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset : Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset;
+            int logRelIdxNumOff = jet4 ? Constants.TableDefinition.Jet4.LogicalIdx.RelIdxNumOffset : Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset;
+            int logIndexTypeOff = jet4 ? Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset : Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset;
 
             for (int i = 0; i < numIdx; i++)
             {
@@ -8597,8 +8566,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private async ValueTask<bool> SystemTableHasMaintainableIndexesAsync(long tdefPage, CancellationToken cancellationToken)
     {
         bool jet3 = _format == DatabaseFormat.Jet3Mdb;
-        int realIdxPhysSz = jet3 ? 39 : 52;
-        int physFirstDpOff = jet3 ? 34 : 38;
+        int realIdxPhysSz = jet3 ? Constants.TableDefinition.Jet3.RealIdx.PhysSize : Constants.TableDefinition.Jet4.RealIdx.PhysSize;
+        int physFirstDpOff = jet3 ? Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset : Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset;
 
         byte[] page = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
@@ -8701,9 +8670,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         try
         {
-            uint current = Ru32(page, TDefRowCountOffset);
+            uint current = Ru32(page, Constants.TableDefinition.RowCountOffset);
             updated = Math.Clamp(current + delta, 0L, uint.MaxValue);
-            Wi32(page, TDefRowCountOffset, unchecked((int)(uint)updated));
+            Wi32(page, Constants.TableDefinition.RowCountOffset, unchecked((int)(uint)updated));
             await WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -8783,7 +8752,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // so a data page can hold at most 256 distinct row slots. Capping at
         // 255 matches Jackcess and keeps the (byte) cast in the index-rebuild
         // path safe under <CheckForOverflowUnderflow>true.
-        if (numRows >= MaxRowsPerDataPage)
+        if (numRows >= Constants.DataPage.MaxRowsPerPage)
         {
             return false;
         }
@@ -9507,12 +9476,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         // §3.1 / §3.2 per-format sizes + offsets.
-        int realIdxPhysSz = jet3 ? 39 : 52;
-        int logIdxEntrySz = jet3 ? 20 : 28;
-        int physFirstDpOff = jet3 ? 34 : 38;
-        int physFlagsOff = jet3 ? 38 : 42;
-        int logIndexNum2Off = jet3 ? 4 : 8;
-        int logIndexTypeOff = jet3 ? 19 : 23;
+        int realIdxPhysSz = jet3 ? Constants.TableDefinition.Jet3.RealIdx.PhysSize : Constants.TableDefinition.Jet4.RealIdx.PhysSize;
+        int logIdxEntrySz = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.EntrySize : Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
+        int physFirstDpOff = jet3 ? Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset : Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset;
+        int physFlagsOff = jet3 ? Constants.TableDefinition.Jet3.RealIdx.FlagsOffset : Constants.TableDefinition.Jet4.RealIdx.FlagsOffset;
+        int logIndexNum2Off = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset : Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset;
+        int logIndexTypeOff = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset : Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset;
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
         int namePos = colStart + (numCols * _colDescSz);
         for (int i = 0; i < numCols; i++)
@@ -9806,10 +9775,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // §3.1 per-format real-idx physical descriptor sizes.
         // Jet4/ACE: 52 bytes — unknown(4) + col_map(30) + used_pages(4) + first_dp(4) + flags(1) + unknown(9).
         // Jet3:     39 bytes — unknown(4) + col_map(30) + first_dp(4) + flags(1) — no used_pages slot.
-        int realIdxPhysSz = jet3 ? 39 : 52;
-        int physFirstDpOff = jet3 ? 34 : 38;
-        int logIdxEntrySz = jet3 ? 20 : 28;
-        int logIndexTypeOff = jet3 ? 19 : 23;
+        int realIdxPhysSz = jet3 ? Constants.TableDefinition.Jet3.RealIdx.PhysSize : Constants.TableDefinition.Jet4.RealIdx.PhysSize;
+        int physFirstDpOff = jet3 ? Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset : Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset;
+        int logIdxEntrySz = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.EntrySize : Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
+        int logIndexTypeOff = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset : Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset;
         int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
         int namePos = colStart + (numCols * _colDescSz);
         for (int i = 0; i < numCols; i++)
@@ -12099,7 +12068,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.LeafPageLayout.Jet4;
         const int RealIdxPhysSz = 52;
-        const int PhysFirstDpOff = 38;
+        const int PhysFirstDpOff = Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset;
 
         _lastIncrementalBail = null;
 
@@ -12439,11 +12408,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // §3.1 / §3.2 per-format sizes + offsets.
         bool jet3 = _format == DatabaseFormat.Jet3Mdb;
-        int realIdxPhysSz = jet3 ? 39 : 52;
-        int logIdxEntrySz = jet3 ? 20 : 28;
-        int physFlagsOff = jet3 ? 38 : 42;
-        int logIndexNum2Off = jet3 ? 4 : 8;
-        int logIndexTypeOff = jet3 ? 19 : 23;
+        int realIdxPhysSz = jet3 ? Constants.TableDefinition.Jet3.RealIdx.PhysSize : Constants.TableDefinition.Jet4.RealIdx.PhysSize;
+        int logIdxEntrySz = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.EntrySize : Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
+        int physFlagsOff = jet3 ? Constants.TableDefinition.Jet3.RealIdx.FlagsOffset : Constants.TableDefinition.Jet4.RealIdx.FlagsOffset;
+        int logIndexNum2Off = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset : Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset;
+        int logIndexTypeOff = jet3 ? Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset : Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset;
 
         byte[] tdefPageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] tdefBuffer;

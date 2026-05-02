@@ -514,4 +514,152 @@ internal static class Constants
         /// </summary>
         public const int SegmentSize = 4096;
     }
+
+    /// <summary>
+    /// On-disk constants for the per-table TDEF page header and the index
+    /// sub-sections (real-idx physical descriptors, logical-idx entries) that
+    /// follow the column descriptors. See
+    /// <c>docs/design/index-and-relationship-format-notes.md</c> §3.
+    /// </summary>
+    public static class TableDefinition
+    {
+        /// <summary>
+        /// Byte offset within a TDEF page header where the live-row count is
+        /// stored as a little-endian <c>uint32</c>. Adjusted by every insert /
+        /// delete so the cached count stays in sync with what readers compute
+        /// by walking row offset arrays.
+        /// </summary>
+        public const int RowCountOffset = 16;
+
+        /// <summary>Jet3 (.mdb, Access 97) TDEF index-section sizes per HACKING.md.</summary>
+        public static class Jet3
+        {
+            /// <summary>Byte offsets within a Jet3 real-idx physical descriptor (39 bytes total).</summary>
+            public static class RealIdx
+            {
+                /// <summary>Size in bytes of one real-idx physical descriptor (col_map + flags).</summary>
+                public const int PhysSize = 39;
+
+                /// <summary>Start of the 30-byte <c>col_map</c> block (10 × {col_num(2), col_order(1)}).</summary>
+                public const int ColMapOffset = 4;
+
+                /// <summary><c>first_dp</c> (4 bytes): root page of the index B-tree.</summary>
+                public const int FirstDpOffset = 34;
+
+                /// <summary><c>flags</c> (1 byte): bit 0 = unique.</summary>
+                public const int FlagsOffset = 38;
+            }
+
+            /// <summary>Byte offsets within a Jet3 logical-idx entry (20 bytes total).</summary>
+            public static class LogicalIdx
+            {
+                /// <summary>Size in bytes of one logical-idx entry inside a TDEF.</summary>
+                public const int EntrySize = 20;
+
+                /// <summary><c>index_num</c> (4 bytes): logical-index number.</summary>
+                public const int IndexNumOffset = 0;
+
+                /// <summary><c>index_num2</c> (4 bytes): backing real-idx slot number.</summary>
+                public const int IndexNum2Offset = 4;
+
+                /// <summary><c>rel_tbl_type</c> (1 byte): 0x01 on FK entries.</summary>
+                public const int RelTblTypeOffset = 8;
+
+                /// <summary><c>rel_idx_num</c> (4 bytes): partner-side real-idx slot number on FK entries.</summary>
+                public const int RelIdxNumOffset = 9;
+
+                /// <summary><c>rel_tbl_page</c> (4 bytes): partner-side TDEF page on FK entries.</summary>
+                public const int RelTblPageOffset = 13;
+
+                /// <summary><c>cascade_ups</c> (1 byte).</summary>
+                public const int CascadeUpsOffset = 17;
+
+                /// <summary><c>cascade_dels</c> (1 byte).</summary>
+                public const int CascadeDelsOffset = 18;
+
+                /// <summary><c>index_type</c> (1 byte): 0x00 normal, 0x01 PK, 0x02 FK.</summary>
+                public const int IndexTypeOffset = 19;
+            }
+        }
+
+        /// <summary>Jet4 / ACE TDEF index-section sizes.</summary>
+        public static class Jet4
+        {
+            /// <summary>Byte offsets within a Jet4/ACE real-idx physical descriptor (52 bytes total).</summary>
+            public static class RealIdx
+            {
+                /// <summary>Size in bytes of one real-idx physical descriptor (col_map + flags).</summary>
+                public const int PhysSize = 52;
+
+                /// <summary>Start of the 30-byte <c>col_map</c> block (10 × {col_num(2), col_order(1)}).</summary>
+                public const int ColMapOffset = 4;
+
+                /// <summary><c>first_dp</c> (4 bytes): root page of the index B-tree.</summary>
+                public const int FirstDpOffset = 38;
+
+                /// <summary><c>flags</c> (1 byte): bit 0 = unique.</summary>
+                public const int FlagsOffset = 42;
+            }
+
+            /// <summary>Byte offsets within a Jet4/ACE logical-idx entry (28 bytes total).</summary>
+            public static class LogicalIdx
+            {
+                /// <summary>Size in bytes of one logical-idx entry inside a TDEF.</summary>
+                public const int EntrySize = 28;
+
+                /// <summary><c>index_num</c> (4 bytes): logical-index number (Jet4 has a leading 4-byte cookie).</summary>
+                public const int IndexNumOffset = 4;
+
+                /// <summary><c>index_num2</c> (4 bytes): backing real-idx slot number.</summary>
+                public const int IndexNum2Offset = 8;
+
+                /// <summary><c>rel_tbl_type</c> (1 byte): 0x01 on FK entries.</summary>
+                public const int RelTblTypeOffset = 12;
+
+                /// <summary><c>rel_idx_num</c> (4 bytes): partner-side real-idx slot number on FK entries.</summary>
+                public const int RelIdxNumOffset = 13;
+
+                /// <summary><c>rel_tbl_page</c> (4 bytes): partner-side TDEF page on FK entries.</summary>
+                public const int RelTblPageOffset = 17;
+
+                /// <summary><c>cascade_ups</c> (1 byte).</summary>
+                public const int CascadeUpsOffset = 21;
+
+                /// <summary><c>cascade_dels</c> (1 byte).</summary>
+                public const int CascadeDelsOffset = 22;
+
+                /// <summary><c>index_type</c> (1 byte): 0x00 normal, 0x01 PK, 0x02 FK.</summary>
+                public const int IndexTypeOffset = 23;
+            }
+        }
+    }
+
+    /// <summary>
+    /// On-disk limits for long-value (LVAL) MEMO / OLE / Attachment payloads.
+    /// </summary>
+    public static class LongValue
+    {
+        /// <summary>
+        /// Maximum payload size for a MEMO / OLE / Attachment value. The on-disk
+        /// LVAL header dedicates a 24-bit field to the total length, so values
+        /// strictly larger than 16,777,215 bytes cannot be addressed regardless
+        /// of the chosen storage form (inline / single-page / chained).
+        /// </summary>
+        public const int MaxPayloadBytes = (1 << 24) - 1;
+    }
+
+    /// <summary>
+    /// On-disk limits for JET data pages (page-type <c>0x01</c>).
+    /// </summary>
+    public static class DataPage
+    {
+        /// <summary>
+        /// Maximum number of rows a single JET data page may hold. JET row IDs
+        /// encode the per-page row index as a single byte, so a page can address
+        /// at most 256 row slots; Jackcess caps at 255 and we follow suit so the
+        /// <c>(byte)RowIndex</c> cast in the index-rebuild path stays safe
+        /// under <c>&lt;CheckForOverflowUnderflow&gt;true</c>.
+        /// </summary>
+        public const int MaxRowsPerPage = 255;
+    }
 }
