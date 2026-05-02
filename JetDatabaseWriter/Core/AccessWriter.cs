@@ -9272,32 +9272,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private void EncodeNumericValue(decimal value, Span<byte> dest)
     {
-        int[] bits = decimal.GetBits(value);
-        int flags = bits[3];
-        bool negative = (flags & unchecked((int)0x80000000)) != 0;
-        byte scale = (byte)((flags >> 16) & 0x7F);
+        Span<byte> mantissa = dest.Slice(4, 12);
+        DecimalNumeric.Decompose(value, mantissa, out bool negative, out int scale);
 
-        byte precision = 1;
-        var mantissa = new decimal(bits[0], bits[1], bits[2], isNegative: false, scale: 0);
-        while (mantissa >= 10m)
-        {
-            mantissa = decimal.Truncate(mantissa / 10m);
-            precision++;
-        }
-
-        if (precision > 28)
-        {
-            precision = 28;
-        }
-
-        dest[0] = precision;
-        dest[1] = scale;
+        dest[0] = DecimalNumeric.ComputePrecision(mantissa);
+        dest[1] = (byte)scale;
         dest[2] = negative ? (byte)1 : (byte)0;
         dest[3] = 0;
-
-        BinaryPrimitives.WriteInt32LittleEndian(dest.Slice(4, 4), bits[0]);
-        BinaryPrimitives.WriteInt32LittleEndian(dest.Slice(8, 4), bits[1]);
-        BinaryPrimitives.WriteInt32LittleEndian(dest.Slice(12, 4), bits[2]);
     }
 
     private bool TryGetCachedInsertPageNumber(long tdefPage, out long pageNumber)

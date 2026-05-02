@@ -375,10 +375,12 @@ internal static class IndexKeyEncoder
         }
 
         decimal d = ToDecimal(value!);
-        int[] bits = decimal.GetBits(d);
-        int flags = bits[3];
-        bool negative = (flags & unchecked((int)0x80000000)) != 0;
-        int scale = (flags >> 16) & 0x7F;
+
+        // Build BigInteger from the unsigned 96-bit mantissa: 12 LE data bytes
+        // plus a trailing zero byte that forces BigInteger to interpret the
+        // value as positive (sign is tracked separately in `negative`).
+        byte[] leMantissa = new byte[13];
+        DecimalNumeric.Decompose(d, leMantissa.AsSpan(0, 12), out bool negative, out int scale);
 
         Guard.InRange(targetScale, 0, 28, nameof(targetScale));
 
@@ -389,11 +391,6 @@ internal static class IndexKeyEncoder
                 nameof(targetScale));
         }
 
-        // Build BigInteger from the unsigned 96-bit mantissa.
-        byte[] leMantissa = new byte[13]; // 12 data bytes + trailing zero ensures positive sign in BigInteger.
-        BinaryPrimitives.WriteInt32LittleEndian(leMantissa.AsSpan(0, 4), bits[0]);
-        BinaryPrimitives.WriteInt32LittleEndian(leMantissa.AsSpan(4, 4), bits[1]);
-        BinaryPrimitives.WriteInt32LittleEndian(leMantissa.AsSpan(8, 4), bits[2]);
         BigInteger mag = new BigInteger(leMantissa);
 
         if (targetScale > scale)
