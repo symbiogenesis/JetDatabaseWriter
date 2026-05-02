@@ -370,7 +370,7 @@ internal static class AgileEncryptionFixtureBuilder
         int totalDataSectors = 2 + eiSectors + epSectors;
 
         // One FAT sector holds 1024 entries (4096 / 4); ensure we don't overflow.
-        const int entriesPerFatSector = Constants.CompoundFile.V4SectorSize / 4;
+        const int entriesPerFatSector = Constants.CompoundFile.V4.SectorSize / 4;
         if (totalDataSectors > entriesPerFatSector)
         {
             throw new InvalidOperationException(
@@ -380,7 +380,7 @@ internal static class AgileEncryptionFixtureBuilder
         // Compose file: Header (4096) | FAT | Dir | EI | EP. Allocated up
         // front so every section can be written in place — no intermediate
         // sector buffers, no final BlockCopy pass.
-        int fileSize = Constants.CompoundFile.V4SectorSize + ((1 + 1 + eiSectors + epSectors) * Constants.CompoundFile.V4SectorSize);
+        int fileSize = Constants.CompoundFile.V4.SectorSize + ((1 + 1 + eiSectors + epSectors) * Constants.CompoundFile.V4.SectorSize);
         byte[] file = new byte[fileSize];
 
         WriteHeader(file, fatSectorIndex, dirSectorIndex, totalDirSectors: 1);
@@ -388,7 +388,7 @@ internal static class AgileEncryptionFixtureBuilder
         // ── FAT sector ──────────────────────────────────────────────
         // FREESECT (0xFFFFFFFF) is all-ones, so a single byte-fill seeds
         // every entry; we then overwrite only the slots actually in use.
-        Span<byte> fatSpan = file.AsSpan(SectorOffset(fatSectorIndex), Constants.CompoundFile.V4SectorSize);
+        Span<byte> fatSpan = file.AsSpan(SectorOffset(fatSectorIndex), Constants.CompoundFile.V4.SectorSize);
         fatSpan.Fill(0xFF);
         BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(fatSectorIndex * 4, 4), Constants.CompoundFile.FatSect);
         BinaryPrimitives.WriteUInt32LittleEndian(fatSpan.Slice(dirSectorIndex * 4, 4), Constants.CompoundFile.EndOfChain);
@@ -436,9 +436,9 @@ internal static class AgileEncryptionFixtureBuilder
         }
     }
 
-    private static int SectorOffset(int sectorIndex) => Constants.CompoundFile.V4SectorSize + (sectorIndex * Constants.CompoundFile.V4SectorSize);
+    private static int SectorOffset(int sectorIndex) => Constants.CompoundFile.V4.SectorSize + (sectorIndex * Constants.CompoundFile.V4.SectorSize);
 
-    private static int SectorsFor(int byteLength) => (byteLength + Constants.CompoundFile.V4SectorSize - 1) / Constants.CompoundFile.V4SectorSize;
+    private static int SectorsFor(int byteLength) => (byteLength + Constants.CompoundFile.V4.SectorSize - 1) / Constants.CompoundFile.V4.SectorSize;
 
     private static void WriteHeader(byte[] file, int firstFatSector, int firstDirSector, int totalDirSectors)
     {

@@ -143,7 +143,7 @@ public sealed class IndexTailPageAppendAndKeyTypeRestrictionTests
         Assert.Equal(4, r.Pages.Count);
         Assert.Equal(Constants.IndexLeafPage.PageTypeIntermediate, r.Pages[3][0]);
 
-        long tailPage = ReadI32(r.Pages[3], Constants.IndexLeafPage.Jet4TailPageOffset);
+        long tailPage = ReadI32(r.Pages[3], Constants.IndexLeafPage.Jet4.TailPageOffset);
         Assert.Equal(firstPage + 2, tailPage); // rightmost leaf
     }
 

@@ -264,15 +264,6 @@ internal static class Constants
     /// </summary>
     public static class CompoundFile
     {
-        /// <summary>CFB v4 sector size in bytes (4096).</summary>
-        public const int V4SectorSize = 4096;
-
-        /// <summary>Sector shift for v4 (log₂ of <see cref="V4SectorSize"/>): 2¹² = 4096.</summary>
-        public const ushort V4SectorShift = 12;
-
-        /// <summary>CFB major version for v4 (4096-byte sectors).</summary>
-        public const ushort V4MajorVersion = 4;
-
         /// <summary>Size of a single directory entry in bytes (128).</summary>
         public const int DirEntrySize = 128;
 
@@ -290,6 +281,93 @@ internal static class Constants
         /// a reserved sentinel rather than an addressable sector index.
         /// </summary>
         public const uint FatSectMin = 0xFFFFFFFAu;
+
+        /// <summary>
+        /// Number of FAT-sector pointers stored directly in the 512-byte CFB
+        /// header DIFAT (offset 0x4C..0xFF). Identical for v3 and v4.
+        /// </summary>
+        public const int MaxHeaderDifatEntries = 109;
+
+        /// <summary>CFB v3 sizes (512-byte sectors). MS-CFB §2.2.</summary>
+        public static class V3
+        {
+            /// <summary>Sector size in bytes (512).</summary>
+            public const int SectorSize = 512;
+
+            /// <summary>Sector shift (log₂ of <see cref="SectorSize"/>): 2⁹ = 512.</summary>
+            public const ushort SectorShift = 9;
+
+            /// <summary>CFB major version for v3.</summary>
+            public const ushort MajorVersion = 3;
+        }
+
+        /// <summary>CFB v4 sizes (4096-byte sectors). MS-CFB §2.2.</summary>
+        public static class V4
+        {
+            /// <summary>Sector size in bytes (4096).</summary>
+            public const int SectorSize = 4096;
+
+            /// <summary>Sector shift (log₂ of <see cref="SectorSize"/>): 2¹² = 4096.</summary>
+            public const ushort SectorShift = 12;
+
+            /// <summary>CFB major version for v4.</summary>
+            public const ushort MajorVersion = 4;
+
+            /// <summary>Number of 4-byte FAT entries per v4 FAT sector (1024).</summary>
+            public const int EntriesPerFatSector = SectorSize / 4;
+
+            /// <summary>Number of 128-byte directory entries per v4 directory sector (32).</summary>
+            public const int EntriesPerDirSector = SectorSize / DirEntrySize;
+        }
+
+        /// <summary>
+        /// Byte offsets into the 512-byte CFB header. Field meanings per MS-CFB §2.2.
+        /// Identical for v3 and v4.
+        /// </summary>
+        public static class HeaderOffsets
+        {
+            /// <summary>Minor version (offset 0x18, 2 bytes).</summary>
+            public const int MinorVersion = 0x18;
+
+            /// <summary>Major version (offset 0x1A, 2 bytes; 3 = v3, 4 = v4).</summary>
+            public const int MajorVersion = 0x1A;
+
+            /// <summary>Byte-order mark (offset 0x1C, 2 bytes; always 0xFFFE).</summary>
+            public const int ByteOrder = 0x1C;
+
+            /// <summary>Sector shift (offset 0x1E, 2 bytes; log₂ of sector size).</summary>
+            public const int SectorShift = 0x1E;
+
+            /// <summary>Mini-sector shift (offset 0x20, 2 bytes; log₂ of mini-sector size).</summary>
+            public const int MiniSectorShift = 0x20;
+
+            /// <summary>Number of directory sectors (offset 0x28, 4 bytes).</summary>
+            public const int NumDirSectors = 0x28;
+
+            /// <summary>Number of FAT sectors (offset 0x2C, 4 bytes).</summary>
+            public const int NumFatSectors = 0x2C;
+
+            /// <summary>First directory sector (offset 0x30, 4 bytes).</summary>
+            public const int FirstDirSector = 0x30;
+
+            /// <summary>Mini-stream cutoff size (offset 0x38, 4 bytes).</summary>
+            public const int MiniStreamCutoff = 0x38;
+
+            /// <summary>First mini-FAT sector (offset 0x3C, 4 bytes).</summary>
+            public const int FirstMiniFatSector = 0x3C;
+
+            /// <summary>Number of mini-FAT sectors (offset 0x40, 4 bytes).</summary>
+            public const int NumMiniFatSectors = 0x40;
+
+            /// <summary>First DIFAT extension sector (offset 0x44, 4 bytes).</summary>
+            public const int FirstDifatSector = 0x44;
+
+            /// <summary>Number of DIFAT extension sectors (offset 0x48, 4 bytes).</summary>
+            public const int NumDifatSectors = 0x48;
+
+            /// <summary>Start of the 109-entry header DIFAT array (offset 0x4C).</summary>
+            public const int HeaderDifat = 0x4C;
+        }
     }
 
     /// <summary>
@@ -350,50 +428,60 @@ internal static class Constants
         /// (sibling of <see cref="PageTypeLeaf"/> in the same B-tree).</summary>
         public const byte PageTypeIntermediate = 0x03;
 
-        /// <summary>Bitmask offset on a Jet4 leaf page (§4.2).</summary>
-        public const int Jet4BitmaskOffset = 0x1B;
+        /// <summary>
+        /// Per-version field offsets within an index leaf / intermediate page
+        /// header (§4.1) and the entry-start bitmask + first-entry positions (§4.2).
+        /// Verified against Jackcess <c>JetFormat</c> constants
+        /// (<c>OFFSET_PREV_INDEX_PAGE</c>, <c>OFFSET_NEXT_INDEX_PAGE</c>,
+        /// <c>OFFSET_CHILD_TAIL_INDEX_PAGE</c>,
+        /// <c>OFFSET_INDEX_COMPRESSED_BYTE_COUNT</c>) and empirically against an
+        /// Access-authored MSysObjects.ParentIdName leaf (page 2790 of
+        /// Tests/Databases/NorthwindTraders.accdb): prev=2677 at @12, next=2996 at @16,
+        /// pref_len=1 at @24. Jet4/ACE has an extra unknown(0) field at offset 8
+        /// that Jet3 lacks, shifting the rest of the header by 4 bytes.
+        /// </summary>
+        public static class Jet3
+        {
+            /// <summary>Bitmask offset on a Jet3 leaf page (§4.2).</summary>
+            public const int BitmaskOffset = 0x16;
 
-        /// <summary>First-entry offset on a Jet4 leaf page (§4.2).</summary>
-        public const int Jet4FirstEntryOffset = 0x1E0;
+            /// <summary>First-entry offset on a Jet3 leaf page (§4.2).</summary>
+            public const int FirstEntryOffset = 0xF8;
 
-        /// <summary>Bitmask offset on a Jet3 leaf page (§4.2).</summary>
-        public const int Jet3BitmaskOffset = 0x16;
+            /// <summary>prev_page header offset.</summary>
+            public const int PrevPageOffset = 8;
 
-        /// <summary>First-entry offset on a Jet3 leaf page (§4.2).</summary>
-        public const int Jet3FirstEntryOffset = 0xF8;
+            /// <summary>next_page header offset.</summary>
+            public const int NextPageOffset = 12;
 
-        // §4.1 page header offsets. Verified against Jackcess JetFormat
-        // (`OFFSET_PREV_INDEX_PAGE`, `OFFSET_NEXT_INDEX_PAGE`,
-        // `OFFSET_CHILD_TAIL_INDEX_PAGE`, `OFFSET_INDEX_COMPRESSED_BYTE_COUNT`)
-        // and empirically against an Access-authored MSysObjects.ParentIdName
-        // leaf (page 2790 of Tests/Databases/NorthwindTraders.accdb): prev=2677
-        // at @12, next=2996 at @16, pref_len=1 at @24. Jet4/ACE has an extra
-        // unknown(0) field at offset 8 that Jet3 lacks, shifting the rest of
-        // the header by 4 bytes.
+            /// <summary>tail_page header offset.</summary>
+            public const int TailPageOffset = 16;
 
-        /// <summary>Jet3 prev_page header offset.</summary>
-        public const int Jet3PrevPageOffset = 8;
+            /// <summary>pref_len (page-shared prefix length) header offset.</summary>
+            public const int PrefLenOffset = 20;
+        }
 
-        /// <summary>Jet3 next_page header offset.</summary>
-        public const int Jet3NextPageOffset = 12;
+        /// <summary>Jet4 / ACE counterparts of <see cref="Jet3"/>.</summary>
+        public static class Jet4
+        {
+            /// <summary>Bitmask offset on a Jet4 leaf page (§4.2).</summary>
+            public const int BitmaskOffset = 0x1B;
 
-        /// <summary>Jet3 tail_page header offset.</summary>
-        public const int Jet3TailPageOffset = 16;
+            /// <summary>First-entry offset on a Jet4 leaf page (§4.2).</summary>
+            public const int FirstEntryOffset = 0x1E0;
 
-        /// <summary>Jet3 pref_len (page-shared prefix length) header offset.</summary>
-        public const int Jet3PrefLenOffset = 20;
+            /// <summary>prev_page header offset.</summary>
+            public const int PrevPageOffset = 12;
 
-        /// <summary>Jet4 / ACE prev_page header offset.</summary>
-        public const int Jet4PrevPageOffset = 12;
+            /// <summary>next_page header offset.</summary>
+            public const int NextPageOffset = 16;
 
-        /// <summary>Jet4 / ACE next_page header offset.</summary>
-        public const int Jet4NextPageOffset = 16;
+            /// <summary>tail_page (childTail) header offset.</summary>
+            public const int TailPageOffset = 20;
 
-        /// <summary>Jet4 / ACE tail_page (childTail) header offset.</summary>
-        public const int Jet4TailPageOffset = 20;
-
-        /// <summary>Jet4 / ACE pref_len (page-shared prefix length) header offset.</summary>
-        public const int Jet4PrefLenOffset = 24;
+            /// <summary>pref_len (page-shared prefix length) header offset.</summary>
+            public const int PrefLenOffset = 24;
+        }
     }
 
     /// <summary>

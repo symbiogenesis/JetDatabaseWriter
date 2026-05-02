@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Internal.Helpers;
+using HdrOff = JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets;
 
 /// <summary>
 /// Minimal reader for the OLE / Microsoft Compound File Binary (CFB / OLE2)
@@ -78,9 +79,9 @@ internal static class CompoundFileReader
 
     private static CfbHeader ParseHeader(byte[] header)
     {
-        ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(0x1A));
-        ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(0x1E));
-        ushort miniSectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(0x20));
+        ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(HdrOff.MajorVersion));
+        ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(HdrOff.SectorShift));
+        ushort miniSectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(HdrOff.MiniSectorShift));
 
         if (sectorShift != 9 && sectorShift != 12)
         {
@@ -101,13 +102,13 @@ internal static class CompoundFileReader
         return new CfbHeader(
             SectorSize: 1 << sectorShift,
             MiniSectorSize: 1 << miniSectorShift,
-            NumFatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x2C)),
-            FirstDirSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x30)),
-            MiniStreamCutoff: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x38)),
-            FirstMiniFatSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x3C)),
-            NumMiniFatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x40)),
-            FirstDifatSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x44)),
-            NumDifatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x48)));
+            NumFatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.NumFatSectors)),
+            FirstDirSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.FirstDirSector)),
+            MiniStreamCutoff: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.MiniStreamCutoff)),
+            FirstMiniFatSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.FirstMiniFatSector)),
+            NumMiniFatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.NumMiniFatSectors)),
+            FirstDifatSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.FirstDifatSector)),
+            NumDifatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(HdrOff.NumDifatSectors)));
     }
 
     private static async ValueTask<uint[]> BuildFatAsync(

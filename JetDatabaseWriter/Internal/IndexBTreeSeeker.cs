@@ -20,8 +20,8 @@ using JetDatabaseWriter.Internal.Helpers;
 /// §4 and §7 R3).
 /// <para>
 /// Jet4 / ACE only — bitmask at <c>0x1B</c>, first entry at <c>0x1E0</c>,
-/// matching <see cref="Constants.IndexLeafPage.Jet4BitmaskOffset"/> and
-/// <see cref="Constants.IndexLeafPage.Jet4FirstEntryOffset"/>.
+/// matching <see cref="Constants.IndexLeafPage.Jet4.BitmaskOffset"/> and
+/// <see cref="Constants.IndexLeafPage.Jet4.FirstEntryOffset"/>.
 /// </para>
 /// <para>
 /// Honours §4.4 prefix compression (re-prepends the page <c>pref_len</c>
@@ -52,11 +52,11 @@ internal static class IndexBTreeSeeker
 {
     private const byte PageTypeIntermediate = Constants.IndexLeafPage.PageTypeIntermediate;
     private const byte PageTypeLeaf = Constants.IndexLeafPage.PageTypeLeaf;
-    private const int BitmaskOffset = Constants.IndexLeafPage.Jet4BitmaskOffset;
-    private const int FirstEntryOffset = Constants.IndexLeafPage.Jet4FirstEntryOffset;
-    private const int NextPageOffset = Constants.IndexLeafPage.Jet4NextPageOffset;
-    private const int TailPageOffset = Constants.IndexLeafPage.Jet4TailPageOffset;
-    private const int PrefLenOffset = Constants.IndexLeafPage.Jet4PrefLenOffset;
+    private const int BitmaskOffset = Constants.IndexLeafPage.Jet4.BitmaskOffset;
+    private const int FirstEntryOffset = Constants.IndexLeafPage.Jet4.FirstEntryOffset;
+    private const int NextPageOffset = Constants.IndexLeafPage.Jet4.NextPageOffset;
+    private const int TailPageOffset = Constants.IndexLeafPage.Jet4.TailPageOffset;
+    private const int PrefLenOffset = Constants.IndexLeafPage.Jet4.PrefLenOffset;
 
     /// <summary>
     /// Returns <see langword="true"/> when at least one entry in the B-tree

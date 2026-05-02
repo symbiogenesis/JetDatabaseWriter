@@ -642,10 +642,10 @@ public sealed class IndexMaintenanceTests
         fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
     private static int BitmaskOffset(DatabaseFormat fmt) =>
-        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3BitmaskOffset : Constants.IndexLeafPage.Jet4BitmaskOffset;
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3.BitmaskOffset : Constants.IndexLeafPage.Jet4.BitmaskOffset;
 
     private static int FirstEntryOffset(DatabaseFormat fmt) =>
-        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3FirstEntryOffset : Constants.IndexLeafPage.Jet4FirstEntryOffset;
+        fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3.FirstEntryOffset : Constants.IndexLeafPage.Jet4.FirstEntryOffset;
 
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {

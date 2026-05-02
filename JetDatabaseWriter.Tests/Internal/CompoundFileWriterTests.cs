@@ -118,11 +118,11 @@ public sealed class CompoundFileWriterTests
 
         // sectorShift at offset 0x1E (little-endian uint16); 12 == 4096-byte sectors.
         ushort sectorShift = (ushort)(cfb[0x1E] | (cfb[0x1F] << 8));
-        Assert.Equal(Constants.CompoundFile.V4SectorShift, sectorShift);
+        Assert.Equal(Constants.CompoundFile.V4.SectorShift, sectorShift);
 
         // majorVersion at offset 0x1A; v4 == 4.
         ushort majorVersion = (ushort)(cfb[0x1A] | (cfb[0x1B] << 8));
-        Assert.Equal(Constants.CompoundFile.V4MajorVersion, majorVersion);
+        Assert.Equal(Constants.CompoundFile.V4.MajorVersion, majorVersion);
     }
 
     [Fact]

@@ -407,7 +407,7 @@ public sealed class IndexWriterAdvancedTests
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
     {
         int count = 1;
-        for (int i = Constants.IndexLeafPage.Jet4BitmaskOffset; i < Constants.IndexLeafPage.Jet4FirstEntryOffset; i++)
+        for (int i = Constants.IndexLeafPage.Jet4.BitmaskOffset; i < Constants.IndexLeafPage.Jet4.FirstEntryOffset; i++)
         {
             byte b = fileBytes[leafOffset + i];
             for (int bit = 0; bit < 8; bit++)

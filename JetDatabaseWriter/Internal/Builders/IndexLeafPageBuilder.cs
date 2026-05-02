@@ -56,21 +56,21 @@ internal static class IndexLeafPageBuilder
     {
         /// <summary>Gets the Jet3 (<c>.mdb</c> Access 97) leaf page layout.</summary>
         public static LeafPageLayout Jet3 => new(
-            Constants.IndexLeafPage.Jet3BitmaskOffset,
-            Constants.IndexLeafPage.Jet3FirstEntryOffset,
-            Constants.IndexLeafPage.Jet3PrevPageOffset,
-            Constants.IndexLeafPage.Jet3NextPageOffset,
-            Constants.IndexLeafPage.Jet3TailPageOffset,
-            Constants.IndexLeafPage.Jet3PrefLenOffset);
+            Constants.IndexLeafPage.Jet3.BitmaskOffset,
+            Constants.IndexLeafPage.Jet3.FirstEntryOffset,
+            Constants.IndexLeafPage.Jet3.PrevPageOffset,
+            Constants.IndexLeafPage.Jet3.NextPageOffset,
+            Constants.IndexLeafPage.Jet3.TailPageOffset,
+            Constants.IndexLeafPage.Jet3.PrefLenOffset);
 
         /// <summary>Gets the Jet4 / ACE leaf page layout.</summary>
         public static LeafPageLayout Jet4 => new(
-            Constants.IndexLeafPage.Jet4BitmaskOffset,
-            Constants.IndexLeafPage.Jet4FirstEntryOffset,
-            Constants.IndexLeafPage.Jet4PrevPageOffset,
-            Constants.IndexLeafPage.Jet4NextPageOffset,
-            Constants.IndexLeafPage.Jet4TailPageOffset,
-            Constants.IndexLeafPage.Jet4PrefLenOffset);
+            Constants.IndexLeafPage.Jet4.BitmaskOffset,
+            Constants.IndexLeafPage.Jet4.FirstEntryOffset,
+            Constants.IndexLeafPage.Jet4.PrevPageOffset,
+            Constants.IndexLeafPage.Jet4.NextPageOffset,
+            Constants.IndexLeafPage.Jet4.TailPageOffset,
+            Constants.IndexLeafPage.Jet4.PrefLenOffset);
 
         /// <summary>Gets the byte offset of the entry-start bitmask within the page.</summary>
         public int BitmaskOffset { get; } = bitmaskOffset;
