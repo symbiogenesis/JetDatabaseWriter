@@ -157,13 +157,52 @@ Notes:
   Employees), all green.
 
 ### Phase 3 — Wire new path into public API
-- [ ] Change `AccessReader.Rows(string)` to use `CrackRowTyped` + the new
+- [x] Change `AccessReader.Rows(string)` to use `CrackRowTyped` + the new
   per-table complex-data resolver (no `ConvertRowToTyped` round-trip).
-- [ ] Change `ReadDataTableAsync` to use the typed path.
-- [ ] Keep `RowsAsStrings` on the existing string path (it's the only
+- [x] Change `ReadDataTableAsync` to use the typed path.
+- [x] Keep `RowsAsStrings` on the existing string path (it's the only
   consumer that actually wants strings).
-- [ ] Delete or relegate `ConvertRowToTyped` to a fallback used only by the
+- [x] Delete or relegate `ConvertRowToTyped` to a fallback used only by the
   string→typed conversion API (if any external caller still needs it).
+
+#### Notes
+- `Rows(string)` and `ReadDataTableAsync` now decode rows via
+  `CrackRowTypedAsync` directly — no `EnumerateRowsAsync` →
+  `List<string>` → `ConvertRowToTyped` round-trip. Both methods skip
+  the `BuildComplexColumnDataAsync` prefetch when
+  `td.HasComplexColumns == false`.
+- New post-processing helpers in
+  [AccessReader.cs](JetDatabaseWriter/Core/AccessReader.cs):
+  - `ResolveComplexColumns(typedRow, columns, complexData)` replaces
+    the `"__CX:N__"` marker emitted by
+    `JetTypeInfo.ReadFixedTyped`/`ReadVarTypedSync` with the joined
+    attachment bytes (or `DBNull` when no child data resolves). Falls
+    back to the parent row's first `T_LONG` column when the marker is
+    missing — a typed equivalent of the legacy `ExtractParentId`.
+  - `WrapHyperlinkColumns(typedRow, td.ClrTypes)` upgrades
+    Hyperlink-flagged text payloads into `Hyperlink` instances, matching
+    the projection `JetTypeInfo.ResolveClrType` exposes via the public
+    API. Both helpers are gated by new
+    `TableDef.HasComplexColumns` / `TableDef.HasHyperlinkColumns`
+    flags so non-affected tables pay zero per-row cost.
+- `ConvertRowToTyped`, `ExtractComplexId` (now `static`), and
+  `ExtractParentId` (deleted) are no longer reached from any public path.
+  `ExtractParentId` is replaced by `ExtractParentIdTyped` (operates on
+  `object?[]`); `ConvertRowToTyped` was removed.
+- Removed [CrackRowTypedParityTests.cs](JetDatabaseWriter.Tests/Core/CrackRowTypedParityTests.cs) —
+  after Phase 3 the legacy and new paths are the same path, so the
+  parity test devolved into a self-comparison. Coverage of the typed
+  path is preserved by the existing Northwind round-trip and DataTable
+  read tests (see `AccessReaderReadTests`, `HyperlinkTests`,
+  `CfbAesDecryptionTests`).
+- `RowsAsStrings` is unchanged (still uses `EnumerateRowsAsync` →
+  `List<string>`).
+- Test result after wiring: 2548/2550 pass. The two failures
+  (`AccessRoundTripTests.SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`
+  and `…CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`) are the
+  pre-existing DAO Compact baseline failures documented in
+  `/memories/repo/round-trip-tests.md` — unrelated to typed-row
+  decoding.
 
 ### Phase 4 — Per-page enumerator (kill async-per-row overhead)
 - [ ] Replace per-row `IAsyncEnumerable<object?[]>` with per-page

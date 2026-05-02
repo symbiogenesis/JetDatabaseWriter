@@ -427,7 +427,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         var (entry, td) = resolved.Value;
         long rowCount = 0;
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
+        Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
+            ? await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            : null;
         IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
         foreach (long pageNumber in pageNumbers)
@@ -436,9 +438,30 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+            foreach (RowBound rb in EnumerateLiveRowBounds(page))
             {
-                yield return ConvertRowToTyped(row, td.Columns, tableName, complexData, _strictParsing);
+                if (rb.RowSize < _numColsFldSz)
+                {
+                    continue;
+                }
+
+                object?[]? row = await CrackRowTypedAsync(page, rb.RowStart, rb.RowSize, td, cancellationToken).ConfigureAwait(false);
+                if (row == null)
+                {
+                    continue;
+                }
+
+                if (td.HasComplexColumns)
+                {
+                    ResolveComplexColumns(row, td.Columns, complexData);
+                }
+
+                if (td.HasHyperlinkColumns)
+                {
+                    WrapHyperlinkColumns(row, td.ClrTypes);
+                }
+
+                yield return (object[])row;
                 rowCount++;
             }
 
@@ -1235,7 +1258,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 _ = dt.Columns.Add(col.Name, JetTypeInfo.ResolveClrType(col));
             }
 
-            Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
+            Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
+                ? await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+                : null;
             IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
             foreach (long pageNumber in pageNumbers)
@@ -1244,9 +1269,30 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-                await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+                foreach (RowBound rb in EnumerateLiveRowBounds(page))
                 {
-                    _ = dt.Rows.Add(ConvertRowToTyped(row, td.Columns, tableName, complexData, _strictParsing));
+                    if (rb.RowSize < _numColsFldSz)
+                    {
+                        continue;
+                    }
+
+                    object?[]? row = await CrackRowTypedAsync(page, rb.RowStart, rb.RowSize, td, cancellationToken).ConfigureAwait(false);
+                    if (row == null)
+                    {
+                        continue;
+                    }
+
+                    if (td.HasComplexColumns)
+                    {
+                        ResolveComplexColumns(row, td.Columns, complexData);
+                    }
+
+                    if (td.HasHyperlinkColumns)
+                    {
+                        WrapHyperlinkColumns(row, td.ClrTypes);
+                    }
+
+                    _ = dt.Rows.Add((object[])row);
                     if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
                     {
                         progress?.Report(dt.Rows.Count);
@@ -2074,64 +2120,91 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return true;
     }
 
-    private static object[] ConvertRowToTyped(List<string> row, List<ColumnInfo> columns, string? tableName = null, Dictionary<int, Dictionary<int, byte[]>>? complexData = null, bool strictParsing = true)
+    /// <summary>
+    /// Wraps text payloads of Hyperlink-flagged columns in a typed row into
+    /// <see cref="Hyperlink"/> instances, mirroring the projection
+    /// <see cref="JetTypeInfo.ResolveClrType"/> exposes via the public API.
+    /// Non-string slots (e.g. <see cref="DBNull.Value"/>) are left untouched;
+    /// strings that fail to parse collapse to <see cref="DBNull.Value"/>
+    /// (matching <see cref="TypedValueParser.ParseValue"/>'s legacy behaviour).
+    /// </summary>
+    private static void WrapHyperlinkColumns(object?[] typedRow, Type[] clrTypes)
     {
-        var typedRow = new object[row.Count];
-        for (int i = 0; i < row.Count && i < columns.Count; i++)
+        int limit = Math.Min(clrTypes.Length, typedRow.Length);
+        for (int i = 0; i < limit; i++)
         {
-            string raw = row[i];
-            ColumnInfo col = columns[i];
-
-            // Resolve complex-field attachments using preloaded complex data (keyed by col ordinal).
-            // The variable slot holds a marker "__CX:<complex_id>__" encoding the FK
-            // that joins this row to the hidden flat data table.
-            if (col.Type == T_COMPLEX || col.Type == T_ATTACHMENT)
+            if (clrTypes[i] != typeof(Hyperlink))
             {
-                if (complexData != null &&
-                    complexData.TryGetValue(i, out Dictionary<int, byte[]>? colData))
-                {
-                    // Extract complex_id from marker string (e.g. "__CX:1__" → 1).
-                    int complexId = ExtractComplexId(raw);
-                    if (complexId <= 0)
-                    {
-                        // Fallback: use the parent row's AutoNumber ID.
-                        complexId = ExtractParentId(row, columns);
-                    }
-
-                    if (complexId > 0 && colData.TryGetValue(complexId, out byte[]? attachBytes) &&
-                        attachBytes != null && attachBytes.Length > 0)
-                    {
-                        typedRow[i] = attachBytes;
-                        continue;
-                    }
-                }
-
-                // Complex slot with no resolvable child data (e.g. multi-value
-                // columns whose flat-table loader is not wired through, or
-                // attachment slots whose ConceptualTableID has no live flat
-                // rows). Surface as DBNull rather than attempting to parse the
-                // "__CX:N__" marker as the column's nominal byte[] CLR type.
-                typedRow[i] = DBNull.Value;
                 continue;
             }
 
-            typedRow[i] = TypedValueParser.ParseValue(raw, JetTypeInfo.ResolveClrType(col), strictParsing);
+            if (typedRow[i] is string s)
+            {
+                typedRow[i] = (object?)Hyperlink.Parse(s) ?? DBNull.Value;
+            }
         }
-
-        return typedRow;
     }
 
-    /// <summary>Extracts the parent row's integer ID from the first fixed LONG column.</summary>
-    private static int ExtractParentId(List<string> row, List<ColumnInfo> columns)
+    /// <summary>
+    /// Resolves <c>T_COMPLEX</c>/<c>T_ATTACHMENT</c> slots in a typed row
+    /// (produced by <see cref="CrackRowTypedAsync"/>) by replacing the
+    /// <c>"__CX:N__"</c> marker string with the joined attachment bytes from
+    /// the preloaded complex-data dictionary. Slots with no resolvable child
+    /// data collapse to <see cref="DBNull.Value"/> rather than leaving the
+    /// marker visible to callers.
+    /// </summary>
+    private static void ResolveComplexColumns(object?[] typedRow, List<ColumnInfo> columns, Dictionary<int, Dictionary<int, byte[]>>? complexData)
     {
-        for (int i = 0; i < columns.Count && i < row.Count; i++)
+        int parentId = -1;
+        int limit = Math.Min(columns.Count, typedRow.Length);
+        for (int i = 0; i < limit; i++)
         {
-            if (columns[i].Type == T_LONG && !string.IsNullOrEmpty(row[i]))
+            ColumnInfo col = columns[i];
+            if (col.Type != T_COMPLEX && col.Type != T_ATTACHMENT)
             {
-                if (int.TryParse(row[i], out int id))
+                continue;
+            }
+
+            if (complexData != null &&
+                complexData.TryGetValue(i, out Dictionary<int, byte[]>? colData))
+            {
+                int complexId = typedRow[i] is string marker ? ExtractComplexId(marker) : 0;
+                if (complexId <= 0)
                 {
-                    return id;
+                    if (parentId < 0)
+                    {
+                        parentId = ExtractParentIdTyped(typedRow, columns);
+                    }
+
+                    complexId = parentId;
                 }
+
+                if (complexId > 0 && colData.TryGetValue(complexId, out byte[]? attachBytes) &&
+                    attachBytes != null && attachBytes.Length > 0)
+                {
+                    typedRow[i] = attachBytes;
+                    continue;
+                }
+            }
+
+            // Complex slot with no resolvable child data (e.g. multi-value
+            // columns whose flat-table loader is not wired through, or
+            // attachment slots whose ConceptualTableID has no live flat
+            // rows). Surface as DBNull rather than leaving the "__CX:N__"
+            // marker visible.
+            typedRow[i] = DBNull.Value;
+        }
+    }
+
+    /// <summary>Extracts the parent row's integer ID from the first fixed LONG column of a typed row.</summary>
+    private static int ExtractParentIdTyped(object?[] typedRow, List<ColumnInfo> columns)
+    {
+        int limit = Math.Min(columns.Count, typedRow.Length);
+        for (int i = 0; i < limit; i++)
+        {
+            if (columns[i].Type == T_LONG && typedRow[i] is int id)
+            {
+                return id;
             }
         }
 
@@ -2704,8 +2777,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // tables) can avoid the await/state-machine cost entirely.
     // Cancellation is checked once per row, not per column.
     //
-    // Wiring into the public Rows() / ReadDataTableAsync paths is
-    // Phase 3.
+    // Phase 3 wired this into the public Rows() / ReadDataTableAsync
+    // entry points; complex-attachment resolution and Hyperlink wrapping
+    // are applied as post-processing passes (ResolveComplexColumns /
+    // WrapHyperlinkColumns) gated by the per-table HasComplexColumns /
+    // HasHyperlinkColumns flags.
 
     private async ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
     {
@@ -2913,51 +2989,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <see cref="CrackRowTypedAsync"/>.
     /// </summary>
     private readonly record struct LongValueRef(int Start, int Len, bool IsOle);
-
-    /// <summary>
-    /// Test/benchmark hook: enumerates a table's rows through the new typed
-    /// cracker (Phase 2 of <c>typed-row-read-perf-plan.md</c>) without going
-    /// through the public API. Complex/attachment columns surface as the
-    /// <c>"__CX:N__"</c> string sentinel since complex-data resolution is a
-    /// Phase 3 concern; tests that want fully-typed complex data should use
-    /// the public <see cref="Rows(string, IProgress{long}, CancellationToken)"/>
-    /// path instead.
-    /// </summary>
-    internal async IAsyncEnumerable<object?[]> EnumerateRowsTypedNewPathAsync(
-        string tableName,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        if (resolved == null)
-        {
-            yield break;
-        }
-
-        var (entry, td) = resolved.Value;
-        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        foreach (long pageNumber in pageNumbers)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-
-            foreach (RowBound rb in EnumerateLiveRowBounds(page))
-            {
-                if (rb.RowSize < _numColsFldSz)
-                {
-                    continue;
-                }
-
-                object?[]? row = await CrackRowTypedAsync(page, rb.RowStart, rb.RowSize, td, cancellationToken).ConfigureAwait(false);
-                if (row != null)
-                {
-                    yield return row;
-                }
-            }
-        }
-    }
 
     /// <summary>
     /// Yields rows from every data page whose owning TDEF page equals <paramref name="tdefPage"/>.

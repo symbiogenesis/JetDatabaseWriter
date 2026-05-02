@@ -40,6 +40,14 @@ internal sealed class TableDef
     public bool HasComplexColumns { get; private set; }
 
     /// <summary>
+    /// Gets a value indicating whether at least one column is flagged as a
+    /// Hyperlink (a <c>T_TEXT</c>/<c>T_MEMO</c> column whose Jet column flags
+    /// have <c>HYPERLINK_FLAG_MASK = 0x80</c> set). Cached so the typed
+    /// reader can skip its hyperlink-wrap pass when the table has none.
+    /// </summary>
+    public bool HasHyperlinkColumns { get; private set; }
+
+    /// <summary>
     /// Populates the per-table metadata caches (<see cref="ClrTypes"/>,
     /// <see cref="HasVarColumns"/>, <see cref="HasComplexColumns"/>). Must be
     /// invoked after <see cref="Columns"/> is finalised; called once by the
@@ -50,10 +58,12 @@ internal sealed class TableDef
         var clrTypes = new Type[Columns.Count];
         bool hasVar = false;
         bool hasComplex = false;
+        bool hasHyperlink = false;
         for (int i = 0; i < Columns.Count; i++)
         {
             ColumnInfo c = Columns[i];
-            clrTypes[i] = JetTypeInfo.ResolveClrType(c);
+            Type clr = JetTypeInfo.ResolveClrType(c);
+            clrTypes[i] = clr;
             if (!c.IsFixed)
             {
                 hasVar = true;
@@ -63,11 +73,17 @@ internal sealed class TableDef
             {
                 hasComplex = true;
             }
+
+            if (clr == typeof(JetDatabaseWriter.Models.Hyperlink))
+            {
+                hasHyperlink = true;
+            }
         }
 
         ClrTypes = clrTypes;
         HasVarColumns = hasVar;
         HasComplexColumns = hasComplex;
+        HasHyperlinkColumns = hasHyperlink;
     }
 
     /// <summary>
