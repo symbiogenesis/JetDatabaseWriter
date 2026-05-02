@@ -666,10 +666,13 @@ All password-protected formats produced by Microsoft Access from Access 97 throu
 
 ## Limitations
 
-The items below are **not yet implemented** and are the most likely places to hit a wall.
+The items below are either **not yet implemented** or are important behavioral caveats, and are the most likely places to hit a wall.
 
 ### Specialized column kinds
 - **Calculated columns (Access 2010+ expression columns) — read-only metadata.** The library reads calc-column flags and the `Expression` / `ResultType` properties produced by Microsoft Access and surfaces them via `ColumnMetadata.IsCalculated` / `.CalculationExpression` / `.CalculatedResultType`. **Writing** calc columns (Phase 1B — emitting the extra-flags byte, the `Expression`/`ResultType` LvProp entries, and the 23-byte calculated-value wrapper) and **client-side evaluation** of expressions (Phase 2+) are not yet implemented. `CreateTableAsync` throws `NotSupportedException` when `ColumnDefinition.IsCalculated = true`. See [docs/design/calculated-columns-format-notes.md](docs/design/calculated-columns-format-notes.md) for the implementation plan.
+
+### Thread safety and concurrent access
+- **Do not treat a single `AccessReader` / `AccessWriter` instance as a parallel worker.** Low-level page I/O is funneled through one internal gate, so overlapping calls on the same instance block behind each other rather than running in parallel; `AccessWriter` also allows only one active explicit transaction per instance. **Concurrent writers against the same file will corrupt it.** Open with `UseLockFile = true` and `RespectExistingLockFile = true` (both defaults) to fail fast when another process already holds the database. The page byte-range locks are cooperative/advisory: they help protocol-obeying writers serialize page mutations, but they are not a substitute for external coordination with arbitrary tools.
 
 ### Forms, reports, macros, queries, VBA
 - Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.
