@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Globalization;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
@@ -91,6 +92,24 @@ internal static class JetTypeInfo
     };
 
     /// <summary>
+    /// Returns <see langword="true"/> when the column is a MEMO whose TDEF flag
+    /// byte has Jackcess <c>HYPERLINK_FLAG_MASK = 0x80</c> set — Microsoft Access
+    /// surfaces such columns through the Hyperlink data-format affordance.
+    /// See <c>docs/design/hyperlink-format-notes.md</c>.
+    /// </summary>
+    public static bool IsHyperlinkColumn(ColumnInfo col)
+        => col.Type == T_MEMO && (col.Flags & 0x80) != 0;
+
+    /// <summary>
+    /// Returns the CLR projection type for a column, accounting for the
+    /// MEMO/Hyperlink override (<see cref="IsHyperlinkColumn"/>). Falls back
+    /// to <see cref="string"/> for unknown type codes — matching the
+    /// long-standing reader contract.
+    /// </summary>
+    public static Type ResolveClrType(ColumnInfo col)
+        => IsHyperlinkColumn(col) ? typeof(Hyperlink) : GetClrType(col.Type) ?? typeof(string);
+
+    /// <summary>
     /// Returns the human-friendly Access display name for a JET column-type code
     /// (e.g. <c>"Long Integer"</c> for <c>T_LONG</c>). Unknown codes surface as
     /// the hex representation <c>"0xNN"</c>. Mirrors Access's UI labels and the
@@ -167,11 +186,11 @@ internal static class JetTypeInfo
                 case T_LONG:
                     return BinaryPrimitives.ReadInt32LittleEndian(row.AsSpan(start, 4)).ToString(CultureInfo.InvariantCulture);
                 case T_FLOAT:
-                    return BinaryPrimitives.ReadSingleLittleEndian(row.AsSpan(start, 4)).ToString("G", CultureInfo.InvariantCulture);
+                    return ReadSingleLittleEndian(row.AsSpan(start, 4)).ToString("G", CultureInfo.InvariantCulture);
                 case T_DOUBLE:
-                    return BinaryPrimitives.ReadDoubleLittleEndian(row.AsSpan(start, 8)).ToString("G", CultureInfo.InvariantCulture);
+                    return ReadDoubleLittleEndian(row.AsSpan(start, 8)).ToString("G", CultureInfo.InvariantCulture);
                 case T_DATETIME:
-                    return DateTime.FromOADate(BinaryPrimitives.ReadDoubleLittleEndian(row.AsSpan(start, 8))).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                    return DateTime.FromOADate(ReadDoubleLittleEndian(row.AsSpan(start, 8))).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
                 case T_MONEY:
                     return decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(row.AsSpan(start, 8))).ToString("F4", CultureInfo.InvariantCulture);
                 case T_GUID:
@@ -182,7 +201,7 @@ internal static class JetTypeInfo
                 case T_ATTACHMENT:
                     return size >= 4 ? $"__CX:{BinaryPrimitives.ReadInt32LittleEndian(row.AsSpan(start, 4))}__" : string.Empty;
                 default:
-                    return Convert.ToHexString(row.AsSpan(start, Math.Min(size, 8)));
+                    return ToHexStringNoSeparator(row.AsSpan(start, Math.Min(size, 8)));
             }
         }
         catch (ArgumentException)
@@ -247,11 +266,11 @@ internal static class JetTypeInfo
                 case T_LONG:
                     return BinaryPrimitives.ReadInt32LittleEndian(row.AsSpan(start, 4));
                 case T_FLOAT:
-                    return BinaryPrimitives.ReadSingleLittleEndian(row.AsSpan(start, 4));
+                    return ReadSingleLittleEndian(row.AsSpan(start, 4));
                 case T_DOUBLE:
-                    return BinaryPrimitives.ReadDoubleLittleEndian(row.AsSpan(start, 8));
+                    return ReadDoubleLittleEndian(row.AsSpan(start, 8));
                 case T_DATETIME:
-                    return DateTime.FromOADate(BinaryPrimitives.ReadDoubleLittleEndian(row.AsSpan(start, 8)));
+                    return DateTime.FromOADate(ReadDoubleLittleEndian(row.AsSpan(start, 8)));
                 case T_MONEY:
                     return decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(row.AsSpan(start, 8)));
                 case T_GUID:
@@ -262,7 +281,7 @@ internal static class JetTypeInfo
                 case T_ATTACHMENT:
                     return size >= 4 ? $"__CX:{BinaryPrimitives.ReadInt32LittleEndian(row.AsSpan(start, 4))}__" : DBNull.Value;
                 default:
-                    return Convert.ToHexString(row.AsSpan(start, Math.Min(size, 8)));
+                    return ToHexStringNoSeparator(row.AsSpan(start, Math.Min(size, 8)));
             }
         }
         catch (ArgumentException)
@@ -394,4 +413,42 @@ internal static class JetTypeInfo
             return DBNull.Value;
         }
     }
+
+    // ── Pure byte-decoding helpers ────────────────────────────────
+    // Live here (rather than AccessBase) so JetTypeInfo's per-type byte→value
+    // switches don't take an upward dependency on Core, and so non-Core
+    // callers (IndexLeafIncremental, etc.) can use them without going through
+    // the AccessBase inheritance chain.
+
+    /// <summary>Reads a 24-bit little-endian unsigned integer.</summary>
+    internal static int ReadUInt24LittleEndian(ReadOnlySpan<byte> source) =>
+        source[0] | (source[1] << 8) | (source[2] << 16);
+
+    /// <summary>Reads a 24-bit big-endian unsigned integer.</summary>
+    internal static int ReadUInt24BigEndian(ReadOnlySpan<byte> source) =>
+        (source[0] << 16) | (source[1] << 8) | source[2];
+
+    /// <summary>Reads an IEEE-754 single-precision float in little-endian byte order.</summary>
+    internal static float ReadSingleLittleEndian(ReadOnlySpan<byte> source) =>
+#if NET5_0_OR_GREATER
+        BinaryPrimitives.ReadSingleLittleEndian(source);
+#else
+        BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(source));
+#endif
+
+    /// <summary>Reads an IEEE-754 double-precision float in little-endian byte order.</summary>
+    internal static double ReadDoubleLittleEndian(ReadOnlySpan<byte> source) =>
+#if NET5_0_OR_GREATER
+        BinaryPrimitives.ReadDoubleLittleEndian(source);
+#else
+        BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(source));
+#endif
+
+    /// <summary>Encodes <paramref name="source"/> as an upper-case hex string with no separators.</summary>
+    internal static string ToHexStringNoSeparator(ReadOnlySpan<byte> source) =>
+#if NET5_0_OR_GREATER
+        Convert.ToHexString(source);
+#else
+        BitConverter.ToString(source.ToArray()).Replace("-", string.Empty, StringComparison.Ordinal);
+#endif
 }

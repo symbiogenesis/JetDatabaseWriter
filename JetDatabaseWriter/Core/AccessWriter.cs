@@ -5695,6 +5695,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
         }
 
+        result.InitializeColumnMetadata();
         return result;
     }
 
@@ -9379,9 +9380,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             case T_LONG:
                 return size >= 4 ? BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4)) : null;
             case T_FLOAT:
-                return size >= 4 ? ReadSingleLittleEndian(page.AsSpan(start, 4)) : null;
+                return size >= 4 ? JetTypeInfo.ReadSingleLittleEndian(page.AsSpan(start, 4)) : null;
             case T_DOUBLE:
-                return size >= 8 ? ReadDoubleLittleEndian(page.AsSpan(start, 8)) : null;
+                return size >= 8 ? JetTypeInfo.ReadDoubleLittleEndian(page.AsSpan(start, 8)) : null;
             case T_MONEY:
                 return size >= 8 ? BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8)) / 10000m : null;
 
@@ -9393,7 +9394,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 try
                 {
-                    return DateTime.FromOADate(ReadDoubleLittleEndian(page.AsSpan(start, 8)));
+                    return DateTime.FromOADate(JetTypeInfo.ReadDoubleLittleEndian(page.AsSpan(start, 8)));
                 }
                 catch (ArgumentException)
                 {

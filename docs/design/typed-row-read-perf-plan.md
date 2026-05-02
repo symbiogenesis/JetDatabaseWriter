@@ -24,7 +24,7 @@ Hottest costs, in order:
 3. `async`/`ValueTask` state machine on `CrackRowAsync` / `ReadVarAsync` even
    when no async I/O happens (fixed-only rows).
 4. `cancellationToken.ThrowIfCancellationRequested()` per column.
-5. `ResolveClrType(col)` + complex-id marker scan per column per row in
+5. `JetTypeInfo.ResolveClrType(col)` + complex-id marker scan per column per row in
    `ConvertRowToTyped`.
 6. `RowMapper<T>.Map` does `acc.TargetType != value.GetType()` on every
    column and falls back to `Convert.ChangeType` for primitive widening
@@ -112,18 +112,49 @@ Notes:
   in a separate work item if desired.
 
 ### Phase 2 — Typed row cracker
-- [ ] Add `CrackRowTyped` that fills an `object?[]` directly (no
+- [x] Add `CrackRowTyped` that fills an `object?[]` directly (no
   intermediate `List<string>`). Variable-width text still decodes to
   `string`; `T_MEMO`/`T_OLE` keeps its async branch.
-- [ ] Make the synchronous portion truly sync: split into
+- [x] Make the synchronous portion truly sync: split into
   `TryCrackRowSync(... out object?[] row, out bool needsLongValue)` plus a
   fallback async path that only runs when long-value chains are present.
-- [ ] Move `cancellationToken.ThrowIfCancellationRequested()` from
+- [x] Move `cancellationToken.ThrowIfCancellationRequested()` from
   per-column to per-row (or per-page).
-- [ ] Hoist `ResolveClrType(col)` results into `TableDef`/`ColumnInfo` once
+- [x] Hoist `JetTypeInfo.ResolveClrType(col)` results into `TableDef`/`ColumnInfo` once
   per table (cache `Type[] ClrTypes`).
-- [ ] Hoist the "has any var-cols" / "has any complex cols" flags onto
+- [x] Hoist the "has any var-cols" / "has any complex cols" flags onto
   `TableDef`.
+
+#### Notes
+- New typed cracker lives in
+  [AccessReader.cs](JetDatabaseWriter/Core/AccessReader.cs) as
+  `CrackRowTypedAsync` + `TryCrackRowSync` + `ReadVarTypedSync`. Sync
+  fast-path emits a `LongValueRef` sentinel in any `T_MEMO`/`T_OLE` slot
+  whose 12-byte header bitmask is NOT `0x80` (inline); the async wrapper
+  walks the LVAL chain only for those sentinels and leaves all other
+  slots untouched. Pure-fixed and inline-only rows therefore never enter
+  the async state machine even though the entry point is `async`.
+- `JetTypeInfo.ResolveClrType` (and its hyperlink-detection helper `JetTypeInfo.IsHyperlinkColumn`)
+  moved to [JetTypeInfo.cs](JetDatabaseWriter/Internal/JetTypeInfo.cs)
+  so both `AccessReader` and `TableDef.InitializeColumnMetadata` share
+  the projection. The reader's local `JetTypeInfo.ResolveClrType`/`JetTypeInfo.IsHyperlinkColumn`
+  now delegate to it (kept for backwards-compat with existing call sites).
+- `TableDef` gained `Type[] ClrTypes`, `bool HasVarColumns`,
+  `bool HasComplexColumns`, populated once by
+  `InitializeColumnMetadata()`. Called from `AccessBase.ReadTableDefAsync`
+  (read path) and `AccessWriter.BuildTableDefinition` (write path) so the
+  cache is always present whenever a `TableDef` is observed by the
+  cracker.
+- Cancellation moved from per-column to per-row (per-page in the typed
+  enumerator). This drops 11× `ThrowIfCancellationRequested` calls per
+  row on the OrderDetails benchmark table.
+- Wiring into the public `Rows()` / `ReadDataTableAsync()` API is
+  Phase 3 — Phase 2 leaves the typed cracker reachable only via the
+  internal `AccessReader.EnumerateRowsTypedNewPathAsync` test/benchmark
+  hook. Parity with the legacy `ConvertRowToTyped` path is pinned by
+  [CrackRowTypedParityTests.cs](JetDatabaseWriter.Tests/Core/CrackRowTypedParityTests.cs)
+  on four NorthwindTraders tables (Order Details, Customers, Products,
+  Employees), all green.
 
 ### Phase 3 — Wire new path into public API
 - [ ] Change `AccessReader.Rows(string)` to use `CrackRowTyped` + the new

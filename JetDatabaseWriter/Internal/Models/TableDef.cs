@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Internal.Models;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 
 internal sealed class TableDef
 {
@@ -11,6 +12,63 @@ internal sealed class TableDef
     public long RowCount { get; set; } // num_rows from TDEF page offset 16
 
     public bool HasDeletedColumns { get; set; } // true if ColNum sequence has gaps
+
+    /// <summary>
+    /// Gets the per-column CLR projection types, populated by
+    /// <see cref="InitializeColumnMetadata"/>. Mirrors the result of
+    /// <c>JetTypeInfo.ResolveClrType(col)</c> for each column. The
+    /// typed-row cracker reuses this array to avoid resolving the CLR
+    /// type per-row.
+    /// </summary>
+    public Type[] ClrTypes { get; private set; } = [];
+
+    /// <summary>
+    /// Gets a value indicating whether at least one column lives in the row's
+    /// variable-length area (any column where <see cref="ColumnInfo.IsFixed"/>
+    /// is <see langword="false"/>). Cached so the row layout parser can skip
+    /// the var-area read when no var columns exist. See
+    /// <see cref="InitializeColumnMetadata"/>.
+    /// </summary>
+    public bool HasVarColumns { get; private set; }
+
+    /// <summary>
+    /// Gets a value indicating whether at least one column is a complex/attachment
+    /// column (<c>T_COMPLEX</c> or <c>T_ATTACHMENT</c>). Cached so the typed
+    /// reader can skip its complex-data prefetch when the table has none.
+    /// See <see cref="InitializeColumnMetadata"/>.
+    /// </summary>
+    public bool HasComplexColumns { get; private set; }
+
+    /// <summary>
+    /// Populates the per-table metadata caches (<see cref="ClrTypes"/>,
+    /// <see cref="HasVarColumns"/>, <see cref="HasComplexColumns"/>). Must be
+    /// invoked after <see cref="Columns"/> is finalised; called once by the
+    /// TableDef loader in <c>AccessBase.ReadTableDefAsync</c>.
+    /// </summary>
+    public void InitializeColumnMetadata()
+    {
+        var clrTypes = new Type[Columns.Count];
+        bool hasVar = false;
+        bool hasComplex = false;
+        for (int i = 0; i < Columns.Count; i++)
+        {
+            ColumnInfo c = Columns[i];
+            clrTypes[i] = JetTypeInfo.ResolveClrType(c);
+            if (!c.IsFixed)
+            {
+                hasVar = true;
+            }
+
+            if (c.Type == T_COMPLEX || c.Type == T_ATTACHMENT)
+            {
+                hasComplex = true;
+            }
+        }
+
+        ClrTypes = clrTypes;
+        HasVarColumns = hasVar;
+        HasComplexColumns = hasComplex;
+    }
 
     /// <summary>
     /// Returns the zero-based index of the column whose name matches

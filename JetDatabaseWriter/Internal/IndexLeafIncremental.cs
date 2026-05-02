@@ -287,7 +287,7 @@ internal static class IndexLeafIncremental
             }
 
             int dpOff = entryStart + suffixLen;
-            long dp = AccessBase.ReadUInt24BigEndian(page.AsSpan(dpOff, 3));
+            long dp = JetTypeInfo.ReadUInt24BigEndian(page.AsSpan(dpOff, 3));
             byte dr = page[dpOff + 3];
             result.Add(new IndexEntry(canonical, dp, dr));
 

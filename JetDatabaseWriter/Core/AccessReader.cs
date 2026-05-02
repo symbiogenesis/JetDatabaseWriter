@@ -572,11 +572,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 TypeName = (col.Type == T_COMPLEX && complexSubtypes.TryGetValue(col.Name, out string? subtype))
                     ? subtype
                     : ResolveTypeName(col),
-                ClrType = ResolveClrType(col),
+                ClrType = JetTypeInfo.ResolveClrType(col),
                 MaxLength = col.Size > 0 ? col.Size : null,
                 IsNullable = (col.Flags & 0x02) != 0,
                 IsFixedLength = col.IsFixed,
-                IsHyperlink = IsHyperlinkColumn(col),
+                IsHyperlink = JetTypeInfo.IsHyperlinkColumn(col),
                 Ordinal = index,
                 Size = JetTypeInfo.GetColumnSize(col.Type, col.Size),
                 DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, _format),
@@ -1232,7 +1232,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             dt = new DataTable(tableName);
             foreach (ColumnInfo col in td.Columns)
             {
-                _ = dt.Columns.Add(col.Name, ResolveClrType(col));
+                _ = dt.Columns.Add(col.Name, JetTypeInfo.ResolveClrType(col));
             }
 
             Dictionary<int, Dictionary<int, byte[]>>? complexData = await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false);
@@ -1551,7 +1551,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 _ => string.Empty,
             };
 
-            values[i] = TypedValueParser.ParseValue(rawValue, ResolveClrType(col), _strictParsing);
+            values[i] = TypedValueParser.ParseValue(rawValue, JetTypeInfo.ResolveClrType(col), _strictParsing);
         }
 
         return values;
@@ -1576,7 +1576,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     private object ParseColumnValue(string rawValue, ColumnInfo col) =>
-        TypedValueParser.ParseValue(rawValue, ResolveClrType(col), _strictParsing);
+        TypedValueParser.ParseValue(rawValue, JetTypeInfo.ResolveClrType(col), _strictParsing);
 
     private async ValueTask<object> ReadVarValueAsync(byte[] row, int start, int len, ColumnInfo col, CancellationToken cancellationToken)
     {
@@ -1585,7 +1585,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return DBNull.Value;
         }
 
-        Type targetType = ResolveClrType(col);
+        Type targetType = JetTypeInfo.ResolveClrType(col);
         if (targetType == typeof(byte[]))
         {
             switch (col.Type)
@@ -1825,20 +1825,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private static FileStream CreateStream(string path, AccessReaderOptions options) =>
         OpenDatabaseFileStream(path, options.FileAccess, options.FileShare, FileOptions.Asynchronous | FileOptions.SequentialScan);
 
-    /// <summary>
-    /// Returns <see langword="true"/> when the column is a MEMO whose TDEF flag
-    /// byte has Jackcess <c>HYPERLINK_FLAG_MASK = 0x80</c> set — Microsoft Access
-    /// surfaces such columns through the Hyperlink data-format affordance.
-    /// See <c>docs/design/hyperlink-format-notes.md</c>.
-    /// </summary>
-    internal static bool IsHyperlinkColumn(ColumnInfo col) =>
-        col.Type == T_MEMO && (col.Flags & 0x80) != 0;
-
-    private static Type ResolveClrType(ColumnInfo col) =>
-        IsHyperlinkColumn(col) ? typeof(Hyperlink) : JetTypeInfo.GetClrType(col.Type) ?? typeof(string);
-
     private static string ResolveTypeName(ColumnInfo col) =>
-        IsHyperlinkColumn(col) ? "Hyperlink" : JetTypeInfo.GetTypeDisplayName(col.Type);
+        JetTypeInfo.IsHyperlinkColumn(col) ? "Hyperlink" : JetTypeInfo.GetTypeDisplayName(col.Type);
 
     /// <summary>
     /// Unwraps common OLE 1.0 package envelopes and scans the resulting payload
@@ -2127,7 +2115,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            typedRow[i] = TypedValueParser.ParseValue(raw, ResolveClrType(col), strictParsing);
+            typedRow[i] = TypedValueParser.ParseValue(raw, JetTypeInfo.ResolveClrType(col), strictParsing);
         }
 
         return typedRow;
@@ -2654,7 +2642,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                                  : _ansiEncoding.GetString(row, start, len);
 
                 case T_BINARY:
-                    return ToHexStringNoSeparator(row.AsSpan(start, len));
+                    return JetTypeInfo.ToHexStringNoSeparator(row.AsSpan(start, len));
 
                 case T_MEMO:
                 case T_OLE:
@@ -2698,6 +2686,276 @@ public sealed class AccessReader : AccessBase, IAccessReader
         catch (IndexOutOfRangeException)
         {
             return string.Empty;
+        }
+    }
+
+    // ── Typed row cracker (Phase 2 of typed-row-read-perf-plan) ──────
+    //
+    // CrackRowTypedAsync fills an object?[] of length td.Columns.Count
+    // directly from the page bytes — no intermediate List<string> + per-
+    // column culture-invariant formatting + re-parse round-trip. Fixed-
+    // width primitives go through JetTypeInfo.ReadFixedTyped; variable-
+    // width text goes straight to a managed string; T_BINARY is copied as
+    // byte[]; T_MEMO/T_OLE keep their async branch only when the LVAL
+    // chain actually needs to be walked (the inline 0x80 case stays sync).
+    //
+    // The split is exposed as TryCrackRowSync — callers that know they
+    // are on the fully-sync hot path (e.g. fixed-only / inline-only
+    // tables) can avoid the await/state-machine cost entirely.
+    // Cancellation is checked once per row, not per column.
+    //
+    // Wiring into the public Rows() / ReadDataTableAsync paths is
+    // Phase 3.
+
+    private async ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!TryCrackRowSync(page, rowStart, rowSize, td, out object?[]? row, out bool needsLongValue))
+        {
+            return null;
+        }
+
+        if (!needsLongValue)
+        {
+            return row;
+        }
+
+        for (int i = 0; i < row!.Length; i++)
+        {
+            if (row[i] is LongValueRef lvr)
+            {
+                row[i] = lvr.IsOle
+                    ? (object)await ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
+                    : await ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return row;
+    }
+
+    /// <summary>
+    /// Synchronously decodes a row into a typed <c>object?[]</c>. Returns
+    /// <see langword="false"/> when the row trailer is malformed or the
+    /// schema sanity-check rejects the row (caller should skip).
+    /// <paramref name="needsLongValue"/> is set when one or more
+    /// <c>T_MEMO</c>/<c>T_OLE</c> slots require an LVAL-chain walk; those
+    /// slots are filled with a <see cref="LongValueRef"/> sentinel that the
+    /// async wrapper (<see cref="CrackRowTypedAsync"/>) replaces.
+    /// </summary>
+    private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, TableDef td, out object?[]? row, out bool needsLongValue)
+    {
+        row = null;
+        needsLongValue = false;
+
+        if (rowSize < _numColsFldSz)
+        {
+            return false;
+        }
+
+        int rawNumCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
+        if (rawNumCols == 0)
+        {
+            return false;
+        }
+
+        if (td.HasDeletedColumns && rawNumCols > td.Columns.Count)
+        {
+            throw new JetLimitationException(
+                $"Row has {rawNumCols} columns but current schema has {td.Columns.Count} with deleted-column gaps. " +
+                "This row predates schema changes and data may be misaligned. " +
+                "Solution: Compact & Repair the database in Microsoft Access to rebuild all rows.");
+        }
+
+        if (!TryParseRowLayout(page, rowStart, rowSize, td.HasVarColumns, out RowLayout layout))
+        {
+            return false;
+        }
+
+        var result = new object?[td.Columns.Count];
+        for (int i = 0; i < td.Columns.Count; i++)
+        {
+            ColumnInfo col = td.Columns[i];
+            ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, col);
+
+            switch (slice.Kind)
+            {
+                case ColumnSliceKind.Bool:
+                    result[i] = slice.BoolValue;
+                    break;
+
+                case ColumnSliceKind.Null:
+                case ColumnSliceKind.Empty:
+                    result[i] = DBNull.Value;
+                    break;
+
+                case ColumnSliceKind.Fixed:
+                    result[i] = JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, col.Type, slice.DataLen, _strictParsing);
+                    break;
+
+                case ColumnSliceKind.Var:
+                    result[i] = ReadVarTypedSync(page, rowStart + slice.DataStart, slice.DataLen, col, ref needsLongValue);
+                    break;
+
+                default:
+                    result[i] = DBNull.Value;
+                    break;
+            }
+        }
+
+        row = result;
+        return true;
+    }
+
+    /// <summary>
+    /// Synchronous decode of a variable-area column slice into its CLR
+    /// projection. T_TEXT → <see cref="string"/>, T_BINARY → <see cref="byte"/>[],
+    /// T_MEMO/T_OLE → inline payload when the bitmask is 0x80 (sync) or a
+    /// <see cref="LongValueRef"/> sentinel (async resolution required —
+    /// flips <paramref name="needsLongValue"/>). Fixed-type columns living
+    /// in the variable area (numeric/datetime/etc. with FLAG_FIXED cleared)
+    /// route through <see cref="JetTypeInfo.ReadFixedTyped"/>.
+    /// </summary>
+    private object? ReadVarTypedSync(byte[] page, int start, int len, ColumnInfo col, ref bool needsLongValue)
+    {
+        if (len <= 0)
+        {
+            return col.Type switch
+            {
+                T_TEXT or T_MEMO => string.Empty,
+                T_BINARY or T_OLE => Array.Empty<byte>(),
+                _ => DBNull.Value,
+            };
+        }
+
+        try
+        {
+            switch (col.Type)
+            {
+                case T_TEXT:
+                    return _format != DatabaseFormat.Jet3Mdb
+                        ? DecodeJet4Text(page, start, len)
+                        : _ansiEncoding.GetString(page, start, len);
+
+                case T_BINARY:
+                    return page.AsSpan(start, len).ToArray();
+
+                case T_MEMO:
+                case T_OLE:
+                    {
+                        bool isOle = col.Type == T_OLE;
+                        if (len >= 12 && (page[start + 3] & 0xC0) == 0x80)
+                        {
+                            // Inline payload: data follows the 12-byte header
+                            // directly within this row, no LVAL chain walk.
+                            int memoLen = JetTypeInfo.ReadUInt24LittleEndian(page.AsSpan(start, 3));
+                            int memoStart = start + 12;
+                            int inlineLen = Math.Min(memoLen, page.Length - memoStart);
+                            if (inlineLen <= 0)
+                            {
+                                return isOle ? Array.Empty<byte>() : string.Empty;
+                            }
+
+                            return isOle
+                                ? (object)DecodeOleValueBytes(page, memoStart, inlineLen)
+                                : DecodeLongValue(page, memoStart, inlineLen, isOle: false);
+                        }
+
+                        // Single-LVAL (0x40) or chained LVAL (0x00) — defer to
+                        // the async wrapper for the LVAL chain walk.
+                        needsLongValue = true;
+                        return new LongValueRef(start, len, isOle);
+                    }
+
+                case T_BYTE:
+                case T_INT:
+                case T_LONG:
+                case T_FLOAT:
+                case T_DOUBLE:
+                case T_DATETIME:
+                case T_MONEY:
+                case T_GUID:
+                case T_COMPLEX:
+                case T_ATTACHMENT:
+                    {
+                        // Fixed-width types stored in the variable area
+                        // (FLAG_FIXED cleared). Same length-guard semantics as
+                        // ReadVarAsync's fallback: too-short slot collapses
+                        // to DBNull.
+                        int required = col.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(col.Type);
+                        return len >= required
+                            ? JetTypeInfo.ReadFixedTyped(page, start, col.Type, required, _strictParsing)
+                            : DBNull.Value;
+                    }
+
+                default:
+                    return DBNull.Value;
+            }
+        }
+        catch (JetLimitationException)
+        {
+            throw;
+        }
+        catch (ArgumentException)
+        {
+            return DBNull.Value;
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return DBNull.Value;
+        }
+    }
+
+    /// <summary>
+    /// Sentinel placed in the typed-row buffer for variable-area MEMO/OLE
+    /// slots that need an LVAL chain walk to resolve. Replaced by the
+    /// final <see cref="string"/> or <see cref="byte"/>[] payload by
+    /// <see cref="CrackRowTypedAsync"/>.
+    /// </summary>
+    private readonly record struct LongValueRef(int Start, int Len, bool IsOle);
+
+    /// <summary>
+    /// Test/benchmark hook: enumerates a table's rows through the new typed
+    /// cracker (Phase 2 of <c>typed-row-read-perf-plan.md</c>) without going
+    /// through the public API. Complex/attachment columns surface as the
+    /// <c>"__CX:N__"</c> string sentinel since complex-data resolution is a
+    /// Phase 3 concern; tests that want fully-typed complex data should use
+    /// the public <see cref="Rows(string, IProgress{long}, CancellationToken)"/>
+    /// path instead.
+    /// </summary>
+    internal async IAsyncEnumerable<object?[]> EnumerateRowsTypedNewPathAsync(
+        string tableName,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            yield break;
+        }
+
+        var (entry, td) = resolved.Value;
+        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        foreach (long pageNumber in pageNumbers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+
+            foreach (RowBound rb in EnumerateLiveRowBounds(page))
+            {
+                if (rb.RowSize < _numColsFldSz)
+                {
+                    continue;
+                }
+
+                object?[]? row = await CrackRowTypedAsync(page, rb.RowStart, rb.RowSize, td, cancellationToken).ConfigureAwait(false);
+                if (row != null)
+                {
+                    yield return row;
+                }
+            }
         }
     }
 
@@ -3292,7 +3550,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         byte bitmask = row[start + 3];
-        int memoLen = ReadUInt24LittleEndian(row.AsSpan(start, 3));
+        int memoLen = JetTypeInfo.ReadUInt24LittleEndian(row.AsSpan(start, 3));
 
         switch (bitmask & 0xC0)
         {
@@ -3329,7 +3587,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         byte bitmask = row[start + 3];
-        int memoLen = ReadUInt24LittleEndian(row.AsSpan(start, 3));
+        int memoLen = JetTypeInfo.ReadUInt24LittleEndian(row.AsSpan(start, 3));
 
         switch (bitmask & 0xC0)
         {

@@ -293,37 +293,10 @@ public abstract class AccessBase : IAccessBase
     private protected static void Wi32(byte[] b, int o, int value) =>
         BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(o, 4), value);
 
-    /// <summary>Reads a 24-bit little-endian unsigned integer.</summary>
-    internal static int ReadUInt24LittleEndian(ReadOnlySpan<byte> source) =>
-        source[0] | (source[1] << 8) | (source[2] << 16);
-
-    /// <summary>Reads a 24-bit big-endian unsigned integer.</summary>
-    internal static int ReadUInt24BigEndian(ReadOnlySpan<byte> source) =>
-        (source[0] << 16) | (source[1] << 8) | source[2];
-
-    /// <summary>Reads an IEEE-754 single-precision float in little-endian byte order.</summary>
-    internal static float ReadSingleLittleEndian(ReadOnlySpan<byte> source) =>
-#if NET5_0_OR_GREATER
-        BinaryPrimitives.ReadSingleLittleEndian(source);
-#else
-        BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(source));
-#endif
-
-    /// <summary>Reads an IEEE-754 double-precision float in little-endian byte order.</summary>
-    internal static double ReadDoubleLittleEndian(ReadOnlySpan<byte> source) =>
-#if NET5_0_OR_GREATER
-        BinaryPrimitives.ReadDoubleLittleEndian(source);
-#else
-        BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(source));
-#endif
-
-    /// <summary>Encodes <paramref name="source"/> as an upper-case hex string with no separators.</summary>
-    internal static string ToHexStringNoSeparator(ReadOnlySpan<byte> source) =>
-#if NET5_0_OR_GREATER
-        Convert.ToHexString(source);
-#else
-        BitConverter.ToString(source.ToArray()).Replace("-", string.Empty, StringComparison.Ordinal);
-#endif
+    // Pure byte-decoding helpers (ReadUInt24LittleEndian / ReadUInt24BigEndian /
+    // ReadSingleLittleEndian / ReadDoubleLittleEndian / ToHexStringNoSeparator)
+    // live in JetTypeInfo so the per-type byte→value switches don't take an
+    // upward dependency on Core.
 
     private protected static void WriteUInt24(byte[] b, int o, int value)
     {
@@ -689,12 +662,14 @@ public abstract class AccessBase : IAccessBase
         bool hasDeletedColumns = cols.Count >= 2
             && cols[cols.Count - 1].ColNum - cols[0].ColNum != cols.Count - 1;
 
-        return new TableDef
+        var tableDef = new TableDef
         {
             Columns = cols,
             RowCount = td.Length > 20 ? Ru32(td, 16) : 0,
             HasDeletedColumns = hasDeletedColumns,
         };
+        tableDef.InitializeColumnMetadata();
+        return tableDef;
     }
 
     /// <summary>
@@ -1150,7 +1125,7 @@ public abstract class AccessBase : IAccessBase
                             ? DecodeJet4Text(page, rowStart + slice.DataStart, slice.DataLen)
                             : _ansiEncoding.GetString(page, rowStart + slice.DataStart, slice.DataLen);
                     case T_BINARY:
-                        return ToHexStringNoSeparator(page.AsSpan(rowStart + slice.DataStart, slice.DataLen));
+                        return JetTypeInfo.ToHexStringNoSeparator(page.AsSpan(rowStart + slice.DataStart, slice.DataLen));
                     default:
                         return string.Empty;
                 }
