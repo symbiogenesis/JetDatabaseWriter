@@ -10,7 +10,7 @@
 
 ## 1. Background
 
-Access 2007 introduced three "complex column" kinds. All three are stored the same way: a 4-byte per-row "ConceptualTableID" pseudo-foreign-key in the parent row, pointing into a hidden child ("flat") table that holds the actual values. **All three kinds share the column-type byte `0x12` (`COMPLEX_TYPE`)** — confirmed both by Jackcess `DataType.java` and by our format-probe across the entire test corpus (no on-disk fixture in `JetDatabaseWriter.Tests/Databases/` carries `0x11` on a complex column). The `T_ATTACHMENT = 0x11` constant in `AccessBase.cs` is vestigial: per Jackcess `0x11` is `UNKNOWN_11`, an alternative OLE type used only by `MSysAccessObjects` (fixed length 3992). The writer's IsAttachment-→-`0x11` mapping in `MapToJetType` does not match Access's own emission and is a known divergence to fix.
+Access 2007 introduced three "complex column" kinds. All three are stored the same way: a 4-byte per-row "ConceptualTableID" pseudo-foreign-key in the parent row, pointing into a hidden child ("flat") table that holds the actual values. **All three kinds share the column-type byte `0x12` (`COMPLEX_TYPE`)** — confirmed both by Jackcess `DataType.java` and by our format-probe across the entire test corpus (no on-disk fixture in `JetDatabaseWriter.Tests/Databases/` carries `0x11` on a complex column). The `T_ATTACHMENT = 0x11` constant in `Constants.cs` (`Constants.ColumnTypes.T_ATTACHMENT`) is vestigial: per Jackcess `0x11` is `UNKNOWN_11`, an alternative OLE type used only by `MSysAccessObjects` (fixed length 3992). The writer's IsAttachment-→-`0x11` mapping in `AccessWriter.TypeCodeFromDefinition` does not match Access's own emission and is a known divergence to fix.
 
 | Kind | Storage in child table |
 |---|---|

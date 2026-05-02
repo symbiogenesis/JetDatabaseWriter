@@ -2,7 +2,7 @@
 
 **Status:** Implemented
 
-This document captures the on-disk layout of the property blob stored in `MSysObjects.LvProp`. The parser ([`ColumnPropertyBlock`](../../JetDatabaseWriter/Internal/ColumnPropertyBlock.cs)) and writer ([`ColumnPropertyBlockBuilder`](../../JetDatabaseWriter/Internal/ColumnPropertyBlockBuilder.cs)) follow the layout below; round-trip tests exercise both against Access-authored fixtures.
+This document captures the on-disk layout of the property blob stored in `MSysObjects.LvProp`. The parser ([`ColumnPropertyBlock`](../../JetDatabaseWriter/Internal/Models/ColumnPropertyBlock.cs)) and writer ([`ColumnPropertyBlockBuilder`](../../JetDatabaseWriter/Internal/Builders/ColumnPropertyBlockBuilder.cs)) follow the layout below; round-trip tests exercise both against Access-authored fixtures.
 
 ## 1. Sources
 
