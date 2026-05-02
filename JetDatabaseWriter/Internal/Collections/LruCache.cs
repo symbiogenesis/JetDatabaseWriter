@@ -22,6 +22,8 @@ internal sealed class LruCache<TKey, TValue>
     private readonly Action<TValue>? _onEvict;
     private readonly object _lock = new();
     private int _nextSlot = 1; // 0 is reserved for sentinel
+    private long _hits;
+    private long _misses;
 
     public LruCache(int capacity, Action<TValue>? onEvict = null)
     {
@@ -44,6 +46,30 @@ internal sealed class LruCache<TKey, TValue>
         }
     }
 
+    /// <summary>Gets the number of successful <see cref="TryGetValue"/> lookups since construction.</summary>
+    public long Hits
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _hits;
+            }
+        }
+    }
+
+    /// <summary>Gets the number of failed <see cref="TryGetValue"/> lookups since construction.</summary>
+    public long Misses
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _misses;
+            }
+        }
+    }
+
     public bool TryGetValue(TKey key, out TValue value)
     {
         lock (_lock)
@@ -56,10 +82,12 @@ internal sealed class LruCache<TKey, TValue>
                 }
 
                 value = _nodes[idx].Value;
+                _hits++;
                 return true;
             }
 
             value = default!;
+            _misses++;
             return false;
         }
     }
@@ -108,18 +136,13 @@ internal sealed class LruCache<TKey, TValue>
 
     public void Clear()
     {
-        Clear(_onEvict);
-    }
-
-    public void Clear(Action<TValue>? onRemove)
-    {
         lock (_lock)
         {
-            if (onRemove != null)
+            if (_onEvict != null)
             {
                 foreach (var kvp in _map)
                 {
-                    onRemove(_nodes[kvp.Value].Value);
+                    _onEvict(_nodes[kvp.Value].Value);
                 }
             }
 

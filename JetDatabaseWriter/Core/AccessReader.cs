@@ -55,18 +55,15 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// </summary>
 public sealed class AccessReader : AccessBase, IAccessReader
 {
-    private readonly object _cacheLock = new();
     private readonly AsyncReentrantOperationGate _operationGate = new();
     private readonly SemaphoreSlim _ownedDataPageIndexGate = new(1, 1);
     private readonly bool _useLockFile;
     private readonly string? _lockFileUserName;
     private readonly string? _lockFileMachineName;
     private readonly bool _strictParsing;
+    private readonly LruCache<long, byte[]>? _pageCache;
     private LockFileSlotWriter? _lockFileSlot;
     private volatile Dictionary<long, long[]>? _ownedDataPagesByTdef;
-    private volatile LruCache<long, byte[]>? _pageCache;
-    private long _cacheHits;
-    private long _cacheMisses;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessReader"/> class.
@@ -93,6 +90,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         DiagnosticsEnabled = options.DiagnosticsEnabled;
         PageCacheSize = options.PageCacheSize;
         ParallelPageReadsEnabled = options.ParallelPageReadsEnabled;
+
+        // Cache is created up front when enabled (>0); negative or zero leaves
+        // it null and ReadPageCachedAsync bypasses caching entirely.
+        if (PageCacheSize > 0)
+        {
+            _pageCache = new LruCache<long, byte[]>(PageCacheSize, ReturnPage);
+        }
 
         bool isAccdbCfbEncrypted = EncryptionManager.IsCompoundFileEncrypted(hdr);
         (_pageKeys.Rc4DbKey, _pageKeys.AesPageKey) =
@@ -1692,8 +1696,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
         }
 
-        long totalAccess = _cacheHits + _cacheMisses;
-        int pageCacheHitRate = totalAccess > 0 ? (int)(_cacheHits * 100 / totalAccess) : 0;
+        long cacheHits = _pageCache?.Hits ?? 0;
+        long cacheMisses = _pageCache?.Misses ?? 0;
+        long totalAccess = cacheHits + cacheMisses;
+        int pageCacheHitRate = totalAccess > 0 ? (int)(cacheHits * 100 / totalAccess) : 0;
 
         return new DatabaseStatistics
         {
@@ -1782,11 +1788,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 _lockFileSlot = null;
             }
 
-            lock (_cacheLock)
-            {
-                _pageCache?.Clear(ReturnPage);
-                _pageCache = null;
-            }
+            _pageCache?.Clear();
 
             _ownedDataPagesByTdef = null;
             _ownedDataPageIndexGate.Dispose();
@@ -2506,34 +2508,24 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    /// <summary>Reads a page through the cache if enabled (PageCacheSize > 0).</summary>
+    /// <summary>Reads a page through the cache when one is configured (PageCacheSize &gt; 0).</summary>
     private async ValueTask<byte[]> ReadPageCachedAsync(long n, CancellationToken cancellationToken)
     {
         Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (PageCacheSize < 0)
+        if (_pageCache is null)
         {
             return await ReadPageAsync(n, cancellationToken).ConfigureAwait(false);
         }
 
-        if (_pageCache == null && PageCacheSize > 0)
+        if (_pageCache.TryGetValue(n, out byte[] cached))
         {
-            lock (_cacheLock)
-            {
-                _pageCache ??= new LruCache<long, byte[]>(PageCacheSize);
-            }
-        }
-
-        if (_pageCache != null && _pageCache.TryGetValue(n, out byte[] cached))
-        {
-            _ = Interlocked.Increment(ref _cacheHits);
             return cached;
         }
 
-        _ = Interlocked.Increment(ref _cacheMisses);
         byte[] page = await ReadPageAsync(n, cancellationToken).ConfigureAwait(false);
-        _pageCache?.Add(n, page);
+        _pageCache.Add(n, page);
         return page;
     }
 
