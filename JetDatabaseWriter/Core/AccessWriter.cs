@@ -10793,9 +10793,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             byte[] pageBytes = step.PageBytes;
-            long prev = (uint)BinaryPrimitives.ReadInt32LittleEndian(pageBytes.AsSpan(layout.PrevPageOffset, 4));
-            long next = (uint)BinaryPrimitives.ReadInt32LittleEndian(pageBytes.AsSpan(layout.NextPageOffset, 4));
-            long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(pageBytes.AsSpan(layout.TailPageOffset, 4));
+            var (prev, next, tail) = IndexLeafIncremental.ReadSiblingPointers(layout, pageBytes);
 
             byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
                 layout, _pgSz, tdefPage, newEntries, prev, next, tail);
@@ -10871,9 +10869,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         byte[] parentBytes = step.PageBytes;
-        long parentPrev = (uint)BinaryPrimitives.ReadInt32LittleEndian(parentBytes.AsSpan(layout.PrevPageOffset, 4));
-        long parentNext = (uint)BinaryPrimitives.ReadInt32LittleEndian(parentBytes.AsSpan(layout.NextPageOffset, 4));
-        long parentTail = (uint)BinaryPrimitives.ReadInt32LittleEndian(parentBytes.AsSpan(layout.TailPageOffset, 4));
+        var (parentPrev, parentNext, parentTail) = IndexLeafIncremental.ReadSiblingPointers(layout, parentBytes);
 
         byte[]? rebuiltParent = IndexBTreeBuilder.TryBuildIntermediatePage(
             layout, _pgSz, tdefPage, newEntries, parentPrev, parentNext, parentTail);
@@ -11800,9 +11796,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             byte[] origBytes = refStep.PageBytes;
-            long origPrev = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(layout.PrevPageOffset, 4));
-            long origNext = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(layout.NextPageOffset, 4));
-            long origTail = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(layout.TailPageOffset, 4));
+            var (origPrev, origNext, origTail) = IndexLeafIncremental.ReadSiblingPointers(layout, origBytes);
 
             // Recompute tail_page based on the post-mutation
             // entry list. For parent-of-leaf intermediates the rightmost

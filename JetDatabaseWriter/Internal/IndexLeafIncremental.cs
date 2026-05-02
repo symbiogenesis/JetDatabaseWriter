@@ -111,6 +111,26 @@ internal static class IndexLeafIncremental
     }
 
     /// <summary>
+    /// Reads the three sibling-pointer header fields (<c>prev_page</c>,
+    /// <c>next_page</c>, <c>tail_page</c>) of any index page in one call.
+    /// Each is interpreted as an unsigned 32-bit little-endian page number
+    /// (zero = absent). Returns <c>(0, 0, 0)</c> when the page is too short
+    /// to contain all three fields.
+    /// </summary>
+    public static (long Prev, long Next, long Tail) ReadSiblingPointers(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
+    {
+        if (page == null || page.Length < layout.TailPageOffset + 4)
+        {
+            return (0, 0, 0);
+        }
+
+        long prev = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.PrevPageOffset, 4));
+        long next = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.NextPageOffset, 4));
+        long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.TailPageOffset, 4));
+        return (prev, next, tail);
+    }
+
+    /// <summary>
     /// Decodes the child-page pointer of the FIRST entry on an intermediate
     /// (<c>0x03</c>) page. Each intermediate entry is laid out as
     /// <c>[stripped key bytes][3 B BE data page][1 B data row][4 B LE child page]</c>
@@ -200,9 +220,7 @@ internal static class IndexLeafIncremental
             return false;
         }
 
-        int prev = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.PrevPageOffset, 4));
-        int next = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.NextPageOffset, 4));
-        int tail = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.TailPageOffset, 4));
+        var (prev, next, tail) = ReadSiblingPointers(layout, page);
         return prev == 0 && next == 0 && tail == 0;
     }
 
