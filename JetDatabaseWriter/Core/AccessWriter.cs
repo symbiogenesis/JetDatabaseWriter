@@ -6566,7 +6566,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (numIdx > 0)
         {
             int realIdxPhysStart = namePos;
-            var (_, logIdxStart, logIdxNameStart) = _indexLayout.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
+            var (_, logIdxStart, logIdxNameStart, _, _) = _indexLayout.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
 
             // Bound check (logical-index name byte count is variable; account for it below).
             int totalIdxBytesLowerBound = logIdxNameStart - realIdxPhysStart;
@@ -9445,59 +9445,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int realIdxDescStart = namePos;
-        int logIdxStart = _indexLayout.LogicalIdxStart(realIdxDescStart, numRealIdx);
 
-        // per-real-idx, decode every populated col_map slot to recover the
-        // full (column, direction) list, the first_dp byte offset, and the unique
-        // flag bit (real-idx flags & 0x01). PK uniqueness is signalled by the
-        // logical-idx index_type discriminator below, not the flag bit.
-        var realIdxByNum = new Dictionary<int, RealIdxEntry>();
-        for (int ri = 0; ri < numRealIdx; ri++)
-        {
-            if (!_indexLayout.TryReadRealIdxSlotWithKeyColumns(tdefBuffer, realIdxDescStart, ri, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn> keyCols))
-            {
-                break;
-            }
-
-            if (keyCols.Count == 0)
-            {
-                continue;
-            }
-
-            realIdxByNum[ri] = slot.ToEntry(keyCols);
-        }
+        // Decode the index catalog: every populated real-idx slot, with
+        // IsUnique already promoted for any slot backing a PK logical-idx.
+        IndexCatalogReader.IndexCatalog catalog = IndexCatalogReader.Read(
+            tdefBuffer, _indexLayout, _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx));
+        Dictionary<int, RealIdxEntry> realIdxByNum = catalog.RealIdxByNum;
 
         if (realIdxByNum.Count == 0)
         {
             return;
         }
 
-        // Walk logical-idx entries to discover whether any logical idx pointing at
-        // a given real-idx is a primary key (index_type = 0x01) — that promotes
-        // the real-idx to unique even when the flags byte is 0x00 (per §3.1).
-        for (int li = 0; li < numIdx; li++)
-        {
-            if (!_indexLayout.TryReadLogicalEntry(tdefBuffer, logIdxStart, li, out IndexLayout.LogicalIdxEntry entry))
-            {
-                break;
-            }
-
-            int realIdxNum = entry.IndexNum2;
-            byte indexType = entry.IndexType;
-            if (indexType == (byte)IndexKind.PrimaryKey
-                && realIdxByNum.TryGetValue(realIdxNum, out RealIdxEntry rie))
-            {
-                realIdxByNum[realIdxNum] = rie with { IsUnique = true };
-            }
-        }
-
         // Build column ordinal lookup so we can find each key column's value in the
         // snapshot row by ColNum (deleted-column gaps mean ColNum != snapshot index).
-        var snapshotIndexByColNum = new Dictionary<int, int>(tableDef.Columns.Count);
-        for (int c = 0; c < tableDef.Columns.Count; c++)
-        {
-            snapshotIndexByColNum[tableDef.Columns[c].ColNum] = c;
-        }
+        Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
 
         // Snapshot rows + locations in matching order (same page-walk semantics as
         // the existing UpdateRowsAsync/DeleteRowsAsync rely on).
@@ -9736,7 +9698,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return false;
             }
 
-            if (entry.IndexType == (byte)IndexKind.ForeignKey)
+            if (entry.IndexType == IndexKind.ForeignKey)
             {
                 _lastIncrementalBail = "C1c foreign-key logical index present";
                 return false;
@@ -9766,11 +9728,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return true;
         }
 
-        var snapshotIndexByColNum = new Dictionary<int, int>(tableDef.Columns.Count);
-        for (int c = 0; c < tableDef.Columns.Count; c++)
-        {
-            snapshotIndexByColNum[tableDef.Columns[c].ColNum] = c;
-        }
+        Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
 
         bool tdefDirty = false;
         foreach (RealIdxEntry rie in slots)
@@ -11974,8 +11932,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.LeafPageLayout.Jet4;
-        const int RealIdxPhysSz = 52;
-        const int PhysFirstDpOff = Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset;
 
         _lastIncrementalBail = null;
 
@@ -12016,42 +11972,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int realIdxDescStart = namePos;
-        var snapshotIndexByColNum = new Dictionary<int, int>(tableDef.Columns.Count);
-        for (int c = 0; c < tableDef.Columns.Count; c++)
-        {
-            snapshotIndexByColNum[tableDef.Columns[c].ColNum] = c;
-        }
+        Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
 
         bool legacyNumeric = _format == DatabaseFormat.Jet4Mdb;
 
-        for (int ri = 0; ri < numRealIdx; ri++)
+        // Decode the index catalog once. PK promotion is harmless here (this
+        // path doesn't gate on IsUnique); names are unused so we skip them.
+        IndexCatalogReader.IndexCatalog catalog = IndexCatalogReader.Read(
+            tdefBuf, _indexLayout, _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx));
+
+        foreach ((int ri, RealIdxEntry rie) in catalog.RealIdxByNum)
         {
-            int phys = realIdxDescStart + (ri * RealIdxPhysSz);
-            if (phys + RealIdxPhysSz > tdefBuf.Length)
-            {
-                return false;
-            }
-
-            var keyCols = new List<(int ColNum, bool Ascending)>(10);
-            for (int slot = 0; slot < 10; slot++)
-            {
-                int so = phys + 4 + (slot * 3);
-                int cn = Ru16(tdefBuf, so);
-                if (cn == 0xFFFF)
-                {
-                    continue;
-                }
-
-                byte order = tdefBuf[so + 2];
-                keyCols.Add((cn, order != 0x02));
-            }
-
-            if (keyCols.Count == 0)
-            {
-                continue;
-            }
-
-            long firstDp = (uint)Ri32(tdefBuf, phys + PhysFirstDpOff);
+            long firstDp = (uint)Ri32(tdefBuf, rie.FirstDpOffset);
             if (firstDp <= 0)
             {
                 _lastIncrementalBail = $"S2 ri={ri} firstDp=0";
@@ -12059,21 +11991,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             // Resolve key columns to TDEF ColumnInfos.
-            var keyColInfos = new List<(ColumnInfo Col, int SnapIdx, bool Ascending)>(keyCols.Count);
-            bool resolveFailed = false;
-            foreach ((int colNum, bool ascending) in keyCols)
-            {
-                ColumnInfo? col = tableDef.Columns.Find(c => c.ColNum == colNum);
-                if (col is null || !snapshotIndexByColNum.TryGetValue(colNum, out int snapIdx))
-                {
-                    resolveFailed = true;
-                    break;
-                }
-
-                keyColInfos.Add((col, snapIdx, ascending));
-            }
-
-            if (resolveFailed)
+            if (!IndexLayout.TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
             {
                 _lastIncrementalBail = $"S3 ri={ri} resolveFailed";
                 return false;
@@ -12343,64 +12261,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int realIdxDescStart = namePos;
-        var (_, logIdxStart, logIdxNamesStart) = _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        var anchors = _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        List<string> logIdxNames = ReadLogicalIdxNames(tdefBuffer, anchors.LogIdxNamesStart, numIdx);
 
-        // Decode every real-idx slot's key columns + flag bit. Reuses the
-        // RealIdxEntry shape from MaintainIndexesAsync; FirstDpOffset is
-        // unused on this path (we don't rewrite first_dp here).
-        var realIdxSlots = new Dictionary<int, RealIdxEntry>();
-        for (int ri = 0; ri < numRealIdx; ri++)
-        {
-            if (!_indexLayout.TryReadRealIdxSlotWithKeyColumns(tdefBuffer, realIdxDescStart, ri, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn> keyCols))
-            {
-                break;
-            }
-
-            if (keyCols.Count == 0)
-            {
-                continue;
-            }
-
-            realIdxSlots[ri] = slot.ToEntry(keyCols);
-        }
-
-        // Walk the logical-idx entries to (a) promote any real-idx that backs a
-        // PK logical-idx to unique, and (b) capture a best-effort name for each
-        // unique real-idx (first logical-idx referencing it wins).
-        List<string> logIdxNames = ReadLogicalIdxNames(tdefBuffer, logIdxNamesStart, numIdx);
-
-        var pkRealIdxNums = new HashSet<int>();
-        var nameByRealIdx = new Dictionary<int, string>();
-        for (int li = 0; li < numIdx; li++)
-        {
-            if (!_indexLayout.TryReadLogicalEntry(tdefBuffer, logIdxStart, li, out IndexLayout.LogicalIdxEntry entry))
-            {
-                break;
-            }
-
-            int realIdxNum = entry.IndexNum2;
-            byte indexType = entry.IndexType;
-            if (indexType == (byte)IndexKind.PrimaryKey)
-            {
-                pkRealIdxNums.Add(realIdxNum);
-            }
-
-            if (li < logIdxNames.Count)
-            {
-                nameByRealIdx.TryAdd(realIdxNum, logIdxNames[li]);
-            }
-        }
+        // Decode the index catalog, including per-real-idx names so the
+        // unique-violation error message can quote the originating logical-idx.
+        IndexCatalogReader.IndexCatalog catalog = IndexCatalogReader.Read(
+            tdefBuffer, _indexLayout, anchors, logIdxNames);
 
         // Build column-ordinal lookup for resolving (ColNum -> snapshot index).
-        var snapshotIndexByColNum = new Dictionary<int, int>(tableDef.Columns.Count);
-        for (int c = 0; c < tableDef.Columns.Count; c++)
-        {
-            snapshotIndexByColNum[tableDef.Columns[c].ColNum] = c;
-        }
+        Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
 
-        foreach ((int realIdxNum, RealIdxEntry slot) in realIdxSlots)
+        foreach ((int realIdxNum, RealIdxEntry slot) in catalog.RealIdxByNum)
         {
-            if (!slot.IsUnique && !pkRealIdxNums.Contains(realIdxNum))
+            if (!slot.IsUnique && !catalog.PkRealIdxNums.Contains(realIdxNum))
             {
                 continue;
             }
@@ -12413,8 +12287,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            string name = nameByRealIdx.TryGetValue(realIdxNum, out string? n) ? n : $"realidx#{realIdxNum}";
-            result.Add(new UniqueIndexDescriptor(realIdxNum, name, keyColInfos));
+            result.Add(new UniqueIndexDescriptor(realIdxNum, catalog.GetNameOrFallback(realIdxNum), keyColInfos));
         }
 
         return result;

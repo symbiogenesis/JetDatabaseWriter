@@ -272,7 +272,7 @@ internal readonly struct IndexLayout
     {
         int logIdxStart = LogicalIdxStart(realIdxDescStart, numRealIdx);
         int logIdxNamesStart = LogicalIdxNamesStart(logIdxStart, numIdx);
-        return new IndexSectionAnchors(realIdxDescStart, logIdxStart, logIdxNamesStart);
+        return new IndexSectionAnchors(realIdxDescStart, logIdxStart, logIdxNamesStart, numRealIdx, numIdx);
     }
 
     /// <summary>
@@ -348,18 +348,23 @@ internal readonly struct IndexLayout
             BinaryPrimitives.ReadInt32LittleEndian(td.Slice(e + RelTblPageFieldOffset, 4)),
             td[e + CascadeUpsFieldOffset],
             td[e + CascadeDelsFieldOffset],
-            td[e + IndexTypeFieldOffset]);
+            (IndexKind)td[e + IndexTypeFieldOffset]);
         return true;
     }
 
     /// <summary>
     /// Anchors of the three index-related blocks within a TDEF buffer,
-    /// returned by <see cref="GetIndexSection"/>.
+    /// plus the populated real-idx / logical-idx slot counts (TDEF header
+    /// fields), returned by <see cref="GetIndexSection"/>. Bundles every
+    /// piece of state a catalog walker needs so callers pass a single value
+    /// instead of four parallel arguments.
     /// </summary>
     public readonly record struct IndexSectionAnchors(
         int RealIdxDescStart,
         int LogIdxStart,
-        int LogIdxNamesStart);
+        int LogIdxNamesStart,
+        int NumRealIdx,
+        int NumIdx);
 
     /// <summary>
     /// Decoded view of a single real-idx physical descriptor's
@@ -386,7 +391,9 @@ internal readonly struct IndexLayout
 
     /// <summary>
     /// Decoded view of a single logical-idx entry's format-invariant fields,
-    /// returned by <see cref="TryReadLogicalEntry"/>.
+    /// returned by <see cref="TryReadLogicalEntry"/>. <see cref="IndexType"/>
+    /// is exposed as <see cref="IndexKind"/> rather than the raw byte so
+    /// consumers compare against enum values directly.
     /// </summary>
     public readonly record struct LogicalIdxEntry(
         int FieldsOffset,
@@ -396,7 +403,7 @@ internal readonly struct IndexLayout
         int RelTblPage,
         byte CascadeUps,
         byte CascadeDels,
-        byte IndexType);
+        IndexKind IndexType);
 
     /// <summary>
     /// One real-idx slot decoded into its full <c>col_map</c> key list, the

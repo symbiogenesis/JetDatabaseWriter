@@ -950,7 +950,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         int realIdxDescStart = pos;
-        var (_, logicalIdxStart, logicalIdxNamesStart) = _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        var (_, logicalIdxStart, logicalIdxNamesStart, _, _) = _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
 
         if (logicalIdxNamesStart > td.Length)
         {
@@ -1008,19 +1008,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 flags = slot.Flags;
             }
 
-            IndexKind kind = indexType switch
-            {
-                0x01 => IndexKind.PrimaryKey,
-                0x02 => IndexKind.ForeignKey,
-                _ => IndexKind.Normal,
-            };
-
             result.Add(new IndexMetadata
             {
                 Name = names[i],
                 IndexNumber = indexNum,
                 RealIndexNumber = realIdxNum,
-                Kind = kind,
+                Kind = indexType,
                 IsUnique = (flags & 0x01) != 0,
                 IgnoreNulls = (flags & 0x02) != 0,
                 IsRequired = (flags & 0x08) != 0,
