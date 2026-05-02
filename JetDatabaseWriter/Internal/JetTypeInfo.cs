@@ -233,10 +233,11 @@ internal static class JetTypeInfo
     /// the typed path keeps full precision),
     /// <c>T_MONEY → decimal</c>, <c>T_GUID → Guid</c>,
     /// <c>T_NUMERIC → decimal</c>,
-    /// <c>T_COMPLEX</c>/<c>T_ATTACHMENT → "__CX:N__"</c> string sentinel
-    /// (matching <see cref="ReadFixedString"/>; replaced by direct id storage in
-    /// a later phase), and unknown types fall through to the same hex-string
-    /// representation <see cref="ReadFixedString"/> emits.
+    /// <c>T_COMPLEX</c>/<c>T_ATTACHMENT → <see cref="ComplexIdRef"/></c> typed
+    /// sentinel carrying the row's complex_id directly (the legacy
+    /// <c>"__CX:N__"</c> string round-trip used by <see cref="ReadFixedString"/>
+    /// is avoided on the typed hot path), and unknown types fall through to
+    /// the same hex-string representation <see cref="ReadFixedString"/> emits.
     /// </para>
     /// <para>
     /// Returns <see cref="DBNull.Value"/> when the underlying byte access throws
@@ -279,7 +280,9 @@ internal static class JetTypeInfo
                     return ReadNumericTyped(row, start, strictNumeric);
                 case T_COMPLEX:
                 case T_ATTACHMENT:
-                    return size >= 4 ? $"__CX:{BinaryPrimitives.ReadInt32LittleEndian(row.AsSpan(start, 4))}__" : DBNull.Value;
+                    return size >= 4
+                        ? new ComplexIdRef(BinaryPrimitives.ReadInt32LittleEndian(row.AsSpan(start, 4)))
+                        : DBNull.Value;
                 default:
                     return ToHexStringNoSeparator(row.AsSpan(start, Math.Min(size, 8)));
             }
@@ -452,3 +455,11 @@ internal static class JetTypeInfo
         BitConverter.ToString(source.ToArray()).Replace("-", string.Empty, StringComparison.Ordinal);
 #endif
 }
+
+/// <summary>
+/// Typed-row sentinel for <c>T_COMPLEX</c>/<c>T_ATTACHMENT</c> slots emitted
+/// by <see cref="JetTypeInfo.ReadFixedTyped"/>. Carries the parent row's
+/// complex_id directly so the post-processing pass can resolve attachment
+/// bytes without parsing the legacy <c>"__CX:N__"</c> string format.
+/// </summary>
+internal readonly record struct ComplexIdRef(int Id);

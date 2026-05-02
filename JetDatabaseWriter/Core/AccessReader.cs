@@ -426,6 +426,76 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         var (entry, td) = resolved.Value;
+        await foreach (object?[] row in EnumerateTypedRowsAsync(tableName, entry, td, progress, cancellationToken).ConfigureAwait(false))
+        {
+            yield return (object[])row;
+        }
+    }
+
+    /// <inheritdoc/>
+    public async IAsyncEnumerable<T> Rows<T>(
+        string tableName,
+        IProgress<long>? progress = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        where T : class, new()
+    {
+        using var operation = EnterOperation();
+        Guard.ThrowIfDisposed(_disposed, this);
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
+            if (link != null)
+            {
+                await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
+                await foreach (T row in source.Rows<T>(link.ForeignName, progress, cancellationToken).ConfigureAwait(false))
+                {
+                    yield return row;
+                }
+            }
+
+            yield break;
+        }
+
+        var (entry, td) = resolved.Value;
+
+        // Bind the compiled mapper directly against the per-table column
+        // headers + ClrTypes; avoids the GetColumnMetadataAsync round-trip
+        // and the second async-iterator state machine that the previous
+        // implementation built by re-entering Rows().
+        var headers = new string[td.Columns.Count];
+        for (int i = 0; i < td.Columns.Count; i++)
+        {
+            headers[i] = td.Columns[i].Name;
+        }
+
+        Func<object?[], T> factory = RowMapper<T>.Build(headers, td.ClrTypes);
+
+        await foreach (object?[] row in EnumerateTypedRowsAsync(tableName, entry, td, progress, cancellationToken).ConfigureAwait(false))
+        {
+            yield return factory(row);
+        }
+    }
+
+    /// <summary>
+    /// Shared typed-row enumerator used by <see cref="Rows(string, IProgress{long}?, CancellationToken)"/>
+    /// and <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>. Walks every
+    /// owned data page for <paramref name="entry"/>, emitting per-row
+    /// <c>object?[]</c> buffers with complex-attachment and Hyperlink
+    /// post-processing applied (gated by the per-table flags). Centralising
+    /// the page scan here keeps the typed and projected entry points on a
+    /// single iterator (one C# async state machine instead of two).
+    /// </summary>
+    private async IAsyncEnumerable<object?[]> EnumerateTypedRowsAsync(
+        string tableName,
+        CatalogEntry entry,
+        TableDef td,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
         long rowCount = 0;
         Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
             ? await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
@@ -461,31 +531,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     WrapHyperlinkColumns(row, td.ClrTypes);
                 }
 
-                yield return (object[])row;
+                yield return row;
                 rowCount++;
             }
 
             progress?.Report(rowCount);
-        }
-    }
-
-    /// <inheritdoc/>
-    public async IAsyncEnumerable<T> Rows<T>(
-        string tableName,
-        IProgress<long>? progress = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-        where T : class, new()
-    {
-        using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        cancellationToken.ThrowIfCancellationRequested();
-
-        List<ColumnMetadata> meta = await GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
-        var factory = RowMapper<T>.Build(meta);
-        await foreach (object[] row in Rows(tableName, progress, cancellationToken).ConfigureAwait(false))
-        {
-            yield return factory(row);
         }
     }
 
@@ -2073,10 +2123,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>
     /// Resolves <c>T_COMPLEX</c>/<c>T_ATTACHMENT</c> slots in a typed row
     /// (produced by <see cref="CrackRowTypedAsync"/>) by replacing the
-    /// <c>"__CX:N__"</c> marker string with the joined attachment bytes from
-    /// the preloaded complex-data dictionary. Slots with no resolvable child
-    /// data collapse to <see cref="DBNull.Value"/> rather than leaving the
-    /// marker visible to callers.
+    /// <see cref="ComplexIdRef"/> sentinel with the joined attachment bytes
+    /// from the preloaded complex-data dictionary. Slots with no resolvable
+    /// child data collapse to <see cref="DBNull.Value"/> rather than leaving
+    /// the sentinel visible to callers.
     /// </summary>
     private static void ResolveComplexColumns(object?[] typedRow, List<ColumnInfo> columns, Dictionary<int, Dictionary<int, byte[]>>? complexData)
     {
@@ -2093,7 +2143,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (complexData != null &&
                 complexData.TryGetValue(i, out Dictionary<int, byte[]>? colData))
             {
-                int complexId = typedRow[i] is string marker ? ExtractComplexId(marker) : 0;
+                int complexId = typedRow[i] is ComplexIdRef cir ? cir.Id : 0;
                 if (complexId <= 0)
                 {
                     if (parentId < 0)
@@ -2115,8 +2165,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // Complex slot with no resolvable child data (e.g. multi-value
             // columns whose flat-table loader is not wired through, or
             // attachment slots whose ConceptualTableID has no live flat
-            // rows). Surface as DBNull rather than leaving the "__CX:N__"
-            // marker visible.
+            // rows). Surface as DBNull rather than leaving the
+            // ComplexIdRef sentinel visible.
             typedRow[i] = DBNull.Value;
         }
     }
@@ -2128,24 +2178,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         for (int i = 0; i < limit; i++)
         {
             if (columns[i].Type == T_LONG && typedRow[i] is int id)
-            {
-                return id;
-            }
-        }
-
-        return 0;
-    }
-
-    /// <summary>Extracts the complex_id from a marker string like "__CX:123__".</summary>
-    private static int ExtractComplexId(string raw)
-    {
-        if (raw != null &&
-            raw.StartsWith("__CX:", StringComparison.Ordinal) &&
-            raw.EndsWith("__", StringComparison.Ordinal) &&
-            raw.Length > 7)
-        {
-            string numStr = raw.Substring(5, raw.Length - 7);
-            if (int.TryParse(numStr, out int id))
             {
                 return id;
             }

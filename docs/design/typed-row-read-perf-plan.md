@@ -307,14 +307,63 @@ Notes:
   `HyperlinkTests.*`).
 
 ### Phase 6 — Micro-cleanups
-- [ ] In `Rows<T>()`, avoid double `await foreach` (today it iterates
+- [x] In `Rows<T>()`, avoid double `await foreach` (today it iterates
   `Rows()` which is itself async-iterated). Inline against the page-level
   enumerator from Phase 4.
-- [ ] Audit `ColumnSlice`/`RowLayout` for per-row struct copies; pass by
+- [x] Audit `ColumnSlice`/`RowLayout` for per-row struct copies; pass by
   `in` / `ref readonly` where it removes copies.
-- [ ] Fast-path complex-id marker resolution: store the resolved
+- [x] Fast-path complex-id marker resolution: store the resolved
   `int complexId` directly in the typed slot (boxed `int` sentinel or
   internal struct) instead of a `"__CX:N__"` string.
+
+#### Notes
+- **`Rows<T>()` inlining.** Both
+  [`AccessReader.Rows(string)`](JetDatabaseWriter/Core/AccessReader.cs)
+  and `Rows<T>(string)` now share a single private
+  `EnumerateTypedRowsAsync(tableName, entry, td, progress, ct)`
+  iterator that walks owned data pages, calls `CrackRowTypedAsync`,
+  and applies the gated `ResolveComplexColumns` /
+  `WrapHyperlinkColumns` post-processing once. Previously `Rows<T>()`
+  awaited `Rows()` in an outer iterator, then re-cast each row from
+  `object[]` and applied the mapper — two C# async-iterator state
+  machines per row. After the change there is one iterator per public
+  entry point, with `Rows()` doing only the `(object[])row` re-cast and
+  `Rows<T>()` invoking the compiled `RowMapper<T>.Build(headers, td.ClrTypes)`
+  delegate directly. This also drops the per-call
+  `GetColumnMetadataAsync(tableName, ct)` round-trip the old
+  `Rows<T>()` performed (the typed mapper now binds against the same
+  cached `td.ClrTypes` array Phase 2 introduced) and gives `Rows<T>()`
+  its own linked-table fallback so it can recurse into
+  `source.Rows<T>(...)` instead of routing through the untyped
+  `source.Rows(...)`.
+- **ComplexIdRef sentinel.** Introduced
+  [`ComplexIdRef(int Id)`](JetDatabaseWriter/Internal/JetTypeInfo.cs)
+  as an `internal readonly record struct` returned by
+  `JetTypeInfo.ReadFixedTyped` for `T_COMPLEX`/`T_ATTACHMENT` slots
+  (size ≥ 4); too-short slots still surface as `DBNull.Value`.
+  `AccessReader.ResolveComplexColumns` now checks
+  `typedRow[i] is ComplexIdRef cir ? cir.Id : 0`, eliminating the
+  per-attachment-row `string.StartsWith("__CX:")` +
+  `Substring` + `int.TryParse` round-trip the legacy marker required.
+  The legacy `ExtractComplexId` helper was deleted.
+  `JetTypeInfo.ReadFixedString` is unchanged — it still emits the
+  legacy `"__CX:N__"` string for the diagnostics / `RowsAsStrings`
+  consumers, so the typed and string paths remain symmetric.
+  `ReadFixedTypedTests.Complex_ReturnsCxSentinelString` was updated to
+  pin the new `ComplexIdRef` shape on the typed side while still
+  asserting the legacy string shape on the diagnostics side.
+- **`ColumnSlice` / `RowLayout` audit.** Both are already
+  `private protected readonly record struct`s. `RowLayout` is already
+  passed `in RowLayout layout` to `ResolveColumnSlice`. The remaining
+  `ColumnSlice slice` parameter on `ReadColumnValueAsync` cannot be
+  converted to `in` because C# disallows `in`/`ref` parameters on
+  `async` methods. All other consumers store the result of
+  `ResolveColumnSlice(...)` into a single local immediately. No
+  material per-row copies were found, so no signature changes were
+  made — bullet checked off as audited rather than refactored.
+- Test result after Phase 6: 2552/2554 pass — only the two
+  pre-existing DAO Compact baseline failures noted in
+  `/memories/repo/round-trip-tests.md`. No new regressions.
 
 ### Phase 7 — Verify & document
 - [ ] Re-run the Phase 0 benchmarks; record results in this doc.

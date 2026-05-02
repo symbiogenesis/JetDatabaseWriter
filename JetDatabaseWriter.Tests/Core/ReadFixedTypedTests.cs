@@ -268,8 +268,13 @@ public sealed class ReadFixedTypedTests
         object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, type, size: 4);
         string viaString = JetTypeInfo.ReadFixedString(row, start: 0, type, size: 4);
 
-        Assert.Equal("__CX:42__", typed);
-        Assert.Equal(viaString, typed);
+        // Typed path now emits a typed ComplexIdRef sentinel rather than the
+        // legacy "__CX:N__" string used by ReadFixedString — keep the string
+        // path pinned for the diagnostics/RowsAsStrings consumer and assert
+        // both encode the same complex_id.
+        ComplexIdRef cir = Assert.IsType<ComplexIdRef>(typed);
+        Assert.Equal(42, cir.Id);
+        Assert.Equal("__CX:42__", viaString);
     }
 
     [Theory]
