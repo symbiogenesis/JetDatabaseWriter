@@ -66,7 +66,7 @@ public abstract class AccessBase : IAccessBase
     /// Per-page decryption keys (Jet3 XOR, Jet4 RC4, ACCDB AES). Populated during
     /// reader construction by <see cref="EncryptionManager"/>. Mutated only on the
     /// constructor thread; consulted by every page read via
-    /// <see cref="EncryptionManager.DecryptPageInPlace"/>.
+    /// <see cref="EncryptionManager.DecryptPageInPlace(byte[], long, int, EncryptionManager.PageDecryptionKeys)"/>.
     /// </summary>
     private protected readonly EncryptionManager.PageDecryptionKeys _pageKeys = new();
 
@@ -237,6 +237,7 @@ public abstract class AccessBase : IAccessBase
         _disposed = true;
         await _stream.DisposeAsync().ConfigureAwait(false);
         _ioGate.Dispose();
+        _pageKeys.Dispose();
         GC.SuppressFinalize(this);
     }
 
