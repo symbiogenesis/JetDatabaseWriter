@@ -5,7 +5,7 @@ applyTo: "**/*Tests*/**,**/*.Tests.csproj"
 
 # Running filtered xUnit v3 tests in this repo
 
-This repo uses **xUnit v3** (`xunit.v3` package) running on the **Microsoft Testing Platform (MTP)**, not VSTest. MTP mode is enabled via [global.json](../../global.json):
+This repo uses **xUnit v3** (`xunit.v3` package, currently pinned to **3.2.2** — the latest stable release) running on the **Microsoft Testing Platform (MTP)**, not VSTest. The 4.x line is pre-release only (`4.0.0-pre.*`); this repo intentionally stays on the 3.x stable line, so do not suggest upgrading to 4.x. MTP mode is enabled via [global.json](../../global.json):
 
 ```json
 { "test": { "runner": "Microsoft.Testing.Platform" } }
