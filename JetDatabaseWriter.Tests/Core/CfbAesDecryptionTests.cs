@@ -299,24 +299,6 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
     }
 
     /// <summary>
-    /// AES-128-ECB encrypts a region of a byte array in place.
-    /// </summary>
-    private static void AesEncryptInPlace(byte[] data, int offset, int length, byte[] key)
-    {
-        using var aes = Aes.Create();
-        aes.Key = key;
-        aes.Mode = CipherMode.ECB;
-        aes.Padding = PaddingMode.None;
-
-        using var encryptor = aes.CreateEncryptor();
-        byte[] block = new byte[length];
-        Buffer.BlockCopy(data, offset, block, 0, length);
-
-        byte[] encrypted = encryptor.TransformFinalBlock(block, 0, length);
-        Buffer.BlockCopy(encrypted, 0, data, offset, length);
-    }
-
-    /// <summary>
     /// Creates a synthetic AES-encrypted ACCDB by cloning NorthwindTraders.accdb,
     /// writing the CFB magic header + encoded password, and AES-encrypting all
     /// data pages (pages 1+).
@@ -336,20 +318,27 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         // 3. AES-encrypt all data pages (pages 1+). Page 0 (the header) is left
         //    unencrypted because the reader needs it to detect the format and
         //    verify the password before decryption begins.
-        byte[] aesKey = DeriveSimpleAesKey(TestDatabases.AesEncryptedPassword);
-        byte[] iv = new byte[16]; // zero IV for deterministic fixture
-        for (int page = 1; page * Jet4PageSize < data.Length; page++)
+        //
+        // ECB has no chaining state between blocks, so a single ICryptoTransform
+        // can encrypt every page in place via TransformBlock(data, off, len, data, off),
+        // avoiding per-page Aes/transform allocations and intermediate buffers.
+        using var aes = Aes.Create();
+        aes.Key = DeriveSimpleAesKey(TestDatabases.AesEncryptedPassword);
+        aes.Mode = CipherMode.ECB;
+        aes.Padding = PaddingMode.None;
+        using var encryptor = aes.CreateEncryptor();
+
+        for (int offset = Jet4PageSize; offset < data.Length; offset += Jet4PageSize)
         {
-            int offset = page * Jet4PageSize;
             int length = Math.Min(Jet4PageSize, data.Length - offset);
 
-            // AES-ECB operates on full 16-byte blocks; pad if needed
+            // AES-ECB operates on full 16-byte blocks; skip partial trailing page.
             if (length % 16 != 0)
             {
-                continue; // skip partial trailing page
+                continue;
             }
 
-            AesEncryptInPlace(data, offset, length, aesKey);
+            encryptor.TransformBlock(data, offset, length, data, offset);
         }
 
         return data;

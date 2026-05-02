@@ -175,7 +175,7 @@ internal static class EncryptionConverter
         DatabaseFormat fmt = isLegacyAesCfb ? DatabaseFormat.AceAccdb : DetectFormat(header);
         int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
-        var pageKeys = new EncryptionManager.PageDecryptionKeys
+        using var pageKeys = new EncryptionManager.PageDecryptionKeys
         {
             Jet3XorMask = EncryptionManager.GetJet3PageMask(fmt, header),
         };
@@ -203,6 +203,8 @@ internal static class EncryptionConverter
         await ReadExactAsync(source, result, 0, pageSize, cancellationToken).ConfigureAwait(false);
         StripEncryptionFromHeader(result, fmt, isLegacyAesCfb);
 
+        bool hasPageEncryption = EncryptionManager.HasPageEncryption(pageKeys);
+
         // Pages 1+: read raw, decrypt in place.
         for (long page = 1, offset = pageSize; offset < length; page++, offset += pageSize)
         {
@@ -210,14 +212,9 @@ internal static class EncryptionConverter
             _ = source.Seek(offset, SeekOrigin.Begin);
             await ReadExactAsync(source, result, (int)offset, pageSize, cancellationToken).ConfigureAwait(false);
 
-            if (EncryptionManager.HasPageEncryption(pageKeys))
+            if (hasPageEncryption)
             {
-                // EncryptionManager operates on a self-contained buffer so we
-                // pass a slice copy, then write the result back.
-                byte[] tmp = new byte[pageSize];
-                Buffer.BlockCopy(result, (int)offset, tmp, 0, pageSize);
-                EncryptionManager.DecryptPageInPlace(tmp, page, pageSize, pageKeys);
-                Buffer.BlockCopy(tmp, 0, result, (int)offset, pageSize);
+                EncryptionManager.DecryptPageInPlace(result, (int)offset, page, pageSize, pageKeys);
             }
         }
 
@@ -242,7 +239,7 @@ internal static class EncryptionConverter
         // Microsoft Access.
         result[0x62] = 0x03;
 
-        var keys = new EncryptionManager.PageDecryptionKeys { Rc4DbKey = dbKey };
+        using var keys = new EncryptionManager.PageDecryptionKeys { Rc4DbKey = dbKey };
         EncryptAllPages(result, pageSize, keys);
         return result;
     }
@@ -274,7 +271,7 @@ internal static class EncryptionConverter
         CompoundFileReader.CfbSignature.CopyTo(result);
 
         byte[] aesKey = DeriveAesPageKey(password);
-        var keys = new EncryptionManager.PageDecryptionKeys { AesPageKey = aesKey };
+        using var keys = new EncryptionManager.PageDecryptionKeys { AesPageKey = aesKey };
         EncryptAllPages(result, pageSize, keys);
         return result;
     }
@@ -302,13 +299,10 @@ internal static class EncryptionConverter
         }
 
         long pages = db.Length / pageSize;
-        byte[] tmp = new byte[pageSize];
         for (long page = 1; page < pages; page++)
         {
             int offset = (int)(page * pageSize);
-            Buffer.BlockCopy(db, offset, tmp, 0, pageSize);
-            EncryptionManager.EncryptPageInPlace(tmp, page, pageSize, keys);
-            Buffer.BlockCopy(tmp, 0, db, offset, pageSize);
+            EncryptionManager.EncryptPageInPlace(db, offset, page, pageSize, keys);
         }
     }
 

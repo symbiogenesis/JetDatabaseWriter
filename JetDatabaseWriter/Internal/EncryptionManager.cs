@@ -178,7 +178,7 @@ internal static class EncryptionManager
                         "remove the password in Microsoft Access (File > Info > Encrypt with Password) and try again.");
                 }
 
-                string storedPassword = DecodeJet4Password(hdr);
+                string storedPassword = DecodeHeaderPassword(hdr, Jet4PasswordMask);
                 if (!password.Span.SequenceEqual(storedPassword.AsSpan()))
                 {
                     throw new UnauthorizedAccessException(
@@ -208,7 +208,7 @@ internal static class EncryptionManager
                         "Provide a password via AccessReaderOptions.Password.");
                 }
 
-                string storedPassword = DecodeAccdbPassword(hdr);
+                string storedPassword = DecodeHeaderPassword(hdr, AccdbLegacyPasswordMask);
                 if (!password.Span.SequenceEqual(storedPassword.AsSpan()))
                 {
                     throw new UnauthorizedAccessException(
@@ -230,7 +230,7 @@ internal static class EncryptionManager
             }
 
             // ACCDB uses the same XOR scheme as Jet4 for the header password area.
-            string storedPassword = DecodeJet4Password(hdr);
+            string storedPassword = DecodeHeaderPassword(hdr, Jet4PasswordMask);
             if (!password.Span.SequenceEqual(storedPassword.AsSpan()))
             {
                 throw new UnauthorizedAccessException(
@@ -300,7 +300,15 @@ internal static class EncryptionManager
     /// <paramref name="buf"/> in place. A no-op when no keys are configured or
     /// when <paramref name="pageNumber"/> is 0 (the unencrypted header page).
     /// </summary>
-    public static void DecryptPageInPlace(byte[] buf, long pageNumber, int pageSize, PageDecryptionKeys keys)
+    public static void DecryptPageInPlace(byte[] buf, long pageNumber, int pageSize, PageDecryptionKeys keys) =>
+        DecryptPageInPlace(buf, 0, pageNumber, pageSize, keys);
+
+    /// <summary>
+    /// Variant of <see cref="DecryptPageInPlace(byte[],long,int,PageDecryptionKeys)"/>
+    /// that decrypts a page sitting at <paramref name="offset"/> within a larger
+    /// backing array. Lets bulk callers skip per-page slice copies.
+    /// </summary>
+    public static void DecryptPageInPlace(byte[] buf, int offset, long pageNumber, int pageSize, PageDecryptionKeys keys)
     {
         if (pageNumber < 1 || keys == null)
         {
@@ -309,34 +317,39 @@ internal static class EncryptionManager
 
         if (keys.Jet3XorMask is { } jet3Mask)
         {
-            long fileOffset = pageNumber * pageSize;
-            for (int b = 0; b < pageSize; b++)
-            {
-                buf[b] ^= jet3Mask[(int)((fileOffset + b - pageSize) % jet3Mask.Length)];
-            }
+            ApplyJet3Xor(buf, offset, pageNumber, pageSize, jet3Mask);
         }
 
         if (keys.Rc4DbKey is uint dbKey)
         {
             byte[] rc4Key = DeriveRc4PageKey(dbKey, (uint)pageNumber);
-            Rc4Transform(buf, 0, pageSize, rc4Key);
+            Rc4Transform(buf, offset, pageSize, rc4Key);
         }
 
-        if (keys.AesPageKey is { } aesKey)
+        if (keys.AesPageKey is not null)
         {
-            AesEcbDecryptInPlace(buf, 0, pageSize, aesKey);
+            AesEcbInPlace(keys.GetAesDecryptor(), buf, offset, pageSize);
         }
     }
 
     /// <summary>
     /// Applies any active page encryption (Jet3 XOR, Jet4 RC4, ACCDB AES) to
     /// <paramref name="buf"/> in place — the inverse of
-    /// <see cref="DecryptPageInPlace"/>. A no-op when no keys are configured
+    /// <see cref="DecryptPageInPlace(byte[],long,int,PageDecryptionKeys)"/>.
+    /// A no-op when no keys are configured
     /// or when <paramref name="pageNumber"/> is 0 (the unencrypted header
     /// page). Operations are applied in reverse order so a page round-trips
     /// back to its original ciphertext.
     /// </summary>
-    public static void EncryptPageInPlace(byte[] buf, long pageNumber, int pageSize, PageDecryptionKeys keys)
+    public static void EncryptPageInPlace(byte[] buf, long pageNumber, int pageSize, PageDecryptionKeys keys) =>
+        EncryptPageInPlace(buf, 0, pageNumber, pageSize, keys);
+
+    /// <summary>
+    /// Variant of <see cref="EncryptPageInPlace(byte[],long,int,PageDecryptionKeys)"/>
+    /// that encrypts a page sitting at <paramref name="offset"/> within a larger
+    /// backing array.
+    /// </summary>
+    public static void EncryptPageInPlace(byte[] buf, int offset, long pageNumber, int pageSize, PageDecryptionKeys keys)
     {
         if (pageNumber < 1 || keys == null)
         {
@@ -344,26 +357,35 @@ internal static class EncryptionManager
         }
 
         // Inverse order of DecryptPageInPlace: AES → RC4 → Jet3 XOR.
-        if (keys.AesPageKey is { } aesKey)
+        if (keys.AesPageKey is not null)
         {
-            AesEcbEncryptInPlace(buf, 0, pageSize, aesKey);
+            AesEcbInPlace(keys.GetAesEncryptor(), buf, offset, pageSize);
         }
 
         if (keys.Rc4DbKey is uint dbKey)
         {
             // RC4 is symmetric: same operation encrypts and decrypts.
             byte[] rc4Key = DeriveRc4PageKey(dbKey, (uint)pageNumber);
-            Rc4Transform(buf, 0, pageSize, rc4Key);
+            Rc4Transform(buf, offset, pageSize, rc4Key);
         }
 
         if (keys.Jet3XorMask is { } jet3Mask)
         {
             // XOR is symmetric.
-            long fileOffset = pageNumber * pageSize;
-            for (int b = 0; b < pageSize; b++)
-            {
-                buf[b] ^= jet3Mask[(int)((fileOffset + b - pageSize) % jet3Mask.Length)];
-            }
+            ApplyJet3Xor(buf, offset, pageNumber, pageSize, jet3Mask);
+        }
+    }
+
+    /// <summary>
+    /// Applies the Jet3 cyclic XOR mask to a single page in place. Symmetric:
+    /// the same operation encrypts and decrypts.
+    /// </summary>
+    private static void ApplyJet3Xor(byte[] buf, int offset, long pageNumber, int pageSize, byte[] mask)
+    {
+        long fileOffset = pageNumber * pageSize;
+        for (int b = 0; b < pageSize; b++)
+        {
+            buf[offset + b] ^= mask[(int)((fileOffset + b - pageSize) % mask.Length)];
         }
     }
 
@@ -379,13 +401,20 @@ internal static class EncryptionManager
     /// </summary>
     private static byte[] DeriveRc4PageKey(uint dbKey, uint pageNumber)
     {
-        byte[] input = new byte[8];
-        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(0, 4), dbKey);
-        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4, 4), pageNumber);
-        using var md5 = MD5.Create();
-        byte[] hash = md5.ComputeHash(input);
+        Span<byte> input = stackalloc byte[8];
+        BinaryPrimitives.WriteUInt32LittleEndian(input.Slice(0, 4), dbKey);
+        BinaryPrimitives.WriteUInt32LittleEndian(input.Slice(4, 4), pageNumber);
+        Span<byte> hash = stackalloc byte[16];
+        using (var md5 = MD5.Create())
+        {
+            if (!md5.TryComputeHash(input, hash, out _))
+            {
+                throw new CryptographicException("MD5 hash computation failed.");
+            }
+        }
+
         byte[] key = new byte[4];
-        Buffer.BlockCopy(hash, 0, key, 0, 4);
+        hash.Slice(0, 4).CopyTo(key);
         return key;
     }
 #pragma warning restore CA5351
@@ -393,7 +422,7 @@ internal static class EncryptionManager
     /// <summary>In-place RC4 transform (encrypt and decrypt are the same operation).</summary>
     private static void Rc4Transform(byte[] data, int offset, int length, byte[] key)
     {
-        byte[] s = new byte[256];
+        Span<byte> s = stackalloc byte[256];
         for (int i = 0; i < 256; i++)
         {
             s[i] = (byte)i;
@@ -417,70 +446,38 @@ internal static class EncryptionManager
     }
 
 #pragma warning disable CA5358 // ECB mode is required to match the ACCDB AES page encryption scheme
-    /// <summary>In-place AES-128-ECB decryption of a page buffer.</summary>
-    private static void AesEcbDecryptInPlace(byte[] data, int offset, int length, byte[] key)
+    /// <summary>
+    /// Runs an ECB <see cref="ICryptoTransform"/> over a buffer in place.
+    /// ECB has no chaining state between 16-byte blocks, so passing the same
+    /// array as both input and output is safe and avoids any temporary
+    /// allocations or block copies.
+    /// </summary>
+    private static void AesEcbInPlace(ICryptoTransform xform, byte[] data, int offset, int length)
     {
-        using var aes = Aes.Create();
-        aes.Key = key;
-        aes.Mode = CipherMode.ECB;
-        aes.Padding = PaddingMode.None;
-
-        using var decryptor = aes.CreateDecryptor();
-        byte[] block = new byte[length];
-        Buffer.BlockCopy(data, offset, block, 0, length);
-
-        byte[] decrypted = decryptor.TransformFinalBlock(block, 0, length);
-        Buffer.BlockCopy(decrypted, 0, data, offset, length);
-    }
-
-    /// <summary>In-place AES-128-ECB encryption of a page buffer.</summary>
-    private static void AesEcbEncryptInPlace(byte[] data, int offset, int length, byte[] key)
-    {
-        using var aes = Aes.Create();
-        aes.Key = key;
-        aes.Mode = CipherMode.ECB;
-        aes.Padding = PaddingMode.None;
-
-        using var encryptor = aes.CreateEncryptor();
-        byte[] block = new byte[length];
-        Buffer.BlockCopy(data, offset, block, 0, length);
-
-        byte[] encrypted = encryptor.TransformFinalBlock(block, 0, length);
-        Buffer.BlockCopy(encrypted, 0, data, offset, length);
+        int written = xform.TransformBlock(data, offset, length, data, offset);
+        if (written != length)
+        {
+            throw new CryptographicException(
+                $"AES-ECB TransformBlock processed {written} bytes but {length} were expected.");
+        }
     }
 #pragma warning restore CA5358
 
     /// <summary>
-    /// Decodes the stored Jet4 password from the database header. The 40 bytes
-    /// at offset 0x42 are XOR'd with a fixed mask and the 4-byte creation date
-    /// at offset 0x72.
+    /// Shared XOR-mask password decoder for the 40-byte header password area
+    /// at offset 0x42. The 40 bytes are XOR'd with a fixed mask and the 4-byte
+    /// creation date at offset 0x72. Decodes as UTF-16LE and stops at the first
+    /// NUL char because the encryption flag at 0x62 overlaps byte 32 of the area
+    /// and can produce a non-null artifact.
     /// </summary>
-    private static string DecodeJet4Password(byte[] hdr)
+    private static string DecodeHeaderPassword(byte[] hdr, ReadOnlySpan<byte> mask)
     {
-        var decoded = new byte[40];
+        Span<byte> decoded = stackalloc byte[40];
         for (int i = 0; i < 40; i++)
         {
-            decoded[i] = (byte)(hdr[0x42 + i] ^ Jet4PasswordMask[i] ^ hdr[0x72 + (i % 4)]);
+            decoded[i] = (byte)(hdr[0x42 + i] ^ mask[i] ^ hdr[0x72 + (i % 4)]);
         }
 
-        // Decode as UTF-16LE. Stop at the first null character rather than
-        // trimming from the end, because the encryption flag at 0x62 overlaps
-        // byte 32 of the password area and may produce a non-null artifact.
-        string raw = Encoding.Unicode.GetString(decoded);
-        int nullIdx = raw.IndexOf('\0', StringComparison.Ordinal);
-        return nullIdx >= 0 ? raw.Substring(0, nullIdx) : raw;
-    }
-
-    private static string DecodeAccdbPassword(byte[] hdr)
-    {
-        var decoded = new byte[40];
-        for (int i = 0; i < 40; i++)
-        {
-            decoded[i] = (byte)(hdr[0x42 + i] ^ AccdbLegacyPasswordMask[i] ^ hdr[0x72 + (i % 4)]);
-        }
-
-        // Offset 0x62 overlaps the password area for 40-byte decode blocks,
-        // so stop at the first null character.
         string raw = Encoding.Unicode.GetString(decoded);
         int nullIdx = raw.IndexOf('\0', StringComparison.Ordinal);
         return nullIdx >= 0 ? raw.Substring(0, nullIdx) : raw;
@@ -491,14 +488,18 @@ internal static class EncryptionManager
     /// </summary>
     private static byte[] DeriveAesPageKey(ReadOnlySpan<char> password)
     {
+        // Header-area passwords are capped at 15 UTF-16 chars by
+        // EncryptionConverter.EncodeJet4StylePassword, so 256 bytes of stack is
+        // ample headroom; we still allocate a heap buffer for any unexpectedly
+        // long password rather than risk a stack overflow.
         int maxBytes = Encoding.UTF8.GetMaxByteCount(password.Length);
         Span<byte> stackBuf = stackalloc byte[256];
         byte[]? rented = maxBytes > stackBuf.Length ? new byte[maxBytes] : null;
         Span<byte> utf8 = rented ?? stackBuf;
+
         try
         {
             int utf8Len = Encoding.UTF8.GetBytes(password, utf8);
-
             Span<byte> hash = stackalloc byte[32];
             using var sha = SHA256.Create();
             if (!sha.TryComputeHash(utf8.Slice(0, utf8Len), hash, out _))
@@ -506,28 +507,34 @@ internal static class EncryptionManager
                 throw new CryptographicException("SHA-256 hash computation failed.");
             }
 
-            utf8.Slice(0, utf8Len).Clear();
-
-            byte[] key = new byte[16];
-            hash.Slice(0, 16).CopyTo(key);
+            byte[] key = hash.Slice(0, 16).ToArray(); // AES-128
             hash.Clear();
-            return key; // AES-128
+            return key;
         }
         finally
         {
-            if (rented != null)
-            {
-                Array.Clear(rented, 0, rented.Length);
-            }
+            // Scrub any password bytes from the buffer we used.
+            (rented ?? stackBuf).Clear();
         }
     }
 
     /// <summary>
     /// Mutable holder for the three page-decryption keys an open database may need.
     /// Populated during reader construction; consulted by every page read.
+    /// Caches an <see cref="Aes"/> instance and a pair of <see cref="ICryptoTransform"/>
+    /// objects derived from <see cref="AesPageKey"/> so AES-encrypted databases pay
+    /// the key-schedule + transform-creation cost once per file open instead of once
+    /// per page. ECB mode has no chaining state, so the same transforms are reused
+    /// across every page (callers must serialize access — the existing per-reader
+    /// I/O gate already provides this).
     /// </summary>
-    public sealed class PageDecryptionKeys
+    public sealed class PageDecryptionKeys : IDisposable
     {
+        private byte[]? _aesPageKey;
+        private Aes? _aes;
+        private ICryptoTransform? _aesEncryptor;
+        private ICryptoTransform? _aesDecryptor;
+
         /// <summary>Gets or sets the Jet3 XOR mask, non-null when Jet3 page encryption is active.</summary>
         public byte[]? Jet3XorMask { get; set; }
 
@@ -535,6 +542,64 @@ internal static class EncryptionManager
         public uint? Rc4DbKey { get; set; }
 
         /// <summary>Gets or sets the AES-128 page decryption key, non-null when ACCDB CFB AES page encryption is active.</summary>
-        public byte[]? AesPageKey { get; set; }
+        public byte[]? AesPageKey
+        {
+            get => _aesPageKey;
+            set
+            {
+                DisposeAesTransforms();
+                _aesPageKey = value;
+            }
+        }
+
+        /// <summary>Returns the cached AES decryptor for the current <see cref="AesPageKey"/>, building it on first use.</summary>
+        internal ICryptoTransform GetAesDecryptor()
+        {
+            EnsureAesTransforms();
+            return _aesDecryptor!;
+        }
+
+        /// <summary>Returns the cached AES encryptor for the current <see cref="AesPageKey"/>, building it on first use.</summary>
+        internal ICryptoTransform GetAesEncryptor()
+        {
+            EnsureAesTransforms();
+            return _aesEncryptor!;
+        }
+
+        /// <inheritdoc/>
+        public void Dispose() => DisposeAesTransforms();
+
+        private void EnsureAesTransforms()
+        {
+            if (_aes != null)
+            {
+                return;
+            }
+
+            if (_aesPageKey == null)
+            {
+                throw new InvalidOperationException("AesPageKey must be set before requesting AES transforms.");
+            }
+
+#pragma warning disable CA5358 // ECB mode is required to match the ACCDB AES page encryption scheme
+            _aes = Aes.Create();
+            _aes.Key = _aesPageKey;
+            _aes.Mode = CipherMode.ECB;
+            _aes.Padding = PaddingMode.None;
+#pragma warning restore CA5358
+
+            _aesEncryptor = _aes.CreateEncryptor();
+            _aesDecryptor = _aes.CreateDecryptor();
+        }
+
+        private void DisposeAesTransforms()
+        {
+            _aesEncryptor?.Dispose();
+            _aesDecryptor?.Dispose();
+            _aes?.Dispose();
+            _aesEncryptor = null;
+            _aesDecryptor = null;
+            _aes = null;
+        }
     }
 }
