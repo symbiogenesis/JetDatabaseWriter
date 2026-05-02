@@ -77,12 +77,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.NotNull(options, nameof(options));
 
         _ownedDataPageIndex = new(BuildOwnedDataPageIndexAsync);
-        _lockFile = new LockFileCoordinator(
-            path,
-            nameof(AccessReader),
-            enabled: options.UseLockFile,
-            userName: options.LockFileUserName,
-            machineName: options.LockFileMachineName);
+        _lockFile = LockFileCoordinator.ForReader(path, options);
         _strictParsing = options.StrictParsing;
         LinkedSourcePathValidator = options.LinkedSourcePathValidator;
         LinkedSourcePathAllowlist = LinkedTableManager.NormalizeAllowlist(options.LinkedSourcePathAllowlist, path);
@@ -118,14 +113,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ValidateDatabaseFormat();
         }
 
-        // AcquireThen releases the slot if the post-acquire setup throws —
-        // OpenAsync's catch only disposes the underlying stream and never
-        // sees this half-built reader, so without this guard the slot would
-        // outlive the failed open and leave a populated .ldb / .laccdb on disk.
-        _lockFile.AcquireThen(() =>
-        {
-            _byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
-        });
+        // Scope-guard idiom: the slot is released if the rest of construction
+        // throws — OpenAsync's catch only disposes the underlying stream and
+        // never sees this half-built reader, so without this guard a populated
+        // .ldb / .laccdb would outlive the failed open.
+        using var lockGuard = _lockFile.AcquireWithRollback();
+        _byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
+        lockGuard.Commit();
     }
 
     /// <summary>Gets a value indicating whether to print console logs with verbose hex dumps for debugging. Default: false.</summary>
@@ -1783,7 +1777,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // The coordinator drains every step in order, captures the first
             // failure, then unconditionally releases the .ldb / .laccdb slot.
             await _lockFile.DisposeAfterAsync(
-                () => new ValueTask(waitForOperations),
+                waitForOperations,
                 DisposeReaderResourcesAsync).ConfigureAwait(false);
             _operationGate.CompleteDispose();
         }

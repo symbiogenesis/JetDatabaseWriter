@@ -100,13 +100,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         : base(stream, header, path)
     {
         _password = password;
-        _lockFile = new LockFileCoordinator(
+        _lockFile = LockFileCoordinator.ForWriter(
             path,
-            nameof(AccessWriter),
-            enabled: useLockFile,
-            respectExisting: respectExistingLockFile,
-            userName: lockFileUserName,
-            machineName: lockFileMachineName);
+            useLockFile,
+            respectExistingLockFile,
+            lockFileUserName,
+            lockFileMachineName);
         _useByteRangeLocks = useByteRangeLocks;
         _lockTimeoutMilliseconds = lockTimeoutMilliseconds;
         _maxTransactionPageBudget = maxTransactionPageBudget;
@@ -133,10 +132,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         (_pageKeys.Rc4DbKey, _pageKeys.AesPageKey) =
             EncryptionManager.ResolveReaderPageKeys(header, _format, isLegacyAesCfb, password);
 
-        _lockFile.AcquireThen(() =>
-        {
-            _byteRangeLock = JetByteRangeLock.Create(stream, _useByteRangeLocks, _lockTimeoutMilliseconds);
-        });
+        using var lockGuard = _lockFile.AcquireWithRollback();
+        _byteRangeLock = JetByteRangeLock.Create(stream, _useByteRangeLocks, _lockTimeoutMilliseconds);
+        lockGuard.Commit();
     }
 
     /// <summary>
@@ -4510,13 +4508,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // slot on every exit path; AcquireThen/DisposeAfterAsync would force
         // either an empty setup-lambda or wrap the entire async body in a
         // cleanup-named call, both of which obscure the intent here.
-        using var lockFile = new LockFileCoordinator(
-            path,
-            nameof(AccessWriter),
-            enabled: options?.UseLockFile ?? true,
-            respectExisting: options?.RespectExistingLockFile ?? true,
-            userName: options?.LockFileUserName,
-            machineName: options?.LockFileMachineName);
+        using var lockFile = LockFileCoordinator.ForReencrypt(path, options);
         lockFile.Acquire();
 
         byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
