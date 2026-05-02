@@ -47,6 +47,8 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task DisposeAsync_WaitsForInFlightRead(string path)
     {
+        TimeSpan timeout = TimeSpan.FromSeconds(10);
+
         if (!File.Exists(path))
         {
             return;
@@ -79,12 +81,14 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
             }
         });
 
-        Task readTask = reader.ReadDataTableAsync(
-            stat.Name,
-            progress: progress,
-            cancellationToken: TestContext.Current.CancellationToken).AsTask();
+        Task readTask = Task.Run(
+            () => reader.ReadDataTableAsync(
+                stat.Name,
+                progress: progress,
+                cancellationToken: TestContext.Current.CancellationToken).AsTask(),
+            TestContext.Current.CancellationToken);
 
-        await readReachedProgress.Task;
+        await readReachedProgress.Task.WaitAsync(timeout, TestContext.Current.CancellationToken);
 
         Task disposeTask = reader.DisposeAsync().AsTask();
 
@@ -92,8 +96,63 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         releaseRead.TrySetResult(null);
 
-        await readTask;
-        await disposeTask;
+        await readTask.WaitAsync(timeout, TestContext.Current.CancellationToken);
+        await disposeTask.WaitAsync(timeout, TestContext.Current.CancellationToken);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task DisposeAsync_DoesNotBreakNestedPublicCallsOfActiveOperation(string path)
+    {
+        TimeSpan timeout = TimeSpan.FromSeconds(10);
+
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        byte[] bytes = await db.GetFileAsync(path, TestContext.Current.CancellationToken);
+        await using var stream = new MemoryStream(bytes, writable: false);
+        await using var reader = await AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: false,
+            TestContext.Current.CancellationToken);
+
+        if ((await reader.ListTablesAsync(TestContext.Current.CancellationToken)).Count == 0)
+        {
+            return;
+        }
+
+        var outerOperationReachedNestedCall = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOuterOperation = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int progressObserved = 0;
+        var progress = new SyncProgress<TableProgress>(_ =>
+        {
+            if (Interlocked.Exchange(ref progressObserved, 1) == 0)
+            {
+                outerOperationReachedNestedCall.TrySetResult(null);
+                releaseOuterOperation.Task.GetAwaiter().GetResult();
+            }
+        });
+
+        var readAllTask = Task.Run(
+            () => reader.ReadAllTablesAsync(
+                progress,
+                TestContext.Current.CancellationToken).AsTask(),
+            TestContext.Current.CancellationToken);
+
+        await outerOperationReachedNestedCall.Task.WaitAsync(timeout, TestContext.Current.CancellationToken);
+
+        Task disposeTask = reader.DisposeAsync().AsTask();
+
+        Assert.False(disposeTask.IsCompleted);
+
+        releaseOuterOperation.TrySetResult(null);
+
+        var tables = await readAllTask.WaitAsync(timeout, TestContext.Current.CancellationToken);
+        Assert.NotEmpty(tables);
+        await disposeTask.WaitAsync(timeout, TestContext.Current.CancellationToken);
     }
 
     private sealed class SyncProgress<T>(Action<T> action) : IProgress<T>
