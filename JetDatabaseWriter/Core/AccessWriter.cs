@@ -9188,15 +9188,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
             {
-                result.Add(new CatalogRow
-                {
-                    PageNumber = row.PageNumber,
-                    RowIndex = row.RowIndex,
-                    Name = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameColumn),
-                    ObjectType = ParseInt32(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, typeColumn)),
-                    Flags = ParseInt64(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flagsColumn!)),
-                    TDefPage = ParseInt64(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn!)) & 0x00FFFFFFL,
-                });
+                result.Add(new CatalogRow(
+                    PageNumber: row.PageNumber,
+                    RowIndex: row.RowIndex,
+                    Name: DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameColumn),
+                    ObjectType: ParseInt32(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, typeColumn)),
+                    Flags: ParseInt64(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flagsColumn!)),
+                    TDefPage: ParseInt64(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn!)) & 0x00FFFFFFL));
             }
 
             ReturnPage(page);
@@ -12761,20 +12759,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         ReturnPage(page);
     }
 
-    private sealed class CatalogRow
-    {
-        public long PageNumber { get; set; }
-
-        public int RowIndex { get; set; }
-
-        public string Name { get; set; } = string.Empty;
-
-        public int ObjectType { get; set; }
-
-        public long Flags { get; set; }
-
-        public long TDefPage { get; set; }
-    }
+    private sealed record CatalogRow(long PageNumber, int RowIndex, string Name, int ObjectType, long Flags, long TDefPage);
 
     private sealed class PageInsertTarget
     {
