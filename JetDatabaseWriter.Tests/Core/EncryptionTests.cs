@@ -559,10 +559,7 @@ public sealed class EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCa
     {
         // OLE2 CFB magic: first 8 bytes of any Compound File Binary container.
         // Access 2007+ AES-encrypts the .accdb by wrapping it in a CFB document.
-        byte[] cfbMagic = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
-
-        // Write CFB magic
-        Buffer.BlockCopy(cfbMagic, 0, data, 0, cfbMagic.Length);
+        CompoundFileReader.CfbSignature.CopyTo(data.AsSpan(0, CompoundFileReader.CfbSignature.Length));
 
         // Encode password at offset 0x42 using the Jet4/ACCDB XOR scheme
         byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(TestDatabases.AesEncryptedPassword);

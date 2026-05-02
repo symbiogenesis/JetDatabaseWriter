@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
+using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Tests.Core;
 
 #pragma warning disable CA5358 // ECMA-376 Agile encryption uses fixed cipher modes per spec.
@@ -24,9 +25,8 @@ using JetDatabaseWriter.Tests.Core;
 /// </summary>
 internal static class AgileEncryptionFixtureBuilder
 {
-    // CFB v4 magic signature (MS-CFB §2.2). Cached so we don't reallocate on every header write.
-    private static readonly byte[] CfbMagic =
-        [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    // CFB v4 magic signature (MS-CFB §2.2). Sourced from the production reader to avoid duplication.
+    private static ReadOnlySpan<byte> CfbMagic => CompoundFileReader.CfbSignature;
 
     // ── Agile spec block-key constants (ECMA-376 §2.3.4.13) ─────────────
 
