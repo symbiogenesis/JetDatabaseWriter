@@ -676,6 +676,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         public string Label { get; set; } = string.Empty;
     }
 
+    private sealed class WriterOlePoco
+    {
+        public int Id { get; set; }
+
+        public byte[]? Blob { get; set; }
+    }
+
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task InsertRowGeneric_SingleRow_IncreasesRowCount(string path)
@@ -1043,6 +1050,47 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
                 _ => throw new InvalidOperationException($"Unexpected OLE cell shape: {cell.GetType().FullName}"),
             };
             Assert.Equal(oversized, roundTripped);
+        }
+    }
+
+    [Fact]
+    public async Task ReadTableGeneric_OleBytesOverInlineLimit_RoundTripsAsByteArray()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        var temp = await CopyToStreamAsync(path);
+        string tableName = $"OleGen_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Blob", typeof(byte[])),
+        };
+
+        byte[] oversized = new byte[4096];
+        for (int i = 0; i < oversized.Length; i++)
+        {
+            oversized[i] = (byte)(i & 0xFF);
+        }
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, oversized], TestContext.Current.CancellationToken);
+        }
+
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
+        {
+            List<WriterOlePoco> items = await reader.ReadTableAsync<WriterOlePoco>(tableName, cancellationToken: TestContext.Current.CancellationToken);
+
+            WriterOlePoco item = Assert.Single(items);
+            Assert.Equal(1, item.Id);
+            Assert.NotNull(item.Blob);
+            Assert.Equal(oversized, item.Blob);
         }
     }
 
