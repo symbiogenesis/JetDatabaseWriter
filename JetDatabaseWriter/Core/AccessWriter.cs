@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -89,13 +90,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private LockFileSlotWriter? _lockFileSlot;
 
-    // Active explicit transaction. We dispose any in-flight transaction's
-    // journal explicitly in DisposeAsync (see below); CA2213 cannot see that
-    // because we mark the transaction terminated rather than calling its
-    // public DisposeAsync (which would re-enter the writer).
-#pragma warning disable CA2213
+    // Active explicit transaction. Writer disposal rolls back any in-flight
+    // transaction through JetTransaction.DisposeAsync before clearing the
+    // field so analyzers can see the owned resource is disposed.
     private JetTransaction? _activeTransaction;
-#pragma warning restore CA2213
     private long _cachedInsertTDefPage = -1;
     private long _cachedInsertPageNumber = -1;
 
@@ -5116,11 +5114,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // Drop any in-flight transaction so its journal does not survive
         // dispose. Nothing has been written to disk for an uncommitted
         // transaction, so this is equivalent to an implicit rollback.
-        if (_activeTransaction is { } pending)
+        if (_activeTransaction is not null)
         {
-            ActiveJournal = null;
-            _activeTransaction = null;
-            pending.MarkRolledBack();
+            try
+            {
+                await _activeTransaction.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                ActiveJournal = null;
+                _activeTransaction = null;
+            }
         }
 
         if (_useLockFile)
@@ -5539,20 +5543,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return;
         }
 
-        try
+        foreach (RowLocation loc in locations)
         {
-            foreach (RowLocation loc in locations)
-            {
-                await MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, cancellationToken).ConfigureAwait(false);
-            }
+            await MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, cancellationToken).ConfigureAwait(false);
+        }
 
-            await AdjustTDefRowCountAsync(tdefPage, -locations.Count, cancellationToken).ConfigureAwait(false);
-        }
-#pragma warning disable CA1031 // Best-effort rollback — never let it mask the original exception.
-        catch
-        {
-        }
-#pragma warning restore CA1031
+        await AdjustTDefRowCountAsync(tdefPage, -locations.Count, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<long> GetNextAutoValueAsync(string tableName, ColumnConstraint c, int columnIndex, CancellationToken cancellationToken)
@@ -7807,7 +7803,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return values;
     }
 
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Access stores attachment file extensions in lowercase, matching Jackcess.")]
+    [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Attachment FileType is intentionally stored in lowercase to match the existing attachment contract and Access conventions.")]
     private static string DeriveExtension(string fileName)
     {
         if (string.IsNullOrEmpty(fileName))
@@ -7851,7 +7847,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </remarks>
     private async ValueTask CascadeDeleteComplexChildrenAsync(
         TableDef parentDef,
-        IReadOnlyList<RowLocation> deletedParentLocations,
+        List<RowLocation> deletedParentLocations,
         CancellationToken cancellationToken)
     {
         if (deletedParentLocations.Count == 0)
@@ -12201,6 +12197,61 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private record struct UniqueIndexDescriptor(int RealIdxNum, string Name, IReadOnlyList<KeyColumnInfo> KeyColumns);
 
     /// <summary>
+    /// Reads the 4-byte big-endian child-page pointer at the END of the LAST
+    /// entry on an intermediate (<c>0x03</c>) page. Each intermediate entry
+    /// trails with <c>[3 B BE data page][1 B data row][4 B BE child page]</c>;
+    /// the bitmask-driven entry layout means the last entry ends exactly at
+    /// <c>payloadEnd</c>, so the child pointer occupies
+    /// <c>[payloadEnd-4, payloadEnd)</c>.
+    /// </summary>
+    private static long ReadLastChildPointer(byte[] page, int pageSize, IndexLeafPageBuilder.LeafPageLayout layout)
+    {
+        if (page == null || page.Length < pageSize)
+        {
+            return 0;
+        }
+
+        int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+        int payloadEnd = pageSize - freeSpace;
+        if (payloadEnd < layout.FirstEntryOffset + 8)
+        {
+            return 0;
+        }
+
+        return IndexLeafIncremental.DecodeIntermediateChildPointer(page, payloadEnd - 4);
+    }
+
+    /// <summary>
+    /// Selects the child page on an intermediate (<c>0x03</c>) index page
+    /// whose subtree should hold an entry with the given canonical
+    /// <paramref name="searchKey"/>. Each intermediate entry summarises its
+    /// child page's MAX key, so the descent picks the FIRST entry whose
+    /// summary key is &gt;= <paramref name="searchKey"/>. Returns
+    /// <see langword="null"/> when every summary on the page sorts strictly
+    /// less than the search key (caller follows <c>tail_page</c> or the last
+    /// child as a fallback).
+    /// </summary>
+    private static long? SelectChildForKey(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        byte[] page,
+        int pageSize,
+        byte[] searchKey)
+    {
+        List<DecodedIntermediateEntry> entries =
+            IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+        for (int i = 0; i < entries.Count; i++)
+        {
+            int cmp = IndexHelpers.CompareKeyBytes(searchKey, entries[i].Entry.Key);
+            if (cmp <= 0)
+            {
+                return entries[i].ChildPage;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Splices a single new catalog row's index entry into the rightmost
     /// (tail) leaf of every real-idx slot on a system table's index B-tree
     /// without re-encoding any pre-existing entries.
@@ -12573,61 +12624,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         return true;
-    }
-
-    /// <summary>
-    /// Reads the 4-byte big-endian child-page pointer at the END of the LAST
-    /// entry on an intermediate (<c>0x03</c>) page. Each intermediate entry
-    /// trails with <c>[3 B BE data page][1 B data row][4 B BE child page]</c>;
-    /// the bitmask-driven entry layout means the last entry ends exactly at
-    /// <c>payloadEnd</c>, so the child pointer occupies
-    /// <c>[payloadEnd-4, payloadEnd)</c>.
-    /// </summary>
-    private static long ReadLastChildPointer(byte[] page, int pageSize, IndexLeafPageBuilder.LeafPageLayout layout)
-    {
-        if (page == null || page.Length < pageSize)
-        {
-            return 0;
-        }
-
-        int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
-        int payloadEnd = pageSize - freeSpace;
-        if (payloadEnd < layout.FirstEntryOffset + 8)
-        {
-            return 0;
-        }
-
-        return IndexLeafIncremental.DecodeIntermediateChildPointer(page, payloadEnd - 4);
-    }
-
-    /// <summary>
-    /// Selects the child page on an intermediate (<c>0x03</c>) index page
-    /// whose subtree should hold an entry with the given canonical
-    /// <paramref name="searchKey"/>. Each intermediate entry summarises its
-    /// child page's MAX key, so the descent picks the FIRST entry whose
-    /// summary key is &gt;= <paramref name="searchKey"/>. Returns
-    /// <see langword="null"/> when every summary on the page sorts strictly
-    /// less than the search key (caller follows <c>tail_page</c> or the last
-    /// child as a fallback).
-    /// </summary>
-    private static long? SelectChildForKey(
-        IndexLeafPageBuilder.LeafPageLayout layout,
-        byte[] page,
-        int pageSize,
-        byte[] searchKey)
-    {
-        List<DecodedIntermediateEntry> entries =
-            IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
-        for (int i = 0; i < entries.Count; i++)
-        {
-            int cmp = IndexHelpers.CompareKeyBytes(searchKey, entries[i].Entry.Key);
-            if (cmp <= 0)
-            {
-                return entries[i].ChildPage;
-            }
-        }
-
-        return null;
     }
 
     /// <summary>
