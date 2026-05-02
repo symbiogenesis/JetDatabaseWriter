@@ -10,36 +10,6 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 
 ## Features
 
-
----
-
-## Transactions
-
-`AccessWriter` supports explicit transactions for atomic multi-row/page operations. All page mutations are buffered in memory until committed or rolled back.
-
-```csharp
-await using var writer = await AccessWriter.OpenAsync("database.mdb");
-
-// Transaction with commit/rollback
-await using (var tx = await writer.BeginTransactionAsync())
-{
-    try
-    {
-        await writer.InsertRowAsync("Contacts", new object[] { 7, "Grace", "grace@example.com", 90.0m });
-        await writer.UpdateRowsAsync("Contacts", "ContactID", 2, new Dictionary<string, object> { ["Score"] = 93.5m });
-        await tx.CommitAsync(); // Writes all changes atomically
-    }
-    catch
-    {
-        await tx.RollbackAsync(); // Discards all changes if an error occurs
-        throw;
-    }
-}
-```
-
-If you do not call `CommitAsync`, the transaction is rolled back automatically when disposed.
-
----
 | | |
 |---|---|
 | ✅ **Pure managed .NET** | No OleDB, ODBC, or ACE/Jet driver — runs anywhere .NET runs |
@@ -358,8 +328,6 @@ Dictionary<string, DataTable> all = await reader.ReadAllTablesAsync(
     cancellationToken);
 ```
 
-All async APIs return `ValueTask<T>`. Reader/writer instances implement `IAsyncDisposable`, so prefer `await using`.
-
 ---
 
 ## Writing Data
@@ -396,7 +364,6 @@ await writer.CreateTableAsync("Contacts", new[]
     new ColumnDefinition("Score",     typeof(int))
     {
         DefaultValue             = 0,
-        DefaultValueExpression   = "0",
         ValidationRule           = v => v is int i and >= 0 and <= 100,
         ValidationRuleExpression = ">=0 And <=100",
         ValidationText           = "Score must be between 0 and 100.",
@@ -524,6 +491,21 @@ await writer.CreateRelationshipAsync(new RelationshipDefinition(
 ```
 
 > Requires a database that already contains the `MSysRelationships` catalog table — every Access-authored `.mdb` / `.accdb` does, but databases freshly created by `AccessWriter.CreateDatabaseAsync` do not. Open or copy an Access-authored fixture first, or `CreateRelationshipAsync` throws `NotSupportedException`.
+
+---
+
+## Transactions
+
+`AccessWriter` supports explicit transactions for atomic multi-row/page operations. All page mutations are buffered in memory until committed or rolled back.
+
+```csharp
+await using var tx = await writer.BeginTransactionAsync();
+await writer.InsertRowAsync("Contacts", new object[] { 7, "Grace", "grace@example.com", 90.0m });
+await writer.UpdateRowsAsync("Contacts", "ContactID", 2, new Dictionary<string, object> { ["Score"] = 93.5m });
+await tx.CommitAsync(); // Writes all changes atomically
+```
+
+If the transaction is disposed without a `CommitAsync` call (for example, because an exception unwound the scope), all buffered changes are discarded automatically. Only one transaction may be active per `AccessWriter` instance.
 
 ---
 
@@ -669,10 +651,10 @@ All password-protected formats produced by Microsoft Access from Access 97 throu
 The items below are either **not yet implemented** or are important behavioral caveats, and are the most likely places to hit a wall.
 
 ### Specialized column kinds
-- **Calculated columns (Access 2010+ expression columns) — read-only metadata.** The library reads calc-column flags and the `Expression` / `ResultType` properties produced by Microsoft Access and surfaces them via `ColumnMetadata.IsCalculated` / `.CalculationExpression` / `.CalculatedResultType`. **Writing** calc columns (Phase 1B — emitting the extra-flags byte, the `Expression`/`ResultType` LvProp entries, and the 23-byte calculated-value wrapper) and **client-side evaluation** of expressions (Phase 2+) are not yet implemented. `CreateTableAsync` throws `NotSupportedException` when `ColumnDefinition.IsCalculated = true`. See [docs/design/calculated-columns-format-notes.md](docs/design/calculated-columns-format-notes.md) for the implementation plan.
+- **Calculated columns (Access 2010+ expression columns) — read-only metadata.** The library reads calc-column flags and the `Expression` / `ResultType` properties produced by Microsoft Access and surfaces them via `ColumnMetadata.IsCalculated` / `.CalculationExpression` / `.CalculatedResultType`. Writing calc columns and client-side evaluation of expressions are not implemented — `CreateTableAsync` throws `NotSupportedException` when `ColumnDefinition.IsCalculated = true`. See [docs/design/calculated-columns-format-notes.md](docs/design/calculated-columns-format-notes.md).
 
 ### Round-trip through Microsoft Access Compact & Repair
-- **Tables created by `CreateTableAsync` are visible in Access and queryable, but `MSysObjects` index maintenance for newly-inserted catalog rows is incomplete.** When the resulting `.accdb` is run through Microsoft Access **Compact & Repair** (or DAO `CompactDatabase`), it is rejected with `Could not find the object 'MSysDb'`. Two pinned tests in [JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs](JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs) (`SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`, `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`) gate the fix. The Jet4 leaf-page header offsets (prev/next/tail/pref_len, §4.1) have been corrected against Jackcess and a byte-level diff of the spliced leaves now confirms: (a) all original entries decode losslessly, (b) the new entries are inserted in correct sort order, (c) the page-shared prefix is recomputed, (d) the entry-start bitmask matches the actual entry stride, and (e) the parent intermediate page is unchanged. The residual failure is therefore not in leaf-page byte layout. The most likely remaining culprits are the new `MSysObjects` row's `ParentId` / `Name` field encoding (must match the canonical bytes used to build the splice key), the index `used_pages` / `usage_map` summary not being marked dirty, or the `MSysObjects.Id` autonumber counter not being advanced past the spliced IDs. See the phased plan in [docs/design/catalog-index-maintenance-notes.md](docs/design/catalog-index-maintenance-notes.md) and the leaf-page format reference in [docs/design/index-and-relationship-format-notes.md §4](docs/design/index-and-relationship-format-notes.md).
+- **Tables created by `CreateTableAsync` are visible in Access and queryable, but `MSysObjects` index maintenance for newly-inserted catalog rows is incomplete.** When the resulting `.accdb` is run through Microsoft Access **Compact & Repair** (or DAO `CompactDatabase`), it is rejected with `Could not find the object 'MSysDb'`. See [docs/design/catalog-index-maintenance-notes.md](docs/design/catalog-index-maintenance-notes.md) for the in-progress fix.
 
 ### Thread safety and concurrent access
 - **Do not treat a single `AccessReader` / `AccessWriter` instance as a parallel worker.** Low-level page I/O is funneled through one internal gate, so overlapping calls on the same instance block behind each other rather than running in parallel; `AccessWriter` also allows only one active explicit transaction per instance. **Concurrent writers against the same file will corrupt it.** Open with `UseLockFile = true` and `RespectExistingLockFile = true` (both defaults) to fail fast when another process already holds the database. The page byte-range locks are cooperative/advisory: they help protocol-obeying writers serialize page mutations, but they are not a substitute for external coordination with arbitrary tools.
