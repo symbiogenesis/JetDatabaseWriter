@@ -1,6 +1,8 @@
 namespace JetDatabaseWriter.Tests.Core;
 
 using System;
+using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
@@ -39,5 +41,65 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Assert.True(stats.TotalPages > 0);
         Assert.True(stats.TableCount > 0);
         Assert.False(string.IsNullOrEmpty(stats.Version));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task DisposeAsync_WaitsForInFlightRead(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        byte[] bytes = await db.GetFileAsync(path, TestContext.Current.CancellationToken);
+        await using var stream = new MemoryStream(bytes, writable: false);
+        await using var reader = await AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: false,
+            TestContext.Current.CancellationToken);
+
+        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken))
+            .FirstOrDefault(s => s.RowCount > 0);
+        if (stat == null)
+        {
+            return;
+        }
+
+        var readReachedProgress = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRead = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int progressObserved = 0;
+        var progress = new SyncProgress<long>(_ =>
+        {
+            if (Interlocked.Exchange(ref progressObserved, 1) == 0)
+            {
+                readReachedProgress.TrySetResult(null);
+                releaseRead.Task.GetAwaiter().GetResult();
+            }
+        });
+
+        Task readTask = reader.ReadDataTableAsync(
+            stat.Name,
+            progress: progress,
+            cancellationToken: TestContext.Current.CancellationToken).AsTask();
+
+        await readReachedProgress.Task;
+
+        Task disposeTask = reader.DisposeAsync().AsTask();
+
+        Assert.False(disposeTask.IsCompleted);
+
+        releaseRead.TrySetResult(null);
+
+        await readTask;
+        await disposeTask;
+    }
+
+    private sealed class SyncProgress<T>(Action<T> action) : IProgress<T>
+    {
+        private readonly Action<T> _action = action;
+
+        public void Report(T value) => _action(value);
     }
 }
