@@ -111,6 +111,43 @@ internal static class IndexCatalogReader
     }
 
     /// <summary>
+    /// Convenience overload of <see cref="Read"/> that additionally builds
+    /// the <c>ColNum → snapshot index</c> lookup and pre-resolves each
+    /// real-idx slot's key columns against <paramref name="tableColumns"/>.
+    /// Real-idx slots whose key columns can't be resolved (deleted-column
+    /// gaps) are still present in the underlying <see cref="IndexCatalog"/>
+    /// but absent from <see cref="ResolvedIndexCatalog.KeyColumnInfosByRealIdx"/>;
+    /// callers that need to bail vs. skip on resolve failure can branch on
+    /// the lookup result via <see cref="ResolvedIndexCatalog.TryGetKeyColumnInfos"/>.
+    /// Collapses the catalog-touching prelude shared by every catalog-using
+    /// path in <see cref="JetDatabaseWriter.Core.AccessWriter"/>.
+    /// </summary>
+    public static ResolvedIndexCatalog ReadResolved(
+        byte[] tdefBuffer,
+        IndexLayout layout,
+        IndexLayout.IndexSectionAnchors anchors,
+        IReadOnlyList<ColumnInfo> tableColumns,
+        IReadOnlyList<string>? logIdxNames = null)
+    {
+        IndexCatalog catalog = Read(tdefBuffer, layout, anchors, logIdxNames);
+        Dictionary<int, int> snapshotIndexByColNum = BuildColumnNumberToSnapshotIndex(tableColumns);
+        var keyColInfosByRealIdx = new Dictionary<int, List<IndexLayout.KeyColumnInfo>>(catalog.RealIdxByNum.Count);
+        foreach ((int realIdxNum, IndexLayout.RealIdxEntry rie) in catalog.RealIdxByNum)
+        {
+            if (IndexLayout.TryResolveKeyColumnInfos(
+                    rie.IndexKeyColumns,
+                    tableColumns,
+                    snapshotIndexByColNum,
+                    out List<IndexLayout.KeyColumnInfo> infos))
+            {
+                keyColInfosByRealIdx[realIdxNum] = infos;
+            }
+        }
+
+        return new ResolvedIndexCatalog(catalog, snapshotIndexByColNum, keyColInfosByRealIdx);
+    }
+
+    /// <summary>
     /// Decoded TDEF index catalog returned by <see cref="Read"/>.
     /// </summary>
     /// <param name="RealIdxByNum">Real-idx slot number → decoded entry. <see cref="IndexLayout.RealIdxEntry.IsUnique"/> reflects the physical <c>flags &amp; 0x01</c> bit OR a PK promotion (any logical-idx with <c>index_type = 0x01</c> referencing this slot via <c>index_num2</c>).</param>
@@ -128,5 +165,53 @@ internal static class IndexCatalogReader
         /// </summary>
         public string GetNameOrFallback(int realIdxNum)
             => NameByRealIdx.TryGetValue(realIdxNum, out string? n) ? n : $"realidx#{realIdxNum}";
+
+        /// <summary>
+        /// Returns <see langword="true"/> when <paramref name="realIdxNum"/>
+        /// is unique either by its physical <c>flags &amp; 0x01</c> bit or by
+        /// PK promotion (any logical-idx with <c>index_type = 0x01</c>
+        /// references this slot).
+        /// </summary>
+        public bool IsUniqueOrPk(int realIdxNum)
+            => (RealIdxByNum.TryGetValue(realIdxNum, out IndexLayout.RealIdxEntry rie) && rie.IsUnique)
+                || PkRealIdxNums.Contains(realIdxNum);
+    }
+
+    /// <summary>
+    /// Result of <see cref="ReadResolved"/>: bundles the decoded
+    /// <see cref="IndexCatalog"/> with the <c>ColNum → snapshot index</c>
+    /// lookup and the per-real-idx pre-resolved key columns. Catalog-touching
+    /// paths in <see cref="JetDatabaseWriter.Core.AccessWriter"/> can iterate
+    /// <see cref="IndexCatalog.RealIdxByNum"/> and call
+    /// <see cref="TryGetKeyColumnInfos"/> directly rather than re-running the
+    /// snapshot-map build + per-slot resolve loop.
+    /// </summary>
+    /// <param name="Catalog">Decoded catalog (real-idx slots, PK promotion, optional names).</param>
+    /// <param name="SnapshotIndexByColNum">ColNum → snapshot row index lookup over the same <c>tableColumns</c> passed to <see cref="ReadResolved"/>.</param>
+    /// <param name="KeyColumnInfosByRealIdx">Pre-resolved key columns per real-idx slot. A real-idx present in <see cref="IndexCatalog.RealIdxByNum"/> but absent here failed resolution (deleted-column gap); callers decide whether that's a skip or a bail.</param>
+    public sealed record ResolvedIndexCatalog(
+        IndexCatalog Catalog,
+        Dictionary<int, int> SnapshotIndexByColNum,
+        Dictionary<int, List<IndexLayout.KeyColumnInfo>> KeyColumnInfosByRealIdx)
+    {
+        /// <summary>Gets the decoded real-idx slots; shortcut for <c>Catalog.RealIdxByNum</c>.</summary>
+        public Dictionary<int, IndexLayout.RealIdxEntry> RealIdxByNum => Catalog.RealIdxByNum;
+
+        /// <summary>
+        /// Returns the pre-resolved key columns for <paramref name="realIdxNum"/>,
+        /// or <see langword="false"/> when the slot's columns could not be
+        /// resolved against the table snapshot (deleted-column gap).
+        /// </summary>
+        public bool TryGetKeyColumnInfos(int realIdxNum, out List<IndexLayout.KeyColumnInfo> keyColInfos)
+        {
+            if (KeyColumnInfosByRealIdx.TryGetValue(realIdxNum, out List<IndexLayout.KeyColumnInfo>? infos))
+            {
+                keyColInfos = infos;
+                return true;
+            }
+
+            keyColInfos = [];
+            return false;
+        }
     }
 }

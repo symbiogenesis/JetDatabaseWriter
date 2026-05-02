@@ -9446,20 +9446,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         int realIdxDescStart = namePos;
 
-        // Decode the index catalog: every populated real-idx slot, with
-        // IsUnique already promoted for any slot backing a PK logical-idx.
-        IndexCatalogReader.IndexCatalog catalog = IndexCatalogReader.Read(
-            tdefBuffer, _indexLayout, _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx));
+        // Decode the index catalog: every populated real-idx slot (with
+        // IsUnique already promoted for any slot backing a PK logical-idx),
+        // along with the snapshot-index map and pre-resolved key columns.
+        IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
+            tdefBuffer,
+            _indexLayout,
+            _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx),
+            tableDef.Columns);
         Dictionary<int, RealIdxEntry> realIdxByNum = catalog.RealIdxByNum;
 
         if (realIdxByNum.Count == 0)
         {
             return;
         }
-
-        // Build column ordinal lookup so we can find each key column's value in the
-        // snapshot row by ColNum (deleted-column gaps mean ColNum != snapshot index).
-        Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
 
         // Snapshot rows + locations in matching order (same page-walk semantics as
         // the existing UpdateRowsAsync/DeleteRowsAsync rely on).
@@ -9468,15 +9468,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int rowCount = Math.Min(snapshot.Rows.Count, locations.Count);
 
         bool tdefDirty = false;
-        foreach (KeyValuePair<int, RealIdxEntry> kvp in realIdxByNum)
+        foreach (var (rieKey, rie) in realIdxByNum)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            RealIdxEntry rie = kvp.Value;
-
-            // Resolve every key column up front; if any column is missing from the
-            // snapshot (deleted-column gap), skip rebuild for this index.
-            if (!IndexLayout.TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
+            // Skip indexes whose key columns failed to resolve against the
+            // snapshot (deleted-column gap).
+            if (!catalog.TryGetKeyColumnInfos(rieKey, out List<KeyColumnInfo> keyColInfos))
             {
                 continue;
             }
@@ -9555,7 +9553,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 await AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
             }
 
-            Wi32(tdefBuffer, kvp.Value.FirstDpOffset, checked((int)build.RootPageNumber));
+            Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)build.RootPageNumber));
             tdefDirty = true;
         }
 
@@ -11972,14 +11970,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int realIdxDescStart = namePos;
-        Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
 
         bool legacyNumeric = _format == DatabaseFormat.Jet4Mdb;
 
-        // Decode the index catalog once. PK promotion is harmless here (this
-        // path doesn't gate on IsUnique); names are unused so we skip them.
-        IndexCatalogReader.IndexCatalog catalog = IndexCatalogReader.Read(
-            tdefBuf, _indexLayout, _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx));
+        // Decode the index catalog once, with key columns pre-resolved
+        // against the snapshot. PK promotion is harmless here (this path
+        // doesn't gate on IsUnique); names are unused so we skip them.
+        IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
+            tdefBuf,
+            _indexLayout,
+            _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx),
+            tableDef.Columns);
 
         foreach ((int ri, RealIdxEntry rie) in catalog.RealIdxByNum)
         {
@@ -11991,7 +11992,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             // Resolve key columns to TDEF ColumnInfos.
-            if (!IndexLayout.TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
+            if (!catalog.TryGetKeyColumnInfos(ri, out List<KeyColumnInfo> keyColInfos))
             {
                 _lastIncrementalBail = $"S3 ri={ri} resolveFailed";
                 return false;
@@ -12264,30 +12265,29 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var anchors = _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
         List<string> logIdxNames = ReadLogicalIdxNames(tdefBuffer, anchors.LogIdxNamesStart, numIdx);
 
-        // Decode the index catalog, including per-real-idx names so the
-        // unique-violation error message can quote the originating logical-idx.
-        IndexCatalogReader.IndexCatalog catalog = IndexCatalogReader.Read(
-            tdefBuffer, _indexLayout, anchors, logIdxNames);
-
-        // Build column-ordinal lookup for resolving (ColNum -> snapshot index).
-        Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
+        // Decode the index catalog (with per-real-idx names so the
+        // unique-violation error message can quote the originating
+        // logical-idx) and pre-resolve each slot's key columns against the
+        // table snapshot in one shot.
+        IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
+            tdefBuffer, _indexLayout, anchors, tableDef.Columns, logIdxNames);
 
         foreach ((int realIdxNum, RealIdxEntry slot) in catalog.RealIdxByNum)
         {
-            if (!slot.IsUnique && !catalog.PkRealIdxNums.Contains(realIdxNum))
+            if (!catalog.Catalog.IsUniqueOrPk(realIdxNum))
             {
                 continue;
             }
 
-            // Resolve every key column up front; if any column is missing from
-            // the snapshot (deleted-column gap), skip — same fall-through model
-            // as MaintainIndexesAsync.
-            if (!IndexLayout.TryResolveKeyColumnInfos(slot.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo> keyColInfos))
+            // Skip indexes whose key columns failed to resolve against the
+            // snapshot (deleted-column gap) — same fall-through model as
+            // MaintainIndexesAsync.
+            if (!catalog.TryGetKeyColumnInfos(realIdxNum, out List<KeyColumnInfo> keyColInfos))
             {
                 continue;
             }
 
-            result.Add(new UniqueIndexDescriptor(realIdxNum, catalog.GetNameOrFallback(realIdxNum), keyColInfos));
+            result.Add(new UniqueIndexDescriptor(realIdxNum, catalog.Catalog.GetNameOrFallback(realIdxNum), keyColInfos));
         }
 
         return result;
