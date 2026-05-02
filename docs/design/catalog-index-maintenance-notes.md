@@ -1,12 +1,13 @@
 # Design notes: MSysObjects catalog index maintenance for round-trip-safe writes
 
-**Status:** Proposal. No code shipped. Replaces the workaround in `AccessWriter.InsertCatalogEntryAsync` (`JetDatabaseWriter/Core/AccessWriter.cs` ~line 6244) which today calls plain `InsertRowDataAsync(2, msys, values, ct)` and leaves MSysObjects's existing index B-trees stale.
+**Status:** Phase C1 partially implemented (`AccessWriter.TrySpliceCatalogIndexEntryAsync`, ~line 12309) and wired into `InsertCatalogEntryAsync` (~line 6310). The splice succeeds for single-column uniform-length indexes (e.g. MSysObjects's `Id` PK) but **corrupts composite/text leaves** (e.g. MSysObjects's `ParentIdName`) because the underlying leaf decoder/encoder does not model Access's per-entry incremental prefix compression. See §2.2 below and [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.4.2. The two gating tests below remain failing.
+
 **Driver:** Two pinned round-trip tests in [JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs):
 
 - `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`
 - `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`
 
-Both currently fail because DAO Compact & Repair cannot locate the new tables' catalog rows through MSysObjects's PK index, since that index leaf was never updated when the rows were appended.
+Both currently fail with DAO error `Could not find the object 'MSysDb'` (originally diagnosed as "PK index not updated" — the Phase C1 PK-splice landed but the composite-index splice corrupts the leaf, producing the same surface error from a different root cause).
 
 **Validation requirement:** any PR landing this work MUST round-trip through Microsoft Access on Windows (open, compact-and-repair, re-open) — see §7. The two failing tests above are the gating signal.
 
@@ -49,26 +50,26 @@ This **drops the special MSysObjects rows the writer cannot re-encode** — most
 
 Empirically: routing MSysObjects through this path causes **every** AccessRoundTripTests case to fail, not just the two we are trying to fix.
 
-### 2.2 `TryMaintainIndexesIncrementalAsync`
+### 2.2 `TryMaintainIndexesIncrementalAsync` / `TrySpliceCatalogIndexEntryAsync`
 
-This is the targeted fast path that splices a single new entry into existing leaves without rewriting them. It returns `true` when called for MSysObjects but no leaf is actually modified — the leaf at page 2996 (the `Id` PK index root for MSysObjects in our fixture) is byte-identical before and after the call.
+The targeted Phase C1 splice path (`AccessWriter.TrySpliceCatalogIndexEntryAsync`, ~line 12309) does correctly descend MSysObjects's real-idx tree, decode the tail leaf, splice the new entry, and write it back — instrumentation via the `DIAG_CATALOG_SPLICE` env var (2026-05-01) confirms both real-idx slots (ri=0 ParentIdName, ri=1 Id PK) report success with no bail-out, and the `Id` PK rewrite is in fact lossless (DAO finds the new row at the expected `Id` after the splice).
 
-The most likely cause is an early `return true` inside the function when `slots.Count == 0`. The generic real-idx slot decoder probably mis-parses MSysObjects's TDEF layout (which has unusual column ordering and multiple LvProp/Owner Memo slots near the index block), leaves the slot list empty, and the function bails silently as a "nothing to do" success.
+The remaining failure is in the **`ParentIdName` composite leaf rewrite**. Bisecting via `DIAG_CATALOG_SPLICE_SKIP_RI=0` (skip the composite splice, only update the `Id` PK) makes DAO open the post-write file cleanly and find all 240 MSysObjects rows including `MSysDb`. Re-enabling the composite splice corrupts the leaf and DAO aborts with `Could not find the object 'MSysDb'`.
 
-Until that decoder is hardened, the incremental path cannot be relied on for MSysObjects, and we should not silently swallow `slots.Count == 0` for known-indexed system tables anyway.
+Root cause: the composite leaf's existing entries are stored in Access's per-entry incremental-prefix compression scheme, which neither `IndexLeafIncremental.DecodeEntries` (reader) nor `IndexLeafPageBuilder.BuildLeafPage` (writer) currently models. See [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.4.2 for the full technical description and the gating fix required before Phase C1 can ship.
+
+Earlier, the previous (full-rebuild) `InsertSystemRowAndMaintainAsync` path was rejected for a different reason — it re-encodes every existing row, dropping content the writer cannot losslessly emit (the special "Databases" properties row's LvProp blob). That rejection still holds. Phase C1's incremental design is the correct shape; only the leaf decoder/encoder is incomplete.
 
 ## 3. MSysObjects index layout (NorthwindTraders.accdb, Jet4)
 
-| # | Index name | Kind | Columns | Real-idx slot | Root page (this fixture) |
-|---|---|---|---|---|---|
-| 0 | `Id` | Primary key | `Id` (Int32 asc) | 0 | leaf at p.2996, ~2790 entries (multi-page leaf chain) |
-| 1 | `ParentIdName` | Composite | `ParentId` (Int32 asc), `Name` (Text asc, GeneralLegacy collation) | 1 | leaf chain rooted at a page recorded in real-idx slot 1 |
-| 2 | `ParentIdType` | Composite | `ParentId` (Int32 asc), `Type` (Int16 asc) | 2 | similar |
-| 3 | `Name` | Secondary | `Name` (Text asc) | 3 | similar |
+> **Corrected 2026-05-01.** This section originally claimed four indexes (`Id`, `ParentIdName`, `ParentIdType`, `Name`). Empirical inspection of `NorthwindTraders.accdb`'s MSysObjects TDEF (page 2) via `JetDatabaseWriter.FormatProbe` shows **only two real-idx slots are present** in this fixture; see [`format-probe-appendix-index.md`](format-probe-appendix-index.md) §"`MSysObjects` — TDEF page 2" and the diagnostic logs in `/memories/repo/round-trip-tests.md` (`DIAG_CATALOG_SPLICE` output: ri=0 keyCols=[1,2], ri=1 keyCols=[0]). The four-index shape may apply to other Access versions / fixtures; re-probe before relying on it.
 
-(Confirm the per-fixture page numbers via `FormatProbe`; they are unstable across files but the *count* and column shape are stable across all modern Access ACE fixtures.)
+| # | Index name (logical) | Real-idx slot | Columns (col_num order) | Root page (this fixture) |
+|---|---|---|---|---|
+| 0 | `ParentIdName` (composite) | 0 | `ParentId` (col 1, Int32 asc), `Name` (col 2, Text asc, GeneralLegacy) | leaf chain rooted at p.7 → tail leaf p.2790 (114 entries) |
+| 1 | `Id` (PK) | 1 | `Id` (col 0, Int32 asc) | leaf chain rooted at p.8 (single leaf, 239 entries pre-insert) |
 
-Per-leaf entry format follows the standard rules in [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4: `entry_start` bitmask + sort-key bytes + 4-byte row pointer (`page << 8 | row_index_within_page`).
+Per-leaf entry format follows the standard rules in [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4: `entry_start` bitmask + sort-key bytes + 4-byte row pointer (`page << 8 | row_index_within_page`). **However**, see [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.4.2 — Access-authored leaves use a per-entry incremental-prefix scheme that our reader/writer does NOT model. This is the gating obstacle for Phase C1.
 
 The Text column `Name` uses the **General Legacy** text encoder (`JetDatabaseWriter/Internal/GeneralLegacyTextIndexEncoder.cs`). That encoder is already shipped and exercised by user-table indexes; it is reusable here.
 
@@ -143,12 +144,13 @@ We never touch entries we did not insert. The "Databases" row (and any other row
 
 | Phase | Scope | Gating tests |
 |---|---|---|
-| **C1** | New `CatalogIndexLeafSplicer` with append-to-tail-leaf only; wire into `InsertCatalogEntryAsync`. Throw `NotSupportedException` for non-tail inserts. | `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`, `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`. Plus all of `AccessRoundTripTests` must stay green. |
+| **C0 (NEW — gating prerequisite)** | Implement Access's per-entry incremental-prefix compression in `IndexLeafIncremental.DecodeEntries` and `IndexLeafPageBuilder.BuildLeafPage`. Without this, no leaf rewrite is byte-safe for Access-authored leaves with heterogeneous-length entries. See [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.4.2 for the empirical observations and the canonical Jackcess port reference. | New unit tests round-tripping Access-authored leaves byte-for-byte. Should be added to `IndexLeafIncrementalTests`. |
+| **C1** | (Already partially landed as `TrySpliceCatalogIndexEntryAsync`.) Once C0 is in, re-enable for *all* MSysObjects real-idx slots — currently the composite-key splice corrupts the leaf. | `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`, `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`. Plus all of `AccessRoundTripTests` must stay green. |
 | **C2** | Re-route `InsertSystemRowAndMaintainAsync` (used by MSysRelationships/MSysComplexColumns) through the same splicer; remove dependency on `MaintainIndexesAsync`'s full-rebuild path for system tables. | Existing relationship/complex-column round-trip tests (already passing) stay green; no new test required if behaviour is byte-equivalent. |
 | **C3** | Implement general mid-tree leaf split + intermediate-page rebalancing for system tables. | New unit tests in `JetDatabaseWriter.Tests/Internal/CatalogIndexLeafSplicerTests.cs` constructing synthetic many-table scenarios that force splits; round-trip through DAO. |
 | **C4** | Harden `TryMaintainIndexesIncrementalAsync`'s slot decoder so it no longer silently returns `true` on `slots.Count == 0` for tables known to have indexes. Treat that case as a hard error and emit a diagnostic. | Internal-only; covered by existing user-table round-trip tests. |
 
-C1 alone unblocks the two failing tests. C2/C3/C4 are follow-ups that reduce technical debt but are not gating.
+**C0 must land before C1 can clear the gating tests.** C2/C3/C4 are follow-ups that reduce technical debt but are not gating.
 
 ## 6. Implementation checklist (C1)
 

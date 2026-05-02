@@ -175,7 +175,28 @@ n bytes  encoded key    // per-column, in column-map order; null cols contribute
 
 ### 4.4 Prefix compression
 
-If `pref_len > 0`, the first `pref_len` bytes of the *first* entry are implicitly prepended to every subsequent entry on that page. So a 4-byte-prefix page could cut every int-key entry from 9 bytes (`flag + int32 + 3-byte page + 1-byte row`) to 5 bytes.
+JET leaf and intermediate pages compress entries via TWO independent mechanisms. Our writer + reader currently model only the first; **the second is undocumented in our notes and is a known gap** (see §4.4.2).
+
+#### 4.4.1 Page-shared prefix (`pref_len` header field)
+
+If the page header `pref_len` (offset `0x14`, u16 LE) is non-zero, the first `pref_len` bytes of the *first* entry are implicitly prepended to every subsequent entry on that page. So a 4-byte-prefix page could cut every int-key entry from 9 bytes (`flag + int32 + 3-byte page + 1-byte row`) to 5 bytes. `IndexLeafPageBuilder.BuildLeafPage` (writer) computes the longest byte-wise prefix common to every entry and emits this on `enablePrefixCompression: true`; `IndexLeafIncremental.DecodeEntries` (reader) re-prepends those bytes to entries beyond the first.
+
+#### 4.4.2 Per-entry incremental compression (UNMODELLED — reverse-engineering required)
+
+Empirically (see `/memories/repo/round-trip-tests.md`, 2026-05-01 findings), Access-authored leaves with **`pref_len = 0`** still pack adjacent entries by stripping a per-entry-variable number of leading bytes shared with the *previous* entry on the same leaf — independent of §4.4.1. Concrete observation from `MSysObjects.ParentIdName` leaf at page 2790 (`NorthwindTraders.accdb`, ACCDB):
+
+- Page header `pref_len = 0`.
+- Entry [0] stored bytes (25): `7F 8F 00 00 01 7F 64 69 4F 51 69 4F 51 6D 4A 59 5E 6B 6D 4A 6D 6F 6B 01 00`. This decodes correctly as `flag(7F) + ParentId BE(8F000001 = 0x0F000001 = TablesParentId) + Name flag(7F) + Name encoded bytes + END_TEXT(01) + END_EXTRA_TEXT(00)`.
+- Entry [1] stored bytes (13): `8F 00 00 01 7F 64 69 4F 51 69 6B 01 00`. This is *not* a valid standalone canonical key — the leading `7F` flag byte is missing, and Naïve concatenation with the row pointer yields a key that compares incorrectly against entry [0].
+- The 13 bytes of entry [1] only make sense as a per-entry suffix relative to entry [0]: canonical key of entry [1] = (some leading bytes copied from entry [0]) ++ (entry [1] stored bytes after the implicit prefix length marker).
+
+Since `IndexLeafIncremental.DecodeEntries` only re-prepends the page-shared `pref_len` (which is 0 here), it returns these stripped bytes as if they were the canonical keys. Round-tripping through `BuildLeafPage` then **writes them back as standalone keys**, corrupting the leaf — DAO Compact subsequently fails to descend the (now-corrupt) `MSysObjects.ParentIdName` index and aborts with `Could not find the object 'MSysDb'` (verified by bisecting via `DIAG_CATALOG_SPLICE_SKIP_RI=0` against the real-idx loop).
+
+**Status:** unimplemented in both reader and writer. Affects any index where Access-authored leaves contain entries of unequal length / heterogeneous leading bytes — most prominently MSysObjects's `ParentIdName` and `ParentIdType` composite indexes, and any user-table text/composite index re-read after Access has rebuilt it. Indexes with uniform-length single-column int keys (e.g. `MSysObjects.Id` PK at leaf page 8) round-trip correctly because no incremental compression is applied to them in practice (every entry's full bytes are stored).
+
+The canonical port should mirror Jackcess `com.healthmarketscience.jackcess.impl.IndexData.LeafEntry` / `IndexData.readEntry` — investigate the `entryPrefix` / `prefixLength` plumbing there. Jackcess stores a per-entry "shared with previous" byte count (likely the first byte of the stored entry, or a bit-stream alongside the entry-start bitmask).
+
+This is the gating obstacle for the Phase C1 `CatalogIndexLeafSplicer` work outlined in [`catalog-index-maintenance-notes.md`](catalog-index-maintenance-notes.md).
 
 ### 4.5 Tail-page optimization
 
