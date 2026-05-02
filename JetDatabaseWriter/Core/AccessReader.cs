@@ -56,11 +56,10 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 public sealed class AccessReader : AccessBase, IAccessReader
 {
     private readonly AsyncReentrantOperationGate _operationGate = new();
-    private readonly SemaphoreSlim _ownedDataPageIndexGate = new(1, 1);
+    private readonly AsyncLazyInitializer<Dictionary<long, long[]>> _ownedDataPageIndex;
     private readonly LockFileCoordinator _lockFile;
     private readonly bool _strictParsing;
     private readonly LruCache<long, byte[]>? _pageCache;
-    private volatile Dictionary<long, long[]>? _ownedDataPagesByTdef;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessReader"/> class.
@@ -75,6 +74,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         Guard.NotNull(options, nameof(options));
 
+        _ownedDataPageIndex = new(BuildOwnedDataPageIndexAsync);
         _lockFile = new LockFileCoordinator(
             path,
             nameof(AccessReader),
@@ -1778,8 +1778,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             _pageCache?.Clear();
 
-            _ownedDataPagesByTdef = null;
-            _ownedDataPageIndexGate.Dispose();
+            _ownedDataPageIndex.Dispose();
             InvalidateCatalogCache();
 
             await base.DisposeAsync().ConfigureAwait(false);
@@ -2297,70 +2296,49 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return [];
         }
 
-        Dictionary<long, long[]> pageIndex = await GetOwnedDataPageIndexAsync(cancellationToken).ConfigureAwait(false);
+        Dictionary<long, long[]> pageIndex = await _ownedDataPageIndex.GetAsync(cancellationToken).ConfigureAwait(false);
         return pageIndex.TryGetValue(tdefPage, out long[]? pageNumbers)
             ? pageNumbers
             : [];
     }
 
-    private async ValueTask<Dictionary<long, long[]>> GetOwnedDataPageIndexAsync(CancellationToken cancellationToken)
+    private async ValueTask<Dictionary<long, long[]>> BuildOwnedDataPageIndexAsync(CancellationToken cancellationToken)
     {
-        Dictionary<long, long[]>? cached = _ownedDataPagesByTdef;
-        if (cached != null)
-        {
-            return cached;
-        }
+        var pagesByOwner = new Dictionary<long, List<long>>();
+        long totalPages = _stream.Length / _pgSz;
 
-        await _ownedDataPageIndexGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
         {
-            cached = _ownedDataPagesByTdef;
-            if (cached != null)
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01)
             {
-                return cached;
+                continue;
             }
 
-            var pagesByOwner = new Dictionary<long, List<long>>();
-            long totalPages = _stream.Length / _pgSz;
-
-            for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
+            long owner = Ri32(page, _dpTDefOff);
+            if (owner <= 0)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-                if (page[0] != 0x01)
-                {
-                    continue;
-                }
-
-                long owner = Ri32(page, _dpTDefOff);
-                if (owner <= 0)
-                {
-                    continue;
-                }
-
-                if (!pagesByOwner.TryGetValue(owner, out List<long>? ownedPages))
-                {
-                    ownedPages = [];
-                    pagesByOwner.Add(owner, ownedPages);
-                }
-
-                ownedPages.Add(pageNumber);
+                continue;
             }
 
-            cached = new Dictionary<long, long[]>(pagesByOwner.Count);
-            foreach ((long owner, List<long> ownedPages) in pagesByOwner)
+            if (!pagesByOwner.TryGetValue(owner, out List<long>? ownedPages))
             {
-                cached.Add(owner, [.. ownedPages]);
+                ownedPages = [];
+                pagesByOwner.Add(owner, ownedPages);
             }
 
-            _ownedDataPagesByTdef = cached;
-            return cached;
+            ownedPages.Add(pageNumber);
         }
-        finally
+
+        var result = new Dictionary<long, long[]>(pagesByOwner.Count);
+        foreach ((long owner, List<long> ownedPages) in pagesByOwner)
         {
-            _ownedDataPageIndexGate.Release();
+            result.Add(owner, [.. ownedPages]);
         }
+
+        return result;
     }
 
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
