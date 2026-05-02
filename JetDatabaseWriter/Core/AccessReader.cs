@@ -2784,31 +2784,28 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case T_OLE:
                     return await ReadLongValueAsync(row, start, len, col.Type == T_OLE, cancellationToken).ConfigureAwait(false);
 
-                case T_COMPLEX:
-                case T_ATTACHMENT:
-                    if (len >= 4)
-                    {
-                        int complexId = Ri32(row, start);
-                        return $"__CX:{complexId}__";
-                    }
-
-                    return string.Empty;
-
                 case T_BYTE:
-                    return len >= 1 ? row[start].ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_INT:
-                    return len >= 2 ? ((short)Ru16(row, start)).ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_LONG:
-                    return len >= 4 ? Ri32(row, start).ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_FLOAT:
-                    return len >= 4 ? AccessBase.ReadSingleLittleEndian(row.AsSpan(start, 4)).ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_DOUBLE:
-                    return len >= 8 ? AccessBase.ReadDoubleLittleEndian(row.AsSpan(start, 8)).ToString(CultureInfo.InvariantCulture) : string.Empty;
                 case T_DATETIME:
                 case T_MONEY:
-                    return len >= 8 ? ReadFixed(row, start, col, 8) : string.Empty;
                 case T_GUID:
-                    return len >= 16 ? ReadFixed(row, start, col, 16) : string.Empty;
+                case T_COMPLEX:
+                case T_ATTACHMENT:
+                    {
+                        // Delegate fixed-width primitive formatting to the shared
+                        // AccessBase.ReadFixedString helper to avoid duplicating
+                        // the per-type Invariant-culture formatting block. The
+                        // length guard mirrors the historical behaviour (return
+                        // empty when the variable-length slice is too short to
+                        // contain the type's fixed payload) — JetTypeInfo gives
+                        // 4 bytes for COMPLEX/ATTACHMENT (the complex-id int32)
+                        // since they have no fixed-area size of their own.
+                        int required = col.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(col.Type);
+                        return len >= required ? ReadFixed(row, start, col, required) : string.Empty;
+                    }
 
                 default:
                     return string.Empty;

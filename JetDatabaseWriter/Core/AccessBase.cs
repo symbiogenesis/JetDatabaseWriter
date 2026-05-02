@@ -342,24 +342,6 @@ public abstract class AccessBase : IAccessBase
         }
     }
 
-    /// <summary>Returns the expected byte size for a fixed-length column type.</summary>
-    private protected static int FixedSize(byte type, int declaredSize)
-    {
-        switch (type)
-        {
-            case T_BYTE: return 1;
-            case T_INT: return 2;
-            case T_LONG: return 4;
-            case T_MONEY: return 8;
-            case T_FLOAT: return 4;
-            case T_DOUBLE: return 8;
-            case T_DATETIME: return 8;
-            case T_GUID: return 16;
-            case T_NUMERIC: return 17;
-            default: return declaredSize > 0 ? declaredSize : 0;
-        }
-    }
-
     /// <summary>
     /// Encodes a string for storage in a Jet4 text/memo column.
     /// When all characters are in the U+0001..U+00FF range, emits the
@@ -1136,7 +1118,7 @@ public abstract class AccessBase : IAccessBase
         if (col.IsFixed)
         {
             int start = _numColsFldSz + col.FixedOff;
-            int sz = FixedSize(col.Type, col.Size);
+            int sz = JetTypeInfo.GetFixedSize(col.Type);
             if (sz == 0 || start + sz > rowSize)
             {
                 return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);

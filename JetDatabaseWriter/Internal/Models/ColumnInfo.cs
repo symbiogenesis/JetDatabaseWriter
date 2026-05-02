@@ -80,19 +80,19 @@ internal sealed class ColumnInfo
     {
         get
         {
-            switch (Type)
+            // BOOL stores its value in the null mask, never in fixed area.
+            if (Type == T_BOOL)
             {
-                case T_BOOL:
-                    // BOOL stores its value in the null mask, never in fixed area.
-                    return true;
-                case T_TEXT:
-                case T_BINARY:
-                case T_MEMO:
-                case T_OLE:
-                    return false;
-                default:
-                    return (Flags & 0x01) != 0; // FLAG_FIXED
+                return true;
             }
+
+            // TEXT/BINARY/MEMO/OLE always live in the variable area.
+            if (JetTypeInfo.IsAlwaysVariableLength(Type))
+            {
+                return false;
+            }
+
+            return (Flags & 0x01) != 0; // FLAG_FIXED
         }
     }
 }

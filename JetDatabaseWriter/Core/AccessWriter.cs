@@ -5823,7 +5823,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
             else
             {
-                fixedOffset += FixedSize(type, size);
+                fixedOffset += JetTypeInfo.GetFixedSize(type);
             }
         }
 
@@ -6542,23 +6542,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         ColumnDefinition baseDef;
         switch (column.Type)
         {
-            case T_BOOL: baseDef = new ColumnDefinition(column.Name, typeof(bool)); break;
-            case T_BYTE: baseDef = new ColumnDefinition(column.Name, typeof(byte)); break;
-            case T_INT: baseDef = new ColumnDefinition(column.Name, typeof(short)); break;
-            case T_LONG: baseDef = new ColumnDefinition(column.Name, typeof(int)); break;
-            case T_MONEY: baseDef = new ColumnDefinition(column.Name, typeof(decimal)); break;
-            case T_FLOAT: baseDef = new ColumnDefinition(column.Name, typeof(float)); break;
-            case T_DOUBLE: baseDef = new ColumnDefinition(column.Name, typeof(double)); break;
-            case T_DATETIME: baseDef = new ColumnDefinition(column.Name, typeof(DateTime)); break;
-            case T_NUMERIC: baseDef = new ColumnDefinition(column.Name, typeof(decimal)); break;
-            case T_GUID: baseDef = new ColumnDefinition(column.Name, typeof(Guid)); break;
             case T_TEXT:
                 int charLen = _format != DatabaseFormat.Jet3Mdb ? Math.Max(1, column.Size / 2) : Math.Max(1, column.Size);
                 baseDef = new ColumnDefinition(column.Name, typeof(string), charLen);
                 break;
-            case T_MEMO: baseDef = new ColumnDefinition(column.Name, typeof(string)); break;
-            case T_BINARY: baseDef = new ColumnDefinition(column.Name, typeof(byte[]), column.Size > 0 ? column.Size : 255); break;
-            case T_OLE: baseDef = new ColumnDefinition(column.Name, typeof(byte[])); break;
+            case T_BINARY:
+                baseDef = new ColumnDefinition(column.Name, typeof(byte[]), column.Size > 0 ? column.Size : 255);
+                break;
             case T_ATTACHMENT:
                 // preserve attachment columns across
                 // AddColumnAsync / DropColumnAsync / RenameColumnAsync. The parent
@@ -6585,7 +6575,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     ComplexId = column.Misc,
                 };
             default:
-                throw new NotSupportedException($"Column '{column.Name}' has unsupported type code 0x{column.Type:X2}.");
+                Type? clrType = JetTypeInfo.GetClrType(column.Type)
+                    ?? throw new NotSupportedException($"Column '{column.Name}' has unsupported type code 0x{column.Type:X2}.");
+                baseDef = new ColumnDefinition(column.Name, clrType);
+                break;
         }
 
         // Surface the persisted TDEF flag bits as ColumnDefinition properties so the
@@ -8985,7 +8978,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             numCols = Math.Max(numCols, col.ColNum + 1);
             if (col.IsFixed && col.Type != T_BOOL)
             {
-                maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + FixedSize(col.Type, col.Size));
+                maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + JetTypeInfo.GetFixedSize(col.Type));
             }
             else if (!col.IsFixed)
             {
@@ -9027,7 +9020,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                int fixedSize = FixedSize(column.Type, column.Size);
+                int fixedSize = JetTypeInfo.GetFixedSize(column.Type);
                 if (fixedSize <= 0)
                 {
                     continue;
@@ -9117,7 +9110,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private bool CanStoreFixedColumn(ColumnInfo column)
     {
-        int size = FixedSize(column.Type, column.Size);
+        int size = JetTypeInfo.GetFixedSize(column.Type);
         return size >= 0 && column.FixedOff >= 0 && column.FixedOff + size < _pgSz;
     }
 
