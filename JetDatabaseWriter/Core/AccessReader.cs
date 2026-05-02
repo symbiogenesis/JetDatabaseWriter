@@ -56,21 +56,17 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 public sealed class AccessReader : AccessBase, IAccessReader
 {
     private readonly object _cacheLock = new();
-    private readonly object _operationStateLock = new();
+    private readonly AsyncReentrantOperationGate _operationGate = new();
     private readonly SemaphoreSlim _ownedDataPageIndexGate = new(1, 1);
     private readonly bool _useLockFile;
     private readonly string? _lockFileUserName;
     private readonly string? _lockFileMachineName;
     private readonly bool _strictParsing;
-    private readonly TaskCompletionSource<object?> _disposeCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private LockFileSlotWriter? _lockFileSlot;
-    private TaskCompletionSource<object?>? _operationsDrained;
     private volatile Dictionary<long, long[]>? _ownedDataPagesByTdef;
     private volatile LruCache<long, byte[]>? _pageCache;
     private long _cacheHits;
     private long _cacheMisses;
-    private int _activeOperations;
-    private int _lifecycleState;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessReader"/> class.
@@ -1756,26 +1752,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <inheritdoc/>
     public override async ValueTask DisposeAsync()
     {
-        if (Interlocked.CompareExchange(ref _lifecycleState, 1, 0) != 0)
+        if (!_operationGate.TryBeginDispose(out Task waitForOperations))
         {
-            await _disposeCompleted.Task.ConfigureAwait(false);
+            await _operationGate.DisposeCompleted.ConfigureAwait(false);
             return;
         }
 
         try
         {
-            Task waitForOperations;
-            lock (_operationStateLock)
-            {
-                _operationsDrained = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-                if (Volatile.Read(ref _activeOperations) == 0)
-                {
-                    _operationsDrained.TrySetResult(null);
-                }
-
-                waitForOperations = _operationsDrained.Task;
-            }
-
             await waitForOperations.ConfigureAwait(false);
 
             if (_useLockFile)
@@ -1795,24 +1779,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
             InvalidateCatalogCache();
 
             await base.DisposeAsync().ConfigureAwait(false);
-            _disposeCompleted.TrySetResult(null);
+            _operationGate.CompleteDispose();
         }
         catch (Exception ex)
         {
-            _disposeCompleted.TrySetException(ex);
+            _operationGate.CompleteDispose(ex);
             throw;
         }
-        finally
-        {
-            Volatile.Write(ref _lifecycleState, 2);
-        }
-    }
-
-    private readonly struct OperationLease(AccessReader owner) : IDisposable
-    {
-        private readonly AccessReader _owner = owner;
-
-        public void Dispose() => _owner.ReleaseOperation();
     }
 
     private static string SafeGet(List<string> row, int idx) =>
@@ -1875,7 +1848,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         T_NUMERIC => ColumnSize.FromBytes(17),
         T_TEXT => ColumnSize.FromChars(col.Size > 0 ? col.Size / 2 : 255),
         T_MEMO or T_OLE or T_ATTACHMENT or T_COMPLEX => ColumnSize.Lval,
-        _ => col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable, // such as T_BINARY
+        _ => col.Size > 0 ? ColumnSize.FromBytes(col.Size) : ColumnSize.Variable,
     };
 
     private static Type TypeCodeToClrType(byte typeCode) => typeCode switch
@@ -2601,39 +2574,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return result;
     }
 
-    private OperationLease EnterOperation()
-    {
-        if (Volatile.Read(ref _lifecycleState) != 0)
-        {
-            throw new ObjectDisposedException(GetType().FullName);
-        }
-
-        _ = Interlocked.Increment(ref _activeOperations);
-
-        if (Volatile.Read(ref _lifecycleState) != 0)
-        {
-            ReleaseOperation();
-            throw new ObjectDisposedException(GetType().FullName);
-        }
-
-        return new OperationLease(this);
-    }
-
-    private void ReleaseOperation()
-    {
-        if (Interlocked.Decrement(ref _activeOperations) != 0)
-        {
-            return;
-        }
-
-        TaskCompletionSource<object?>? drained;
-        lock (_operationStateLock)
-        {
-            drained = _operationsDrained;
-        }
-
-        drained?.TrySetResult(null);
-    }
+    private AsyncReentrantOperationGate.Lease EnterOperation() =>
+        _operationGate.Enter(this);
 
     private void ValidateDatabaseFormat()
     {
