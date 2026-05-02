@@ -1715,10 +1715,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
-    /// Scans the first 512 bytes for known file magic numbers (images, PDFs, Office docs, archives).
-    /// Typical Access OLE fields wrap files in an OLE container (~78-byte header),
-    /// so this scans beyond the OLE envelope to find the real file bytes.
-    /// Returns a data-URI with appropriate MIME type, or null if no known format is found.
+    /// Unwraps common OLE 1.0 package envelopes and scans the resulting payload
+    /// for known file signatures (images, PDFs, Office docs, archives).
+    /// Typical Access OLE fields prepend a package header before the embedded
+    /// file bytes, so package-aware extraction must run before the generic
+    /// sliding magic-byte scan.
     /// </summary>
     private static string? TryDecodeOleObject(byte[] b, int start, int len)
     {
@@ -1727,59 +1728,195 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        int scanEnd = Math.Min(start + len, start + 512);
-        for (int i = start; i < scanEnd - 3; i++)
+        if (TryExtractEmbeddedOlePackagePayload(b, start, len, out int payloadStart, out int payloadLength))
         {
-            ReadOnlySpan<byte> window = b.AsSpan(i, scanEnd - i);
-            int fileLen = start + len - i;
+            return TryCreateOleDataUriFromKnownMagic(b, payloadStart, payloadLength)
+                ?? "data:application/octet-stream;base64," + Convert.ToBase64String(b, payloadStart, payloadLength);
+        }
+
+        return TryCreateOleDataUriFromKnownMagic(b, start, len);
+    }
+
+    private static string? TryCreateOleDataUriFromKnownMagic(byte[] buffer, int start, int len)
+    {
+        int valueStart = Math.Max(start, 0);
+        int valueEnd = Math.Min(start + len, buffer.Length);
+        if (valueEnd - valueStart < 4)
+        {
+            return null;
+        }
+
+        int scanEnd = Math.Min(valueEnd, valueStart + 512);
+        for (int i = valueStart; i < scanEnd - 3; i++)
+        {
+            ReadOnlySpan<byte> window = buffer.AsSpan(i, scanEnd - i);
+            int fileLen = valueEnd - i;
 
             // ── Images ──
             if (window.StartsWith(Constants.OleMagicBytes.Jpeg))
             {
-                return "data:image/jpeg;base64," + Convert.ToBase64String(b, i, fileLen);
+                return "data:image/jpeg;base64," + Convert.ToBase64String(buffer, i, fileLen);
             }
 
             if (window.StartsWith(Constants.OleMagicBytes.Png))
             {
-                return "data:image/png;base64," + Convert.ToBase64String(b, i, fileLen);
+                return "data:image/png;base64," + Convert.ToBase64String(buffer, i, fileLen);
             }
 
             if (window.StartsWith(Constants.OleMagicBytes.Gif))
             {
-                return "data:image/gif;base64," + Convert.ToBase64String(b, i, fileLen);
+                return "data:image/gif;base64," + Convert.ToBase64String(buffer, i, fileLen);
             }
 
             if (window.StartsWith(Constants.OleMagicBytes.Bmp))
             {
-                return "data:image/bmp;base64," + Convert.ToBase64String(b, i, fileLen);
+                return "data:image/bmp;base64," + Convert.ToBase64String(buffer, i, fileLen);
+            }
+
+            if (window.StartsWith(Constants.OleMagicBytes.TiffLittleEndian) ||
+                window.StartsWith(Constants.OleMagicBytes.TiffBigEndian))
+            {
+                return "data:image/tiff;base64," + Convert.ToBase64String(buffer, i, fileLen);
             }
 
             // ── Documents ──
             if (window.StartsWith(Constants.OleMagicBytes.Pdf))
             {
-                return "data:application/pdf;base64," + Convert.ToBase64String(b, i, fileLen);
+                return "data:application/pdf;base64," + Convert.ToBase64String(buffer, i, fileLen);
             }
 
             // ZIP (also DOCX/XLSX/PPTX). For simplicity, return generic zip MIME.
             if (window.StartsWith(Constants.OleMagicBytes.Zip))
             {
-                return "data:application/zip;base64," + Convert.ToBase64String(b, i, fileLen);
+                return "data:application/zip;base64," + Convert.ToBase64String(buffer, i, fileLen);
             }
 
             // DOC (Word 97-2003): OLE compound file.
             if (window.StartsWith(Constants.OleMagicBytes.OleCompound))
             {
-                return "data:application/msword;base64," + Convert.ToBase64String(b, i, fileLen);
+                return "data:application/msword;base64," + Convert.ToBase64String(buffer, i, fileLen);
             }
 
             // RTF: {\rt
             if (window.StartsWith(Constants.OleMagicBytes.Rtf))
             {
-                return "data:application/rtf;base64," + Convert.ToBase64String(b, i, fileLen);
+                return "data:application/rtf;base64," + Convert.ToBase64String(buffer, i, fileLen);
             }
         }
 
         return null;
+    }
+
+    private static bool TryExtractEmbeddedOlePackagePayload(byte[] buffer, int start, int len, out int payloadStart, out int payloadLength)
+    {
+        const ushort OlePackageSignature = 0x1C15;
+        const int OleVersion = 0x0501;
+        const ushort OlePackageStreamSignature = 0x0002;
+        const int EmbeddedFilePackageType = 0x030000;
+
+        payloadStart = 0;
+        payloadLength = 0;
+
+        if (start < 0 || len < 24 || start > buffer.Length - 4)
+        {
+            return false;
+        }
+
+        int valueEnd = Math.Min(start + len, buffer.Length);
+        ReadOnlySpan<byte> value = buffer.AsSpan(start, valueEnd - start);
+        if (value.Length < 24 || BinaryPrimitives.ReadUInt16LittleEndian(value) != OlePackageSignature)
+        {
+            return false;
+        }
+
+        int headerSize = BinaryPrimitives.ReadUInt16LittleEndian(value.Slice(2, 2));
+        if (headerSize < 20 || headerSize > value.Length - 24)
+        {
+            return false;
+        }
+
+        int oleHeaderOffset = headerSize;
+        if (BinaryPrimitives.ReadInt32LittleEndian(value.Slice(oleHeaderOffset, 4)) != OleVersion)
+        {
+            return false;
+        }
+
+        int typeNameLength = BinaryPrimitives.ReadInt32LittleEndian(value.Slice(oleHeaderOffset + 8, 4));
+        if (typeNameLength <= 0)
+        {
+            return false;
+        }
+
+        int dataBlockLengthOffset = oleHeaderOffset + 20 + typeNameLength;
+        if (dataBlockLengthOffset + 4 > value.Length)
+        {
+            return false;
+        }
+
+        int dataBlockLength = BinaryPrimitives.ReadInt32LittleEndian(value.Slice(dataBlockLengthOffset, 4));
+        int dataBlockOffset = dataBlockLengthOffset + 4;
+        if (dataBlockLength <= 0 || dataBlockOffset + dataBlockLength > value.Length)
+        {
+            return false;
+        }
+
+        ReadOnlySpan<byte> dataBlock = value.Slice(dataBlockOffset, dataBlockLength);
+        if (dataBlock.Length < 2 || BinaryPrimitives.ReadUInt16LittleEndian(dataBlock) != OlePackageStreamSignature)
+        {
+            return false;
+        }
+
+        int cursor = 2;
+        if (!TrySkipZeroTermAsciiString(dataBlock, ref cursor) ||
+            !TrySkipZeroTermAsciiString(dataBlock, ref cursor) ||
+            cursor + 8 > dataBlock.Length)
+        {
+            return false;
+        }
+
+        int packageType = BinaryPrimitives.ReadInt32LittleEndian(dataBlock.Slice(cursor, 4));
+        cursor += 4;
+        if (packageType != EmbeddedFilePackageType)
+        {
+            return false;
+        }
+
+        int localFilePathLength = BinaryPrimitives.ReadInt32LittleEndian(dataBlock.Slice(cursor, 4));
+        cursor += 4;
+        if (localFilePathLength < 0 || cursor + localFilePathLength + 4 > dataBlock.Length)
+        {
+            return false;
+        }
+
+        cursor += localFilePathLength;
+
+        int embeddedLength = BinaryPrimitives.ReadInt32LittleEndian(dataBlock.Slice(cursor, 4));
+        cursor += 4;
+        if (embeddedLength <= 0 || cursor + embeddedLength > dataBlock.Length)
+        {
+            return false;
+        }
+
+        payloadStart = start + dataBlockOffset + cursor;
+        payloadLength = embeddedLength;
+        return true;
+    }
+
+    private static bool TrySkipZeroTermAsciiString(ReadOnlySpan<byte> value, ref int offset)
+    {
+        if ((uint)offset >= (uint)value.Length)
+        {
+            return false;
+        }
+
+        int terminator = value.Slice(offset).IndexOf((byte)0x00);
+        if (terminator < 0)
+        {
+            return false;
+        }
+
+        offset += terminator + 1;
+        return true;
     }
 
     /// <summary>

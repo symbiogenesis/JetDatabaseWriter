@@ -314,6 +314,12 @@ internal static class Constants
         /// <summary>Gets the BMP magic bytes: <c>42 4D</c> (<c>BM</c>).</summary>
         public static ReadOnlySpan<byte> Bmp => [0x42, 0x4D];
 
+        /// <summary>Gets the little-endian TIFF magic bytes: <c>49 49 2A 00</c>.</summary>
+        public static ReadOnlySpan<byte> TiffLittleEndian => [0x49, 0x49, 0x2A, 0x00];
+
+        /// <summary>Gets the big-endian TIFF magic bytes: <c>4D 4D 00 2A</c>.</summary>
+        public static ReadOnlySpan<byte> TiffBigEndian => [0x4D, 0x4D, 0x00, 0x2A];
+
         /// <summary>Gets the PDF magic bytes: <c>25 50 44 46</c> (<c>%PDF</c>).</summary>
         public static ReadOnlySpan<byte> Pdf => [0x25, 0x50, 0x44, 0x46];
 
