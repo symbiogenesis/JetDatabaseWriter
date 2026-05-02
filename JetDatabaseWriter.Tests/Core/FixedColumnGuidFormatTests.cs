@@ -1,13 +1,13 @@
 namespace JetDatabaseWriter.Tests.Core;
 
 using System;
-using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Internal;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention.
 
 /// <summary>
-/// Pins the string format produced by <see cref="AccessBase.ReadFixedString"/>
+/// Pins the string format produced by <see cref="JetTypeInfo.ReadFixedString"/>
 /// for <c>T_GUID</c> columns. The format is:
 /// <code>{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}</code>
 /// — braces, lowercase hex, with the first three groups stored little-endian
@@ -27,7 +27,7 @@ public sealed class FixedColumnGuidFormatTests
         // little-endian, and the final 8 bytes are stored verbatim.
         byte[] row = [0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
 
-        string result = AccessBase.ReadFixedString(row, start: 0, type: T_GUID, size: 16);
+        string result = JetTypeInfo.ReadFixedString(row, start: 0, type: T_GUID, size: 16);
 
         Assert.Equal("{00112233-4455-6677-8899-aabbccddeeff}", result);
     }
@@ -40,7 +40,7 @@ public sealed class FixedColumnGuidFormatTests
         byte[] row = new byte[24];
         Buffer.BlockCopy(bytes, 0, row, 4, 16); // place at non-zero offset to exercise 'start'
 
-        string formatted = AccessBase.ReadFixedString(row, start: 4, type: T_GUID, size: 16);
+        string formatted = JetTypeInfo.ReadFixedString(row, start: 4, type: T_GUID, size: 16);
 
         Assert.StartsWith("{", formatted, StringComparison.Ordinal);
         Assert.EndsWith("}", formatted, StringComparison.Ordinal);
@@ -56,7 +56,7 @@ public sealed class FixedColumnGuidFormatTests
         var expected = Guid.Parse(guidText);
         byte[] row = expected.ToByteArray();
 
-        string formatted = AccessBase.ReadFixedString(row, start: 0, type: T_GUID, size: 16);
+        string formatted = JetTypeInfo.ReadFixedString(row, start: 0, type: T_GUID, size: 16);
 
         Assert.Equal($"{{{guidText}}}", formatted);
     }
@@ -67,7 +67,7 @@ public sealed class FixedColumnGuidFormatTests
         // Use a value whose every hex group contains A–F digits.
         byte[] row = new Guid("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").ToByteArray();
 
-        string formatted = AccessBase.ReadFixedString(row, start: 0, type: T_GUID, size: 16);
+        string formatted = JetTypeInfo.ReadFixedString(row, start: 0, type: T_GUID, size: 16);
 
         // Strip the brace delimiters and dashes; the remaining 32 hex digits
         // must all be lowercase (no A–F uppercase characters).
@@ -90,7 +90,7 @@ public sealed class FixedColumnGuidFormatTests
         Buffer.BlockCopy(first.ToByteArray(), 0, row, 0, 16);
         Buffer.BlockCopy(second.ToByteArray(), 0, row, 16, 16);
 
-        Assert.Equal("{11111111-2222-3333-4444-555555555555}", AccessBase.ReadFixedString(row, start: 0, type: T_GUID, size: 16));
-        Assert.Equal("{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}", AccessBase.ReadFixedString(row, start: 16, type: T_GUID, size: 16));
+        Assert.Equal("{11111111-2222-3333-4444-555555555555}", JetTypeInfo.ReadFixedString(row, start: 0, type: T_GUID, size: 16));
+        Assert.Equal("{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}", JetTypeInfo.ReadFixedString(row, start: 16, type: T_GUID, size: 16));
     }
 }

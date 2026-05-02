@@ -1546,7 +1546,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
                 ColumnSliceKind.Null => string.Empty,
                 ColumnSliceKind.Empty => string.Empty,
-                ColumnSliceKind.Fixed => ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true),
+                ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true),
                 ColumnSliceKind.Var => await ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
                 _ => string.Empty,
             };
@@ -1569,7 +1569,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ColumnSliceKind.Bool => slice.BoolValue,
             ColumnSliceKind.Null => DBNull.Value,
             ColumnSliceKind.Empty => DBNull.Value,
-            ColumnSliceKind.Fixed => ParseColumnValue(ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true), col),
+            ColumnSliceKind.Fixed => ParseColumnValue(JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true), col),
             ColumnSliceKind.Var => await ReadVarValueAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
             _ => DBNull.Value,
         };
@@ -2621,7 +2621,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     break;
 
                 case ColumnSliceKind.Fixed:
-                    result.Add(ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true));
+                    result.Add(JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true));
                     break;
 
                 case ColumnSliceKind.Var:
@@ -2672,7 +2672,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case T_ATTACHMENT:
                     {
                         // Delegate fixed-width primitive formatting to the shared
-                        // AccessBase.ReadFixedString helper to avoid duplicating
+                        // JetTypeInfo.ReadFixedString helper to avoid duplicating
                         // the per-type Invariant-culture formatting block. The
                         // length guard mirrors the historical behaviour (return
                         // empty when the variable-length slice is too short to
@@ -2680,7 +2680,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                         // 4 bytes for COMPLEX/ATTACHMENT (the complex-id int32)
                         // since they have no fixed-area size of their own.
                         int required = col.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(col.Type);
-                        return len >= required ? ReadFixedString(row, start, col.Type, required, strictNumeric: true) : string.Empty;
+                        return len >= required ? JetTypeInfo.ReadFixedString(row, start, col.Type, required, strictNumeric: true) : string.Empty;
                     }
 
                 default:
