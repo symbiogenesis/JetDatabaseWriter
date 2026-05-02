@@ -1265,9 +1265,20 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
             }
 
-            bool canProject = projectedColumns.Count > 0
-                && projectedColumns.Count < resolvedHeaders.Count
+            bool canUseDirectMap = projectedColumns.Count > 0
                 && projectedColumns.TrueForAll(static projection => projection.Column.Type != T_COMPLEX && projection.Column.Type != T_ATTACHMENT);
+
+            if (canUseDirectMap && projectedColumns.Count == resolvedHeaders.Count)
+            {
+                return await ReadMappedTableAsync(
+                    resolved.Value.Entry.TDefPage,
+                    resolved.Value.Td,
+                    fullIndex,
+                    maxRows,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            bool canProject = canUseDirectMap && projectedColumns.Count < resolvedHeaders.Count;
 
             if (canProject)
             {
@@ -1294,6 +1305,58 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (maxRows.HasValue && count >= maxRows.Value)
             {
                 break;
+            }
+        }
+
+        return items;
+    }
+
+    private async ValueTask<List<T>> ReadMappedTableAsync<T>(
+        long tdefPage,
+        TableDef td,
+        RowMapper<T>.Accessor?[] index,
+        uint? maxRows,
+        CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        var items = new List<T>();
+        bool hasVarCols = false;
+        for (int i = 0; i < td.Columns.Count; i++)
+        {
+            if (!td.Columns[i].IsFixed)
+            {
+                hasVarCols = true;
+                break;
+            }
+        }
+
+        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        foreach (long pageNumber in pageNumbers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            foreach (RowBound rb in EnumerateLiveRowBounds(page))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                object[]? row = await CrackMappedRowAsync(
+                    page,
+                    rb.RowStart,
+                    rb.RowSize,
+                    td,
+                    hasVarCols,
+                    cancellationToken).ConfigureAwait(false);
+                if (row == null)
+                {
+                    continue;
+                }
+
+                items.Add(RowMapper<T>.Map(row, index));
+                if (maxRows.HasValue && items.Count >= maxRows.Value)
+                {
+                    return items;
+                }
             }
         }
 
@@ -1361,6 +1424,53 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return items;
     }
 
+    private async ValueTask<object[]?> CrackMappedRowAsync(
+        byte[] page,
+        int rowStart,
+        int rowSize,
+        TableDef td,
+        bool hasVarCols,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (rowSize < _numColsFldSz)
+        {
+            return null;
+        }
+
+        int rawNumCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
+        if (rawNumCols == 0)
+        {
+            return null;
+        }
+
+        if (td.HasDeletedColumns && rawNumCols > td.Columns.Count)
+        {
+            throw new JetLimitationException(
+                $"Row has {rawNumCols} columns but current schema has {td.Columns.Count} with deleted-column gaps. " +
+                "This row predates schema changes and data may be misaligned. " +
+                "Solution: Compact & Repair the database in Microsoft Access to rebuild all rows.");
+        }
+
+        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarCols, out RowLayout layout))
+        {
+            return null;
+        }
+
+        var values = new object[td.Columns.Count];
+        for (int i = 0; i < td.Columns.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            ColumnInfo col = td.Columns[i];
+            ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, col);
+            values[i] = await ReadColumnValueAsync(page, rowStart, slice, col, cancellationToken).ConfigureAwait(false);
+        }
+
+        return values;
+    }
+
     private async ValueTask<object[]?> CrackProjectedRowAsync(
         byte[] page,
         int rowStart,
@@ -1417,6 +1527,50 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return values;
+    }
+
+    private async ValueTask<object> ReadColumnValueAsync(
+        byte[] page,
+        int rowStart,
+        ColumnSlice slice,
+        ColumnInfo col,
+        CancellationToken cancellationToken)
+    {
+        return slice.Kind switch
+        {
+            ColumnSliceKind.Bool => slice.BoolValue,
+            ColumnSliceKind.Null => DBNull.Value,
+            ColumnSliceKind.Empty => DBNull.Value,
+            ColumnSliceKind.Fixed => ParseColumnValue(ReadFixed(page, rowStart + slice.DataStart, col, slice.DataLen), col),
+            ColumnSliceKind.Var => await ReadVarValueAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
+            _ => DBNull.Value,
+        };
+    }
+
+    private object ParseColumnValue(string rawValue, ColumnInfo col) =>
+        TypedValueParser.ParseValue(rawValue, ResolveClrType(col), _strictParsing);
+
+    private async ValueTask<object> ReadVarValueAsync(byte[] row, int start, int len, ColumnInfo col, CancellationToken cancellationToken)
+    {
+        if (len <= 0)
+        {
+            return DBNull.Value;
+        }
+
+        Type targetType = ResolveClrType(col);
+        if (targetType == typeof(byte[]))
+        {
+            switch (col.Type)
+            {
+                case T_BINARY:
+                    return row.AsSpan(start, len).ToArray();
+                case T_OLE:
+                    return await ReadOleValueBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        string rawValue = await ReadVarAsync(row, start, len, col, cancellationToken).ConfigureAwait(false);
+        return TypedValueParser.ParseValue(rawValue, targetType, _strictParsing);
     }
 
     /// <summary>
@@ -1739,11 +1893,25 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private static string? TryCreateOleDataUriFromKnownMagic(byte[] buffer, int start, int len)
     {
+        if (!TryFindOlePayloadRange(buffer, start, len, out int payloadStart, out int payloadLength, out string? mimeType))
+        {
+            return null;
+        }
+
+        return "data:" + mimeType + ";base64," + Convert.ToBase64String(buffer, payloadStart, payloadLength);
+    }
+
+    private static bool TryFindOlePayloadRange(byte[] buffer, int start, int len, out int payloadStart, out int payloadLength, out string? mimeType)
+    {
+        payloadStart = 0;
+        payloadLength = 0;
+        mimeType = null;
+
         int valueStart = Math.Max(start, 0);
         int valueEnd = Math.Min(start + len, buffer.Length);
         if (valueEnd - valueStart < 4)
         {
-            return null;
+            return false;
         }
 
         int scanEnd = Math.Min(valueEnd, valueStart + 512);
@@ -1755,56 +1923,83 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // ── Images ──
             if (window.StartsWith(Constants.OleMagicBytes.Jpeg))
             {
-                return "data:image/jpeg;base64," + Convert.ToBase64String(buffer, i, fileLen);
+                payloadStart = i;
+                payloadLength = fileLen;
+                mimeType = "image/jpeg";
+                return true;
             }
 
             if (window.StartsWith(Constants.OleMagicBytes.Png))
             {
-                return "data:image/png;base64," + Convert.ToBase64String(buffer, i, fileLen);
+                payloadStart = i;
+                payloadLength = fileLen;
+                mimeType = "image/png";
+                return true;
             }
 
             if (window.StartsWith(Constants.OleMagicBytes.Gif))
             {
-                return "data:image/gif;base64," + Convert.ToBase64String(buffer, i, fileLen);
+                payloadStart = i;
+                payloadLength = fileLen;
+                mimeType = "image/gif";
+                return true;
             }
 
             if (window.StartsWith(Constants.OleMagicBytes.Bmp))
             {
-                return "data:image/bmp;base64," + Convert.ToBase64String(buffer, i, fileLen);
+                payloadStart = i;
+                payloadLength = fileLen;
+                mimeType = "image/bmp";
+                return true;
             }
 
             if (window.StartsWith(Constants.OleMagicBytes.TiffLittleEndian) ||
                 window.StartsWith(Constants.OleMagicBytes.TiffBigEndian))
             {
-                return "data:image/tiff;base64," + Convert.ToBase64String(buffer, i, fileLen);
+                payloadStart = i;
+                payloadLength = fileLen;
+                mimeType = "image/tiff";
+                return true;
             }
 
             // ── Documents ──
             if (window.StartsWith(Constants.OleMagicBytes.Pdf))
             {
-                return "data:application/pdf;base64," + Convert.ToBase64String(buffer, i, fileLen);
+                payloadStart = i;
+                payloadLength = fileLen;
+                mimeType = "application/pdf";
+                return true;
             }
 
             // ZIP (also DOCX/XLSX/PPTX). For simplicity, return generic zip MIME.
             if (window.StartsWith(Constants.OleMagicBytes.Zip))
             {
-                return "data:application/zip;base64," + Convert.ToBase64String(buffer, i, fileLen);
+                payloadStart = i;
+                payloadLength = fileLen;
+                mimeType = "application/zip";
+                return true;
             }
 
             // DOC (Word 97-2003): OLE compound file.
             if (window.StartsWith(Constants.OleMagicBytes.OleCompound))
             {
-                return "data:application/msword;base64," + Convert.ToBase64String(buffer, i, fileLen);
+                payloadStart = i;
+                payloadLength = fileLen;
+                mimeType = "application/msword";
+                return true;
             }
 
             // RTF: {\rt
             if (window.StartsWith(Constants.OleMagicBytes.Rtf))
             {
-                return "data:application/rtf;base64," + Convert.ToBase64String(buffer, i, fileLen);
+                payloadStart = i;
+                payloadLength = fileLen;
+                mimeType = "application/rtf";
+                return true;
             }
         }
 
-        return null;
+        return false;
     }
 
     private static bool TryExtractEmbeddedOlePackagePayload(byte[] buffer, int start, int len, out int payloadStart, out int payloadLength)
@@ -2143,6 +2338,27 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         // Plain text (Memo): encode as UTF-8
         return Encoding.UTF8.GetBytes(value);
+    }
+
+    private static byte[] DecodeOleValueBytes(byte[] buffer, int offset, int length)
+    {
+        if (buffer == null || length <= 0 || offset < 0 || offset >= buffer.Length)
+        {
+            return [];
+        }
+
+        if (TryExtractEmbeddedOlePackagePayload(buffer, offset, length, out int payloadStart, out int payloadLength))
+        {
+            return buffer.AsSpan(payloadStart, payloadLength).ToArray();
+        }
+
+        if (TryFindOlePayloadRange(buffer, offset, length, out payloadStart, out payloadLength, out _))
+        {
+            return buffer.AsSpan(payloadStart, payloadLength).ToArray();
+        }
+
+        int boundedLength = Math.Min(length, buffer.Length - offset);
+        return boundedLength <= 0 ? [] : buffer.AsSpan(offset, boundedLength).ToArray();
     }
 
     private async ValueTask<IReadOnlyList<long>> GetOwnedDataPagesAsync(long tdefPage, CancellationToken cancellationToken)
@@ -3198,6 +3414,37 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return chain.Data != null
                     ? DecodeLongValue(chain.Data, 0, chain.Data.Length, isOle)
                     : (isOle ? $"(OLE chain error: {chain.Error})" : $"(memo chain error: {chain.Error})");
+        }
+    }
+
+    private async ValueTask<byte[]> ReadOleValueBytesAsync(byte[] row, int start, int len, CancellationToken cancellationToken)
+    {
+        if (len < 12)
+        {
+            return [];
+        }
+
+        byte bitmask = row[start + 3];
+        int memoLen = ReadUInt24LittleEndian(row.AsSpan(start, 3));
+
+        switch (bitmask & 0xC0)
+        {
+            case 0x80:
+                int memoStart = start + 12;
+                int inlineLen = Math.Min(memoLen, row.Length - memoStart);
+                return inlineLen <= 0 ? [] : DecodeOleValueBytes(row, memoStart, inlineLen);
+
+            case 0x40:
+                byte[]? lvalData = await ReadLvalBytesAsync(Ru32(row, start + 4), memoLen, cancellationToken).ConfigureAwait(false);
+                return lvalData != null
+                    ? DecodeOleValueBytes(lvalData, 0, lvalData.Length)
+                    : [];
+
+            default:
+                LvalChainResult chain = await ReadLvalChainAsync(Ru32(row, start + 4), memoLen, cancellationToken).ConfigureAwait(false);
+                return chain.Data != null
+                    ? DecodeOleValueBytes(chain.Data, 0, chain.Data.Length)
+                    : [];
         }
     }
 
