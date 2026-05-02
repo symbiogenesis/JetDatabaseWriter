@@ -48,12 +48,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly int _lockTimeoutMilliseconds;
     private readonly int _maxTransactionPageBudget;
     private readonly bool _useTransactionalWrites;
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeStateLockAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private readonly ReaderWriterLockSlim _stateLock = new(LockRecursionPolicy.NoRecursion);
 
     // Agile re-encryption context. When non-null, the underlying _stream is an
     // in-memory MemoryStream containing the *decrypted* inner ACCDB; on
     // DisposeAsync the bytes are re-encrypted with Office Crypto API "Agile"
     // and written back to _outerEncryptedStream (which holds the original CFB).
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via RewrapAndCloseOuterEncryptedStreamAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private readonly Stream? _outerEncryptedStream;
     private readonly bool _outerEncryptedLeaveOpen;
     private readonly bool _isAgileEncryptedRewrap;
@@ -70,6 +72,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     // Active explicit transaction. Writer disposal rolls back any in-flight
     // transaction through JetTransaction.DisposeAsync before clearing the
     // field so analyzers can see the owned resource is disposed.
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeActiveTransactionAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private JetTransaction? _activeTransaction;
     private long _cachedInsertTDefPage = -1;
     private long _cachedInsertPageNumber = -1;
@@ -130,9 +133,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         (_pageKeys.Rc4DbKey, _pageKeys.AesPageKey) =
             EncryptionManager.ResolveReaderPageKeys(header, _format, isLegacyAesCfb, password);
 
-        _lockFile.Acquire();
-
-        _byteRangeLock = JetByteRangeLock.Create(stream, _useByteRangeLocks, _lockTimeoutMilliseconds);
+        _lockFile.AcquireThen(() =>
+        {
+            _byteRangeLock = JetByteRangeLock.Create(stream, _useByteRangeLocks, _lockTimeoutMilliseconds);
+        });
     }
 
     /// <summary>
@@ -4502,59 +4506,62 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             throw new FileNotFoundException($"Database file not found: {path}", path);
         }
 
-        // Lockfile honouring: respect any existing lockfile while we rewrite.
-        bool useLockFile = options?.UseLockFile ?? true;
-        bool respectLockFile = options?.RespectExistingLockFile ?? true;
-        var lockFile = new LockFileCoordinator(
+        // Honour any existing lockfile while we rewrite. `using` releases the
+        // slot on every exit path; AcquireThen/DisposeAfterAsync would force
+        // either an empty setup-lambda or wrap the entire async body in a
+        // cleanup-named call, both of which obscure the intent here.
+        using var lockFile = new LockFileCoordinator(
             path,
             nameof(AccessWriter),
-            enabled: useLockFile,
-            respectExisting: respectLockFile,
+            enabled: options?.UseLockFile ?? true,
+            respectExisting: options?.RespectExistingLockFile ?? true,
             userName: options?.LockFileUserName,
             machineName: options?.LockFileMachineName);
         lockFile.Acquire();
 
+        byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+        await using var sourceStream = new MemoryStream(sourceBytes, writable: false);
+
+        byte[] result = await ReencryptCoreAsync(
+            sourceStream,
+            oldPassword,
+            newPassword,
+            targetFormat,
+            requireSourceEncrypted,
+            cancellationToken).ConfigureAwait(false);
+
+        await ReplaceFileAtomicAsync(path, result, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Writes <paramref name="contents"/> to a sibling temp file and atomically
+    /// replaces <paramref name="path"/>. Falls back to delete-then-move on
+    /// platforms / filesystems that reject <see cref="File.Replace(string, string, string?, bool)"/>.
+    /// </summary>
+    private static async ValueTask ReplaceFileAtomicAsync(string path, byte[] contents, CancellationToken cancellationToken)
+    {
+        string tempPath = path + ".reenc-" + Guid.NewGuid().ToString("N") + ".tmp";
+        await using (var fs = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
+        {
+            await fs.WriteAsync(contents.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         try
         {
-            byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-            await using var sourceStream = new MemoryStream(sourceBytes, writable: false);
-
-            byte[] result = await ReencryptCoreAsync(
-                sourceStream,
-                oldPassword,
-                newPassword,
-                targetFormat,
-                requireSourceEncrypted,
-                cancellationToken).ConfigureAwait(false);
-
-            // Atomic-ish replace: write to a sibling temp file then move into place.
-            string tempPath = path + ".reenc-" + Guid.NewGuid().ToString("N") + ".tmp";
-            await using (var fs = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
-            {
-                await fs.WriteAsync(result.AsMemory(), cancellationToken).ConfigureAwait(false);
-                await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
-            }
-
-            try
-            {
-                File.Replace(tempPath, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
-            }
-            catch (PlatformNotSupportedException)
-            {
-                // Some filesystems / platforms don't support File.Replace.
-                File.Delete(path);
-                File.Move(tempPath, path);
-            }
-            catch (IOException)
-            {
-                // Fallback for filesystems that reject Replace (e.g. across volumes).
-                File.Delete(path);
-                File.Move(tempPath, path);
-            }
+            File.Replace(tempPath, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
         }
-        finally
+        catch (PlatformNotSupportedException)
         {
-            lockFile.Dispose();
+            // Some filesystems / platforms don't support File.Replace.
+            File.Delete(path);
+            File.Move(tempPath, path);
+        }
+        catch (IOException)
+        {
+            // Fallback for filesystems that reject Replace (e.g. across volumes).
+            File.Delete(path);
+            File.Move(tempPath, path);
         }
     }
 
@@ -4956,6 +4963,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     /// <inheritdoc/>
+    [SuppressMessage("Usage", "CA2215:Dispose methods should call base class dispose", Justification = "base.DisposeAsync is passed as the final step to LockFileCoordinator.DisposeAfterAsync.")]
     public override async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -4963,45 +4971,65 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return;
         }
 
+        // The coordinator drains every step in order, captures the first
+        // failure, and unconditionally releases the .ldb / .laccdb slot last.
+        // Lock-file release runs after the agile re-wrap so the lock-file
+        // accurately reflects "database still in use" while we re-encrypt.
+        await _lockFile.DisposeAfterAsync(
+            DisposeActiveTransactionAsync,
+            RewrapAndCloseOuterEncryptedStreamAsync,
+            DisposeStateLockAsync,
+            () => base.DisposeAsync()).ConfigureAwait(false);
+    }
+
+    private async ValueTask DisposeActiveTransactionAsync()
+    {
         // Drop any in-flight transaction so its journal does not survive
         // dispose. Nothing has been written to disk for an uncommitted
         // transaction, so this is equivalent to an implicit rollback.
-        if (_activeTransaction is not null)
+        if (_activeTransaction is null)
         {
-            try
-            {
-                await _activeTransaction.DisposeAsync().ConfigureAwait(false);
-            }
-            finally
-            {
-                ActiveJournal = null;
-                _activeTransaction = null;
-            }
+            return;
         }
 
-        _lockFile.Dispose();
+        try
+        {
+            await _activeTransaction.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            ActiveJournal = null;
+            _activeTransaction = null;
+        }
+    }
 
+    private async ValueTask RewrapAndCloseOuterEncryptedStreamAsync()
+    {
         // For Agile-encrypted databases the underlying _stream is an in-memory
         // copy of the *decrypted* ACCDB. Re-encrypt it before tearing down so
         // the user's outer encrypted stream/file ends up with all writes.
-        if (_isAgileEncryptedRewrap && _outerEncryptedStream != null && !_password.IsEmpty)
+        if (!_isAgileEncryptedRewrap || _outerEncryptedStream is null || _password.IsEmpty)
         {
-            try
-            {
-                await RewrapAgileOnDisposeAsync().ConfigureAwait(false);
-            }
-            finally
-            {
-                if (!_outerEncryptedLeaveOpen)
-                {
-                    await _outerEncryptedStream.DisposeAsync().ConfigureAwait(false);
-                }
-            }
+            return;
         }
 
-        _stateLock.Dispose();
+        try
+        {
+            await RewrapAgileOnDisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!_outerEncryptedLeaveOpen)
+            {
+                await _outerEncryptedStream.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
 
-        await base.DisposeAsync().ConfigureAwait(false);
+    private ValueTask DisposeStateLockAsync()
+    {
+        _stateLock.Dispose();
+        return default;
     }
 
     /// <summary>

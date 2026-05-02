@@ -592,6 +592,52 @@ public sealed class LockFileTests : IDisposable
         Assert.Equal("HOST-B", ReadAsciiField(bytes, 64, 32));
     }
 
+    // ── Phase 2: finalizer safety net ─────────────────────────────────
+    //
+    // If a caller forgets to dispose the reader / writer, the LockFileSlotWriter
+    // finalizer must still release the slot and best-effort-delete the lockfile
+    // so the .ldb / .laccdb does not survive the process.
+
+    [Fact]
+    public void LockFileSlotWriter_AbandonedWithoutDispose_FinalizerDeletesLockFile()
+    {
+        // Use a synthetic empty file as a stand-in for a database — the slot
+        // writer only needs the path, not a real Access database.
+        string dbPath = Path.Combine(Path.GetTempPath(), $"JetLockFin_{Guid.NewGuid():N}.accdb");
+        File.WriteAllBytes(dbPath, Array.Empty<byte>());
+        _tempFiles.Add(dbPath);
+        string lockPath = Path.ChangeExtension(dbPath, ".laccdb");
+
+        OpenAndAbandonSlot(dbPath);
+
+        // The discarded slot is now eligible for finalization. Drain the
+        // finalizer queue (and FileStream's own finalizer) before checking.
+        for (int i = 0; i < 10 && File.Exists(lockPath); i++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
+
+        Assert.False(
+            File.Exists(lockPath),
+            $"Finalizer should have removed the lockfile abandoned by the slot writer: {lockPath}");
+    }
+
+    // Open the slot in a separate non-inlined helper so the local cannot
+    // stay JIT-rooted past the call site. The discarded result is then
+    // eligible for finalization on return.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void OpenAndAbandonSlot(string dbPath)
+    {
+#pragma warning disable CA2000 // Intentional: this test exercises the finalizer when the caller forgets to dispose.
+        _ = JetDatabaseWriter.Internal.LockFileSlotWriter.Open(
+            dbPath,
+            ownerTypeName: nameof(LockFileTests),
+            respectExisting: false);
+#pragma warning restore CA2000
+    }
+
     private static string ReadAsciiField(byte[] bytes, int offset, int length)
     {
         int end = offset;

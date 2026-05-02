@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -56,6 +57,7 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 public sealed class AccessReader : AccessBase, IAccessReader
 {
     private readonly AsyncReentrantOperationGate _operationGate = new();
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeReaderResourcesAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private readonly AsyncLazyInitializer<Dictionary<long, long[]>> _ownedDataPageIndex;
     private readonly LockFileCoordinator _lockFile;
     private readonly bool _strictParsing;
@@ -116,9 +118,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ValidateDatabaseFormat();
         }
 
-        _lockFile.Acquire();
-
-        _byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
+        // AcquireThen releases the slot if the post-acquire setup throws —
+        // OpenAsync's catch only disposes the underlying stream and never
+        // sees this half-built reader, so without this guard the slot would
+        // outlive the failed open and leave a populated .ldb / .laccdb on disk.
+        _lockFile.AcquireThen(() =>
+        {
+            _byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
+        });
     }
 
     /// <summary>Gets a value indicating whether to print console logs with verbose hex dumps for debugging. Default: false.</summary>
@@ -1762,6 +1769,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
+    [SuppressMessage("Usage", "CA2215:Dispose methods should call base class dispose", Justification = "base.DisposeAsync is invoked from DisposeReaderResourcesAsync, passed as a step to LockFileCoordinator.DisposeAfterAsync.")]
     public override async ValueTask DisposeAsync()
     {
         if (!_operationGate.TryBeginDispose(out Task waitForOperations))
@@ -1772,16 +1780,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         try
         {
-            await waitForOperations.ConfigureAwait(false);
-
-            _lockFile.Dispose();
-
-            _pageCache?.Clear();
-
-            _ownedDataPageIndex.Dispose();
-            InvalidateCatalogCache();
-
-            await base.DisposeAsync().ConfigureAwait(false);
+            // The coordinator drains every step in order, captures the first
+            // failure, then unconditionally releases the .ldb / .laccdb slot.
+            await _lockFile.DisposeAfterAsync(
+                () => new ValueTask(waitForOperations),
+                DisposeReaderResourcesAsync).ConfigureAwait(false);
             _operationGate.CompleteDispose();
         }
         catch (Exception ex)
@@ -1791,8 +1794,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
+    private async ValueTask DisposeReaderResourcesAsync()
+    {
+        _pageCache?.Clear();
+        _ownedDataPageIndex.Dispose();
+        InvalidateCatalogCache();
+        await base.DisposeAsync().ConfigureAwait(false);
+    }
+
+#pragma warning disable SA1204 // Helper kept beside its sole caller (DisposeAsync) for readability.
     private static string SafeGet(List<string> row, int idx) =>
         (idx >= 0 && idx < row.Count) ? row[idx] : string.Empty;
+#pragma warning restore SA1204
 
     /// <summary>
     /// Returns true when an MSysComplexColumns row's ConceptualTableID column refers to

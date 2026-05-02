@@ -52,6 +52,78 @@ internal sealed class LockFileSlotWriter : IDisposable
         SlotOffset = slotOffset;
     }
 
+    /// <summary>
+    /// Finalizes an instance of the <see cref="LockFileSlotWriter"/> class. Acts as a
+    /// safety net: if a caller forgot to dispose the owning reader / writer (and
+    /// therefore this slot), still make a best-effort attempt to release the
+    /// FileStream and delete the lock-file companion so a stale .ldb / .laccdb does
+    /// not survive the process. Skipped during process shutdown when the FileStream
+    /// has likely already been finalised.
+    /// </summary>
+    ~LockFileSlotWriter()
+    {
+        if (_disposed || Environment.HasShutdownStarted || AppDomain.CurrentDomain.IsFinalizingForUnload())
+        {
+            return;
+        }
+
+#pragma warning disable CA1031 // Finalizers must never throw — swallow everything.
+        try
+        {
+            FinalizerCleanup();
+        }
+        catch
+        {
+            // Intentionally suppressed.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Finalizer-only cleanup. Cannot rely on <c>_stream</c> being usable —
+    /// <see cref="FileStream"/>'s own finalizer may have run first, closing the
+    /// handle. Best-effort attempt to dispose the stream (no-op if already
+    /// finalised) then unconditionally delete the lock-file companion. Slot
+    /// zeroing is skipped because we cannot trust the stream, and any other
+    /// live opener still holds its own handle and slot.
+    /// </summary>
+    private void FinalizerCleanup()
+    {
+        _disposed = true;
+
+        FileStream? stream = _stream;
+        _stream = null;
+        if (stream != null)
+        {
+            try
+            {
+                stream.Dispose();
+            }
+            catch (IOException)
+            {
+                // Stream may already be in an unusable state during finalization.
+            }
+            catch (ObjectDisposedException)
+            {
+                // FileStream finalizer ran first; nothing to do.
+            }
+        }
+
+        try
+        {
+            File.Delete(LockFilePath);
+        }
+        catch (IOException)
+        {
+            // Another opener still holds a handle without FileShare.Delete,
+            // or the file was already removed. Best-effort only.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Permissions changed since open; nothing more we can do.
+        }
+    }
+
     /// <summary>Gets the path of the lock-file companion this instance owns.</summary>
     public string LockFilePath { get; }
 
@@ -154,6 +226,7 @@ internal sealed class LockFileSlotWriter : IDisposable
         }
 
         _disposed = true;
+        GC.SuppressFinalize(this);
 
         FileStream? stream = _stream;
         _stream = null;
