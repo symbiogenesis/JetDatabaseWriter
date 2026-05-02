@@ -853,9 +853,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        var headers = tableDef.Columns.ConvertAll(c => c.Name);
-        var index = RowMapper<T>.BuildIndex(headers);
-        object[] mappedRow = RowMapper<T>.ToRow(item, index);
+        object[] mappedRow = RowMapper<T>.ToRow(tableDef, item);
 
         IReadOnlyList<FkRelationship> relsT = await GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         FkContext? fkCtxT = relsT.Count > 0 ? new FkContext(relsT) : null;
@@ -878,8 +876,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        var headers = tableDef.Columns.ConvertAll(c => c.Name);
-        var index = RowMapper<T>.BuildIndex(headers);
         IReadOnlyList<FkRelationship> rels = await GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
 
@@ -897,7 +893,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 Guard.NotNull(item, nameof(items));
-                object[] mappedRow = RowMapper<T>.ToRow(item, index);
+                object[] mappedRow = RowMapper<T>.ToRow(tableDef, item);
                 List<(ColumnConstraint Constraint, long? PreviousValue)>? rowCp =
                     await ApplyConstraintsAsync(tableName, tableDef, mappedRow, cancellationToken).ConfigureAwait(false);
                 if (rowCp != null)

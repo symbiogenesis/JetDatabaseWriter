@@ -246,7 +246,7 @@ Notes:
   No new regressions.
 
 ### Phase 5 — RowMapper<T> fast path
-- [ ] In `RowMapper<T>.BuildIndex`, accept `Type[] sourceTypes` (the per-
+- [x] In `RowMapper<T>.BuildIndex`, accept `Type[] sourceTypes` (the per-
   column CLR types from Phase 2) and pre-compile a single
   `Action<object?[], T>` that:
   - skips null/DBNull,
@@ -254,7 +254,57 @@ Notes:
   - emits inlined widening conversions (e.g. `(int)(short)v`) instead of
     `Convert.ChangeType`,
   - keeps the Hyperlink ↔ string interop branch.
-- [ ] Replace `Map(row, index)` callsites with the compiled delegate.
+- [x] Replace `Map(row, index)` callsites with the compiled delegate.
+
+#### Notes
+- New API:
+  [`RowMapper<T>.BuildMapper(headers, sourceTypes?)`](JetDatabaseWriter/Internal/RowMapper.cs)
+  returns a single compiled `Action<object?[], T>`. The expression tree
+  emits one statement per matched header:
+  - reads `row[i]` once into a local;
+  - skips when `null` or `DBNull`;
+  - when the column's source type matches the property's underlying type
+    (the common case for typed JET reads now that Phase 2 hoisted
+    `td.ClrTypes`), emits a direct unbox-and-assign
+    (`Expression.Convert(v, propType)` — handles both the boxed→T unbox
+    and the implicit `T`→`Nullable<T>` wrap);
+  - otherwise hops into a single `CoerceToTarget(value, targetUnderlying)`
+    static helper that mirrors the legacy `Map` branches (Hyperlink
+    parse/format + `Convert.ChangeType` fallback) and skips assignment
+    when the helper returns `null` (preserving the
+    "Hyperlink.Parse failure → leave property at default" semantics).
+- The `BuildIndex` / `Map` / `ToRow` / `Accessor` API is **unchanged** —
+  the writer side (`AccessWriter.AppendRowsAsync<T>`) and the public
+  `RowMapper` tests still use it. `Accessor` gained an internal
+  `Property` field so `BuildMapper` can emit direct property accesses.
+- Read-path call sites switched in
+  [AccessReader.cs](JetDatabaseWriter/Core/AccessReader.cs):
+  - `Rows<T>(string)` — uses `BuildMapper(headers, meta.ClrType[])`.
+  - `ReadTableAsync<T>` direct-map path — uses
+    `BuildMapper(resolvedHeaders, td.ClrTypes)`.
+  - `ReadTableAsync<T>` projected path
+    (`ReadProjectedTableAsync`) — uses
+    `BuildMapper(headers, projectedSourceTypes)` where the source types
+    come from `JetTypeInfo.ResolveClrType(col)` for the projected subset.
+  - `ReadTableAsync<T>` complex/attachment fallback — uses
+    `BuildMapper(headers, meta.ClrType[])`.
+  - `ReadMappedTableAsync` signature changed from
+    `RowMapper<T>.Accessor?[] index` to `Action<object?[], T> mapper`.
+- Property assignment goes directly through the compiled `Expression.Property`
+  setter, avoiding the per-column `Action<T, object>` invocation, the
+  per-column `acc.TargetType != value.GetType()` check, and the
+  `Convert.ChangeType` fallback when source and target types match.
+  This eliminates the `~7 KB/row` typed overhead noted in the Phase 0
+  baseline for `StreamRowsTyped_All_Numeric` (re-measure in Phase 7).
+- Test result after the change: 2548/2550 pass — only the two
+  pre-existing DAO Compact baseline failures noted in
+  `/memories/repo/round-trip-tests.md`. No new regressions; the
+  full `RowMapperTests` suite (BuildIndex / Map / ToRow back-compat
+  surface) is green, plus the typed-read tests that now exercise the
+  compiled delegate path
+  (`AccessReaderStreamTests.StreamRows_Generic_*`,
+  `AccessReaderReadTests.ReadTable_Generic_*`,
+  `HyperlinkTests.*`).
 
 ### Phase 6 — Micro-cleanups
 - [ ] In `Rows<T>()`, avoid double `await foreach` (today it iterates

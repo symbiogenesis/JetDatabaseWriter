@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Internal;
 using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Internal.Models;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
@@ -72,9 +73,9 @@ public class RowMapperTests
 
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
 
-        Assert.Equal("Id", index[0]!.Name);
-        Assert.Equal("Name", index[1]!.Name);
-        Assert.Equal("Price", index[2]!.Name);
+        Assert.Equal("Id", index[0]!.Property.Name);
+        Assert.Equal("Name", index[1]!.Property.Name);
+        Assert.Equal("Price", index[2]!.Property.Name);
     }
 
     [Fact]
@@ -289,16 +290,26 @@ public class RowMapperTests
         Assert.Equal(5.5m, result.Price);
     }
 
-    // ── ToRow — reverse mapping ──────────────────────────────────────
+    // ── ToRow(TableDef) — reverse mapping ────────────────────────────
+
+    private static TableDef MakeTableDef(params string[] columnNames)
+    {
+        var td = new TableDef();
+        foreach (string name in columnNames)
+        {
+            td.Columns.Add(new ColumnInfo { Name = name });
+        }
+
+        return td;
+    }
 
     [Fact]
     public void ToRow_AllPropertiesMatch_ReturnsCorrectValues()
     {
-        var headers = new List<string> { "Id", "Name", "Price" };
-        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        TableDef td = MakeTableDef("Id", "Name", "Price");
         var product = new SimpleProduct { Id = 7, Name = "Bolt", Price = 1.25m };
 
-        object[] row = RowMapper<SimpleProduct>.ToRow(product, index);
+        object[] row = RowMapper<SimpleProduct>.ToRow(td, product);
 
         Assert.Equal(3, row.Length);
         Assert.Equal(7, row[0]);
@@ -309,11 +320,10 @@ public class RowMapperTests
     [Fact]
     public void ToRow_UnmatchedColumn_ProducesDBNull()
     {
-        var headers = new List<string> { "Id", "Unknown" };
-        var index = RowMapper<SimpleProduct>.BuildIndex(headers);
+        TableDef td = MakeTableDef("Id", "Unknown");
         var product = new SimpleProduct { Id = 3 };
 
-        object[] row = RowMapper<SimpleProduct>.ToRow(product, index);
+        object[] row = RowMapper<SimpleProduct>.ToRow(td, product);
 
         Assert.Equal(3, row[0]);
         Assert.Equal(DBNull.Value, row[1]);
@@ -322,29 +332,139 @@ public class RowMapperTests
     [Fact]
     public void ToRow_NullPropertyValue_ProducesDBNull()
     {
-        var headers = new List<string> { "Id", "Name" };
-        var index = RowMapper<NullableProduct>.BuildIndex(headers);
+        TableDef td = MakeTableDef("Id", "Name");
         var product = new NullableProduct { Id = 1, Name = null };
 
-        object[] row = RowMapper<NullableProduct>.ToRow(product, index);
+        object[] row = RowMapper<NullableProduct>.ToRow(td, product);
 
         Assert.Equal(1, row[0]);
         Assert.Equal(DBNull.Value, row[1]);
     }
 
     [Fact]
+    public void ToRow_NullableValueTypeWithNoValue_ProducesDBNull()
+    {
+        TableDef td = MakeTableDef("Id", "Name", "CreatedDate");
+        var product = new NullableProduct { Id = null, Name = null, CreatedDate = null };
+
+        object[] row = RowMapper<NullableProduct>.ToRow(td, product);
+
+        Assert.Equal(DBNull.Value, row[0]);
+        Assert.Equal(DBNull.Value, row[1]);
+        Assert.Equal(DBNull.Value, row[2]);
+    }
+
+    [Fact]
+    public void ToRow_NonNullableValueType_BoxedAsIs()
+    {
+        TableDef td = MakeTableDef("Id", "Name", "Price");
+        var product = new SimpleProduct { Id = 0, Name = "Zero", Price = 0m };
+
+        object[] row = RowMapper<SimpleProduct>.ToRow(td, product);
+
+        // Default values for non-nullable value types must NOT be coerced to DBNull.
+        Assert.Equal(0, row[0]);
+        Assert.Equal(0m, row[2]);
+    }
+
+    [Fact]
+    public void ToRow_EmptyPoco_AllDBNull()
+    {
+        TableDef td = MakeTableDef("Col1", "Col2");
+        var item = new EmptyPoco();
+
+        object[] row = RowMapper<EmptyPoco>.ToRow(td, item);
+
+        Assert.Equal(2, row.Length);
+        Assert.Equal(DBNull.Value, row[0]);
+        Assert.Equal(DBNull.Value, row[1]);
+    }
+
+    [Fact]
     public void ToRow_RoundTrips_WithMap()
     {
+        TableDef td = MakeTableDef("Id", "Name", "Price");
         var headers = new List<string> { "Id", "Name", "Price" };
         var index = RowMapper<SimpleProduct>.BuildIndex(headers);
         var original = new SimpleProduct { Id = 42, Name = "Gadget", Price = 19.99m };
 
-        object[] row = RowMapper<SimpleProduct>.ToRow(original, index);
+        object[] row = RowMapper<SimpleProduct>.ToRow(td, original);
         SimpleProduct roundTripped = RowMapper<SimpleProduct>.Map(row, index);
 
         Assert.Equal(original.Id, roundTripped.Id);
         Assert.Equal(original.Name, roundTripped.Name);
         Assert.Equal(original.Price, roundTripped.Price);
+    }
+
+    [Fact]
+    public void NullableProduct_ToRow_ThenMap_RoundTrips()
+    {
+        TableDef td = MakeTableDef("Id", "Name", "CreatedDate");
+        var headers = new List<string> { "Id", "Name", "CreatedDate" };
+        var index = RowMapper<NullableProduct>.BuildIndex(headers);
+        var original = new NullableProduct
+        {
+            Id = 99,
+            Name = "RoundTrip",
+            CreatedDate = new DateTime(2025, 12, 25),
+        };
+
+        object[] row = RowMapper<NullableProduct>.ToRow(td, original);
+        NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
+
+        Assert.Equal(original.Id, result.Id);
+        Assert.Equal(original.Name, result.Name);
+        Assert.Equal(original.CreatedDate, result.CreatedDate);
+    }
+
+    [Fact]
+    public void NullableProduct_WithAllNulls_ToRow_ThenMap_StaysNull()
+    {
+        TableDef td = MakeTableDef("Id", "Name", "CreatedDate");
+        var headers = new List<string> { "Id", "Name", "CreatedDate" };
+        var index = RowMapper<NullableProduct>.BuildIndex(headers);
+        var original = new NullableProduct { Id = null, Name = null, CreatedDate = null };
+
+        object[] row = RowMapper<NullableProduct>.ToRow(td, original);
+        NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
+
+        Assert.Null(result.Id);
+        Assert.Null(result.Name);
+        Assert.Null(result.CreatedDate);
+    }
+
+    [Fact]
+    public void ToRow_CaseInsensitiveColumnMatch()
+    {
+        // Column names differ in case from property names; matching is case-insensitive.
+        TableDef td = MakeTableDef("ID", "nAmE", "PRICE");
+        var product = new SimpleProduct { Id = 5, Name = "Case", Price = 2.5m };
+
+        object[] row = RowMapper<SimpleProduct>.ToRow(td, product);
+
+        Assert.Equal(5, row[0]);
+        Assert.Equal("Case", row[1]);
+        Assert.Equal(2.5m, row[2]);
+    }
+
+    [Fact]
+    public void ToRow_SameTableDefInstance_ReusesCompiledDelegate()
+    {
+        // The per-TableDef ConditionalWeakTable cache means repeated calls with
+        // the same TableDef instance must produce identical output without re-
+        // compiling. Verified indirectly by asserting consistent results across
+        // many invocations; a regression that recompiled per call would still
+        // pass functionally, but exercising the cached path here keeps it covered.
+        TableDef td = MakeTableDef("Id", "Name", "Price");
+        var product = new SimpleProduct { Id = 11, Name = "Cached", Price = 9.99m };
+
+        for (int i = 0; i < 5; i++)
+        {
+            object[] row = RowMapper<SimpleProduct>.ToRow(td, product);
+            Assert.Equal(11, row[0]);
+            Assert.Equal("Cached", row[1]);
+            Assert.Equal(9.99m, row[2]);
+        }
     }
 
     // ── Map — all DBNull row ─────────────────────────────────────────
@@ -377,43 +497,6 @@ public class RowMapperTests
         Assert.Equal(0m, result.Price);
     }
 
-    // ── Map — nullable property roundtrip ────────────────────────────
-
-    [Fact]
-    public void NullableProduct_ToRow_ThenMap_RoundTrips()
-    {
-        var headers = new List<string> { "Id", "Name", "CreatedDate" };
-        var index = RowMapper<NullableProduct>.BuildIndex(headers);
-        var original = new NullableProduct
-        {
-            Id = 99,
-            Name = "RoundTrip",
-            CreatedDate = new DateTime(2025, 12, 25),
-        };
-
-        object[] row = RowMapper<NullableProduct>.ToRow(original, index);
-        NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
-
-        Assert.Equal(original.Id, result.Id);
-        Assert.Equal(original.Name, result.Name);
-        Assert.Equal(original.CreatedDate, result.CreatedDate);
-    }
-
-    [Fact]
-    public void NullableProduct_WithAllNulls_ToRow_ThenMap_StaysNull()
-    {
-        var headers = new List<string> { "Id", "Name", "CreatedDate" };
-        var index = RowMapper<NullableProduct>.BuildIndex(headers);
-        var original = new NullableProduct { Id = null, Name = null, CreatedDate = null };
-
-        object[] row = RowMapper<NullableProduct>.ToRow(original, index);
-        NullableProduct result = RowMapper<NullableProduct>.Map(row, index);
-
-        Assert.Null(result.Id);
-        Assert.Null(result.Name);
-        Assert.Null(result.CreatedDate);
-    }
-
     // ── Map — inconvertible type ─────────────────────────────────────
 
     [Fact]
@@ -442,22 +525,6 @@ public class RowMapperTests
         Assert.Equal(0, result.Id);
         Assert.Equal(string.Empty, result.Name);
         Assert.Equal(0m, result.Price);
-    }
-
-    // ── ToRow — empty POCO ───────────────────────────────────────────
-
-    [Fact]
-    public void ToRow_EmptyPoco_AllDBNull()
-    {
-        var headers = new List<string> { "Col1", "Col2" };
-        var index = RowMapper<EmptyPoco>.BuildIndex(headers);
-        var item = new EmptyPoco();
-
-        object[] row = RowMapper<EmptyPoco>.ToRow(item, index);
-
-        Assert.Equal(2, row.Length);
-        Assert.Equal(DBNull.Value, row[0]);
-        Assert.Equal(DBNull.Value, row[1]);
     }
 
     // ── BuildIndex — duplicate headers pick first ────────────────────
