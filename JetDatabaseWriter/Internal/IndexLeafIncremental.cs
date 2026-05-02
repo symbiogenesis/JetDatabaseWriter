@@ -45,47 +45,69 @@ internal static class IndexLeafIncremental
 
     /// <summary>
     /// Returns the page number recorded in the <c>next_page</c> sibling
-    /// pointer of a leaf page (offset 12, signed 32-bit little-endian).
-    /// 0 means "no further leaf to the right".
+    /// pointer of a leaf page. 0 means "no further leaf to the right".
+    /// Defaults to the Jet4 / ACE layout (next_page at offset 16);
+    /// callers targeting Jet3 should use the layout overload.
     /// </summary>
     public static long ReadNextLeafPage(byte[] leafPage)
+        => ReadNextLeafPage(IndexLeafPageBuilder.LeafPageLayout.Jet4, leafPage);
+
+    /// <summary>
+    /// Layout-aware overload of <see cref="ReadNextLeafPage(byte[])"/>.
+    /// </summary>
+    public static long ReadNextLeafPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] leafPage)
     {
-        if (leafPage == null || leafPage.Length < 16)
+        if (leafPage == null || leafPage.Length < layout.NextPageOffset + 4)
         {
             return 0;
         }
 
-        return (uint)BinaryPrimitives.ReadInt32LittleEndian(leafPage.AsSpan(12, 4));
+        return (uint)BinaryPrimitives.ReadInt32LittleEndian(leafPage.AsSpan(layout.NextPageOffset, 4));
     }
 
     /// <summary>
     /// Returns the page number recorded in the <c>tail_page</c> header
-    /// field of any index page (offset 16, signed 32-bit little-endian per
-    /// §4.1). On intermediates emitted by <see cref="IndexBTreeBuilder"/>
-    /// this is the absolute page number of the rightmost leaf. On a single-leaf root it is 0 (the leaf is its own tail).
+    /// field of any index page (signed 32-bit little-endian per §4.1).
+    /// On intermediates emitted by <see cref="IndexBTreeBuilder"/> this is
+    /// the absolute page number of the rightmost leaf. On a single-leaf
+    /// root it is 0 (the leaf is its own tail). Defaults to the Jet4 / ACE
+    /// layout (tail_page at offset 20).
     /// </summary>
     public static long ReadTailPage(byte[] page)
+        => ReadTailPage(IndexLeafPageBuilder.LeafPageLayout.Jet4, page);
+
+    /// <summary>
+    /// Layout-aware overload of <see cref="ReadTailPage(byte[])"/>.
+    /// </summary>
+    public static long ReadTailPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
     {
-        if (page == null || page.Length < 20)
+        if (page == null || page.Length < layout.TailPageOffset + 4)
         {
             return 0;
         }
 
-        return (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(16, 4));
+        return (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.TailPageOffset, 4));
     }
 
     /// <summary>
     /// Returns the page number recorded in the <c>prev_page</c> sibling
-    /// pointer of any index page (offset 8, signed 32-bit little-endian).
+    /// pointer of any index page (signed 32-bit little-endian). Defaults to
+    /// the Jet4 / ACE layout (prev_page at offset 12).
     /// </summary>
     public static long ReadPrevPage(byte[] page)
+        => ReadPrevPage(IndexLeafPageBuilder.LeafPageLayout.Jet4, page);
+
+    /// <summary>
+    /// Layout-aware overload of <see cref="ReadPrevPage(byte[])"/>.
+    /// </summary>
+    public static long ReadPrevPage(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
     {
-        if (page == null || page.Length < 12)
+        if (page == null || page.Length < layout.PrevPageOffset + 4)
         {
             return 0;
         }
 
-        return (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(8, 4));
+        return (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.PrevPageOffset, 4));
     }
 
     /// <summary>
@@ -161,8 +183,14 @@ internal static class IndexLeafIncremental
     /// chain, neither of which the fast path handles.
     /// </summary>
     public static bool IsSingleRootLeaf(byte[] page)
+        => IsSingleRootLeaf(IndexLeafPageBuilder.LeafPageLayout.Jet4, page);
+
+    /// <summary>
+    /// Layout-aware overload of <see cref="IsSingleRootLeaf(byte[])"/>.
+    /// </summary>
+    public static bool IsSingleRootLeaf(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page)
     {
-        if (page == null || page.Length < 32)
+        if (page == null || page.Length < layout.TailPageOffset + 4)
         {
             return false;
         }
@@ -172,9 +200,9 @@ internal static class IndexLeafIncremental
             return false;
         }
 
-        int prev = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(8, 4));
-        int next = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(12, 4));
-        int tail = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(16, 4));
+        int prev = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.PrevPageOffset, 4));
+        int next = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.NextPageOffset, 4));
+        int tail = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.TailPageOffset, 4));
         return prev == 0 && next == 0 && tail == 0;
     }
 
@@ -194,7 +222,7 @@ internal static class IndexLeafIncremental
     public static List<IndexEntry> DecodeEntries(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, int pageSize)
     {
         var result = new List<IndexEntry>();
-        int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(20, 2));
+        int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(layout.PrefLenOffset, 2));
         int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
         int payloadEnd = pageSize - freeSpace;
         if (payloadEnd <= layout.FirstEntryOffset)
@@ -431,7 +459,7 @@ internal static class IndexLeafIncremental
             return result;
         }
 
-        int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(20, 2));
+        int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(layout.PrefLenOffset, 2));
         int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
         int payloadEnd = pageSize - freeSpace;
         if (payloadEnd <= layout.FirstEntryOffset)

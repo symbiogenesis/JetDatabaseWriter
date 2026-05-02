@@ -347,15 +347,15 @@ internal static class IndexBTreeBuilder
 
         // free_space patched at end.
         Wi32(page, 4, checked((int)parentTdefPage));
-        Wi32(page, 8, checked((int)prevPage));
-        Wi32(page, 12, checked((int)nextPage));
-        Wi32(page, 16, checked((int)tailPage));   // tail_page (rightmost leaf in the tree)
+        Wi32(page, layout.PrevPageOffset, checked((int)prevPage));
+        Wi32(page, layout.NextPageOffset, checked((int)nextPage));
+        Wi32(page, layout.TailPageOffset, checked((int)tailPage));   // tail_page (rightmost leaf in the tree)
 
         // §4.4 prefix compression on intermediate pages: hoist the longest
         // shared encoded-key prefix into the header and strip it from every
         // entry beyond the first.
         int prefLen = ComputeIntermediatePrefixLength(entries);
-        Wu16(page, 20, prefLen);
+        Wu16(page, layout.PrefLenOffset, prefLen);
 
         int payloadCursor = layout.FirstEntryOffset;
         int payloadLimit = pageSize;

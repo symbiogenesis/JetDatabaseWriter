@@ -361,6 +361,39 @@ internal static class Constants
 
         /// <summary>First-entry offset on a Jet3 leaf page (§4.2).</summary>
         public const int Jet3FirstEntryOffset = 0xF8;
+
+        // §4.1 page header offsets. Verified against Jackcess JetFormat
+        // (`OFFSET_PREV_INDEX_PAGE`, `OFFSET_NEXT_INDEX_PAGE`,
+        // `OFFSET_CHILD_TAIL_INDEX_PAGE`, `OFFSET_INDEX_COMPRESSED_BYTE_COUNT`)
+        // and empirically against an Access-authored MSysObjects.ParentIdName
+        // leaf (page 2790 of Tests/Databases/NorthwindTraders.accdb): prev=2677
+        // at @12, next=2996 at @16, pref_len=1 at @24. Jet4/ACE has an extra
+        // unknown(0) field at offset 8 that Jet3 lacks, shifting the rest of
+        // the header by 4 bytes.
+
+        /// <summary>Jet3 prev_page header offset.</summary>
+        public const int Jet3PrevPageOffset = 8;
+
+        /// <summary>Jet3 next_page header offset.</summary>
+        public const int Jet3NextPageOffset = 12;
+
+        /// <summary>Jet3 tail_page header offset.</summary>
+        public const int Jet3TailPageOffset = 16;
+
+        /// <summary>Jet3 pref_len (page-shared prefix length) header offset.</summary>
+        public const int Jet3PrefLenOffset = 20;
+
+        /// <summary>Jet4 / ACE prev_page header offset.</summary>
+        public const int Jet4PrevPageOffset = 12;
+
+        /// <summary>Jet4 / ACE next_page header offset.</summary>
+        public const int Jet4NextPageOffset = 16;
+
+        /// <summary>Jet4 / ACE tail_page (childTail) header offset.</summary>
+        public const int Jet4TailPageOffset = 20;
+
+        /// <summary>Jet4 / ACE pref_len (page-shared prefix length) header offset.</summary>
+        public const int Jet4PrefLenOffset = 24;
     }
 
     /// <summary>

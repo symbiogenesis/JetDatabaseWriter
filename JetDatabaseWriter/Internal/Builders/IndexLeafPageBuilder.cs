@@ -37,24 +37,58 @@ using JetDatabaseWriter.Internal.Models;
 internal static class IndexLeafPageBuilder
 {
     /// <summary>
-    /// Per-format index page layout descriptor. The §4.1 page header is
-    /// identical between Jet3 and Jet4 / ACE; only
-    /// the §4.2 entry-start bitmask offset and the first-entry offset
-    /// differ, along with the database page size (2048 vs 4096).
+    /// Per-format index page layout descriptor. The §4.1 page header layout
+    /// differs between Jet3 (no unknown(0) at offset 8) and Jet4 / ACE
+    /// (unknown(0) at offset 8 shifts prev/next/tail/pref_len 4 bytes
+    /// later); the §4.2 entry-start bitmask offset and first-entry offset
+    /// also differ, along with the database page size (2048 vs 4096).
+    /// All offsets verified against Jackcess <c>JetFormat</c> constants and
+    /// empirically against Access-authored fixtures (see
+    /// <c>Constants.IndexLeafPage</c> for the reference observation).
     /// </summary>
-    internal readonly struct LeafPageLayout(int bitmaskOffset, int firstEntryOffset)
+    internal readonly struct LeafPageLayout(
+        int bitmaskOffset,
+        int firstEntryOffset,
+        int prevPageOffset,
+        int nextPageOffset,
+        int tailPageOffset,
+        int prefLenOffset)
     {
         /// <summary>Gets the Jet3 (<c>.mdb</c> Access 97) leaf page layout.</summary>
-        public static LeafPageLayout Jet3 => new(Constants.IndexLeafPage.Jet3BitmaskOffset, Constants.IndexLeafPage.Jet3FirstEntryOffset);
+        public static LeafPageLayout Jet3 => new(
+            Constants.IndexLeafPage.Jet3BitmaskOffset,
+            Constants.IndexLeafPage.Jet3FirstEntryOffset,
+            Constants.IndexLeafPage.Jet3PrevPageOffset,
+            Constants.IndexLeafPage.Jet3NextPageOffset,
+            Constants.IndexLeafPage.Jet3TailPageOffset,
+            Constants.IndexLeafPage.Jet3PrefLenOffset);
 
         /// <summary>Gets the Jet4 / ACE leaf page layout.</summary>
-        public static LeafPageLayout Jet4 => new(Constants.IndexLeafPage.Jet4BitmaskOffset, Constants.IndexLeafPage.Jet4FirstEntryOffset);
+        public static LeafPageLayout Jet4 => new(
+            Constants.IndexLeafPage.Jet4BitmaskOffset,
+            Constants.IndexLeafPage.Jet4FirstEntryOffset,
+            Constants.IndexLeafPage.Jet4PrevPageOffset,
+            Constants.IndexLeafPage.Jet4NextPageOffset,
+            Constants.IndexLeafPage.Jet4TailPageOffset,
+            Constants.IndexLeafPage.Jet4PrefLenOffset);
 
         /// <summary>Gets the byte offset of the entry-start bitmask within the page.</summary>
         public int BitmaskOffset { get; } = bitmaskOffset;
 
         /// <summary>Gets the byte offset of the first entry payload within the page.</summary>
         public int FirstEntryOffset { get; } = firstEntryOffset;
+
+        /// <summary>Gets the byte offset of the prev_page header field.</summary>
+        public int PrevPageOffset { get; } = prevPageOffset;
+
+        /// <summary>Gets the byte offset of the next_page header field.</summary>
+        public int NextPageOffset { get; } = nextPageOffset;
+
+        /// <summary>Gets the byte offset of the tail_page (childTail) header field.</summary>
+        public int TailPageOffset { get; } = tailPageOffset;
+
+        /// <summary>Gets the byte offset of the pref_len (page-shared prefix length, u16) header field.</summary>
+        public int PrefLenOffset { get; } = prefLenOffset;
     }
 
     /// <summary>
@@ -103,7 +137,7 @@ internal static class IndexLeafPageBuilder
     /// <paramref name="enablePrefixCompression"/> is <c>true</c> and at least
     /// two entries are supplied, the longest byte-wise prefix common to every
     /// <see cref="IndexEntry.Key"/> is hoisted into the page header
-    /// (<c>pref_len</c> at offset 20) and stripped from every entry beyond
+    /// (<c>pref_len</c> in the page header) and stripped from every entry beyond
     /// the first. The first entry is always written whole because it carries
     /// the canonical bytes that subsequent entries logically prepend (§4.4).
     /// </summary>
@@ -152,16 +186,16 @@ internal static class IndexLeafPageBuilder
 
         // free_space (offset 2, u16) is patched after we know the entry size.
         Wi32(page, 4, checked((int)parentTdefPage)); // parent_page (TDEF)
-        Wi32(page, 8, checked((int)prevPage));   // prev_page
-        Wi32(page, 12, checked((int)nextPage));  // next_page
-        Wi32(page, 16, checked((int)tailPage));  // tail_page
+        Wi32(page, layout.PrevPageOffset, checked((int)prevPage));   // prev_page
+        Wi32(page, layout.NextPageOffset, checked((int)nextPage));   // next_page
+        Wi32(page, layout.TailPageOffset, checked((int)tailPage));   // tail_page (childTail)
 
         // §4.4: pref_len is the number of leading bytes that every entry
         // shares with the first entry. Stripped from every entry beyond the
         // first; the first entry is always written whole because it supplies
         // the canonical prefix bytes.
         int prefLen = enablePrefixCompression ? ComputeSharedPrefixLength(entries) : 0;
-        Wu16(page, 20, prefLen);
+        Wu16(page, layout.PrefLenOffset, prefLen);
 
         // Bytes 22..(layout.BitmaskOffset-1) are reserved; left zeroed.
         // Bitmask spans [layout.BitmaskOffset .. layout.FirstEntryOffset-1].

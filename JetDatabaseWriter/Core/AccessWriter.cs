@@ -10166,7 +10166,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 removePtrs.Add((dpDel, drDel));
             }
 
-            if (!IndexLeafIncremental.IsSingleRootLeaf(rootPage))
+            if (!IndexLeafIncremental.IsSingleRootLeaf(layout, rootPage))
             {
                 // Multi-level tree (root is an intermediate 0x03 page) or a
                 // single leaf with sibling pointers (a child of an
@@ -10292,7 +10292,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     }
 
                     allExisting.AddRange(IndexLeafIncremental.DecodeEntries(layout, leaf, _pgSz));
-                    walkPage = IndexLeafIncremental.ReadNextLeafPage(leaf);
+                    walkPage = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
                 }
 
                 List<IndexEntry>? splicedAll = IndexLeafIncremental.Splice(allExisting, addEntries, removePtrs);
@@ -10432,7 +10432,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         List<IndexEntry> addEntries,
         CancellationToken cancellationToken)
     {
-        long tailLeafPage = IndexLeafIncremental.ReadTailPage(rootPage);
+        long tailLeafPage = IndexLeafIncremental.ReadTailPage(layout, rootPage);
         if (tailLeafPage <= 0)
         {
             return false;
@@ -10454,8 +10454,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        long tailPrev = IndexLeafIncremental.ReadPrevPage(tailLeaf);
-        long tailNext = IndexLeafIncremental.ReadNextLeafPage(tailLeaf);
+        long tailPrev = IndexLeafIncremental.ReadPrevPage(layout, tailLeaf);
+        long tailNext = IndexLeafIncremental.ReadNextLeafPage(layout, tailLeaf);
         if (tailNext != 0)
         {
             // The tail leaf must be the rightmost leaf (next_page == 0). If
@@ -10626,9 +10626,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        long leafPrev = IndexLeafIncremental.ReadPrevPage(leaf);
-        long leafNext = IndexLeafIncremental.ReadNextLeafPage(leaf);
-        long leafTail = IndexLeafIncremental.ReadTailPage(leaf);
+        long leafPrev = IndexLeafIncremental.ReadPrevPage(layout, leaf);
+        long leafNext = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
+        long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
 
         byte[] oldMaxKey = existingLeafEntries[existingLeafEntries.Count - 1].Key;
 
@@ -10758,8 +10758,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 ReturnPage(nextBytes);
             }
 
-            // prev_page is at offset 8 (§4.1).
-            BinaryPrimitives.WriteInt32LittleEndian(nextLeaf.AsSpan(8, 4), checked((int)pageNumbers[splitCount - 1]));
+            // prev_page is per layout (§4.1).
+            BinaryPrimitives.WriteInt32LittleEndian(nextLeaf.AsSpan(layout.PrevPageOffset, 4), checked((int)pageNumbers[splitCount - 1]));
             await WritePageAsync(leafNext, nextLeaf, cancellationToken).ConfigureAwait(false);
         }
 
@@ -10881,9 +10881,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             byte[] pageBytes = step.PageBytes;
-            long prev = (uint)BinaryPrimitives.ReadInt32LittleEndian(pageBytes.AsSpan(8, 4));
-            long next = (uint)BinaryPrimitives.ReadInt32LittleEndian(pageBytes.AsSpan(12, 4));
-            long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(pageBytes.AsSpan(16, 4));
+            long prev = (uint)BinaryPrimitives.ReadInt32LittleEndian(pageBytes.AsSpan(layout.PrevPageOffset, 4));
+            long next = (uint)BinaryPrimitives.ReadInt32LittleEndian(pageBytes.AsSpan(layout.NextPageOffset, 4));
+            long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(pageBytes.AsSpan(layout.TailPageOffset, 4));
 
             byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
                 layout, _pgSz, tdefPage, newEntries, prev, next, tail);
@@ -10959,9 +10959,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         byte[] parentBytes = step.PageBytes;
-        long parentPrev = (uint)BinaryPrimitives.ReadInt32LittleEndian(parentBytes.AsSpan(8, 4));
-        long parentNext = (uint)BinaryPrimitives.ReadInt32LittleEndian(parentBytes.AsSpan(12, 4));
-        long parentTail = (uint)BinaryPrimitives.ReadInt32LittleEndian(parentBytes.AsSpan(16, 4));
+        long parentPrev = (uint)BinaryPrimitives.ReadInt32LittleEndian(parentBytes.AsSpan(layout.PrevPageOffset, 4));
+        long parentNext = (uint)BinaryPrimitives.ReadInt32LittleEndian(parentBytes.AsSpan(layout.NextPageOffset, 4));
+        long parentTail = (uint)BinaryPrimitives.ReadInt32LittleEndian(parentBytes.AsSpan(layout.TailPageOffset, 4));
 
         byte[]? rebuiltParent = IndexBTreeBuilder.TryBuildIntermediatePage(
             layout, _pgSz, tdefPage, newEntries, parentPrev, parentNext, parentTail);
@@ -11195,9 +11195,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return false;
             }
 
-            long leafPrev = IndexLeafIncremental.ReadPrevPage(leaf);
-            long leafNext = IndexLeafIncremental.ReadNextLeafPage(leaf);
-            long leafTail = IndexLeafIncremental.ReadTailPage(leaf);
+            long leafPrev = IndexLeafIncremental.ReadPrevPage(layout, leaf);
+            long leafNext = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
+            long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
 
             if (spliced.Count == 0)
             {
@@ -11513,8 +11513,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 ReturnPage(neighbourBytes);
             }
 
-            // §4.1 prev_page is at offset 8.
-            BinaryPrimitives.WriteInt32LittleEndian(neighbour.AsSpan(8, 4), checked((int)newPrevValue));
+            // §4.1 prev_page (per layout).
+            BinaryPrimitives.WriteInt32LittleEndian(neighbour.AsSpan(layout.PrevPageOffset, 4), checked((int)newPrevValue));
             await WritePageAsync(neighbourPage, neighbour, cancellationToken).ConfigureAwait(false);
         }
 
@@ -11531,8 +11531,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 ReturnPage(neighbourBytes);
             }
 
-            // §4.1 next_page is at offset 12.
-            BinaryPrimitives.WriteInt32LittleEndian(neighbour.AsSpan(12, 4), checked((int)newNextValue));
+            // §4.1 next_page (per layout).
+            BinaryPrimitives.WriteInt32LittleEndian(neighbour.AsSpan(layout.NextPageOffset, 4), checked((int)newNextValue));
             await WritePageAsync(neighbourPage, neighbour, cancellationToken).ConfigureAwait(false);
         }
 
@@ -11679,6 +11679,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </list>
     /// </summary>
     private async ValueTask<long> GetEffectiveTailPageAsync(
+        IndexLeafPageBuilder.LeafPageLayout layout,
         long intermediatePage,
         Dictionary<long, long> overrides,
         Dictionary<long, byte[]> rewrites,
@@ -11691,13 +11692,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         if (rewrites.TryGetValue(intermediatePage, out byte[]? rewriteBytes))
         {
-            return IndexLeafIncremental.ReadTailPage(rewriteBytes);
+            return IndexLeafIncremental.ReadTailPage(layout, rewriteBytes);
         }
 
         byte[] raw = await ReadPageAsync(intermediatePage, cancellationToken).ConfigureAwait(false);
         try
         {
-            return IndexLeafIncremental.ReadTailPage(raw);
+            return IndexLeafIncremental.ReadTailPage(layout, raw);
         }
         finally
         {
@@ -11887,9 +11888,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             byte[] origBytes = refStep.PageBytes;
-            long origPrev = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(8, 4));
-            long origNext = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(12, 4));
-            long origTail = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(16, 4));
+            long origPrev = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(layout.PrevPageOffset, 4));
+            long origNext = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(layout.NextPageOffset, 4));
+            long origTail = (uint)BinaryPrimitives.ReadInt32LittleEndian(origBytes.AsSpan(layout.TailPageOffset, 4));
 
             // Recompute tail_page based on the post-mutation
             // entry list. For parent-of-leaf intermediates the rightmost
@@ -11917,7 +11918,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 else
                 {
                     newTail = await GetEffectiveTailPageAsync(
-                        lastChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
+                        layout, lastChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
                         .ConfigureAwait(false);
                 }
             }
@@ -11983,7 +11984,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     {
                         var lastEntry = splitInts[p][splitInts[p].Count - 1];
                         intTails[p] = await GetEffectiveTailPageAsync(
-                            lastEntry.ChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
+                            layout, lastEntry.ChildPage, intermediateTailOverrides, existingPageRewrites, cancellationToken)
                             .ConfigureAwait(false);
                     }
                 }
@@ -12518,7 +12519,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 long? nextChild = SelectChildForKey(layout, page, _pgSz, composite);
                 if (nextChild is null)
                 {
-                    long tail = IndexLeafIncremental.ReadTailPage(page);
+                    long tail = IndexLeafIncremental.ReadTailPage(layout, page);
                     nextChild = tail > 0 ? tail : ReadLastChildPointer(page, _pgSz, layout);
                 }
 
@@ -12564,7 +12565,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             int chainBudget = 1_000_000;
             while (true)
             {
-                long nextLeaf = IndexLeafIncremental.ReadNextLeafPage(leaf);
+                long nextLeaf = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
                 if (nextLeaf <= 0)
                 {
                     break;
@@ -12601,9 +12602,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 }
             }
 
-            long leafPrev = IndexLeafIncremental.ReadPrevPage(leaf);
-            long leafNext = IndexLeafIncremental.ReadNextLeafPage(leaf);
-            long leafTail = IndexLeafIncremental.ReadTailPage(leaf);
+            long leafPrev = IndexLeafIncremental.ReadPrevPage(layout, leaf);
+            long leafNext = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
+            long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
 
             List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, leaf, _pgSz);
 

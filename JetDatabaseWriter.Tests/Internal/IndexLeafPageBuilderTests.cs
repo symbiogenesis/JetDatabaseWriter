@@ -202,7 +202,7 @@ public sealed class IndexLeafPageBuilderTests
             tailPage: 0,
             enablePrefixCompression: true);
 
-        Assert.Equal(4, ReadU16(page, 20));
+        Assert.Equal(4, ReadU16(page, layout.PrefLenOffset));
 
         // First entry is whole: 5-byte key + 4-byte rowptr at firstEntryOffset.
         for (int i = 0; i < 5; i++)

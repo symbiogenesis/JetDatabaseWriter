@@ -197,7 +197,7 @@ public sealed class IndexLeafIncrementalTests
         byte[]? page = IndexLeafIncremental.TryRebuildLeaf(layout, pageSize, ParentTdef, entries);
         Assert.NotNull(page);
         Assert.Equal(0x04, page![0]);
-        Assert.True(IndexLeafIncremental.IsSingleRootLeaf(page));
+        Assert.True(IndexLeafIncremental.IsSingleRootLeaf(layout, page));
 
         List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
         Assert.Equal(2, decoded.Count);
@@ -290,7 +290,7 @@ public sealed class IndexLeafIncrementalTests
         IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         byte[] page = IndexLeafPageBuilder.BuildLeafPage(
             layout, pageSize, ParentTdef, [], prevPage: 0, nextPage: 12345, tailPage: 0, enablePrefixCompression: false);
-        Assert.Equal(12345, IndexLeafIncremental.ReadNextLeafPage(page));
+        Assert.Equal(12345, IndexLeafIncremental.ReadNextLeafPage(layout, page));
     }
 
     [Theory]

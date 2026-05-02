@@ -100,7 +100,7 @@ public sealed class IndexBTreeBuilderTests
         // [2..199] are all zero across the three summaries; only byte [1]
         // differs. Prefix compression hoists the leading 0x00 (1 byte) into
         // pref_len, so subsequent entries strip 1 byte from the front.
-        int prefLen = ReadU16(intermediate, 20);
+        int prefLen = ReadU16(intermediate, layout.PrefLenOffset);
         Assert.Equal(1, prefLen);
 
         // Entry 0 (full): key (200) + 3-byte BE data_page + 1-byte data_row + 4-byte BE child_page.
@@ -146,7 +146,7 @@ public sealed class IndexBTreeBuilderTests
 
         // Intermediate entries summarise the last leaf entry of each child.
         // All boundary keys share big[0]=0 → prefix compression hoists 1 byte.
-        int prefLen = ReadU16(intermediate, 20);
+        int prefLen = ReadU16(intermediate, layout.PrefLenOffset);
         Assert.Equal(1, prefLen);
 
         // Entry 0 (full): key (200) + 3-byte BE data_page + 1-byte data_row + 4-byte BE child_page.
@@ -186,8 +186,8 @@ public sealed class IndexBTreeBuilderTests
         byte[] leaf = r.Pages[0];
         Assert.Equal(0x04, leaf[0]);
 
-        // pref_len at offset 20 should be 4 (the shared 0x7F 0x80 0x00 0x00 prefix).
-        Assert.Equal(4, ReadU16(leaf, 20));
+        // pref_len in the page header should be 4 (the shared 0x7F 0x80 0x00 0x00 prefix).
+        Assert.Equal(4, ReadU16(leaf, layout.PrefLenOffset));
 
         // First entry: full 5-byte key + 4-byte rowptr at firstEntryOffset (stride 9).
         // Entry 1 at offset 9, entry 2 at offset 14 — both compressed to 1 + 4 bytes.

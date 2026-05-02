@@ -1,6 +1,6 @@
 # Design notes: MSysObjects catalog index maintenance for round-trip-safe writes
 
-**Status:** Phase C1 partially implemented (`AccessWriter.TrySpliceCatalogIndexEntryAsync`, ~line 12309) and wired into `InsertCatalogEntryAsync` (~line 6310). The splice succeeds for single-column uniform-length indexes (e.g. MSysObjects's `Id` PK) but **corrupts composite/text leaves** (e.g. MSysObjects's `ParentIdName`) because the underlying leaf decoder/encoder does not model Access's per-entry incremental prefix compression. See §2.2 below and [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.4.2. The two gating tests below remain failing.
+**Status:** Phase C1 partially implemented (`AccessWriter.TrySpliceCatalogIndexEntryAsync`, ~line 12309) and wired into `InsertCatalogEntryAsync` (~line 6310). The splice succeeds for single-column uniform-length indexes (e.g. MSysObjects's `Id` PK) but **still corrupts composite/text leaves** (e.g. MSysObjects's `ParentIdName`). The previous root-cause hypothesis (per-entry incremental prefix compression) was disproven on 2026-05-02 — see §2.2 below and [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.4.2 for the corrected analysis. Two gating tests below remain failing.
 
 **Driver:** Two pinned round-trip tests in [JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs):
 
@@ -56,7 +56,9 @@ The targeted Phase C1 splice path (`AccessWriter.TrySpliceCatalogIndexEntryAsync
 
 The remaining failure is in the **`ParentIdName` composite leaf rewrite**. Bisecting via `DIAG_CATALOG_SPLICE_SKIP_RI=0` (skip the composite splice, only update the `Id` PK) makes DAO open the post-write file cleanly and find all 240 MSysObjects rows including `MSysDb`. Re-enabling the composite splice corrupts the leaf and DAO aborts with `Could not find the object 'MSysDb'`.
 
-Root cause: the composite leaf's existing entries are stored in Access's per-entry incremental-prefix compression scheme, which neither `IndexLeafIncremental.DecodeEntries` (reader) nor `IndexLeafPageBuilder.BuildLeafPage` (writer) currently models. See [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.4.2 for the full technical description and the gating fix required before Phase C1 can ship.
+Root cause (corrected 2026-05-02): the original 2026-05-01 hypothesis blamed an unmodelled per-entry incremental prefix compression scheme. That hypothesis was wrong — the symptom was actually a 4-byte header offset error in our writer/reader (we were reading the Jet4/ACE leaf header at Jet3 offsets, so `pref_len` came back as `0` from the wrong byte). That offset bug has been fixed: `Constants.IndexLeafPage` now exposes per-format offsets and `IndexLeafPageBuilder.LeafPageLayout` carries them through every writer + reader path. See [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.1 (per-format offset table) and §4.4.2 (withdrawn hypothesis).
+
+The header-offset fix did not by itself green the two gating tests — the splice still produces a leaf DAO Compact rejects with `Could not find the object 'MSysDb'`. The remaining bug is in the splice itself: candidate suspects are (a) the composite key encoding for the new MSysObjects row not matching Access's encoding for `(ParentId, Name)` sort, (b) the page-shared prefix being recomputed to a value Access did not produce, or (c) an entry-start bitmask / row-pointer encoding mismatch when the new entry breaks the existing prefix invariant. Byte-level diff of the spliced vs original `MSysObjects.ParentIdName` tail leaf is the next investigation step.
 
 Earlier, the previous (full-rebuild) `InsertSystemRowAndMaintainAsync` path was rejected for a different reason — it re-encodes every existing row, dropping content the writer cannot losslessly emit (the special "Databases" properties row's LvProp blob). That rejection still holds. Phase C1's incremental design is the correct shape; only the leaf decoder/encoder is incomplete.
 
@@ -69,7 +71,7 @@ Earlier, the previous (full-rebuild) `InsertSystemRowAndMaintainAsync` path was 
 | 0 | `ParentIdName` (composite) | 0 | `ParentId` (col 1, Int32 asc), `Name` (col 2, Text asc, GeneralLegacy) | leaf chain rooted at p.7 → tail leaf p.2790 (114 entries) |
 | 1 | `Id` (PK) | 1 | `Id` (col 0, Int32 asc) | leaf chain rooted at p.8 (single leaf, 239 entries pre-insert) |
 
-Per-leaf entry format follows the standard rules in [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4: `entry_start` bitmask + sort-key bytes + 4-byte row pointer (`page << 8 | row_index_within_page`). **However**, see [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.4.2 — Access-authored leaves use a per-entry incremental-prefix scheme that our reader/writer does NOT model. This is the gating obstacle for Phase C1.
+Per-leaf entry format follows the standard rules in [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4: `entry_start` bitmask + sort-key bytes + 4-byte row pointer (`page << 8 | row_index_within_page`). Page-shared prefix compression (§4.4.1, `pref_len` header field) is the only compression scheme; the previously-suspected per-entry incremental scheme does not exist (§4.4.2).
 
 The Text column `Name` uses the **General Legacy** text encoder (`JetDatabaseWriter/Internal/GeneralLegacyTextIndexEncoder.cs`). That encoder is already shipped and exercised by user-table indexes; it is reusable here.
 
@@ -144,13 +146,13 @@ We never touch entries we did not insert. The "Databases" row (and any other row
 
 | Phase | Scope | Gating tests |
 |---|---|---|
-| **C0 (NEW — gating prerequisite)** | Implement Access's per-entry incremental-prefix compression in `IndexLeafIncremental.DecodeEntries` and `IndexLeafPageBuilder.BuildLeafPage`. Without this, no leaf rewrite is byte-safe for Access-authored leaves with heterogeneous-length entries. See [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.4.2 for the empirical observations and the canonical Jackcess port reference. | New unit tests round-tripping Access-authored leaves byte-for-byte. Should be added to `IndexLeafIncrementalTests`. |
-| **C1** | (Already partially landed as `TrySpliceCatalogIndexEntryAsync`.) Once C0 is in, re-enable for *all* MSysObjects real-idx slots — currently the composite-key splice corrupts the leaf. | `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`, `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`. Plus all of `AccessRoundTripTests` must stay green. |
+| **C0 (LANDED 2026-05-02)** | ~~Implement Access's per-entry incremental-prefix compression.~~ Hypothesis withdrawn — see §4.4.2 of index notes. The actual fix shipped was a 4-byte header-offset correction (per-format `LeafPageLayout` offsets across `Constants.IndexLeafPage`, `IndexLeafPageBuilder`, `IndexBTreeBuilder`, `IndexLeafIncremental`, `IndexBTreeSeeker`, `AccessWriter.MaintainIndexesAsync`). All 2501 non-round-trip tests pass. | n/a |
+| **C1** | (Already partially landed as `TrySpliceCatalogIndexEntryAsync`.) The composite-index splice still corrupts the leaf even after C0; remaining bug is in the splice's entry encoding / prefix recomputation, not in the underlying decoder. | `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`, `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`. Plus all of `AccessRoundTripTests` must stay green. |
 | **C2** | Re-route `InsertSystemRowAndMaintainAsync` (used by MSysRelationships/MSysComplexColumns) through the same splicer; remove dependency on `MaintainIndexesAsync`'s full-rebuild path for system tables. | Existing relationship/complex-column round-trip tests (already passing) stay green; no new test required if behaviour is byte-equivalent. |
 | **C3** | Implement general mid-tree leaf split + intermediate-page rebalancing for system tables. | New unit tests in `JetDatabaseWriter.Tests/Internal/CatalogIndexLeafSplicerTests.cs` constructing synthetic many-table scenarios that force splits; round-trip through DAO. |
 | **C4** | Harden `TryMaintainIndexesIncrementalAsync`'s slot decoder so it no longer silently returns `true` on `slots.Count == 0` for tables known to have indexes. Treat that case as a hard error and emit a diagnostic. | Internal-only; covered by existing user-table round-trip tests. |
 
-**C0 must land before C1 can clear the gating tests.** C2/C3/C4 are follow-ups that reduce technical debt but are not gating.
+**C0 has landed; C1 still requires further investigation.** C2/C3/C4 are follow-ups that reduce technical debt but are not gating.
 
 ## 6. Implementation checklist (C1)
 

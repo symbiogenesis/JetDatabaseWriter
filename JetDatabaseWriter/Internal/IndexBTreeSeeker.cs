@@ -54,6 +54,9 @@ internal static class IndexBTreeSeeker
     private const byte PageTypeLeaf = Constants.IndexLeafPage.PageTypeLeaf;
     private const int BitmaskOffset = Constants.IndexLeafPage.Jet4BitmaskOffset;
     private const int FirstEntryOffset = Constants.IndexLeafPage.Jet4FirstEntryOffset;
+    private const int NextPageOffset = Constants.IndexLeafPage.Jet4NextPageOffset;
+    private const int TailPageOffset = Constants.IndexLeafPage.Jet4TailPageOffset;
+    private const int PrefLenOffset = Constants.IndexLeafPage.Jet4PrefLenOffset;
 
     /// <summary>
     /// Returns <see langword="true"/> when at least one entry in the B-tree
@@ -120,7 +123,7 @@ internal static class IndexBTreeSeeker
             long? next = SelectChildPage(pageSize, page, searchKey);
             if (next == null)
             {
-                long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(16, 4));
+                long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(TailPageOffset, 4));
                 if (tail <= 0)
                 {
                     return false;
@@ -187,7 +190,7 @@ internal static class IndexBTreeSeeker
             long? next = SelectChildPage(pageSize, page, searchKey);
             if (next == null)
             {
-                long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(16, 4));
+                long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(TailPageOffset, 4));
                 if (tail <= 0)
                 {
                     return matches;
@@ -221,7 +224,7 @@ internal static class IndexBTreeSeeker
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(20, 2));
+            int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(PrefLenOffset, 2));
             int payloadEnd = pageSize - BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
             byte[]? sharedPrefix = null;
 
@@ -300,7 +303,7 @@ internal static class IndexBTreeSeeker
             // equals the search key (canonically) — if not, sibling leaves
             // cannot contain it (entries are sorted globally). Only then walk
             // next_page.
-            long nextPageNumber = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(12, 4));
+            long nextPageNumber = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(NextPageOffset, 4));
             if (nextPageNumber <= 0 || lastEntryStart < 0)
             {
                 return false;
@@ -337,7 +340,7 @@ internal static class IndexBTreeSeeker
     /// </summary>
     private static long? SelectChildPage(int pageSize, byte[] page, byte[] searchKey)
     {
-        int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(20, 2));
+        int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(PrefLenOffset, 2));
         int payloadEnd = pageSize - BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
         byte[]? sharedPrefix = null;
 
@@ -525,7 +528,7 @@ internal static class IndexBTreeSeeker
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(20, 2));
+            int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(PrefLenOffset, 2));
             int payloadEnd = pageSize - BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
             byte[]? sharedPrefix = null;
 
@@ -591,7 +594,7 @@ internal static class IndexBTreeSeeker
             // searchKey, no sibling leaf can hold further matches (entries
             // are sorted globally). Otherwise, when last == searchKey OR
             // last < searchKey but tail-page may overshoot, walk next_page.
-            long nextPageNumber = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(12, 4));
+            long nextPageNumber = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(NextPageOffset, 4));
             if (nextPageNumber <= 0 || lastEntryStart < 0)
             {
                 return;

@@ -142,11 +142,26 @@ When the user enables "enforce referential integrity" in the Access GUI, both si
 1 byte   unknown        // 0x01
 2 bytes  free_space
 4 bytes  parent_page    // TDEF pg for this idx
+4 bytes  unknown(0)     // Jet4 / ACE ONLY — not present in Jet3 (shifts every field below by +4)
 4 bytes  prev_page      // sibling at this level
 4 bytes  next_page      // sibling at this level
 4 bytes  tail_page      // pointer to tail leaf (PK-style append optimization)
 2 bytes  pref_len       // shared-prefix length (compression)
 ```
+
+Per-format absolute offsets (matches Jackcess `JetFormat`):
+
+| Field        | Jet3 (`.mdb` Access 97) | Jet4 / ACE (`.mdb` 2000–2003, `.accdb`) |
+|--------------|------------------------:|------------------------------------------:|
+| `parent_page`| `0x04` (4)              | `0x04` (4)                                |
+| `prev_page`  | `0x08` (8)              | `0x0C` (12)                               |
+| `next_page`  | `0x0C` (12)             | `0x10` (16)                               |
+| `tail_page`  | `0x10` (16)             | `0x14` (20)                               |
+| `pref_len`   | `0x14` (20)             | `0x18` (24)                               |
+| bitmask start| `0x16` (22)             | `0x1B` (27)                               |
+| first entry  | `0xF8` (248)            | `0x1E0` (480)                             |
+
+These constants are exposed as `Constants.IndexLeafPage.{Jet3,Jet4}{PrevPage,NextPage,TailPage,PrefLen,Bitmask,FirstEntry}Offset` and bundled into `IndexLeafPageBuilder.LeafPageLayout` (`LeafPageLayout.Jet3` / `LeafPageLayout.Jet4`) so writer + reader code paths pick the correct offsets per format.
 
 ### 4.2 Entry-start bitmask
 
@@ -157,7 +172,9 @@ A bitmask immediately following the header marks where each entry begins.
 
 The bitmask encodes 1 bit per byte of payload (LSB-first within each byte). The first entry is implicit (no bit set). A bit at position N indicates an entry begins at offset `(first_entry_offset + N)`.
 
-> **Jet3 confirmed empirically by W17a** ([`format-probe-appendix-jet3-index.md`](format-probe-appendix-jet3-index.md), `MSysAccessObjects.PrimaryKey` leaf page 24 of `indexTestV1997.mdb`): bitmask at offset `0x16`, first entry at `0xF8`, 9-byte stride for `T_LONG` int keys (1B flag + 4B BE int + 3B page + 1B row), and the bitmask byte pattern `00 02 04 08 10 20 40 80 …` matches the LSB-first 9-byte stride exactly. The §4.1 page-header layout (parent_page @ 4, prev_page @ 8, next_page @ 12, tail_page @ 16, pref_len @ 20) is **identical** between Jet3 and Jet4.
+> **Jet3 confirmed empirically by W17a** ([`format-probe-appendix-jet3-index.md`](format-probe-appendix-jet3-index.md), `MSysAccessObjects.PrimaryKey` leaf page 24 of `indexTestV1997.mdb`): bitmask at offset `0x16`, first entry at `0xF8`, 9-byte stride for `T_LONG` int keys (1B flag + 4B BE int + 3B page + 1B row), and the bitmask byte pattern `00 02 04 08 10 20 40 80 …` matches the LSB-first 9-byte stride exactly.
+>
+> **The §4.1 page-header layout is NOT identical between Jet3 and Jet4.** Earlier revisions of this document incorrectly claimed it was. Jet4 / ACE inserts an extra 4-byte `unknown(0)` field at offset `0x08`, shifting `prev_page`, `next_page`, `tail_page`, and `pref_len` by +4 bytes. See the per-format offset table above; verified against `JetDatabaseWriter.Tests/Databases/NorthwindTraders.accdb` (page 2790, `MSysObjects.ParentIdName` middle leaf) and Jackcess `com.healthmarketscience.jackcess.impl.JetFormat`.
 
 ### 4.3 Entry record
 
@@ -175,28 +192,19 @@ n bytes  encoded key    // per-column, in column-map order; null cols contribute
 
 ### 4.4 Prefix compression
 
-JET leaf and intermediate pages compress entries via TWO independent mechanisms. Our writer + reader currently model only the first; **the second is undocumented in our notes and is a known gap** (see §4.4.2).
+JET leaf and intermediate pages compress entries via a single **page-shared prefix** held in the header `pref_len` field. An earlier revision of these notes hypothesised a second per-entry incremental compression scheme; that hypothesis was **incorrect** (see §4.4.2) — the symptom that motivated it was a 4-byte header offset bug in our writer (§4.1).
 
 #### 4.4.1 Page-shared prefix (`pref_len` header field)
 
-If the page header `pref_len` (offset `0x14`, u16 LE) is non-zero, the first `pref_len` bytes of the *first* entry are implicitly prepended to every subsequent entry on that page. So a 4-byte-prefix page could cut every int-key entry from 9 bytes (`flag + int32 + 3-byte page + 1-byte row`) to 5 bytes. `IndexLeafPageBuilder.BuildLeafPage` (writer) computes the longest byte-wise prefix common to every entry and emits this on `enablePrefixCompression: true`; `IndexLeafIncremental.DecodeEntries` (reader) re-prepends those bytes to entries beyond the first.
+If the page header `pref_len` (Jet3 offset `0x14`, Jet4 / ACE offset `0x18`, u16 LE) is non-zero, the first `pref_len` bytes of the *first* entry are implicitly prepended to every subsequent entry on that page. So a 4-byte-prefix page could cut every int-key entry from 9 bytes (`flag + int32 + 3-byte page + 1-byte row`) to 5 bytes. `IndexLeafPageBuilder.BuildLeafPage` (writer) computes the longest byte-wise prefix common to every entry and emits this on `enablePrefixCompression: true`; `IndexLeafIncremental.DecodeEntries` (reader) re-prepends those bytes to entries beyond the first.
 
-#### 4.4.2 Per-entry incremental compression (UNMODELLED — reverse-engineering required)
+#### 4.4.2 Per-entry incremental compression — hypothesis WITHDRAWN (2026-05-02)
 
-Empirically (see `/memories/repo/round-trip-tests.md`, 2026-05-01 findings), Access-authored leaves with **`pref_len = 0`** still pack adjacent entries by stripping a per-entry-variable number of leading bytes shared with the *previous* entry on the same leaf — independent of §4.4.1. Concrete observation from `MSysObjects.ParentIdName` leaf at page 2790 (`NorthwindTraders.accdb`, ACCDB):
+A prior diagnostic session (2026-05-01) hypothesised that Access-authored leaves with `pref_len = 0` use a per-entry incremental prefix scheme stripping leading bytes shared with the *previous* entry. **That hypothesis was wrong.** The corrupt-looking entries observed on `MSysObjects.ParentIdName` (NorthwindTraders.accdb page 2790) were the result of our writer reading `pref_len` from the wrong byte offset — we were reading offset `0x14` (correct for Jet3) on a Jet4 / ACE page where `pref_len` actually lives at `0x18`. The byte at `0x14` on a Jet4 page is the low half of `tail_page`, which happened to be `0x00 0x00` for the inspected leaf, so the writer mis-computed `pref_len = 0` instead of the true `pref_len = 1` (or higher), then re-encoded entries beyond the first as if they carried the canonical prefix.
 
-- Page header `pref_len = 0`.
-- Entry [0] stored bytes (25): `7F 8F 00 00 01 7F 64 69 4F 51 69 4F 51 6D 4A 59 5E 6B 6D 4A 6D 6F 6B 01 00`. This decodes correctly as `flag(7F) + ParentId BE(8F000001 = 0x0F000001 = TablesParentId) + Name flag(7F) + Name encoded bytes + END_TEXT(01) + END_EXTRA_TEXT(00)`.
-- Entry [1] stored bytes (13): `8F 00 00 01 7F 64 69 4F 51 69 6B 01 00`. This is *not* a valid standalone canonical key — the leading `7F` flag byte is missing, and Naïve concatenation with the row pointer yields a key that compares incorrectly against entry [0].
-- The 13 bytes of entry [1] only make sense as a per-entry suffix relative to entry [0]: canonical key of entry [1] = (some leading bytes copied from entry [0]) ++ (entry [1] stored bytes after the implicit prefix length marker).
+Fix shipped: `Constants.IndexLeafPage` exposes per-format header offsets, `LeafPageLayout` carries them (`PrefLenOffset`, `PrevPageOffset`, `NextPageOffset`, `TailPageOffset`), and every writer + reader call site (`IndexLeafPageBuilder`, `IndexBTreeBuilder`, `IndexLeafIncremental`, `IndexBTreeSeeker`, `AccessWriter` MaintainIndexes path) reads/writes through the layout. See §4.1 for the corrected offset table.
 
-Since `IndexLeafIncremental.DecodeEntries` only re-prepends the page-shared `pref_len` (which is 0 here), it returns these stripped bytes as if they were the canonical keys. Round-tripping through `BuildLeafPage` then **writes them back as standalone keys**, corrupting the leaf — DAO Compact subsequently fails to descend the (now-corrupt) `MSysObjects.ParentIdName` index and aborts with `Could not find the object 'MSysDb'` (verified by bisecting via `DIAG_CATALOG_SPLICE_SKIP_RI=0` against the real-idx loop).
-
-**Status:** unimplemented in both reader and writer. Affects any index where Access-authored leaves contain entries of unequal length / heterogeneous leading bytes — most prominently MSysObjects's `ParentIdName` and `ParentIdType` composite indexes, and any user-table text/composite index re-read after Access has rebuilt it. Indexes with uniform-length single-column int keys (e.g. `MSysObjects.Id` PK at leaf page 8) round-trip correctly because no incremental compression is applied to them in practice (every entry's full bytes are stored).
-
-The canonical port should mirror Jackcess `com.healthmarketscience.jackcess.impl.IndexData.LeafEntry` / `IndexData.readEntry` — investigate the `entryPrefix` / `prefixLength` plumbing there. Jackcess stores a per-entry "shared with previous" byte count (likely the first byte of the stored entry, or a bit-stream alongside the entry-start bitmask).
-
-This is the gating obstacle for the Phase C1 `CatalogIndexLeafSplicer` work outlined in [`catalog-index-maintenance-notes.md`](catalog-index-maintenance-notes.md).
+No evidence of any per-entry incremental compression scheme has been found in Jackcess (`com.healthmarketscience.jackcess.impl.IndexData` only models the §4.4.1 page-shared prefix). Treat any future "unaccountable per-entry stripping" symptom as a strong signal of a header-offset / decode bug rather than a missing format feature.
 
 ### 4.5 Tail-page optimization
 
