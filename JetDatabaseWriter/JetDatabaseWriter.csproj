@@ -41,6 +41,10 @@
   <ItemGroup>
     <EmbeddedResource Include="Internal\IndexCodeTables\index_codes_genleg.txt.gz" LogicalName="JetDatabaseWriter.IndexCodeTables.index_codes_genleg.txt.gz" />
     <EmbeddedResource Include="Internal\IndexCodeTables\index_codes_ext_genleg.txt.gz" LogicalName="JetDatabaseWriter.IndexCodeTables.index_codes_ext_genleg.txt.gz" />
+    <EmbeddedResource Include="Internal\IndexCodeTables\index_codes_gen.txt.gz" LogicalName="JetDatabaseWriter.IndexCodeTables.index_codes_gen.txt.gz" />
+    <EmbeddedResource Include="Internal\IndexCodeTables\index_codes_ext_gen.txt.gz" LogicalName="JetDatabaseWriter.IndexCodeTables.index_codes_ext_gen.txt.gz" />
+    <EmbeddedResource Include="Internal\IndexCodeTables\index_codes_gen_97.txt.gz" LogicalName="JetDatabaseWriter.IndexCodeTables.index_codes_gen_97.txt.gz" />
+    <EmbeddedResource Include="Internal\IndexCodeTables\index_mappings_ext_gen_97.txt.gz" LogicalName="JetDatabaseWriter.IndexCodeTables.index_mappings_ext_gen_97.txt.gz" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.7" />
