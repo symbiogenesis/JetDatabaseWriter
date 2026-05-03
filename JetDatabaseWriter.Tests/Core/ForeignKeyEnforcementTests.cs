@@ -292,6 +292,90 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
         Assert.Equal(2, t.Rows.Count);
         Assert.All(t.AsEnumerable(), r => Assert.Equal(99, Convert.ToInt32(r["ParentId"], System.Globalization.CultureInfo.InvariantCulture)));
+
+        // Regression for `docs/design/test-coverage-gaps.md` §9: the
+        // parent-side `UpdateRowsAsync` must rewrite the PK column on disk,
+        // not only repoint the children. Reopen the parent table and assert
+        // the row carries the new PK value (and the old one is gone).
+        DataTable p = (await reader.ReadDataTableAsync(parent, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataRow parentRow = Assert.Single(p.AsEnumerable());
+        Assert.Equal(99, Convert.ToInt32(parentRow["Id"], System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task Update_PkSide_WithCascade_RewritesParentRowOnDisk_SingleColumnPk()
+    {
+        // Focused regression for `docs/design/test-coverage-gaps.md` §9.
+        // The existing cascade-update tests assert the child-side index
+        // repoint; this test isolates the parent-side observation: after
+        // updating the parent row's PK, reopen the file and assert the
+        // parent table now exposes only the new PK value.
+        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        string parent = MakeTableName("UPP");
+        string child = MakeTableName("UPC");
+
+        await using (var writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(
+                parent,
+                [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Label", typeof(string), maxLength: 32)],
+                TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(
+                child,
+                [new("Id", typeof(int)), new("ParentId", typeof(int))],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowsAsync(
+                parent,
+                [
+                    [1, "one"],
+                    [2, "two"],
+                    [3, "three"],
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_PkUpdObs", parent, "Id", child, "ParentId")
+                {
+                    CascadeUpdates = true,
+                },
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowsAsync(
+                child,
+                [
+                    [10, 2],
+                    [11, 2],
+                ],
+                TestContext.Current.CancellationToken);
+
+            int updated = await writer.UpdateRowsAsync(
+                parent,
+                "Id",
+                2,
+                new Dictionary<string, object> { ["Id"] = 222 },
+                TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
+        }
+
+        await using var reader = await OpenReaderAsync(temp);
+        DataTable p = (await reader.ReadDataTableAsync(parent, cancellationToken: TestContext.Current.CancellationToken))!;
+
+        // Parent side: row that had Id=2 now reports Id=222; the other
+        // rows are unchanged; no row carries the old key value any more.
+        Assert.Equal(3, p.Rows.Count);
+        int[] parentIds = [.. p.AsEnumerable().Select(r => Convert.ToInt32(r["Id"], System.Globalization.CultureInfo.InvariantCulture)).OrderBy(static x => x)];
+        Assert.Equal([1, 3, 222], parentIds);
+        Assert.DoesNotContain(2, parentIds);
+
+        // The non-PK columns must travel with the rewritten row.
+        DataRow renamed = Assert.Single(p.AsEnumerable(), r => Convert.ToInt32(r["Id"], System.Globalization.CultureInfo.InvariantCulture) == 222);
+        Assert.Equal("two", (string)renamed["Label"]);
+
+        // Sanity: child-side cascade still landed (existing coverage).
+        DataTable c = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Equal(2, c.Rows.Count);
+        Assert.All(c.AsEnumerable(), r => Assert.Equal(222, Convert.ToInt32(r["ParentId"], System.Globalization.CultureInfo.InvariantCulture)));
     }
 
     [Fact]
@@ -315,6 +399,87 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
 
         // Correct tuple → succeed.
         await writer.InsertRowAsync(child, [2, 1, 2], TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// Atomicity regression for <c>docs/design/test-coverage-gaps.md</c>
+    /// §9: a constraint violation deep in a multi-row insert must roll
+    /// back every row written earlier in the batch — the database must
+    /// look exactly as it did before the call.
+    /// </summary>
+    /// <remarks>
+    /// The pre-write unique check (covered by
+    /// <c>JetTransactionTests.UseTransactionalWrites_RollsBackOnExceptionDuringInsert</c>)
+    /// fires <em>before</em> any row is physically inserted, so it doesn't
+    /// exercise the per-call <c>RollbackInsertedRowsAsync</c> path. Foreign-key
+    /// enforcement runs <em>per-row</em> inside the loop after the row has
+    /// been written, so we use it to land partial writes on disk before
+    /// the throw.
+    /// </remarks>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task InsertRows_WithFkViolationDeepInBatch_RollsBackEntireBatch()
+    {
+        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        string parent = MakeTableName("AP");
+        string child = MakeTableName("AC");
+
+        await using (var writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
+
+            // Seed every legal parent key 1..10.
+            var parentRows = new List<object[]>(10);
+            for (int i = 1; i <= 10; i++)
+            {
+                parentRows.Add([i]);
+            }
+
+            await writer.InsertRowsAsync(parent, parentRows, TestContext.Current.CancellationToken);
+
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_AtomBatch", parent, "Id", child, "ParentId"),
+                TestContext.Current.CancellationToken);
+
+            // Seed one valid child row so we can detect any "leaked" rows
+            // from the failed batch by row count.
+            await writer.InsertRowAsync(child, [1, 1], TestContext.Current.CancellationToken);
+
+            // Build a batch where rows 0..N-2 are valid and row N-1 is
+            // an FK violation (ParentId=999 has no matching parent).
+            // FK enforcement runs per-row INSIDE the insert loop after the
+            // row has been written, so rows 0..N-2 land on disk before the
+            // throw — the per-call rollback path must remove them.
+            object[][] batch =
+            [
+                [100, 1],
+                [101, 2],
+                [102, 3],
+                [103, 4],
+                [104, 5],
+                [105, 6],
+                [106, 7],
+                [107, 999], // FK violation — no parent.
+                [108, 8],
+            ];
+
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await writer.InsertRowsAsync(child, batch, TestContext.Current.CancellationToken));
+        }
+
+        // Reopen and assert the child table contains ONLY the seed row;
+        // none of the partial-batch rows survived the rollback.
+        await using var reader = await OpenReaderAsync(temp);
+        DataTable c = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataRow only = Assert.Single(c.AsEnumerable());
+        Assert.Equal(1, Convert.ToInt32(only["Id"], System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Equal(1, Convert.ToInt32(only["ParentId"], System.Globalization.CultureInfo.InvariantCulture));
+
+        // Specifically: none of the batch's Ids (100..108) leaked through.
+        Assert.DoesNotContain(
+            c.AsEnumerable(),
+            r => Convert.ToInt32(r["Id"], System.Globalization.CultureInfo.InvariantCulture) >= 100);
     }
 
     [Fact]
