@@ -21,7 +21,7 @@ Phases below are ordered by **biggest line reduction first**. Line numbers refer
 | 11 | LVAL encoding                   |   200 | 10,245 |
 | 12 | Stray nested utilities          |   150 | 10,395 |
 
-After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly **~2,100 lines** of pure orchestration: the constructor, public `OpenAsync`/`CreateDatabaseAsync` factories, the public CRUD/schema entry points, and `DisposeAsync`. (Current state after Phases 1–2: **6,823 lines**.)
+After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly **~2,100 lines** of pure orchestration: the constructor, public `OpenAsync`/`CreateDatabaseAsync` factories, the public CRUD/schema entry points, and `DisposeAsync`. (Current state after Phases 1–3: **5,347 lines**.)
 
 > **No partial classes.** The maintainer dislikes splitting `AccessWriter` across multiple `partial` files — it hides the true size and complexity of the type and makes navigation worse. Every extraction below must land in a **properly-named type** under `Internal/`, with `AccessWriter` holding a private field of that type and forwarding through thin instance methods. Anything that genuinely cannot be lifted off `AccessWriter` (because it touches too much private state) must stay in `AccessWriter.cs` rather than be moved into a partial.
 >
@@ -56,23 +56,15 @@ Extracted to [JetDatabaseWriter/Internal/IndexMaintainer.cs](../../JetDatabaseWr
 - [x] Moved diagnostic field `_lastIncrementalBail` (now `IndexMaintainer.LastIncrementalBail`).
 - [x] **Home:** `Internal/IndexMaintainer.cs`, alongside `IndexLeafIncremental` / `IndexBTreeBuilder` ✓.
 
-## Phase 3 — Complex-column (Attachment / MultiValue) subsystem (~1,590 lines)
+## Phase 3 — Complex-column (Attachment / MultiValue) subsystem (~1,590 lines) ✅ DONE
 
-- [ ] Extract methods at lines **6626–8213**:
-  - `ScaffoldSystemTablesAsync`
-  - `CreateMSysComplexTypeTemplatesAsync`, `ResolveComplexTypeTemplateName`
-  - `CreateMSysComplexColumnsAsync`
-  - `PrepareComplexColumnAllocationsAsync`, `GetNextComplexIdAsync`
-  - `EmitComplexColumnArtifactsAsync`, `BuildFlatTableName`
-  - `InsertMSysComplexColumnsRowAsync`
-  - `AddAttachmentAsync`, `AddMultiValueItemAsync`, `AddComplexItemCoreAsync`
-  - `ResolveFlatTableNameAsync`, `ResolveFlatTableTdefPageAsync`
-  - `ReadOrAllocateConceptualTableIdAsync`, `PatchParentComplexSlotAsync`, `GetNextConceptualTableIdForFlatAsync`
-  - `BuildAttachmentFlatRow`, `BuildMultiValueFlatRow`, `DeriveExtension`
-  - `CascadeDeleteComplexChildrenAsync`, `DropSingleComplexChildAsync`
-  - `RenameComplexColumnArtifactsAsync`, `DropComplexChildrenForTableAsync`
-- [ ] Move nested type: `ComplexColumnAllocation` (L6803).
-- [ ] **Suggested home:** `Internal/ComplexColumnManager.cs`.
+Extracted to [JetDatabaseWriter/Internal/ComplexColumnManager.cs](../../JetDatabaseWriter/Internal/ComplexColumnManager.cs). `AccessWriter` holds a private `_complexColumns` field and exposes thin instance forwarders for the public entry points (`AddAttachmentAsync`, `AddMultiValueItemAsync`) plus internal forwarders for the orchestration hooks (`ScaffoldSystemTablesAsync`, `PrepareComplexColumnAllocationsAsync`, `EmitComplexColumnArtifactsAsync`, `CascadeDeleteComplexChildrenAsync`, `RenameComplexColumnArtifactsAsync`, `DropComplexChildrenForTableAsync`).
+
+`AccessWriter.cs` shrank from **6,823 → 5,347 lines** (–1,476).
+
+- [x] Extracted methods: `ScaffoldSystemTablesAsync`, `CreateMSysComplexTypeTemplatesAsync`, `ResolveComplexTypeTemplateName`, `CreateMSysComplexColumnsAsync`, `PrepareComplexColumnAllocationsAsync`, `GetNextComplexIdAsync`, `EmitComplexColumnArtifactsAsync`, `BuildFlatTableName`, `InsertMSysComplexColumnsRowAsync`, `AddAttachmentAsync`, `AddMultiValueItemAsync`, `AddComplexItemCoreAsync`, `ResolveFlatTableNameAsync`, `ResolveFlatTableTdefPageAsync`, `ReadOrAllocateConceptualTableIdAsync`, `PatchParentComplexSlotAsync`, `GetNextConceptualTableIdForFlatAsync`, `BuildAttachmentFlatRow`, `BuildMultiValueFlatRow`, `DeriveExtension`, `CascadeDeleteComplexChildrenAsync`, `DropSingleComplexChildAsync`, `RenameComplexColumnArtifactsAsync`, `DropComplexChildrenForTableAsync`.
+- [x] Moved nested type: `ComplexColumnAllocation` (now `internal` on `ComplexColumnManager`).
+- [x] **Home:** `Internal/ComplexColumnManager.cs` ✓.
 
 ## Phase 4 — Row encoding / page-level row insertion (~750 lines)
 

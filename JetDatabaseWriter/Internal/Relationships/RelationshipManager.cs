@@ -2238,7 +2238,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
                 cascadeLocs.Add(locations[rIdx]);
             }
 
-            await writer.CascadeDeleteComplexChildrenAsync(childDef, cascadeLocs, cancellationToken).ConfigureAwait(false);
+            await writer.ComplexColumns.CascadeDeleteComplexChildrenAsync(childDef, cascadeLocs, cancellationToken).ConfigureAwait(false);
 
             // Now delete the child rows.
             int deleted = 0;
@@ -2471,7 +2471,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
             depth + 1,
             cancellationToken).ConfigureAwait(false);
 
-        await writer.CascadeDeleteComplexChildrenAsync(childDef, fullLocations, cancellationToken).ConfigureAwait(false);
+        await writer.ComplexColumns.CascadeDeleteComplexChildrenAsync(childDef, fullLocations, cancellationToken).ConfigureAwait(false);
 
         int deleted = 0;
         foreach (RowLocation loc in fullLocations)
