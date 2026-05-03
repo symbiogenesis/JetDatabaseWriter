@@ -64,12 +64,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private readonly bool _strictParsing;
     private readonly LruCache<long, byte[]>? _pageCache;
 
-    // Phase 6 of read-perf-plan-v2: memoize the parsed live-row directory per
-    // data page. Same eviction profile as _pageCache (sized 1:1 with it) so a
-    // page that's still hot in the byte-cache also keeps its bounds array.
-    // Stale entries left behind after a page is evicted from _pageCache simply
-    // age out of this LRU on their own — correctness doesn't depend on the
-    // two caches being kept in lock-step.
+    // Memoize the parsed live-row directory per data page. Same eviction
+    // profile as _pageCache (sized 1:1 with it) so a page that's still hot in
+    // the byte-cache also keeps its bounds array. Stale entries left behind
+    // after a page is evicted from _pageCache simply age out of this LRU on
+    // their own — correctness doesn't depend on the two caches being kept in
+    // lock-step.
     private readonly LruCache<long, RowBound[]>? _rowBoundsCache;
 
     /// <summary>
@@ -482,11 +482,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
             headers[i] = td.Columns[i].Name;
         }
 
-        // Phase 3 of read-perf-plan-v2: try to compile a direct
-        // page → T decoder that skips the per-row object?[] buffer and
-        // primitive boxing entirely. The builder returns null when any
-        // bound column requires the slow path (T_MEMO/T_OLE LVAL chain,
-        // T_BINARY, T_NUMERIC, T_COMPLEX/T_ATTACHMENT, Hyperlink prop).
+        // Try to compile a direct page → T decoder that skips the per-row
+        // object?[] buffer and primitive boxing entirely. The builder returns
+        // null when any bound column requires the slow path (T_MEMO/T_OLE
+        // LVAL chain, T_BINARY, T_NUMERIC, T_COMPLEX/T_ATTACHMENT, Hyperlink
+        // prop).
         DirectRowDecoder<T>? directDecoder = td.HasComplexColumns
             ? null
             : DirectRowDecoderBuilder.TryBuild<T>(headers, td.Columns, td.ClrTypes);
@@ -503,12 +503,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         Func<object?[], T> factory = RowMapper<T>.Build(headers, td.ClrTypes);
 
-        // Phase 2 of read-perf-plan-v2: skip per-row decode of columns the
-        // mapper never reads. For wide tables and narrow DTOs this can
-        // eliminate the bulk of the per-row decode + boxing cost. We
-        // suppress the projection when the table has complex/attachment
-        // columns, because complex resolution needs the parent-id T_LONG
-        // which may not be in the projection set.
+        // Skip per-row decode of columns the mapper never reads. For wide
+        // tables and narrow DTOs this can eliminate the bulk of the per-row
+        // decode + boxing cost. We suppress the projection when the table has
+        // complex/attachment columns, because complex resolution needs the
+        // parent-id T_LONG which may not be in the projection set.
         bool[]? wantedColumns = td.HasComplexColumns
             ? null
             : RowMapper<T>.GetBoundColumnMask(headers);
@@ -520,7 +519,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
-    /// Phase 7 fallback path for <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>:
+    /// Fallback path for <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>:
     /// walks every owned data page for <paramref name="entry"/>, decodes each
     /// row into a single <see cref="ArrayPool{T}.Shared"/>-rented buffer,
     /// applies the mapper, and yields the produced <typeparamref name="T"/>.
@@ -623,7 +622,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// When <paramref name="wantedColumns"/> is non-<see langword="null"/>, only the
     /// flagged column indices are decoded and the complex-attachment / Hyperlink
     /// post-processing passes are skipped when no wanted column is affected by them.
-    /// Phase 2 of read-perf-plan-v2.
     /// </summary>
     private async IAsyncEnumerable<object?[]> EnumerateTypedRowsAsync(
         string tableName,
@@ -686,13 +684,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
-    /// Phase 3 fast-path enumerator: walks every owned data page for
+    /// Direct-decoder fast-path enumerator: walks every owned data page for
     /// <paramref name="entry"/> and invokes the compiled
     /// <paramref name="directDecoder"/> against each live row, allocating a
     /// fresh <typeparamref name="T"/> per row but no <c>object?[]</c> buffer.
     /// Used by <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>
-    /// when every bound column is directly decodable; otherwise the Phase 2
-    /// path runs.
+    /// when every bound column is directly decodable; otherwise the
+    /// projection-aware fallback path runs.
     /// </summary>
     private async IAsyncEnumerable<T> EnumerateDirectRowsAsync<T>(
         CatalogEntry entry,
@@ -1430,7 +1428,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 : null;
             IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-            // Phase 7: rent a single object?[] from the shared pool and
+            // Rent a single object?[] from the shared pool and
             // reuse it across every row. The DataRow ingestion below
             // copies values out via the per-cell setter, so the buffer is
             // never retained by the table.
@@ -2981,7 +2979,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    // ── Typed row cracker (Phase 2 of typed-row-read-perf-plan) ──────
+    // ── Typed row cracker ────────────────────────────────────
     //
     // CrackRowTypedAsync fills an object?[] of length td.Columns.Count
     // directly from the page bytes — no intermediate List<string> + per-
@@ -2996,11 +2994,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // tables) can avoid the await/state-machine cost entirely.
     // Cancellation is checked once per row, not per column.
     //
-    // Phase 3 wired this into the public Rows() / ReadDataTableAsync
-    // entry points; complex-attachment resolution and Hyperlink wrapping
-    // are applied as post-processing passes (ResolveComplexColumns /
-    // WrapHyperlinkColumns) gated by the per-table HasComplexColumns /
-    // HasHyperlinkColumns flags.
+    // The public Rows() / ReadDataTableAsync entry points wire this in;
+    // complex-attachment resolution and Hyperlink wrapping are applied as
+    // post-processing passes (ResolveComplexColumns / WrapHyperlinkColumns)
+    // gated by the per-table HasComplexColumns / HasHyperlinkColumns flags.
 
     private ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
         => CrackRowTypedAsync(page, rowStart, rowSize, td, wantedColumns: null, cancellationToken);
@@ -3011,7 +3008,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// columns whose mask entry is <see langword="true"/> are decoded; the rest are
     /// left as <see langword="null"/> (the compiled <c>RowMapper&lt;T&gt;</c> mapper
     /// already skips <see langword="null"/>/<see cref="DBNull"/> slots, so unbound
-    /// columns simply produce no work). Phase 2 of read-perf-plan-v2.
+    /// columns simply produce no work).
     /// </summary>
     private ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, CancellationToken cancellationToken)
     {
@@ -3024,8 +3021,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         // Fast path: no T_MEMO/T_OLE LVAL chain walk needed — return a
         // sync-completed ValueTask so the caller never builds an async
-        // state machine for fixed-only / inline-only rows (Phase 4 of
-        // typed-row-read-perf-plan).
+        // state machine for fixed-only / inline-only rows.
         if (!needsLongValue)
         {
             return new ValueTask<object?[]?>(row);
@@ -3035,13 +3031,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
-    /// Phase 7 buffer-filling counterpart to <c>CrackRowTypedAsync</c>.
+    /// Buffer-filling counterpart to <c>CrackRowTypedAsync</c>.
     /// Returns <see langword="true"/> when the row was successfully decoded
     /// into the first <c>td.Columns.Count</c> slots of
     /// <paramref name="buffer"/>; <see langword="false"/> when the row
     /// trailer was malformed (caller should skip without resetting the
     /// buffer — the next iteration will overwrite it). Used by
-    /// <see cref="ReadDataTableAsync"/> and the Phase-2 fallback in
+    /// <see cref="ReadDataTableAsync"/> and the projection-aware fallback in
     /// <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>
     /// to reuse a single <see cref="ArrayPool{T}.Shared"/>-rented array
     /// across the entire scan.
@@ -3126,7 +3122,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// fully parsed (<c>TryParseRowLayout</c> walks the trailer once for the whole
     /// row), and <c>ResolveColumnSlice</c> is independent per column — skipping
     /// decode of one var column does not affect the offsets of any later column.
-    /// Phase 2 of read-perf-plan-v2.
     /// </summary>
     private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, out object?[]? row, out bool needsLongValue)
     {
@@ -3142,9 +3137,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
-    /// Buffer-filling core of <c>TryCrackRowSync</c>. Phase 7 of
-    /// read-perf-plan-v2: lets non-yielding callers
-    /// (<see cref="ReadDataTableAsync"/>, the Phase-2 fallback in
+    /// Buffer-filling core of <c>TryCrackRowSync</c>: lets non-yielding callers
+    /// (<see cref="ReadDataTableAsync"/>, the projection-aware fallback in
     /// <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>)
     /// rent a single <c>object?[]</c> from <see cref="ArrayPool{T}.Shared"/>
     /// and re-use it across every row instead of allocating a fresh array
@@ -3223,13 +3217,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return true;
     }
 
-    // ── Phase 3: direct page → T decoder support ─────────────────────
+    // ── Direct page → T decoder support ───────────────────────────────
     //
     // The "direct decoder" eliminates the per-row object?[] buffer and
     // the box/unbox round-trip on every primitive column. RowMapper<T>
     // compiles a delegate that reads typed values straight out of the
     // page bytes and assigns them to T's properties; only the columns
-    // the mapper actually binds are decoded (Phase 2 projection is
+    // the mapper actually binds are decoded (the projection mask is
     // baked in). Callers gate the fast path with
     // RowMapper<T>.TryBuildDirectDecoder which inspects each bound
     // column and returns null when any column requires the slow path

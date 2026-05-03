@@ -86,7 +86,7 @@ public class AccessReaderBenchmarks
     }
 
     /// <summary>
-    /// Phase 0 baseline: untyped row stream over a numeric/date-heavy table.
+    /// Baseline: untyped row stream over a numeric/date-heavy table.
     /// Targets the per-column ReadFixedString → ParseValue round-trip the typed
     /// path will eventually replace.
     /// </summary>
@@ -99,7 +99,7 @@ public class AccessReaderBenchmarks
     }
 
     /// <summary>
-    /// Phase 0 baseline: typed row stream (Rows&lt;T&gt;) over the same numeric/date-heavy
+    /// Baseline: typed row stream (Rows&lt;T&gt;) over the same numeric/date-heavy
     /// table. Exercises RowMapper&lt;T&gt; on top of the untyped row path.
     /// </summary>
     /// <returns>Row count for the typed numeric/date-heavy table stream.</returns>

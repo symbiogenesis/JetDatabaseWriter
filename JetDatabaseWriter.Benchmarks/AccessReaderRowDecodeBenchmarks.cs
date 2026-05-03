@@ -7,11 +7,10 @@ using JetDatabaseWriter.Benchmarks.Models;
 using JetDatabaseWriter.Core;
 
 /// <summary>
-/// Phase 1 benchmarks: isolate per-row decode cost from the
+/// Per-row decode benchmarks: isolate per-row decode cost from the
 /// <c>OpenAsync</c> floor by pre-opening the reader once in
 /// <c>[GlobalSetup]</c>. The legacy <see cref="AccessReaderBenchmarks"/>
-/// class is left unchanged so the v1 plan's Phase 0/7 numbers remain
-/// comparable. See <c>docs/design/read-perf-plan-v2.md</c>.
+/// class is left unchanged so historical numbers remain comparable.
 /// </summary>
 [MemoryDiagnoser]
 public class AccessReaderRowDecodeBenchmarks
@@ -30,7 +29,7 @@ public class AccessReaderRowDecodeBenchmarks
         _textReader = await AccessReader.OpenAsync(SyntheticDatabases.TextDbPath).ConfigureAwait(false);
         _wideReader = await AccessReader.OpenAsync(SyntheticDatabases.WideDbPath).ConfigureAwait(false);
 
-        // Dedicated reader for the Phase 6 re-scan benchmark. Sized to hold
+        // Dedicated reader for the row-bounds re-scan benchmark. Sized to hold
         // every data page of NumericTable so the second pass is a pure cache
         // hit and the row-bounds memoization shows up cleanly.
         _numericReaderRescan = await AccessReader.OpenAsync(
@@ -173,7 +172,7 @@ public class AccessReaderRowDecodeBenchmarks
         return count;
     }
 
-    // ── Re-scan (Phase 6 row-bounds cache) ────────────────────────────
+    // ── Re-scan (row-bounds cache) ──────────────────────────────────
     // Two passes over the same table inside one op. With the page cache
     // sized to hold every data page (default 256, NumericTable fits),
     // the second pass should hit the row-bounds memo on every page and

@@ -13,7 +13,7 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// <summary>
 /// Builds <see cref="DirectRowDecoder{T}"/> delegates for the
 /// <see cref="AccessReader.Rows{T}(string, IProgress{long}?, System.Threading.CancellationToken)"/>
-/// fast path (Phase 3 of read-perf-plan-v2). The builder inspects the bound
+/// fast path. The builder inspects the bound
 /// columns and refuses (returns <see langword="null"/>) when any column
 /// requires the slow path — T_MEMO/T_OLE LVAL chains, T_BINARY, T_NUMERIC,
 /// T_COMPLEX/T_ATTACHMENT, or any property typed as
@@ -94,7 +94,7 @@ internal static class DirectRowDecoderBuilder
 
         if (bound.Count == 0)
         {
-            // Nothing bound — let the caller fall through to the Phase 2
+            // Nothing bound — let the caller fall through to the slow
             // path (which is already a no-op for unbound rows).
             return null;
         }
@@ -294,7 +294,7 @@ internal static class DirectRowDecoderBuilder
 /// Compiled per-<typeparamref name="T"/> delegate that decodes a single row
 /// straight off the page bytes into <paramref name="target"/>'s properties,
 /// bypassing the per-row <c>object?[]</c> buffer and the box/unbox round-trip
-/// that the Phase 2 path still pays. Phase 3 of <c>read-perf-plan-v2.md</c>.
+/// that the projection-aware path still pays.
 /// </summary>
 /// <returns>
 /// <see langword="true"/> when the row was decoded; <see langword="false"/>

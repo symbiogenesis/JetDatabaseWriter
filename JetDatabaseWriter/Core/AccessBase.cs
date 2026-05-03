@@ -939,8 +939,8 @@ public abstract class AccessBase : IAccessBase
     /// Eager array form of <see cref="EnumerateLiveRowBounds"/>. Allocates a
     /// single <see cref="RowBound"/>[] (or <see cref="Array.Empty{T}"/> when the
     /// page has no live rows) instead of returning an iterator. Suitable as a
-    /// memoization target for <see cref="AccessReader"/>'s page cache (Phase 6
-    /// of the read-perf plan), where the same page may be visited by multiple
+    /// memoization target for <see cref="AccessReader"/>'s page cache,
+    /// where the same page may be visited by multiple
     /// streaming consumers.
     /// </summary>
     private protected RowBound[] ComputeLiveRowBoundsArray(byte[] page)
