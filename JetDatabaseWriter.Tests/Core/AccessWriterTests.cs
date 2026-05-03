@@ -722,6 +722,75 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
     }
 
+    /// <summary>
+    /// Round-trips boundary <see cref="decimal"/> values through a
+    /// NUMERIC column, exercising the full precision/scale grid Access
+    /// supports (precision 1..28, scale 0..precision). Regression for
+    /// <c>docs/design/test-coverage-gaps.md</c> §2.4: mdbtools historically
+    /// rounded NUMERIC(28,28) values; verify we preserve them losslessly.
+    /// </summary>
+    /// <param name="precision">NUMERIC declared precision (1..28).</param>
+    /// <param name="scale">NUMERIC declared scale (0..precision).</param>
+    /// <param name="literal">Decimal literal (invariant culture) to round-trip.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+
+    // NUMERIC(28,28): full-scale fractional. Largest representable values
+    // are ±0.999...28 nines; smallest non-zero is 1e-28.
+    [InlineData(28, 28, "0")]
+    [InlineData(28, 28, "0.0000000000000000000000000001")]
+    [InlineData(28, 28, "-0.0000000000000000000000000001")]
+    [InlineData(28, 28, "0.9999999999999999999999999999")]
+    [InlineData(28, 28, "-0.9999999999999999999999999999")]
+
+    // NUMERIC(28,0): full-precision integer. Boundary is ±28 nines.
+    [InlineData(28, 0, "0")]
+    [InlineData(28, 0, "9999999999999999999999999999")]
+    [InlineData(28, 0, "-9999999999999999999999999999")]
+
+    // NUMERIC(28,14): split — half integer, half fractional.
+    [InlineData(28, 14, "12345678901234.12345678901234")]
+    [InlineData(28, 14, "-12345678901234.12345678901234")]
+
+    // NUMERIC(18,4): the writer's default-precision case.
+    [InlineData(18, 4, "0")]
+    [InlineData(18, 4, "99999999999999.9999")]
+    [InlineData(18, 4, "-99999999999999.9999")]
+    public async Task InsertRow_NumericPrecisionAndScaleBoundaries_RoundTripsLosslessly(int precision, int scale, string literal)
+    {
+        var expected = decimal.Parse(literal, System.Globalization.CultureInfo.InvariantCulture);
+
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        var temp = await CopyToStreamAsync(path);
+        string tableName = $"NumBnd_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("N", typeof(decimal)) { NumericPrecision = (byte)precision, NumericScale = (byte)scale },
+        };
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, expected], TestContext.Current.CancellationToken);
+        }
+
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
+        {
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+            Assert.Equal(1, dt.Rows.Count);
+
+            decimal actual = Convert.ToDecimal(dt.Rows[0]["N"], System.Globalization.CultureInfo.InvariantCulture);
+            Assert.Equal(expected, actual);
+        }
+    }
+
     // ── InsertRow<T> (generic POCO) ────────────────────────────────────
 
     private sealed class WriterPoco

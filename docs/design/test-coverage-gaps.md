@@ -46,15 +46,23 @@ and the rough difficulty (`S`/`M`/`L`).
   encoded key would otherwise be `0x00` (encoder must emit the descending
   flag and not collapse to "null"). The Jackcess `IndexCodesTest.testReadIndex`
   loop covers this implicitly.
-- [ ] **`[J]` `[S]`** "Crazy code" surrogate pair coverage: extend the fixture
-  test to assert at least one indexed value in the corpus that exercises the
-  high+low surrogate handler (fixture rows containing characters in the
-  Supplementary Multilingual Plane). If the Jackcess fixtures don't include
-  any, add a synthetic round-trip test.
-- [ ] **`[J]` `[M]`** Right-to-left scripts (Hebrew, Arabic) and combining-
-  diacritic NFD/NFC equivalence in keys — Jackcess has scattered cases under
-  `testIndexCodesV*`; we should confirm our encoder matches Access's
-  pre-normalisation.
+- [x] **`[J]` `[S]`** "Crazy code" surrogate pair coverage: closed by
+  `Text_SmpPlaneCharacter_RoutesThroughSurrogateHandler` in
+  [IndexKeyEncoderTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexKeyEncoderTests.cs).
+  Synthetic round-trip — encodes U+1D54F / U+1D550 (SMP plane), asserts the
+  surrogate-handler `0x3F` extra-byte marker is present, distinct SMP code
+  points produce distinct keys, and ASCII "X" does not collide with SMP "𝕏".
+  The Jackcess fixtures do not contain SMP-plane indexed values, so a
+  fixture-driven assertion is not possible.
+- [x] **`[J]` `[M]`** Right-to-left scripts (Hebrew, Arabic) and combining-
+  diacritic NFD/NFC equivalence in keys — closed by
+  `Text_RtlScriptsAndCombiningDiacritics_EncodeStably` in
+  [IndexKeyEncoderTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexKeyEncoderTests.cs).
+  Asserts the encoder doesn't throw on Hebrew "שלום" / Arabic "سلام",
+  produces deterministic distinct keys per script, and folds NFC "café"
+  and NFD "cafe\u0301" to the SAME key bytes (the General Legacy
+  international-handler tables resolve the combining acute to the same
+  primary weight + extras-section diacritic as the precomposed character).
 
 ### 1.2 Numeric / temporal / binary keys
 
@@ -145,8 +153,12 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   expectations on disk (we treat them as opaque today).
 
 ### 2.4 Numeric edge cases
-- [ ] **`[J]` `[M]`** NUMERIC(28,28) min/max & scale boundaries — mdbtools
-  historically rounded these; confirm we don't.
+- [x] **`[J]` `[M]`** NUMERIC(28,28) min/max & scale boundaries — closed
+  by the `InsertRow_NumericPrecisionAndScaleBoundaries_RoundTripsLosslessly`
+  theory in
+  [AccessWriterTests.cs](../../JetDatabaseWriter.Tests/Core/AccessWriterTests.cs),
+  which round-trips ±0.999...28-nines, ±1e-28, ±28-nines integers, and
+  the NUMERIC(28,14) / (18,4) corners through the writer + reader.
 - [ ] **`[J]`** Currency rounding at `MIN/MAX_VALUE` and the
   `Decimal.MinValue + 1` boundary.
 
@@ -236,16 +248,23 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ## 9. API / model surface
 
-- [ ] **`[J]`** `AccessWriter` + transaction rollback after a constraint
+- [x] **`[J]`** `AccessWriter` + transaction rollback after a constraint
   violation deep in a multi-row insert (`PendingChange.rollback`
-  equivalent path).
-- [ ] **`[S]`** Writer round-trip of a parent-side `UpdateRowsAsync` that
-  rewrites the PK column itself — surfaced while authoring the §6
-  self-referential FK test. Existing cascade-update tests assert the
-  child-side index repoint, but the parent row's new PK value is not
-  currently observed on disk after the update. Needs a focused regression
-  that opens the file post-update and asserts the parent row's PK column
-  has the new value.
+  equivalent path) — closed by
+  `InsertRows_WithFkViolationDeepInBatch_RollsBackEntireBatch` in
+  [ForeignKeyEnforcementTests.cs](../../JetDatabaseWriter.Tests/Core/ForeignKeyEnforcementTests.cs).
+  FK enforcement runs per-row inside the insert loop after the row has
+  been written, so rows 0..N-2 land on disk before the throw; the test
+  reopens the file and asserts the per-call `RollbackInsertedRowsAsync`
+  path removed every batch row, leaving only the seed row.
+- [x] **`[S]`** Writer round-trip of a parent-side `UpdateRowsAsync` that
+  rewrites the PK column itself — closed by
+  [ForeignKeyEnforcementTests.cs](../../JetDatabaseWriter.Tests/Core/ForeignKeyEnforcementTests.cs)
+  `Update_PkSide_WithCascade_RewritesParentRowOnDisk_SingleColumnPk` (and
+  the parent-row assertions added to
+  `Update_PkSide_WithCascade_PropagatesNewKeyToChildren`): both reopen the
+  file post-update and assert the parent row's PK column carries the new
+  value while the old key is gone.
 
 ---
 

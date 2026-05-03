@@ -441,6 +441,116 @@ public sealed class IndexKeyEncoderTests
         Assert.True(encoded.Length > 4, "Encoded entry should contain inline + framing bytes.");
     }
 
+    /// <summary>
+    /// Supplementary-Multilingual-Plane (SMP) characters route through the
+    /// high+low surrogate handler in <c>GeneralLegacyTextIndexEncoder</c>.
+    /// Closes <c>docs/design/test-coverage-gaps.md</c> §1.1 "crazy code
+    /// surrogate pair coverage" — a synthetic round-trip rather than a
+    /// fixture-table assertion, since the Jackcess fixtures do not contain
+    /// SMP-plane indexed values.
+    /// </summary>
+    [Fact]
+    public void Text_SmpPlaneCharacter_RoutesThroughSurrogateHandler()
+    {
+        // U+1D54F MATHEMATICAL DOUBLE-STRUCK CAPITAL X — encodes as
+        // surrogate pair D835 DD4F in .NET strings; both halves take the
+        // surrogate path.
+        const string smpX = "\uD835\uDD4F";
+        const string smpY = "\uD835\uDD50"; // U+1D550 CAPITAL Y — different SMP codepoint.
+
+        byte[] keyX = IndexKeyEncoder.EncodeEntry(T_TEXT, smpX, ascending: true);
+        byte[] keyY = IndexKeyEncoder.EncodeEntry(T_TEXT, smpY, ascending: true);
+        byte[] keyAsciiX = IndexKeyEncoder.EncodeEntry(T_TEXT, "X", ascending: true);
+
+        // Standard framing: ascending flag + END_EXTRA_TEXT terminator.
+        Assert.Equal(0x7F, keyX[0]);
+        Assert.Equal(0x00, keyX[^1]);
+
+        // Surrogate handler emits extra-byte marker 0x3F per surrogate
+        // half, so an SMP character contributes the byte 0x3F at least
+        // once in the encoded payload (extras section).
+        Assert.Contains((byte)0x3F, keyX);
+
+        // Distinct SMP code points must yield distinct keys.
+        Assert.NotEqual(keyX, keyY);
+
+        // SMP "𝕏" must not collide with ASCII "X".
+        Assert.NotEqual(keyX, keyAsciiX);
+
+        // Descending pass must also succeed and flip the payload (start
+        // flag is the descending null/non-null marker, terminator is
+        // 0x00 unchanged).
+        byte[] keyXDesc = IndexKeyEncoder.EncodeEntry(T_TEXT, smpX, ascending: false);
+        Assert.NotEqual(keyX, keyXDesc);
+        Assert.Equal(0x00, keyXDesc[^1]);
+    }
+
+    /// <summary>
+    /// Right-to-left scripts (Hebrew, Arabic) and combining-diacritic
+    /// NFC/NFD pairs round-trip through the encoder without throwing and
+    /// produce stable keys. Closes
+    /// <c>docs/design/test-coverage-gaps.md</c> §1.1: documents that
+    /// Access's General Legacy encoder treats NFC ("é") and NFD
+    /// ("e\u0301") as equivalent — both forms encode to the <em>same</em>
+    /// key bytes (the combining acute resolves to the same primary weight
+    /// + extras-section diacritic as the precomposed character).
+    /// </summary>
+    [Fact]
+    public void Text_RtlScriptsAndCombiningDiacritics_EncodeStably()
+    {
+        // Hebrew "shalom" — pure RTL, all in BMP.
+        const string hebrew = "\u05E9\u05DC\u05D5\u05DD"; // שלום
+
+        // Arabic "salam" — RTL with shaping.
+        const string arabic = "\u0633\u0644\u0627\u0645"; // سلام
+
+        // Pre-composed (NFC) "café" vs decomposed (NFD) "cafe\u0301".
+        const string cafeNfc = "caf\u00E9";
+        const string cafeNfd = "cafe\u0301";
+
+        // Sanity: the two forms really are distinct character sequences
+        // at the .NET-string level (Access's encoder is what folds them).
+        Assert.NotEqual(cafeNfc, cafeNfd);
+        Assert.Equal(cafeNfc, cafeNfd.Normalize(System.Text.NormalizationForm.FormC));
+
+        // Every script encodes without throwing and emits the standard
+        // ascending start flag + null terminator framing.
+        foreach (string s in new[] { hebrew, arabic, cafeNfc, cafeNfd })
+        {
+            byte[] key = IndexKeyEncoder.EncodeEntry(T_TEXT, s, ascending: true);
+            Assert.Equal(0x7F, key[0]);
+            Assert.Equal(0x00, key[^1]);
+            Assert.True(key.Length > 2, $"Encoded key for '{s}' must contain payload, got {key.Length} bytes.");
+
+            // Re-encoding the same string is deterministic.
+            Assert.Equal(key, IndexKeyEncoder.EncodeEntry(T_TEXT, s, ascending: true));
+        }
+
+        // Distinct scripts produce distinct keys.
+        byte[] keyHebrew = IndexKeyEncoder.EncodeEntry(T_TEXT, hebrew, ascending: true);
+        byte[] keyArabic = IndexKeyEncoder.EncodeEntry(T_TEXT, arabic, ascending: true);
+        Assert.NotEqual(keyHebrew, keyArabic);
+
+        // Pre-composed "é" and decomposed "e + combining-acute" encode to
+        // the SAME bytes — Access's General Legacy encoder folds them via
+        // the international-handler / extra-codes tables. This matches the
+        // Jackcess `IndexCodesTest` behaviour and is the property that
+        // lets indexed lookups work regardless of normalization form.
+        byte[] keyNfc = IndexKeyEncoder.EncodeEntry(T_TEXT, cafeNfc, ascending: true);
+        byte[] keyNfd = IndexKeyEncoder.EncodeEntry(T_TEXT, cafeNfd, ascending: true);
+        Assert.Equal(keyNfc, keyNfd);
+
+        // Descending pass succeeds for every script and produces a
+        // different key from ascending.
+        foreach (string s in new[] { hebrew, arabic, cafeNfc, cafeNfd })
+        {
+            byte[] asc = IndexKeyEncoder.EncodeEntry(T_TEXT, s, ascending: true);
+            byte[] desc = IndexKeyEncoder.EncodeEntry(T_TEXT, s, ascending: false);
+            Assert.NotEqual(asc, desc);
+            Assert.Equal(0x00, desc[^1]);
+        }
+    }
+
     [Fact]
     public void Text_Null_EmitsSingleFlagByte()
     {
