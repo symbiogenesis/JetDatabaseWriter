@@ -56,8 +56,6 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                     output.WriteLine($"DatabaseFormat: {reader.DatabaseFormat}");
                     output.WriteLine($"LastDiagnostics: {reader.LastDiagnostics}");
                     output.WriteLine($"LinkedSourceOpenOptions: {reader.LinkedSourceOpenOptions}");
-                    output.WriteLine($"LinkedSourcePathAllowlist: {reader.LinkedSourcePathAllowlist}");
-                    output.WriteLine($"LinkedSourcePathValidator: {reader.LinkedSourcePathValidator}");
                 }
                 catch (Exception ex)
                 {

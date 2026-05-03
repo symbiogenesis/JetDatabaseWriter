@@ -51,13 +51,12 @@ internal static class LinkedTableManager
     /// <summary>
     /// Builds a derivative <see cref="AccessReaderOptions"/> instance suitable for
     /// re-opening the source database referenced by a linked table. The allowlist
-    /// and validator are forwarded so transitively linked databases inherit the
-    /// same security policy.
+    /// is normalised against the host database directory and the validator is
+    /// forwarded so transitively linked databases inherit the same security policy.
     /// </summary>
     internal static AccessReaderOptions CreateLinkedSourceOpenOptions(
         AccessReaderOptions options,
-        string[] normalizedAllowlist,
-        Func<LinkedTableInfo, string, bool>? linkedSourcePathValidator)
+        string hostDatabasePath)
     {
         return new AccessReaderOptions
         {
@@ -72,8 +71,8 @@ internal static class LinkedTableManager
             UseLockFile = options.UseLockFile,
             LockFileUserName = options.LockFileUserName,
             LockFileMachineName = options.LockFileMachineName,
-            LinkedSourcePathAllowlist = normalizedAllowlist,
-            LinkedSourcePathValidator = linkedSourcePathValidator,
+            LinkedSourcePathAllowlist = NormalizeAllowlist(options.LinkedSourcePathAllowlist, hostDatabasePath),
+            LinkedSourcePathValidator = options.LinkedSourcePathValidator,
         };
     }
 
@@ -166,11 +165,12 @@ internal static class LinkedTableManager
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
+        AccessReaderOptions linkedOptions = reader.LinkedSourceOpenOptions;
         string resolvedPath = ResolveLinkedSourcePath(
             link,
             reader.HostDatabasePath,
-            reader.LinkedSourcePathAllowlist,
-            reader.LinkedSourcePathValidator);
+            linkedOptions.LinkedSourcePathAllowlist,
+            linkedOptions.LinkedSourcePathValidator);
 
         if (!File.Exists(resolvedPath))
         {
@@ -179,13 +179,13 @@ internal static class LinkedTableManager
                 resolvedPath);
         }
 
-        return await AccessReader.OpenAsync(resolvedPath, reader.LinkedSourceOpenOptions, cancellationToken).ConfigureAwait(false);
+        return await AccessReader.OpenAsync(resolvedPath, linkedOptions, cancellationToken).ConfigureAwait(false);
     }
 
     private static string ResolveLinkedSourcePath(
         LinkedTableInfo link,
         string hostDatabasePath,
-        string[] linkedSourcePathAllowlist,
+        IReadOnlyList<string> linkedSourcePathAllowlist,
         Func<LinkedTableInfo, string, bool>? linkedSourcePathValidator)
     {
         if (string.IsNullOrWhiteSpace(link.SourceDatabasePath))
@@ -211,7 +211,7 @@ internal static class LinkedTableManager
                 "Use AccessReaderOptions.LinkedSourcePathValidator to explicitly allow trusted paths.");
         }
 
-        if (linkedSourcePathAllowlist.Length > 0 &&
+        if (linkedSourcePathAllowlist.Count > 0 &&
             !linkedSourcePathAllowlist.Any(root => IsPathWithinDirectory(resolvedPath, root)))
         {
             throw new UnauthorizedAccessException(
