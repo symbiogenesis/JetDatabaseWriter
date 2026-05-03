@@ -23,9 +23,6 @@ using Xunit;
 /// <c>testIndexProperties*</c> fixtures, which were authored specifically
 /// to exercise these flag bits (<c>0x01 = unique</c>,
 /// <c>0x02 = ignore_nulls</c>, <c>0x08 = required</c>).
-/// <para>
-/// Closes gap §1.4 / §9 of <c>docs/design/test-coverage-gaps.md</c>.
-/// </para>
 /// </summary>
 public sealed class IndexFlagCombinationsTests
 {

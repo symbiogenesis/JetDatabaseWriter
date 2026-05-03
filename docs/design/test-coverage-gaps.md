@@ -12,9 +12,10 @@ that target the same on-disk format(s) we do:
 - **Microsoft Office Compound File / Agile Encryption** specs (MS-OFFCRYPTO,
   MS-CFB) — used to cross-check the encryption fixtures we already have.
 
-Items already covered are **not** listed; this is a pure gap list. Each
-section tags the source project with `[J]` (Jackcess), `[M]` (mdbtools), or
-`[O]` (OpenMcdf) and the rough difficulty (`S`/`M`/`L`).
+Items already covered are **not** listed here — closed work is summarised
+in the "Recently closed" section at the bottom. Each open gap is tagged
+with the source project (`[J]` Jackcess, `[M]` mdbtools, `[O]` OpenMcdf)
+and the rough difficulty (`S`/`M`/`L`).
 
 ---
 
@@ -22,11 +23,12 @@ section tags the source project with `[J]` (Jackcess), `[M]` (mdbtools), or
 
 ### 1.1 Text / sort-order encoders
 - [ ] **`[J]` `[S]`** Per-fixture byte-exact validation for **General** (2010+) and
-  **General 97** sort orders, mirroring the new `GeneralLegacyEncoderFixtureTests`.
+  **General 97** sort orders, mirroring the existing `GeneralLegacyEncoderFixtureTests`.
   Current coverage validates only the `GeneralLegacy` encoder against
-  `testIndexCodes*` fixtures (V2000–V2007 in [GeneralLegacyEncoderFixtureTests.cs](JetDatabaseWriter.Tests/Internal/GeneralLegacyEncoderFixtureTests.cs);
+  `testIndexCodes*` fixtures (V2000–V2007 in
+  [GeneralLegacyEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralLegacyEncoderFixtureTests.cs));
   V2010 is excluded there because its default sort order is **General**, not
-  **General Legacy**). The V2010 long-row tables (`Table11`, `Table11_desc`)
+  **General Legacy**. The V2010 long-row tables (`Table11`, `Table11_desc`)
   are explicitly skipped — Jackcess does the same
   ("TODO long rows not handled completely yet in V2010"). Closing the General /
   General 97 gap would also let us re-include those tables.
@@ -58,8 +60,8 @@ section tags the source project with `[J]` (Jackcess), `[M]` (mdbtools), or
 
 Broad fixture-driven coverage for single-column non-text indexes
 (`Byte` / `Short` / `Long` / `Single` / `Double` / `Money` / `DateTime` /
-`Boolean` / `GUID` / `Binary`) is now in
-[NonTextSingleColumnIndexFixtureTests.cs](JetDatabaseWriter.Tests/Internal/NonTextSingleColumnIndexFixtureTests.cs),
+`Boolean` / `GUID` / `Binary`) is in
+[NonTextSingleColumnIndexFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/NonTextSingleColumnIndexFixtureTests.cs),
 running across the Jackcess `indexTest`, `bigIndexTest`, `binIdxTest`, and
 `fixedNumericTest` corpora (V2000–V2010). Each row's value is round-tripped
 through `IndexKeyEncoder.EncodeEntry` and compared positionally against the
@@ -75,19 +77,16 @@ out cases that fixture sweep does **not** specifically isolate.
 - [ ] **`[J]` `[S]`** Extended Date/Time (`SHORT_DATE_TIME` extended; 42-byte
   blocks separated by `0x09`, asc/desc trailer flip). Jackcess test:
   `testExtDateIndex`.
-- [ ] **`[J]` `[S]`** Focused unit-level matrix for negative Single/Double
-  values across the full `(isAsc, isNeg)` cross-product as a regression
-  guard (the fixture sweep hits this positionally only).
 
 ### 1.3 B-tree structural
 
-Structural-invariant sweep across the Jackcess fixture corpus is now in
-[IndexBTreeStructuralFixtureTests.cs](JetDatabaseWriter.Tests/Internal/IndexBTreeStructuralFixtureTests.cs):
+Structural-invariant sweep across the Jackcess fixture corpus is in
+[IndexBTreeStructuralFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexBTreeStructuralFixtureTests.cs):
 asserts row-count == leaf-entry-count for `compIndexTest*` (Jackcess
 `testComplexIndex`), unsigned byte-order monotonicity of every leaf chain
 (Jackcess `testByteOrder`), and that every leaf entry's row trailer points
 at a data-page within the file. Leaf-walker bugs that would silently
-degrade the §1.1 / §1.2 fixture comparisons are now caught up-front.
+degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 - [ ] **`[J]`** Index page splits where the **child_tail** pointer is
   populated (Jackcess `IndexPageCache.validate` walks this; we don't read it).
@@ -97,13 +96,14 @@ degrade the §1.1 / §1.2 fixture comparisons are now caught up-front.
   `testCursors`/`testIndexCreation`.
 - [ ] **`[M]` `[S]`** Compare our `next_page`/`prev_page` chain against
   mdbtools' `mdb-index` dump for at least one fixture — provides an
-  external sanity check. (The new internal sweep validates ordering, but
-  not the chain itself against an independent implementation.)
+  external sanity check. (The internal sweep validates ordering, but not
+  the chain itself against an independent implementation.)
 
 ### 1.4 Index flags & metadata
 - [ ] **`[J]` `[S]`** Writer round-trip of `IGNORE_NULLS_INDEX_FLAG` (`0x02`)
   and `REQUIRED_INDEX_FLAG` (`0x08`) combinations (reader exposure is
-  covered by `IndexFlagCombinationsTests`).
+  covered by `IndexFlagCombinationsTests`). Requires adding `IgnoreNulls` /
+  `IsRequired` properties to `IndexDefinition`.
 - [ ] **`[J]` `[S]`** **Foreign-key surrogate** indexes (the auto-created
   ones backing relationships) — round-trip + listing semantics; we filter
   them out today.
@@ -118,11 +118,10 @@ degrade the §1.1 / §1.2 fixture comparisons are now caught up-front.
   covers all three; we have round-trip but no per-type assertion.
 - [ ] **`[J]` `[M]`** Compressed (UCS-2 → ASCII) Memo prefixes longer than 1
   inline page — mdbtools regressions historically hit truncation here.
-- [ ] **`[J]`** Memo column with embedded **`0x00` bytes** (Jackcess
-  `testEmbeddedNulls`). _Closed_ for the writer round-trip path by
-  `AccessWriterTests.InsertRow_MemoWithEmbeddedNulls_RoundTrips` (inline +
-  LVAL-chain); leaving the bullet open until reader-side coverage of an
-  Access-authored fixture is also confirmed.
+- [ ] **`[J]` `[S]`** Reader-side coverage of an Access-authored fixture
+  containing a Memo with embedded `0x00` bytes. The writer round-trip path
+  is closed by `AccessWriterTests.InsertRow_MemoWithEmbeddedNulls_RoundTrips`,
+  but no Access-authored fixture exercises the read path yet.
 - [ ] **`[J]`** OLE long values whose header reports a **mismatched length**
   vs the actual chain — Jackcess has a "lvalLength" sanity test.
 
@@ -150,20 +149,6 @@ degrade the §1.1 / §1.2 fixture comparisons are now caught up-front.
   historically rounded these; confirm we don't.
 - [ ] **`[J]`** Currency rounding at `MIN/MAX_VALUE` and the
   `Decimal.MinValue + 1` boundary.
-- [x] **`[J]`** DateTime values straddling the 1899-12-30 epoch and the 1900
-  Excel-leap-year quirk — `AccessWriterTests.InsertRow_DateTimeAroundOaDateEpochAnd1900Quirk_RoundTrips`
-  round-trips 1899-12-29/30/31, 1900-02-28, 1900-03-01, and the Mac 1904
-  epoch through `AccessWriter` + `AccessReader`.
-
-### 2.5 Hyperlink fields
-- [x] **`[J]`** Hyperlink with **all four parts** populated (display, address,
-  subaddress, screentip) at large length — `HyperlinkTests.Writer_HyperlinkAllFourPartsAtLargeLength_RoundTrips`
-  exercises a 1024-char-per-part Hyperlink (~8 KB UCS-2 payload, forcing
-  the LVAL chain on a Hyperlink-flagged Memo column).
-- [x] **`[J]`** Hyperlink with embedded `#` literal in the URL (must be
-  doubled in the on-disk encoding) — `HyperlinkTests.Writer_HyperlinkWithEmbeddedHashInEveryPart_RoundTrips`
-  round-trips literal `#` characters in display/address/subaddress/screentip
-  through `AccessWriter` + `AccessReader`.
 
 ---
 
@@ -220,7 +205,6 @@ degrade the §1.1 / §1.2 fixture comparisons are now caught up-front.
 
 - [ ] **`[J]`** Linked table to a CSV / text file (the `MSysObjects.Type`
   variant we don't currently surface).
-- [ ] **`[J]`** Self-referential foreign key with cascade-update.
 - [ ] **`[J]`** Many-to-many through a junction table where both FKs have
   `enforce_referential_integrity=true` — assert relationship mutation
   ordering.
@@ -229,9 +213,6 @@ degrade the §1.1 / §1.2 fixture comparisons are now caught up-front.
 
 ## 7. Fuzz / robustness
 
-- [ ] **`[J]`** Truncated file fuzz (last N bytes lopped off) — Jackcess
-  `testCorruptDb`. We have generic fuzz; add a deterministic truncation
-  matrix.
 - [ ] **`[O]`** CFB with a **circular FAT chain** — must throw, not loop.
   OpenMcdf has explicit tests.
 - [ ] **`[O]`** CFB with **negative free-sector count** in header.
@@ -255,12 +236,16 @@ degrade the §1.1 / §1.2 fixture comparisons are now caught up-front.
 
 ## 9. API / model surface
 
-- [ ] **`[J]`** Concurrent `AccessReader` open + iterate from multiple
-  tasks against the same file (we have `JetByteRangeLock` tests but no
-  end-to-end multi-reader scenario).
 - [ ] **`[J]`** `AccessWriter` + transaction rollback after a constraint
   violation deep in a multi-row insert (`PendingChange.rollback`
   equivalent path).
+- [ ] **`[S]`** Writer round-trip of a parent-side `UpdateRowsAsync` that
+  rewrites the PK column itself — surfaced while authoring the §6
+  self-referential FK test. Existing cascade-update tests assert the
+  child-side index repoint, but the parent row's new PK value is not
+  currently observed on disk after the update. Needs a focused regression
+  that opens the file post-update and asserts the parent row's PK column
+  has the new value.
 
 ---
 
@@ -276,35 +261,3 @@ degrade the §1.1 / §1.2 fixture comparisons are now caught up-front.
   larger.
 - Items in **§7** can be largely automated by extending the existing
   `Fuzz/` projects with deterministic seeds.
-
----
-
-## Recently closed
-
-- **§2.1** Memo round-trip with embedded `0x00` characters (inline + LVAL
-  chain) — `AccessWriterTests.InsertRow_MemoWithEmbeddedNulls_RoundTrips`.
-- **§2.4** DateTime values straddling the 1899-12-30 OADate epoch and the
-  Excel 1900 phantom-leap-day window —
-  `AccessWriterTests.InsertRow_DateTimeAroundOaDateEpochAnd1900Quirk_RoundTrips`.
-- **§2.5** Hyperlink writer round-trip with all four parts at large length
-  (1024 chars/part, exercises the LVAL chain on the Hyperlink-flagged Memo
-  column) — `HyperlinkTests.Writer_HyperlinkAllFourPartsAtLargeLength_RoundTrips`.
-- **§2.5** Hyperlink writer round-trip with literal `#` characters in every
-  part (display / address / subaddress / screentip) —
-  `HyperlinkTests.Writer_HyperlinkWithEmbeddedHashInEveryPart_RoundTrips`.
-- **§1.1** composite-text-index round-trip — `CompositeTextIndexFixtureTests`.
-- **§1.2** non-text single-column index encoding (Byte/Short/Long/Single/
-  Double/Money/DateTime/Boolean/GUID/Binary) across `indexTest*`,
-  `bigIndexTest*`, `binIdxTestV2010`, and `fixedNumericTest*` fixtures —
-  `NonTextSingleColumnIndexFixtureTests`.
-- **§1.3** structural invariants (row-count vs leaf-entry-count for
-  `compIndexTest*`, leaf chain unsigned-byte ordering, leaf trailers
-  pointing at valid data pages) — `IndexBTreeStructuralFixtureTests`;
-  unit-level `testByteOrder` / `testByteCodeComparator` / encoder
-  asc/desc and null-flag invariants — `IndexByteOrderUnitTests`.
-- **§1.4** / **§9** index flag-byte parse (`IGNORE_NULLS`, `REQUIRED`,
-  `UNIQUE` combinations) — `IndexFlagCombinationsTests`.
-- Supporting reader change: `IndexMetadata.FirstDp` (internal) plus
-  ascending-flag mask fix in `IndexLayout.ReadColMap` /
-  `ReadColMapAndCollect` — both required for the encoder fixture tests to
-  walk B-tree leaves correctly across writer conventions.

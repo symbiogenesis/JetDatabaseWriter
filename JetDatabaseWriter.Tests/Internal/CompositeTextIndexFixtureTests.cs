@@ -26,7 +26,7 @@ using Xunit;
 /// whose key columns are <em>all</em> Text/Memo, this test re-encodes each
 /// row's key tuple via <see cref="GeneralLegacyTextIndexEncoder"/>, sorts by
 /// unsigned byte order, and compares positionally against the on-disk leaf
-/// keys. Closes gap §1.1 of <c>docs/design/test-coverage-gaps.md</c>.
+/// keys.
 /// <para>
 /// On a passing run this proves that the encoder concatenates per-column
 /// key blocks in the expected order. On a failing run it surfaces — like the

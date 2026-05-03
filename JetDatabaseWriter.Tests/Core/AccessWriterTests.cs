@@ -670,9 +670,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// <summary>
     /// Round-trips DateTime values straddling the OADate epoch
     /// (1899-12-30) and the Excel/Lotus 1900 phantom-leap-day window
-    /// (1900-02-28 / 03-01). Closes the §2.4 "DateTime values straddling
-    /// the 1899-12-30 epoch and the 1900 Excel-leap-year quirk" gap in
-    /// <c>docs/design/test-coverage-gaps.md</c>. Access stores DateTime as
+    /// (1900-02-28 / 03-01). Access stores DateTime as
     /// an OADate <c>double</c>, which matches .NET's <see cref="DateTime.ToOADate"/>
     /// — i.e. it does <em>not</em> reproduce Excel's phantom 1900-02-29.
     /// </summary>
@@ -1020,11 +1018,10 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// <summary>
     /// Round-trips Memo strings containing embedded U+0000 (NUL)
     /// characters — both inline (small) and over the inline-memo cap
-    /// (forcing the LVAL chain). Closes the §2.1 "Memo column with embedded
-    /// 0x00 bytes" gap in <c>docs/design/test-coverage-gaps.md</c>;
-    /// mirrors Jackcess <c>testEmbeddedNulls</c>. The Jet4 text encoder
-    /// treats any '\0' as non-compressible, so the on-disk payload is plain
-    /// UCS-2 LE and must survive without truncation at the first NUL.
+    /// (forcing the LVAL chain). Mirrors Jackcess <c>testEmbeddedNulls</c>.
+    /// The Jet4 text encoder treats any '\0' as non-compressible, so the
+    /// on-disk payload is plain UCS-2 LE and must survive without
+    /// truncation at the first NUL.
     /// </summary>
     /// <param name="charCount">Total character count of the seeded Memo string.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>

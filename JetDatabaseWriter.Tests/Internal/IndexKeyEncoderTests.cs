@@ -143,6 +143,133 @@ public sealed class IndexKeyEncoderTests
         Assert.Equal(new byte[] { 0x7F, 0x80, 0x00, 0x00, 0x00 }, encoded);
     }
 
+    /// <summary>
+    /// Focused unit-level matrix for negative <see cref="float"/> values
+    /// across the full <c>(isAsc, isNeg)</c> cross-product. The fixture
+    /// sweep in <c>NonTextSingleColumnIndexFixtureTests</c> hits this
+    /// positionally only; this guard is a regression catch for the
+    /// IEEE-twiddle (negative ⇒ ones-complement <em>every</em> byte; not
+    /// just the sign bit).
+    /// </summary>
+    [Fact]
+    public void Float_NegativeAndPositive_OrderCorrectly_AscendingAndDescending()
+    {
+        float[] values =
+        [
+            float.NegativeInfinity,
+            -1e10f,
+            -1.0f,
+            -float.Epsilon,
+            -0.0f,
+            0.0f,
+            float.Epsilon,
+            1.0f,
+            1e10f,
+            float.PositiveInfinity,
+        ];
+
+        byte[][] asc = new byte[values.Length][];
+        byte[][] desc = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++)
+        {
+            asc[i] = IndexKeyEncoder.EncodeEntry(T_FLOAT, values[i], ascending: true);
+            desc[i] = IndexKeyEncoder.EncodeEntry(T_FLOAT, values[i], ascending: false);
+
+            // FLOAT key length: flag(1) + 4 bytes = 5.
+            Assert.Equal(5, asc[i].Length);
+            Assert.Equal(5, desc[i].Length);
+
+            // Descending must be the bitwise complement of ascending — see §5.
+            for (int j = 0; j < asc[i].Length; j++)
+            {
+                Assert.Equal(unchecked((byte)~asc[i][j]), desc[i][j]);
+            }
+        }
+
+        // Adjacent-pair monotonicity. -0.0f and +0.0f compare-equal as
+        // floats but the IEEE bit pattern differs by exactly the sign bit,
+        // so the encoded keys are also distinct — assert non-strict
+        // ordering across that one boundary, strict elsewhere.
+        for (int i = 1; i < values.Length; i++)
+        {
+            int cmpAsc = CompareLex(asc[i - 1], asc[i]);
+            int cmpDesc = CompareLex(desc[i - 1], desc[i]);
+            bool zeroBoundary = values[i - 1] == 0.0f && values[i] == 0.0f;
+
+            if (zeroBoundary)
+            {
+                Assert.True(cmpAsc <= 0, $"Ascending order violated at zero boundary: {values[i - 1]} vs {values[i]}.");
+                Assert.True(cmpDesc >= 0, $"Descending order violated at zero boundary: {values[i - 1]} vs {values[i]}.");
+            }
+            else
+            {
+                Assert.True(cmpAsc < 0, $"Ascending order violated: {values[i - 1]} → {values[i]}.");
+                Assert.True(cmpDesc > 0, $"Descending order violated: {values[i - 1]} → {values[i]}.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Focused unit-level matrix for negative <see cref="double"/> values
+    /// across the full <c>(isAsc, isNeg)</c> cross-product. Mirrors
+    /// <see cref="Float_NegativeAndPositive_OrderCorrectly_AscendingAndDescending"/>
+    /// for the 8-byte IEEE encoding. Closes the §1.2 gap.
+    /// </summary>
+    [Fact]
+    public void Double_NegativeAndPositive_OrderCorrectly_AscendingAndDescending()
+    {
+        double[] values =
+        [
+            double.NegativeInfinity,
+            double.MinValue,
+            -1e10,
+            -1.0,
+            -double.Epsilon,
+            -0.0,
+            0.0,
+            double.Epsilon,
+            1.0,
+            1e10,
+            double.MaxValue,
+            double.PositiveInfinity,
+        ];
+
+        byte[][] asc = new byte[values.Length][];
+        byte[][] desc = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++)
+        {
+            asc[i] = IndexKeyEncoder.EncodeEntry(T_DOUBLE, values[i], ascending: true);
+            desc[i] = IndexKeyEncoder.EncodeEntry(T_DOUBLE, values[i], ascending: false);
+
+            // DOUBLE key length: flag(1) + 8 bytes = 9.
+            Assert.Equal(9, asc[i].Length);
+            Assert.Equal(9, desc[i].Length);
+
+            for (int j = 0; j < asc[i].Length; j++)
+            {
+                Assert.Equal(unchecked((byte)~asc[i][j]), desc[i][j]);
+            }
+        }
+
+        for (int i = 1; i < values.Length; i++)
+        {
+            int cmpAsc = CompareLex(asc[i - 1], asc[i]);
+            int cmpDesc = CompareLex(desc[i - 1], desc[i]);
+            bool zeroBoundary = values[i - 1] == 0.0 && values[i] == 0.0;
+
+            if (zeroBoundary)
+            {
+                Assert.True(cmpAsc <= 0, $"Ascending order violated at zero boundary: {values[i - 1]} vs {values[i]}.");
+                Assert.True(cmpDesc >= 0, $"Descending order violated at zero boundary: {values[i - 1]} vs {values[i]}.");
+            }
+            else
+            {
+                Assert.True(cmpAsc < 0, $"Ascending order violated: {values[i - 1]} → {values[i]}.");
+                Assert.True(cmpDesc > 0, $"Descending order violated: {values[i - 1]} → {values[i]}.");
+            }
+        }
+    }
+
     [Fact]
     public void DateTime_EncodedAsOaDateDouble()
     {

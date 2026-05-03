@@ -555,6 +555,97 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         Assert.Equal(4, repointed);
     }
 
+    /// <summary>
+    /// Self-referential FK with cascade-update — a single table whose
+    /// <c>ParentId</c> column references its own <c>Id</c> column. Asserts
+    /// that:
+    /// <list type="bullet">
+    ///   <item><description>the relationship can be created against the same table on both sides;</description></item>
+    ///   <item><description>renaming an <c>Id</c> propagates to every row whose <c>ParentId</c> referenced it (the cascade walks the index on the same table);</description></item>
+    ///   <item><description>rows that referenced a different parent are untouched;</description></item>
+    ///   <item><description>null-FK rows are untouched.</description></item>
+    /// </list>
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task Update_SelfReferentialFk_WithCascade_PropagatesToChildRowsInSameTable()
+    {
+        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        string tbl = MakeTableName("SR");
+
+        await using (var writer = await OpenWriterAsync(temp))
+        {
+            // Mirror the proven-working shape used by
+            // Update_PkSide_WithCascade_BulkSeeksChildIndex — same table on
+            // both sides of the FK, no explicit PK declaration on the
+            // writer-side schema, so the cascade walks via the FK's
+            // child-side index seek.
+            await writer.CreateTableAsync(
+                tbl,
+                [
+                    new("Id", typeof(int)),
+                    new("ParentId", typeof(int)),
+                    new("Label", typeof(string), maxLength: 32),
+                ],
+                TestContext.Current.CancellationToken);
+
+            // Seed parent rows BEFORE creating the FK so the rows that point
+            // at not-yet-inserted ids don't trip insert-time enforcement.
+            for (int i = 1; i <= 10; i++)
+            {
+                await writer.InsertRowAsync(tbl, [i, DBNull.Value, $"node-{i}"], TestContext.Current.CancellationToken);
+            }
+
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_Self", tbl, "Id", tbl, "ParentId")
+                {
+                    CascadeUpdates = true,
+                },
+                TestContext.Current.CancellationToken);
+
+            // Add child rows (ParentId in 1..10).
+            for (int i = 11; i <= 30; i++)
+            {
+                await writer.InsertRowAsync(tbl, [i, ((i - 11) % 10) + 1, $"child-{i}"], TestContext.Current.CancellationToken);
+            }
+
+            // Move the row with Id=7 to Id=999. The cascade must repoint
+            // every row whose ParentId == 7 to ParentId = 999.
+            int updated = await writer.UpdateRowsAsync(
+                tbl,
+                "Id",
+                7,
+                new Dictionary<string, object> { ["Id"] = 999 },
+                TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
+        }
+
+        await using var reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(tbl, cancellationToken: TestContext.Current.CancellationToken))!;
+
+        // Count children that were repointed to the new Id and ensure no
+        // child still references the old Id.
+        int repointed = 0;
+        foreach (DataRow r in t.Rows)
+        {
+            if (r["ParentId"] is DBNull)
+            {
+                continue;
+            }
+
+            int p = (int)r["ParentId"];
+            Assert.NotEqual(7, p);
+            if (p == 999)
+            {
+                repointed++;
+            }
+        }
+
+        // 20 child rows distributed round-robin across ParentId 1..10 means
+        // exactly 2 rows referenced the old Id=7 and must now reference 999.
+        Assert.Equal(2, repointed);
+    }
+
     private static string MakeTableName(string prefix) =>
         $"{prefix}_{Guid.NewGuid():N}".Substring(0, Math.Min(18, prefix.Length + 11));
 
