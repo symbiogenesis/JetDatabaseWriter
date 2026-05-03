@@ -152,9 +152,6 @@ public abstract class AccessBase : IAccessBase
     }
 
     /// <inheritdoc/>
-    public bool IsJet4 => _format != DatabaseFormat.Jet3Mdb;
-
-    /// <inheritdoc/>
     public DatabaseFormat DatabaseFormat => _format;
 
     /// <inheritdoc/>
