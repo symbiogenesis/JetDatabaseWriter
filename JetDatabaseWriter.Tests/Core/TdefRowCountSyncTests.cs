@@ -21,7 +21,7 @@ using Xunit;
 ///
 /// This invariant is required for DAO Compact &amp; Repair: when the two
 /// disagree DAO aborts compact with "could not find the object 'MSysDb'".
-/// See <c>docs/design/round-trip-test-failures-2026-05-02.md</c> hypothesis #2
+/// See <c>docs/design/round-trip-test-failures.md</c> hypothesis #2
 /// and the corresponding fix in <c>AccessWriter.UpdateRowCountAsync</c>.
 ///
 /// The invariant is exercised in two paths:
@@ -131,7 +131,7 @@ public sealed class TdefRowCountSyncTests
                 Assert.True(
                     perIdxCount == rowCount,
                     FormattableString.Invariant(
-                        $"TDEF page {p}, real-idx {i}: num_idx_rows={perIdxCount} but row_count={rowCount} (format={format}). Indexes always cover every live row, so per-real-idx counters must track row_count exactly. See AccessWriter.UpdateRowCountAsync and docs/design/round-trip-test-failures-2026-05-02.md hypothesis #2."));
+                        $"TDEF page {p}, real-idx {i}: num_idx_rows={perIdxCount} but row_count={rowCount} (format={format}). Indexes always cover every live row, so per-real-idx counters must track row_count exactly. See AccessWriter.UpdateRowCountAsync and docs/design/round-trip-test-failures.md hypothesis #2."));
             }
 
             tdefsChecked++;
