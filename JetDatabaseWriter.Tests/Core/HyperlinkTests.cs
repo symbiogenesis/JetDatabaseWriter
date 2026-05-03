@@ -222,6 +222,96 @@ public sealed class HyperlinkTests
         }
     }
 
+    /// <summary>
+    /// Round-trips a Hyperlink with all four parts populated near the
+    /// per-part length Access exposes through its UI (~2048 chars/part).
+    /// Closes the §2.5 "all four parts populated at maximum length" gap in
+    /// <c>docs/design/test-coverage-gaps.md</c>.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task Writer_HyperlinkAllFourPartsAtLargeLength_RoundTrips()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
+
+        // 1024 chars per part stays well under any single-part Access limit
+        // and produces a UCS-2 payload (~8 KB) that comfortably exceeds the
+        // inline-memo cap, exercising the LVAL chain on a Hyperlink column.
+        string display = new('D', 1024);
+        string address = "https://example.com/" + new string('a', 1004);
+        string sub = new('s', 1024);
+        string tip = new('t', 1024);
+        var link = new Hyperlink(display, address, sub, tip);
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                tableName,
+                [
+                    new("Id", typeof(int)),
+                    new("Link", typeof(Hyperlink)),
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(tableName, [1, link], TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        var actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
+        Assert.Equal(link, actual);
+        Assert.Equal(display, actual.DisplayText);
+        Assert.Equal(address, actual.Address);
+        Assert.Equal(sub, actual.SubAddress);
+        Assert.Equal(tip, actual.ScreenTip);
+    }
+
+    /// <summary>
+    /// Round-trips a Hyperlink whose URL contains literal <c>#</c>
+    /// characters. The on-disk encoding splits parts on <c>#</c>, so the
+    /// writer must escape embedded hashes (Jackcess uses <c>%23</c>) before
+    /// emit. Closes the §2.5 "embedded `#` literal in the URL" gap.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task Writer_HyperlinkWithEmbeddedHashInEveryPart_RoundTrips()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        string tableName = $"HL_{Guid.NewGuid():N}".Substring(0, 16);
+
+        var link = new Hyperlink(
+            displayText: "Title # with hash",
+            address: "https://example.com/path#section/q?x=1#y=2",
+            subAddress: "frag#1",
+            screenTip: "tip#with#hashes");
+
+        // Self-check: the on-disk form must not contain raw '#' inside any
+        // single part — only the three part separators.
+        string encoded = link.ToString();
+        Assert.Equal(3, encoded.Split('#').Length - 1);
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                tableName,
+                [
+                    new("Id", typeof(int)),
+                    new("Link", typeof(Hyperlink)),
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(tableName, [1, link], TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        var actual = Assert.IsType<Hyperlink>(dt.Rows[0]["Link"]);
+        Assert.Equal(link, actual);
+        Assert.Equal("https://example.com/path#section/q?x=1#y=2", actual.Address);
+        Assert.Equal("tip#with#hashes", actual.ScreenTip);
+    }
+
     [Fact]
     public async Task SchemaEvolution_AddRenameColumn_PreservesHyperlinkFlag()
     {
