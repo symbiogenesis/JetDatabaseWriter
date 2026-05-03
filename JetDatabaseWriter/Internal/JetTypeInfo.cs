@@ -166,7 +166,7 @@ internal static class JetTypeInfo
     // metadata above (GetFixedSize / GetClrType / GetTypeDisplayName) so
     // the per-type switch tables stay co-located. ReadFixedString is the
     // legacy lossy/diagnostic path; ReadFixedTyped is the typed-reader
-    // hot path. See <c>docs/design/typed-row-read-perf-plan.md</c>.
+    // hot path.
 
     /// <summary>
     /// Formats a fixed-width JET column value as a culture-invariant string.

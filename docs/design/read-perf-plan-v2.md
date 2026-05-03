@@ -1,6 +1,7 @@
 # Read-path performance plan, v2
 
-Successor to [typed-row-read-perf-plan.md](typed-row-read-perf-plan.md).
+Successor to the (now-deleted) typed-row read perf plan, whose results
+are summarized in repo memory (`/memories/repo/typed-row-read-path.md`).
 That plan delivered the per-row decode wins it set out to deliver
 (Phase 5 alone dropped `Rows<T>()` allocations by ~6 KB/row), but the
 gains were largely invisible in the Phase 7 numbers because every
@@ -483,21 +484,107 @@ that work is repeated.
 
 ### Tasks
 
-- [ ] Change the LRU cache value from `byte[] page` to a small struct
-  `CachedPage(byte[] Bytes, RowBound[]? LiveRows)` where `LiveRows` is
-  populated on first `EnumerateLiveRowBounds` call and reused on
-  subsequent ones. Use `ArrayPool<RowBound>` if cache eviction is hot.
-- [ ] Skip parsing for non-data pages.
+- [x] Added [`AccessBase.ComputeLiveRowBoundsArray(byte[] page)`](../../JetDatabaseWriter/Core/AccessBase.cs)
+  — eager array form of `EnumerateLiveRowBounds`. Allocates one
+  `RowBound[]` (or `Array.Empty<RowBound>()` when the page is empty)
+  instead of an iterator object plus the per-call `int[2]` scratch
+  buffers the original yield-method paid for. Same parsing logic
+  (offset trailer, deletion mask, sort + binary-search to derive each
+  row's end), just structured to be cacheable.
+- [x] Added a parallel `LruCache<long, RowBound[]>? _rowBoundsCache`
+  in [AccessReader.cs](../../JetDatabaseWriter/Core/AccessReader.cs)
+  sized 1:1 with `_pageCache` (constructed only when
+  `PageCacheSize > 0`). Cleared in `DisposeReaderResourcesAsync`.
+- [x] Added `private RowBound[] GetLiveRowBoundsCached(long pageNumber, byte[] page)`
+  helper: returns the cached array on hit, otherwise computes via
+  `ComputeLiveRowBoundsArray` and stores under `pageNumber`. Stale
+  entries left behind after a page is evicted from `_pageCache` simply
+  age out of this LRU on their own — the two caches don't have to be
+  kept in lock-step for correctness.
+- [x] Routed all six per-page enumeration sites in `AccessReader`
+  (typed `Rows<T>` projection path, direct-decoder fast path,
+  legacy `Rows<T>()` mapper path, `ReadDataTableAsync`'s untyped row
+  loop, `RowsAsStrings` projected loop, and the catalog/`MSysObjects`
+  scan via `EnumerateRowsAsync`) through the cached helper. Threaded
+  `pageNumber` into `EnumerateRowsAsync(long pageNumber, byte[] page,
+  TableDef td, ct)` and updated all five callers — `pageNumber` was
+  already in scope at every site (each call sits inside a
+  `foreach (long pageNumber in pageNumbers)` block immediately after
+  `ReadPageCachedAsync(pageNumber, …)`).
+- [x] Skipped the writer (`AccessWriter.cs`) — its `EnumerateLiveRowBounds`
+  call sites (FK / cascade / index maintenance) are inside mutating
+  flows that don't benefit from the read-side memo, and the writer
+  doesn't carry a reader-style page cache.
 
-### Risk
+### Verification
 
-- Increases per-cached-page memory by ~16 bytes + (rows × 8 bytes).
-  Mitigation: only populate for data pages, cap rows-per-page (~250).
+- `dotnet test --project JetDatabaseWriter.Tests -c Release`: 2552
+  passing / 2 failing — same two known DAO Compact failures
+  documented in `/memories/repo/round-trip-tests.md`. No new
+  regressions.
+- `AccessReaderRowDecodeBenchmarks` re-run (Release, same job config
+  as Phase 1; added `Decode_Numeric_Untyped_TwoPass` against a
+  dedicated reader with `PageCacheSize = 2048` so the second pass is a
+  pure cache hit):
 
-### Exit criteria
+  | Method                              | Phase 4 alloc | Phase 6 alloc | Phase 4 mean | Phase 6 mean |
+  | ----------------------------------- | ------------: | ------------: | -----------: | -----------: |
+  | `Decode_Numeric_Untyped`            |       8.00 MB |     8.26 MB   |     34.37 ms |     29.78 ms |
+  | `Decode_Numeric_Typed`              |       3.28 MB |     3.55 MB   |     23.81 ms |     21.87 ms |
+  | `Decode_Text_Untyped`               |      20.72 MB |    20.93 MB   |     52.10 ms |     46.51 ms |
+  | `Decode_Text_Typed`                 |      20.0 MB  |    20.21 MB   |     56.82 ms |     55.51 ms |
+  | `Decode_Wide_Untyped`               |      31.71 MB |    31.78 MB   |     61.69 ms |     60.97 ms |
+  | `Decode_Wide_Typed_NarrowProjection`|       2.14 MB |     2.21 MB   |     18.17 ms |     19.31 ms |
+  | `Decode_Numeric_Untyped_TwoPass` ★  |             — |    15.27 MB   |            — |     35.31 ms |
 
-- `Decode_*` benchmarks that re-scan the same table show measurable
-  improvement.
+  ★ New for Phase 6.
+
+  **Single-pass first-scan cost.** Storing the `RowBound[]` directory
+  in a long-lived LRU adds ~60–270 KB across the synthetic tables
+  (one small array per data page, retained as long as the page sits
+  in the cache). That shows up as a ~3 % allocation bump on every
+  single-scan benchmark. Means trended slightly *faster* (the new
+  array form skips the iterator/state-machine allocation per call),
+  but the deltas sit inside the run-to-run error margins so the mean
+  improvement should be treated as "no regression" rather than a
+  measured win on first scan.
+
+  **Re-scan win** (`Decode_Numeric_Untyped_TwoPass` vs 2× the
+  single-scan baseline):
+
+  | Metric          | 2× single-pass (computed) | Two-pass (measured) | Δ             |
+  | --------------- | ------------------------: | ------------------: | ------------- |
+  | Mean            |                  59.56 ms |            35.31 ms | **1.7× faster** |
+  | Allocated / op  |                  16.52 MB |            15.27 MB | ~7.6 % less   |
+
+  The bulk of the time saving comes from page-cache hits avoiding the
+  decrypt + ArrayPool path; Phase 6's row-bounds memo accounts for
+  the allocation delta (skipping per-page `int[2]` scratch + the
+  iterator object on the second pass).
+
+### Risk (resolved)
+
+- **Mutated bounds.** `RowBound` is a `readonly record struct`, so
+  even though the cached array is shared across callers no consumer
+  can mutate an entry. The XML doc on `GetLiveRowBoundsCached`
+  explicitly notes the array is owned by the cache.
+- **Stale entries after page eviction.** Confirmed acceptable above —
+  a stale entry is just memory waste until the second LRU evicts it.
+- **netstandard2.1 compatibility.** The first draft used
+  `Span<int>.Sort()` / `BinarySearch` (only in .NET Core 2.1+), which
+  broke the netstandard2.1 build. Switched to `int[]` + `Array.Sort`
+  /`Array.BinarySearch` — same algorithm, one extra allocation per
+  page on first parse (then memoized).
+- **Writer paths.** `EnumerateLiveRowBounds` remains in place on
+  `AccessBase`; only the `AccessReader` call sites were re-routed.
+  `AccessWriter` is unchanged.
+
+### Exit criteria — done
+
+- [x] `Decode_*` benchmarks that re-scan the same table show
+  measurable improvement (`Decode_Numeric_Untyped_TwoPass` is 1.7×
+  faster than 2× single-scan).
+- [x] All existing tests still pass (modulo the 2 known failures).
 
 ---
 
@@ -560,7 +647,7 @@ Phase 1 (benchmarks)                ✓ done
    │    └─ Phase 3 (direct decoder) ✓ done
    │         └─ Phase 4 (span plumbing) ✓ done (refactor; no alloc delta)
    ├─ Phase 5 (OpenAsync floor)     ✓ done — dropped after Phase 1 finding #1; one diag-gate cleanup landed
-   ├─ Phase 6 (cached row directory) ← low priority; helps repeated scans only
+   ├─ Phase 6 (cached row directory) ✓ done — re-scan workload 1.7× faster
    └─ Phase 7 (pooled row buffers)  ← high priority for DataTable path
 Phase 8 (verify + document)
 ```

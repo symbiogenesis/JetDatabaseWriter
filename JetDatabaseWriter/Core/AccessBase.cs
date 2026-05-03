@@ -935,6 +935,76 @@ public abstract class AccessBase : IAccessBase
         }
     }
 
+    /// <summary>
+    /// Eager array form of <see cref="EnumerateLiveRowBounds"/>. Allocates a
+    /// single <see cref="RowBound"/>[] (or <see cref="Array.Empty{T}"/> when the
+    /// page has no live rows) instead of returning an iterator. Suitable as a
+    /// memoization target for <see cref="AccessReader"/>'s page cache (Phase 6
+    /// of the read-perf plan), where the same page may be visited by multiple
+    /// streaming consumers.
+    /// </summary>
+    private protected RowBound[] ComputeLiveRowBoundsArray(byte[] page)
+    {
+        int numRows = Ru16(page, _dpNumRows);
+        if (numRows == 0)
+        {
+            return Array.Empty<RowBound>();
+        }
+
+        var rawOffsets = new int[numRows];
+        var positions = new int[numRows];
+
+        int posCount = 0;
+        int liveCount = 0;
+        for (int r = 0; r < numRows; r++)
+        {
+            int raw = Ru16(page, _dpRowsStart + (r * 2));
+            rawOffsets[r] = raw;
+
+            int pos = raw & 0x1FFF;
+            if (pos > 0 && pos < _pgSz)
+            {
+                positions[posCount++] = pos;
+            }
+
+            if ((raw & 0xC000) == 0)
+            {
+                liveCount++;
+            }
+        }
+
+        if (liveCount == 0)
+        {
+            return Array.Empty<RowBound>();
+        }
+
+        Array.Sort(positions, 0, posCount);
+
+        var result = new RowBound[liveCount];
+        int idx = 0;
+        for (int r = 0; r < numRows; r++)
+        {
+            int raw = rawOffsets[r];
+            if ((raw & 0xC000) != 0)
+            {
+                continue;
+            }
+
+            int rowStart = raw & 0x1FFF;
+            int rowEnd = _pgSz - 1;
+            int searchIdx = Array.BinarySearch(positions, 0, posCount, rowStart);
+            int nextIdx = searchIdx >= 0 ? searchIdx + 1 : ~searchIdx;
+            if (nextIdx < posCount)
+            {
+                rowEnd = positions[nextIdx] - 1;
+            }
+
+            result[idx++] = new RowBound(r, rowStart, rowEnd - rowStart + 1);
+        }
+
+        return result;
+    }
+
     // ── Row layout decoding (shared by AccessReader.CrackRowAsync and AccessWriter.ReadColumnValue) ────
 
     /// <summary>
