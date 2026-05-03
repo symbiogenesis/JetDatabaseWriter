@@ -113,6 +113,49 @@ These have been verified and **should not regress**:
 
 A useful tactical knob: keep `TrySpliceCatalogIndexEntryAsync`'s `_lastIncrementalBail` plumbing and have failing tests dump that value plus the raw page-2/5 byte diffs into the existing `DIAG_RT_KEEP` work directory so post-mortem diffs don't require manual setup.
 
+## FormatProbe diagnostic harness (added 2026-05-02)
+
+`JetDatabaseWriter.FormatProbe` now carries two opt-in probes for triaging this regression. Both are off by default — they only fire when the matching environment variable is set, so the standard `dotnet run --project JetDatabaseWriter.FormatProbe` keeps producing the existing `format-probe-appendix-*.md` files unchanged.
+
+### `DIAG_RT_PROBE` — single-file post-mortem ([RoundTripDiagnostic.cs](../../JetDatabaseWriter.FormatProbe/RoundTripDiagnostic.cs))
+
+```pwsh
+$env:DIAG_RT_PROBE   = "<DIAG_RT_KEEP work dir>\source.accdb"
+$env:DIAG_RT_BASELINE = "<repo>\JetDatabaseWriter.Tests\Databases\NorthwindTraders.accdb"  # optional
+dotnet run --project JetDatabaseWriter.FormatProbe
+```
+
+Writes `round-trip-diagnostic.md` next to `source.accdb`. Sections:
+1. **§1 file-level page diff** — total size delta + every shared-range page that differs.
+2. **§2 catalog diff** — every `MSysObjects` row in src that isn't in the baseline (Id/ParentId/Type/Flags/TDEF page).
+3. **§3 MSysObjects TDEF (page 2)** — `row_count` / `num_idx` / `num_real_idx` deltas plus the per-real-idx 12-byte skip entries; surfaces hypothesis #2 (stale `usage_map_page` / `used_pages`).
+4. **§4 index leaf splice verification** — re-decodes pages 8 + 2790 in both files, lists added / removed entries, asserts sort order.
+5. **§5 new MSysObjects rows** — decoded `Id` / `ParentId` / `Type` / `Flags` / `Name` for every row whose name starts with `RT_`.
+6. **§6 row → IndexKeyEncoder → splice key roundtrip** — re-encodes each new row's `Id` PK key and `(ParentId, Name)` composite key, then asserts presence on the spliced leaves. ❌ here = hypothesis #1.
+
+First run against the failing `9ac4fd00…\source.accdb` showed every section green: keys match, sort order intact, only the `row_count` byte changed in the entire MSysObjects TDEF chain. So hypotheses #1 and #2 (as currently understood) are NOT the cause.
+
+### `DIAG_RT_BISECT` — escalating-step regression bisector ([RoundTripBisect.cs](../../JetDatabaseWriter.FormatProbe/RoundTripBisect.cs))
+
+```pwsh
+$env:DIAG_RT_BISECT = "1"
+dotnet run --project JetDatabaseWriter.FormatProbe
+```
+
+Copies `NorthwindTraders.accdb` once per step, runs the writer through an escalating action set (`N0` open/close → `N1` one table → `N2` two tables → `N3` add relationship → `N4` insert rows), and shells DAO compact for each via `C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe`. Output is one line per step:
+
+```
+[bisect] N0_OpenClose: ✅ OK
+[bisect] N1_CreateOneTable: ❌ MSysDb
+           stderr: Exception calling "CompactDatabase" ...
+```
+
+This gives the smallest writer surface that breaks DAO. Use it before adding new instrumentation — if `N1_CreateOneTable` already fails, the relationship/insert paths are off the critical path entirely.
+
+### Hooking either probe into a fresh failure
+
+The `DIAG_RT_KEEP` work dirs (`%TEMP%\JetDatabaseWriter.Tests.RoundTrip\<guid>\source.accdb`) survive failing test runs verbatim. Point `DIAG_RT_PROBE` at one of them to regenerate the markdown without re-running the writer; pair with `DIAG_RT_BISECT` to find the smallest reproducer to feed back into the probe.
+
 ## Background already captured
 
 - [/memories/repo/round-trip-tests.md](memories/repo/round-trip-tests.md) — leaf-bytes verification + Jet4 layout invariants.
