@@ -53,7 +53,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                     output.WriteLine($"DiagnosticsEnabled: {reader.DiagnosticsEnabled}");
                     output.WriteLine($"HostDatabasePath: {reader.HostDatabasePath}");
                     output.WriteLine($"IoGate: {reader.IoGate}");
-                    output.WriteLine($"IsJet4: {reader.IsJet4}");
+                    output.WriteLine($"DatabaseFormat: {reader.DatabaseFormat}");
                     output.WriteLine($"LastDiagnostics: {reader.LastDiagnostics}");
                     output.WriteLine($"LinkedSourceOpenOptions: {reader.LinkedSourceOpenOptions}");
                     output.WriteLine($"LinkedSourcePathAllowlist: {reader.LinkedSourcePathAllowlist}");
