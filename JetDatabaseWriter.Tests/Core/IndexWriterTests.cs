@@ -372,13 +372,12 @@ public sealed class IndexWriterTests
     }
 
     /// <summary>
-    /// Closes <c>docs/design/test-coverage-gaps.md</c> §4: a table with
-    /// more than 32 columns and more than 16 indexes must round-trip
-    /// without truncation. mdbtools historically clipped at 32 columns;
-    /// Access supports up to 255 (with one slot reserved). This test
-    /// uses 50 columns + 20 single-column indexes — well past both
-    /// historical caps but well below the format ceiling — and asserts
-    /// every column and every index survives the round-trip.
+    /// A table with more than 32 columns and more than 16 indexes must
+    /// round-trip without truncation. mdbtools historically clipped at
+    /// 32 columns; Access supports up to 255 (with one slot reserved).
+    /// This test uses 50 columns + 20 single-column indexes — well past
+    /// both historical caps but well below the format ceiling — and
+    /// asserts every column and every index survives the round-trip.
     /// </summary>
     /// <remarks>
     /// ACE only. The current writer requires the entire TDEF (including

@@ -725,9 +725,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// <summary>
     /// Round-trips boundary <see cref="decimal"/> values through a
     /// NUMERIC column, exercising the full precision/scale grid Access
-    /// supports (precision 1..28, scale 0..precision). Regression for
-    /// <c>docs/design/test-coverage-gaps.md</c> §2.4: mdbtools historically
-    /// rounded NUMERIC(28,28) values; verify we preserve them losslessly.
+    /// supports (precision 1..28, scale 0..precision). mdbtools
+    /// historically rounded NUMERIC(28,28) values; verify we preserve
+    /// them losslessly.
     /// </summary>
     /// <param name="precision">NUMERIC declared precision (1..28).</param>
     /// <param name="scale">NUMERIC declared scale (0..precision).</param>

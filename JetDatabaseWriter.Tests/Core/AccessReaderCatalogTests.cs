@@ -58,13 +58,12 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
     }
 
     /// <summary>
-    /// Closes <c>docs/design/test-coverage-gaps.md</c> §4: every fixture in
-    /// the corpus carries the canonical Access catalog tables (MSysObjects,
-    /// MSysAccessStorage, MSysComplexColumns, MSysRelationships, etc.) plus
-    /// the writer-emitted complex-column flat-child tables (<c>f_&lt;hex&gt;_*</c>).
-    /// All of these have the system / hidden flag bit set in
-    /// <c>MSysObjects.Flags</c> and must be filtered by
-    /// <c>ListTablesAsync</c> via <c>SystemTableMask</c>.
+    /// Every fixture in the corpus carries the canonical Access catalog
+    /// tables (MSysObjects, MSysAccessStorage, MSysComplexColumns,
+    /// MSysRelationships, etc.) plus the writer-emitted complex-column
+    /// flat-child tables (<c>f_&lt;hex&gt;_*</c>). All of these have the
+    /// system / hidden flag bit set in <c>MSysObjects.Flags</c> and must
+    /// be filtered by <c>ListTablesAsync</c> via <c>SystemTableMask</c>.
     /// </summary>
     /// <remarks>
     /// We deliberately do <em>not</em> assert that no <c>MSys*</c>-prefixed

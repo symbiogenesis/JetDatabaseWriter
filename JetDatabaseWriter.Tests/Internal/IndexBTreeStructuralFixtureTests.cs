@@ -85,11 +85,6 @@ public sealed class IndexBTreeStructuralFixtureTests
     [MemberData(nameof(CompIndexFixtures))]
     public async Task CompIndex_RowCount_EqualsLeafEntryCount(string fixturePath)
     {
-        if (!File.Exists(fixturePath))
-        {
-            Assert.Skip($"Fixture not present: {fixturePath}");
-        }
-
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
@@ -137,11 +132,6 @@ public sealed class IndexBTreeStructuralFixtureTests
     [MemberData(nameof(AllJackcessFixtures))]
     public async Task LeafChain_IsSortedByUnsignedByteOrder(string fixturePath)
     {
-        if (!File.Exists(fixturePath))
-        {
-            Assert.Skip($"Fixture not present: {fixturePath}");
-        }
-
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
@@ -223,11 +213,6 @@ public sealed class IndexBTreeStructuralFixtureTests
     [MemberData(nameof(AllJackcessFixtures))]
     public async Task LeafEntryTrailers_PointAtValidDataPages(string fixturePath)
     {
-        if (!File.Exists(fixturePath))
-        {
-            Assert.Skip($"Fixture not present: {fixturePath}");
-        }
-
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
