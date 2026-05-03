@@ -953,7 +953,7 @@ public abstract class AccessBase : IAccessBase
             return false;
         }
 
-        int numCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
+        int numCols = _rowSz.ReadNumCols(page, rowStart);
         if (numCols == 0)
         {
             return false;
@@ -983,7 +983,7 @@ public abstract class AccessBase : IAccessBase
                 return false;
             }
 
-            varLen = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
+            varLen = _rowSz.ReadVarLen(page, rowStart + varLenPos);
             int jumpSz = _format != DatabaseFormat.Jet3Mdb ? 0 : (rowSize / 256);
             varTableStart = varLenPos - jumpSz - (varLen * _rowSz.VarEntry);
             int eodPos = varTableStart - _rowSz.Eod;
@@ -992,7 +992,7 @@ public abstract class AccessBase : IAccessBase
                 return false;
             }
 
-            eod = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + eodPos) : page[rowStart + eodPos];
+            eod = _rowSz.ReadEod(page, rowStart + eodPos);
         }
 
         layout = new RowLayout(numCols, nullMaskPos, varLen, varTableStart, eod);
@@ -1050,13 +1050,13 @@ public abstract class AccessBase : IAccessBase
             return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
         }
 
-        int varOff = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + entryPos) : page[rowStart + entryPos];
+        int varOff = _rowSz.ReadVarEntry(page, rowStart + entryPos);
 
         int varEnd;
         if (col.VarIdx + 1 < layout.VarLen)
         {
             int nextEntry = layout.VarTableStart + ((layout.VarLen - 2 - col.VarIdx) * _rowSz.VarEntry);
-            varEnd = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + nextEntry) : page[rowStart + nextEntry];
+            varEnd = _rowSz.ReadVarEntry(page, rowStart + nextEntry);
         }
         else
         {
