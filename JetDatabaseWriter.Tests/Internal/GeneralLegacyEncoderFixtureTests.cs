@@ -52,7 +52,8 @@ public sealed class GeneralLegacyEncoderFixtureTests
     // the indexed-text length cap (127 chars in Jackcess / our encoder).
     // Upstream Jackcess explicitly skips them too (see
     // `IndexCodesTest.findRow`'s "TODO long rows not handled completely"
-    // workaround).
+    // workaround). Tracked in <c>docs/design/test-coverage-gaps.md</c> §1.1
+    // (canonical home for the upstream long-row TODO cross-references).
     private static readonly HashSet<string> LongRowStressTables = new(StringComparer.OrdinalIgnoreCase)
     {
         "Table11",

@@ -3675,14 +3675,30 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 }
 
                 // The caller patches first_dp after appending the leaf page.
-                // Per the §3.1 empirical correction, real Access fixtures emit
-                // flags = 0x00 even for PK indexes — uniqueness is signalled by
-                // index_type = 0x01 below, not the flag bit. Non-PK unique
-                // indexes set flags bit 0x01 explicitly.
-                if (ri.IsUnique && !ri.IsPrimaryKey)
+                // Per the Jackcess `IndexData.writeDefinition` constants
+                // (`UNKNOWN_INDEX_FLAG=0x80`, `UNIQUE_INDEX_FLAG=0x01`,
+                // `REQUIRED_INDEX_FLAG=0x08`, `IGNORE_NULLS_INDEX_FLAG=0x02`),
+                // every Access-authored real-idx descriptor sets the 0x80 bit;
+                // PKs additionally set 0x01 (unique) | 0x08 (required) so the
+                // observed PK byte is 0x89, observed non-PK unique is 0x81,
+                // observed plain index is 0x80. Empirically verified against
+                // the Jackcess `testIndexProperties` fixtures via the
+                // `IndexFlagsRawProbe` diagnostic in this session — the prior
+                // "Access fixtures emit flags = 0x00 even for PK indexes"
+                // claim was based on reading the wrong byte (offset 42, the
+                // 4-byte unknown gap) before the FlagsOffset fix to 46.
+                byte flagsByte = Constants.TableDefinition.UnknownIndexFlag;
+                if (ri.IsPrimaryKey)
                 {
-                    page[_indexLayout.FlagsAbsoluteOffset(phys)] = 0x01;
+                    flagsByte |= (byte)(Constants.TableDefinition.UniqueIndexFlag
+                        | Constants.TableDefinition.RequiredIndexFlag);
                 }
+                else if (ri.IsUnique)
+                {
+                    flagsByte |= Constants.TableDefinition.UniqueIndexFlag;
+                }
+
+                page[_indexLayout.FlagsAbsoluteOffset(phys)] = flagsByte;
 
                 firstDpOffsets[i] = _indexLayout.FirstDpAbsoluteOffset(phys);
 

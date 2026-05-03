@@ -539,6 +539,39 @@ internal static class Constants
         public const int ColMapSlotSize = 3;
 
         /// <summary>
+        /// Real-idx <c>flags</c> bit indicating a unique index. Per Jackcess
+        /// <c>IndexData.UNIQUE_INDEX_FLAG</c>. PK indexes implicitly set this.
+        /// </summary>
+        public const byte UniqueIndexFlag = 0x01;
+
+        /// <summary>
+        /// Real-idx <c>flags</c> bit indicating an index that ignores rows
+        /// whose key columns are NULL. Per Jackcess
+        /// <c>IndexData.IGNORE_NULLS_INDEX_FLAG</c>.
+        /// </summary>
+        public const byte IgnoreNullsIndexFlag = 0x02;
+
+        /// <summary>
+        /// Real-idx <c>flags</c> bit indicating a required (NOT NULL) index.
+        /// Per Jackcess <c>IndexData.REQUIRED_INDEX_FLAG</c>. PK indexes
+        /// implicitly set this.
+        /// </summary>
+        public const byte RequiredIndexFlag = 0x08;
+
+        /// <summary>
+        /// Real-idx <c>flags</c> bit always set by Microsoft Access on every
+        /// real-idx descriptor in V2000+ (.accdb / Jet4). Per Jackcess
+        /// <c>IndexData.UNKNOWN_INDEX_FLAG</c> — purpose undocumented but
+        /// empirically required: omitting it on writer-emitted TDEFs causes
+        /// DAO <c>CompactDatabase</c> to reject the file with
+        /// "could not find object 'MSysDb'". Verified against the Jackcess
+        /// <c>testIndexProperties</c> fixture corpus (every observed flag
+        /// byte is one of <c>0x80</c>, <c>0x81</c>, <c>0x82</c>, <c>0x88</c>,
+        /// <c>0x89</c>; none ever lacks the <c>0x80</c> bit).
+        /// </summary>
+        public const byte UnknownIndexFlag = 0x80;
+
+        /// <summary>
         /// Number of <c>col_map</c> slots in a real-idx physical descriptor
         /// (always 10). Format-invariant across Jet3 and Jet4/ACE.
         /// </summary>

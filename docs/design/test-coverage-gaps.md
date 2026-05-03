@@ -30,6 +30,16 @@ section tags the source project with `[J]` (Jackcess), `[M]` (mdbtools), or
   are explicitly skipped — Jackcess does the same
   ("TODO long rows not handled completely yet in V2010"). Closing the General /
   General 97 gap would also let us re-include those tables.
+
+  > **Canonical home for the upstream Jackcess long-row TODO.** The same
+  > limitation is referenced (and these tables/keys are skipped) from:
+  > [GeneralLegacyEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralLegacyEncoderFixtureTests.cs)
+  > (text long-row stress tables `Table11` / `Table11_desc`),
+  > [NonTextSingleColumnIndexFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/NonTextSingleColumnIndexFixtureTests.cs)
+  > (binary single-column long keys in V2010 `binIdxTest`),
+  > [IndexCodesAggregateDiagnosticTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexCodesAggregateDiagnosticTests.cs)
+  > (aggregate ignores Memo-keyed indexes), and the README "Limitations →
+  > Index keys" bullet. Repo-memory note: `/memories/repo/long-row-index-todo.md`.
 - [x] **`[J]` `[S]`** Composite (multi-column) text index encoding round-trip
   against `testCompIndex.mdb` / `.accdb`. Addressed by
   [CompositeTextIndexFixtureTests.cs](JetDatabaseWriter.Tests/Internal/CompositeTextIndexFixtureTests.cs)
