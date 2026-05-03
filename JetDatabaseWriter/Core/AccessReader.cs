@@ -1217,6 +1217,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // Read the col_map for the backing real-idx entry to recover key columns.
             var keyColumns = new List<IndexColumnReference>();
             byte flags = 0x00;
+            int firstDp = 0;
             if (numRealIdx > 0 && realIdxNum >= 0 && realIdxNum < numRealIdx
                 && _indexLayout.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, realIdxNum, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn> kcs))
             {
@@ -1231,6 +1232,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
 
                 flags = slot.Flags;
+                if (slot.FirstDpOffset >= 0 && slot.FirstDpOffset + 4 <= td.Length)
+                {
+                    firstDp = Ri32(td, slot.FirstDpOffset);
+                }
             }
 
             result.Add(new IndexMetadata
@@ -1247,6 +1252,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 CascadeUpdates = cascadeUps != 0,
                 CascadeDeletes = cascadeDels != 0,
                 Columns = keyColumns,
+                FirstDp = firstDp,
             });
         }
 

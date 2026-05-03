@@ -70,4 +70,11 @@ public sealed record IndexMetadata
 
     /// <summary>Gets the columns that make up the index key, in key order.</summary>
     public IReadOnlyList<IndexColumnReference> Columns { get; init; } = [];
+
+    /// <summary>
+    /// Gets the page number of the index B-tree root (real-idx <c>first_dp</c>).
+    /// Exposed for in-assembly consumers (tests, format probe) that need to
+    /// walk the on-disk index pages; not part of the public schema surface.
+    /// </summary>
+    internal int FirstDp { get; init; }
 }
