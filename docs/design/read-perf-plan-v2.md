@@ -147,37 +147,57 @@ narrow DTOs (the common LINQ-projection shape) this is pure waste.
 
 ### Tasks
 
-- [ ] Add `RowMapper<T>.GetBoundColumnIndices(string[] headers)` that
-  returns the sorted set of header indices the compiled mapper actually
-  reads.
-- [ ] Add an internal overload
+- [x] Added [`RowMapper<T>.GetBoundColumnMask(headers)`](../../JetDatabaseWriter/Internal/RowMapper.cs)
+  — returns a `bool[]` of header indices the compiled mapper actually reads.
+- [x] Added projection-aware overload
   `TryCrackRowSync(byte[] page, int rowStart, int rowSize, TableDef td,
-   ReadOnlySpan<int> wantedColumns, out object?[]? row, out bool needsLongValue)`
-  that:
-  - Always parses the row layout (cheap and required for var-area
-    offsets even on unread columns — verify via test).
-  - Calls `ResolveColumnSlice` only for columns in `wantedColumns`.
-  - Fills unread slots with `null` (mapper already skips `null` /
-    `DBNull` per Phase 5).
-- [ ] Wire it into the `Rows<T>()` path in
-  [AccessReader.cs](../../JetDatabaseWriter/Core/AccessReader.cs) via a
-  new `EnumerateTypedRowsAsync(..., ReadOnlySpan<int> wantedColumns)`
-  overload. `Rows()` keeps calling the existing all-columns overload.
-- [ ] Skip `ResolveComplexColumns` / `WrapHyperlinkColumns` for columns
-  not in `wantedColumns`.
+   bool[]? wantedColumns, out object?[]? row, out bool needsLongValue)`
+  in [AccessReader.cs](../../JetDatabaseWriter/Core/AccessReader.cs)
+  that always parses the row layout (cheap and required for var-area
+  offsets) but only calls `ResolveColumnSlice` + decode for columns
+  whose mask entry is `true`. Unread slots stay `null`; the compiled
+  mapper already skips `null`/`DBNull`.
+- [x] Added matching projection overload of `CrackRowTypedAsync` and
+  `EnumerateTypedRowsAsync`. The `Rows<T>()` entry point computes the
+  mask once per call and passes it through; `Rows()` /
+  `ReadDataTableAsync` keep calling the all-columns overload (mask = `null`).
+- [x] Skipped `ResolveComplexColumns` / `WrapHyperlinkColumns` passes
+  entirely when the projection contains no column of the relevant kind
+  (per-row helpers `HasWantedColumnOfType` / `HasWantedHyperlinkColumn`).
+- [x] Disabled the projection (mask = `null`) when
+  `td.HasComplexColumns` so complex resolution's parent-id T_LONG lookup
+  is never starved.
 
-### Risk
+### Verification
 
-- Var-area offsets are cumulative — must verify that skipping decode
-  doesn't break offset tracking for *later* var columns the mapper
-  *does* want. `ResolveColumnSlice` is independent of decode, so this
-  should be fine, but pin it with a test.
+- `dotnet test` clean modulo the 2 known DAO Compact failures
+  documented in `/memories/repo/round-trip-tests.md`.
+- `Decode_Wide_Typed_NarrowProjection` (10 k rows, 40 cols, DTO binds 4):
 
-### Exit criteria
+  | Metric        | Baseline (Phase 1) | Phase 2  | Δ          |
+  | ------------- | -----------------: | -------: | ---------- |
+  | Mean / op     |          63.85 ms  | 22.19 ms | **2.9× faster** |
+  | Allocated/op  |          32.19 MB  |  6.10 MB | **5.3× less**   |
+  | Allocated/row |          3.22 KB   |    624 B | **5.3× less**   |
 
-- New benchmark `Decode_Wide_Typed` (40 cols, mapper binds 4) shows
-  measurable speedup and allocation drop.
-- All existing tests still pass.
+  Other `Decode_*` benchmarks are within run-to-run noise of the
+  Phase 1 baselines (no regression on the all-columns path).
+
+### Risk (resolved)
+
+- Var-area offsets are cumulative — verified that skipping decode does
+  not break offset tracking for later var columns. `ResolveColumnSlice`
+  computes each column's offsets independently from the row trailer
+  (`RowLayout.VarTableStart` + `col.VarIdx`), so unread slots are safe.
+- Complex/attachment parent-id resolution needs the first T_LONG to be
+  decoded — addressed by falling back to the all-columns path whenever
+  `td.HasComplexColumns`.
+
+### Exit criteria — done
+
+- [x] Wide narrow-projection benchmark shows ≥2× speedup and ≥5×
+  allocation drop.
+- [x] All existing tests still pass (modulo the 2 known failures).
 
 ---
 

@@ -474,7 +474,17 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         Func<object?[], T> factory = RowMapper<T>.Build(headers, td.ClrTypes);
 
-        await foreach (object?[] row in EnumerateTypedRowsAsync(tableName, entry, td, progress, cancellationToken).ConfigureAwait(false))
+        // Phase 2 of read-perf-plan-v2: skip per-row decode of columns the
+        // mapper never reads. For wide tables and narrow DTOs this can
+        // eliminate the bulk of the per-row decode + boxing cost. We
+        // suppress the projection when the table has complex/attachment
+        // columns, because complex resolution needs the parent-id T_LONG
+        // which may not be in the projection set.
+        bool[]? wantedColumns = td.HasComplexColumns
+            ? null
+            : RowMapper<T>.GetBoundColumnMask(headers);
+
+        await foreach (object?[] row in EnumerateTypedRowsAsync(tableName, entry, td, wantedColumns, progress, cancellationToken).ConfigureAwait(false))
         {
             yield return factory(row);
         }
@@ -496,8 +506,38 @@ public sealed class AccessReader : AccessBase, IAccessReader
         IProgress<long>? progress,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        await foreach (object?[] row in EnumerateTypedRowsAsync(tableName, entry, td, wantedColumns: null, progress, cancellationToken).ConfigureAwait(false))
+        {
+            yield return row;
+        }
+    }
+
+    /// <summary>
+    /// Projection-aware overload of <c>EnumerateTypedRowsAsync</c>.
+    /// When <paramref name="wantedColumns"/> is non-<see langword="null"/>, only the
+    /// flagged column indices are decoded and the complex-attachment / Hyperlink
+    /// post-processing passes are skipped when no wanted column is affected by them.
+    /// Phase 2 of read-perf-plan-v2.
+    /// </summary>
+    private async IAsyncEnumerable<object?[]> EnumerateTypedRowsAsync(
+        string tableName,
+        CatalogEntry entry,
+        TableDef td,
+        bool[]? wantedColumns,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
         long rowCount = 0;
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
+
+        // Decide which post-processing passes are needed up front. When a
+        // projection mask is supplied, skip a pass entirely if no wanted
+        // column requires it; otherwise run with the table-wide flag.
+        bool needsComplexPass = td.HasComplexColumns
+            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, T_COMPLEX, T_ATTACHMENT));
+        bool needsHyperlinkPass = td.HasHyperlinkColumns
+            && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
+
+        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
             ? await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
             : null;
         IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
@@ -515,18 +555,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     continue;
                 }
 
-                object?[]? row = await CrackRowTypedAsync(page, rb.RowStart, rb.RowSize, td, cancellationToken).ConfigureAwait(false);
+                object?[]? row = await CrackRowTypedAsync(page, rb.RowStart, rb.RowSize, td, wantedColumns, cancellationToken).ConfigureAwait(false);
                 if (row == null)
                 {
                     continue;
                 }
 
-                if (td.HasComplexColumns)
+                if (needsComplexPass)
                 {
                     ResolveComplexColumns(row, td.Columns, complexData);
                 }
 
-                if (td.HasHyperlinkColumns)
+                if (needsHyperlinkPass)
                 {
                     WrapHyperlinkColumns(row, td.ClrTypes);
                 }
@@ -2103,6 +2143,34 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// strings that fail to parse collapse to <see cref="DBNull.Value"/>
     /// (matching <see cref="TypedValueParser.ParseValue"/>'s legacy behaviour).
     /// </summary>
+    private static bool HasWantedColumnOfType(List<ColumnInfo> columns, bool[] wantedColumns, byte type1, byte type2)
+    {
+        int limit = Math.Min(columns.Count, wantedColumns.Length);
+        for (int i = 0; i < limit; i++)
+        {
+            if (wantedColumns[i] && (columns[i].Type == type1 || columns[i].Type == type2))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasWantedHyperlinkColumn(Type[] clrTypes, bool[] wantedColumns)
+    {
+        int limit = Math.Min(clrTypes.Length, wantedColumns.Length);
+        for (int i = 0; i < limit; i++)
+        {
+            if (wantedColumns[i] && clrTypes[i] == typeof(Hyperlink))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static void WrapHyperlinkColumns(object?[] typedRow, Type[] clrTypes)
     {
         int limit = Math.Min(clrTypes.Length, typedRow.Length);
@@ -2122,7 +2190,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <summary>
     /// Resolves <c>T_COMPLEX</c>/<c>T_ATTACHMENT</c> slots in a typed row
-    /// (produced by <see cref="CrackRowTypedAsync"/>) by replacing the
+    /// (produced by <c>CrackRowTypedAsync</c>) by replacing the
     /// <see cref="ComplexIdRef"/> sentinel with the joined attachment bytes
     /// from the preloaded complex-data dictionary. Slots with no resolvable
     /// child data collapse to <see cref="DBNull.Value"/> rather than leaving
@@ -2741,10 +2809,21 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // HasHyperlinkColumns flags.
 
     private ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
+        => CrackRowTypedAsync(page, rowStart, rowSize, td, wantedColumns: null, cancellationToken);
+
+    /// <summary>
+    /// Projection-aware overload of <c>CrackRowTypedAsync</c>.
+    /// When <paramref name="wantedColumns"/> is non-<see langword="null"/>, only the
+    /// columns whose mask entry is <see langword="true"/> are decoded; the rest are
+    /// left as <see langword="null"/> (the compiled <c>RowMapper&lt;T&gt;</c> mapper
+    /// already skips <see langword="null"/>/<see cref="DBNull"/> slots, so unbound
+    /// columns simply produce no work). Phase 2 of read-perf-plan-v2.
+    /// </summary>
+    private ValueTask<object?[]?> CrackRowTypedAsync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (!TryCrackRowSync(page, rowStart, rowSize, td, out object?[]? row, out bool needsLongValue))
+        if (!TryCrackRowSync(page, rowStart, rowSize, td, wantedColumns, out object?[]? row, out bool needsLongValue))
         {
             return new ValueTask<object?[]?>((object?[]?)null);
         }
@@ -2764,7 +2843,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>
     /// Async slow-path that walks the LVAL chain for any
     /// <see cref="LongValueRef"/> sentinels left in <paramref name="row"/>
-    /// by <see cref="TryCrackRowSync"/>. Only invoked when at least one
+    /// by <c>TryCrackRowSync</c>. Only invoked when at least one
     /// such sentinel was emitted — fixed-only / inline-only rows skip this
     /// entirely and never allocate an async state machine.
     /// </summary>
@@ -2790,9 +2869,22 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <paramref name="needsLongValue"/> is set when one or more
     /// <c>T_MEMO</c>/<c>T_OLE</c> slots require an LVAL-chain walk; those
     /// slots are filled with a <see cref="LongValueRef"/> sentinel that the
-    /// async wrapper (<see cref="CrackRowTypedAsync"/>) replaces.
+    /// async wrapper (<c>CrackRowTypedAsync</c>) replaces.
     /// </summary>
     private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, TableDef td, out object?[]? row, out bool needsLongValue)
+        => TryCrackRowSync(page, rowStart, rowSize, td, wantedColumns: null, out row, out needsLongValue);
+
+    /// <summary>
+    /// Projection-aware overload of <c>TryCrackRowSync</c>.
+    /// When <paramref name="wantedColumns"/> is non-<see langword="null"/>, only the
+    /// columns whose mask entry is <see langword="true"/> are decoded; unwanted slots
+    /// are left at their default (<see langword="null"/>). The row layout is still
+    /// fully parsed (<c>TryParseRowLayout</c> walks the trailer once for the whole
+    /// row), and <c>ResolveColumnSlice</c> is independent per column — skipping
+    /// decode of one var column does not affect the offsets of any later column.
+    /// Phase 2 of read-perf-plan-v2.
+    /// </summary>
+    private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, out object?[]? row, out bool needsLongValue)
     {
         row = null;
         needsLongValue = false;
@@ -2824,6 +2916,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var result = new object?[td.Columns.Count];
         for (int i = 0; i < td.Columns.Count; i++)
         {
+            if (wantedColumns != null && !wantedColumns[i])
+            {
+                // Column not bound by the caller's projection — leave the
+                // slot null so the compiled RowMapper<T> mapper skips it.
+                continue;
+            }
+
             ColumnInfo col = td.Columns[i];
             ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, col);
 
@@ -2959,7 +3058,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Sentinel placed in the typed-row buffer for variable-area MEMO/OLE
     /// slots that need an LVAL chain walk to resolve. Replaced by the
     /// final <see cref="string"/> or <see cref="byte"/>[] payload by
-    /// <see cref="CrackRowTypedAsync"/>.
+    /// <c>CrackRowTypedAsync</c>.
     /// </summary>
     private readonly record struct LongValueRef(int Start, int Len, bool IsOle);
 
