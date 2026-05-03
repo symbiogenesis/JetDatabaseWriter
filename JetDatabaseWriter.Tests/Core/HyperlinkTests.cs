@@ -225,8 +225,6 @@ public sealed class HyperlinkTests
     /// <summary>
     /// Round-trips a Hyperlink with all four parts populated near the
     /// per-part length Access exposes through its UI (~2048 chars/part).
-    /// Closes the §2.5 "all four parts populated at maximum length" gap in
-    /// <c>docs/design/test-coverage-gaps.md</c>.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
