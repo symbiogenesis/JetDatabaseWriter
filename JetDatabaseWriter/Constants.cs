@@ -617,8 +617,17 @@ internal static class Constants
                 /// <summary><c>first_dp</c> (4 bytes): root page of the index B-tree.</summary>
                 public const int FirstDpOffset = 38;
 
-                /// <summary><c>flags</c> (1 byte): bit 0 = unique.</summary>
-                public const int FlagsOffset = 42;
+                /// <summary>
+                /// <c>flags</c> (1 byte): bit 0 = unique, bit 1 = ignore_nulls,
+                /// bit 3 = required. Per Jackcess <c>IndexData.writeDefinition</c>
+                /// the Jet4 physical descriptor is laid out as
+                /// <c>magic(4) + col_map(30) + umap_row(1) + umap_page(3) +
+                /// first_dp(4) + unknown(4) + flags(1) + unknown(5)</c>, so the
+                /// flags byte sits at absolute offset 46 within the 52-byte slot,
+                /// not at offset 42 (which is the start of the 4-byte
+                /// “unknown” gap immediately following <c>first_dp</c>).
+                /// </summary>
+                public const int FlagsOffset = 46;
             }
 
             /// <summary>Byte offsets within a Jet4/ACE logical-idx entry (28 bytes total).</summary>

@@ -1238,13 +1238,21 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
             }
 
+            // Per Jackcess `IndexData.isUnique()`: a primary-key logical
+            // index is always unique, regardless of the flag bit (Access
+            // historically writes `flags = 0x00` for PKs and conveys
+            // uniqueness through `index_type = 0x01`). Honour both signals
+            // so PrimaryKey indexes always surface as IsUnique=true.
+            bool isUniqueFlag = (flags & 0x01) != 0;
+            bool isUnique = isUniqueFlag || indexType == IndexKind.PrimaryKey;
+
             result.Add(new IndexMetadata
             {
                 Name = names[i],
                 IndexNumber = indexNum,
                 RealIndexNumber = realIdxNum,
                 Kind = indexType,
-                IsUnique = (flags & 0x01) != 0,
+                IsUnique = isUnique,
                 IgnoreNulls = (flags & 0x02) != 0,
                 IsRequired = (flags & 0x08) != 0,
                 IsForeignKey = relIdxNum != -1,
@@ -3413,6 +3421,45 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// </summary>
     internal ValueTask<byte[]?> GetRawTDefBytesAsync(long tdefPage, CancellationToken cancellationToken) =>
         ReadTDefBytesAsync(tdefPage, cancellationToken);
+
+    /// <summary>
+    /// Diagnostic helper: resolves <paramref name="tableName"/>, reads the
+    /// TDEF page chain, and walks to the start of the real-idx physical
+    /// descriptor block — returning the raw TDEF bytes, the absolute
+    /// <c>realIdxDescStart</c> offset within them, and <c>numRealIdx</c>.
+    /// Used by tests that need to inspect the raw on-disk layout (e.g. to
+    /// verify the per-format flag-byte offset). Returns <see langword="null"/>
+    /// when the table or TDEF can't be resolved.
+    /// </summary>
+    internal async ValueTask<(byte[] Td, int RealIdxDescStart, int NumRealIdx)?> GetRawTDefBytesForTableAsync(
+        string tableName, CancellationToken cancellationToken)
+    {
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            return null;
+        }
+
+        byte[]? td = await ReadTDefBytesAsync(resolved.Value.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        if (td == null || td.Length < _tdef.BlockEnd)
+        {
+            return null;
+        }
+
+        int numCols = Ru16(td, _tdef.NumCols);
+        int numRealIdx = Ri32(td, _tdef.NumRealIdx);
+        int colStart = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
+        int pos = colStart + (numCols * _colDesc.Size);
+        for (int i = 0; i < numCols; i++)
+        {
+            if (ReadColumnName(td, ref pos, out _) < 0)
+            {
+                return (td, -1, numRealIdx);
+            }
+        }
+
+        return (td, pos, numRealIdx);
+    }
 
     /// <summary>
     /// Returns a heap-allocated copy of the raw bytes of <paramref name="pageNumber"/>
