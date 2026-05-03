@@ -1029,6 +1029,53 @@ public sealed class IndexKeyEncoderTests
         Assert.Equal(fromDecimal, fromDouble);
     }
 
+    /// <summary>
+    /// Cross-format isolation of the NUMERIC sort-key sign byte
+    /// (payload byte 0, i.e. encoded byte 1 after the entry-flag prefix).
+    /// Closes the §1.2 test-coverage gap entry "Per-format isolated assertion
+    /// of <c>LegacyFixedPointColumnDescriptor</c> vs
+    /// <c>FixedPointColumnDescriptor</c> sign-byte handling": the existing
+    /// <c>Numeric_*</c> facts cover four of the eight (asc/desc × pos/neg ×
+    /// legacy/new-style) combinations positionally, but no single assertion
+    /// pins down the sign-byte branch across the full grid.
+    /// <para>
+    /// Sign-byte derivation per <see cref="IndexKeyEncoder.EncodeNumericEntry"/>:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description><b>Legacy</b> (Jet4 .mdb): if (negative == ascending)
+    /// flip all 17 bytes; THEN byte 0 = 0x00 (negative) or 0xFF (positive).
+    /// The overwrite happens AFTER the flip, so the sign byte is a function of
+    /// the <em>sign alone</em> in legacy form (positive → 0xFF, negative → 0x00).
+    /// This is the documented MS KB 837148 / Jackcess
+    /// <c>LegacyFixedPointColumnDescriptor</c> quirk that breaks cross-sign
+    /// descending order on Jet4 .mdb.</description></item>
+    /// <item><description><b>New-style</b> (ACCDB / ACE): byte 0 = 0xFF; THEN
+    /// if (negative == ascending) flip all 17 bytes. The flip happens AFTER the
+    /// sign-byte stamp, so the sign byte is 0xFF when not flipped (when
+    /// negative != ascending) and 0x00 when flipped (when negative == ascending).
+    /// </description></item>
+    /// </list>
+    /// </summary>
+    [Theory]
+    [InlineData(true, false, true, 0xFF)] // asc, pos, legacy -> 0xFF (positive sign post-overwrite)
+    [InlineData(true, true, true, 0x00)] // asc, neg, legacy -> 0x00 (negative sign post-overwrite)
+    [InlineData(false, false, true, 0xFF)] // desc, pos, legacy -> 0xFF
+    [InlineData(false, true, true, 0x00)] // desc, neg, legacy -> 0x00
+    [InlineData(true, false, false, 0xFF)] // asc, pos, new-style -> 0xFF (no flip; neg != asc)
+    [InlineData(true, true, false, 0x00)] // asc, neg, new-style -> 0xFF then flipped (neg == asc)
+    [InlineData(false, false, false, 0x00)] // desc, pos, new-style -> 0xFF then flipped (neg == asc, both false)
+    [InlineData(false, true, false, 0xFF)] // desc, neg, new-style -> 0xFF (no flip; neg != asc)
+    public void Numeric_SignByte_IsolatedAcrossFormatAndDirection(bool ascending, bool negative, bool legacy, int expectedSignByte)
+    {
+        decimal value = negative ? -1m : 1m;
+        byte[] encoded = IndexKeyEncoder.EncodeNumericEntry(value, ascending, targetScale: 0, legacy);
+
+        // Layout: encoded[0] = entry-flag (0x7F asc / 0x80 desc); encoded[1..17] = 17-byte payload.
+        Assert.Equal(18, encoded.Length);
+        Assert.Equal(ascending ? (byte)0x7F : (byte)0x80, encoded[0]);
+        Assert.Equal((byte)expectedSignByte, encoded[1]);
+    }
+
     private static int CompareLex(byte[] a, byte[] b)
     {
         int n = Math.Min(a.Length, b.Length);
