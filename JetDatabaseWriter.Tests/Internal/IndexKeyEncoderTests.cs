@@ -420,6 +420,39 @@ public sealed class IndexKeyEncoderTests
         }
     }
 
+    /// <summary>
+    /// Closes <c>docs/design/test-coverage-gaps.md</c> §1.1: the descending
+    /// non-null start flag (<c>0x80</c>) must never collapse into the
+    /// descending null marker (<c>0xFF</c>) — even when the inverted payload
+    /// happens to begin with <c>0xFF</c>. The start flag is written before
+    /// the inversion pass and is not flipped, so a descending non-null key
+    /// always begins with exactly one <c>0x80</c> byte and is therefore
+    /// unambiguously distinguishable from a single-byte <c>0xFF</c> null
+    /// entry, regardless of payload contents.
+    /// </summary>
+    [Fact]
+    public void Text_DescendingNonNull_AlwaysStartsWith0x80_NeverCollapsesToNullFlag()
+    {
+        // FlagDescendingNull is a single 0xFF byte. Anything else with a
+        // leading 0x80 cannot be confused with it.
+        byte[] descNull = IndexKeyEncoder.EncodeEntry(T_TEXT, value: DBNull.Value, ascending: false);
+        Assert.Equal(new byte[] { 0xFF }, descNull);
+
+        // Cover empty, all-spaces (trim → empty), single char, multi-char,
+        // and a string long enough that the inverted payload contains at
+        // least one 0xFF byte (every END_EXTRA_TEXT 0x00 in the unflipped
+        // payload becomes 0xFF after inversion).
+        string[] values = [string.Empty, "   ", "A", "ABC", "Hello, World!", new('Z', 50)];
+        foreach (string value in values)
+        {
+            byte[] encoded = IndexKeyEncoder.EncodeEntry(T_TEXT, value, ascending: false);
+
+            Assert.True(encoded.Length >= 2, $"Descending non-null encoding of '{value}' is too short.");
+            Assert.Equal(0x80, encoded[0]);
+            Assert.NotEqual(descNull, encoded);
+        }
+    }
+
     [Fact]
     public void Text_Punctuation_NowEncodesViaSimpleHandler()
     {
