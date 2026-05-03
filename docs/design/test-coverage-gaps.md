@@ -159,8 +159,13 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   [AccessWriterTests.cs](../../JetDatabaseWriter.Tests/Core/AccessWriterTests.cs),
   which round-trips ±0.999...28-nines, ±1e-28, ±28-nines integers, and
   the NUMERIC(28,14) / (18,4) corners through the writer + reader.
-- [ ] **`[J]`** Currency rounding at `MIN/MAX_VALUE` and the
-  `Decimal.MinValue + 1` boundary.
+- [x] **`[J]`** Currency rounding at `MIN/MAX_VALUE` and the
+  `Decimal.MinValue + 1` boundary — closed by the OACurrency boundary
+  cases added to the `Money_Scale4_RoundTripsThroughParseValue` theory in
+  [ReadFixedTypedTests.cs](../../JetDatabaseWriter.Tests/Core/ReadFixedTypedTests.cs):
+  `long.MaxValue` (±922,337,203,685,477.5807), `long.MinValue + 1`, and
+  `long.MinValue` all round-trip without rounding through both the typed
+  fast path and the legacy `ReadFixedString` + `ParseValue` round-trip.
 
 ---
 
@@ -189,9 +194,17 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 - [ ] **`[J]`** `MSysAccessStorage` / `MSysNavPaneGroups` round-trip for
   ACE (these are referenced by Jackcess but not asserted).
-- [ ] **`[J]`** `MSysObjects.Flags` bits: hidden, system, replicated.
-  Verify our `ListTablesAsync` filtering matches Access's "show
-  hidden/system" semantics.
+- [x] **`[J]`** `MSysObjects.Flags` bits: hidden, system, replicated.
+  Closed by `ListTables_FiltersOutAllSystemAndHiddenTables` in
+  [AccessReaderCatalogTests.cs](../../JetDatabaseWriter.Tests/Core/AccessReaderCatalogTests.cs).
+  Asserts that across every fixture (the local + Jackcess corpora) the
+  canonical catalog tables (MSysObjects, MSysAccessStorage,
+  MSysComplexColumns, MSysRelationships, MSysQueries, MSysNavPane*, etc.)
+  and the writer-emitted complex-column flat-child tables
+  (`f_<32-hex>_<col>`) are all filtered out via `SystemTableMask`.
+  Note: `MSysCompactError` is intentionally NOT in the filter list —
+  Access writes it as a USER table with the system bit cleared and the
+  Access UI exposes it.
 - [ ] **`[J]`** Table with > 32 columns and > 16 indexes (boundary of the
   index-block layout) — mdbtools historically clipped at 32.
 - [ ] **`[J]`** Querying `MSysQueries` row-set for a **parameterised** query
@@ -203,8 +216,15 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 - [ ] **`[M]`** Row whose **variable-length column count exceeds 127** — uses
   the 2-byte length prefix path; mdbtools `pkrep` exercises this.
-- [ ] **`[M]`** Row with a **null mask** that crosses an 8-byte boundary
-  exactly (off-by-one historic bug in mdbtools).
+- [x] **`[M]`** Row with a **null mask** that crosses an 8-byte boundary
+  exactly (off-by-one historic bug in mdbtools) — closed by
+  `NullMask_AcrossEightByteBoundaries_RoundTripsCorrectly` in
+  [WideRowTests.cs](../../JetDatabaseWriter.Tests/Core/WideRowTests.cs),
+  which round-trips three rows (all-set, alternating null/value, all-null)
+  through tables with 8 / 9 / 16 / 17 / 24 / 25 / 32 / 33 nullable
+  columns. The boundary cases (9, 17, 25, 33) force one extra mask byte
+  with a single bit set — the off-by-one shape mdbtools historically
+  mis-decoded.
 - [ ] **`[J]`** Row spanning a **page boundary via overflow pointer**
   (`0x80`-flagged row id) where the overflow target is itself a row whose
   variable section needs another overflow.

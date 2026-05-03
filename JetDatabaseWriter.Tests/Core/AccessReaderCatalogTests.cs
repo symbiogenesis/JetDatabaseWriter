@@ -57,6 +57,69 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
         Assert.Equal(tables.Count, tables.Distinct().Count());
     }
 
+    /// <summary>
+    /// Closes <c>docs/design/test-coverage-gaps.md</c> §4: every fixture in
+    /// the corpus carries the canonical Access catalog tables (MSysObjects,
+    /// MSysAccessStorage, MSysComplexColumns, MSysRelationships, etc.) plus
+    /// the writer-emitted complex-column flat-child tables (<c>f_&lt;hex&gt;_*</c>).
+    /// All of these have the system / hidden flag bit set in
+    /// <c>MSysObjects.Flags</c> and must be filtered by
+    /// <c>ListTablesAsync</c> via <c>SystemTableMask</c>.
+    /// </summary>
+    /// <remarks>
+    /// We deliberately do <em>not</em> assert that no <c>MSys*</c>-prefixed
+    /// table at all leaks through — Access's compact-and-repair process
+    /// occasionally writes a USER table named <c>MSysCompactError</c> with
+    /// the system bit cleared, and the Access UI exposes it. The test
+    /// pins the names we know must always be hidden plus the flat-child
+    /// hidden-table prefix the writer emits.
+    /// </remarks>
+    /// <param name="path">Fixture path supplied by the data-driven theory.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
+    [MemberData(nameof(TestDatabases.JackcessAll), MemberType = typeof(TestDatabases))]
+    public async Task ListTables_FiltersOutAllSystemAndHiddenTables(string path)
+    {
+        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+
+        // Canonical system tables (catalog + ACE complex/storage helpers).
+        // Every fixture has at least MSysObjects + MSysAccessStorage; the
+        // others appear as the database is exercised.
+        string[] mustBeHidden =
+        [
+            "MSysObjects",
+            "MSysACEs",
+            "MSysQueries",
+            "MSysRelationships",
+            "MSysAccessStorage",
+            "MSysAccessXML",
+            "MSysComplexColumns",
+            "MSysNavPaneGroupCategories",
+            "MSysNavPaneGroups",
+            "MSysNavPaneGroupToObjects",
+            "MSysNavPaneObjectIDs",
+            "MSysNameMap",
+            "MSysResources",
+        ];
+
+        foreach (string canonical in mustBeHidden)
+        {
+            Assert.DoesNotContain(
+                tables,
+                t => string.Equals(t, canonical, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // Hidden flat-child tables backing complex columns must never
+        // leak — these are an internal implementation detail of the
+        // writer's Multi-Value / Attachment / Versioned-Text support.
+        Assert.DoesNotContain(
+            tables,
+            t => t.StartsWith("f_", StringComparison.Ordinal) && t.Length > 34);
+    }
+
     // ── GetTableStats ─────────────────────────────────────────────────
 
     [Theory]
