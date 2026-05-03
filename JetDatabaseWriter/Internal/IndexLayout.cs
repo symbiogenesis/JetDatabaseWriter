@@ -134,7 +134,13 @@ internal readonly struct IndexLayout
                 continue;
             }
 
-            onColumn(new KeyColumn(colNum, td[so + 2] != 0x02));
+            // Per Jackcess `IndexData.ASCENDING_COLUMN_FLAG = 0x01`: bit 0x01
+            // set in the col_map flag byte means ascending; clear means
+            // descending. (Microsoft Access writes 0x01 / 0x00; this library's
+            // writer historically wrote 0x01 / 0x02 — both readings of the
+            // 0x01 bit yield the correct result, so this masks both writers'
+            // conventions correctly.)
+            onColumn(new KeyColumn(colNum, (td[so + 2] & 0x01) != 0));
         }
     }
 
@@ -162,7 +168,8 @@ internal readonly struct IndexLayout
                 continue;
             }
 
-            result.Add(new KeyColumn(colNum, td[so + 2] != 0x02));
+            // See ReadColMap for the 0x01-bit ascending-flag rationale.
+            result.Add(new KeyColumn(colNum, (td[so + 2] & 0x01) != 0));
         }
 
         return result;
