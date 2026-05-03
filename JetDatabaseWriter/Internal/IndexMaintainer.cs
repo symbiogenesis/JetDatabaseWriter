@@ -37,6 +37,145 @@ internal sealed class IndexMaintainer(AccessWriter writer)
     public string? LastIncrementalBail { get; private set; }
 
     /// <summary>
+    /// Reads <paramref name="pageNumber"/> through the page cache and returns
+    /// a freshly cloned, caller-owned copy of the bytes. The cache buffer is
+    /// returned to the pool before this method returns, so callers must not
+    /// retain any reference to the original buffer.
+    /// </summary>
+    private async ValueTask<byte[]> ReadAndClonePageAsync(long pageNumber, CancellationToken cancellationToken)
+    {
+        byte[] pageBytes = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return (byte[])pageBytes.Clone();
+        }
+        finally
+        {
+            AccessBase.ReturnPage(pageBytes);
+        }
+    }
+
+    /// <summary>
+    /// Parsed snapshot of the per-table TDEF header bytes needed by the index
+    /// maintenance paths: the cloned page buffer, decoded column / index
+    /// counts, and the byte offset at which the real-idx descriptor block
+    /// begins (i.e. just past the column-name table).
+    /// </summary>
+    private readonly record struct TdefPreamble(
+        byte[] Buffer,
+        int NumCols,
+        int NumIdx,
+        int NumRealIdx,
+        int RealIdxDescStart,
+        int FailedColumnIndex,
+        int FailedColumnNamePos);
+
+    /// <summary>
+    /// Reads + clones the TDEF page, decodes <c>numCols</c> / <c>numIdx</c> /
+    /// <c>numRealIdx</c>, walks the column-name table, and returns the byte
+    /// offset at which the real-idx descriptor block starts. Each caller maps
+    /// the returned <see cref="TdefPreambleStatus"/> to its own bail policy
+    /// (silent return for the bulk path, <c>LastIncrementalBail</c> string for
+    /// the incremental and catalog-splice paths).
+    /// </summary>
+    private async ValueTask<(TdefPreambleStatus Status, TdefPreamble Preamble)> ReadTdefPreambleAsync(
+        long tdefPage,
+        CancellationToken cancellationToken)
+    {
+        byte[] buffer = await ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+
+        int numCols = AccessBase.Ru16(buffer, writer._tdef.NumCols);
+        int numIdx = AccessBase.Ri32(buffer, writer._tdef.NumCols + 2);
+        int numRealIdx = AccessBase.Ri32(buffer, writer._tdef.NumRealIdx);
+
+        if (numIdx <= 0 || numRealIdx <= 0)
+        {
+            return (TdefPreambleStatus.Empty, new TdefPreamble(buffer, numCols, numIdx, numRealIdx, 0, -1, 0));
+        }
+
+        if (numIdx > 1000 || numRealIdx > 1000)
+        {
+            return (TdefPreambleStatus.TooMany, new TdefPreamble(buffer, numCols, numIdx, numRealIdx, 0, -1, 0));
+        }
+
+        int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * writer._colDesc.Size);
+        for (int i = 0; i < numCols; i++)
+        {
+            if (writer.ReadColumnName(buffer, ref namePos, out _) < 0)
+            {
+                return (TdefPreambleStatus.ColumnNameWalkFailed, new TdefPreamble(buffer, numCols, numIdx, numRealIdx, 0, i, namePos));
+            }
+        }
+
+        return (TdefPreambleStatus.Ok, new TdefPreamble(buffer, numCols, numIdx, numRealIdx, namePos, -1, 0));
+    }
+
+    /// <summary>
+    /// Allocates the page-number array for an N-way leaf split. The first
+    /// page reuses <paramref name="originalPage"/>; pages 1..N-1 are
+    /// consecutive starting at <paramref name="firstNewPage"/>. Used by
+    /// both surgical split paths so the (file-end / staging-counter)
+    /// allocation source is the only thing the caller varies.
+    /// </summary>
+    private static long[] AllocateSplitPageNumbers(long originalPage, int count, long firstNewPage)
+    {
+        long[] pageNumbers = new long[count];
+        pageNumbers[0] = originalPage;
+        for (int p = 1; p < count; p++)
+        {
+            pageNumbers[p] = firstNewPage + (p - 1);
+        }
+
+        return pageNumbers;
+    }
+
+    /// <summary>
+    /// Builds every page of an N-way leaf split into a fresh
+    /// <c>byte[][]</c>. Each page's prev/next sibling pointers stitch
+    /// the new pages into the existing chain (page 0's prev =
+    /// <paramref name="leafPrev"/>, page N-1's next =
+    /// <paramref name="leafNext"/>; interior pages point at their
+    /// neighbours via <paramref name="pageNumbers"/>). Returns
+    /// <see langword="null"/> on any single-entry overflow
+    /// (<see cref="ArgumentOutOfRangeException"/> from the page builder).
+    /// </summary>
+    private byte[][]? TryBuildSplitLeafPages(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long tdefPage,
+        SplitPages splitPages,
+        long[] pageNumbers,
+        long leafPrev,
+        long leafNext)
+    {
+        int splitCount = splitPages.Count;
+        byte[][] pageBytesAll = new byte[splitCount][];
+        try
+        {
+            for (int p = 0; p < splitCount; p++)
+            {
+                long thisPrev = p == 0 ? leafPrev : pageNumbers[p - 1];
+                long thisNext = p == splitCount - 1 ? leafNext : pageNumbers[p + 1];
+                pageBytesAll[p] = IndexLeafPageBuilder.BuildLeafPage(
+                    layout,
+                    writer._pgSz,
+                    tdefPage,
+                    splitPages[p],
+                    prevPage: thisPrev,
+                    nextPage: thisNext,
+                    tailPage: 0,
+                    enablePrefixCompression: true);
+            }
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+
+        return pageBytesAll;
+    }
+
+    /// <summary>
     /// Adds a parent-intermediate op for a split leaf/intermediate.
     /// </summary>
     private static void AddParentOp(
@@ -106,38 +245,22 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
         // Read the TDEF page bytes (single-page TDEFs produced by this writer).
         // Multi-page TDEF chains are not produced by CreateTableAsync today.
-        byte[] tdefPageBytes = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        byte[] tdefBuffer;
-        try
+        var (status, preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (status != TdefPreambleStatus.Ok)
         {
-            tdefBuffer = (byte[])tdefPageBytes.Clone();
-        }
-        finally
-        {
-            AccessBase.ReturnPage(tdefPageBytes);
-        }
-
-        IndexLeafPageBuilder.LeafPageLayout leafLayout = IndexLeafPageBuilder.GetLayout(writer._format);
-
-        int numCols = AccessBase.Ru16(tdefBuffer, writer._tdef.NumCols);
-        int numIdx = AccessBase.Ri32(tdefBuffer, writer._tdef.NumCols + 2);
-        int numRealIdx = AccessBase.Ri32(tdefBuffer, writer._tdef.NumRealIdx);
-        if (numIdx <= 0 || numRealIdx <= 0 || numIdx > 1000 || numRealIdx > 1000)
-        {
+            // Bulk path is silent on every bail (Empty / TooMany /
+            // ColumnNameWalkFailed) — caller treats the table as having
+            // no maintainable indexes.
             return;
         }
 
-        int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * writer._colDesc.Size);
-        for (int i = 0; i < numCols; i++)
-        {
-            if (writer.ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
-            {
-                return;
-            }
-        }
+        byte[] tdefBuffer = preamble.Buffer;
+        int numCols = preamble.NumCols;
+        int numIdx = preamble.NumIdx;
+        int numRealIdx = preamble.NumRealIdx;
+        int realIdxDescStart = preamble.RealIdxDescStart;
 
-        int realIdxDescStart = namePos;
+        IndexLeafPageBuilder.LeafPageLayout leafLayout = IndexLeafPageBuilder.GetLayout(writer._format);
 
         // Decode the index catalog: every populated real-idx slot (with
         // IsUnique already promoted for any slot backing a PK logical-idx),
@@ -172,43 +295,17 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 continue;
             }
 
-            // Canonical scale for a T_NUMERIC index column is the column's
-            // DECLARED scale (Access-parity — every cell is canonically stored
-            // at the declared scale, so the index sorts at that scale too).
-            // Non-numeric columns get -1 as a sentinel.
-            int[] numericTargetScales = new int[keyColInfos.Count];
-            for (int k = 0; k < keyColInfos.Count; k++)
-            {
-                ColumnInfo kCol = keyColInfos[k].Col;
-                numericTargetScales[k] = kCol.Type == T_NUMERIC ? kCol.NumericScale : -1;
-            }
-
-            bool legacyNumeric = writer._format == DatabaseFormat.Jet4Mdb;
-
             var entries = new List<(byte[] Key, long Page, byte Row)>(rowCount);
+            object?[] cells = new object?[keyColInfos.Count];
             for (int r = 0; r < rowCount; r++)
             {
-                byte[][] perColumn = new byte[keyColInfos.Count][];
-                int totalLen = 0;
                 for (int k = 0; k < keyColInfos.Count; k++)
                 {
-                    (ColumnInfo col, int snapIdx, bool ascending) = keyColInfos[k];
-                    object cell = snapshot.Rows[r][snapIdx];
-                    object? value = cell is DBNull ? null : cell;
-                    perColumn[k] = col.Type == T_NUMERIC
-                        ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, (byte)numericTargetScales[k], legacyNumeric)
-                        : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
-                    totalLen += perColumn[k].Length;
+                    object cell = snapshot.Rows[r][keyColInfos[k].SnapIdx];
+                    cells[k] = cell is DBNull ? null : cell;
                 }
 
-                byte[] composite = new byte[totalLen];
-                int offset = 0;
-                for (int k = 0; k < perColumn.Length; k++)
-                {
-                    Buffer.BlockCopy(perColumn[k], 0, composite, offset, perColumn[k].Length);
-                    offset += perColumn[k].Length;
-                }
-
+                byte[] composite = EncodeCompositeKey(keyColInfos, cells);
                 entries.Add((composite, locations[r].PageNumber, (byte)locations[r].RowIndex));
             }
 
@@ -335,46 +432,27 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             return true;
         }
 
-        byte[] tdefPageBytes = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        byte[] tdefBuffer;
-        try
+        var (preStatus, preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        switch (preStatus)
         {
-            tdefBuffer = (byte[])tdefPageBytes.Clone();
-        }
-        finally
-        {
-            AccessBase.ReturnPage(tdefPageBytes);
-        }
-
-        int numCols = AccessBase.Ru16(tdefBuffer, writer._tdef.NumCols);
-        int numIdx = AccessBase.Ri32(tdefBuffer, writer._tdef.NumCols + 2);
-        int numRealIdx = AccessBase.Ri32(tdefBuffer, writer._tdef.NumRealIdx);
-        if (numIdx <= 0 || numRealIdx <= 0)
-        {
-            return true;
-        }
-
-        if (numIdx > 1000 || numRealIdx > 1000)
-        {
-            LastIncrementalBail = $"NumIdx_TooMany numIdx={numIdx} numRealIdx={numRealIdx}";
-            return false;
-        }
-
-        // §3.1 per-format real-idx physical descriptor sizes.
-        // Jet4/ACE: 52 bytes — unknown(4) + col_map(30) + used_pages(4) + first_dp(4) + flags(1) + unknown(9).
-        // Jet3:     39 bytes — unknown(4) + col_map(30) + first_dp(4) + flags(1) — no used_pages slot.
-        int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * writer._colDesc.Size);
-        for (int i = 0; i < numCols; i++)
-        {
-            if (writer.ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
-            {
-                LastIncrementalBail = $"C0 col-name walk i={i} namePos={namePos}";
+            case TdefPreambleStatus.Ok:
+                break;
+            case TdefPreambleStatus.Empty:
+                return true;
+            case TdefPreambleStatus.TooMany:
+                LastIncrementalBail = $"NumIdx_TooMany numIdx={preamble.NumIdx} numRealIdx={preamble.NumRealIdx}";
                 return false;
-            }
+            case TdefPreambleStatus.ColumnNameWalkFailed:
+                LastIncrementalBail = $"C0 col-name walk i={preamble.FailedColumnIndex} namePos={preamble.FailedColumnNamePos}";
+                return false;
+            default:
+                return false;
         }
 
-        int realIdxDescStart = namePos;
+        byte[] tdefBuffer = preamble.Buffer;
+        int numIdx = preamble.NumIdx;
+        int numRealIdx = preamble.NumRealIdx;
+        int realIdxDescStart = preamble.RealIdxDescStart;
         int logIdxStart = idxLayout.LogicalIdxStart(realIdxDescStart, numRealIdx);
 
         // Access Compact & Repair has rejected incrementally maintained
@@ -441,16 +519,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 return false;
             }
 
-            byte[] rootPageBytes = await writer.ReadPageAsync(firstDp, cancellationToken).ConfigureAwait(false);
-            byte[] rootPage;
-            try
-            {
-                rootPage = (byte[])rootPageBytes.Clone();
-            }
-            finally
-            {
-                AccessBase.ReturnPage(rootPageBytes);
-            }
+            byte[] rootPage = await ReadAndClonePageAsync(firstDp, cancellationToken).ConfigureAwait(false);
 
             // Encode the change-set keys for this index. Used by both the
             // single-leaf splice and the multi-level rebuild path below.
@@ -588,16 +657,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
-                    byte[] leafBytes = await writer.ReadPageAsync(walkPage, cancellationToken).ConfigureAwait(false);
-                    byte[] leaf;
-                    try
-                    {
-                        leaf = (byte[])leafBytes.Clone();
-                    }
-                    finally
-                    {
-                        AccessBase.ReturnPage(leafBytes);
-                    }
+                    byte[] leaf = await ReadAndClonePageAsync(walkPage, cancellationToken).ConfigureAwait(false);
 
                     if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
                     {
@@ -684,16 +744,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         for (int depth = 0; depth < 16; depth++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] pageBytes = await writer.ReadPageAsync(current, cancellationToken).ConfigureAwait(false);
-            byte[] page;
-            try
-            {
-                page = (byte[])pageBytes.Clone();
-            }
-            finally
-            {
-                AccessBase.ReturnPage(pageBytes);
-            }
+            byte[] page = await ReadAndClonePageAsync(current, cancellationToken).ConfigureAwait(false);
 
             if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -752,16 +803,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             return false;
         }
 
-        byte[] tailBytes = await writer.ReadPageAsync(tailLeafPage, cancellationToken).ConfigureAwait(false);
-        byte[] tailLeaf;
-        try
-        {
-            tailLeaf = (byte[])tailBytes.Clone();
-        }
-        finally
-        {
-            AccessBase.ReturnPage(tailBytes);
-        }
+        byte[] tailLeaf = await ReadAndClonePageAsync(tailLeafPage, cancellationToken).ConfigureAwait(false);
 
         if (tailLeaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
         {
@@ -898,16 +940,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         }
 
         // 3. Read the target leaf and decode existing entries.
-        byte[] leafBytes = await writer.ReadPageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
-        byte[] leaf;
-        try
-        {
-            leaf = (byte[])leafBytes.Clone();
-        }
-        finally
-        {
-            AccessBase.ReturnPage(leafBytes);
-        }
+        byte[] leaf = await ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
 
         if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
         {
@@ -992,33 +1025,11 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         // First page reuses the original leaf page; remaining pages are
         // freshly appended at end-of-file.
         int splitCount = splitPages.Count;
-        long[] pageNumbers = new long[splitCount];
-        pageNumbers[0] = targetLeafPage;
         long firstFreshPage = writer._stream.Length / writer._pgSz;
-        for (int p = 1; p < splitCount; p++)
-        {
-            pageNumbers[p] = firstFreshPage + (p - 1);
-        }
+        long[] pageNumbers = AllocateSplitPageNumbers(targetLeafPage, splitCount, firstFreshPage);
 
-        byte[][] pageBytesAll = new byte[splitCount][];
-        try
-        {
-            for (int p = 0; p < splitCount; p++)
-            {
-                long thisPrev = p == 0 ? leafPrev : pageNumbers[p - 1];
-                long thisNext = p == splitCount - 1 ? leafNext : pageNumbers[p + 1];
-                pageBytesAll[p] = IndexLeafPageBuilder.BuildLeafPage(
-                    layout,
-                    writer._pgSz,
-                    tdefPage,
-                    splitPages[p],
-                    prevPage: thisPrev,
-                    nextPage: thisNext,
-                    tailPage: 0,
-                    enablePrefixCompression: true);
-            }
-        }
-        catch (ArgumentOutOfRangeException)
+        byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext);
+        if (pageBytesAll is null)
         {
             return false;
         }
@@ -1061,16 +1072,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
         if (leafNext > 0)
         {
-            byte[] nextBytes = await writer.ReadPageAsync(leafNext, cancellationToken).ConfigureAwait(false);
-            byte[] nextLeaf;
-            try
-            {
-                nextLeaf = (byte[])nextBytes.Clone();
-            }
-            finally
-            {
-                AccessBase.ReturnPage(nextBytes);
-            }
+            byte[] nextLeaf = await ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
 
             // prev_page is per layout (§4.1).
             BinaryPrimitives.WriteInt32LittleEndian(nextLeaf.AsSpan(layout.PrevPageOffset, 4), checked((int)pageNumbers[splitCount - 1]));
@@ -1096,28 +1098,28 @@ internal sealed class IndexMaintainer(AccessWriter writer)
     /// decoded summary entries, and the index of the followed child. Returns
     /// the leaf page number reached, or 0 on any descent failure (overshoot,
     /// malformed page, or excessive depth) — surgical mutation bails on 0.
+    /// <para>
+    /// When <paramref name="allowTailOvershoot"/> is <see langword="true"/>,
+    /// an overshoot (search key sorts strictly above every summary on the
+    /// current intermediate) is tolerated by following <c>tail_page</c> (or
+    /// the last child pointer as fallback) without recording the step on
+    /// <paramref name="path"/>. Used by the catalog-splice path, which
+    /// doesn't need a clean (page, taken-index) pair at every level.
+    /// </para>
     /// </summary>
     private async ValueTask<long> DescendCapturingAsync(
         IndexLeafPageBuilder.LeafPageLayout layout,
         long rootPage,
         byte[] searchKey,
         List<DescentStep> path,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool allowTailOvershoot = false)
     {
         long current = rootPage;
         for (int depth = 0; depth < 32; depth++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] pageBytes = await writer.ReadPageAsync(current, cancellationToken).ConfigureAwait(false);
-            byte[] page;
-            try
-            {
-                page = (byte[])pageBytes.Clone();
-            }
-            finally
-            {
-                AccessBase.ReturnPage(pageBytes);
-            }
+            byte[] page = await ReadAndClonePageAsync(current, cancellationToken).ConfigureAwait(false);
 
             if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -1139,11 +1141,24 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             int idx = IndexHelpers.SelectChildIndexFromDecoded(entries, searchKey);
             if (idx < 0)
             {
-                // Search key sorts strictly above every summary on this
-                // intermediate. The seeker would follow tail_page here,
-                // but the surgical path needs a clean (page, taken-index)
-                // pair at every level for an in-place ancestor rewrite — bail.
-                return 0;
+                if (!allowTailOvershoot)
+                {
+                    // Search key sorts strictly above every summary on this
+                    // intermediate. The seeker would follow tail_page here,
+                    // but the surgical path needs a clean (page, taken-index)
+                    // pair at every level for an in-place ancestor rewrite — bail.
+                    return 0;
+                }
+
+                long tail = IndexLeafIncremental.ReadTailPage(layout, page);
+                long nextChild = tail > 0 ? tail : ReadLastChildPointer(page, writer._pgSz, layout);
+                if (nextChild <= 0)
+                {
+                    return 0;
+                }
+
+                current = nextChild;
+                continue;
             }
 
             path.Add(new DescentStep(current, page, entries, idx));
@@ -1477,16 +1492,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] leafBytes = await writer.ReadPageAsync(group.LeafPage, cancellationToken).ConfigureAwait(false);
-            byte[] leaf;
-            try
-            {
-                leaf = (byte[])leafBytes.Clone();
-            }
-            finally
-            {
-                AccessBase.ReturnPage(leafBytes);
-            }
+            byte[] leaf = await ReadAndClonePageAsync(group.LeafPage, cancellationToken).ConfigureAwait(false);
 
             if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -1629,32 +1635,11 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
             // First page reuses group.LeafPage; remaining pages are
             // freshly allocated from the staging counter.
-            long[] pageNumbers = new long[splitCount];
-            pageNumbers[0] = group.LeafPage;
-            for (int p = 1; p < splitCount; p++)
-            {
-                pageNumbers[p] = nextAllocatedPageNumber++;
-            }
+            long[] pageNumbers = AllocateSplitPageNumbers(group.LeafPage, splitCount, nextAllocatedPageNumber);
+            nextAllocatedPageNumber += splitCount - 1;
 
-            byte[][] pageBytesAll = new byte[splitCount][];
-            try
-            {
-                for (int p = 0; p < splitCount; p++)
-                {
-                    long thisPrev = p == 0 ? leafPrev : pageNumbers[p - 1];
-                    long thisNext = p == splitCount - 1 ? leafNext : pageNumbers[p + 1];
-                    pageBytesAll[p] = IndexLeafPageBuilder.BuildLeafPage(
-                        layout,
-                        writer._pgSz,
-                        tdefPage,
-                        splitPages[p],
-                        prevPage: thisPrev,
-                        nextPage: thisNext,
-                        tailPage: 0,
-                        enablePrefixCompression: true);
-                }
-            }
-            catch (ArgumentOutOfRangeException)
+            byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext);
+            if (pageBytesAll is null)
             {
                 return false;
             }
@@ -1812,16 +1797,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
         foreach ((long neighbourPage, long newPrevValue) in leafNextPointerPatches)
         {
-            byte[] neighbourBytes = await writer.ReadPageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
-            byte[] neighbour;
-            try
-            {
-                neighbour = (byte[])neighbourBytes.Clone();
-            }
-            finally
-            {
-                AccessBase.ReturnPage(neighbourBytes);
-            }
+            byte[] neighbour = await ReadAndClonePageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
 
             // §4.1 prev_page (per layout).
             BinaryPrimitives.WriteInt32LittleEndian(neighbour.AsSpan(layout.PrevPageOffset, 4), checked((int)newPrevValue));
@@ -1830,16 +1806,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
         foreach ((long neighbourPage, long newNextValue) in leafPrevPointerPatches)
         {
-            byte[] neighbourBytes = await writer.ReadPageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
-            byte[] neighbour;
-            try
-            {
-                neighbour = (byte[])neighbourBytes.Clone();
-            }
-            finally
-            {
-                AccessBase.ReturnPage(neighbourBytes);
-            }
+            byte[] neighbour = await ReadAndClonePageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
 
             // §4.1 next_page (per layout).
             BinaryPrimitives.WriteInt32LittleEndian(neighbour.AsSpan(layout.NextPageOffset, 4), checked((int)newNextValue));
@@ -1859,16 +1826,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         // newPageAppends above, so the page number is stable.
         if (newRootPage.HasValue)
         {
-            byte[] tdefBytesRaw = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-            byte[] tdefBytes;
-            try
-            {
-                tdefBytes = (byte[])tdefBytesRaw.Clone();
-            }
-            finally
-            {
-                AccessBase.ReturnPage(tdefBytesRaw);
-            }
+            byte[] tdefBytes = await ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
             BinaryPrimitives.WriteInt32LittleEndian(tdefBytes.AsSpan(firstDpOffset, 4), checked((int)newRootPage.Value));
             await writer.WritePageAsync(tdefPage, tdefBytes, cancellationToken).ConfigureAwait(false);
@@ -2438,6 +2396,85 @@ internal sealed class IndexMaintainer(AccessWriter writer)
     }
 
     /// <summary>
+    /// Encodes a single composite index key by per-column-encoding then
+    /// concatenating. Honours <see cref="DatabaseFormat.Jet4Mdb"/>'s legacy
+    /// fixed-point byte-twiddling for <c>T_NUMERIC</c> columns. Throws
+    /// whatever <see cref="IndexKeyEncoder"/> throws on encoder rejection
+    /// (<see cref="NotSupportedException"/> / <see cref="ArgumentException"/>
+    /// / <see cref="OverflowException"/>); callers that want soft-fail
+    /// behaviour should use <see cref="TryEncodeCompositeKey"/>.
+    /// </summary>
+    private byte[] EncodeCompositeKey(List<KeyColumnInfo> keyColInfos, object?[] cells)
+    {
+        bool legacyNumeric = writer._format == DatabaseFormat.Jet4Mdb;
+
+        byte[][] perColumn = new byte[keyColInfos.Count][];
+        int totalLen = 0;
+        for (int k = 0; k < keyColInfos.Count; k++)
+        {
+            (ColumnInfo col, int _, bool ascending) = keyColInfos[k];
+            object? value = cells[k];
+            perColumn[k] = col.Type == T_NUMERIC
+                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, col.NumericScale, legacyNumeric)
+                : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
+            totalLen += perColumn[k].Length;
+        }
+
+        byte[] composite = new byte[totalLen];
+        int offset = 0;
+        for (int k = 0; k < perColumn.Length; k++)
+        {
+            Buffer.BlockCopy(perColumn[k], 0, composite, offset, perColumn[k].Length);
+            offset += perColumn[k].Length;
+        }
+
+        return composite;
+    }
+
+    /// <summary>
+    /// Soft-fail wrapper over <see cref="EncodeCompositeKey"/>: gathers the
+    /// per-column cells for <paramref name="row"/> against
+    /// <paramref name="keyColInfos"/>'s snapshot indices and returns
+    /// <see langword="null"/> when the row is too short or any encoder
+    /// rejects (<see cref="NotSupportedException"/>,
+    /// <see cref="ArgumentException"/>, or <see cref="OverflowException"/>).
+    /// Used by the incremental + catalog-splice paths to bail to bulk on any
+    /// encoder rejection.
+    /// </summary>
+    private byte[]? TryEncodeCompositeKey(List<KeyColumnInfo> keyColInfos, object[] row)
+    {
+        object?[] cells = new object?[keyColInfos.Count];
+        for (int k = 0; k < keyColInfos.Count; k++)
+        {
+            int snapIdx = keyColInfos[k].SnapIdx;
+            if (snapIdx >= row.Length)
+            {
+                return null;
+            }
+
+            object cell = row[snapIdx];
+            cells[k] = cell is DBNull ? null : cell;
+        }
+
+        try
+        {
+            return EncodeCompositeKey(keyColInfos, cells);
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Encodes the (composite-key, page, row) tuples for the rows in
     /// <paramref name="rows"/> against the supplied key column descriptors.
     /// Returns a partially-filled list when an encoder throws — the caller
@@ -2454,67 +2491,15 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             return results;
         }
 
-        // Jet4 .mdb uses the LegacyFixedPointColumnDescriptor
-        // byte-twiddling rules for T_NUMERIC keys; ACCDB / ACE uses the
-        // post-2007 form. Mirrors the bulk path's `legacyNumeric` flag.
-        bool legacyNumeric = writer._format == DatabaseFormat.Jet4Mdb;
-
         foreach ((RowLocation loc, object[] row) in rows)
         {
-            byte[][] perColumn = new byte[keyColInfos.Count][];
-            int totalLen = 0;
-            bool encoderRejected = false;
-            for (int k = 0; k < keyColInfos.Count; k++)
-            {
-                (ColumnInfo col, int snapIdx, bool ascending) = keyColInfos[k];
-                if (snapIdx >= row.Length)
-                {
-                    encoderRejected = true;
-                    break;
-                }
-
-                object cell = row[snapIdx];
-                object? value = cell is DBNull ? null : cell;
-                try
-                {
-                    perColumn[k] = col.Type == T_NUMERIC
-                        ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, col.NumericScale, legacyNumeric)
-                        : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
-                }
-                catch (NotSupportedException)
-                {
-                    encoderRejected = true;
-                    break;
-                }
-                catch (ArgumentException)
-                {
-                    encoderRejected = true;
-                    break;
-                }
-                catch (OverflowException)
-                {
-                    encoderRejected = true;
-                    break;
-                }
-
-                totalLen += perColumn[k].Length;
-            }
-
-            if (encoderRejected)
+            byte[]? composite = TryEncodeCompositeKey(keyColInfos, row);
+            if (composite is null)
             {
                 return results;
             }
 
-            byte[] composite = new byte[totalLen];
-            int offset = 0;
-            for (int k = 0; k < perColumn.Length; k++)
-            {
-                Buffer.BlockCopy(perColumn[k], 0, composite, offset, perColumn[k].Length);
-                offset += perColumn[k].Length;
-            }
-
-            var result = new IndexEntry(composite, loc.PageNumber, (byte)loc.RowIndex);
-            results.Add(result);
+            results.Add(new IndexEntry(composite, loc.PageNumber, (byte)loc.RowIndex));
         }
 
         return results;
@@ -2543,36 +2528,6 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         }
 
         return IndexLeafIncremental.DecodeIntermediateChildPointer(page, payloadEnd - 4);
-    }
-
-    /// <summary>
-    /// Selects the child page on an intermediate (<c>0x03</c>) index page
-    /// whose subtree should hold an entry with the given canonical
-    /// <paramref name="searchKey"/>. Each intermediate entry summarises its
-    /// child page's MAX key, so the descent picks the FIRST entry whose
-    /// summary key is &gt;= <paramref name="searchKey"/>. Returns
-    /// <see langword="null"/> when every summary on the page sorts strictly
-    /// less than the search key (caller follows <c>tail_page</c> or the last
-    /// child as a fallback).
-    /// </summary>
-    private static long? SelectChildForKey(
-        IndexLeafPageBuilder.LeafPageLayout layout,
-        byte[] page,
-        int pageSize,
-        byte[] searchKey)
-    {
-        List<DecodedIntermediateEntry> entries =
-            IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
-        for (int i = 0; i < entries.Count; i++)
-        {
-            int cmp = IndexHelpers.CompareKeyBytes(searchKey, entries[i].Entry.Key);
-            if (cmp <= 0)
-            {
-                return entries[i].ChildPage;
-            }
-        }
-
-        return null;
     }
 
     /// <summary>
@@ -2626,45 +2581,27 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
         LastIncrementalBail = null;
 
-        byte[] tdefPageBytes = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        byte[] tdefBuf;
-        try
+        var (preStatus, preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        switch (preStatus)
         {
-            tdefBuf = (byte[])tdefPageBytes.Clone();
-        }
-        finally
-        {
-            AccessBase.ReturnPage(tdefPageBytes);
-        }
-
-        int numCols = AccessBase.Ru16(tdefBuf, writer._tdef.NumCols);
-        int numIdx = AccessBase.Ri32(tdefBuf, writer._tdef.NumCols + 2);
-        int numRealIdx = AccessBase.Ri32(tdefBuf, writer._tdef.NumRealIdx);
-        if (numIdx <= 0 || numRealIdx <= 0)
-        {
-            LastIncrementalBail = $"S0 numIdx={numIdx} numRealIdx={numRealIdx}";
-            return true;
-        }
-
-        if (numIdx > 1000 || numRealIdx > 1000)
-        {
-            LastIncrementalBail = "S1 too many idx";
-            return false;
-        }
-
-        int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * writer._colDesc.Size);
-        for (int i = 0; i < numCols; i++)
-        {
-            if (writer.ReadColumnName(tdefBuf, ref namePos, out _) < 0)
-            {
+            case TdefPreambleStatus.Ok:
+                break;
+            case TdefPreambleStatus.Empty:
+                LastIncrementalBail = $"S0 numIdx={preamble.NumIdx} numRealIdx={preamble.NumRealIdx}";
+                return true;
+            case TdefPreambleStatus.TooMany:
+                LastIncrementalBail = "S1 too many idx";
                 return false;
-            }
+            case TdefPreambleStatus.ColumnNameWalkFailed:
+                return false;
+            default:
+                return false;
         }
 
-        int realIdxDescStart = namePos;
-
-        bool legacyNumeric = writer._format == DatabaseFormat.Jet4Mdb;
+        byte[] tdefBuf = preamble.Buffer;
+        int realIdxDescStart = preamble.RealIdxDescStart;
+        int numIdx = preamble.NumIdx;
+        int numRealIdx = preamble.NumRealIdx;
 
         // Decode the index catalog once, with key columns pre-resolved
         // against the snapshot. PK promotion is harmless here (this path
@@ -2692,56 +2629,11 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             }
 
             // Encode the composite key for the new row.
-            byte[][] perColumn = new byte[keyColInfos.Count][];
-            int totalLen = 0;
-            bool encErr = false;
-            for (int k = 0; k < keyColInfos.Count; k++)
-            {
-                (ColumnInfo col, int snapIdx, bool ascending) = keyColInfos[k];
-                if (snapIdx >= newRowValues.Length)
-                {
-                    encErr = true;
-                    break;
-                }
-
-                object? val = newRowValues[snapIdx] is DBNull ? null : newRowValues[snapIdx];
-                try
-                {
-                    perColumn[k] = col.Type == T_NUMERIC
-                        ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(val, ascending, col.NumericScale, legacyNumeric)
-                        : IndexKeyEncoder.EncodeEntry(col.Type, val, ascending);
-                }
-                catch (NotSupportedException)
-                {
-                    encErr = true;
-                    break;
-                }
-                catch (ArgumentException)
-                {
-                    encErr = true;
-                    break;
-                }
-                catch (OverflowException)
-                {
-                    encErr = true;
-                    break;
-                }
-
-                totalLen += perColumn[k].Length;
-            }
-
-            if (encErr)
+            byte[]? composite = TryEncodeCompositeKey(keyColInfos, newRowValues);
+            if (composite is null)
             {
                 LastIncrementalBail = $"S4 ri={ri} encErr";
                 return false;
-            }
-
-            byte[] composite = new byte[totalLen];
-            int compositeOff = 0;
-            for (int k = 0; k < perColumn.Length; k++)
-            {
-                Buffer.BlockCopy(perColumn[k], 0, composite, compositeOff, perColumn[k].Length);
-                compositeOff += perColumn[k].Length;
             }
 
             // Descend by binary-searching child summaries: at each
@@ -2749,69 +2641,18 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             // >= the new composite key, and follow that child. When every
             // summary on the page is < composite, follow tail_page (or the
             // last child as fallback). This lands on the leaf that should
-            // hold the new entry's sorted insertion point.
-            long currentPage = firstDp;
-            int depth;
-            for (depth = 0; depth < 32; depth++)
+            // hold the new entry's sorted insertion point. The captured
+            // path is unused (catalog splice doesn't rewrite ancestors).
+            var unusedPath = new List<DescentStep>();
+            long targetLeafPage = await DescendCapturingAsync(
+                layout, firstDp, composite, unusedPath, cancellationToken, allowTailOvershoot: true).ConfigureAwait(false);
+            if (targetLeafPage <= 0)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                byte[] pageBytes = await writer.ReadPageAsync(currentPage, cancellationToken).ConfigureAwait(false);
-                byte[] page;
-                try
-                {
-                    page = (byte[])pageBytes.Clone();
-                }
-                finally
-                {
-                    AccessBase.ReturnPage(pageBytes);
-                }
-
-                byte pageType = page[0];
-                if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
-                {
-                    break;
-                }
-
-                if (pageType != Constants.IndexLeafPage.PageTypeIntermediate)
-                {
-                    LastIncrementalBail = $"S5 ri={ri} depth={depth} page={currentPage} type=0x{pageType:X2}";
-                    return false;
-                }
-
-                long? nextChild = SelectChildForKey(layout, page, writer._pgSz, composite);
-                if (nextChild is null)
-                {
-                    long tail = IndexLeafIncremental.ReadTailPage(layout, page);
-                    nextChild = tail > 0 ? tail : ReadLastChildPointer(page, writer._pgSz, layout);
-                }
-
-                if (nextChild.GetValueOrDefault() == 0)
-                {
-                    LastIncrementalBail = $"S6 ri={ri} depth={depth} page={currentPage} noChild";
-                    return false;
-                }
-
-                currentPage = nextChild.Value;
-            }
-
-            if (depth >= 32)
-            {
-                LastIncrementalBail = $"S7 ri={ri} depthExceeded";
+                LastIncrementalBail = $"S5 ri={ri} descent failed firstDp={firstDp}";
                 return false;
             }
 
-            long targetLeafPage = currentPage;
-            byte[] leafPageBytes = await writer.ReadPageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
-            byte[] leaf;
-            try
-            {
-                leaf = (byte[])leafPageBytes.Clone();
-            }
-            finally
-            {
-                AccessBase.ReturnPage(leafPageBytes);
-            }
+            byte[] leaf = await ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
 
             if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -2848,15 +2689,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 }
 
                 targetLeafPage = nextLeaf;
-                byte[] nb = await writer.ReadPageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    leaf = (byte[])nb.Clone();
-                }
-                finally
-                {
-                    AccessBase.ReturnPage(nb);
-                }
+                leaf = await ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
 
                 if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
                 {
