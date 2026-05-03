@@ -229,14 +229,20 @@ internal static class Constants
         public const uint SystemTableMask = 0x80000002U;
 
         /// <summary>
-        /// Constant 2-byte value Microsoft Access stamps into the
-        /// <c>MSysObjects.Owner</c> BINARY column for every catalog row.
-        /// Verified across all Type=1 user-table and Type=8 relationship
-        /// rows in <c>NorthwindTraders.accdb</c>. DAO Compact &amp; Repair's
-        /// catalog walk requires this column to be non-null on user-table
-        /// rows or it aborts with the spurious "could not find the object
-        /// 'MSysDb'" error. Semantically opaque (likely a Jet-internal
-        /// owner-token sentinel rather than a real Windows SID).
+        /// 2-byte sentinel written into the <c>MSysObjects.Owner</c> BINARY
+        /// column for every catalog row this writer creates. Access itself
+        /// stamps a per-file token that varies across databases (empirically
+        /// verified across ~80 Jet3 / Jet4 / ACE fixtures: NorthwindTraders.accdb
+        /// uses <c>0x71 0x10</c>, nwind.mdb <c>0x03 0x01</c>,
+        /// ComplexFields.accdb <c>0xC8 0xB1</c>, etc.) -- the exact bytes
+        /// appear to be derived from file/owner identity and are opaque to
+        /// DAO Compact &amp; Repair, which only requires the column to be
+        /// non-null on user-authored Type=1 / Type=8 catalog rows (modern
+        /// .accdb files always leave the 10 hidden system-managed Type=1 rows
+        /// with Owner=NULL). The fixed sentinel below -- the value Access uses
+        /// in <c>NorthwindTraders.accdb</c> -- satisfies that non-null check
+        /// on every JET / ACE format with no version gate; without it, DAO
+        /// C&amp;R aborts with "could not find the object 'MSysDb'".
         /// </summary>
         public static readonly byte[] DefaultOwnerBlob = [0x71, 0x10];
     }

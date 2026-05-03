@@ -3261,13 +3261,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         msys.SetValueByName(values, "DateUpdate", now);
         msys.SetValueByName(values, "Flags", unchecked((int)catalogFlags));
 
-        // Microsoft Access stamps the MSysObjects.Owner BINARY column with the
-        // constant 2-byte value 0x71 0x10 for every catalog row (verified
-        // across all Type=1 user-table and Type=8 relationship rows in
-        // NorthwindTraders.accdb). DAO Compact & Repair's catalog walk
-        // requires the column to be non-null on user-table rows; without it,
-        // the walk aborts with "could not find the object 'MSysDb'". See
-        // docs/design/round-trip-test-failures.md (hypothesis #6).
+        // Microsoft Access stamps MSysObjects.Owner with a per-file 2-byte
+        // token that varies across databases (verified across ~80 Jet3 / Jet4 /
+        // ACE fixtures: e.g. NorthwindTraders.accdb uses 0x71 0x10, nwind.mdb
+        // 0x03 0x01, ComplexFields.accdb 0xC8 0xB1, AdventureLT2008.mdb 0xEC
+        // 0xC7). The exact bytes appear to be derived from file/owner identity
+        // and are opaque to DAO Compact & Repair, which only requires the
+        // column to be non-null on user-authored Type=1 / Type=8 catalog rows
+        // (Access itself leaves the 10 hidden system-managed Type=1 rows with
+        // Owner=NULL on every modern .accdb). We stamp a fixed 2-byte sentinel
+        // -- DefaultOwnerBlob (0x71 0x10, the value Access uses in
+        // NorthwindTraders.accdb) -- which satisfies the non-null check on
+        // every JET / ACE format we support, with no version gate required.
         msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
 
         // LvProp is the OLE/LongBinary cell carrying per-column persisted properties
