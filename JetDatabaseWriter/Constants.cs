@@ -227,6 +227,18 @@ internal static class Constants
         /// (hidden) object rather than a user table.
         /// </summary>
         public const uint SystemTableMask = 0x80000002U;
+
+        /// <summary>
+        /// Constant 2-byte value Microsoft Access stamps into the
+        /// <c>MSysObjects.Owner</c> BINARY column for every catalog row.
+        /// Verified across all Type=1 user-table and Type=8 relationship
+        /// rows in <c>NorthwindTraders.accdb</c>. DAO Compact &amp; Repair's
+        /// catalog walk requires this column to be non-null on user-table
+        /// rows or it aborts with the spurious "could not find the object
+        /// 'MSysDb'" error. Semantically opaque (likely a Jet-internal
+        /// owner-token sentinel rather than a real Windows SID).
+        /// </summary>
+        public static readonly byte[] DefaultOwnerBlob = [0x71, 0x10];
     }
 
     /// <summary>

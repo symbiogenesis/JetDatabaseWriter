@@ -3261,6 +3261,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         msys.SetValueByName(values, "DateUpdate", now);
         msys.SetValueByName(values, "Flags", unchecked((int)catalogFlags));
 
+        // Microsoft Access stamps the MSysObjects.Owner BINARY column with the
+        // constant 2-byte value 0x71 0x10 for every catalog row (verified
+        // across all Type=1 user-table and Type=8 relationship rows in
+        // NorthwindTraders.accdb). DAO Compact & Repair's catalog walk
+        // requires the column to be non-null on user-table rows; without it,
+        // the walk aborts with "could not find the object 'MSysDb'". See
+        // docs/design/round-trip-test-failures.md (hypothesis #6).
+        msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
+
         // LvProp is the OLE/LongBinary cell carrying per-column persisted properties
         // (DefaultValue, ValidationRule, ValidationText, Description). Only emitted on
         // the full 17-column catalog schema (the slim 9-column legacy schema lacks the
@@ -4577,7 +4586,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var fixedArea = new byte[maxFixedEnd];
         int fixedAreaSize = 0;
         var varEntries = maxDefinedVarIdx >= 0 ? new byte[maxDefinedVarIdx + 1][] : [];
-        int maxVarIndex = -1;
         int varPayloadSize = 0;
 
         for (int i = 0; i < tableDef.Columns.Count; i++)
@@ -4631,13 +4639,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 }
 
                 varEntries[column.VarIdx] = variableValue;
-                maxVarIndex = Math.Max(maxVarIndex, column.VarIdx);
                 varPayloadSize += variableValue.Length;
                 SetNullMaskBit(nullMask, column.ColNum, true);
             }
         }
 
-        int varLen = maxVarIndex + 1;
+        // Emit the full variable-column slot count declared by the TableDef
+        // schema, not just up through the highest non-null var column. Microsoft
+        // Access stamps every catalog/system-table row with the schema's full
+        // varLen and writes zero-length entries (offset == EOD) for trailing
+        // null vars; DAO Compact & Repair's catalog walk rejects rows whose
+        // var-offset table is shorter than the schema's variable-column count.
+        // See docs/design/round-trip-test-failures.md (hypothesis #6).
+        int varLen = maxDefinedVarIdx + 1;
         int baseRowLength = _rowSz.NumCols + fixedAreaSize + varPayloadSize + _rowSz.Eod + (varLen * _rowSz.VarEntry) + _rowSz.VarLen + nullMask.Length;
 
         // Jet3 rows include a jump table whose size depends on total row length.
