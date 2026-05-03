@@ -4232,7 +4232,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // num_idx_rows against the leaf-level row count when walking
             // MSysObjects; if they disagree it aborts compact with
             // "could not find the object 'MSysDb'" — see
-            // docs/design/round-trip-test-failures-2026-05-02.md.
+            // docs/design/round-trip-test-failures.md.
             int numRealIdx = Ri32(page, _tdef.NumRealIdx);
             if (numRealIdx > 0 && numRealIdx <= 1000)
             {

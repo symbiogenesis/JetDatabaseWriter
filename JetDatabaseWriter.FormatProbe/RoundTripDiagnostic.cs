@@ -3,7 +3,7 @@
 // Compares a "post-write" .accdb (the output of AccessWriter.CreateTableAsync
 // against a copy of NorthwindTraders.accdb) byte-for-byte against the
 // original NorthwindTraders.accdb fixture, and dumps every fact that bears on
-// docs/design/round-trip-test-failures-2026-05-02.md hypothesis #1–#4:
+// docs/design/round-trip-test-failures.md hypothesis #1–#4:
 //
 //   1. MSysObjects row payload disagrees with the spliced index key.
 //   2. MSysObjects TDEF index summary stale (used_pages / usage_map_page).

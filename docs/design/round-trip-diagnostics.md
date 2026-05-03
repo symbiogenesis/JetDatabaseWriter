@@ -18,7 +18,7 @@ The normal regression suite remains:
 
 For the most recent active investigation into why these two tests fail under
 DAO compact, see
-[docs/design/round-trip-test-failures-2026-05-02.md](docs/design/round-trip-test-failures-2026-05-02.md).
+[docs/design/round-trip-test-failures.md](docs/design/round-trip-test-failures.md).
 This diagnostics file holds the durable probing methodology; dated failure
 notes hold the current symptoms, page diffs, and hypotheses.
 
