@@ -1,6 +1,6 @@
 # Round-Trip Test Failures — Investigation Status
 
-**Status:** Both gating tests still fail under DAO Compact & Repair with err 3011 `'MSysDb'`. Multiple structural fixes have landed (TDEF header, per-table usage-map page, catalog row var-length area, `MSysObjects.Owner`). Byte-level decode of the new MSysObjects catalog row body now confirms the row is **structurally well-formed and shape-compatible with Access-authored Type=1 rows that DAO already accepts in the same file** (see "Empirical findings 2026-05-03" below). The previous leading suspect — `LvProp` being null — has been **ruled out** by sweeping every Type=1 row in `NorthwindTraders.accdb` and finding ~14 Access-authored rows with `LvProp = NULL` that DAO accepts unchanged. Investigation has shifted to the **three pages added by the writer that are not in the shared-range diff** (new TDEF, new PK leaf, new usage-map page) and the **global page-allocation map** (page 5), which currently does *not* mark any of those new pages as allocated.
+**Status:** Both gating tests still fail under DAO Compact & Repair with err 3011 `'MSysDb'`. Multiple structural fixes have landed (TDEF header, per-table usage-map page, catalog row var-length area, `MSysObjects.Owner`). Byte-level decode of the new MSysObjects catalog row body now confirms the row is **structurally well-formed and shape-compatible with Access-authored Type=1 rows that DAO already accepts in the same file** (see "Empirical findings 2026-05-03" below). The previous leading suspect — `LvProp` being null — has been **partly walked back**: a sweep of every Type=1 row in `NorthwindTraders.accdb` initially appeared to find ~14 Access-authored rows with `LvProp = NULL`, but this was a script bug (PowerShell `[int]((14)/8)` rounds 1.75 → 2, hitting the wrong null-mask byte). The sweep needs to be redone before LvProp is conclusively cleared. **What is solidly established**: the writer's row body decodes correctly per the table below, and the structural defect must originate in either (a) the new TDEF page body beyond the validated header bytes, (b) the per-table usage-map page contents (not just its shape), or (c) some referenced structure not yet identified. Without an Access-UI-authored RT_-prefix baseline in the same file, the remaining hypotheses cannot be empirically ranked.
 
 ## Tests in question
 
@@ -41,9 +41,10 @@ Pages added              : new TDEF, new PK leaf, new usage-map page (+3)
 | 2790 | MSysObjects `ParentIdName` composite leaf | ✅ splice byte-clean |
 | 2994 | MSysObjects data page hosting the new row | ✅ row body structurally well-formed (decodes correctly; entries / EOD / nullmask / varLen all match Access-authored Type=1 rows) — see "Empirical findings 2026-05-03" |
 | New TDEF page (3008) | RT_Customers TDEF | 🔴 only superficially verified ("byte-shape-identical to baseline" header bytes); body / index descriptors / column descriptors not yet diffed against an Access-authored RT_-prefix table |
-| New PK leaf | RT_Customers PK leaf | 🟡 empty leaf, well-formed — but never re-read by DAO unless reachable via TDEF |
-| New usage-map page | RT_Customers used/free pages | 🟡 byte-identical to a baseline usage-map page in isolation — but not registered in the global PAM |
-| Page 5 (global PAM) | global page-allocation map | 🔴 **identical to baseline** — meaning new pages 3008+ are NOT marked allocated. Promoted to leading suspect on 2026-05-03. |
+| New PK leaf (3009) | RT_Customers PK leaf (page_type=0x04, parent=3008) | 🟡 empty leaf, well-formed in isolation |
+| New usage-map page (3010) | RT_Customers used/free pages (page_type=0x01) | 🟡 byte-identical to a baseline usage-map page in isolation — bitmap *contents* (which bits set) not yet diffed against an Access-UI baseline |
+
+Page 5 of NorthwindTraders is `page_type=0x02` (a TDEF page), NOT a global page-allocation map. There is no evidence Jet/ACE has a centralised GPM separate from per-table usage maps; an earlier note in this document claiming page 5 was the GPM was **incorrect** and has been removed.
 
 ## Fixes already landed (do not regress)
 
@@ -137,23 +138,22 @@ EOD/var-table/null-mask/var-length all parse cleanly; structurally indistinguish
 1. `Name` is written as compressed UCS-2 (`FF FE` marker + 1B/char) instead of raw UTF-16. Already ruled out as the blocker (hypothesis #12; re-confirmed today).
 2. `LvProp` (varIdx 8) and `LvExtra` (varIdx 10) are NULL.
 
-### `LvProp` NULL is NOT the trigger
+### `LvProp` NULL — verdict deferred (script bug)
 
-Sweep across **every Type=1 row** in `NorthwindTraders.accdb` (49 rows total) via `dump-type1.ps1`:
+A sweep across every Type=1 row in `NorthwindTraders.accdb` was attempted via `dump-type1.ps1` to determine whether DAO tolerates a NULL `LvProp` on user-table catalog rows. The sweep reported ~14 system rows (`MSysObjects`, `MSysACEs`, `MSysQueries`, `MSysRelationships`, `MSysComplexColumns`, all `MSysComplexType_*`, `MSysAccessStorage`, `MSysNameMap`, `MSysNavPane*`, `MSysResources`, plus user table `f_086A23…_Data`) with `LvProp = NULL`. **This was a script bug**: PowerShell's `[int]((14)/8)` rounds the float 1.75 → 2 (banker's rounding), so the script was reading `nullMask[2]` instead of `nullMask[1]` for column 14's null bit. The actual nullmask bit for `LvProp` was therefore not checked. The sweep needs to be redone with `[int][math]::Floor((14)/8)` (or `14 -shr 3`) before this hypothesis can be conclusively closed.
+
+Independent observation — `Companies` (Access-authored Type=1 row at id=50) has `entry[8] = 52`, `entry[9] = 64`: a 12-byte `LvProp` payload that does NOT begin with the `MR2\0` property-block magic (bytes are `40 00 34 00 34 00 34 00 34 00 34 00`, which look like jump-table offsets, not a property block). So Access's `LvProp` semantics on user-table catalog rows are not necessarily "emit a property block" — they appear to be more opaque than `JetExpressionConverter.BuildLvPropBlob` assumes. This warrants its own investigation before any synthetic LvProp blob is added.
 
 - All 49 rows use `ParentId = 0x0F000001` (re-confirms hypothesis #10).
-- **14 Access-authored Type=1 rows have `LvProp = NULL` (`lvLen=0`)** — `MSysObjects`, `MSysACEs`, `MSysQueries`, `MSysRelationships`, `MSysComplexColumns`, all 9 `MSysComplexType_*`, `MSysAccessStorage`, `MSysNameMap`, `MSysNavPaneGroupCategories`, `MSysNavPaneGroups`, `MSysNavPaneGroupToObjects`, `MSysNavPaneObjectIDs`, `MSysResources`, plus user table `f_086A23…_Data`.
-- DAO Compact accepts the baseline file unchanged, so it accepts `LvProp = NULL` on Type=1 rows.
-
-Conclusion: the writer's choice to emit `LvProp = NULL` is **shape-compatible with multiple Access-authored rows DAO already tolerates in this same file**. Hypothesis #6's `LvProp` sub-suspect is closed.
 
 ### Where the defect must live
 
-Since (a) the catalog row body is well-formed, (b) the MSysObjects TDEF and both spliced index leaves are byte-clean, and (c) `LvProp = NULL` is acceptable to DAO, the failure must originate in one of the three pages **added** by the writer (which are NOT visible in the shared-range diff) or in some structure that references those new pages without marking them allocated:
+Given (a) the catalog row body is well-formed and (b) the MSysObjects TDEF and both spliced index leaves are byte-clean, the failure must originate in one of the three pages **added** by the writer (which are NOT visible in the shared-range diff), in the new row's variable-length payload (LvProp/LvExtra; not yet conclusively cleared), or in some structure that references those new pages without proper accounting:
 
-1. **Global page-allocation map (page 5)** is byte-identical to baseline — meaning the new TDEF (3008), new PK leaf, and new usage-map pages are **not marked allocated** in the GPM. Previously dismissed as "low priority" because page 5 didn't differ; now promoted to **leading suspect** precisely *because* it didn't change.
-2. **New TDEF page body** has only been verified to be "byte-shape-identical to baseline" at the header level. The column descriptors, real-idx descriptors, and trailing index/usage-map block have not been diffed against an Access-UI-created RT_-prefix table on the same file.
-3. **New per-table usage-map page** is byte-identical to a baseline usage-map *in isolation* — but the bitmap inside it claims zero used/free pages, which may be inconsistent with the TDEF claiming the table owns a PK leaf page.
+1. **New TDEF page body (3008)** has only been verified "byte-shape-identical to baseline" at the header level. The column descriptors, real-idx descriptors, and trailing index/usage-map block beyond offset 0x3F have not been diffed against an Access-UI-created RT_-prefix table on the same file.
+2. **New per-table usage-map page (3010)** is byte-identical to a baseline usage-map *in isolation* — but the bitmap contents (which bits are set) have not been diffed. An empty bitmap may be inconsistent with the TDEF claiming the table owns a PK leaf page (3009).
+3. **New PK leaf (3009)** is well-formed in isolation, but its parent-page back-pointer chain (`prev`/`next` on the leaf, parent linkage in the TDEF) has not been independently verified end-to-end.
+4. **`LvProp` on the new row** — re-verify with a corrected null-mask check; if Access actually requires a non-null payload here for user-table rows, this is still in play.
 
 ## Hypothesis matrix
 
@@ -164,8 +164,8 @@ Since (a) the catalog row body is well-formed, (b) the MSysObjects TDEF and both
 | 3 | Real-idx `flags` byte at wrong offset / missing `0x80` UNKNOWN bit | ✅ fixed | Now uses `IndexLayout.FlagsOffsetWithinPhys` and `Constants.TableDefinition` flag constants. Guarded. |
 | 4 | Relationship / row-insert paths break compact | ✅ ruled out | N1 reproducer is a single empty `CreateTableAsync` call and still fails. |
 | 5 | New TDEF page malformed | ✅ fixed | All sub-faults landed; TDEF header bytes 0..0x3F now byte-shape-identical to baseline. |
-| 6 | New MSysObjects row variable-length area | ✅ ruled out (2026-05-03) | Byte-level decode of N1 row 9 confirms the row is well-formed; sweep of all 49 Northwind Type=1 rows shows 14 Access-authored rows with `LvProp = NULL` that DAO accepts. |
-| 7 | Global page-allocation map (page 5) missing the new TDEF / PK-leaf / usage-map pages | 🔴 **leading suspect (2026-05-03)** | Page 5 is *byte-identical* to baseline despite the writer adding 3 new pages. New pages 3008+ are not marked allocated in the GPM. Promoted from "low priority" because hypothesis #6 was eliminated. |
+| 6 | New MSysObjects row variable-length area | 🟡 partly walked back (2026-05-03) | Byte-level decode confirms the row is well-formed structurally, but the earlier "DAO accepts LvProp=NULL on 14 baseline rows" sweep was a script bug; LvProp NULL is not yet conclusively safe. Companies' real `LvProp` is 12 opaque bytes, NOT an `MR2\0` property block. |
+| 7 | Global page-allocation map (page 5) missing the new TDEF / PK-leaf / usage-map pages | ❌ withdrawn (2026-05-03) | Page 5 of NorthwindTraders is `page_type=0x02` (a TDEF page), NOT a global page-allocation map. Jet/ACE does not appear to have a centralised GPM separate from per-table usage maps. |
 | 8 | Test infra wrong | ✅ ruled out | FormatProbe N1 reproducer is hand-rolled writer-only; same DAO error. |
 | 9 | DAO requires `MSysAccessStorage` / `MSysComplexColumns` / `MSysNavPaneGroups` / `MSysNameMap` rows | 🟡 lowest priority | Access-UI-created tables don't immediately get NavPane / NameMap entries either. |
 | 10 | New row's `ParentId = 0x0F000001` is the wrong group | ✅ ruled out | Existing Northwind Type=1 user-table rows already use `0x0F000001`. |
@@ -174,11 +174,11 @@ Since (a) the catalog row body is well-formed, (b) the MSysObjects TDEF and both
 
 ## Recommended next steps (priority order)
 
-1. **Examine page 5 (global page-allocation map)** for the writer's output. Verify that the 3 newly-allocated pages (TDEF, PK leaf, usage-map) are marked allocated. If page 5 truly is unchanged, the writer is allocating pages but never updating the GPM bitmap — DAO walks the GPM during catalog enumeration and would reject any TDEF whose page number isn't marked used. This is now the leading suspect.
-2. **If page 5 is the issue**, locate the writer's page-allocation path and add a "mark allocated in GPM" step. The GPM is itself a chain of `page_type=0x05` (or similar) pages; mdbtools `HACKING.md` §3.3 describes the encoding.
-3. **Diff the writer's new TDEF page against an Access-UI-created RT_-prefix table** on the same Northwind file (full body, not just header bytes). The "byte-shape-identical" claim from earlier passes only validated header offsets 0..0x3F; column descriptors, real-idx descriptors at offset 0x3F+, and trailing usage-map back-pointer are not yet probed.
-4. **Diff the writer's new per-table usage-map page bitmap content** against the same Access-UI baseline. The page header is byte-identical to a baseline usage-map but the bitmap *contents* (which bits are set) have not been diffed — an empty bitmap may be inconsistent with the TDEF claiming the table owns a PK leaf page.
-5. **Aesthetic follow-up** (does not block these tests): switch `EncodeJet4Text` to emit uncompressed UTF-16 in catalog `Name` columns for byte-level consistency with Access-authored output. Re-confirmed today as cosmetic only — not a DAO trigger.
+1. **Create an Access-UI baseline.** Open `NorthwindTraders.accdb` in Microsoft Access, manually create one empty table named `RT_Customers` with columns matching the test's `(CustomerID INT PK AUTOINC, Name VARCHAR(100) NOT NULL)`, save, and close. Diff this byte-for-byte against the writer's N1 output (FormatProbe `DIAG_RT_BISECT` step `N1_CreateOneTable`). Without this baseline, every remaining hypothesis is speculative — there is no other available ground truth for what the new TDEF body, new PK leaf, new usage-map bitmap, and new MSysObjects row's `LvProp` payload should each contain for an empty user table.
+2. **Redo the LvProp NULL sweep** with a corrected null-mask byte index (`[math]::Floor((14)/8)` or `14 -shr 3` instead of the buggy `[int]((14)/8)` which banker's-rounds 1.75 → 2). If any Access-authored Type=1 user-table row genuinely has `LvProp = NULL` (nullmask bit 14 clear), the writer's choice is safe; if every Access-authored user-table row has `LvProp` non-null, the writer must synthesize a payload.
+3. **Inspect the writer's new TDEF body (page 3008)** beyond the header bytes — column descriptors, the two real-idx physical descriptors (51 bytes each on Jet4/ACE at offset 63 + n*51), and the trailing index/usage-map block.
+4. **Inspect the writer's new usage-map page (3010)** bitmap contents, comparing which bits are set against an Access-authored single-table usage-map for an empty table.
+5. **Aesthetic follow-up** (does not block these tests): switch `EncodeJet4Text` to emit uncompressed UTF-16 in catalog `Name` columns for byte-level consistency with Access-authored output. Re-confirmed on 2026-05-03 via the bisect: forcing `compressible = false` in `EncodeJet4Text` produced identical bisect output (still `MSysDb` at N1), so this is cosmetic, not a DAO trigger.
 
 ## FormatProbe diagnostic harness
 
