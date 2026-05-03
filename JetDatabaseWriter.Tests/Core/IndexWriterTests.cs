@@ -378,20 +378,23 @@ public sealed class IndexWriterTests
     /// This test uses 50 columns + 20 single-column indexes — well past
     /// both historical caps but well below the format ceiling — and
     /// asserts every column and every index survives the round-trip.
+    /// <para>
+    /// Runs across both Jet4 .mdb and ACE .accdb (4 KB pages) and Jet3 .mdb
+    /// (2 KB pages). The Jet3 case forces the writer onto the multi-page
+    /// TDEF chain path: the schema overflows the 2 KB page, so the builder
+    /// emits a continuation page and the reader's existing
+    /// <c>ReadTDefBytesAsync</c> stitches them back together. ACE/Jet4 fit
+    /// in one page at this size and exercise the legacy single-page path.
+    /// </para>
     /// </summary>
-    /// <remarks>
-    /// ACE only. The current writer requires the entire TDEF (including
-    /// the index block) to fit in a single page; a 50-column + 20-index
-    /// schema overflows the 2 KB Jet3 page (throws
-    /// <see cref="NotSupportedException"/> "Table definition (with indexes)
-    /// does not fit within a single TDEF page."). Multi-page TDEF
-    /// emission is tracked separately and is not covered here.
-    /// </remarks>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
-    [Fact]
-    public async Task CreateTable_WithFiftyColumnsAndTwentyIndexes_RoundTripsWithoutTruncation_Ace()
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateTable_WithFiftyColumnsAndTwentyIndexes_RoundTripsWithoutTruncation(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        await using var stream = await CreateFreshStreamAsync(format);
         const string TableName = "Wide";
         const int ColumnCount = 50;
         const int IndexCount = 20;
@@ -450,6 +453,103 @@ public sealed class IndexWriterTests
         {
             Assert.Equal(i + 1, Convert.ToInt32(r[$"C{i:D2}"], System.Globalization.CultureInfo.InvariantCulture));
         }
+    }
+
+    /// <summary>
+    /// Forces the writer onto the multi-page TDEF chain path on every format
+    /// by emitting a schema deliberately larger than the largest single page
+    /// (4 KB on Jet4 / ACE) — 200 columns + 30 indexes. Asserts that the
+    /// physical TDEF chain on disk is in fact multi-page (the reader's
+    /// stitched buffer exceeds <c>_pgSz</c>) and that every column and index
+    /// survives the round-trip through <see cref="AccessReader"/>.
+    /// </summary>
+    /// <param name="format">The on-disk format under test.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateTable_TDefChainSpansMultiplePages_RoundTrips(DatabaseFormat format)
+    {
+        await using var stream = await CreateFreshStreamAsync(format);
+        const string TableName = "VeryWide";
+        const int ColumnCount = 200;
+        const int IndexCount = 30;
+        int pgSz = PageSizeOf(format);
+
+        var columns = new List<ColumnDefinition>(ColumnCount);
+        for (int i = 0; i < ColumnCount; i++)
+        {
+            columns.Add(new ColumnDefinition($"C{i:D3}", typeof(int)));
+        }
+
+        var indexes = new List<IndexDefinition>(IndexCount);
+        for (int i = 0; i < IndexCount; i++)
+        {
+            indexes.Add(new IndexDefinition($"IX_{i:D2}", $"C{i:D3}"));
+        }
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(TableName, columns, indexes, TestContext.Current.CancellationToken);
+        }
+
+        // Verify the TDEF chain is in fact multi-page on disk by walking it
+        // directly from the raw stream. The first page (the catalog ID) is
+        // located via the catalog; subsequent pages are linked via the
+        // 4-byte next-page pointer at offset 4. A single-page TDEF stores
+        // 0 there.
+        long firstTdefPage;
+        await using (var reader = await OpenReaderAsync(stream))
+        {
+            var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+            Assert.Contains(TableName, tables);
+
+            // Use the reader's internal stitched-bytes accessor (used by the
+            // diagnostic tooling) to confirm the logical TDEF body exceeds
+            // a single page.
+            var msys = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
+            Assert.Equal(ColumnCount, msys.Count);
+
+            var idxList = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+            Assert.Equal(IndexCount, idxList.Count);
+
+            // Pull the catalog row to recover the TDEF page number.
+            firstTdefPage = await GetTDefPageNumberAsync(reader, TableName);
+        }
+
+        // Walk the on-disk page chain manually to assert it has > 1 page.
+        stream.Position = 0;
+        byte[] streamBytes = stream.ToArray();
+        long pg = firstTdefPage;
+        var seen = new HashSet<long>();
+        int chainLen = 0;
+        while (pg != 0 && seen.Add(pg))
+        {
+            int basePos = checked((int)(pg * pgSz));
+            Assert.Equal(0x02, streamBytes[basePos]);
+            chainLen++;
+
+            // Next-page pointer at offset 4 (little-endian uint32).
+            pg = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(
+                streamBytes.AsSpan(basePos + 4, 4));
+        }
+
+        Assert.True(
+            chainLen > 1,
+            $"Expected a multi-page TDEF chain on {format} (page size {pgSz}); got {chainLen} page(s).");
+    }
+
+    private static async ValueTask<long> GetTDefPageNumberAsync(AccessReader reader, string tableName)
+    {
+        JetDatabaseWriter.Internal.Models.CatalogEntry? entry = await reader.GetCatalogEntryAsync(
+            tableName, TestContext.Current.CancellationToken);
+        if (entry is null)
+        {
+            throw new InvalidOperationException($"Table '{tableName}' not found in catalog.");
+        }
+
+        return entry.TDefPage;
     }
 
     private static int PageSizeOf(DatabaseFormat fmt) =>

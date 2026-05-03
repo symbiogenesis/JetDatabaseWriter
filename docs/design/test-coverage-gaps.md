@@ -179,13 +179,17 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   ACE (these are referenced by Jackcess but not asserted).
 - [ ] **`[J]`** Querying `MSysQueries` row-set for a **parameterised** query
   definition; we have basic query metadata but no parameter assertions.
-- [ ] **`[L]`** **Multi-page TDEF emission** — discovered while closing the
-  >32-column / >16-index gap (now covered for ACE, see appendix). The
-  writer currently requires the entire TDEF (header + columns + index
-  block) to fit in a single page, so a 50-column + 20-index schema on
-  Jet3's 2 KB pages throws "Table definition (with indexes) does not fit
-  within a single TDEF page." This is a writer feature gap, not just a
-  test gap.
+- [x] ~~**`[L]`** **Multi-page TDEF emission**~~ — **Closed.** Discovered
+  while closing the >32-column / >16-index gap. The writer was previously
+  limited to a single TDEF page; it now emits a `0x02` page chain (linked
+  via the offset-4 next-page pointer) matching the reader's existing
+  `ReadTDefBytesAsync` stitching path. Covered by
+  `IndexWriterTests.CreateTable_TDefChainSpansMultiplePages_RoundTrips`
+  (Theory over Jet3 / Jet4 / ACE — uses 200 columns + 30 indexes to force
+  a multi-page chain on every format and asserts `chainLen > 1` on disk)
+  and by the now-`[Theory]`-form
+  `CreateTable_WithFiftyColumnsAndTwentyIndexes_RoundTripsWithoutTruncation`
+  (which previously skipped Jet3 because of the single-page limit).
 
 ---
 

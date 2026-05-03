@@ -460,10 +460,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         TableDef tableDef = BuildTableDefinition(columns, _format);
         List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
-        (byte[] tdefPage, int[] firstDpOffsets) = BuildTDefPageWithIndexOffsets(tableDef, resolvedIndexes);
-        long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        (byte[][] tdefPages, int[] firstDpLogicalOffsets) = BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
 
-        bool tdefDirty = false;
+        // Append all TDEF pages first (sequential page numbers). The first
+        // page's number is the table's catalog ID; subsequent pages are
+        // chained via the next-page pointer at offset 4 of each non-last
+        // page. Leaf pages and the usage-map page are appended AFTER, so
+        // they don't interleave with the TDEF chain and the page numbers
+        // stay contiguous (tdefPages[i] lives at file page tdefPageNumber + i).
+        long tdefPageNumber = await AppendPageAsync(tdefPages[0], cancellationToken).ConfigureAwait(false);
+        for (int p = 1; p < tdefPages.Length; p++)
+        {
+            _ = await AppendPageAsync(tdefPages[p], cancellationToken).ConfigureAwait(false);
+        }
+
+        // Stamp the next-page pointer at offset 4 of every non-last TDEF page.
+        for (int p = 0; p < tdefPages.Length - 1; p++)
+        {
+            Wi32(tdefPages[p], 4, checked((int)(tdefPageNumber + p + 1)));
+        }
+
+        bool tdefDirty = tdefPages.Length > 1;
 
         // Emit one empty index leaf page per real index and patch its page
         // number into the corresponding `first_dp` field of the real-idx physical
@@ -487,7 +504,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     tailPage: 0,
                     enablePrefixCompression: false);
                 long leafPageNumber = await AppendPageAsync(leafPage, cancellationToken).ConfigureAwait(false);
-                Wi32(tdefPage, firstDpOffsets[i], checked((int)leafPageNumber));
+                WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
             }
 
             tdefDirty = true;
@@ -505,15 +522,23 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (_format != DatabaseFormat.Jet3Mdb)
         {
             long usageMapPageNumber = await AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
-            PatchUsageMapPointers(tdefPage, checked((int)usageMapPageNumber));
-            PatchAutoNumFlag(tdefPage, tableDef);
+
+            // PatchUsageMapPointers / PatchAutoNumFlag write only into the
+            // TDEF header (offsets 0x18, 0x37..0x3F), which always live on
+            // the first physical page.
+            PatchUsageMapPointers(tdefPages[0], checked((int)usageMapPageNumber));
+            PatchAutoNumFlag(tdefPages[0], tableDef);
             tdefDirty = true;
         }
 
         if (tdefDirty)
         {
-            // Re-flush the TDEF with the patched first_dp / usage-map / autonum bytes.
-            await WritePageAsync(tdefPageNumber, tdefPage, cancellationToken).ConfigureAwait(false);
+            // Re-flush every TDEF page with the patched first_dp / usage-map /
+            // autonum bytes and (for multi-page chains) the next-page pointers.
+            for (int p = 0; p < tdefPages.Length; p++)
+            {
+                await WritePageAsync(tdefPageNumber + p, tdefPages[p], cancellationToken).ConfigureAwait(false);
+            }
         }
 
         byte[]? lvProp = JetExpressionConverter.BuildLvPropBlob(columns, _format);
@@ -3563,15 +3588,54 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         => BuildTDefPageWithIndexOffsets(tableDef, indexes).Page;
 
     /// <summary>
-    /// Builds a TDEF page and also returns, for each logical index in
-    /// <paramref name="indexes"/>, the byte offset within the page of that
-    /// real-index physical descriptor's <c>first_dp</c> field (§3.1). The
-    /// caller uses these offsets to patch in the index leaf-page numbers
-    /// after the leafs themselves have been appended.
+    /// Single-page convenience wrapper for callers (system-table emission,
+    /// complex-type templates) that emit small fixed schemas which always
+    /// fit in one TDEF page. Throws if the table definition would actually
+    /// require a multi-page chain — those callers don't use this method.
+    /// User-facing <see cref="CreateTableInternalAsync"/> goes through
+    /// <see cref="BuildTDefPagesWithIndexOffsets"/> instead, which fully
+    /// supports the multi-page TDEF chain that the reader's
+    /// <c>ReadTDefBytesAsync</c> already stitches.
     /// </summary>
     internal (byte[] Page, int[] FirstDpOffsets) BuildTDefPageWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
     {
-        byte[] page = new byte[_pgSz];
+        var (pages, firstDpOffsets) = BuildTDefPagesWithIndexOffsets(tableDef, indexes);
+        if (pages.Length != 1)
+        {
+            throw new NotSupportedException(
+                $"Table definition produced a {pages.Length}-page TDEF chain, but the single-page builder was used. "
+                + "Route this caller through BuildTDefPagesWithIndexOffsets / the multi-page write path.");
+        }
+
+        return (pages[0], firstDpOffsets);
+    }
+
+    /// <summary>
+    /// Builds a (possibly multi-page) TDEF chain and also returns, for each
+    /// logical index in <paramref name="indexes"/>, the LOGICAL byte offset
+    /// of that real-index physical descriptor's <c>first_dp</c> field (§3.1).
+    /// Logical offsets address the stitched buffer the reader produces in
+    /// <see cref="AccessBase.ReadTDefBytesAsync"/>: the first physical page
+    /// (full <c>_pgSz</c> bytes) followed by every continuation page's body
+    /// from offset 8 onward. Use <see cref="LogicalToPhysicalTDefOffset"/>
+    /// to translate to a (page-index, page-offset) pair before patching.
+    /// <para>
+    /// Continuation pages each carry an 8-byte page-chain header
+    /// (<c>0x02 0x01 00 00</c> + 4-byte next-page pointer) which is NOT part
+    /// of the logical TDEF body. The caller is responsible for writing the
+    /// next-page pointer at offset 4 of each non-last page after appending,
+    /// since page numbers are not known until then.
+    /// </para>
+    /// </summary>
+    internal (byte[][] Pages, int[] FirstDpLogicalOffsets) BuildTDefPagesWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
+    {
+        // Build into a generously-sized logical buffer. Worst-case TDEF body
+        // (255 columns × 25-byte descriptors + 64-char UTF-16 names + 32 indexes
+        // with full real-idx + logical-idx + 64-char names) is ~50 KB. Allocate
+        // 128 KB of headroom; the trim+split below produces only the pages we
+        // actually used.
+        int logicalCapacity = Math.Max(_pgSz * 32, _pgSz);
+        byte[] page = new byte[logicalCapacity];
         int numCols = tableDef.Columns.Count;
         int numIdx = indexes.Count;
         bool jet4 = _format != DatabaseFormat.Jet3Mdb;
@@ -3647,7 +3711,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : _ansiEncoding.GetBytes(col.Name);
             if (namePos + nameLenSize + nameBytes.Length > page.Length)
             {
-                throw new NotSupportedException("Table definition does not fit within a single TDEF page.");
+                throw new NotSupportedException(
+                    "Table definition exceeds the TDEF logical-buffer capacity. Increase "
+                    + "BuildTDefPagesWithIndexOffsets's logicalCapacity or reduce the column count.");
             }
 
             if (jet4)
@@ -3677,7 +3743,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             int totalIdxBytesLowerBound = logIdxNameStart - realIdxPhysStart;
             if (realIdxPhysStart + totalIdxBytesLowerBound > page.Length)
             {
-                throw new NotSupportedException("Table definition (with indexes) does not fit within a single TDEF page.");
+                throw new NotSupportedException(
+                    "Table definition (with indexes) exceeds the TDEF logical-buffer capacity. Increase "
+                    + "BuildTDefPagesWithIndexOffsets's logicalCapacity or reduce the index count.");
             }
 
             for (int i = 0; i < numIdx; i++)
@@ -3761,7 +3829,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(indexes[i].Name) : _ansiEncoding.GetBytes(indexes[i].Name);
                 if (npos + nameLenSize + nameBytes.Length > page.Length)
                 {
-                    throw new NotSupportedException("Table definition (with indexes) does not fit within a single TDEF page.");
+                    throw new NotSupportedException(
+                        "Table definition (with indexes) exceeds the TDEF logical-buffer capacity. Increase "
+                        + "BuildTDefPagesWithIndexOffsets's logicalCapacity or reduce the index count.");
                 }
 
                 if (jet4)
@@ -3797,11 +3867,102 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // TDEF offset 2..3 (Jet4/ACE only): free-space hint = page_size - tdef_len - 8.
             // Every Access-authored TDEF in NorthwindTraders.accdb (52/52) carries this
             // exact computation; the writer leaving it zero contributes to DAO 3011.
+            // For multi-page TDEFs the first page is fully occupied by TDEF body, so
+            // tdef_len > _pgSz and the Math.Max clamp yields 0 — which matches the
+            // empirical "this page has no slack" interpretation.
             int tdefLen = Math.Max(0, namePos - 8);
             Wu16(page, 2, Math.Max(0, _pgSz - tdefLen - 8));
         }
 
-        return (page, firstDpOffsets);
+        return SplitLogicalTDefIntoPages(page, namePos, firstDpOffsets);
+    }
+
+    /// <summary>
+    /// Splits the linear logical TDEF buffer produced by
+    /// <see cref="BuildTDefPagesWithIndexOffsets"/> into one or more physical
+    /// pages. The first page is taken verbatim from <c>logical[0.._pgSz]</c>
+    /// (its 8-byte page-chain header is already populated by the build path).
+    /// Continuation pages get a fresh 8-byte header (<c>0x02 0x01 00 00</c> +
+    /// 4-byte next-page placeholder) followed by a slice of the logical
+    /// body. The next-page pointer at offset 4 of each non-last page is left
+    /// at 0 — the caller stamps the real page number after appending.
+    /// </summary>
+    private (byte[][] Pages, int[] FirstDpLogicalOffsets) SplitLogicalTDefIntoPages(byte[] logical, int usedLength, int[] firstDpLogicalOffsets)
+    {
+        if (usedLength <= _pgSz)
+        {
+            byte[] only = new byte[_pgSz];
+            Buffer.BlockCopy(logical, 0, only, 0, _pgSz);
+            return ([only], firstDpLogicalOffsets);
+        }
+
+        int bodyPerCont = _pgSz - 8;
+        int continuationBodyBytes = usedLength - _pgSz;
+        int continuationCount = (continuationBodyBytes + bodyPerCont - 1) / bodyPerCont;
+        int totalPages = 1 + continuationCount;
+
+        byte[][] pages = new byte[totalPages][];
+
+        // Page 0: take the first _pgSz bytes verbatim (already includes the
+        // 8-byte page-chain header that the build path populated).
+        pages[0] = new byte[_pgSz];
+        Buffer.BlockCopy(logical, 0, pages[0], 0, _pgSz);
+
+        for (int p = 1; p < totalPages; p++)
+        {
+            byte[] cont = new byte[_pgSz];
+            cont[0] = 0x02;
+            cont[1] = 0x01;
+
+            // Free-space hint (offset 2..3) and next-page pointer (offset 4..7)
+            // are left at 0 here. The caller patches the next-page pointer
+            // after AppendPageAsync assigns sequential page numbers.
+            int srcOffset = _pgSz + ((p - 1) * bodyPerCont);
+            int copyLen = Math.Min(bodyPerCont, usedLength - srcOffset);
+            Buffer.BlockCopy(logical, srcOffset, cont, 8, copyLen);
+
+            pages[p] = cont;
+        }
+
+        return (pages, firstDpLogicalOffsets);
+    }
+
+    /// <summary>
+    /// Translates a logical TDEF byte offset (as produced by
+    /// <see cref="BuildTDefPagesWithIndexOffsets"/>) to a physical
+    /// (page-index, page-offset) pair. The first physical page covers
+    /// logical offsets <c>[0, _pgSz)</c>; each continuation page covers
+    /// <c>(_pgSz - 8)</c> body bytes starting at its own offset 8 (the
+    /// first 8 bytes are the page-chain header and are not part of the
+    /// logical buffer).
+    /// </summary>
+    private (int PageIndex, int PageOffset) LogicalToPhysicalTDefOffset(int logicalOffset)
+    {
+        if (logicalOffset < _pgSz)
+        {
+            return (0, logicalOffset);
+        }
+
+        int bodyPerCont = _pgSz - 8;
+        int rest = logicalOffset - _pgSz;
+        int contIdx = rest / bodyPerCont;
+        int contOff = rest % bodyPerCont;
+        return (1 + contIdx, 8 + contOff);
+    }
+
+    /// <summary>
+    /// Writes a 4-byte little-endian integer at the given LOGICAL TDEF
+    /// offset, dispatching the bytes across the physical page boundary
+    /// when the field straddles two pages. Used to patch <c>first_dp</c>
+    /// values after their leaf pages are appended.
+    /// </summary>
+    private void WriteLogicalTDefI32(byte[][] pages, int logicalOffset, int value)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            (int pageIdx, int pageOff) = LogicalToPhysicalTDefOffset(logicalOffset + i);
+            pages[pageIdx][pageOff] = (byte)((value >> (i * 8)) & 0xFF);
+        }
     }
 
     // ── Row-level APIs for complex (Attachment / MultiValue) columns ──
