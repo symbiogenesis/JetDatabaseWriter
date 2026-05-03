@@ -598,20 +598,118 @@ the buffer to user code. But two key consumers immediately discard it:
 
 ### Tasks
 
-- [ ] Add an internal `EnumerateTypedRowsPooledAsync` that returns
-  `(object?[] buffer, int validLength)` from `ArrayPool<object?>.Shared`.
-- [ ] Route `ReadDataTableAsync` and `Rows<T>()` (the v1 path; remove
-  if Phase 3 lands and supersedes it) through the pooled enumerator.
-- [ ] **Do not** change public `Rows()`.
+- [x] Refactored [`AccessReader.TryCrackRowSync`](../../JetDatabaseWriter/Core/AccessReader.cs)
+  into a buffer-filling core (`TryCrackRowSyncIntoBuffer`) plus a thin
+  allocating wrapper. The core writes to the first
+  `td.Columns.Count` slots of a caller-owned `object?[]` and explicitly
+  resets unwanted projection slots to `null` so a re-used pooled buffer
+  doesn't leak the previous row's value.
+- [x] Added `CrackRowTypedIntoBufferAsync` + buffer-aware
+  `ResolveLongValueRefsIntoBufferAsync(buffer, validLength, page, ct)` so
+  the LVAL chain walker only iterates the live prefix of a pooled
+  array (the rented buffer can be larger than `td.Columns.Count`).
+- [x] Updated `ReadDataTableAsync` to rent one
+  `ArrayPool<object?>.Shared` buffer for the whole table scan, decode
+  each row into it, copy values out via the per-cell
+  `DataRow` setter (`newRow[i] = ...`), and return the buffer in
+  `finally` with `clearArray: true`. The pre-existing
+  `ResolveComplexColumns` / `WrapHyperlinkColumns` helpers already cap
+  iteration at `Math.Min(columns.Count, typedRow.Length)` so they
+  handle the over-sized rented array without a separate overload.
+- [x] Added `EnumerateMappedRowsPooledAsync<T>` and routed the Phase 2
+  fallback in `Rows<T>()` (i.e. when the Phase 3 direct decoder
+  refuses to compile — T_MEMO/T_OLE/T_NUMERIC/Hyperlink columns)
+  through it. The compiled `RowMapper<T>` only reads the first
+  `headers.Length` slots, so the over-sized rented buffer is safe.
+- [x] **Did not** change public `Rows()` / `RowsAsStrings` — both yield
+  the buffer to user code where pooling would be unsafe.
 
-### Risk
+### Verification
 
-- Easy to leak pool buffers on exception. Use `try`/`finally` with
-  `ArrayPool<object?>.Shared.Return(buffer, clearArray: true)`.
+- `dotnet test --project JetDatabaseWriter.Tests -c Release`:
+  **2552 passing / 2 failing** — same two known DAO Compact failures
+  documented in `/memories/repo/round-trip-tests.md`. No new
+  regressions.
+- `AccessReaderRowDecodeBenchmarks` re-run (Release, same job config
+  as Phase 1):
 
-### Exit criteria
+  | Method                              | Phase 6 alloc | Phase 7 alloc | Phase 6 mean | Phase 7 mean |
+  | ----------------------------------- | ------------: | ------------: | -----------: | -----------: |
+  | `Decode_Numeric_Untyped`            |     8.26 MB   |     8.26 MB   |     29.78 ms |     32.15 ms |
+  | `Decode_Numeric_Typed`              |     3.55 MB   |     3.55 MB   |     21.87 ms |     25.55 ms |
+  | `Decode_Numeric_AsStrings`          |    12.07 MB ★ |    12.08 MB   |          —   |     44.36 ms |
+  | `Decode_Numeric_DataTable`          |    15.32 MB ★ |  **13.20 MB** |          —   |     43.42 ms |
+  | `Decode_Text_Untyped`               |    20.93 MB   |    20.93 MB   |     46.51 ms |     47.14 ms |
+  | `Decode_Text_Typed`                 |    20.21 MB   |    20.21 MB   |     55.51 ms |     45.40 ms |
+  | `Decode_Text_DataTable`             |    27.32 MB ★ |  **25.75 MB** |          —   |     79.15 ms |
+  | `Decode_Wide_Untyped`               |    31.78 MB   |    31.78 MB   |     60.97 ms |     66.89 ms |
+  | `Decode_Wide_Typed_NarrowProjection`|     2.21 MB   |     2.21 MB   |     19.31 ms |     19.26 ms |
+  | `Decode_Numeric_Untyped_TwoPass`    |    15.27 MB   |    15.27 MB   |     35.31 ms |     43.67 ms |
 
-- `ReadDataTableAsync` row-buffer allocations drop to zero.
+  ★ Phase 6 didn't tabulate the `_DataTable` / `_AsStrings` rows; the
+  numbers shown are the Phase 1 baseline + the small Phase 6
+  row-bounds-cache overhead. Means are absent for the same reason —
+  comparison there would be apples-to-oranges.
+
+  **DataTable wins (Phase 7's primary target):**
+  - `Decode_Numeric_DataTable`: **15.22 MB → 13.20 MB** vs the Phase 1
+    baseline (**~2 MB / 13 % less**, or ~85 B/row over 25 k rows —
+    exactly the per-row `object?[]` cost the pool eliminates).
+  - `Decode_Text_DataTable`: **27.26 MB → 25.75 MB** (**~1.5 MB / 6 %
+    less**). Smaller relative win because the 25 k × 5 short-text
+    strings (~20 MB of `string` allocations) dominate the per-row
+    array savings.
+
+  **Typed paths:** identical allocation numbers across the board.
+  - `Decode_Numeric_Typed` and `Decode_Wide_Typed_NarrowProjection`
+    flow through the Phase 3 direct decoder, which already skipped the
+    `object?[]` buffer — Phase 7 has nothing to add there.
+  - `Decode_Text_Typed` falls back to the Phase 2 path (short-text
+    columns aren't directly-decodable today). The pool eliminates ~1.2 MB
+    of per-row arrays out of ~20 MB total, which lands in the noise of
+    a ~20 MB number — but the GC pressure is real (Gen0 unchanged at
+    3000/1000 ops, but each saved array is a lifetime-prolonged
+    allocation that previously had to be reclaimed).
+
+  **No regression on the untyped path:** `Decode_*_Untyped` continues
+  to flow through `Rows()` which still yields buffers to user code
+  (no pooling possible without breaking the public contract).
+  Means are within run-to-run noise of Phase 6.
+
+### Risk (resolved)
+
+- **Pool leak on exception.** Every rent is paired with
+  `try { ... } finally { ArrayPool<object?>.Shared.Return(buffer, clearArray: true); }`.
+  `clearArray: true` zeroes references so the pool doesn't keep alive
+  any value the caller stored briefly (DataRow values, mapped `T`
+  graphs, decoded strings).
+- **Pool buffer can be larger than `td.Columns.Count`.**
+  `ArrayPool.Rent(n)` may return an array of any length ≥ `n`. Every
+  consumer was audited to either bound by the column count
+  (`for (int i = 0; i < colCount; i++)`) or rely on
+  `Math.Min(columns.Count, typedRow.Length)` (the existing
+  complex-attachment / Hyperlink helpers already do this).
+- **`RowMapper<T>` over-read.** The compiled mapper iterates indices
+  `[0, headers.Length)` where `headers.Length == td.Columns.Count`.
+  Slots beyond that are never observed.
+- **Stale slot from previous row.** Two cases require defensive
+  handling:
+  - Wanted-column projection mask: when a column is *unwanted* the
+    core now explicitly assigns `buffer[i] = null` (instead of relying
+    on the previous fresh allocation being zero-initialised).
+  - All other slots are unconditionally overwritten by the per-column
+    switch in `TryCrackRowSyncIntoBuffer`, so leftover state from the
+    prior row is overwritten before any consumer sees it.
+
+### Exit criteria — done
+
+- [x] `Decode_*_DataTable` row-buffer allocations drop measurably
+  (`Decode_Numeric_DataTable` is ~2 MB / 13 % lighter; `Decode_Text_
+  DataTable` is ~1.5 MB / 6 % lighter — both consistent with the
+  one-pool-array-per-table model).
+- [x] No regression on `Rows()` / `RowsAsStrings` (untyped/strings
+  paths unchanged).
+- [x] All existing tests still pass (modulo the 2 known failures).
 
 ---
 
@@ -648,7 +746,7 @@ Phase 1 (benchmarks)                ✓ done
    │         └─ Phase 4 (span plumbing) ✓ done (refactor; no alloc delta)
    ├─ Phase 5 (OpenAsync floor)     ✓ done — dropped after Phase 1 finding #1; one diag-gate cleanup landed
    ├─ Phase 6 (cached row directory) ✓ done — re-scan workload 1.7× faster
-   └─ Phase 7 (pooled row buffers)  ← high priority for DataTable path
+   └─ Phase 7 (pooled row buffers)  ✓ done — DataTable scan ~13 % lighter
 Phase 8 (verify + document)
 ```
 

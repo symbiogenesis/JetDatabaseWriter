@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Core;
 
 using System;
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
@@ -512,9 +513,86 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ? null
             : RowMapper<T>.GetBoundColumnMask(headers);
 
-        await foreach (object?[] row in EnumerateTypedRowsAsync(tableName, entry, td, wantedColumns, progress, cancellationToken).ConfigureAwait(false))
+        await foreach (T mapped in EnumerateMappedRowsPooledAsync(tableName, entry, td, wantedColumns, factory, progress, cancellationToken).ConfigureAwait(false))
         {
-            yield return factory(row);
+            yield return mapped;
+        }
+    }
+
+    /// <summary>
+    /// Phase 7 fallback path for <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>:
+    /// walks every owned data page for <paramref name="entry"/>, decodes each
+    /// row into a single <see cref="ArrayPool{T}.Shared"/>-rented buffer,
+    /// applies the mapper, and yields the produced <typeparamref name="T"/>.
+    /// The buffer is reused across every row and returned to the pool on
+    /// completion (or exception); the mapper consumes values out of the
+    /// buffer before the next iteration overwrites it, so no caller ever
+    /// observes the pooled array.
+    /// </summary>
+    private async IAsyncEnumerable<T> EnumerateMappedRowsPooledAsync<T>(
+        string tableName,
+        CatalogEntry entry,
+        TableDef td,
+        bool[]? wantedColumns,
+        Func<object?[], T> factory,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        long rowCount = 0;
+
+        bool needsComplexPass = td.HasComplexColumns
+            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, T_COMPLEX, T_ATTACHMENT));
+        bool needsHyperlinkPass = td.HasHyperlinkColumns
+            && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
+
+        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
+            ? await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            : null;
+        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+
+        int colCount = td.Columns.Count;
+        object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
+        try
+        {
+            foreach (long pageNumber in pageNumbers)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+
+                foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
+                {
+                    if (rb.RowSize < _numColsFldSz)
+                    {
+                        continue;
+                    }
+
+                    bool ok = await CrackRowTypedIntoBufferAsync(page, rb.RowStart, rb.RowSize, td, wantedColumns, rowBuffer, cancellationToken).ConfigureAwait(false);
+                    if (!ok)
+                    {
+                        continue;
+                    }
+
+                    if (needsComplexPass)
+                    {
+                        ResolveComplexColumns(rowBuffer, td.Columns, complexData);
+                    }
+
+                    if (needsHyperlinkPass)
+                    {
+                        WrapHyperlinkColumns(rowBuffer, td.ClrTypes);
+                    }
+
+                    yield return factory(rowBuffer);
+                    rowCount++;
+                }
+
+                progress?.Report(rowCount);
+            }
+        }
+        finally
+        {
+            ArrayPool<object?>.Shared.Return(rowBuffer, clearArray: true);
         }
     }
 
@@ -1352,46 +1430,65 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 : null;
             IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-            foreach (long pageNumber in pageNumbers)
+            // Phase 7: rent a single object?[] from the shared pool and
+            // reuse it across every row. The DataRow ingestion below
+            // copies values out via the per-cell setter, so the buffer is
+            // never retained by the table.
+            int colCount = td.Columns.Count;
+            object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-
-                foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
+                foreach (long pageNumber in pageNumbers)
                 {
-                    if (rb.RowSize < _numColsFldSz)
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+
+                    foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
                     {
-                        continue;
+                        if (rb.RowSize < _numColsFldSz)
+                        {
+                            continue;
+                        }
+
+                        bool ok = await CrackRowTypedIntoBufferAsync(page, rb.RowStart, rb.RowSize, td, wantedColumns: null, rowBuffer, cancellationToken).ConfigureAwait(false);
+                        if (!ok)
+                        {
+                            continue;
+                        }
+
+                        if (td.HasComplexColumns)
+                        {
+                            ResolveComplexColumns(rowBuffer, td.Columns, complexData);
+                        }
+
+                        if (td.HasHyperlinkColumns)
+                        {
+                            WrapHyperlinkColumns(rowBuffer, td.ClrTypes);
+                        }
+
+                        DataRow newRow = dt.NewRow();
+                        for (int i = 0; i < colCount; i++)
+                        {
+                            newRow[i] = rowBuffer[i] ?? DBNull.Value;
+                        }
+
+                        dt.Rows.Add(newRow);
+                        if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
+                        {
+                            progress?.Report(dt.Rows.Count);
+                            var result = dt;
+                            dt = null;
+                            return result;
+                        }
                     }
 
-                    object?[]? row = await CrackRowTypedAsync(page, rb.RowStart, rb.RowSize, td, cancellationToken).ConfigureAwait(false);
-                    if (row == null)
-                    {
-                        continue;
-                    }
-
-                    if (td.HasComplexColumns)
-                    {
-                        ResolveComplexColumns(row, td.Columns, complexData);
-                    }
-
-                    if (td.HasHyperlinkColumns)
-                    {
-                        WrapHyperlinkColumns(row, td.ClrTypes);
-                    }
-
-                    _ = dt.Rows.Add((object[])row);
-                    if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
-                    {
-                        progress?.Report(dt.Rows.Count);
-                        var result = dt;
-                        dt = null;
-                        return result;
-                    }
+                    progress?.Report(dt.Rows.Count);
                 }
-
-                progress?.Report(dt.Rows.Count);
+            }
+            finally
+            {
+                ArrayPool<object?>.Shared.Return(rowBuffer, clearArray: true);
             }
 
             var final = dt;
@@ -2938,6 +3035,56 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
+    /// Phase 7 buffer-filling counterpart to <c>CrackRowTypedAsync</c>.
+    /// Returns <see langword="true"/> when the row was successfully decoded
+    /// into the first <c>td.Columns.Count</c> slots of
+    /// <paramref name="buffer"/>; <see langword="false"/> when the row
+    /// trailer was malformed (caller should skip without resetting the
+    /// buffer — the next iteration will overwrite it). Used by
+    /// <see cref="ReadDataTableAsync"/> and the Phase-2 fallback in
+    /// <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>
+    /// to reuse a single <see cref="ArrayPool{T}.Shared"/>-rented array
+    /// across the entire scan.
+    /// </summary>
+    private ValueTask<bool> CrackRowTypedIntoBufferAsync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, object?[] buffer, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!TryCrackRowSyncIntoBuffer(page, rowStart, rowSize, td, wantedColumns, buffer, out bool needsLongValue))
+        {
+            return new ValueTask<bool>(false);
+        }
+
+        if (!needsLongValue)
+        {
+            return new ValueTask<bool>(true);
+        }
+
+        return ResolveLongValueRefsIntoBufferAsync(buffer, td.Columns.Count, page, cancellationToken);
+    }
+
+    /// <summary>
+    /// Buffer-aware mirror of <c>ResolveLongValueRefsAsync</c>: walks only
+    /// the first <paramref name="validLength"/> slots of
+    /// <paramref name="buffer"/> (the pooled array may be larger than
+    /// <c>td.Columns.Count</c>).
+    /// </summary>
+    private async ValueTask<bool> ResolveLongValueRefsIntoBufferAsync(object?[] buffer, int validLength, byte[] page, CancellationToken cancellationToken)
+    {
+        for (int i = 0; i < validLength; i++)
+        {
+            if (buffer[i] is LongValueRef lvr)
+            {
+                buffer[i] = lvr.IsOle
+                    ? (object)await ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
+                    : await ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Async slow-path that walks the LVAL chain for any
     /// <see cref="LongValueRef"/> sentinels left in <paramref name="row"/>
     /// by <c>TryCrackRowSync</c>. Only invoked when at least one
@@ -2983,7 +3130,30 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// </summary>
     private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, out object?[]? row, out bool needsLongValue)
     {
-        row = null;
+        var result = new object?[td.Columns.Count];
+        if (!TryCrackRowSyncIntoBuffer(page, rowStart, rowSize, td, wantedColumns, result, out needsLongValue))
+        {
+            row = null;
+            return false;
+        }
+
+        row = result;
+        return true;
+    }
+
+    /// <summary>
+    /// Buffer-filling core of <c>TryCrackRowSync</c>. Phase 7 of
+    /// read-perf-plan-v2: lets non-yielding callers
+    /// (<see cref="ReadDataTableAsync"/>, the Phase-2 fallback in
+    /// <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>)
+    /// rent a single <c>object?[]</c> from <see cref="ArrayPool{T}.Shared"/>
+    /// and re-use it across every row instead of allocating a fresh array
+    /// per row. <paramref name="buffer"/> must have length
+    /// &gt;= <c>td.Columns.Count</c>; the first <c>td.Columns.Count</c>
+    /// slots are fully overwritten on success.
+    /// </summary>
+    private bool TryCrackRowSyncIntoBuffer(byte[] page, int rowStart, int rowSize, TableDef td, bool[]? wantedColumns, object?[] buffer, out bool needsLongValue)
+    {
         needsLongValue = false;
 
         if (rowSize < _numColsFldSz)
@@ -3010,13 +3180,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return false;
         }
 
-        var result = new object?[td.Columns.Count];
         for (int i = 0; i < td.Columns.Count; i++)
         {
             if (wantedColumns != null && !wantedColumns[i])
             {
-                // Column not bound by the caller's projection — leave the
-                // slot null so the compiled RowMapper<T> mapper skips it.
+                // Column not bound by the caller's projection — clear the
+                // slot so a re-used pooled buffer doesn't leak the prior
+                // row's value into the compiled RowMapper<T> mapper (which
+                // skips null/DBNull slots).
+                buffer[i] = null;
                 continue;
             }
 
@@ -3026,29 +3198,28 @@ public sealed class AccessReader : AccessBase, IAccessReader
             switch (slice.Kind)
             {
                 case ColumnSliceKind.Bool:
-                    result[i] = slice.BoolValue;
+                    buffer[i] = slice.BoolValue;
                     break;
 
                 case ColumnSliceKind.Null:
                 case ColumnSliceKind.Empty:
-                    result[i] = DBNull.Value;
+                    buffer[i] = DBNull.Value;
                     break;
 
                 case ColumnSliceKind.Fixed:
-                    result[i] = JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, col.Type, slice.DataLen, _strictParsing);
+                    buffer[i] = JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, col.Type, slice.DataLen, _strictParsing);
                     break;
 
                 case ColumnSliceKind.Var:
-                    result[i] = ReadVarTypedSync(page, rowStart + slice.DataStart, slice.DataLen, col, ref needsLongValue);
+                    buffer[i] = ReadVarTypedSync(page, rowStart + slice.DataStart, slice.DataLen, col, ref needsLongValue);
                     break;
 
                 default:
-                    result[i] = DBNull.Value;
+                    buffer[i] = DBNull.Value;
                     break;
             }
         }
 
-        row = result;
         return true;
     }
 
