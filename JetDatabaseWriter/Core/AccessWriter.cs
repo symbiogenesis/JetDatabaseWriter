@@ -75,10 +75,25 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// keeps only thin public-API forwarders.</summary>
     private readonly RelationshipManager _relationships;
 
+    /// <summary>Gets the relationship subsystem for sibling managers (e.g. <see cref="ComplexColumnManager"/>)
+    /// that need to delegate FK / system-table lookups.</summary>
+    internal RelationshipManager Relationships => _relationships;
+
     /// <summary>The single instance owning index B-tree maintenance: bulk rebuild,
     /// incremental fast paths, and the catalog-index single-leaf splice. AccessWriter
     /// keeps only thin instance forwarders.</summary>
     private readonly IndexMaintainer _indexMaintainer;
+
+    /// <summary>Owns the Attachment / MultiValue (complex column) subsystem:
+    /// system-table scaffolding, per-table allocation of ComplexID /
+    /// ConceptualTableID, hidden flat-child-table emission, the row-level
+    /// Add* APIs, and cascade / drop / rename plumbing for the artifacts.
+    /// AccessWriter keeps only thin public-API forwarders.</summary>
+    private readonly ComplexColumnManager _complexColumns;
+
+    /// <summary>Gets the complex-column subsystem so sibling managers (e.g. <see cref="Internal.Relationships.RelationshipManager"/>)
+    /// can delegate cascade-on-delete to the complex children.</summary>
+    internal ComplexColumnManager ComplexColumns => _complexColumns;
 
     // Active explicit transaction. Writer disposal rolls back any in-flight
     // transaction through JetTransaction.DisposeAsync before clearing the
@@ -105,6 +120,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         _isAgileEncryptedRewrap = isAgileEncryptedRewrap;
         _relationships = new RelationshipManager(this);
         _indexMaintainer = new IndexMaintainer(this);
+        _complexColumns = new ComplexColumnManager(this);
 
         // Real CFB-wrapped encrypted ACCDBs (Agile / Office Crypto API) can
         // only be edited via the in-memory decrypt-then-rewrap path — caller
@@ -274,7 +290,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         try
         {
             AccessWriter writer = await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
-            await ScaffoldSystemTablesAsync(writer, format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+            await writer._complexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
             return writer;
         }
         catch
@@ -334,7 +350,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         stream.Position = 0;
 
         AccessWriter writer = await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
-        await ScaffoldSystemTablesAsync(writer, format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+        await writer._complexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
         return writer;
     }
 
@@ -399,8 +415,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // flat child table + MSysComplexColumns row per column AFTER the parent TDEF
         // is on disk. The round-trip preservation path on RewriteTableAsync supplies a
         // non-zero ComplexId from the original TDEF and is left untouched here.
-        IReadOnlyList<ComplexColumnAllocation>? complexAllocs =
-            await PrepareComplexColumnAllocationsAsync(columns, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<ComplexColumnManager.ComplexColumnAllocation>? complexAllocs =
+            await _complexColumns.PrepareComplexColumnAllocationsAsync(columns, cancellationToken).ConfigureAwait(false);
         if (complexAllocs is { Count: > 0 })
         {
             // Rewrite the column list with the allocated ComplexIds embedded so the parent
@@ -408,7 +424,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             var rewritten = new List<ColumnDefinition>(columns);
             for (int i = 0; i < complexAllocs.Count; i++)
             {
-                ComplexColumnAllocation a = complexAllocs[i];
+                ComplexColumnManager.ComplexColumnAllocation a = complexAllocs[i];
                 rewritten[a.ColumnIndex] = rewritten[a.ColumnIndex] with { ComplexId = a.ComplexId };
             }
 
@@ -422,7 +438,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // catalog cache reflects the parent before flat-table inserts.
         if (complexAllocs is { Count: > 0 })
         {
-            await EmitComplexColumnArtifactsAsync(tableName, columns, complexAllocs, cancellationToken).ConfigureAwait(false);
+            await _complexColumns.EmitComplexColumnArtifactsAsync(tableName, columns, complexAllocs, cancellationToken).ConfigureAwait(false);
         }
 
         _ = tdefPageNumber;
@@ -435,7 +451,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// emit hidden system tables (e.g. complex-column flat tables that need
     /// <c>MSysObjects.Flags = 0x800A0000</c>). Returns the new TDEF page number.
     /// </summary>
-    private async ValueTask<long> CreateTableInternalAsync(
+    internal async ValueTask<long> CreateTableInternalAsync(
         string tableName,
         IReadOnlyList<ColumnDefinition> columns,
         IReadOnlyList<IndexDefinition> indexes,
@@ -1162,7 +1178,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 parentLocs.Add(locations[i]);
             }
 
-            await CascadeDeleteComplexChildrenAsync(tableDef, parentLocs, cancellationToken).ConfigureAwait(false);
+            await _complexColumns.CascadeDeleteComplexChildrenAsync(tableDef, parentLocs, cancellationToken).ConfigureAwait(false);
         }
 
         int deleted = 0;
@@ -2286,6 +2302,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// data-page write, deferred unique-index check) rejects the row, so the
     /// counter rewinds to the value the failed insert tried to consume.
     /// </summary>
+    internal async ValueTask ApplyConstraintsForComplexAsync(string tableName, TableDef tableDef, object[] values, CancellationToken cancellationToken)
+        => _ = await ApplyConstraintsAsync(tableName, tableDef, values, cancellationToken).ConfigureAwait(false);
+
     private async ValueTask<List<(ColumnConstraint Constraint, long? PreviousValue)>?> ApplyConstraintsAsync(string tableName, TableDef tableDef, object[] values, CancellationToken cancellationToken)
     {
         if (!_constraints.TryGetValue(tableName, out List<ColumnConstraint>? list) || list == null)
@@ -2664,7 +2683,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return s;
     }
 
-    private static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, DatabaseFormat format)
+    internal static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, DatabaseFormat format)
     {
         var result = new TableDef();
         int fixedOffset = 0;
@@ -3201,10 +3220,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return tableDef;
     }
 
-    private ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, CancellationToken cancellationToken = default)
+    internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, CancellationToken cancellationToken = default)
         => InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags: 0, cancellationToken);
 
-    private async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
+    internal async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
     {
         TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         object[] values = msys.CreateNullValueRow();
@@ -3389,12 +3408,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         foreach ((string colName, int complexId) in droppedComplex)
         {
-            await DropSingleComplexChildAsync(colName, complexId, cancellationToken).ConfigureAwait(false);
+            await _complexColumns.DropSingleComplexChildAsync(colName, complexId, cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((string oldColName, string newColName, int complexId) in renamedComplex)
         {
-            await RenameComplexColumnArtifactsAsync(oldColName, newColName, complexId, cancellationToken).ConfigureAwait(false);
+            await _complexColumns.RenameComplexColumnArtifactsAsync(oldColName, newColName, complexId, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -3512,7 +3531,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// caller uses these offsets to patch in the index leaf-page numbers
     /// after the leafs themselves have been appended.
     /// </summary>
-    private (byte[] Page, int[] FirstDpOffsets) BuildTDefPageWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
+    internal (byte[] Page, int[] FirstDpOffsets) BuildTDefPageWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
     {
         byte[] page = new byte[_pgSz];
         int numCols = tableDef.Columns.Count;
@@ -3712,498 +3731,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         return (page, firstDpOffsets);
     }
 
-    /// <summary>
-    /// scaffold mandatory ACCDB system tables (currently
-    /// <c>MSysComplexColumns</c>) into a freshly-created database. Called
-    /// from <see cref="CreateDatabaseAsync(string, DatabaseFormat, AccessWriterOptions?, CancellationToken)"/>
-    /// after the bare 3-page empty database has been opened. ACCDB only —
-    /// complex columns are an Access 2007+ feature absent from Jet3/Jet4
-    /// <c>.mdb</c>. Skipped on the slim 9-column legacy catalog schema
-    /// (<see cref="AccessWriterOptions.WriteFullCatalogSchema"/> = <c>false</c>)
-    /// because that mode targets backward-compatible byte hashing and must
-    /// not introduce additional pages.
-    /// </summary>
-    private static async ValueTask ScaffoldSystemTablesAsync(AccessWriter writer, DatabaseFormat format, bool fullCatalogSchema, CancellationToken cancellationToken)
-    {
-        if (format != DatabaseFormat.AceAccdb || !fullCatalogSchema)
-        {
-            return;
-        }
-
-        await writer.CreateMSysComplexColumnsAsync(cancellationToken).ConfigureAwait(false);
-        await writer.CreateMSysComplexTypeTemplatesAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// per-kind <c>MSysComplexType_*</c> template tables. Each entry maps
-    /// the canonical Access template name to the column schema Access emits for that
-    /// template (verified against <c>ComplexFields.accdb</c> in
-    /// <c>docs/design/format-probe-appendix-complex.md</c> §<c>MSysComplexType_*</c>).
-    /// All templates are zero-row, zero-index tables; their <c>MSysObjects.Id</c>
-    /// (= TDEF page) is what <c>MSysComplexColumns.ComplexTypeObjectID</c> points at.
-    /// </summary>
-    private static readonly (string Name, ColumnDefinition[] Columns)[] _complexTypeTemplates =
-    [
-        (Constants.ComplexTypeNames.UnsignedByte, new[] { new ColumnDefinition("Value", typeof(byte)) }),
-        (Constants.ComplexTypeNames.Short,        [new ColumnDefinition("Value", typeof(short))]),
-        (Constants.ComplexTypeNames.Long,         [new ColumnDefinition("Value", typeof(int))]),
-        (Constants.ComplexTypeNames.IEEESingle,   [new ColumnDefinition("Value", typeof(float))]),
-        (Constants.ComplexTypeNames.IEEEDouble,   [new ColumnDefinition("Value", typeof(double))]),
-        (Constants.ComplexTypeNames.GUID,         [new ColumnDefinition("Value", typeof(Guid))]),
-        (Constants.ComplexTypeNames.Decimal,      [new ColumnDefinition("Value", typeof(decimal))]),
-        (Constants.ComplexTypeNames.Text,         [new ColumnDefinition("Value", typeof(string), maxLength: 255)]),
-        (Constants.ComplexTypeNames.Attachment,
-        [
-            new ColumnDefinition("FileData",      typeof(byte[])),
-            new ColumnDefinition("FileFlags",     typeof(int)),
-            new ColumnDefinition("FileName",      typeof(string), maxLength: 255),
-            new ColumnDefinition("FileTimeStamp", typeof(DateTime)),
-            new ColumnDefinition("FileType",      typeof(string), maxLength: 255),
-            new ColumnDefinition("FileURL",       typeof(string)),
-        ]),
-    ];
-
-    /// <summary>
-    /// scaffolds the nine <c>MSysComplexType_*</c> template tables
-    /// (<c>UnsignedByte</c>, <c>Short</c>, <c>Long</c>, <c>IEEESingle</c>,
-    /// <c>IEEEDouble</c>, <c>GUID</c>, <c>Decimal</c>, <c>Text</c>, <c>Attachment</c>)
-    /// into a freshly-created ACCDB so subsequent <see cref="EmitComplexColumnArtifactsAsync"/>
-    /// calls can populate <c>MSysComplexColumns.ComplexTypeObjectID</c> with a real
-    /// catalog id instead of the placeholder <c>0</c>. Each catalog row carries
-    /// <c>MSysObjects.Flags = 0x80030000</c> (system + the 0x30000 marker Access uses
-    /// for type-template tables) so the templates are excluded from
-    /// <c>ListTablesAsync</c>. Schema verified against <c>ComplexFields.accdb</c> —
-    /// see <c>docs/design/format-probe-appendix-complex.md</c>.
-    /// </summary>
-    private async ValueTask CreateMSysComplexTypeTemplatesAsync(CancellationToken cancellationToken)
-    {
-        foreach ((string name, ColumnDefinition[] cols) in _complexTypeTemplates)
-        {
-            TableDef tableDef = BuildTableDefinition(cols, _format);
-            (byte[] tdefPage, _) = BuildTDefPageWithIndexOffsets(tableDef, []);
-            long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-
-            await InsertCatalogEntryAsync(
-                name,
-                tdefPageNumber,
-                lvProp: null,
-                catalogFlags: 0x80030000U,
-                cancellationToken).ConfigureAwait(false);
-        }
-
-        InvalidateCatalogCache();
-    }
-
-    /// <summary>
-    /// Maps a user-declared complex column to the canonical
-    /// <c>MSysComplexType_*</c> template name. Returns <see langword="null"/>
-    /// when the column is not complex or its element type has no matching template.
-    /// </summary>
-    private static string? ResolveComplexTypeTemplateName(ColumnDefinition col)
-    {
-        if (col.IsAttachment)
-        {
-            return Constants.ComplexTypeNames.Attachment;
-        }
-
-        if (!col.IsMultiValue)
-        {
-            return null;
-        }
-
-        Type? t = col.MultiValueElementType;
-        if (t is null)
-        {
-            return null;
-        }
-
-        if (t == typeof(byte))
-        {
-            return Constants.ComplexTypeNames.UnsignedByte;
-        }
-
-        if (t == typeof(short))
-        {
-            return Constants.ComplexTypeNames.Short;
-        }
-
-        if (t == typeof(int))
-        {
-            return Constants.ComplexTypeNames.Long;
-        }
-
-        if (t == typeof(float))
-        {
-            return Constants.ComplexTypeNames.IEEESingle;
-        }
-
-        if (t == typeof(double))
-        {
-            return Constants.ComplexTypeNames.IEEEDouble;
-        }
-
-        if (t == typeof(Guid))
-        {
-            return Constants.ComplexTypeNames.GUID;
-        }
-
-        if (t == typeof(decimal))
-        {
-            return Constants.ComplexTypeNames.Decimal;
-        }
-
-        if (t == typeof(string))
-        {
-            return Constants.ComplexTypeNames.Text;
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Creates the empty <c>MSysComplexColumns</c> system table.
-    /// Schema verified against <c>ComplexFields.accdb</c> (see
-    /// <c>docs/design/format-probe-appendix-complex.md</c> and
-    /// <c>docs/design/complex-columns-format-notes.md</c> §2.2): four
-    /// <c>T_LONG</c> columns (<c>ComplexTypeObjectID</c>, <c>FlatTableID</c>,
-    /// <c>ConceptualTableID</c>, <c>ComplexID</c>) plus a <c>ColumnName</c>
-    /// <c>T_TEXT(510)</c> variable column. The catalog row carries flag
-    /// <c>0x80000000</c> (system / hidden) so the table is excluded from
-    /// <c>GetUserTablesAsync</c>.
-    /// </summary>
-    private async ValueTask CreateMSysComplexColumnsAsync(CancellationToken cancellationToken)
-    {
-        var columns = new[]
-        {
-            new ColumnDefinition("ColumnName", typeof(string), maxLength: 255),
-            new ColumnDefinition("ComplexTypeObjectID", typeof(int)),
-            new ColumnDefinition("FlatTableID", typeof(int)),
-            new ColumnDefinition("ConceptualTableID", typeof(int)),
-            new ColumnDefinition("ComplexID", typeof(int)),
-        };
-
-        TableDef tableDef = BuildTableDefinition(columns, _format);
-        (byte[] tdefPage, _) = BuildTDefPageWithIndexOffsets(tableDef, []);
-        long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-
-        await InsertCatalogEntryAsync(
-            Constants.SystemTableNames.ComplexColumns,
-            tdefPageNumber,
-            lvProp: null,
-            catalogFlags: 0x80000000U,
-            cancellationToken).ConfigureAwait(false);
-
-        InvalidateCatalogCache();
-    }
-
-    /// <summary>
-    /// Per-column scratch state captured by <see cref="PrepareComplexColumnAllocationsAsync"/>
-    /// and consumed by <see cref="EmitComplexColumnArtifactsAsync"/>.
-    /// </summary>
-    private readonly record struct ComplexColumnAllocation(int ColumnIndex, int ComplexId, int ConceptualTableId);
-
-    /// <summary>
-    /// pre-flight for <see cref="CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, CancellationToken)"/>.
-    /// Walks <paramref name="columns"/> for user-declared complex columns
-    /// (<see cref="ColumnDefinition.IsAttachment"/> / <see cref="ColumnDefinition.IsMultiValue"/>
-    /// where <c>ComplexId == 0</c>), validates the format, and allocates a
-    /// fresh per-database <c>ComplexID</c> + <c>ConceptualTableID</c> for each.
-    /// Returns <see langword="null"/> when no allocation is needed.
-    /// </summary>
-    private async ValueTask<IReadOnlyList<ComplexColumnAllocation>?> PrepareComplexColumnAllocationsAsync(
-        IReadOnlyList<ColumnDefinition> columns,
-        CancellationToken cancellationToken)
-    {
-        List<int>? indices = null;
-        for (int i = 0; i < columns.Count; i++)
-        {
-            ColumnDefinition def = columns[i];
-            if ((def.IsAttachment || def.IsMultiValue) && def.ComplexId == 0)
-            {
-                indices ??= new List<int>(2);
-                indices.Add(i);
-
-                if (def.IsMultiValue && def.MultiValueElementType is null)
-                {
-                    throw new ArgumentException(
-                        $"Column '{def.Name}': MultiValue columns require MultiValueElementType to be set.",
-                        nameof(columns));
-                }
-            }
-        }
-
-        if (indices is null)
-        {
-            return null;
-        }
-
-        if (_format != DatabaseFormat.AceAccdb)
-        {
-            throw new NotSupportedException(
-                "Attachment and MultiValue columns are an Access 2007+ ACE feature; declare them only on .accdb databases.");
-        }
-
-        long msysComplexPg = await _relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        if (msysComplexPg == 0)
-        {
-            throw new NotSupportedException(
-                "The database does not contain a 'MSysComplexColumns' table. Create the database via " +
-                "AccessWriter.CreateDatabaseAsync (which scaffolds it automatically) before declaring complex columns, " +
-                "or open an Access-authored .accdb that already contains the catalog.");
-        }
-
-        int nextId = await GetNextComplexIdAsync(msysComplexPg, cancellationToken).ConfigureAwait(false);
-        var allocations = new ComplexColumnAllocation[indices.Count];
-        for (int i = 0; i < indices.Count; i++)
-        {
-            int id = nextId++;
-            allocations[i] = new ComplexColumnAllocation(indices[i], id, id);
-        }
-
-        return allocations;
-    }
-
-    /// <summary>
-    /// Returns one greater than the largest <c>ComplexID</c> currently stored in
-    /// <c>MSysComplexColumns</c>, or <c>1</c> when the table is empty. ConceptualTableIDs
-    /// are allocated from the same monotonically-increasing pool to keep the per-database
-    /// space simple — Access uses two independent counters but neither value is exposed
-    /// through any external API and there is no documented scenario where they must differ.
-    /// </summary>
-    private async ValueTask<int> GetNextComplexIdAsync(long msysComplexPg, CancellationToken cancellationToken)
-    {
-        TableDef msysComplex = await ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        ColumnInfo? idCol = msysComplex.FindColumn("ComplexID");
-        ColumnInfo? ctIdCol = msysComplex.FindColumn("ConceptualTableID");
-
-        int maxId = 0;
-        long total = _stream.Length / _pgSz;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != 0x01)
-                {
-                    continue;
-                }
-
-                if (Ri32(page, _dataPage.TDefOff) != msysComplexPg)
-                {
-                    continue;
-                }
-
-                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    if (idCol != null)
-                    {
-                        string idText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idCol);
-                        if (int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) && v > maxId)
-                        {
-                            maxId = v;
-                        }
-                    }
-
-                    if (ctIdCol != null)
-                    {
-                        string ctText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, ctIdCol);
-                        if (int.TryParse(ctText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int cv) && cv > maxId)
-                        {
-                            maxId = cv;
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        return maxId + 1;
-    }
-
-    /// <summary>
-    /// post-flight: for each user-declared complex column on the parent
-    /// table, build a hidden flat child table per <c>docs/design/complex-columns-format-notes.md</c>
-    /// §2.3 / §2.4 and append the corresponding <c>MSysComplexColumns</c> row so
-    /// readers can join parent rows to their child values.
-    /// </summary>
-    /// <remarks>
-    /// MVP scope: emits the bare flat-table schema (FK + per-kind value columns) with no
-    /// PK, no autoincrement, and no indexes. This is sufficient for round-trip through
-    /// this library's reader; Microsoft Access compatibility requires a Compact &amp; Repair
-    /// pass to rebuild the missing PK / FK back-reference indexes (validation gap noted in
-    /// the design doc §5). <c>ComplexTypeObjectID</c> is set to <c>0</c> because the
-    /// <c>MSysComplexType_*</c> template tables are not yet scaffolded; the reader's
-    /// classifier falls back to <see cref="ComplexColumnKind.Unknown"/> in that case.
-    /// </remarks>
-    private async ValueTask EmitComplexColumnArtifactsAsync(
-        string parentTableName,
-        IReadOnlyList<ColumnDefinition> columns,
-        IReadOnlyList<ComplexColumnAllocation> allocations,
-        CancellationToken cancellationToken)
-    {
-        for (int i = 0; i < allocations.Count; i++)
-        {
-            ComplexColumnAllocation alloc = allocations[i];
-            ColumnDefinition col = columns[alloc.ColumnIndex];
-
-            string flatTableName = BuildFlatTableName(col.Name);
-            (ColumnDefinition[] flatCols, IndexDefinition[] flatIndexes) =
-                BuildFlatTableSchema(parentTableName, col);
-
-            long flatTdefPage = await CreateTableInternalAsync(
-                flatTableName,
-                flatCols,
-                indexes: flatIndexes,
-                catalogFlags: 0x800A0000U,
-                cancellationToken).ConfigureAwait(false);
-
-            // resolve the matching MSysComplexType_* template id so the
-            // MSysComplexColumns row points at the canonical type-template table
-            // instead of carrying the placeholder 0. Templates are scaffolded by
-            // CreateDatabaseAsync and always present in Access-authored files; the
-            // lookup only falls back to 0 for slim-catalog ACCDBs
-            // (WriteFullCatalogSchema = false), which intentionally skip system
-            // tables for byte-hash backward compatibility.
-            string? templateName = ResolveComplexTypeTemplateName(col);
-            int templateId = templateName is null
-                ? 0
-                : (int)await _relationships.FindSystemTableTdefPageAsync(templateName, cancellationToken).ConfigureAwait(false);
-
-            await InsertMSysComplexColumnsRowAsync(
-                col.Name,
-                complexId: alloc.ComplexId,
-                conceptualTableId: alloc.ConceptualTableId,
-                flatTableId: (int)flatTdefPage,
-                complexTypeObjectId: templateId,
-                cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// Generates the canonical hidden-flat-table name <c>f_&lt;32-hex-uppercase&gt;_&lt;userColumnName&gt;</c>
-    /// per the design doc §2.3 / format-probe-appendix-complex.md observations.
-    /// </summary>
-    private static string BuildFlatTableName(string userColumnName)
-    {
-        // The 32 hex chars are a GUID without dashes — Access uses a fresh GUID per
-        // flat table; we do the same so the name is unique even when two columns
-        // share a name across tables.
-        string guid = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture).ToUpperInvariant();
-        return $"f_{guid}_{userColumnName}";
-    }
-
-    /// <summary>
-    /// Builds the flat-table column list and the system-managed indexes per
-    /// the per-kind schemas in the design doc §2.4 / §4.2.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Two LONG columns participate in the back-reference plumbing:
-    /// </para>
-    /// <list type="bullet">
-    ///   <item><description><c>_&lt;userColumnName&gt;</c> — FK back-reference holding the parent row's <c>ConceptualTableID</c>.</description></item>
-    ///   <item><description><c>&lt;parentTable&gt;_&lt;userColumnName&gt;</c> — autoincrement scalar PK used by Access internally.</description></item>
-    /// </list>
-    /// <para>
-    /// Naming and column ordering match
-    /// <c>format-probe-appendix-complex.md</c> for the attachment case
-    /// (<c>f_A3DF50CFC033433899AF0AC1A4CF4171_Attachments</c>): the
-    /// kind-specific value columns first, then the autoincrement scalar PK,
-    /// then the FK back-reference. Three indexes ship with the attachment
-    /// table — primary key on the scalar (<c>MSysComplexPKIndex</c>), a
-    /// normal index on the FK back-reference (named after the FK column),
-    /// and a normal composite index on (FK, FileName) called
-    /// <c>IdxFKPrimaryScalar</c> per the appendix.
-    /// </para>
-    /// <para>
-    /// The multi-value variant has no empirical fixture; the conservative
-    /// schema mirrors the attachment pattern minus the composite
-    /// <c>IdxFKPrimaryScalar</c> (the value column may be a non-indexable
-    /// type such as MEMO).
-    /// </para>
-    /// </remarks>
-    private static (ColumnDefinition[] Columns, IndexDefinition[] Indexes) BuildFlatTableSchema(
-        string parentTableName,
-        ColumnDefinition parentColumn)
-    {
-        string fkName = $"_{parentColumn.Name}";
-        string scalarName = $"{parentTableName}_{parentColumn.Name}";
-        var fk = new ColumnDefinition(fkName, typeof(int));
-        var scalar = new ColumnDefinition(scalarName, typeof(int)) { IsAutoIncrement = true };
-
-        if (parentColumn.IsAttachment)
-        {
-            ColumnDefinition[] cols =
-            [
-                new ColumnDefinition("FileData", typeof(byte[])),
-                new ColumnDefinition("FileFlags", typeof(int)),
-                new ColumnDefinition("FileName", typeof(string), maxLength: 255),
-                new ColumnDefinition("FileTimeStamp", typeof(DateTime)),
-                new ColumnDefinition("FileType", typeof(string), maxLength: 255),
-                new ColumnDefinition("FileURL", typeof(string)) /* MEMO via no maxLength */,
-                scalar,
-                fk,
-            ];
-
-            IndexDefinition[] indexes =
-            [
-                new IndexDefinition("MSysComplexPKIndex", scalarName) { IsPrimaryKey = true },
-                new IndexDefinition(fkName, fkName),
-                new IndexDefinition("IdxFKPrimaryScalar", [fkName, "FileName"]),
-            ];
-
-            return (cols, indexes);
-        }
-
-        // MultiValue: a single `value` column whose CLR type is the user-declared element type.
-        Type elementType = parentColumn.MultiValueElementType
-            ?? throw new InvalidOperationException("MultiValueElementType must be set on a multi-value column.");
-        var valueCol = new ColumnDefinition("value", elementType, maxLength: parentColumn.MaxLength);
-        ColumnDefinition[] mvCols = [valueCol, scalar, fk];
-        IndexDefinition[] mvIndexes =
-        [
-            new IndexDefinition("MSysComplexPKIndex", scalarName) { IsPrimaryKey = true },
-            new IndexDefinition(fkName, fkName),
-        ];
-        return (mvCols, mvIndexes);
-    }
-
-    /// <summary>
-    /// Inserts one row into <c>MSysComplexColumns</c> linking a parent column's
-    /// <see cref="ComplexColumnAllocation.ComplexId"/> to its hidden flat-table TDEF
-    /// page. Schema verified in <c>format-probe-appendix-complex.md</c>.
-    /// </summary>
-    private async ValueTask InsertMSysComplexColumnsRowAsync(
-        string parentColumnName,
-        int complexId,
-        int conceptualTableId,
-        int flatTableId,
-        int complexTypeObjectId,
-        CancellationToken cancellationToken)
-    {
-        long pg = await _relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        if (pg == 0)
-        {
-            throw new InvalidOperationException("MSysComplexColumns table is missing.");
-        }
-
-        TableDef msysComplex = await ReadRequiredTableDefAsync(pg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        object[] values = msysComplex.CreateNullValueRow();
-
-        msysComplex.SetValueByName(values, "ColumnName", parentColumnName);
-        msysComplex.SetValueByName(values, "ComplexTypeObjectID", complexTypeObjectId);
-        msysComplex.SetValueByName(values, "FlatTableID", flatTableId);
-        msysComplex.SetValueByName(values, "ConceptualTableID", conceptualTableId);
-        msysComplex.SetValueByName(values, "ComplexID", complexId);
-
-        await InsertSystemRowAndMaintainAsync(pg, msysComplex, Constants.SystemTableNames.ComplexColumns, values, cancellationToken: cancellationToken).ConfigureAwait(false);
-    }
-
     // ── Row-level APIs for complex (Attachment / MultiValue) columns ──
     // See docs/design/complex-columns-format-notes.md §2.1 / §2.4 / §3.
 
@@ -4218,7 +3745,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Guard.NotNull(parentRowKey, nameof(parentRowKey));
         Guard.NotNull(attachment, nameof(attachment));
         return RunAutoCommitAsync(
-            _ => AddComplexItemCoreAsync(tableName, columnName, parentRowKey, attachment, expectAttachment: true, cancellationToken),
+            _ => _complexColumns.AddComplexItemCoreAsync(tableName, columnName, parentRowKey, attachment, expectAttachment: true, cancellationToken),
             cancellationToken);
     }
 
@@ -4232,665 +3759,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         Guard.NotNull(parentRowKey, nameof(parentRowKey));
         return RunAutoCommitAsync(
-            _ => AddComplexItemCoreAsync(tableName, columnName, parentRowKey, value, expectAttachment: false, cancellationToken),
+            _ => _complexColumns.AddComplexItemCoreAsync(tableName, columnName, parentRowKey, value, expectAttachment: false, cancellationToken),
             cancellationToken);
-    }
-
-    private async ValueTask AddComplexItemCoreAsync(
-        string tableName,
-        string columnName,
-        IReadOnlyDictionary<string, object> parentRowKey,
-        object payload,
-        bool expectAttachment,
-        CancellationToken cancellationToken)
-    {
-        Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        Guard.NotNullOrEmpty(columnName, nameof(columnName));
-        Guard.NotNull(parentRowKey, nameof(parentRowKey));
-        Guard.ThrowIfDisposed(_disposed, this);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (parentRowKey.Count == 0)
-        {
-            throw new ArgumentException("At least one key column is required.", nameof(parentRowKey));
-        }
-
-        if (_format != DatabaseFormat.AceAccdb)
-        {
-            throw new NotSupportedException(
-                "Complex (Attachment / MultiValue) columns are an Access 2007+ ACE feature; only .accdb databases are supported.");
-        }
-
-        // Resolve parent table + complex column.
-        CatalogEntry parentEntry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef parentDef = await ReadRequiredTableDefAsync(parentEntry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-
-        ColumnInfo complexCol = parentDef.FindColumn(columnName)
-            ?? throw new ArgumentException($"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName));
-
-        bool isAttachmentCol = complexCol.Type == T_ATTACHMENT;
-        bool isMultiValueCol = complexCol.Type == T_COMPLEX;
-        if (!isAttachmentCol && !isMultiValueCol)
-        {
-            throw new NotSupportedException(
-                $"Column '{tableName}.{columnName}' is not a complex (Attachment / MultiValue) column (type=0x{complexCol.Type:X2}).");
-        }
-
-        if (expectAttachment && !isAttachmentCol)
-        {
-            throw new NotSupportedException(
-                $"Column '{tableName}.{columnName}' is a MultiValue column; call AddMultiValueItemAsync instead.");
-        }
-
-        if (!expectAttachment && !isMultiValueCol)
-        {
-            throw new NotSupportedException(
-                $"Column '{tableName}.{columnName}' is an Attachment column; call AddAttachmentAsync instead.");
-        }
-
-        // Resolve the hidden flat child table via MSysComplexColumns.
-        long flatTdefPage = await ResolveFlatTableTdefPageAsync(columnName, complexCol.Misc, cancellationToken).ConfigureAwait(false);
-        if (flatTdefPage <= 0)
-        {
-            throw new InvalidOperationException(
-                $"No MSysComplexColumns row was found for column '{tableName}.{columnName}'.");
-        }
-
-        TableDef flatDef = await ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
-
-        // Resolve predicate column ordinals + decode parent key (string-form for comparison).
-        var predIndexes = new int[parentRowKey.Count];
-        var predValues = new string[parentRowKey.Count];
-        int pi = 0;
-        foreach (KeyValuePair<string, object> kvp in parentRowKey)
-        {
-            int idx = parentDef.FindColumnIndex(kvp.Key);
-            if (idx < 0)
-            {
-                throw new ArgumentException($"Column '{kvp.Key}' was not found in table '{tableName}'.", nameof(parentRowKey));
-            }
-
-            predIndexes[pi] = idx;
-            predValues[pi] = kvp.Value is null or DBNull
-                ? string.Empty
-                : Convert.ToString(kvp.Value, CultureInfo.InvariantCulture) ?? string.Empty;
-            pi++;
-        }
-
-        // Locate the unique parent row.
-        (long parentPageNumber, int parentRowIndex, int parentRowStart, int parentRowSize) =
-            await FindUniqueParentRowAsync(parentEntry.TDefPage, parentDef, predIndexes, predValues, tableName, cancellationToken)
-                .ConfigureAwait(false);
-
-        // Read the existing ConceptualTableID from the parent row's complex slot;
-        // allocate a fresh one when the slot is null.
-        int conceptualTableId = await ReadOrAllocateConceptualTableIdAsync(
-            parentPageNumber,
-            parentRowStart,
-            parentRowSize,
-            parentRowIndex,
-            complexCol,
-            flatTdefPage,
-            flatDef,
-            cancellationToken).ConfigureAwait(false);
-
-        // Build the flat-table row values.
-        object[] flatValues = expectAttachment
-            ? BuildAttachmentFlatRow(flatDef, conceptualTableId, (AttachmentInput)payload)
-            : BuildMultiValueFlatRow(flatDef, conceptualTableId, payload);
-
-        // The flat table carries an autoincrement scalar PK column.
-        // ApplyConstraintsAsync hydrates the constraint registry from the
-        // persisted FLAG_AUTO_LONG bit and seeds the next value from the
-        // existing rows so AddAttachmentAsync / AddMultiValueItemAsync stay
-        // a single-call surface.
-        string flatTableName = await ResolveFlatTableNameAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
-        await ApplyConstraintsAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
-
-        await InsertRowDataAsync(flatTdefPage, flatDef, flatValues, cancellationToken: cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Resolves a hidden flat-child-table TDEF page back to its
-    /// <c>MSysObjects.Name</c>. Used by <see cref="AddComplexItemCoreAsync"/>
-    /// to drive <see cref="ApplyConstraintsAsync"/> for the autoincrement
-    /// scalar PK column emitted by the complex-column scaffold.
-    /// </summary>
-    private async ValueTask<string> ResolveFlatTableNameAsync(long flatTdefPage, CancellationToken cancellationToken)
-    {
-        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            throw new InvalidOperationException("MSysObjects catalog table is missing.");
-        }
-
-        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        foreach (CatalogRow row in rows)
-        {
-            if (row.TDefPage == flatTdefPage)
-            {
-                return row.Name;
-            }
-        }
-
-        throw new InvalidOperationException(
-            $"No MSysObjects row was found for flat-child TDEF page {flatTdefPage}.");
-    }
-
-    /// <summary>
-    /// Looks up <c>MSysComplexColumns</c> for a row matching both
-    /// <paramref name="columnName"/> and <paramref name="complexId"/> and returns
-    /// the lower-24-bit TDEF page number of the hidden flat child table.
-    /// </summary>
-    private async ValueTask<long> ResolveFlatTableTdefPageAsync(string columnName, int complexId, CancellationToken cancellationToken)
-    {
-        long msysPg = await _relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        if (msysPg == 0)
-        {
-            return 0;
-        }
-
-        TableDef msys = await ReadRequiredTableDefAsync(msysPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        ColumnInfo? nameCol = msys.FindColumn("ColumnName");
-        ColumnInfo? flatIdCol = msys.FindColumn("FlatTableID");
-        ColumnInfo? complexIdCol = msys.FindColumn("ComplexID");
-        if (nameCol == null || flatIdCol == null || complexIdCol == null)
-        {
-            return 0;
-        }
-
-        long total = _stream.Length / _pgSz;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != 0x01)
-                {
-                    continue;
-                }
-
-                if (Ri32(page, _dataPage.TDefOff) != msysPg)
-                {
-                    continue;
-                }
-
-                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    string rowName = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
-                    if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    string idText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, complexIdCol);
-                    if (complexId != 0 && (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid) || rid != complexId))
-                    {
-                        continue;
-                    }
-
-                    string flatText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
-                    if (long.TryParse(flatText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long flatId))
-                    {
-                        return flatId & 0x00FFFFFFL;
-                    }
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        return 0;
-    }
-
-    private async ValueTask<(long PageNumber, int RowIndex, int RowStart, int RowSize)> FindUniqueParentRowAsync(
-        long parentTdefPage,
-        TableDef parentDef,
-        int[] predIndexes,
-        string[] predValues,
-        string tableName,
-        CancellationToken cancellationToken)
-    {
-        (long, int, int, int) match = default;
-        bool found = false;
-
-        long total = _stream.Length / _pgSz;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != 0x01)
-                {
-                    continue;
-                }
-
-                if (Ri32(page, _dataPage.TDefOff) != parentTdefPage)
-                {
-                    continue;
-                }
-
-                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    bool ok = true;
-                    for (int p = 0; p < predIndexes.Length; p++)
-                    {
-                        ColumnInfo c = parentDef.Columns[predIndexes[p]];
-                        string actual = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, c);
-                        if (!string.Equals(actual, predValues[p], StringComparison.OrdinalIgnoreCase))
-                        {
-                            ok = false;
-                            break;
-                        }
-                    }
-
-                    if (!ok)
-                    {
-                        continue;
-                    }
-
-                    if (found)
-                    {
-                        throw new InvalidOperationException(
-                            $"Parent row key matches more than one row in '{tableName}'.");
-                    }
-
-                    match = (row.PageNumber, row.RowIndex, row.RowStart, row.RowSize);
-                    found = true;
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        if (!found)
-        {
-            throw new InvalidOperationException($"No row in '{tableName}' matches the supplied parent row key.");
-        }
-
-        return match;
-    }
-
-    private async ValueTask<int> ReadOrAllocateConceptualTableIdAsync(
-        long parentPageNumber,
-        int parentRowStart,
-        int parentRowSize,
-        int parentRowIndex,
-        ColumnInfo complexCol,
-        long flatTdefPage,
-        TableDef flatDef,
-        CancellationToken cancellationToken)
-    {
-        // Re-read parent page to inspect the complex slot null bit + 4 bytes.
-        byte[] page = await ReadPageAsync(parentPageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            int numCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, parentRowStart) : page[parentRowStart];
-            int nullMaskSz = (numCols + 7) / 8;
-            int nullMaskPos = parentRowSize - nullMaskSz;
-            int byteOff = nullMaskPos + (complexCol.ColNum / 8);
-            int bitOff = complexCol.ColNum % 8;
-            bool slotSet = byteOff < parentRowSize && (page[parentRowStart + byteOff] & (1 << bitOff)) != 0;
-
-            int slotOff = parentRowStart + _rowSz.NumCols + complexCol.FixedOff;
-            if (slotSet && slotOff + 4 <= parentRowStart + parentRowSize)
-            {
-                int existing = Ri32(page, slotOff);
-                if (existing > 0)
-                {
-                    return existing;
-                }
-            }
-        }
-        finally
-        {
-            ReturnPage(page);
-        }
-
-        // Allocate a fresh ConceptualTableID by scanning the flat table for max(FK)+1.
-        int allocated = await GetNextConceptualTableIdForFlatAsync(flatTdefPage, flatDef, cancellationToken).ConfigureAwait(false);
-
-        // Patch the parent row's complex slot in place: 4 bytes + null-mask bit.
-        await PatchParentComplexSlotAsync(parentPageNumber, parentRowStart, parentRowSize, complexCol, allocated, cancellationToken).ConfigureAwait(false);
-        return allocated;
-    }
-
-    private async ValueTask PatchParentComplexSlotAsync(
-        long pageNumber,
-        int rowStart,
-        int rowSize,
-        ColumnInfo complexCol,
-        int conceptualTableId,
-        CancellationToken cancellationToken)
-    {
-        byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            int numCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
-            int nullMaskSz = (numCols + 7) / 8;
-            int nullMaskPos = rowSize - nullMaskSz;
-            int slotOff = rowStart + _rowSz.NumCols + complexCol.FixedOff;
-            if (slotOff + 4 > rowStart + rowSize)
-            {
-                throw new InvalidDataException("Complex column slot is out of row bounds.");
-            }
-
-            Wi32(page, slotOff, conceptualTableId);
-            int byteOff = nullMaskPos + (complexCol.ColNum / 8);
-            int bitOff = complexCol.ColNum % 8;
-            if (byteOff < rowSize)
-            {
-                page[rowStart + byteOff] |= (byte)(1 << bitOff);
-            }
-
-            await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            ReturnPage(page);
-        }
-    }
-
-    /// <summary>
-    /// Returns one greater than the largest FK value currently stored in the
-    /// flat table, or <c>1</c> when the table is empty. The FK column is the
-    /// single <c>T_LONG</c> column whose name starts with <c>"_"</c> per
-    /// <see cref="BuildFlatTableSchema"/>.
-    /// </summary>
-    private async ValueTask<int> GetNextConceptualTableIdForFlatAsync(long flatTdefPage, TableDef flatDef, CancellationToken cancellationToken)
-    {
-        ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
-
-        int maxId = 0;
-        long total = _stream.Length / _pgSz;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != 0x01)
-                {
-                    continue;
-                }
-
-                if (Ri32(page, _dataPage.TDefOff) != flatTdefPage)
-                {
-                    continue;
-                }
-
-                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    string text = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
-                    if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) && v > maxId)
-                    {
-                        maxId = v;
-                    }
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        return maxId + 1;
-    }
-
-    private static object[] BuildAttachmentFlatRow(TableDef flatDef, int conceptualTableId, AttachmentInput input)
-    {
-        object[] values = flatDef.CreateNullValueRow();
-
-        // FK back-ref: the single T_LONG column starting with "_".
-        ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
-        values[flatDef.Columns.IndexOf(fkCol)] = conceptualTableId;
-
-        string ext = input.FileType ?? DeriveExtension(input.FileName);
-        byte[] wrapped = AttachmentWrapper.Encode(ext, input.FileData);
-
-        flatDef.SetValueByName(values, "FileURL", (object?)input.FileURL ?? DBNull.Value);
-        flatDef.SetValueByName(values, "FileName", input.FileName);
-        flatDef.SetValueByName(values, "FileType", ext);
-        flatDef.SetValueByName(values, "FileFlags", DBNull.Value);
-        flatDef.SetValueByName(values, "FileTimeStamp", input.FileTimeStamp ?? DateTime.UtcNow);
-        flatDef.SetValueByName(values, "FileData", wrapped);
-        return values;
-    }
-
-    private static object[] BuildMultiValueFlatRow(TableDef flatDef, int conceptualTableId, object value)
-    {
-        object[] values = flatDef.CreateNullValueRow();
-        ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
-        values[flatDef.Columns.IndexOf(fkCol)] = conceptualTableId;
-        flatDef.SetValueByName(values, "value", value ?? DBNull.Value);
-        return values;
-    }
-
-    [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Attachment FileType is intentionally stored in lowercase to match the existing attachment contract and Access conventions.")]
-    private static string DeriveExtension(string fileName)
-    {
-        if (string.IsNullOrEmpty(fileName))
-        {
-            return string.Empty;
-        }
-
-        int dot = fileName.LastIndexOf('.');
-        if (dot < 0 || dot == fileName.Length - 1)
-        {
-            return string.Empty;
-        }
-
-        return fileName.Substring(dot + 1).ToLowerInvariant();
-    }
-
-    // ── Cascade-on-delete for complex (Attachment / MultiValue) columns ──
-    // See docs/design/complex-columns-format-notes.md §4.3.
-    //
-    // Whenever a parent row containing a complex column slot is deleted, the
-    // associated rows in the hidden flat child table (joined via the parent's
-    // 4-byte ConceptualTableID slot) must also be deleted. Without this pass
-    // the flat table accumulates orphaned rows, breaks referential integrity
-    // expected by Microsoft Access, and may cause Compact &amp; Repair to flag
-    // the file.
-
-    /// <summary>
-    /// Cascades a pending delete of <paramref name="deletedParentLocations"/>
-    /// rows in <paramref name="parentDef"/> to the hidden flat child tables
-    /// of every Attachment / MultiValue column on the parent. Must be called
-    /// BEFORE the parent rows are marked deleted, since the per-row
-    /// <c>ConceptualTableID</c> slot value is needed to identify which flat
-    /// rows to delete.
-    /// </summary>
-    /// <remarks>
-    /// Per-flat-table cost is O(P) where P is the database page count
-    /// (full sequential scan, no index seek). Multiple complex columns on
-    /// the same parent perform one scan each. This matches the existing
-    /// cascade-delete cost profile and the ConceptualTableID allocator
-    /// used by the row-add path.
-    /// </remarks>
-    internal async ValueTask CascadeDeleteComplexChildrenAsync(
-        TableDef parentDef,
-        List<RowLocation> deletedParentLocations,
-        CancellationToken cancellationToken)
-    {
-        if (deletedParentLocations.Count == 0)
-        {
-            return;
-        }
-
-        // Identify complex columns on the parent.
-        var complexCols = new List<ColumnInfo>();
-        foreach (ColumnInfo col in parentDef.Columns)
-        {
-            if (col.Type == T_ATTACHMENT || col.Type == T_COMPLEX)
-            {
-                complexCols.Add(col);
-            }
-        }
-
-        if (complexCols.Count == 0)
-        {
-            return;
-        }
-
-        // Resolve each complex column to its flat-table TDEF page (skip
-        // any column whose MSysComplexColumns row is missing — same
-        // tolerance as the row-add path).
-        var flatPagesByCol = new Dictionary<int, long>(complexCols.Count);
-        foreach (ColumnInfo col in complexCols)
-        {
-            long flatPg = await ResolveFlatTableTdefPageAsync(col.Name, col.Misc, cancellationToken).ConfigureAwait(false);
-            if (flatPg > 0)
-            {
-                flatPagesByCol[col.ColNum] = flatPg;
-            }
-        }
-
-        if (flatPagesByCol.Count == 0)
-        {
-            return;
-        }
-
-        // Read each parent row to collect the live ConceptualTableID per
-        // complex column. Rows whose complex slot is null contribute
-        // nothing to cascade.
-        var idsByCol = new Dictionary<int, HashSet<int>>(complexCols.Count);
-        foreach (ColumnInfo col in complexCols)
-        {
-            if (flatPagesByCol.ContainsKey(col.ColNum))
-            {
-                idsByCol[col.ColNum] = [];
-            }
-        }
-
-        foreach (RowLocation loc in deletedParentLocations)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageAsync(loc.PageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                int numCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, loc.RowStart) : page[loc.RowStart];
-                int nullMaskSz = (numCols + 7) / 8;
-                int nullMaskPos = loc.RowSize - nullMaskSz;
-
-                foreach (ColumnInfo col in complexCols)
-                {
-                    if (!idsByCol.TryGetValue(col.ColNum, out HashSet<int>? ids))
-                    {
-                        continue;
-                    }
-
-                    int byteOff = nullMaskPos + (col.ColNum / 8);
-                    int bitOff = col.ColNum % 8;
-                    bool slotSet = byteOff < loc.RowSize
-                        && (page[loc.RowStart + byteOff] & (1 << bitOff)) != 0;
-                    if (!slotSet)
-                    {
-                        continue;
-                    }
-
-                    int slotOff = loc.RowStart + _rowSz.NumCols + col.FixedOff;
-                    if (slotOff + 4 > loc.RowStart + loc.RowSize)
-                    {
-                        continue;
-                    }
-
-                    int ctid = Ri32(page, slotOff);
-                    if (ctid > 0)
-                    {
-                        _ = ids.Add(ctid);
-                    }
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        // For each complex column with collected IDs, scan the flat
-        // child table once and delete every row whose FK back-reference
-        // is in the set. Adjust the flat TDEF row count once.
-        foreach (ColumnInfo col in complexCols)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (!flatPagesByCol.TryGetValue(col.ColNum, out long flatTdefPage))
-            {
-                continue;
-            }
-
-            HashSet<int> ids = idsByCol[col.ColNum];
-            if (ids.Count == 0)
-            {
-                continue;
-            }
-
-            TableDef flatDef = await ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
-            ColumnInfo? fkCol = flatDef.Columns.Find(c => c.Type == T_LONG && c.Name.StartsWith('_'))
-                ?? flatDef.Columns.Find(c => c.Type == T_LONG);
-            if (fkCol == null)
-            {
-                continue;
-            }
-
-            int deletedFromFlat = 0;
-            long total = _stream.Length / _pgSz;
-            for (long pageNumber = 3; pageNumber < total; pageNumber++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var rowsToDelete = new List<int>();
-                byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    if (page[0] != 0x01)
-                    {
-                        continue;
-                    }
-
-                    if (Ri32(page, _dataPage.TDefOff) != flatTdefPage)
-                    {
-                        continue;
-                    }
-
-                    foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
-                    {
-                        string fkText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
-                        if (int.TryParse(fkText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int fk)
-                            && ids.Contains(fk))
-                        {
-                            rowsToDelete.Add(row.RowIndex);
-                        }
-                    }
-                }
-                finally
-                {
-                    ReturnPage(page);
-                }
-
-                foreach (int rowIdx in rowsToDelete)
-                {
-                    await MarkRowDeletedAsync(pageNumber, rowIdx, cancellationToken).ConfigureAwait(false);
-                    deletedFromFlat++;
-                }
-            }
-
-            if (deletedFromFlat > 0)
-            {
-                await AdjustTDefRowCountAsync(flatTdefPage, -deletedFromFlat, cancellationToken).ConfigureAwait(false);
-            }
-        }
     }
 
     /// <summary>
@@ -4946,358 +3816,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             foreach (long parentTdefPage in droppedTdefPages)
             {
-                await DropComplexChildrenForTableAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
+                await _complexColumns.DropComplexChildrenForTableAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
             }
         }
 
         UnregisterConstraints(tableName);
         InvalidateCatalogCache();
-    }
-
-    /// <summary>
-    /// surgically drops a single complex column's flat child table
-    /// and its <c>MSysComplexColumns</c> row, identified by
-    /// <paramref name="columnName"/> + <paramref name="complexId"/>. Used by the
-    /// rewrite path when the user calls <c>DropColumnAsync</c> on an
-    /// attachment / multi-value column. Returns silently if no matching row is
-    /// found (idempotent).
-    /// </summary>
-    private async ValueTask DropSingleComplexChildAsync(string columnName, int complexId, CancellationToken cancellationToken)
-    {
-        long msysCxPg = await _relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        if (msysCxPg == 0)
-        {
-            return;
-        }
-
-        TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
-        ColumnInfo? flatIdCol = msysCxDef.FindColumn("FlatTableID");
-        ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
-        if (nameCol == null || flatIdCol == null || cxIdCol == null)
-        {
-            return;
-        }
-
-        long flatTdefPage = 0;
-        var deletedRows = new List<(long PageNumber, int RowIndex)>();
-
-        long total = _stream.Length / _pgSz;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != 0x01)
-                {
-                    continue;
-                }
-
-                if (Ri32(page, _dataPage.TDefOff) != msysCxPg)
-                {
-                    continue;
-                }
-
-                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    string rowName = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
-                    if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    string idText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
-                    if (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid) || rid != complexId)
-                    {
-                        continue;
-                    }
-
-                    string flatText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
-                    if (long.TryParse(flatText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long fid))
-                    {
-                        flatTdefPage = fid & 0x00FFFFFFL;
-                    }
-
-                    deletedRows.Add((row.PageNumber, row.RowIndex));
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        foreach ((long pg, int ri) in deletedRows)
-        {
-            await MarkRowDeletedAsync(pg, ri, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (deletedRows.Count > 0)
-        {
-            await AdjustTDefRowCountAsync(msysCxPg, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (flatTdefPage <= 0)
-        {
-            return;
-        }
-
-        // Drop the hidden flat-table catalog row. Same model as
-        // DropComplexChildrenForTableAsync — orphaned data pages are reclaimed
-        // by Access on the next Compact &amp; Repair pass.
-        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            return;
-        }
-
-        List<CatalogRow> catalog = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        foreach (CatalogRow row in catalog)
-        {
-            if (row.ObjectType != Constants.SystemObjects.UserTableType)
-            {
-                continue;
-            }
-
-            if (row.TDefPage == flatTdefPage)
-            {
-                await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
-            }
-        }
-    }
-
-    /// <summary>
-    /// when the user renames a complex column, rewrite the
-    /// matching <c>MSysComplexColumns</c> row's <c>ColumnName</c> field. The
-    /// hidden flat child table's catalog name (<c>f_&lt;hex&gt;_&lt;oldName&gt;</c>)
-    /// is left unchanged because it is opaque to readers — they resolve the
-    /// flat name via <c>FlatTableID</c> → <c>MSysObjects</c>. This mirrors the
-    /// <c>RenameRelationshipAsync</c> trade-off that leaves TDEF logical-idx
-    /// name cookies stale until Compact &amp; Repair.
-    /// </summary>
-    private async ValueTask RenameComplexColumnArtifactsAsync(string oldColumnName, string newColumnName, int complexId, CancellationToken cancellationToken)
-    {
-        long msysCxPg = await _relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        if (msysCxPg == 0)
-        {
-            return;
-        }
-
-        TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
-        ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
-        if (nameCol == null || cxIdCol == null)
-        {
-            return;
-        }
-
-        var matched = new List<(long PageNumber, int RowIndex, object[] Values)>();
-        long total = _stream.Length / _pgSz;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != 0x01)
-                {
-                    continue;
-                }
-
-                if (Ri32(page, _dataPage.TDefOff) != msysCxPg)
-                {
-                    continue;
-                }
-
-                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    string rowName = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
-                    if (!string.Equals(rowName, oldColumnName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    string idText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
-                    if (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid) || rid != complexId)
-                    {
-                        continue;
-                    }
-
-                    var values = new object[msysCxDef.Columns.Count];
-                    for (int i = 0; i < values.Length; i++)
-                    {
-                        string text = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);
-                        values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
-                    }
-
-                    msysCxDef.SetValueByName(values, "ColumnName", newColumnName);
-                    matched.Add((row.PageNumber, row.RowIndex, values));
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        foreach ((long pg, int ri, object[] _) in matched)
-        {
-            await MarkRowDeletedAsync(pg, ri, cancellationToken).ConfigureAwait(false);
-        }
-
-        foreach ((long _, int _, object[] values) in matched)
-        {
-            _ = await InsertRowDataLocAsync(msysCxPg, msysCxDef, values, updateTDefRowCount: false, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// when dropping a parent table, also drop the hidden flat
-    /// child tables backing each Attachment / MultiValue column on the
-    /// parent and remove the corresponding rows from
-    /// <c>MSysComplexColumns</c>. Tolerates missing
-    /// <c>MSysComplexColumns</c> (Jet3 / Jet4 / fresh writer-created
-    /// ACCDB without the system table) and missing catalog rows for a
-    /// flat table (already removed) by silently skipping.
-    /// </summary>
-    private async ValueTask DropComplexChildrenForTableAsync(long parentTdefPage, CancellationToken cancellationToken)
-    {
-        TableDef? parentDef = await ReadTableDefAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
-        if (parentDef == null)
-        {
-            return;
-        }
-
-        var complexCols = new List<ColumnInfo>();
-        foreach (ColumnInfo col in parentDef.Columns)
-        {
-            if (col.Type == T_ATTACHMENT || col.Type == T_COMPLEX)
-            {
-                complexCols.Add(col);
-            }
-        }
-
-        if (complexCols.Count == 0)
-        {
-            return;
-        }
-
-        long msysCxPg = await _relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        if (msysCxPg == 0)
-        {
-            return;
-        }
-
-        TableDef msysCxDef = await ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
-        ColumnInfo? flatIdCol = msysCxDef.FindColumn("FlatTableID");
-        ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
-        if (nameCol == null || flatIdCol == null || cxIdCol == null)
-        {
-            return;
-        }
-
-        var lookup = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
-        foreach (ColumnInfo col in complexCols)
-        {
-            if (!lookup.TryGetValue(col.Name, out HashSet<int>? ids))
-            {
-                ids = [];
-                lookup[col.Name] = ids;
-            }
-
-            _ = ids.Add(col.Misc);
-        }
-
-        var flatTdefPages = new HashSet<long>();
-        var cxRowsToDelete = new List<(long PageNumber, int RowIndex)>();
-
-        long total = _stream.Length / _pgSz;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != 0x01)
-                {
-                    continue;
-                }
-
-                if (Ri32(page, _dataPage.TDefOff) != msysCxPg)
-                {
-                    continue;
-                }
-
-                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    string rowName = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
-                    string idText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
-                    if (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid))
-                    {
-                        continue;
-                    }
-
-                    if (!lookup.TryGetValue(rowName, out HashSet<int>? expectedIds) || !expectedIds.Contains(rid))
-                    {
-                        continue;
-                    }
-
-                    string flatText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
-                    if (long.TryParse(flatText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long flatId))
-                    {
-                        _ = flatTdefPages.Add(flatId & 0x00FFFFFFL);
-                    }
-
-                    cxRowsToDelete.Add((row.PageNumber, row.RowIndex));
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        foreach ((long pg, int ri) in cxRowsToDelete)
-        {
-            await MarkRowDeletedAsync(pg, ri, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (cxRowsToDelete.Count > 0)
-        {
-            await AdjustTDefRowCountAsync(msysCxPg, -cxRowsToDelete.Count, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (flatTdefPages.Count == 0)
-        {
-            return;
-        }
-
-        // Drop the hidden flat-table catalog rows (system-flag tables —
-        // public DropTableAsync would skip them).
-        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            return;
-        }
-
-        List<CatalogRow> catalog = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        foreach (CatalogRow row in catalog)
-        {
-            if (row.ObjectType != Constants.SystemObjects.UserTableType)
-            {
-                continue;
-            }
-
-            if (flatTdefPages.Contains(row.TDefPage))
-            {
-                await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
-            }
-        }
     }
 
     /// <summary>
@@ -5630,7 +4154,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// fails. Mirrors <see cref="InsertRowDataAsync"/> but exposes the
     /// <see cref="RowLocation"/> of the freshly written row.
     /// </summary>
-    private async ValueTask<RowLocation> InsertRowDataLocAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default)
+    internal async ValueTask<RowLocation> InsertRowDataLocAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default)
     {
         if (values.Length != tableDef.Columns.Count)
         {

@@ -40,7 +40,7 @@ public abstract class AccessBase : IAccessBase
     internal readonly ColumnDescriptorLayout _colDesc;
 
     /// <summary>Per-format byte sizes of the in-row trailer fields — see <see cref="RowFieldSizes"/>.</summary>
-    private protected readonly RowFieldSizes _rowSz;
+    internal readonly RowFieldSizes _rowSz;
 
     /// <summary>
     /// Per-format byte offsets and entry sizes for the TDEF page's real-idx
@@ -1150,7 +1150,7 @@ public abstract class AccessBase : IAccessBase
     private protected void SetCatalogCache(List<CatalogEntry> cache) => _catalogCache = cache;
 
     /// <summary>Discards the cached catalog so the next <see cref="GetUserTablesAsync"/> call re-scans MSysObjects.</summary>
-    private protected void InvalidateCatalogCache() => _catalogCache = null;
+    internal void InvalidateCatalogCache() => _catalogCache = null;
 
     // ── Inner types ──────────────────────────────────────────────────
 
