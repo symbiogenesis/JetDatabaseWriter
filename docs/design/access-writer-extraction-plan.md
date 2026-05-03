@@ -35,23 +35,15 @@ After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly *
 
 ---
 
-## Phase 1 — Foreign-key / Relationship subsystem (~2,870 lines)
+## Phase 1 — Foreign-key / Relationship subsystem (~2,870 lines) ✅ DONE
 
-- [ ] Extract methods at lines **1304–4177**:
-  - `CreateRelationshipAsync`, `EmitFkPerTdefEntriesAsync`, `EmitFkLogicalIdxAsync`
-  - `LocateRealIdxDescStart`, `MeasureLogicalIdxNamesLength`, `ReadLogicalIdxNames`, `FindCoveringRealIdx`
-  - `DropRelationshipAsync`, `RenameRelationshipAsync`
-  - `PickUniqueLogicalIdxNameAsync`, `CollectRelationshipRowsAsync`
-  - `TryRemoveFkLogicalIdxEntryAsync`, `TryReclaimTrailingRealIdxAsync`, `TryRenameFkLogicalIdxNameAsync`
-  - `TryParseFkTDefLayout`, `FindFkLogicalIdxEntry`, `TryGetLogicalIdxNameRange`
-  - `ForEachRelationshipFkPairAsync`
-  - `GetEnforcedRelationshipsAsync`, `GetParentKeySetAsync`
-  - `EnforceFkOnInsertAsync`, `ResolveParentSeekIndexAsync`, `ResolveChildSeekIndexAsync`, `AugmentParentSetsAfterInsert`
-  - `EnforceFkOnPrimaryDeleteAsync`, `TryProcessCascadeDeleteWithSeekAsync`
-  - `EnforceFkOnPrimaryUpdateAsync`, `TryProcessCascadeUpdateWithSeekAsync`
-  - `FindSystemTableTdefPageAsync`, `ReadExistingRelationshipNamesAsync`
-- [ ] Move nested types: `FkSidePlan` (L1441), `RelationshipRowSnapshot` (L1941), `FkTDefLayout` (L2481), `FkPairContext` (L2654), `TablePairComparer` (L2734), `FkRelationship` (L2772), `FkContext` (L2788).
-- [ ] **Suggested home:** `Internal/Relationships/RelationshipManager.cs`; each FK record/struct in its own file under `Internal/Models/`.
+Extracted to [JetDatabaseWriter/Internal/Relationships/RelationshipManager.cs](../../JetDatabaseWriter/Internal/Relationships/RelationshipManager.cs). `AccessWriter` holds a private `_relationships` field and exposes thin public forwarders for `CreateRelationshipAsync` / `DropRelationshipAsync` / `RenameRelationshipAsync`; FK enforcement entry points (`EnforceFkOnInsertAsync`, `EnforceFkOnPrimaryDeleteAsync`, `EnforceFkOnPrimaryUpdateAsync`, `GetEnforcedRelationshipsAsync`, `AugmentParentSetsAfterInsert`) are called directly through `_relationships`.
+
+`AccessWriter.cs` shrank from **12,537 → 9,693 lines** (–2,844). `CatalogEntry`, `RowLocation`, `RowBound`, `CatalogRow` were promoted out of `AccessBase`/`AccessWriter` to top-level `internal` records under `Internal/Models/`. ~22 `private protected` members of `AccessBase` and ~15 `private` members of `AccessWriter` were promoted to `internal` to allow `RelationshipManager` to call them via its `AccessWriter _writer` reference.
+
+- [x] Extract methods at lines **1304–4177** (FK CRUD, FK logical-idx maintenance, runtime enforcement, cascade processing).
+- [x] Move nested types: `FkSidePlan`, `RelationshipRowSnapshot`, `FkTDefLayout`, `FkPairContext`, `TablePairComparer`, `FkRelationship`, `FkContext` (now nested in `RelationshipManager`; `FkContext` and `FkRelationship` are `internal` so AccessWriter can reference them as `RelationshipManager.FkContext` / `RelationshipManager.FkRelationship`).
+- [x] **Suggested home:** `Internal/Relationships/RelationshipManager.cs` ✓.
 
 ## Phase 2 — Index maintenance (~2,820 lines)
 
