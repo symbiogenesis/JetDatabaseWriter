@@ -1,5 +1,7 @@
 namespace JetDatabaseWriter.Internal;
 
+using System;
+using System.Buffers.Binary;
 using JetDatabaseWriter.Enums;
 
 /// <summary>
@@ -79,4 +81,20 @@ internal readonly record struct RowFieldSizes(int NumCols, int VarEntry, int Eod
     public static RowFieldSizes For(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb
         ? new RowFieldSizes(NumCols: 2, VarEntry: 2, Eod: 2, VarLen: 2)
         : new RowFieldSizes(NumCols: 1, VarEntry: 1, Eod: 1, VarLen: 1);
+
+    /// <summary>Reads a <see cref="NumCols"/>-sized little-endian unsigned int (1 or 2 bytes) from <paramref name="page"/> at <paramref name="off"/>.</summary>
+    public int ReadNumCols(ReadOnlySpan<byte> page, int off) =>
+        NumCols == 2 ? BinaryPrimitives.ReadUInt16LittleEndian(page.Slice(off, 2)) : page[off];
+
+    /// <summary>Reads a <see cref="VarEntry"/>-sized little-endian unsigned int (1 or 2 bytes) from <paramref name="page"/> at <paramref name="off"/>.</summary>
+    public int ReadVarEntry(ReadOnlySpan<byte> page, int off) =>
+        VarEntry == 2 ? BinaryPrimitives.ReadUInt16LittleEndian(page.Slice(off, 2)) : page[off];
+
+    /// <summary>Reads a <see cref="VarLen"/>-sized little-endian unsigned int (1 or 2 bytes) from <paramref name="page"/> at <paramref name="off"/>.</summary>
+    public int ReadVarLen(ReadOnlySpan<byte> page, int off) =>
+        VarLen == 2 ? BinaryPrimitives.ReadUInt16LittleEndian(page.Slice(off, 2)) : page[off];
+
+    /// <summary>Reads an <see cref="Eod"/>-sized little-endian unsigned int (1 or 2 bytes) from <paramref name="page"/> at <paramref name="off"/>.</summary>
+    public int ReadEod(ReadOnlySpan<byte> page, int off) =>
+        Eod == 2 ? BinaryPrimitives.ReadUInt16LittleEndian(page.Slice(off, 2)) : page[off];
 }
