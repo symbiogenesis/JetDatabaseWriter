@@ -3303,11 +3303,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // LvProp is the OLE/LongBinary cell carrying per-column persisted properties
         // (DefaultValue, ValidationRule, ValidationText, Description). Only emitted on
         // the full 17-column catalog schema (the slim 9-column legacy schema lacks the
-        // column entirely, so SetValue is a no-op).
-        if (lvProp is not null)
-        {
-            msys.SetValueByName(values, "LvProp", lvProp);
-        }
+        // column entirely, so SetValue is a no-op). DAO Compact & Repair requires
+        // LvProp to be NOT NULL on every user-authored Type=1 catalog row -- when no
+        // per-column properties are declared the writer falls back to a 12-byte
+        // placeholder (DefaultLvPropPlaceholder) so the null-mask bit is set and the
+        // row's var-offset table mirrors what DAO emits. See
+        // docs/design/round-trip-test-failures.md.
+        msys.SetValueByName(values, "LvProp", lvProp ?? Constants.SystemObjects.DefaultLvPropPlaceholder);
 
         // Insert the new MSysObjects row, then splice its index entry into
         // the rightmost leaf of every real-idx slot WITHOUT re-encoding any

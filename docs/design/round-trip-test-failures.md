@@ -1,6 +1,6 @@
 # Round-Trip Test Failures — Investigation Status
 
-**Status:** Both gating tests still fail under DAO Compact & Repair with err 3011 `'MSysDb'`. Multiple structural fixes have landed (TDEF header, per-table usage-map page, catalog row var-length area, `MSysObjects.Owner`). Byte-level decode of the new MSysObjects catalog row body now confirms the row is **structurally well-formed and shape-compatible with Access-authored Type=1 rows that DAO already accepts in the same file** (see "Empirical findings 2026-05-03" below). The previous leading suspect — `LvProp` being null — has been **partly walked back**: a sweep of every Type=1 row in `NorthwindTraders.accdb` initially appeared to find ~14 Access-authored rows with `LvProp = NULL`, but this was a script bug (PowerShell `[int]((14)/8)` rounds 1.75 → 2, hitting the wrong null-mask byte). The sweep needs to be redone before LvProp is conclusively cleared. **What is solidly established**: the writer's row body decodes correctly per the table below, and the structural defect must originate in either (a) the new TDEF page body beyond the validated header bytes, (b) the per-table usage-map page contents (not just its shape), or (c) some referenced structure not yet identified. Without an Access-UI-authored RT_-prefix baseline in the same file, the remaining hypotheses cannot be empirically ranked.
+**Status:** Both gating tests still fail under DAO Compact & Repair with err 3011 `'MSysDb'`. The DAO-authored baseline probe (see [DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs)) has now produced empirical ground truth: a copy of `NorthwindTraders.accdb` to which the **same** `RT_Customers` table was added via `DAO.DBEngine.120` (the engine path Access UI uses) survives DAO compact ✅, while the writer's copy of the same fixture fails ❌. The probe's full diff (`%TEMP%\JetDatabaseWriter.RtDaoBaseline\dao-baseline-diff.md`) reveals **at least seven concrete structural differences** the writer is missing — see "DAO baseline differences (2026-05-03 evening)" below. Several of these are fundamental architectural gaps in the writer (page reuse vs always-append; missing global page-allocation map maintenance; missing `MSysACEs` rows; non-null `LvProp` on user-table catalog rows), not byte-level fixes.
 
 ## Tests in question
 
@@ -155,6 +155,80 @@ Given (a) the catalog row body is well-formed and (b) the MSysObjects TDEF and b
 3. **New PK leaf (3009)** is well-formed in isolation, but its parent-page back-pointer chain (`prev`/`next` on the leaf, parent linkage in the TDEF) has not been independently verified end-to-end.
 4. **`LvProp` on the new row** — re-verify with a corrected null-mask check; if Access actually requires a non-null payload here for user-table rows, this is still in play.
 
+## DAO baseline differences (2026-05-03 evening)
+
+Empirical comparison of writer-authored vs DAO-authored `RT_Customers` against the same `NorthwindTraders.accdb` baseline. Source: `DIAG_RT_DAO_BASELINE` probe; full report at `%TEMP%\JetDatabaseWriter.RtDaoBaseline\dao-baseline-diff.md`.
+
+**DAO compact verdict: ✅ accepts DAO-authored copy, ❌ rejects writer-authored copy with `MSysDb (3011)` from the same starting fixture.** This isolates the cause to the writer's output, not the test infra or the fixture.
+
+### 1. Page reuse vs always-append (architectural)
+
+DAO **adds 0 pages**, **reuses 5 pre-existing free pages** (2671 TDEF, 2997+3003 leaf-idx, 2998+3002 data, 2843 data); writer **always appends 3 new pages** (3008 TDEF, 3009 PK leaf, 3010 usage-map).
+
+The reused pages in the baseline have first 8 bytes `09 01 F0 0F 4C 56 41 4C` — `page_type=0x09`, `freespace=0x0FF0`, ASCII tag `"LVAL"`. **This is Access's "freed page" sentinel** (NOT a usable LVAL — the type-9 marker means "this page is on the free list"). DAO's allocator finds these and overwrites them; the writer has no equivalent free-page-finder.
+
+### 2. Page 1 is the global page-allocation map (revises 2026-05-03 morning withdrawal of hypothesis #7)
+
+DAO modifies page 1 at offsets `0x0FD5` (`80 → 00`, clearing one bit) and `0x0FFF` (`7C → 70`). Page 1's first byte is `01 01` (type-0x01 data page). **Page 1 IS the global page-allocation map** — Jet/ACE does have one, just on page 1 rather than page 5 as the original (since-withdrawn) hypothesis assumed. Bit at `0x0FD5 bit 7` covers a specific page number; DAO clears it when claiming that page off the free list. The writer never updates page 1 — every newly-appended page is invisible to the global allocation map. **This is a concrete protocol gap.**
+
+### 3. Page 3 is `MSysACEs` TDEF — DAO adds 3 ACE rows per new table
+
+Page 3 first byte is `02 01` (TDEF). Its trailing payload contains the property-block strings `"ACM"`, `"Inheritable"`, `"ObjectId"`, `"SID"` — these are the column names of the `MSysACEs` (Access Control Entries) table. DAO bumps the row count at offset `0x10` from `0x02CE → 0x02D1` (Δ +3) and adds 3 ACE rows for `RT_Customers` (1 owner + 1 admins + 1 users, by Access convention). The new ACE rows land on data pages 2843 and 2998 (which DAO modifies) and corresponding leaf entries on page 2997. **The writer creates zero `MSysACEs` rows for new user tables.**
+
+### 4. `LvProp` is non-null on the DAO-authored user-table row (closes hypothesis #6, fix landed 2026-05-03)
+
+Writer row body (pre-fix, 77 bytes, page 2994): `nullMask = FF 00 00`. Bit 14 (`LvProp`, varIdx 8) clear → **NULL**.
+DAO row body (99 bytes, page 2994): `nullMask = FF 40 00`. Bit 14 set → **NOT NULL**, with a 12-byte payload at varIdx 8.
+
+DAO writes `LvProp` non-null on every user-table catalog row. The 12 bytes (`62 00 00 40 05 1B 0B 00 00 00 00 00`) do not begin with the `MR2\0` property-block magic and appear to vary across runs — likely uninitialized memory from DAO's authoring path. **Fix landed:** `Constants.SystemObjects.DefaultLvPropPlaceholder` (12 zero bytes) is stamped into `MSysObjects.LvProp` whenever `JetExpressionConverter.BuildLvPropBlob` returns null. Verified: writer-authored row now has `nullMask = FF 40 00` matching DAO. **DAO compact still rejects with `MSysDb (3011)` after this fix alone**, confirming LvProp is necessary but not sufficient.
+
+Verified empirical column metadata for MSysObjects (via `AccessReader.ReadTableDefAsync(2)` on a writer-authored copy):
+
+```
+col  varIdx  fixedOff  type  flags  name
+  0    0       0       0x04  0x13   Id
+  1    0       4       0x04  0x13   ParentId
+  2    0       0       0x0A  0x12   Name
+  3    1       8       0x03  0x13   Type
+  4    1      10       0x08  0x13   DateCreate
+  5    1      18       0x08  0x13   DateUpdate
+  6    1       0       0x09  0x32   Owner
+  7    2      26       0x04  0x13   Flags
+  8    2       0       0x0C  0x12   Database
+  9    3       0       0x0C  0x12   Connect
+ 10    4       0       0x0A  0x12   ForeignName
+ 11    5       0       0x09  0x12   RmtInfoShort
+ 12    6       0       0x0B  0x12   RmtInfoLong
+ 13    7       0       0x0B  0x12   Lv
+ 14    8       0       0x0B  0x12   LvProp
+ 15    9       0       0x0B  0x12   LvModule
+ 16   10       0       0x0B  0x12   LvExtra
+```
+
+The earlier confusion about whether the 12-byte payload was at varIdx 8 (LvProp) or varIdx 9 (LvModule) is resolved: it is at varIdx 8 — **LvProp** has 12 bytes, **LvModule** has 0 bytes (NULL).
+
+### 5. Format magic `0x00000659` stamped inside column descriptors
+
+Inside DAO's TDEF column descriptors, the 4 bytes immediately after the column-type byte are `59 06 00 00` (`= 0x00000659`, the same format magic the writer already stamps in the TDEF header at offset `0x0C`). The writer leaves these zero. Differences appear at TDEF offsets `0x4D-0x4F`, `0x66-0x68`, plus other interior magic stamps in the index-descriptor block.
+
+### 6. Page 0 (DB header) — modify counter
+
+DAO bumps a single byte at file offset `0x0E02` from `0x00 → 0x04`. Likely a "modification counter" or "schema version" field Access touches on every catalog write. The writer never updates the DB header.
+
+### 7. DAO uses raw UTF-16 in catalog `Name`; writer uses compressed UCS-2 (cosmetic, already known)
+
+Re-confirmed — does not block compact (bisect proved this earlier).
+
+### Likelihood ranking for the `MSysDb (3011)` trigger
+
+In rough order of likely contribution to DAO's compact rejection:
+
+1. **#2 missing GPM update on page 1** — if pages 3008/3009/3010 aren't marked "in use" in the global page-allocation map, DAO's compact catalog walk will treat them as garbage referenced by a live TDEF, which exactly matches the symptom (DAO can't find an object whose pages "don't exist").
+2. **#3 missing `MSysACEs` rows** — DAO compact may require every catalog entry to have at least one ACE; missing ACEs would cause an "object not found" during the security-descriptor pass.
+3. **#4 NULL `LvProp`** — confirmed not the only issue (DAO succeeds on the DAO-authored copy which has #1+#2+#3 right *and* #4 right), but may still be a contributing factor on its own.
+
+#5 (col-desc magic) and #6 (DB-header counter) are lower priority — bytes that Access stamps but DAO compact may tolerate when absent.
+
 ## Hypothesis matrix
 
 | # | Hypothesis | Status | Evidence |
@@ -164,44 +238,28 @@ Given (a) the catalog row body is well-formed and (b) the MSysObjects TDEF and b
 | 3 | Real-idx `flags` byte at wrong offset / missing `0x80` UNKNOWN bit | ✅ fixed | Now uses `IndexLayout.FlagsOffsetWithinPhys` and `Constants.TableDefinition` flag constants. Guarded. |
 | 4 | Relationship / row-insert paths break compact | ✅ ruled out | N1 reproducer is a single empty `CreateTableAsync` call and still fails. |
 | 5 | New TDEF page malformed | ✅ fixed | All sub-faults landed; TDEF header bytes 0..0x3F now byte-shape-identical to baseline. |
-| 6 | New MSysObjects row variable-length area | 🟡 partly walked back (2026-05-03) | Byte-level decode confirms the row is well-formed structurally, but the earlier "DAO accepts LvProp=NULL on 14 baseline rows" sweep was a script bug; LvProp NULL is not yet conclusively safe. Companies' real `LvProp` is 12 opaque bytes, NOT an `MR2\0` property block. |
-| 7 | Global page-allocation map (page 5) missing the new TDEF / PK-leaf / usage-map pages | ❌ withdrawn (2026-05-03) | Page 5 of NorthwindTraders is `page_type=0x02` (a TDEF page), NOT a global page-allocation map. Jet/ACE does not appear to have a centralised GPM separate from per-table usage maps. |
+| 6 | New MSysObjects row variable-length area | 🟡 partially fixed (2026-05-03 evening) | DAO writes 12-byte LvProp at varIdx 8; writer left it NULL. Fix landed: `Constants.SystemObjects.DefaultLvPropPlaceholder` stamps 12 zero bytes when no per-column properties are declared. Writer row now has `nullMask = FF 40 00` matching DAO. **DAO still rejects after this fix alone** — necessary but not sufficient. Remaining gaps in row body (raw UTF-16 vs compressed UCS-2 for Name, etc.) are cosmetic. |
+| 7 | Global page-allocation map missing the new TDEF / PK-leaf / usage-map pages | 🔴 confirmed defect (2026-05-03 evening) | Page **1** (not page 5) IS the GPM. DAO modifies it at `0x0FD5` (clears one bit) and `0x0FFF` when claiming pages off the free list; writer never updates page 1. The earlier withdrawal of this hypothesis was based on the wrong page assumption. |
 | 8 | Test infra wrong | ✅ ruled out | FormatProbe N1 reproducer is hand-rolled writer-only; same DAO error. |
-| 9 | DAO requires `MSysAccessStorage` / `MSysComplexColumns` / `MSysNavPaneGroups` / `MSysNameMap` rows | 🟡 lowest priority | Access-UI-created tables don't immediately get NavPane / NameMap entries either. |
+| 9 | DAO requires `MSysACEs` / `MSysAccessStorage` / `MSysComplexColumns` / `MSysNavPaneGroups` / `MSysNameMap` rows | 🔴 confirmed for `MSysACEs` (2026-05-03 evening) | DAO baseline probe shows DAO bumps `MSysACEs` row count by 3 on page 3 TDEF (the per-table ACL entries: owner/admins/users), and writes new ACE rows on data pages 2843/2998 + leaf entries on 2997. Writer creates zero ACE rows. NavPane/NameMap remain low priority. |
 | 10 | New row's `ParentId = 0x0F000001` is the wrong group | ✅ ruled out | Existing Northwind Type=1 user-table rows already use `0x0F000001`. |
 | 11 | TDEF back-pointer wrong | ✅ ruled out | All TDEF header bytes outside the originally-divergent fields are byte-identical to baseline. |
 | 12 | Catalog `Name` column written in compressed UCS-2 (`FF FE` marker + 1B/char) instead of raw UTF-16 LE | ✅ ruled out as the blocker | Disabling `EncodeJet4Text` compression entirely did not change bisect output. *Cosmetically* unlike Access-authored rows but not the trigger. |
 
 ## Recommended next steps (priority order)
 
-1. **Create an Access-UI baseline.** Open `NorthwindTraders.accdb` in Microsoft Access, manually create one empty table named `RT_Customers` with columns matching the test's `(CustomerID INT PK AUTOINC, Name VARCHAR(100) NOT NULL)`, save, and close. Diff this byte-for-byte against the writer's N1 output (FormatProbe `DIAG_RT_BISECT` step `N1_CreateOneTable`). Without this baseline, every remaining hypothesis is speculative — there is no other available ground truth for what the new TDEF body, new PK leaf, new usage-map bitmap, and new MSysObjects row's `LvProp` payload should each contain for an empty user table.
-2. **Redo the LvProp NULL sweep** with a corrected null-mask byte index (`[math]::Floor((14)/8)` or `14 -shr 3` instead of the buggy `[int]((14)/8)` which banker's-rounds 1.75 → 2). If any Access-authored Type=1 user-table row genuinely has `LvProp = NULL` (nullmask bit 14 clear), the writer's choice is safe; if every Access-authored user-table row has `LvProp` non-null, the writer must synthesize a payload.
-3. **Inspect the writer's new TDEF body (page 3008)** beyond the header bytes — column descriptors, the two real-idx physical descriptors (51 bytes each on Jet4/ACE at offset 63 + n*51), and the trailing index/usage-map block.
-4. **Inspect the writer's new usage-map page (3010)** bitmap contents, comparing which bits are set against an Access-authored single-table usage-map for an empty table.
-5. **Aesthetic follow-up** (does not block these tests): switch `EncodeJet4Text` to emit uncompressed UTF-16 in catalog `Name` columns for byte-level consistency with Access-authored output. Re-confirmed on 2026-05-03 via the bisect: forcing `compressible = false` in `EncodeJet4Text` produced identical bisect output (still `MSysDb` at N1), so this is cosmetic, not a DAO trigger.
+The DAO baseline probe has now answered the previous "diff against ground truth" item; what remains is to land each of the protocol gaps it surfaced. **LvProp (item 4 below) is fixed but is not the silver bullet.** In rough order of likely contribution to the remaining `MSysDb (3011)` rejection:
+
+1. **Implement global page-allocation map maintenance on page 1.** Every newly-allocated page (new TDEF, new PK leaf, new usage-map page) must clear its corresponding bit on page 1's bitmap. The exact bitmap layout (start offset, bit ordering, type-0 inline vs type-1 multi-page-pointer encoding) needs reverse-engineering from comparing pre-write vs post-write page-1 bytes across multiple Access-UI-authored single-table additions to the same fixture — the probe's `pages\page00001_dao.bin` snapshot is sufficient ground truth for `RT_Customers`. Note: page 1 is itself a data page hosting two ~69-byte usage-map rows; the bytes DAO modifies (`0x0FD5`, `0x0FFF`) lie inside the longer of those two rows, suggesting the GPM is a per-database (rather than format-wide) bitmap stored as a system-table usage map.
+2. **Implement `MSysACEs` row creation per new user table.** DAO writes 3 ACE rows (owner / admins / users) on every `CreateTableDef`, hosted on existing data pages 2843/2998 with leaf entries on 2997. The probe's per-page bins (`pages\page02843_dao.bin`, `pages\page02998_dao.bin`, `pages\page02997_dao.bin`) contain the exact row bytes to model from. The writer's `MSysObjects` index-splice infrastructure can be reused for `MSysACEs`'s indexes.
+3. **Investigate free-page reuse.** DAO finds and reuses pages bearing the `09 01 F0 0F 4C 56 41 4C` "freed page" sentinel (type 9, free-space `0x0FF0`, ASCII tag `"LVAL"`). The writer's append-only allocator never finds these. May or may not be required for compact correctness — DAO compact is what *creates* free pages, so a fresh-write file with no free pages may still be valid; defer until #1+#2 are landed and re-test.
+4. **Synthesize a non-null `LvProp` for user-table catalog rows.** DAO writes ~12 bytes; `Companies` (existing) shows a similar pattern. Bytes do NOT begin with `MR2\0`, so this is NOT a property block — characterise the layout from comparing the probe's `pages\msysobjects_row_dao.bin` against several existing Access-authored Type=1 rows before implementing.
+5. **Land #5 / #6 (col-desc magic stamps; DB-header counter)** as housekeeping after the test passes — these are cosmetic deltas DAO almost certainly tolerates, but byte-level parity would close the ground-truth diff entirely.
+6. **Aesthetic: switch `EncodeJet4Text` to raw UTF-16 in catalog `Name`.** Re-confirmed cosmetic.
 
 ## FormatProbe diagnostic harness
 
 `JetDatabaseWriter.FormatProbe` carries two opt-in probes for triaging this regression. Both are off by default — they only fire when the matching environment variable is set.
-
-### `DIAG_RT_PROBE` — single-file post-mortem
-
-[RoundTripDiagnostic.cs](../../JetDatabaseWriter.FormatProbe/RoundTripDiagnostic.cs):
-
-```pwsh
-$env:DIAG_RT_PROBE    = "<work-dir>\source.accdb"
-$env:DIAG_RT_BASELINE = "<repo>\JetDatabaseWriter.Tests\Databases\NorthwindTraders.accdb"  # optional
-dotnet run --project JetDatabaseWriter.FormatProbe
-```
-
-Writes `round-trip-diagnostic.md` next to `source.accdb`. Sections:
-
-1. file-level page diff,
-2. catalog diff (rows in src missing from baseline),
-3. MSysObjects TDEF header + per-real-idx skip entries,
-4. index leaf splice verification (decodes the spliced leaves in src + baseline, lists added/removed entries, asserts sort order),
-5. decoded `Id` / `ParentId` / `Type` / `Flags` / `Name` for every new RT_* row,
-6. row → `IndexKeyEncoder` → splice key roundtrip (asserts presence on spliced leaves).
 
 ### `DIAG_RT_BISECT` — escalating-step regression bisector
 
@@ -221,9 +279,29 @@ Copies `NorthwindTraders.accdb` once per step, runs the writer through an escala
 
 `N1_CreateOneTable` is the smallest writer surface that breaks DAO. If it already fails, the relationship / insert paths are off the critical path.
 
+### `DIAG_RT_DAO_BASELINE` — DAO-authored ground-truth comparator
+
+[DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs):
+
+```pwsh
+$env:DIAG_RT_DAO_BASELINE = "1"
+dotnet run --project JetDatabaseWriter.FormatProbe
+```
+
+Makes two copies of `NorthwindTraders.accdb`. On copy A runs the writer's N1 step (`CreateTableAsync RT_Customers`); on copy B shells `DAO.DBEngine.120` from `SysWOW64\WindowsPowerShell` and creates the same table via `Database.CreateTableDef` / `TableDef.CreateField` / `TableDef.CreateIndex` / `TableDefs.Append` — the API path Microsoft Access UI uses internally. Then runs `DBEngine.CompactDatabase` on both, captures both verdicts, and emits a side-by-side report at `%TEMP%\JetDatabaseWriter.RtDaoBaseline\dao-baseline-diff.md` with:
+
+1. Authoring + DAO-compact outcomes per copy (writer's must fail with `MSysDb`; DAO's must succeed — that's the validity check that the baseline is real).
+2. File-level page-count and shared-range page-diff summaries vs the original NorthwindTraders.
+3. RT_Customers catalog-row metadata in each (Id, ParentId, TDEF page).
+4. A unified table of every changed/added page in either copy, labeled by page-type byte.
+5. Side-by-side hex of the two `RT_Customers` TDEF pages (with byte-diff markers).
+6. Located-and-extracted MSysObjects new-row body bytes from both copies (so `LvProp` / `LvExtra` payloads can be compared directly without going through any decoder).
+
+Per-page raw bytes for every changed/added page are dumped to `pages\page<NNNNN>_{writer,dao}.bin` so a binary diff tool (e.g. `fc /b`, `vbindiff`, VS Code's hex editor) can be pointed at any specific page pair. This is how step 1 of "Recommended next steps" above is now answered without manual Access-UI work.
+
 ### Hooking either probe into a fresh failure
 
-The `DIAG_RT_KEEP=1` work dirs (`%TEMP%\JetDatabaseWriter.Tests.RoundTrip\<guid>\source.accdb`) survive failing test runs verbatim. Point `DIAG_RT_PROBE` at one of them to regenerate the markdown without re-running the writer; pair with `DIAG_RT_BISECT` to find the smallest reproducer to feed back into the probe.
+The `DIAG_RT_KEEP=1` work dirs (`%TEMP%\JetDatabaseWriter.Tests.RoundTrip\<guid>\source.accdb`) survive failing test runs verbatim. Pair `DIAG_RT_BISECT` with `DIAG_RT_DAO_BASELINE` to find the smallest reproducer and then diff the writer's output against a DAO-authored ground truth for the same operation.
 
 ## Background
 

@@ -35,12 +35,20 @@ Property/structural assertions for the General + General 97 encoders are
 in [GeneralAndGeneral97EncoderUnitTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralAndGeneral97EncoderUnitTests.cs).
 
 - [ ] **V2010 long-row stress tables (`Table11`, `Table11_desc`)** are
-  skipped across the General fixture sweep, §1.2 binary single-column
-  long keys, and Memo-keyed indexes. Mirrors the upstream Jackcess long-row
-  TODO ("long rows not handled completely yet in V2010 — truncates entry
-  at 508 bytes"); both our text/binary index-key encoders share the same
-  127-char prefix cap and ~508-byte leaf truncation. See
-  `/memories/repo/long-row-index-todo.md`.
+  partially covered: V2000 / V2003 / V2007 long-row leaves now validate
+  byte-exact in [GeneralLegacyEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralLegacyEncoderFixtureTests.cs)
+  via the 2-chunk encoder
+  ([GeneralLegacyTextIndexEncoder.EncodeTwoChunks](../../JetDatabaseWriter/Internal/GeneralLegacyTextIndexEncoder.cs)).
+  V2010 (General sort order) `Table11` / `Table11_desc` are still skipped
+  in [GeneralEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralEncoderFixtureTests.cs):
+  the encoder emits a sortable, complete long-row entry but does not yet
+  apply Access's ~510-byte total-entry truncation cap (rows whose chunk #2
+  contains international chars hit the cap and Access truncates mid-output;
+  rule unverified). Binary single-column long keys in V2010 `binIdxTest`
+  and Memo-keyed indexes via [IndexCodesAggregateDiagnosticTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexCodesAggregateDiagnosticTests.cs)
+  also still run un-asserted for the same reason. See
+  [long-row-index-encoding-investigation.md](long-row-index-encoding-investigation.md)
+  and [long-row-index-encoding-resolution.md](long-row-index-encoding-resolution.md).
 
 ### 1.2 Numeric / temporal / binary keys
 

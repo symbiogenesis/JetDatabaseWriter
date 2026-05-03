@@ -66,6 +66,12 @@ internal static class GeneralLegacyTextIndexEncoder
 
     internal static readonly byte[] SurrogateExtraBytes = [0x3F];
 
+    // 2-chunk "long-row" separators reverse-engineered from Access-authored
+    // testIndexCodes V2000/V2003/V2007/V2010 fixtures (Table11 / Table11_desc).
+    // See docs/design/long-row-index-encoding-investigation.md.
+    internal static readonly byte[] LongRowSeparatorGeneralLegacy = [0x08, 0x07, 0x08, 0x04];
+    internal static readonly byte[] LongRowSeparatorGeneral = [0x07, 0x09, 0x07, 0x06];
+
     private static readonly Lazy<CharHandler[]> Codes = new(
         () => LoadCodes(GenLegResource, FirstChar, LastChar));
 
@@ -91,15 +97,66 @@ internal static class GeneralLegacyTextIndexEncoder
     /// different state machine (no END_TEXT framing, nibble-packed extras)
     /// and has its own dedicated encoder.
     /// </summary>
+    /// <param name="text">Input text (null encodes as a single null-flag byte).</param>
+    /// <param name="ascending">True for ascending sort, false for descending.</param>
+    /// <param name="codes">Per-BMP-codepoint handler table (0x0000–0x00FF).</param>
+    /// <param name="extCodes">Extended handler table (0x0100–0xFFFF).</param>
+    /// <param name="longRowSeparator">
+    /// 4-byte separator emitted between chunks when the input is split across
+    /// two chunks (only used when <paramref name="text"/> exceeds
+    /// <see cref="MaxTextIndexCharLength"/> AND contains an embedded line-break).
+    /// Defaults to the General-Legacy separator <c>08 07 08 04</c>; the
+    /// General sort order uses <c>07 09 07 06</c>.
+    /// </param>
     internal static byte[] EncodeWithTables(
         string? text,
         bool ascending,
         CharHandler[] codes,
-        CharHandler[] extCodes)
+        CharHandler[] extCodes,
+        byte[]? longRowSeparator = null)
     {
         if (text is null)
         {
             return [ascending ? FlagAscendingNull : FlagDescendingNull];
+        }
+
+        // Long-row 2-chunk path: when the input is too long to fit the
+        // single-chunk indexed-prefix cap AND contains an embedded line break
+        // (CR or LF), Access splits the entry into two inline chunks
+        // separated by a 4-byte sentinel, with a single trailing extras /
+        // unprintable / crazy block whose char offsets address into the
+        // concatenated chunk character stream. See
+        // docs/design/long-row-index-encoding-investigation.md and the
+        // upstream Jackcess "TODO long rows not handled completely" comment
+        // in IndexCodesTest.findRow that this path closes.
+        if (text.Length > MaxTextIndexCharLength)
+        {
+            int splitAt = FindFirstLineBreak(text);
+            if (splitAt >= 0)
+            {
+                int resumeAt = splitAt + 1;
+                if (resumeAt < text.Length
+                    && ((text[splitAt] == '\r' && text[resumeAt] == '\n')
+                        || (text[splitAt] == '\n' && text[resumeAt] == '\r')))
+                {
+                    resumeAt++;
+                }
+
+                return EncodeTwoChunks(
+                    text,
+                    splitAt,
+                    resumeAt,
+                    ascending,
+                    codes,
+                    extCodes,
+                    longRowSeparator ?? LongRowSeparatorGeneralLegacy);
+            }
+
+            // No embedded line break: fall through to the single-chunk path,
+            // which truncates at MaxTextIndexCharLength. This matches the
+            // pre-2-chunk behaviour and Jackcess's standing TODO for the
+            // "no-newline long input" sub-case (no Access-authored fixture
+            // currently exists to validate that branch byte-exactly).
         }
 
         // Truncate to the indexed-prefix length and strip trailing spaces
@@ -115,21 +172,106 @@ internal static class GeneralLegacyTextIndexEncoder
         // bit-flipped by the descending pass.
         int payloadStart = bout.Count;
 
-        ExtraCodesStream? extraCodes = null;
-        List<byte>? unprintableCodes = null;
-        List<byte>? crazyCodes = null;
-        int charOffset = 0;
+        var state = new ChunkEmitState(chars.Length);
+        EmitChunkInline(chars, codes, extCodes, bout, state);
 
+        FinishEntry(bout, payloadStart, state, ascending);
+        return [.. bout];
+    }
+
+    /// <summary>
+    /// Two-chunk variant: encodes <c>text[0..splitAt)</c> as chunk #1, emits
+    /// the 4-byte <paramref name="separator"/>, then encodes
+    /// <c>text[resumeAt..min(resumeAt+MaxTextIndexCharLength, text.Length))</c>
+    /// as chunk #2. The extras / unprintable / crazy streams are unified
+    /// across both chunks (char offsets address into the concatenated chunk
+    /// character stream — exactly as observed in the Access-authored
+    /// fixtures).
+    /// </summary>
+    private static byte[] EncodeTwoChunks(
+        string text,
+        int splitAt,
+        int resumeAt,
+        bool ascending,
+        CharHandler[] codes,
+        CharHandler[] extCodes,
+        byte[] separator)
+    {
+        var chunk1 = text.AsSpan(0, splitAt);
+
+        // Chunk #2 is bounded by the original source-position cap
+        // <c>TEXT_FIELD_MAX_LENGTH</c> (255 chars from the start of the
+        // input — note this is a SOURCE position, not a chunk-2 length cap),
+        // by the input length, and by the same trailing-space trim the
+        // single-chunk path applies. Empirically: for the V2000–V2007
+        // long-row fixtures, splitAt=179 and resumeAt=181 produce a 74-char
+        // chunk #2 (255 − 181), which is exactly what Access writes.
+        int chunk2Cap = Math.Min(text.Length, 255);
+        int chunk2Take = chunk2Cap - resumeAt;
+        var chunk2 = chunk2Take > 0
+            ? text.AsSpan(resumeAt, chunk2Take).TrimEnd(' ')
+            : ReadOnlySpan<char>.Empty;
+
+        var bout = new List<byte>(chunk1.Length + chunk2.Length + separator.Length + 8)
+        {
+            ascending ? FlagAscendingNonNull : FlagDescendingNonNull,
+        };
+        int payloadStart = bout.Count;
+
+        var state = new ChunkEmitState(chunk1.Length + chunk2.Length);
+        EmitChunkInline(chunk1, codes, extCodes, bout, state);
+        bout.AddRange(separator);
+        EmitChunkInline(chunk2, codes, extCodes, bout, state);
+
+        FinishEntry(bout, payloadStart, state, ascending);
+        return [.. bout];
+    }
+
+    /// <summary>
+    /// Returns the index of the first CR (U+000D) or LF (U+000A) in
+    /// <paramref name="text"/>, or -1 if none. Used by the 2-chunk long-row
+    /// path to decide where to split the input.
+    /// </summary>
+    private static int FindFirstLineBreak(string text)
+    {
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == '\r' || c == '\n')
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Runs the per-codepoint state machine over <paramref name="chars"/>
+    /// and appends inline bytes to <paramref name="bout"/>, while
+    /// accumulating extras / unprintable / crazy state in
+    /// <paramref name="state"/>. Char offsets used by the extras stream are
+    /// continuous across calls to this method, so multiple invocations
+    /// (one per chunk in the long-row path) correctly produce a unified
+    /// trailing block.
+    /// </summary>
+    private static void EmitChunkInline(
+        ReadOnlySpan<char> chars,
+        CharHandler[] codes,
+        CharHandler[] extCodes,
+        List<byte> bout,
+        ChunkEmitState state)
+    {
         foreach (char c in chars)
         {
             CharHandler ch = c <= LastChar ? codes[c] : extCodes[c - FirstExtChar];
-            int curCharOffset = charOffset;
+            int curCharOffset = state.CharOffset;
 
             byte[]? inline = ch.GetInlineBytes(c);
             if (inline is not null)
             {
                 bout.AddRange(inline);
-                charOffset++;
+                state.CharOffset++;
             }
 
             if (ch.Type == CharHandlerType.Simple)
@@ -141,33 +283,42 @@ internal static class GeneralLegacyTextIndexEncoder
             byte extraCodeModifier = ch.ExtraByteModifier;
             if (extra is not null || extraCodeModifier != 0)
             {
-                extraCodes ??= new ExtraCodesStream(chars.Length);
-                WriteExtraCodes(curCharOffset, extra, extraCodeModifier, extraCodes);
+                state.ExtraCodes ??= new ExtraCodesStream(chars.Length);
+                WriteExtraCodes(curCharOffset, extra, extraCodeModifier, state.ExtraCodes);
             }
 
             byte[]? unprint = ch.UnprintableBytes;
             if (unprint is not null)
             {
-                unprintableCodes ??= [];
-                WriteUnprintableCodes(curCharOffset, unprint, unprintableCodes, extraCodes);
+                state.UnprintableCodes ??= [];
+                WriteUnprintableCodes(curCharOffset, unprint, state.UnprintableCodes, state.ExtraCodes);
             }
 
             if (ch.CrazyFlag != 0)
             {
-                crazyCodes ??= [];
-                crazyCodes.Add(ch.CrazyFlag);
+                state.CrazyCodes ??= [];
+                state.CrazyCodes.Add(ch.CrazyFlag);
             }
         }
+    }
 
+    /// <summary>
+    /// Writes the trailing END_TEXT, extras stream, optional unprintable +
+    /// crazy block, and END_EXTRA_TEXT terminator (with the descending
+    /// one's-complement pass) to <paramref name="bout"/>. Shared between the
+    /// single-chunk and two-chunk paths.
+    /// </summary>
+    private static void FinishEntry(List<byte> bout, int payloadStart, ChunkEmitState state, bool ascending)
+    {
         bout.Add(EndText);
 
-        bool hasExtraCodes = TrimExtraCodes(extraCodes, 0x00, InternationalExtraPlaceholder);
-        bool hasUnprintableCodes = unprintableCodes is { Count: > 0 };
-        bool hasCrazyCodes = crazyCodes is { Count: > 0 };
+        bool hasExtraCodes = TrimExtraCodes(state.ExtraCodes, 0x00, InternationalExtraPlaceholder);
+        bool hasUnprintableCodes = state.UnprintableCodes is { Count: > 0 };
+        bool hasCrazyCodes = state.CrazyCodes is { Count: > 0 };
 
         if (hasExtraCodes)
         {
-            bout.AddRange(extraCodes!.Bytes);
+            bout.AddRange(state.ExtraCodes!.Bytes);
         }
 
         if (hasCrazyCodes || hasUnprintableCodes)
@@ -177,7 +328,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
             if (hasCrazyCodes)
             {
-                WriteCrazyCodes(crazyCodes!, bout);
+                WriteCrazyCodes(state.CrazyCodes!, bout);
                 if (hasUnprintableCodes)
                 {
                     bout.Add(CrazyCodesUnprintSuffix);
@@ -187,7 +338,7 @@ internal static class GeneralLegacyTextIndexEncoder
             if (hasUnprintableCodes)
             {
                 bout.Add(EndText);
-                bout.AddRange(unprintableCodes!);
+                bout.AddRange(state.UnprintableCodes!);
             }
         }
 
@@ -204,7 +355,19 @@ internal static class GeneralLegacyTextIndexEncoder
         }
 
         bout.Add(EndExtraText);
-        return [.. bout];
+    }
+
+    private sealed class ChunkEmitState(int initialCapacity)
+    {
+        public ExtraCodesStream? ExtraCodes { get; set; }
+
+        public List<byte>? UnprintableCodes { get; set; }
+
+        public List<byte>? CrazyCodes { get; set; }
+
+        public int CharOffset { get; set; }
+
+        public int InitialCapacity { get; } = initialCapacity;
     }
 
     private static void WriteExtraCodes(

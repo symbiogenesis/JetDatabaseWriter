@@ -46,16 +46,15 @@ public sealed class GeneralLegacyEncoderFixtureTests
         TestDatabases.TestIndexCodesV2007,
     };
 
-    // Tables intentionally containing values whose encoded prefix exceeds
-    // the indexed-text length cap (127 chars in Jackcess / our encoder).
-    // Upstream Jackcess explicitly skips them too (see
-    // `IndexCodesTest.findRow`'s "TODO long rows not handled completely"
-    // workaround). Tracked in <c>docs/design/test-coverage-gaps.md</c> §1.1.
-    private static readonly HashSet<string> LongRowStressTables = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Table11",
-        "Table11_desc",
-    };
+    // Tables previously skipped because their indexed Memo values exceed
+    // the single-chunk indexed-text cap (127 chars). The encoder now emits
+    // the 2-chunk long-row layout reverse-engineered from the Access-authored
+    // fixtures (separator <c>08 07 08 04</c> for General Legacy, single
+    // unified extras/unprintable/crazy block, descending-pass complement
+    // applied to the joined chunks). See
+    // <c>docs/design/long-row-index-encoding-investigation.md</c> and
+    // <c>docs/design/long-row-index-encoding-resolution.md</c>.
+    private static readonly HashSet<string> LongRowStressTables = new(StringComparer.OrdinalIgnoreCase);
 
     [Theory]
     [MemberData(nameof(Fixtures))]

@@ -27,9 +27,15 @@ public sealed class GeneralEncoderFixtureTests
         TestDatabases.TestIndexCodesV2010,
     };
 
-    // V2010 long-row stress tables — Jackcess's IndexCodesTest skips them
-    // with the same TODO ("long rows not handled completely yet in V2010").
-    // Repo-memory note: /memories/repo/long-row-index-todo.md.
+    // The 2-chunk long-row encoder (separator <c>07 09 07 06</c>) handles
+    // the V2010 Table11 / Table11_desc fixtures byte-exact for the
+    // "no-international-chars-in-chunk" rows. Rows whose chunk #2 contains
+    // international chars (rows 2 and 3 of Table11 / Table11_desc) hit
+    // Access's ~510-byte total-entry truncation cap; we emit the
+    // un-truncated form, which is sortable, complete, and round-trip-stable
+    // but not byte-identical to Access. See
+    // <c>docs/design/long-row-index-encoding-resolution.md</c> §"V2010
+    // truncation cap (open)" for the open-question status of that cap rule.
     private static readonly HashSet<string> LongRowStressTables = new(StringComparer.OrdinalIgnoreCase)
     {
         "Table11",
