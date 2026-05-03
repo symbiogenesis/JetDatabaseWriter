@@ -428,7 +428,13 @@ internal static class EncryptionConverter
         }
     }
 
-    private static DatabaseFormat DetectFormat(byte[] header)
+    /// <summary>
+    /// Classifies a JET/ACE file by inspecting the format-version byte at
+    /// header offset <c>0x14</c> (0 = Jet3, 1 = Jet4, ≥ 2 = ACE/ACCDB).
+    /// Shared with <see cref="Core.AccessBase"/> so format detection lives in
+    /// exactly one place.
+    /// </summary>
+    internal static DatabaseFormat DetectFormat(byte[] header)
     {
         byte ver = header[0x14];
         return ver >= 2 ? DatabaseFormat.AceAccdb

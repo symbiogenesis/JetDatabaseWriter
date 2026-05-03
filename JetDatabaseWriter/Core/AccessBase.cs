@@ -108,11 +108,7 @@ public abstract class AccessBase : IAccessBase
         _stream = stream;
         _path = path ?? string.Empty;
 
-        // Offset 0x14: 0 = Jet3, 1 = Jet4, ≥ 2 = ACE/ACCDB
-        byte ver = hdr[0x14];
-        _format = ver >= 2 ? DatabaseFormat.AceAccdb
-                : ver >= 1 ? DatabaseFormat.Jet4Mdb
-                : DatabaseFormat.Jet3Mdb;
+        _format = EncryptionConverter.DetectFormat(hdr);
         _pgSz = GetPageSize(_format);
 
         _pageKeys.Jet3XorMask = EncryptionManager.GetJet3PageMask(_format, hdr);
