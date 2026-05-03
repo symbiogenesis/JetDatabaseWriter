@@ -12,16 +12,17 @@ that target the same on-disk format(s) we do:
 - **Microsoft Office Compound File / Agile Encryption** specs (MS-OFFCRYPTO,
   MS-CFB) — used to cross-check the encryption fixtures we already have.
 
-Items already covered are **not** listed here — closed work is summarised
-in the "Recently closed" section at the bottom. Each open gap is tagged
-with the source project (`[J]` Jackcess, `[M]` mdbtools, `[O]` OpenMcdf)
-and the rough difficulty (`S`/`M`/`L`).
+This file lists **open** gaps only. Each entry is tagged with the source
+project (`[J]` Jackcess, `[M]` mdbtools, `[O]` OpenMcdf) and the rough
+difficulty (`S`/`M`/`L`). Closed items are summarised in the
+[Recently closed](#recently-closed) appendix at the bottom.
 
 ---
 
 ## 1. Index encoding & B-tree
 
 ### 1.1 Text / sort-order encoders
+
 - [ ] **`[J]` `[S]`** Per-fixture byte-exact validation for **General** (2010+) and
   **General 97** sort orders, mirroring the existing `GeneralLegacyEncoderFixtureTests`.
   Current coverage validates only the `GeneralLegacy` encoder against
@@ -42,27 +43,6 @@ and the rough difficulty (`S`/`M`/`L`).
   > [IndexCodesAggregateDiagnosticTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexCodesAggregateDiagnosticTests.cs)
   > (aggregate ignores Memo-keyed indexes), and the README "Limitations →
   > Index keys" bullet. Repo-memory note: `/memories/repo/long-row-index-todo.md`.
-- [ ] **`[J]` `[M]`** Descending text columns where the first byte of the
-  encoded key would otherwise be `0x00` (encoder must emit the descending
-  flag and not collapse to "null"). The Jackcess `IndexCodesTest.testReadIndex`
-  loop covers this implicitly.
-- [x] **`[J]` `[S]`** "Crazy code" surrogate pair coverage: closed by
-  `Text_SmpPlaneCharacter_RoutesThroughSurrogateHandler` in
-  [IndexKeyEncoderTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexKeyEncoderTests.cs).
-  Synthetic round-trip — encodes U+1D54F / U+1D550 (SMP plane), asserts the
-  surrogate-handler `0x3F` extra-byte marker is present, distinct SMP code
-  points produce distinct keys, and ASCII "X" does not collide with SMP "𝕏".
-  The Jackcess fixtures do not contain SMP-plane indexed values, so a
-  fixture-driven assertion is not possible.
-- [x] **`[J]` `[M]`** Right-to-left scripts (Hebrew, Arabic) and combining-
-  diacritic NFD/NFC equivalence in keys — closed by
-  `Text_RtlScriptsAndCombiningDiacritics_EncodeStably` in
-  [IndexKeyEncoderTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexKeyEncoderTests.cs).
-  Asserts the encoder doesn't throw on Hebrew "שלום" / Arabic "سلام",
-  produces deterministic distinct keys per script, and folds NFC "café"
-  and NFD "cafe\u0301" to the SAME key bytes (the General Legacy
-  international-handler tables resolve the combining acute to the same
-  primary weight + extras-section diacritic as the precomposed character).
 
 ### 1.2 Numeric / temporal / binary keys
 
@@ -108,6 +88,7 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   the chain itself against an independent implementation.)
 
 ### 1.4 Index flags & metadata
+
 - [ ] **`[J]` `[S]`** Writer round-trip of `IGNORE_NULLS_INDEX_FLAG` (`0x02`)
   and `REQUIRED_INDEX_FLAG` (`0x08`) combinations (reader exposure is
   covered by `IndexFlagCombinationsTests`). Requires adding `IgnoreNulls` /
@@ -121,6 +102,7 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 ## 2. Column type & row decode
 
 ### 2.1 Long-value (LVAL) chains
+
 - [ ] **`[J]`** Type 1 (inline), Type 2 (single-page), Type 3 (multi-page
   chained) Memo/OLE values across V1997 → V2010 — Jackcess `LongValueTest`
   covers all three; we have round-trip but no per-type assertion.
@@ -134,6 +116,7 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   vs the actual chain — Jackcess has a "lvalLength" sanity test.
 
 ### 2.2 Complex columns (Multi-Value, Attachment, Versioned text)
+
 - [ ] **`[J]`** `testComplex.accdb` round-trip per complex sub-type:
   - Multi-value text **with mixed value lengths** including null members.
   - Attachment with **0-byte payload** and **deflate-compressed** payload;
@@ -145,27 +128,13 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   cover the single-complex case in `ComplexColumnsCascadeDeleteTests`.
 
 ### 2.3 Calculated columns
+
 - [ ] **`[J]`** Calculated-column expressions that reference **another
   calculated column** (forward and backward dependency order) — Jackcess
   `CalcColTest` covers this.
 - [ ] **`[J]`** Reading a calculated column whose expression uses the
   Access `Switch`/`IIf` builtins; verify cached result bytes match
   expectations on disk (we treat them as opaque today).
-
-### 2.4 Numeric edge cases
-- [x] **`[J]` `[M]`** NUMERIC(28,28) min/max & scale boundaries — closed
-  by the `InsertRow_NumericPrecisionAndScaleBoundaries_RoundTripsLosslessly`
-  theory in
-  [AccessWriterTests.cs](../../JetDatabaseWriter.Tests/Core/AccessWriterTests.cs),
-  which round-trips ±0.999...28-nines, ±1e-28, ±28-nines integers, and
-  the NUMERIC(28,14) / (18,4) corners through the writer + reader.
-- [x] **`[J]`** Currency rounding at `MIN/MAX_VALUE` and the
-  `Decimal.MinValue + 1` boundary — closed by the OACurrency boundary
-  cases added to the `Money_Scale4_RoundTripsThroughParseValue` theory in
-  [ReadFixedTypedTests.cs](../../JetDatabaseWriter.Tests/Core/ReadFixedTypedTests.cs):
-  `long.MaxValue` (±922,337,203,685,477.5807), `long.MinValue + 1`, and
-  `long.MinValue` all round-trip without rounding through both the typed
-  fast path and the legacy `ReadFixedString` + `ParseValue` round-trip.
 
 ---
 
@@ -175,15 +144,8 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   have agile-encryption coverage; Jackcess tests both standard and agile.
 - [ ] **`[J]` `[O]`** CFB streams whose **mini-FAT chain spans more than one
   mini-stream sector** (OpenMcdf `MiniStreamLargeChain` fixtures).
-- [ ] **`[J]`** Round-trip writing of an **encrypted** database (we currently
-  read AES/Agile but don't re-encrypt on write — confirm this is intentional
-  and add a `Skip = "writer not supported"` Theory marker so the gap is
-  visible in the test report).
 - [ ] **`[J]`** `lv_prop` / `MSysDb` properties block round-trip after a
   password change.
-- [ ] **`[J]`** RC4 (Jet 4 "obfuscation") password verification with the
-  legacy `0x6b39dac7` / `0xa5316276` constants — we verify ACE; verify the
-  Jet4 path too.
 - [ ] **`[O]`** CFB **DIFAT chain** with > 109 FAT sectors (i.e., a database
   > ~7 MB after encryption) — exercises the secondary DIFAT walker that
   OpenMcdf fuzz-tests.
@@ -194,21 +156,15 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 - [ ] **`[J]`** `MSysAccessStorage` / `MSysNavPaneGroups` round-trip for
   ACE (these are referenced by Jackcess but not asserted).
-- [x] **`[J]`** `MSysObjects.Flags` bits: hidden, system, replicated.
-  Closed by `ListTables_FiltersOutAllSystemAndHiddenTables` in
-  [AccessReaderCatalogTests.cs](../../JetDatabaseWriter.Tests/Core/AccessReaderCatalogTests.cs).
-  Asserts that across every fixture (the local + Jackcess corpora) the
-  canonical catalog tables (MSysObjects, MSysAccessStorage,
-  MSysComplexColumns, MSysRelationships, MSysQueries, MSysNavPane*, etc.)
-  and the writer-emitted complex-column flat-child tables
-  (`f_<32-hex>_<col>`) are all filtered out via `SystemTableMask`.
-  Note: `MSysCompactError` is intentionally NOT in the filter list —
-  Access writes it as a USER table with the system bit cleared and the
-  Access UI exposes it.
-- [ ] **`[J]`** Table with > 32 columns and > 16 indexes (boundary of the
-  index-block layout) — mdbtools historically clipped at 32.
 - [ ] **`[J]`** Querying `MSysQueries` row-set for a **parameterised** query
   definition; we have basic query metadata but no parameter assertions.
+- [ ] **`[L]`** **Multi-page TDEF emission** — discovered while closing the
+  >32-column / >16-index gap (now covered for ACE, see appendix). The
+  writer currently requires the entire TDEF (header + columns + index
+  block) to fit in a single page, so a 50-column + 20-index schema on
+  Jet3's 2 KB pages throws "Table definition (with indexes) does not fit
+  within a single TDEF page." This is a writer feature gap, not just a
+  test gap.
 
 ---
 
@@ -216,15 +172,6 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 - [ ] **`[M]`** Row whose **variable-length column count exceeds 127** — uses
   the 2-byte length prefix path; mdbtools `pkrep` exercises this.
-- [x] **`[M]`** Row with a **null mask** that crosses an 8-byte boundary
-  exactly (off-by-one historic bug in mdbtools) — closed by
-  `NullMask_AcrossEightByteBoundaries_RoundTripsCorrectly` in
-  [WideRowTests.cs](../../JetDatabaseWriter.Tests/Core/WideRowTests.cs),
-  which round-trips three rows (all-set, alternating null/value, all-null)
-  through tables with 8 / 9 / 16 / 17 / 24 / 25 / 32 / 33 nullable
-  columns. The boundary cases (9, 17, 25, 33) force one extra mask byte
-  with a single bit set — the off-by-one shape mdbtools historically
-  mis-decoded.
 - [ ] **`[J]`** Row spanning a **page boundary via overflow pointer**
   (`0x80`-flagged row id) where the overflow target is itself a row whose
   variable section needs another overflow.
@@ -266,28 +213,6 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ---
 
-## 9. API / model surface
-
-- [x] **`[J]`** `AccessWriter` + transaction rollback after a constraint
-  violation deep in a multi-row insert (`PendingChange.rollback`
-  equivalent path) — closed by
-  `InsertRows_WithFkViolationDeepInBatch_RollsBackEntireBatch` in
-  [ForeignKeyEnforcementTests.cs](../../JetDatabaseWriter.Tests/Core/ForeignKeyEnforcementTests.cs).
-  FK enforcement runs per-row inside the insert loop after the row has
-  been written, so rows 0..N-2 land on disk before the throw; the test
-  reopens the file and asserts the per-call `RollbackInsertedRowsAsync`
-  path removed every batch row, leaving only the seed row.
-- [x] **`[S]`** Writer round-trip of a parent-side `UpdateRowsAsync` that
-  rewrites the PK column itself — closed by
-  [ForeignKeyEnforcementTests.cs](../../JetDatabaseWriter.Tests/Core/ForeignKeyEnforcementTests.cs)
-  `Update_PkSide_WithCascade_RewritesParentRowOnDisk_SingleColumnPk` (and
-  the parent-row assertions added to
-  `Update_PkSide_WithCascade_PropagatesNewKeyToChildren`): both reopen the
-  file post-update and assert the parent row's PK column carries the new
-  value while the old key is gone.
-
----
-
 ## Notes on prioritisation
 
 - Items in **§1.1** are the most directly actionable now that the
@@ -300,3 +225,72 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   larger.
 - Items in **§7** can be largely automated by extending the existing
   `Fuzz/` projects with deterministic seeds.
+
+---
+
+## Recently closed
+
+One-line summaries; follow the test name into the source for details.
+§9 (API / model surface) is fully closed and no longer appears in the
+open-gap list above.
+
+### §1.1 Text / sort-order encoders
+
+- **Descending text never collapses to null marker** —
+  `Text_DescendingNonNull_AlwaysStartsWith0x80_NeverCollapsesToNullFlag`
+  in [IndexKeyEncoderTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexKeyEncoderTests.cs).
+- **SMP-plane "crazy code" surrogate pairs** —
+  `Text_SmpPlaneCharacter_RoutesThroughSurrogateHandler` in the same file.
+- **RTL scripts and NFC/NFD diacritic equivalence** —
+  `Text_RtlScriptsAndCombiningDiacritics_EncodeStably` in the same file.
+  Notable: the General Legacy encoder folds NFC and NFD to the same key
+  bytes (precomposed and decomposed forms produce equal index keys).
+
+### §2.4 Numeric edge cases
+
+- **NUMERIC(28,28) precision/scale boundaries** —
+  `InsertRow_NumericPrecisionAndScaleBoundaries_RoundTripsLosslessly` in
+  [AccessWriterTests.cs](../../JetDatabaseWriter.Tests/Core/AccessWriterTests.cs).
+- **Currency / OACurrency `int64` extremes** — boundary cases added to
+  `Money_Scale4_RoundTripsThroughParseValue` in
+  [ReadFixedTypedTests.cs](../../JetDatabaseWriter.Tests/Core/ReadFixedTypedTests.cs).
+
+### §3 Encryption / password
+
+- **Encrypted-database write round-trip** — covered for all four formats
+  (`Jet4Rc4`, `AccdbLegacyPassword`, `AccdbAesCfbWrapped`, `AccdbAgile`)
+  in [EncryptionMutationTests.cs](../../JetDatabaseWriter.Tests/Core/EncryptionMutationTests.cs).
+  An earlier "writer not supported" framing in this doc was stale.
+- **Jet4 RC4 password verification** — exercised by the
+  `Encryption_Jet4Rc4_*Password*` tests in
+  [EncryptionTests.cs](../../JetDatabaseWriter.Tests/Core/EncryptionTests.cs).
+
+### §4 Catalog / system tables
+
+- **`MSysObjects.Flags` hidden / system / replicated filter** —
+  `ListTables_FiltersOutAllSystemAndHiddenTables` in
+  [AccessReaderCatalogTests.cs](../../JetDatabaseWriter.Tests/Core/AccessReaderCatalogTests.cs).
+  Note: `MSysCompactError` is intentionally NOT in the filter list —
+  Access writes it as a USER table with the system bit cleared and the
+  Access UI exposes it.
+- **>32 columns and >16 indexes round-trip (ACE)** —
+  `CreateTable_WithFiftyColumnsAndTwentyIndexes_RoundTripsWithoutTruncation_Ace`
+  in [IndexWriterTests.cs](../../JetDatabaseWriter.Tests/Core/IndexWriterTests.cs).
+  Same shape on Jet3 hits the single-page TDEF limit (see open §4 item).
+
+### §5 Page / row layout corner cases
+
+- **Null mask across 8-byte boundaries** —
+  `NullMask_AcrossEightByteBoundaries_RoundTripsCorrectly` in
+  [WideRowTests.cs](../../JetDatabaseWriter.Tests/Core/WideRowTests.cs)
+  (8 / 9 / 16 / 17 / 24 / 25 / 32 / 33 nullable-column tables).
+
+### §9 API / model surface (section fully closed)
+
+- **Batch insert atomicity on FK violation** —
+  `InsertRows_WithFkViolationDeepInBatch_RollsBackEntireBatch` in
+  [ForeignKeyEnforcementTests.cs](../../JetDatabaseWriter.Tests/Core/ForeignKeyEnforcementTests.cs).
+- **Parent PK rewrite via `UpdateRowsAsync`** —
+  `Update_PkSide_WithCascade_RewritesParentRowOnDisk_SingleColumnPk`
+  (and parent-row assertions added to
+  `Update_PkSide_WithCascade_PropagatesNewKeyToChildren`) in the same file.

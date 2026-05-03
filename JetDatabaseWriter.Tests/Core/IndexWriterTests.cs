@@ -371,6 +371,88 @@ public sealed class IndexWriterTests
         Assert.Equal("Id", Assert.Single(pk.Columns).Name);
     }
 
+    /// <summary>
+    /// Closes <c>docs/design/test-coverage-gaps.md</c> §4: a table with
+    /// more than 32 columns and more than 16 indexes must round-trip
+    /// without truncation. mdbtools historically clipped at 32 columns;
+    /// Access supports up to 255 (with one slot reserved). This test
+    /// uses 50 columns + 20 single-column indexes — well past both
+    /// historical caps but well below the format ceiling — and asserts
+    /// every column and every index survives the round-trip.
+    /// </summary>
+    /// <remarks>
+    /// ACE only. The current writer requires the entire TDEF (including
+    /// the index block) to fit in a single page; a 50-column + 20-index
+    /// schema overflows the 2 KB Jet3 page (throws
+    /// <see cref="NotSupportedException"/> "Table definition (with indexes)
+    /// does not fit within a single TDEF page."). Multi-page TDEF
+    /// emission is tracked separately and is not covered here.
+    /// </remarks>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task CreateTable_WithFiftyColumnsAndTwentyIndexes_RoundTripsWithoutTruncation_Ace()
+    {
+        await using var stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        const string TableName = "Wide";
+        const int ColumnCount = 50;
+        const int IndexCount = 20;
+
+        var columns = new List<ColumnDefinition>(ColumnCount);
+        for (int i = 0; i < ColumnCount; i++)
+        {
+            columns.Add(new ColumnDefinition($"C{i:D2}", typeof(int)));
+        }
+
+        var indexes = new List<IndexDefinition>(IndexCount);
+        for (int i = 0; i < IndexCount; i++)
+        {
+            indexes.Add(new IndexDefinition($"IX_{i:D2}", $"C{i:D2}"));
+        }
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(TableName, columns, indexes, TestContext.Current.CancellationToken);
+
+            // Insert one row covering every column to exercise the wide-row
+            // write path alongside the wide-schema read path.
+            object[] row = new object[ColumnCount];
+            for (int i = 0; i < ColumnCount; i++)
+            {
+                row[i] = i + 1;
+            }
+
+            await writer.InsertRowAsync(TableName, row, TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+
+        // Every column survives.
+        var meta = await reader.GetColumnMetadataAsync(TableName, TestContext.Current.CancellationToken);
+        Assert.Equal(ColumnCount, meta.Count);
+        for (int i = 0; i < ColumnCount; i++)
+        {
+            Assert.Equal($"C{i:D2}", meta[i].Name);
+            Assert.Equal(typeof(int), meta[i].ClrType);
+        }
+
+        // Every index survives, with the right key column.
+        var idxList = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        Assert.Equal(IndexCount, idxList.Count);
+        for (int i = 0; i < IndexCount; i++)
+        {
+            IndexMetadata idx = idxList.Single(x => x.Name == $"IX_{i:D2}");
+            Assert.Equal($"C{i:D2}", Assert.Single(idx.Columns).Name);
+        }
+
+        // Row data round-trips with every column populated.
+        System.Data.DataTable dt = (await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        System.Data.DataRow r = Assert.Single(System.Data.DataTableExtensions.AsEnumerable(dt));
+        for (int i = 0; i < ColumnCount; i++)
+        {
+            Assert.Equal(i + 1, Convert.ToInt32(r[$"C{i:D2}"], System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
+
     private static int PageSizeOf(DatabaseFormat fmt) =>
         fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
