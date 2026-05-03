@@ -40,6 +40,7 @@ internal sealed class LockFileSlotWriter : IDisposable
 
     /// <summary>Maximum number of openers JET / Access supports per database.</summary>
     public const int MaxSlots = 255;
+
     private readonly string _ownerType;
     private FileStream? _stream;
     private bool _disposed;
@@ -50,6 +51,18 @@ internal sealed class LockFileSlotWriter : IDisposable
         _ownerType = ownerType;
         _stream = stream;
         SlotOffset = slotOffset;
+    }
+
+    /// <summary>
+    /// Returns the path of the JET lock-file companion (.ldb or .laccdb) for the given database path.
+    /// </summary>
+    /// <param name="databasePath">Path to the Access database (.mdb or .accdb).</param>
+    /// <returns>The path the lock-file would occupy.</returns>
+    public static string GetLockFilePath(string databasePath)
+    {
+        string ext = Path.GetExtension(databasePath);
+        string lockExt = ext.Equals(".accdb", StringComparison.OrdinalIgnoreCase) ? ".laccdb" : ".ldb";
+        return Path.ChangeExtension(databasePath, lockExt);
     }
 
     /// <summary>
@@ -165,7 +178,7 @@ internal sealed class LockFileSlotWriter : IDisposable
         string? machineName = null,
         string? userName = null)
     {
-        string lockPath = LockFileManager.GetLockFilePath(databasePath);
+        string lockPath = GetLockFilePath(databasePath);
 
         if (respectExisting && File.Exists(lockPath))
         {
