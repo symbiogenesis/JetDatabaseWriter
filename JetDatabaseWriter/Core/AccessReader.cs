@@ -387,10 +387,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            int numRows = Ru16(page, _dpNumRows);
+            int numRows = Ru16(page, _dataPage.NumRows);
             for (int r = 0; r < numRows; r++)
             {
-                int raw = Ru16(page, _dpRowsStart + (r * 2));
+                int raw = Ru16(page, _dataPage.RowsStart + (r * 2));
                 if ((raw & 0xC000) != 0)
                 {
                     continue;
@@ -554,7 +554,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
                 {
-                    if (rb.RowSize < _numColsFldSz)
+                    if (rb.RowSize < _rowSz.NumCols)
                     {
                         continue;
                     }
@@ -647,7 +647,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
             {
-                if (rb.RowSize < _numColsFldSz)
+                if (rb.RowSize < _rowSz.NumCols)
                 {
                     continue;
                 }
@@ -705,7 +705,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
             {
-                if (rb.RowSize < _numColsFldSz)
+                if (rb.RowSize < _rowSz.NumCols)
                 {
                     continue;
                 }
@@ -860,7 +860,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         byte[]? td = await ReadTDefBytesAsync(resolved.Value.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        if (td == null || td.Length < _tdBlockEnd)
+        if (td == null || td.Length < _tdef.BlockEnd)
         {
             return [];
         }
@@ -895,37 +895,37 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return [];
         }
 
-        int numCols = Ru16(td, _tdNumCols);
-        int numRealIdx = Ri32(td, _tdNumRealIdx);
+        int numCols = Ru16(td, _tdef.NumCols);
+        int numRealIdx = Ri32(td, _tdef.NumRealIdx);
         if (numRealIdx < 0 || numRealIdx > 1000)
         {
             numRealIdx = 0;
         }
 
-        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
+        int colStart = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
 
         var byComplexId = new Dictionary<int, (string Name, byte Type)>();
         for (int i = 0; i < numCols; i++)
         {
-            int o = colStart + (i * _colDescSz);
-            if (o + _colDescSz > td.Length)
+            int o = colStart + (i * _colDesc.Size);
+            if (o + _colDesc.Size > td.Length)
             {
                 break;
             }
 
-            byte type = td[o + _colTypeOff];
+            byte type = td[o + _colDesc.TypeOff];
             if (type != T_COMPLEX && type != T_ATTACHMENT)
             {
                 continue;
             }
 
-            int complexId = Ri32(td, o + _colMiscOff);
+            int complexId = Ri32(td, o + _colDesc.MiscOff);
             if (complexId <= 0)
             {
                 continue;
             }
 
-            int colNum = Ru16(td, o + _colNumOff);
+            int colNum = Ru16(td, o + _colDesc.NumOff);
             ColumnInfo? info = resolved.Value.Td.Columns.Find(c => c.ColNum == colNum);
             string name = info?.Name ?? string.Empty;
             byComplexId[complexId] = (name, type);
@@ -1148,9 +1148,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private List<IndexMetadata> ParseIndexMetadata(byte[] td, List<ColumnInfo> columns)
     {
-        int numCols = Ru16(td, _tdNumCols);
-        int numIdx = Ri32(td, _tdNumCols + 2);
-        int numRealIdx = Ri32(td, _tdNumRealIdx);
+        int numCols = Ru16(td, _tdef.NumCols);
+        int numIdx = Ri32(td, _tdef.NumCols + 2);
+        int numRealIdx = Ri32(td, _tdef.NumRealIdx);
 
         // Defensive bounds: corrupt TDEFs can report absurd counts.
         if (numIdx <= 0 || numIdx > 1000)
@@ -1164,10 +1164,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         // Section walk mirrors AccessBase.ReadTableDefAsync and FormatProbe.
-        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
+        int colStart = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
 
         // Walk column-name length-prefix block to find where it ends.
-        int pos = colStart + (numCols * _colDescSz);
+        int pos = colStart + (numCols * _colDesc.Size);
         for (int i = 0; i < numCols; i++)
         {
             if (ReadColumnName(td, ref pos, out _) < 0)
@@ -1429,7 +1429,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                     foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
                     {
-                        if (rb.RowSize < _numColsFldSz)
+                        if (rb.RowSize < _rowSz.NumCols)
                         {
                             continue;
                         }
@@ -1678,7 +1678,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (rowSize < _numColsFldSz)
+        if (rowSize < _rowSz.NumCols)
         {
             return null;
         }
@@ -1726,7 +1726,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (rowSize < _numColsFldSz)
+        if (rowSize < _rowSz.NumCols)
         {
             return null;
         }
@@ -2562,7 +2562,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            long owner = Ri32(page, _dpTDefOff);
+            long owner = Ri32(page, _dataPage.TDefOff);
             if (owner <= 0)
             {
                 continue;
@@ -2801,7 +2801,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (rb.RowSize < _numColsFldSz)
+            if (rb.RowSize < _rowSz.NumCols)
             {
                 continue;
             }
@@ -2818,7 +2818,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (rowSize < _numColsFldSz)
+        if (rowSize < _rowSz.NumCols)
         {
             return null;
         }
@@ -3130,7 +3130,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         needsLongValue = false;
 
-        if (rowSize < _numColsFldSz)
+        if (rowSize < _rowSz.NumCols)
         {
             return false;
         }
@@ -3253,7 +3253,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// reject the row outright. Used by the compiled direct-decoder
     /// delegate's preflight check (mirrors <c>TryCrackRowSync</c>).
     /// </summary>
-    internal int NumColsFieldSize => _numColsFldSz;
+    internal int NumColsFieldSize => _rowSz.NumCols;
 
     /// <summary>
     /// Internal helper for the compiled direct decoder's first-row-bytes
@@ -3871,13 +3871,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return new(page, 0, 0, $"page {lvalPage} not data page");
         }
 
-        int numRows = Ru16(page, _dpNumRows);
+        int numRows = Ru16(page, _dataPage.NumRows);
         if (lvalRow >= numRows)
         {
             return new(page, 0, 0, $"row {lvalRow} >= numRows {numRows}");
         }
 
-        int rawOff = Ru16(page, _dpRowsStart + (lvalRow * 2));
+        int rawOff = Ru16(page, _dataPage.RowsStart + (lvalRow * 2));
         if ((rawOff & 0xC000) != 0)
         {
             return new(page, 0, 0, "deleted/overflow row");
@@ -3892,7 +3892,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         int rowEnd = _pgSz - 1;
         for (int r = 0; r < numRows; r++)
         {
-            int ofs = Ru16(page, _dpRowsStart + (r * 2)) & 0x1FFF;
+            int ofs = Ru16(page, _dataPage.RowsStart + (r * 2)) & 0x1FFF;
             if (ofs > rowStart && ofs < rowEnd)
             {
                 rowEnd = ofs - 1;
