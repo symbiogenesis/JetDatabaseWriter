@@ -16,6 +16,12 @@ The normal regression suite remains:
 - `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`
 - `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`
 
+For the most recent active investigation into why these two tests fail under
+DAO compact, see
+[docs/design/round-trip-test-failures-2026-05-02.md](docs/design/round-trip-test-failures-2026-05-02.md).
+This diagnostics file holds the durable probing methodology; dated failure
+notes hold the current symptoms, page diffs, and hypotheses.
+
 ## Historical narrow bisection matrix
 
 The removed `AccessRoundTripDiagNarrow` file explored variations of the same
