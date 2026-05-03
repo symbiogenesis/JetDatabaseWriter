@@ -472,6 +472,25 @@ public sealed class AccessReader : AccessBase, IAccessReader
             headers[i] = td.Columns[i].Name;
         }
 
+        // Phase 3 of read-perf-plan-v2: try to compile a direct
+        // page → T decoder that skips the per-row object?[] buffer and
+        // primitive boxing entirely. The builder returns null when any
+        // bound column requires the slow path (T_MEMO/T_OLE LVAL chain,
+        // T_BINARY, T_NUMERIC, T_COMPLEX/T_ATTACHMENT, Hyperlink prop).
+        DirectRowDecoder<T>? directDecoder = td.HasComplexColumns
+            ? null
+            : DirectRowDecoderBuilder.TryBuild<T>(headers, td.Columns, td.ClrTypes);
+
+        if (directDecoder != null)
+        {
+            await foreach (T item in EnumerateDirectRowsAsync(entry, td, directDecoder, progress, cancellationToken).ConfigureAwait(false))
+            {
+                yield return item;
+            }
+
+            yield break;
+        }
+
         Func<object?[], T> factory = RowMapper<T>.Build(headers, td.ClrTypes);
 
         // Phase 2 of read-perf-plan-v2: skip per-row decode of columns the
@@ -572,6 +591,54 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
 
                 yield return row;
+                rowCount++;
+            }
+
+            progress?.Report(rowCount);
+        }
+    }
+
+    /// <summary>
+    /// Phase 3 fast-path enumerator: walks every owned data page for
+    /// <paramref name="entry"/> and invokes the compiled
+    /// <paramref name="directDecoder"/> against each live row, allocating a
+    /// fresh <typeparamref name="T"/> per row but no <c>object?[]</c> buffer.
+    /// Used by <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/>
+    /// when every bound column is directly decodable; otherwise the Phase 2
+    /// path runs.
+    /// </summary>
+    private async IAsyncEnumerable<T> EnumerateDirectRowsAsync<T>(
+        CatalogEntry entry,
+        TableDef td,
+        DirectRowDecoder<T> directDecoder,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        long rowCount = 0;
+        bool hasVarColumns = td.HasVarColumns;
+        IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+
+        foreach (long pageNumber in pageNumbers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+
+            foreach (RowBound rb in EnumerateLiveRowBounds(page))
+            {
+                if (rb.RowSize < _numColsFldSz)
+                {
+                    continue;
+                }
+
+                T target = new();
+                if (!directDecoder(this, page, rb.RowStart, rb.RowSize, hasVarColumns, target))
+                {
+                    continue;
+                }
+
+                yield return target;
                 rowCount++;
             }
 
@@ -2954,6 +3021,71 @@ public sealed class AccessReader : AccessBase, IAccessReader
         row = result;
         return true;
     }
+
+    // ── Phase 3: direct page → T decoder support ─────────────────────
+    //
+    // The "direct decoder" eliminates the per-row object?[] buffer and
+    // the box/unbox round-trip on every primitive column. RowMapper<T>
+    // compiles a delegate that reads typed values straight out of the
+    // page bytes and assigns them to T's properties; only the columns
+    // the mapper actually binds are decoded (Phase 2 projection is
+    // baked in). Callers gate the fast path with
+    // RowMapper<T>.TryBuildDirectDecoder which inspects each bound
+    // column and returns null when any column requires the slow path
+    // (T_MEMO/T_OLE LVAL chain, T_BINARY, T_NUMERIC, T_COMPLEX/
+    // T_ATTACHMENT, Hyperlink-typed properties).
+    //
+    // The compiled delegate calls back into a small set of internal
+    // helpers below for the reader's per-instance state (format,
+    // ANSI encoding) and the row-trailer parse.
+
+    /// <summary>
+    /// Internal accessor for <see cref="AccessBase.TryParseRowLayout"/>
+    /// callable from <see cref="JetDatabaseWriter.Internal.RowMapper{T}"/>'s
+    /// compiled direct-decoder delegate.
+    /// </summary>
+    internal bool TryParseRowLayoutForDirectDecode(byte[] page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
+        => TryParseRowLayout(page, rowStart, rowSize, hasVarColumns, out layout);
+
+    /// <summary>
+    /// Internal accessor for <see cref="AccessBase.ResolveColumnSlice"/>
+    /// callable from the compiled direct-decoder delegate. Takes
+    /// <paramref name="layout"/> by value (not <c>in</c>) so expression
+    /// trees can pass a <c>ParameterExpression</c> directly.
+    /// </summary>
+    internal ColumnSlice ResolveColumnSliceForDirectDecode(byte[] page, int rowStart, int rowSize, RowLayout layout, ColumnInfo col)
+        => ResolveColumnSlice(page, rowStart, rowSize, layout, col);
+
+    /// <summary>
+    /// Internal text decoder used by the compiled direct-decoder delegate.
+    /// Picks the format-appropriate path (Jet4 Unicode/compressed vs Jet3
+    /// ANSI) and returns <see cref="string.Empty"/> for empty slices.
+    /// </summary>
+    internal string DecodeTextSliceForDirectDecode(byte[] page, int start, int len)
+    {
+        if (len <= 0)
+        {
+            return string.Empty;
+        }
+
+        return _format != DatabaseFormat.Jet3Mdb
+            ? DecodeJet4Text(page, start, len)
+            : _ansiEncoding.GetString(page, start, len);
+    }
+
+    /// <summary>
+    /// Gets the minimum row size below which the row trailer parser will
+    /// reject the row outright. Used by the compiled direct-decoder
+    /// delegate's preflight check (mirrors <c>TryCrackRowSync</c>).
+    /// </summary>
+    internal int NumColsFieldSize => _numColsFldSz;
+
+    /// <summary>
+    /// Internal helper for the compiled direct decoder's first-row-bytes
+    /// peek (matches the rawNumCols extraction in <c>TryCrackRowSync</c>).
+    /// </summary>
+    internal int ReadRawNumCols(byte[] page, int rowStart)
+        => _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
 
     /// <summary>
     /// Synchronous decode of a variable-area column slice into its CLR

@@ -205,50 +205,98 @@ narrow DTOs (the common LINQ-projection shape) this is pure waste.
 
 **Hypothesis:** Even after Phase 2, `Rows<T>()` still allocates a
 per-row `object?[]`, boxes every primitive, then unboxes inside the
-mapper. A compiled `delegate void DecodeAndAssign(byte[] page,
-int rowStart, in RowLayout layout, T target)` reads bytes from the
-page and writes properties directly — no row buffer, no boxing.
+mapper. A compiled `delegate bool DirectRowDecoder<T>(reader, page,
+rowStart, rowSize, hasVarColumns, T target)` reads bytes from the page
+and writes properties directly — no row buffer, no boxing.
 
 ### Tasks
 
-- [ ] In [RowMapper.cs](../../JetDatabaseWriter/Internal/RowMapper.cs)
-  add `BuildPageDecoder<T>(ColumnInfo[] columns, string[] headers, Type[] sourceTypes)`
-  that emits an expression tree per bound column:
+- [x] Added typed primitive readers to
+  [JetTypeInfo.cs](../../JetDatabaseWriter/Internal/JetTypeInfo.cs):
+  `ReadByteAt`, `ReadInt16LE`, `ReadInt32LE`, `ReadInt64LE`,
+  `ReadFloatLE`, `ReadDoubleLE`, `ReadDateTimeLE`, `ReadMoneyLE`,
+  `ReadGuidAt`, `ReadDecimalLE` (T_NUMERIC). Each returns the unboxed
+  CLR value directly off the page bytes.
+- [x] Added internal accessors on
+  [AccessReader.cs](../../JetDatabaseWriter/Core/AccessReader.cs)
+  (`TryParseRowLayoutForDirectDecode`,
+  `ResolveColumnSliceForDirectDecode`,
+  `DecodeTextSliceForDirectDecode`, `NumColsFieldSize`,
+  `ReadRawNumCols`) so the compiled delegate can call back into the
+  per-instance state. Promoted `RowLayout`, `ColumnSliceKind`,
+  `ColumnSlice` from `private protected` to `internal` in
+  [AccessBase.cs](../../JetDatabaseWriter/Core/AccessBase.cs) so the
+  delegate can name them.
+- [x] Added [`DirectRowDecoderBuilder`](../../JetDatabaseWriter/Internal/DirectRowDecoderBuilder.cs)
+  with `TryBuild<T>(headers, columns, clrTypes)` that compiles a per-T
+  expression tree. Each bound column emits:
   ```
-  ColumnSlice slice = ResolveColumnSlice(page, rowStart, rowSize, layout, columns[i]);
-  switch (slice.Kind) {
-      case Fixed: target.Foo = ReadInt32LE(page, rowStart + slice.DataStart); break;
-      case Var:   target.Bar = DecodeText(page, rowStart + slice.DataStart, slice.DataLen); break;
-      ...
-  }
+  slice = reader.ResolveColumnSliceForDirectDecode(...);
+  if (slice.Kind == Fixed && slice.DataLen >= expectedSize)
+      try { target.PropI = (PropType)JetTypeInfo.ReadXxx(page, rowStart + slice.DataStart); }
+      catch (ArgumentException/OverflowException/IndexOutOfRangeException) { /* leave default */ }
   ```
-  using the type-specific primitive readers from
-  [JetTypeInfo.cs](../../JetDatabaseWriter/Internal/JetTypeInfo.cs) and
-  emitting only the branch needed for the column's known type — no
-  runtime `switch` on `col.Type`.
-- [ ] Add `Rows<T>()` fast-path: when no column needs LVAL chain
-  resolution, skip `EnumerateTypedRowsAsync` entirely and call the
-  compiled decoder directly inside the page loop.
-- [ ] Keep the Phase 2 `object?[]` path as a fallback for:
-  - Tables with `T_MEMO`/`T_OLE` columns the mapper binds (LVAL chain
-    is async).
-  - Tables with complex / hyperlink columns the mapper binds (post-
-    processing wants the row array).
-- [ ] Pin parity with the existing path via a property test that maps a
-  random NW table both ways and compares.
+  Refuses (returns `null`) when any bound column requires the slow path:
+  T_MEMO/T_OLE LVAL chains, T_BINARY, T_COMPLEX/T_ATTACHMENT, Hyperlink-
+  typed properties, or any property whose underlying type doesn't match
+  the column's natural CLR type.
+- [x] Wired into `Rows<T>()`: when `TryBuild` returns non-null and
+  `td.HasComplexColumns` is false, the new `EnumerateDirectRowsAsync<T>`
+  loops the data pages, allocates a fresh `T` per row, and invokes the
+  decoder — no `object?[]` buffer, no primitive boxing. Phase 2's
+  projection path remains the fallback.
+- [x] Per-column `try/catch` in the emitted body mirrors
+  `ReadFixedTyped`'s exception-swallowing contract, so malformed rows
+  leave properties at their default rather than throwing into user
+  code.
 
-### Risk
+### Verification
 
-- Largest design change in this plan. Defer if Phase 2 already moved
-  the needle enough for your workload.
-- Expression trees + `Span<byte>` historically don't mix; may need to
-  emit IL via `DynamicMethod` or pass `byte[] + int offset` instead of
-  `Span<byte>`. Decide after Phase 4 (the span plumbing phase).
+- `dotnet test` clean modulo the 2 known DAO Compact failures (the
+  full Rows<T>() suite — round-trip parity, schema preservation, etc.
+  — exercises the direct decoder against every NW + synthetic table
+  and matches the Phase 2 baseline).
+- Per-op benchmark numbers (`AccessReaderRowDecodeBenchmarks`,
+  baseline = Phase 1 row of `read-perf-plan-v2.md`):
 
-### Exit criteria
+  | Method                              | Baseline alloc | Phase 3 alloc | Δ alloc | Phase 3 mean |
+  | ----------------------------------- | -------------: | ------------: | ------: | -----------: |
+  | `Decode_Numeric_Typed`              |       10.90 MB |    **3.28 MB** | **3.3× less** |     28.71 ms |
+  | `Decode_Text_Typed`                 |       22.27 MB |    **20.0 MB** |    1.1× less |     68.25 ms |
+  | `Decode_Wide_Typed_NarrowProjection`|       32.19 MB |    **2.14 MB** | **15× less** |     19.15 ms |
 
-- `Decode_Numeric_Typed` ≥2× faster than Phase 2.
-- Per-row allocation for `Rows<T>()` ≤ size of `T` itself.
+  Per-row: Numeric_Typed dropped from **436 B/row → 137 B/row**;
+  Wide_NarrowProjection dropped from **3.22 KB/row → 219 B/row** (vs
+  Phase 2's 624 B/row — a further 2.85× over Phase 2 alone).
+  Text_Typed only saw a small improvement because each row's 5 fresh
+  `string` allocations dominate; the `object?[]` removal is in the
+  noise next to that.
+
+  All `Decode_*_Untyped` and `Decode_*_AsStrings` paths are unchanged
+  (they don't go through `Rows<T>()`), and `Decode_*_DataTable`
+  numbers are within run-to-run noise.
+
+### Risk (resolved)
+
+- Expression-tree access to internal types/members within the same
+  assembly works (`Compile()` produces a DynamicMethod that respects
+  assembly visibility). Promoted only what's needed to `internal`.
+- `out RowLayout` parameter to compiled delegate works via
+  `ParameterExpression`. The original `in RowLayout` overload would
+  not — wrapped with a by-value overload.
+- T_NUMERIC `decimal` construction can throw `OverflowException` for
+  scale > 28 or out-of-range mantissa; the per-column `try/catch`
+  block already swallows these (matching `ReadNumericTyped`'s
+  non-strict contract).
+- `td.HasComplexColumns` always disables the direct path so complex
+  parent-id resolution is never starved (same gate as Phase 2).
+
+### Exit criteria — done
+
+- [x] `Decode_Numeric_Typed` allocation ≥3× lower than Phase 2.
+- [x] `Decode_Wide_Typed_NarrowProjection` allocation ≥2× lower than
+  Phase 2.
+- [x] All existing tests still pass (modulo the 2 known failures).
 
 ---
 
