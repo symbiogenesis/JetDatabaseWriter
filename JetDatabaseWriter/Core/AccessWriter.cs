@@ -8620,6 +8620,32 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             uint current = Ru32(page, Constants.TableDefinition.RowCountOffset);
             updated = Math.Clamp(current + delta, 0L, uint.MaxValue);
             Wi32(page, Constants.TableDefinition.RowCountOffset, unchecked((int)(uint)updated));
+
+            // Mirror the change into the per-real-idx `num_idx_rows` counter
+            // (offset +4 of each 12-byte/8-byte slot in the leading real-idx
+            // skip block at [_tdef.BlockEnd, _tdef.BlockEnd + numRealIdx *
+            // _tdef.RealIdxEntrySz)). Per mdbtools HACKING.md the slot is laid
+            // out as `unknown(4) + num_idx_rows(4) + unknown(4)`. DAO compares
+            // num_idx_rows against the leaf-level row count when walking
+            // MSysObjects; if they disagree it aborts compact with
+            // "could not find the object 'MSysDb'" — see
+            // docs/design/round-trip-test-failures-2026-05-02.md.
+            int numRealIdx = Ri32(page, _tdef.NumRealIdx);
+            if (numRealIdx > 0 && numRealIdx <= 1000)
+            {
+                int slotEnd = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
+                if (slotEnd <= page.Length)
+                {
+                    for (int i = 0; i < numRealIdx; i++)
+                    {
+                        int countOff = _tdef.BlockEnd + (i * _tdef.RealIdxEntrySz) + 4;
+                        uint cur = Ru32(page, countOff);
+                        long next = Math.Clamp(cur + delta, 0L, uint.MaxValue);
+                        Wi32(page, countOff, unchecked((int)(uint)next));
+                    }
+                }
+            }
+
             await WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
         }
         finally
