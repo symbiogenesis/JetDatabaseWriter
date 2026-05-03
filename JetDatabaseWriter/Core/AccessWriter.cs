@@ -3764,7 +3764,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // slots filled with 0xFFFF.
                 for (int slot = 0; slot < IndexLayout.ColMapSlotCount; slot++)
                 {
-                    int so = IndexLayout.ColMapSlotOffset(phys, slot);
+                    int so = _indexLayout.ColMapSlotOffset(phys, slot);
                     if (slot < ri.ColumnNumbers.Count)
                     {
                         Wu16(page, so, ri.ColumnNumbers[slot]);

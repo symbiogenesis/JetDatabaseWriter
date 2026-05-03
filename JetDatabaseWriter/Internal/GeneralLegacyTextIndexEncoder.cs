@@ -64,7 +64,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
     private static readonly byte[] CrazyCodesSuffix = [0xFF, 0x02, 0x80, 0xFF, 0x80];
 
-    private static readonly byte[] SurrogateExtraBytes = [0x3F];
+    internal static readonly byte[] SurrogateExtraBytes = [0x3F];
 
     private static readonly Lazy<CharHandler[]> Codes = new(
         () => LoadCodes(GenLegResource, FirstChar, LastChar));
@@ -78,6 +78,24 @@ internal static class GeneralLegacyTextIndexEncoder
     /// single-byte block with the null flag.
     /// </summary>
     public static byte[] Encode(string? text, bool ascending)
+        => EncodeWithTables(text, ascending, Codes.Value, ExtCodes.Value);
+
+    /// <summary>
+    /// Shared "General Legacy"-shape state machine that both
+    /// <see cref="GeneralLegacyTextIndexEncoder"/> and
+    /// <see cref="GeneralTextIndexEncoder"/> drive with their own per-codepoint
+    /// tables. Access 2010+ "General" sort order is structurally identical to
+    /// "General Legacy" — only the per-codepoint code tables differ
+    /// (Jackcess `GeneralIndexCodes` extends `GeneralLegacyIndexCodes` and
+    /// only overrides `getCharHandler`). Access 1997 "General 97" uses a
+    /// different state machine (no END_TEXT framing, nibble-packed extras)
+    /// and has its own dedicated encoder.
+    /// </summary>
+    internal static byte[] EncodeWithTables(
+        string? text,
+        bool ascending,
+        CharHandler[] codes,
+        CharHandler[] extCodes)
     {
         if (text is null)
         {
@@ -104,7 +122,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
         foreach (char c in chars)
         {
-            CharHandler ch = GetCharHandler(c);
+            CharHandler ch = c <= LastChar ? codes[c] : extCodes[c - FirstExtChar];
             int curCharOffset = charOffset;
 
             byte[]? inline = ch.GetInlineBytes(c);
@@ -188,9 +206,6 @@ internal static class GeneralLegacyTextIndexEncoder
         bout.Add(EndExtraText);
         return [.. bout];
     }
-
-    private static CharHandler GetCharHandler(char c) =>
-        c <= LastChar ? Codes.Value[c] : ExtCodes.Value[c - FirstExtChar];
 
     private static void WriteExtraCodes(
         int charOffset,
@@ -305,7 +320,7 @@ internal static class GeneralLegacyTextIndexEncoder
         bout.AddRange(CrazyCodesSuffix);
     }
 
-    private static CharHandler[] LoadCodes(string resourceName, char firstChar, char lastChar)
+    internal static CharHandler[] LoadCodes(string resourceName, char firstChar, char lastChar)
     {
         int numCodes = lastChar - firstChar + 1;
         var values = new CharHandler[numCodes];
@@ -467,6 +482,14 @@ internal static class GeneralLegacyTextIndexEncoder
 
         public override CharHandlerType Type => CharHandlerType.Ignored;
     }
+
+    /// <summary>
+    /// Gets the singleton "ignored char" handler exposed for sibling encoders
+    /// (<see cref="General97TextIndexEncoder"/>) that need to short-circuit
+    /// out-of-range BMP codepoints to the same no-op behaviour the parser's
+    /// <c>'X'</c> prefix produces.
+    /// </summary>
+    internal static CharHandler IgnoredHandlerInstance => IgnoredHandler.Instance;
 
     private sealed class HighSurrogateHandler : CharHandler
     {
