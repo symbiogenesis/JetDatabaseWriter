@@ -51,8 +51,8 @@ internal static class RowMapper<T>
     /// Returns a boolean mask the same length as <paramref name="headers"/> indicating
     /// which header indices the compiled mapper actually consumes (i.e. those whose
     /// header name maps to a settable property on <typeparamref name="T"/>). Used by
-    /// the read-path projection optimisation (Phase 2 of read-perf-plan-v2) to skip
-    /// per-row decode of columns that <typeparamref name="T"/> never reads.
+    /// the read-path projection optimisation to skip per-row decode of columns
+    /// that <typeparamref name="T"/> never reads.
     /// </summary>
     public static bool[] GetBoundColumnMask(IReadOnlyList<string> headers)
     {
@@ -70,7 +70,7 @@ internal static class RowMapper<T>
     /// <summary>
     /// Returns the compiled <see cref="Accessor"/> for the property whose name
     /// matches <paramref name="header"/> (case-insensitive), or
-    /// <see langword="null"/> when no property matches. Used by the Phase 3
+    /// <see langword="null"/> when no property matches. Used by the
     /// direct-decoder builder.
     /// </summary>
     internal static Accessor? TryGetAccessor(string header)
@@ -90,7 +90,7 @@ internal static class RowMapper<T>
     /// emits a direct unbox-and-assign (skipping the runtime <c>GetType()</c>
     /// check and the <see cref="Convert.ChangeType(object, Type, IFormatProvider)"/>
     /// fallback). Hyperlink ↔ string interop is preserved via the
-    /// <see cref="CoerceToTarget"/> helper. Phase 5 of typed-row-read-perf-plan.
+    /// <see cref="CoerceToTarget"/> helper.
     /// </summary>
     public static Func<object?[], T> Build(IReadOnlyList<string> headers, IReadOnlyList<Type>? sourceTypes = null)
     {

@@ -7,10 +7,9 @@ using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Core;
 
 /// <summary>
-/// Phase 1 benchmarks: measure <see cref="AccessReader.OpenAsync(string, AccessReaderOptions?, System.Threading.CancellationToken)"/>
+/// Open-floor benchmarks: measure <see cref="AccessReader.OpenAsync(string, AccessReaderOptions?, System.Threading.CancellationToken)"/>
 /// (catalog + system table parsing) in isolation across DBs of
-/// different shapes. This is the baseline Phase 5 of the v2 plan
-/// (open-floor work) needs.
+/// different shapes.
 /// </summary>
 [MemoryDiagnoser]
 public class AccessReaderOpenBenchmarks

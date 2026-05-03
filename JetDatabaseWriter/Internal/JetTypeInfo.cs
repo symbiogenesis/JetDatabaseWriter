@@ -508,7 +508,7 @@ internal static class JetTypeInfo
         _ = sb.Append(Encoding.Unicode.GetString(bytes));
     }
 
-    // ── Phase 3 typed primitive readers ───────────────────────────────
+    // ── Typed primitive readers ───────────────────────────────
     // Used by RowMapper<T>'s compiled direct decoder. Each helper returns
     // the unboxed CLR value for a single fixed-width column type, reading
     // straight off the page bytes. Callers must validate that
@@ -554,7 +554,7 @@ internal static class JetTypeInfo
     /// <see cref="decimal"/>, skipping the boxing the
     /// <see cref="ReadFixedTyped"/> path performs. Throws
     /// <see cref="OverflowException"/> / <see cref="ArgumentException"/> on
-    /// invalid scale or out-of-range values; the Phase 3 direct decoder
+    /// invalid scale or out-of-range values; the direct decoder
     /// catches these and leaves the property at its default.
     /// </summary>
     internal static decimal ReadDecimalLE(byte[] page, int start)
