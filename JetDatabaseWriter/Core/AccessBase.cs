@@ -24,44 +24,29 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// </summary>
 public abstract class AccessBase : IAccessBase
 {
-    // ── Format-specific offsets ───────────────────────────────────────
+    // ── Format-specific layouts ───────────────────────────────────────
+    // Each struct groups a related set of byte offsets / entry sizes that
+    // differ between Jet3 (Access 97 .mdb) and Jet4/ACE (.mdb + .accdb).
+    // Populated once at construction so reader/writer call sites do not need
+    // to inline `jet3 ? ... : ...` ternaries on every access.
 
-    // Data page
-    private protected readonly int _dpTDefOff;    // offset of tdef_pg (4 bytes)
-    private protected readonly int _dpNumRows;    // offset of num_rows (2 bytes)
-    private protected readonly int _dpRowsStart;  // offset of first row-offset entry
+    /// <summary>Per-format byte offsets within a data-page (page type 0x01) header — see <see cref="DataPageLayout"/>.</summary>
+    private protected readonly DataPageLayout _dataPage;
 
-    // TDEF page (absolute offsets within the TDEF byte array)
-    private protected readonly int _tdNumCols;    // offset of num_cols    (2 bytes)
-    private protected readonly int _tdNumRealIdx; // offset of num_real_idx (4 bytes)
-    private protected readonly int _tdBlockEnd;   // first byte after table-definition block
+    /// <summary>Per-format byte offsets within a TDEF block plus real-idx entry size — see <see cref="TDefHeaderLayout"/>.</summary>
+    private protected readonly TDefHeaderLayout _tdef;
 
-    // Column descriptor (per-column, fixed-size block)
-    private protected readonly int _colDescSz;
-    private protected readonly int _colTypeOff;
-    private protected readonly int _colVarOff;    // offset_V – var-col index
-    private protected readonly int _colFixedOff;  // offset_F – byte offset in fixed area
-    private protected readonly int _colSzOff;     // col_len
-    private protected readonly int _colFlagsOff;  // bitmask
-    private protected readonly int _colNumOff;    // col_num (includes deleted)
-    private protected readonly int _colMiscOff;   // misc/misc_ext (4 bytes) — carries ComplexID for T_ATTACHMENT/T_COMPLEX (see complex-columns-format-notes.md §2.1)
+    /// <summary>Per-format byte offsets within one column descriptor — see <see cref="ColumnDescriptorLayout"/>.</summary>
+    private protected readonly ColumnDescriptorLayout _colDesc;
 
-    // Per-real-index entry size (skipped during column parsing)
-    private protected readonly int _realIdxEntrySz;
+    /// <summary>Per-format byte sizes of the in-row trailer fields — see <see cref="RowFieldSizes"/>.</summary>
+    private protected readonly RowFieldSizes _rowSz;
 
     /// <summary>
     /// Per-format byte offsets and entry sizes for the TDEF page's real-idx
     /// physical descriptor (§3.1) and logical-idx entry (§3.2) sections.
-    /// Populated once at construction so reader/writer call sites do not need
-    /// to inline `jet3 ? ... : ...` ternaries on every access.
     /// </summary>
     private protected readonly IndexLayout _indexLayout;
-
-    // Row field sizes (differ between Jet3 and Jet4)
-    private protected readonly int _numColsFldSz;  // 1 or 2
-    private protected readonly int _varEntrySz;    // 1 or 2  (var_table entry)
-    private protected readonly int _eodFldSz;      // 1 or 2
-    private protected readonly int _varLenFldSz;   // 1 or 2
 
     private protected readonly int _pgSz;
     private protected readonly DatabaseFormat _format;
@@ -160,65 +145,13 @@ public abstract class AccessBase : IAccessBase
             _codePage = 65001;
         }
 
-        if (_format != DatabaseFormat.Jet3Mdb)
-        {
-            // ── Jet4 / ACE (Access 2000 – 2019, .mdb + .accdb) ──────
-            // Data page
-            _dpTDefOff = 4;
-            _dpNumRows = 12;   // extra 4-byte field after tdef_pg
-            _dpRowsStart = 14;
-
-            // TDEF: 8-byte header + 55-byte Jet4 block = 63 total
-            _tdNumCols = 45;
-            _tdNumRealIdx = 51;
-            _tdBlockEnd = 63;
-
-            // Column descriptor (25 bytes)
-            _colDescSz = 25;
-            _colTypeOff = 0;   // col_type  (1)
-            _colVarOff = 7;   // offset_V  (2): 1+4+2
-            _colFixedOff = 21;   // offset_F  (2): 1+4+2+2+2+2+2+1+1+4
-            _colSzOff = 23;   // col_len   (2)
-            _colFlagsOff = 15;   // bitmask   (1): 1+4+2+2+2+2+2
-            _colNumOff = 5;   // col_num   (2)
-            _colMiscOff = 11;   // misc      (4): 1+4+2+2+2 — carries ComplexID for complex columns
-
-            _realIdxEntrySz = 12;
-            _numColsFldSz = 2;
-            _varEntrySz = 2;
-            _eodFldSz = 2;
-            _varLenFldSz = 2;
-        }
-        else
-        {
-            // ── Jet3 (Access 97, .mdb) ────────────────────────────
-            // Data page
-            _dpTDefOff = 4;
-            _dpNumRows = 8;
-            _dpRowsStart = 10;
-
-            // TDEF: 8-byte header + 35-byte Jet3 block = 43 total
-            _tdNumCols = 25;
-            _tdNumRealIdx = 31;
-            _tdBlockEnd = 43;
-
-            // Column descriptor (18 bytes)
-            _colDescSz = 18;
-            _colTypeOff = 0;   // col_type  (1)
-            _colVarOff = 3;   // offset_V  (2): 1+2
-            _colFixedOff = 14;   // offset_F  (2): 1+2+2+2+2+2+2+1
-            _colSzOff = 16;   // col_len   (2)
-            _colFlagsOff = 13;   // bitmask   (1)
-            _colNumOff = 1;   // col_num   (2)
-            _colMiscOff = 7;    // misc      (4) — Jet3 has no complex columns; included for layout symmetry
-
-            _realIdxEntrySz = 8;
-            _numColsFldSz = 1;
-            _varEntrySz = 1;
-            _eodFldSz = 1;
-            _varLenFldSz = 1;
-        }
-
+        // Format-specific TDEF / page / column / row layouts:
+        //   Jet4 / ACE (Access 2000–2019): TDEF 8+55 = 63 bytes, column descriptor 25 bytes.
+        //   Jet3        (Access 97):       TDEF 8+35 = 43 bytes, column descriptor 18 bytes.
+        _dataPage = DataPageLayout.For(_format);
+        _tdef = TDefHeaderLayout.For(_format);
+        _colDesc = ColumnDescriptorLayout.For(_format);
+        _rowSz = RowFieldSizes.For(_format);
         _indexLayout = IndexLayout.For(_format);
     }
 
@@ -588,13 +521,13 @@ public abstract class AccessBase : IAccessBase
     {
         byte[]? td = await ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
-        if (td == null || td.Length < _tdBlockEnd)
+        if (td == null || td.Length < _tdef.BlockEnd)
         {
             return null;
         }
 
-        int numCols = Ru16(td, _tdNumCols);
-        int numRealIdx = Ri32(td, _tdNumRealIdx);
+        int numCols = Ru16(td, _tdef.NumCols);
+        int numRealIdx = Ri32(td, _tdef.NumRealIdx);
 
         // Safety: corrupt or unusual TDEFs can report absurd index counts
         if (numRealIdx < 0 || numRealIdx > 1000)
@@ -608,8 +541,8 @@ public abstract class AccessBase : IAccessBase
         }
 
         // Column descriptors follow immediately after block + first real-idx entries
-        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
-        int namePos = colStart + (numCols * _colDescSz);
+        int colStart = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * _colDesc.Size);
 
         if (namePos > td.Length)
         {
@@ -619,20 +552,20 @@ public abstract class AccessBase : IAccessBase
         var cols = new List<ColumnInfo>(numCols);
         for (int i = 0; i < numCols; i++)
         {
-            int o = colStart + (i * _colDescSz);
-            if (o + _colDescSz > td.Length)
+            int o = colStart + (i * _colDesc.Size);
+            if (o + _colDesc.Size > td.Length)
             {
                 break;
             }
 
             cols.Add(new ColumnInfo
             {
-                Type = td[o + _colTypeOff],
-                ColNum = Ru16(td, o + _colNumOff),
-                VarIdx = Ru16(td, o + _colVarOff),
-                FixedOff = Ru16(td, o + _colFixedOff),
-                Size = Ru16(td, o + _colSzOff),
-                Flags = td[o + _colFlagsOff],
+                Type = td[o + _colDesc.TypeOff],
+                ColNum = Ru16(td, o + _colDesc.NumOff),
+                VarIdx = Ru16(td, o + _colDesc.VarOff),
+                FixedOff = Ru16(td, o + _colDesc.FixedOff),
+                Size = Ru16(td, o + _colDesc.SzOff),
+                Flags = td[o + _colDesc.FlagsOff],
 
                 // Extra flags byte at descriptor offset 16 (Jet4/ACE only \u2014 the
                 // Jet3 18-byte descriptor has no such slot). Carries the Access
@@ -641,15 +574,15 @@ public abstract class AccessBase : IAccessBase
                 // round-trip through the schema-rewrite path; harmless for cols
                 // Access wrote with the slot at zero.
                 ExtraFlags = _format != DatabaseFormat.Jet3Mdb && o + 16 < td.Length ? td[o + 16] : (byte)0,
-                Misc = Ri32(td, o + _colMiscOff),
+                Misc = Ri32(td, o + _colDesc.MiscOff),
 
                 // For T_NUMERIC the misc 4-byte slot reuses bytes 11/12
                 // (descriptor-relative) to carry the declared precision and
                 // scale Access shows in Design View. Same byte positions as
                 // the Jackcess `FixedPointColumnDescriptor` parser. Other
                 // column types leave these at 0.
-                NumericPrecision = td[o + _colTypeOff] == /* T_NUMERIC */ 0x10 ? td[o + _colMiscOff] : (byte)0,
-                NumericScale = td[o + _colTypeOff] == /* T_NUMERIC */ 0x10 ? td[o + _colMiscOff + 1] : (byte)0,
+                NumericPrecision = td[o + _colDesc.TypeOff] == /* T_NUMERIC */ 0x10 ? td[o + _colDesc.MiscOff] : (byte)0,
+                NumericScale = td[o + _colDesc.TypeOff] == /* T_NUMERIC */ 0x10 ? td[o + _colDesc.MiscOff + 1] : (byte)0,
             });
         }
 
@@ -883,7 +816,7 @@ public abstract class AccessBase : IAccessBase
     /// </summary>
     private protected IEnumerable<RowBound> EnumerateLiveRowBounds(byte[] page)
     {
-        int numRows = Ru16(page, _dpNumRows);
+        int numRows = Ru16(page, _dataPage.NumRows);
         if (numRows == 0)
         {
             yield break;
@@ -892,7 +825,7 @@ public abstract class AccessBase : IAccessBase
         var rawOffsets = new int[numRows];
         for (int r = 0; r < numRows; r++)
         {
-            rawOffsets[r] = Ru16(page, _dpRowsStart + (r * 2));
+            rawOffsets[r] = Ru16(page, _dataPage.RowsStart + (r * 2));
         }
 
         var positions = new int[numRows];
@@ -939,7 +872,7 @@ public abstract class AccessBase : IAccessBase
     /// </summary>
     private protected RowBound[] ComputeLiveRowBoundsArray(byte[] page)
     {
-        int numRows = Ru16(page, _dpNumRows);
+        int numRows = Ru16(page, _dataPage.NumRows);
         if (numRows == 0)
         {
             return Array.Empty<RowBound>();
@@ -952,7 +885,7 @@ public abstract class AccessBase : IAccessBase
         int liveCount = 0;
         for (int r = 0; r < numRows; r++)
         {
-            int raw = Ru16(page, _dpRowsStart + (r * 2));
+            int raw = Ru16(page, _dataPage.RowsStart + (r * 2));
             rawOffsets[r] = raw;
 
             int pos = raw & 0x1FFF;
@@ -1019,7 +952,7 @@ public abstract class AccessBase : IAccessBase
     private protected bool TryParseRowLayout(ReadOnlySpan<byte> page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
     {
         layout = default;
-        if (rowSize < _numColsFldSz)
+        if (rowSize < _rowSz.NumCols)
         {
             return false;
         }
@@ -1032,7 +965,7 @@ public abstract class AccessBase : IAccessBase
 
         int nullMaskSz = (numCols + 7) / 8;
         int nullMaskPos = rowSize - nullMaskSz;
-        if (nullMaskPos < _numColsFldSz)
+        if (nullMaskPos < _rowSz.NumCols)
         {
             return false;
         }
@@ -1048,17 +981,17 @@ public abstract class AccessBase : IAccessBase
         }
         else
         {
-            int varLenPos = nullMaskPos - _varLenFldSz;
-            if (varLenPos < _numColsFldSz)
+            int varLenPos = nullMaskPos - _rowSz.VarLen;
+            if (varLenPos < _rowSz.NumCols)
             {
                 return false;
             }
 
             varLen = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + varLenPos) : page[rowStart + varLenPos];
             int jumpSz = _format != DatabaseFormat.Jet3Mdb ? 0 : (rowSize / 256);
-            varTableStart = varLenPos - jumpSz - (varLen * _varEntrySz);
-            int eodPos = varTableStart - _eodFldSz;
-            if (eodPos < _numColsFldSz)
+            varTableStart = varLenPos - jumpSz - (varLen * _rowSz.VarEntry);
+            int eodPos = varTableStart - _rowSz.Eod;
+            if (eodPos < _rowSz.NumCols)
             {
                 return false;
             }
@@ -1100,7 +1033,7 @@ public abstract class AccessBase : IAccessBase
 
         if (col.IsFixed)
         {
-            int start = _numColsFldSz + col.FixedOff;
+            int start = _rowSz.NumCols + col.FixedOff;
             int sz = JetTypeInfo.GetFixedSize(col.Type);
             if (sz == 0 || start + sz > rowSize)
             {
@@ -1115,8 +1048,8 @@ public abstract class AccessBase : IAccessBase
             return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
         }
 
-        int entryPos = layout.VarTableStart + ((layout.VarLen - 1 - col.VarIdx) * _varEntrySz);
-        if (entryPos < 0 || entryPos + _varEntrySz > rowSize)
+        int entryPos = layout.VarTableStart + ((layout.VarLen - 1 - col.VarIdx) * _rowSz.VarEntry);
+        if (entryPos < 0 || entryPos + _rowSz.VarEntry > rowSize)
         {
             return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
         }
@@ -1126,7 +1059,7 @@ public abstract class AccessBase : IAccessBase
         int varEnd;
         if (col.VarIdx + 1 < layout.VarLen)
         {
-            int nextEntry = layout.VarTableStart + ((layout.VarLen - 2 - col.VarIdx) * _varEntrySz);
+            int nextEntry = layout.VarTableStart + ((layout.VarLen - 2 - col.VarIdx) * _rowSz.VarEntry);
             varEnd = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart + nextEntry) : page[rowStart + nextEntry];
         }
         else
@@ -1166,7 +1099,7 @@ public abstract class AccessBase : IAccessBase
     /// </summary>
     private protected string DecodeSimpleColumnValue(byte[] page, int rowStart, int rowSize, ColumnInfo column)
     {
-        if (column == null || rowSize < _numColsFldSz)
+        if (column == null || rowSize < _rowSz.NumCols)
         {
             return string.Empty;
         }

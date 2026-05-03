@@ -1597,9 +1597,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     $"TDEF at page {tdefPage} spans multiple pages; in-place FK index emission is not supported on multi-page TDEFs.");
             }
 
-            int numCols = Ru16(page, _tdNumCols);
-            int numIdx = Ri32(page, _tdNumCols + 2);
-            int numRealIdx = Ri32(page, _tdNumRealIdx);
+            int numCols = Ru16(page, _tdef.NumCols);
+            int numIdx = Ri32(page, _tdef.NumCols + 2);
+            int numRealIdx = Ri32(page, _tdef.NumRealIdx);
             if (numCols < 0 || numCols > 4096)
             {
                 numCols = 0;
@@ -1674,9 +1674,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 $"cannot mutate the TDEF at page {tdefPage} (multi-page chain or not a TDEF).");
         }
 
-        int numCols = Ru16(td, _tdNumCols);
-        int numIdx = Ri32(td, _tdNumCols + 2);
-        int numRealIdx = Ri32(td, _tdNumRealIdx);
+        int numCols = Ru16(td, _tdef.NumCols);
+        int numIdx = Ri32(td, _tdef.NumCols + 2);
+        int numRealIdx = Ri32(td, _tdef.NumRealIdx);
         if (numCols < 0 || numCols > 4096
             || numIdx < 0 || numIdx > 1000
             || numRealIdx < 0 || numRealIdx > 1000)
@@ -1719,7 +1719,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         byte[] nameBytes = Encoding.Unicode.GetBytes(indexName);
         int nameRecordSize = 2 + nameBytes.Length;
 
-        int deltaRealIdxSkip = allocateNewRealIdx ? _realIdxEntrySz : 0;
+        int deltaRealIdxSkip = allocateNewRealIdx ? _tdef.RealIdxEntrySz : 0;
         int deltaRealIdxPhys = allocateNewRealIdx ? Constants.TableDefinition.Jet4.RealIdx.PhysSize : 0;
         int totalGrowth = deltaRealIdxSkip + deltaRealIdxPhys + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize + nameRecordSize;
 
@@ -1732,16 +1732,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // Build the rewritten page.
         var newTd = new byte[_pgSz];
-        Buffer.BlockCopy(td, 0, newTd, 0, _tdBlockEnd);
+        Buffer.BlockCopy(td, 0, newTd, 0, _tdef.BlockEnd);
 
         // Real-idx skip block (existing slots, unchanged content).
-        int oldRealIdxSkipLen = numRealIdx * _realIdxEntrySz;
-        Buffer.BlockCopy(td, _tdBlockEnd, newTd, _tdBlockEnd, oldRealIdxSkipLen);
-        int newRealIdxSkipEnd = _tdBlockEnd + oldRealIdxSkipLen + deltaRealIdxSkip;
+        int oldRealIdxSkipLen = numRealIdx * _tdef.RealIdxEntrySz;
+        Buffer.BlockCopy(td, _tdef.BlockEnd, newTd, _tdef.BlockEnd, oldRealIdxSkipLen);
+        int newRealIdxSkipEnd = _tdef.BlockEnd + oldRealIdxSkipLen + deltaRealIdxSkip;
 
         // Column descriptors.
-        int oldColStart = _tdBlockEnd + oldRealIdxSkipLen;
-        int colDescBlockLen = numCols * _colDescSz;
+        int oldColStart = _tdef.BlockEnd + oldRealIdxSkipLen;
+        int colDescBlockLen = numCols * _colDesc.Size;
         Buffer.BlockCopy(td, oldColStart, newTd, newRealIdxSkipEnd, colDescBlockLen);
 
         // Column names (variable length).
@@ -1823,10 +1823,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         // Update header counts.
-        Wi32(newTd, _tdNumCols + 2, numIdx + 1);
+        Wi32(newTd, _tdef.NumCols + 2, numIdx + 1);
         if (allocateNewRealIdx)
         {
-            Wi32(newTd, _tdNumRealIdx, numRealIdx + 1);
+            Wi32(newTd, _tdef.NumRealIdx, numRealIdx + 1);
         }
 
         // tdef_len at offset 8 = (newEnd - 8). The page header (8 bytes) is
@@ -1843,8 +1843,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private int LocateRealIdxDescStart(byte[] td, int numCols, int numRealIdx)
     {
-        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
-        int pos = colStart + (numCols * _colDescSz);
+        int colStart = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
+        int pos = colStart + (numCols * _colDesc.Size);
         for (int i = 0; i < numCols; i++)
         {
             if (ReadColumnName(td, ref pos, out _) < 0)
@@ -2218,7 +2218,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                if (Ri32(page, _dpTDefOff) != msysRelTdefPage)
+                if (Ri32(page, _dataPage.TDefOff) != msysRelTdefPage)
                 {
                     continue;
                 }
@@ -2326,7 +2326,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Array.Clear(td, finalEnd, layout.CurrentEnd - finalEnd);
 
         // Update header counts.
-        Wi32(td, _tdNumCols + 2, layout.NumIdx - 1);
+        Wi32(td, _tdef.NumCols + 2, layout.NumIdx - 1);
         Wi32(td, 8, finalEnd - 8);
 
         await WritePageAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
@@ -2349,7 +2349,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </para>
     /// <para>
     /// Removes both the corresponding entry from the leading real-idx skip
-    /// block (<c>num_real_idx × _realIdxEntrySz</c> bytes immediately after
+    /// block (<c>num_real_idx × _tdef.RealIdxEntrySz</c> bytes immediately after
     /// the Jet4 TDEF block) and the trailing 52-byte physical descriptor,
     /// decrements <c>num_real_idx</c>, and updates <c>tdef_len</c>.
     /// </para>
@@ -2397,19 +2397,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // Step 1 — drop the trailing N entries (12 bytes each on Jet4) from
         // the leading real-idx skip block. The skip block lives at
-        // [_tdBlockEnd, _tdBlockEnd + numRealIdx * _realIdxEntrySz). We
-        // collapse out the LAST N × _realIdxEntrySz bytes of that block by
+        // [_tdef.BlockEnd, _tdef.BlockEnd + numRealIdx * _tdef.RealIdxEntrySz). We
+        // collapse out the LAST N × _tdef.RealIdxEntrySz bytes of that block by
         // left-shifting everything that follows.
-        int oldSkipEnd = _tdBlockEnd + (layout.NumRealIdx * _realIdxEntrySz);
-        int newSkipEnd = oldSkipEnd - (reclaim * _realIdxEntrySz);
+        int oldSkipEnd = _tdef.BlockEnd + (layout.NumRealIdx * _tdef.RealIdxEntrySz);
+        int newSkipEnd = oldSkipEnd - (reclaim * _tdef.RealIdxEntrySz);
         Buffer.BlockCopy(td, oldSkipEnd, td, newSkipEnd, layout.CurrentEnd - oldSkipEnd);
-        int endAfterStep1 = layout.CurrentEnd - (reclaim * _realIdxEntrySz);
+        int endAfterStep1 = layout.CurrentEnd - (reclaim * _tdef.RealIdxEntrySz);
 
         // After step 1 the real-idx physical descriptor section starts at
-        // (realIdxDescStart - reclaim * _realIdxEntrySz). We need to drop the
+        // (realIdxDescStart - reclaim * _tdef.RealIdxEntrySz). We need to drop the
         // trailing N × 52 bytes of physical descriptors. Compute the new
         // boundaries.
-        int newRealIdxDescStart = layout.RealIdxDescStart - (reclaim * _realIdxEntrySz);
+        int newRealIdxDescStart = layout.RealIdxDescStart - (reclaim * _tdef.RealIdxEntrySz);
         int newPhysEnd = newRealIdxDescStart + ((layout.NumRealIdx - reclaim) * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
         int oldPhysEnd = newRealIdxDescStart + (layout.NumRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
 
@@ -2423,7 +2423,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Array.Clear(td, finalEnd, layout.CurrentEnd - finalEnd);
 
         // Update header counts.
-        Wi32(td, _tdNumRealIdx, layout.NumRealIdx - reclaim);
+        Wi32(td, _tdef.NumRealIdx, layout.NumRealIdx - reclaim);
         Wi32(td, 8, finalEnd - 8);
 
         await WritePageAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
@@ -2543,9 +2543,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        int numCols = Ru16(td, _tdNumCols);
-        int numIdx = Ri32(td, _tdNumCols + 2);
-        int numRealIdx = Ri32(td, _tdNumRealIdx);
+        int numCols = Ru16(td, _tdef.NumCols);
+        int numIdx = Ri32(td, _tdef.NumCols + 2);
+        int numRealIdx = Ri32(td, _tdef.NumRealIdx);
         if (numCols < 0 || numCols > 4096
             || numIdx < 0 || numIdx > 1000
             || numRealIdx < 0 || numRealIdx > 1000)
@@ -3253,8 +3253,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return null;
         }
 
-        int numCols = Ru16(td, _tdNumCols);
-        int numRealIdx = Ri32(td, _tdNumRealIdx);
+        int numCols = Ru16(td, _tdef.NumCols);
+        int numRealIdx = Ri32(td, _tdef.NumRealIdx);
         if (numCols < 0 || numCols > 4096 || numRealIdx <= 0 || numRealIdx > 1000)
         {
             return null;
@@ -3739,7 +3739,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             byte[] page = await ReadPageAsync(kvp.Key, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != childEntry.TDefPage)
+                if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != childEntry.TDefPage)
                 {
                     // The seek pointer led to an unexpected page — bail.
                     return false;
@@ -4060,7 +4060,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             byte[] page = await ReadPageAsync(kvp.Key, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != 0x01 || Ri32(page, _dpTDefOff) != childEntry.TDefPage)
+                if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != childEntry.TDefPage)
                 {
                     return false;
                 }
@@ -4177,7 +4177,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                if (Ri32(page, _dpTDefOff) != msysRelTdefPage)
+                if (Ri32(page, _dataPage.TDefOff) != msysRelTdefPage)
                 {
                     continue;
                 }
@@ -5835,7 +5835,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         // One row per LVAL page. The row table costs 2 bytes for a single offset.
-        int singleRowMax = _pgSz - _dpRowsStart - 2;
+        int singleRowMax = _pgSz - _dataPage.RowsStart - 2;
         int chainRowMax = singleRowMax - 4; // first 4 bytes of each chained row are the next-pointer
 
         var header = new byte[12];
@@ -5880,14 +5880,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         byte[] page = new byte[_pgSz];
         page[0] = 0x01; // page_type = data page (the reader treats LVAL pages as type 0x01 with tdef_page = 0)
         page[1] = 0x01;
-        Wi32(page, _dpTDefOff, 0);
-        Wu16(page, _dpNumRows, 1);
+        Wi32(page, _dataPage.TDefOff, 0);
+        Wu16(page, _dataPage.NumRows, 1);
 
         int rowStart = _pgSz - payload.Length;
         Buffer.BlockCopy(payload, 0, page, rowStart, payload.Length);
-        Wu16(page, _dpRowsStart, rowStart);
+        Wu16(page, _dataPage.RowsStart, rowStart);
 
-        int freeSpace = rowStart - (_dpRowsStart + 2);
+        int freeSpace = rowStart - (_dataPage.RowsStart + 2);
         Wu16(page, 2, freeSpace);
         return page;
     }
@@ -5902,16 +5902,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         byte[] page = new byte[_pgSz];
         page[0] = 0x01;
         page[1] = 0x01;
-        Wi32(page, _dpTDefOff, 0);
-        Wu16(page, _dpNumRows, 1);
+        Wi32(page, _dataPage.TDefOff, 0);
+        Wu16(page, _dataPage.NumRows, 1);
 
         int rowLen = 4 + length;
         int rowStart = _pgSz - rowLen;
         Wi32(page, rowStart, (int)nextDp);
         Buffer.BlockCopy(data, offset, page, rowStart + 4, length);
-        Wu16(page, _dpRowsStart, rowStart);
+        Wu16(page, _dataPage.RowsStart, rowStart);
 
-        int freeSpace = rowStart - (_dpRowsStart + 2);
+        int freeSpace = rowStart - (_dataPage.RowsStart + 2);
         Wu16(page, 2, freeSpace);
         return page;
     }
@@ -6460,47 +6460,47 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // docs/design/index-and-relationship-format-notes.md §3.3.
         int numRealIdx = numIdx;
 
-        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
-        int namePos = colStart + (numCols * _colDescSz);
+        int colStart = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * _colDesc.Size);
         int nameLenSize = jet4 ? 2 : 1;
 
         page[0] = 0x02;
         page[1] = 0x01;
 
-        // TDEF header fields: offsets are relative to _tdNumCols / _tdNumRealIdx
+        // TDEF header fields: offsets are relative to _tdef.NumCols / _tdef.NumRealIdx
         // so both JET3 and JET4 layouts are covered.
-        page[_tdNumCols - 5] = 0x4E;
-        Wu16(page, _tdNumCols - 4, numCols);
-        Wu16(page, _tdNumCols, numCols);
+        page[_tdef.NumCols - 5] = 0x4E;
+        Wu16(page, _tdef.NumCols - 4, numCols);
+        Wu16(page, _tdef.NumCols, numCols);
 
         // num_idx (4 bytes immediately after num_cols) and num_real_idx.
-        Wi32(page, _tdNumCols + 2, numIdx);
-        Wi32(page, _tdNumRealIdx, numRealIdx);
+        Wi32(page, _tdef.NumCols + 2, numIdx);
+        Wi32(page, _tdef.NumRealIdx, numRealIdx);
 
         // Leading real-index entries (Jet4: 12 bytes each; Jet3: 8 bytes each).
         // Per mdbtools: unknown(4) + num_idx_rows(4) + unknown(4). Zeroed.
-        // Slot lives at _tdBlockEnd .. colStart and is already zero-initialised.
+        // Slot lives at _tdef.BlockEnd .. colStart and is already zero-initialised.
 
         int numVarCols = 0;
         for (int i = 0; i < numCols; i++)
         {
             ColumnInfo col = tableDef.Columns[i];
-            int o = colStart + (i * _colDescSz);
+            int o = colStart + (i * _colDesc.Size);
 
             if (IsVariableType(col.Type))
             {
                 numVarCols++;
             }
 
-            page[o + _colTypeOff] = col.Type;
-            Wu16(page, o + _colNumOff, col.ColNum);
-            Wu16(page, o + _colVarOff, col.VarIdx);
-            page[o + _colFlagsOff] = col.Flags;
-            Wu16(page, o + _colFixedOff, col.FixedOff);
-            Wu16(page, o + _colSzOff, col.Size);
+            page[o + _colDesc.TypeOff] = col.Type;
+            Wu16(page, o + _colDesc.NumOff, col.ColNum);
+            Wu16(page, o + _colDesc.VarOff, col.VarIdx);
+            page[o + _colDesc.FlagsOff] = col.Flags;
+            Wu16(page, o + _colDesc.FixedOff, col.FixedOff);
+            Wu16(page, o + _colDesc.SzOff, col.Size);
 
             // Complex columns (T_ATTACHMENT / T_COMPLEX) carry the 4-byte ComplexID
-            // at descriptor-relative offset _colMiscOff (=11 on Jet4/ACE). Round-tripped
+            // at descriptor-relative offset _colDesc.MiscOff (=11 on Jet4/ACE). Round-tripped
             // through reader → writer so existing complex columns survive
             // RewriteTableAsync (AddColumn / DropColumn / RenameColumn). For new
             // complex columns declared via ColumnDefinition.AsAttachment() /
@@ -6509,7 +6509,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // row are not yet emitted (see complex-columns-format-notes.md).
             if (col.Type == T_ATTACHMENT || col.Type == T_COMPLEX)
             {
-                Wi32(page, o + _colMiscOff, col.Misc);
+                Wi32(page, o + _colDesc.MiscOff, col.Misc);
             }
             else if (col.Type == T_NUMERIC && _format != DatabaseFormat.Jet3Mdb)
             {
@@ -6520,8 +6520,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 // Access-authored fixedNumericTest fixtures). Read back by
                 // AccessBase.LoadColumnInfos and consumed by index encoders as
                 // the canonical index-key scale.
-                page[o + _colMiscOff] = col.NumericPrecision;
-                page[o + _colMiscOff + 1] = col.NumericScale;
+                page[o + _colDesc.MiscOff] = col.NumericPrecision;
+                page[o + _colDesc.MiscOff + 1] = col.NumericScale;
             }
 
             byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : _ansiEncoding.GetBytes(col.Name);
@@ -6544,7 +6544,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             namePos += nameBytes.Length;
         }
 
-        Wu16(page, _tdNumCols - 2, numVarCols);
+        Wu16(page, _tdef.NumCols - 2, numVarCols);
 
         // ── Index sections ─────
         int[] firstDpOffsets = numIdx > 0 ? new int[numIdx] : [];
@@ -6927,7 +6927,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                if (Ri32(page, _dpTDefOff) != msysComplexPg)
+                if (Ri32(page, _dataPage.TDefOff) != msysComplexPg)
                 {
                     continue;
                 }
@@ -7349,7 +7349,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                if (Ri32(page, _dpTDefOff) != msysPg)
+                if (Ri32(page, _dataPage.TDefOff) != msysPg)
                 {
                     continue;
                 }
@@ -7408,7 +7408,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                if (Ri32(page, _dpTDefOff) != parentTdefPage)
+                if (Ri32(page, _dataPage.TDefOff) != parentTdefPage)
                 {
                     continue;
                 }
@@ -7477,7 +7477,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             int bitOff = complexCol.ColNum % 8;
             bool slotSet = byteOff < parentRowSize && (page[parentRowStart + byteOff] & (1 << bitOff)) != 0;
 
-            int slotOff = parentRowStart + _numColsFldSz + complexCol.FixedOff;
+            int slotOff = parentRowStart + _rowSz.NumCols + complexCol.FixedOff;
             if (slotSet && slotOff + 4 <= parentRowStart + parentRowSize)
             {
                 int existing = Ri32(page, slotOff);
@@ -7514,7 +7514,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             int numCols = _format != DatabaseFormat.Jet3Mdb ? Ru16(page, rowStart) : page[rowStart];
             int nullMaskSz = (numCols + 7) / 8;
             int nullMaskPos = rowSize - nullMaskSz;
-            int slotOff = rowStart + _numColsFldSz + complexCol.FixedOff;
+            int slotOff = rowStart + _rowSz.NumCols + complexCol.FixedOff;
             if (slotOff + 4 > rowStart + rowSize)
             {
                 throw new InvalidDataException("Complex column slot is out of row bounds.");
@@ -7560,7 +7560,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                if (Ri32(page, _dpTDefOff) != flatTdefPage)
+                if (Ri32(page, _dataPage.TDefOff) != flatTdefPage)
                 {
                     continue;
                 }
@@ -7736,7 +7736,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         continue;
                     }
 
-                    int slotOff = loc.RowStart + _numColsFldSz + col.FixedOff;
+                    int slotOff = loc.RowStart + _rowSz.NumCols + col.FixedOff;
                     if (slotOff + 4 > loc.RowStart + loc.RowSize)
                     {
                         continue;
@@ -7796,7 +7796,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                         continue;
                     }
 
-                    if (Ri32(page, _dpTDefOff) != flatTdefPage)
+                    if (Ri32(page, _dataPage.TDefOff) != flatTdefPage)
                     {
                         continue;
                     }
@@ -7932,7 +7932,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                if (Ri32(page, _dpTDefOff) != msysCxPg)
+                if (Ri32(page, _dataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
@@ -8044,7 +8044,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                if (Ri32(page, _dpTDefOff) != msysCxPg)
+                if (Ri32(page, _dataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
@@ -8165,7 +8165,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     continue;
                 }
 
-                if (Ri32(page, _dpTDefOff) != msysCxPg)
+                if (Ri32(page, _dataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
@@ -8525,8 +8525,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return false;
             }
 
-            int numCols = Ru16(page, _tdNumCols);
-            int numRealIdx = Ri32(page, _tdNumRealIdx);
+            int numCols = Ru16(page, _tdef.NumCols);
+            int numRealIdx = Ri32(page, _tdef.NumRealIdx);
             if (numCols < 0 || numCols > 4096 || numRealIdx <= 0 || numRealIdx > 1000)
             {
                 return false;
@@ -8588,7 +8588,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int rowStart;
         try
         {
-            rowIndex = Ru16(target.Page, _dpNumRows);
+            rowIndex = Ru16(target.Page, _dataPage.NumRows);
             rowStart = GetFirstRowStart(target.Page, rowIndex) - rowBytes.Length;
             await WriteRowToPageAsync(target.PageNumber, target.Page, rowBytes, cancellationToken).ConfigureAwait(false);
         }
@@ -8633,7 +8633,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (TryGetCachedInsertPageNumber(tdefPage, out long cachedPageNumber))
         {
             byte[] cached = await ReadPageAsync(cachedPageNumber, cancellationToken).ConfigureAwait(false);
-            if (cached[0] == 0x01 && Ri32(cached, _dpTDefOff) == tdefPage && CanInsertRow(cached, rowLength))
+            if (cached[0] == 0x01 && Ri32(cached, _dataPage.TDefOff) == tdefPage && CanInsertRow(cached, rowLength))
             {
                 return new PageInsertTarget { PageNumber = cachedPageNumber, Page = cached };
             }
@@ -8655,7 +8655,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            if (Ri32(page, _dpTDefOff) != tdefPage)
+            if (Ri32(page, _dataPage.TDefOff) != tdefPage)
             {
                 ReturnPage(page);
                 continue;
@@ -8693,7 +8693,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private bool CanInsertRow(byte[] page, int rowLength)
     {
-        int numRows = Ru16(page, _dpNumRows);
+        int numRows = Ru16(page, _dataPage.NumRows);
 
         // JET row IDs encode the per-page row index as a single byte (0..255),
         // so a data page can hold at most 256 distinct row slots. Capping at
@@ -8705,7 +8705,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int dataStart = GetFirstRowStart(page, numRows);
-        int nextOffsetPos = _dpRowsStart + ((numRows + 1) * 2);
+        int nextOffsetPos = _dataPage.RowsStart + ((numRows + 1) * 2);
         return dataStart - nextOffsetPos >= rowLength;
     }
 
@@ -8714,7 +8714,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         int first = _pgSz;
         for (int i = 0; i < numRows; i++)
         {
-            int raw = Ru16(page, _dpRowsStart + (i * 2));
+            int raw = Ru16(page, _dataPage.RowsStart + (i * 2));
             int start = raw & 0x1FFF;
             if (start > 0 && start < first)
             {
@@ -8730,24 +8730,24 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         byte[] page = new byte[_pgSz];
         page[0] = 0x01;
         page[1] = 0x01;
-        Wu16(page, 2, _pgSz - _dpRowsStart);
-        Wi32(page, _dpTDefOff, (int)tdefPage);
-        Wu16(page, _dpNumRows, 0);
+        Wu16(page, 2, _pgSz - _dataPage.RowsStart);
+        Wi32(page, _dataPage.TDefOff, (int)tdefPage);
+        Wu16(page, _dataPage.NumRows, 0);
         return page;
     }
 
     private void WriteRowToPage(long pageNumber, byte[] page, byte[] rowBytes)
     {
-        int numRows = Ru16(page, _dpNumRows);
+        int numRows = Ru16(page, _dataPage.NumRows);
         int firstRowStart = GetFirstRowStart(page, numRows);
         int rowStart = firstRowStart - rowBytes.Length;
-        int rowOffsetPos = _dpRowsStart + (numRows * 2);
+        int rowOffsetPos = _dataPage.RowsStart + (numRows * 2);
 
         Buffer.BlockCopy(rowBytes, 0, page, rowStart, rowBytes.Length);
         Wu16(page, rowOffsetPos, rowStart);
-        Wu16(page, _dpNumRows, numRows + 1);
+        Wu16(page, _dataPage.NumRows, numRows + 1);
 
-        int freeSpace = rowStart - (_dpRowsStart + ((numRows + 1) * 2));
+        int freeSpace = rowStart - (_dataPage.RowsStart + ((numRows + 1) * 2));
         if (freeSpace < 0)
         {
             throw new InvalidDataException("Insufficient free space remained on the target page.");
@@ -8759,16 +8759,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     private async ValueTask WriteRowToPageAsync(long pageNumber, byte[] page, byte[] rowBytes, CancellationToken cancellationToken)
     {
-        int numRows = Ru16(page, _dpNumRows);
+        int numRows = Ru16(page, _dataPage.NumRows);
         int firstRowStart = GetFirstRowStart(page, numRows);
         int rowStart = firstRowStart - rowBytes.Length;
-        int rowOffsetPos = _dpRowsStart + (numRows * 2);
+        int rowOffsetPos = _dataPage.RowsStart + (numRows * 2);
 
         Buffer.BlockCopy(rowBytes, 0, page, rowStart, rowBytes.Length);
         Wu16(page, rowOffsetPos, rowStart);
-        Wu16(page, _dpNumRows, numRows + 1);
+        Wu16(page, _dataPage.NumRows, numRows + 1);
 
-        int freeSpace = rowStart - (_dpRowsStart + ((numRows + 1) * 2));
+        int freeSpace = rowStart - (_dataPage.RowsStart + ((numRows + 1) * 2));
         if (freeSpace < 0)
         {
             throw new InvalidDataException("Insufficient free space remained on the target page.");
@@ -8862,7 +8862,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         int varLen = maxVarIndex + 1;
-        int baseRowLength = _numColsFldSz + fixedAreaSize + varPayloadSize + _eodFldSz + (varLen * _varEntrySz) + _varLenFldSz + nullMask.Length;
+        int baseRowLength = _rowSz.NumCols + fixedAreaSize + varPayloadSize + _rowSz.Eod + (varLen * _rowSz.VarEntry) + _rowSz.VarLen + nullMask.Length;
 
         // Jet3 rows include a jump table whose size depends on total row length.
         int jumpSize = _format != DatabaseFormat.Jet3Mdb ? 0 : baseRowLength / 256;
@@ -8877,8 +8877,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         var row = new byte[rowLength];
         int pos = 0;
 
-        WriteField(row, pos, _numColsFldSz, numCols);
-        pos += _numColsFldSz;
+        WriteField(row, pos, _rowSz.NumCols, numCols);
+        pos += _rowSz.NumCols;
 
         if (fixedAreaSize > 0)
         {
@@ -8886,7 +8886,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             pos += fixedAreaSize;
         }
 
-        int currentOffset = _numColsFldSz + fixedAreaSize;
+        int currentOffset = _rowSz.NumCols + fixedAreaSize;
         var variableOffsets = varLen > 0 ? new int[varLen] : [];
         for (int varIndex = 0; varIndex < varLen; varIndex++)
         {
@@ -8900,20 +8900,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
         }
 
-        WriteField(row, pos, _eodFldSz, currentOffset);
-        pos += _eodFldSz;
+        WriteField(row, pos, _rowSz.Eod, currentOffset);
+        pos += _rowSz.Eod;
 
         for (int varIndex = varLen - 1; varIndex >= 0; varIndex--)
         {
-            WriteField(row, pos, _varEntrySz, variableOffsets[varIndex]);
-            pos += _varEntrySz;
+            WriteField(row, pos, _rowSz.VarEntry, variableOffsets[varIndex]);
+            pos += _rowSz.VarEntry;
         }
 
         // Jet3 jump table (entries are zero for newly written rows).
         pos += jumpSize;
 
-        WriteField(row, pos, _varLenFldSz, varLen);
-        pos += _varLenFldSz;
+        WriteField(row, pos, _rowSz.VarLen, varLen);
+        pos += _rowSz.VarLen;
         Buffer.BlockCopy(nullMask, 0, row, pos, nullMask.Length);
 
         return row;
@@ -9143,7 +9143,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            if (Ri32(page, _dpTDefOff) != 2)
+            if (Ri32(page, _dataPage.TDefOff) != 2)
             {
                 ReturnPage(page);
                 continue;
@@ -9193,7 +9193,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 continue;
             }
 
-            if (Ri32(page, _dpTDefOff) != tdefPage)
+            if (Ri32(page, _dataPage.TDefOff) != tdefPage)
             {
                 ReturnPage(page);
                 continue;
@@ -9411,16 +9411,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         IndexLeafPageBuilder.LeafPageLayout leafLayout = IndexLeafPageBuilder.GetLayout(_format);
 
-        int numCols = Ru16(tdefBuffer, _tdNumCols);
-        int numIdx = Ri32(tdefBuffer, _tdNumCols + 2);
-        int numRealIdx = Ri32(tdefBuffer, _tdNumRealIdx);
+        int numCols = Ru16(tdefBuffer, _tdef.NumCols);
+        int numIdx = Ri32(tdefBuffer, _tdef.NumCols + 2);
+        int numRealIdx = Ri32(tdefBuffer, _tdef.NumRealIdx);
         if (numIdx <= 0 || numRealIdx <= 0 || numIdx > 1000 || numRealIdx > 1000)
         {
             return;
         }
 
-        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
-        int namePos = colStart + (numCols * _colDescSz);
+        int colStart = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * _colDesc.Size);
         for (int i = 0; i < numCols; i++)
         {
             if (ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
@@ -9638,9 +9638,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ReturnPage(tdefPageBytes);
         }
 
-        int numCols = Ru16(tdefBuffer, _tdNumCols);
-        int numIdx = Ri32(tdefBuffer, _tdNumCols + 2);
-        int numRealIdx = Ri32(tdefBuffer, _tdNumRealIdx);
+        int numCols = Ru16(tdefBuffer, _tdef.NumCols);
+        int numIdx = Ri32(tdefBuffer, _tdef.NumCols + 2);
+        int numRealIdx = Ri32(tdefBuffer, _tdef.NumRealIdx);
         if (numIdx <= 0 || numRealIdx <= 0)
         {
             return true;
@@ -9655,8 +9655,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // §3.1 per-format real-idx physical descriptor sizes.
         // Jet4/ACE: 52 bytes — unknown(4) + col_map(30) + used_pages(4) + first_dp(4) + flags(1) + unknown(9).
         // Jet3:     39 bytes — unknown(4) + col_map(30) + first_dp(4) + flags(1) — no used_pages slot.
-        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
-        int namePos = colStart + (numCols * _colDescSz);
+        int colStart = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * _colDesc.Size);
         for (int i = 0; i < numCols; i++)
         {
             if (ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
@@ -11929,9 +11929,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ReturnPage(tdefPageBytes);
         }
 
-        int numCols = Ru16(tdefBuf, _tdNumCols);
-        int numIdx = Ri32(tdefBuf, _tdNumCols + 2);
-        int numRealIdx = Ri32(tdefBuf, _tdNumRealIdx);
+        int numCols = Ru16(tdefBuf, _tdef.NumCols);
+        int numIdx = Ri32(tdefBuf, _tdef.NumCols + 2);
+        int numRealIdx = Ri32(tdefBuf, _tdef.NumRealIdx);
         if (numIdx <= 0 || numRealIdx <= 0)
         {
             _lastIncrementalBail = $"S0 numIdx={numIdx} numRealIdx={numRealIdx}";
@@ -11944,8 +11944,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             return false;
         }
 
-        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
-        int namePos = colStart + (numCols * _colDescSz);
+        int colStart = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * _colDesc.Size);
         for (int i = 0; i < numCols; i++)
         {
             if (ReadColumnName(tdefBuf, ref namePos, out _) < 0)
@@ -12228,16 +12228,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             ReturnPage(tdefPageBytes);
         }
 
-        int numCols = Ru16(tdefBuffer, _tdNumCols);
-        int numIdx = Ri32(tdefBuffer, _tdNumCols + 2);
-        int numRealIdx = Ri32(tdefBuffer, _tdNumRealIdx);
+        int numCols = Ru16(tdefBuffer, _tdef.NumCols);
+        int numIdx = Ri32(tdefBuffer, _tdef.NumCols + 2);
+        int numRealIdx = Ri32(tdefBuffer, _tdef.NumRealIdx);
         if (numIdx <= 0 || numRealIdx <= 0 || numIdx > 1000 || numRealIdx > 1000)
         {
             return result;
         }
 
-        int colStart = _tdBlockEnd + (numRealIdx * _realIdxEntrySz);
-        int namePos = colStart + (numCols * _colDescSz);
+        int colStart = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * _colDesc.Size);
         for (int i = 0; i < numCols; i++)
         {
             if (ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
@@ -12503,7 +12503,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
     {
         byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        int offsetPos = _dpRowsStart + (rowIndex * 2);
+        int offsetPos = _dataPage.RowsStart + (rowIndex * 2);
         int raw = Ru16(page, offsetPos);
         if ((raw & 0x8000) != 0)
         {
