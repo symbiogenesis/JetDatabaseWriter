@@ -31,13 +31,13 @@ public abstract class AccessBase : IAccessBase
     // to inline `jet3 ? ... : ...` ternaries on every access.
 
     /// <summary>Per-format byte offsets within a data-page (page type 0x01) header — see <see cref="DataPageLayout"/>.</summary>
-    private protected readonly DataPageLayout _dataPage;
+    internal readonly DataPageLayout _dataPage;
 
     /// <summary>Per-format byte offsets within a TDEF block plus real-idx entry size — see <see cref="TDefHeaderLayout"/>.</summary>
-    private protected readonly TDefHeaderLayout _tdef;
+    internal readonly TDefHeaderLayout _tdef;
 
     /// <summary>Per-format byte offsets within one column descriptor — see <see cref="ColumnDescriptorLayout"/>.</summary>
-    private protected readonly ColumnDescriptorLayout _colDesc;
+    internal readonly ColumnDescriptorLayout _colDesc;
 
     /// <summary>Per-format byte sizes of the in-row trailer fields — see <see cref="RowFieldSizes"/>.</summary>
     private protected readonly RowFieldSizes _rowSz;
@@ -48,9 +48,9 @@ public abstract class AccessBase : IAccessBase
     /// </summary>
     private protected readonly IndexLayout _indexLayout;
 
-    private protected readonly int _pgSz;
-    private protected readonly DatabaseFormat _format;
-    private protected readonly Stream _stream;
+    internal readonly int _pgSz;
+    internal readonly DatabaseFormat _format;
+    internal readonly Stream _stream;
     private protected readonly Encoding _ansiEncoding;
     private protected readonly int _codePage;
     private protected readonly string _path;
@@ -63,7 +63,7 @@ public abstract class AccessBase : IAccessBase
     /// </summary>
     private protected readonly EncryptionManager.PageDecryptionKeys _pageKeys = new();
 
-    private protected bool _disposed;
+    internal bool _disposed;
     private readonly SemaphoreSlim _ioGate = new(1, 1);
     private volatile List<CatalogEntry>? _catalogCache;
 
@@ -207,27 +207,27 @@ public abstract class AccessBase : IAccessBase
     }
 
     // ── Static helpers ────────────────────────────────────────────────
-    private protected static void ReturnPage(byte[] page)
+    internal static void ReturnPage(byte[] page)
     {
         ArrayPool<byte>.Shared.Return(page);
     }
 
-    private protected static ushort Ru16(byte[] b, int o) =>
+    internal static ushort Ru16(byte[] b, int o) =>
         BinaryPrimitives.ReadUInt16LittleEndian(b.AsSpan(o, 2));
 
-    private protected static ushort Ru16(ReadOnlySpan<byte> b, int o) =>
+    internal static ushort Ru16(ReadOnlySpan<byte> b, int o) =>
         BinaryPrimitives.ReadUInt16LittleEndian(b.Slice(o, 2));
 
-    private protected static int Ri32(byte[] b, int o) =>
+    internal static int Ri32(byte[] b, int o) =>
         BinaryPrimitives.ReadInt32LittleEndian(b.AsSpan(o, 4));
 
-    private protected static uint Ru32(byte[] b, int o) =>
+    internal static uint Ru32(byte[] b, int o) =>
         BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(o, 4));
 
-    private protected static void Wu16(byte[] b, int o, int value) =>
+    internal static void Wu16(byte[] b, int o, int value) =>
         BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(o, 2), (ushort)value);
 
-    private protected static void Wi32(byte[] b, int o, int value) =>
+    internal static void Wi32(byte[] b, int o, int value) =>
         BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(o, 4), value);
 
     // Pure byte-decoding helpers (ReadUInt24LittleEndian / ReadUInt24BigEndian /
@@ -401,7 +401,7 @@ public abstract class AccessBase : IAccessBase
 
     // ── Page I/O ─────────────────────────────────────────────────────
 
-    private protected async ValueTask<byte[]> ReadPageAsync(long n, CancellationToken cancellationToken = default)
+    internal async ValueTask<byte[]> ReadPageAsync(long n, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -510,7 +510,7 @@ public abstract class AccessBase : IAccessBase
         return result;
     }
 
-    private protected async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
+    internal async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
     {
         byte[]? td = await ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
@@ -614,7 +614,7 @@ public abstract class AccessBase : IAccessBase
     /// advancing <paramref name="pos"/> past the name bytes.
     /// Returns the byte length consumed, or -1 if the name extends beyond <paramref name="td"/>.
     /// </summary>
-    private protected int ReadColumnName(byte[] td, ref int pos, out string name)
+    internal int ReadColumnName(byte[] td, ref int pos, out string name)
     {
         name = string.Empty;
         if (pos >= td.Length)
@@ -700,7 +700,7 @@ public abstract class AccessBase : IAccessBase
         }
     }
 
-    private protected async ValueTask WritePageAsync(long pageNumber, byte[] page, CancellationToken cancellationToken = default)
+    internal async ValueTask WritePageAsync(long pageNumber, byte[] page, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -756,7 +756,7 @@ public abstract class AccessBase : IAccessBase
         }
     }
 
-    private protected async ValueTask<long> AppendPageAsync(byte[] page, CancellationToken cancellationToken = default)
+    internal async ValueTask<long> AppendPageAsync(byte[] page, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -792,7 +792,7 @@ public abstract class AccessBase : IAccessBase
     // ── Catalog access ───────────────────────────────────────────────
 
     /// <summary>Finds a catalog entry by name (case-insensitive).</summary>
-    private protected async ValueTask<CatalogEntry?> GetCatalogEntryAsync(string tableName, CancellationToken cancellationToken = default)
+    internal async ValueTask<CatalogEntry?> GetCatalogEntryAsync(string tableName, CancellationToken cancellationToken = default)
     {
         var userTables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
         return userTables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
@@ -807,7 +807,7 @@ public abstract class AccessBase : IAccessBase
     /// Yields the bounds (row index, start offset, size) of every live (non-deleted, non-overflow)
     /// row on the given data <paramref name="page"/>.
     /// </summary>
-    private protected IEnumerable<RowBound> EnumerateLiveRowBounds(byte[] page)
+    internal IEnumerable<RowBound> EnumerateLiveRowBounds(byte[] page)
     {
         int numRows = Ru16(page, _dataPage.NumRows);
         if (numRows == 0)
@@ -1076,7 +1076,7 @@ public abstract class AccessBase : IAccessBase
     /// over <see cref="EnumerateLiveRowBounds(byte[])"/> for callers that need to round-trip
     /// the originating page number (update / delete paths).
     /// </summary>
-    private protected IEnumerable<RowLocation> EnumerateLiveRowLocations(long pageNumber, byte[] page)
+    internal IEnumerable<RowLocation> EnumerateLiveRowLocations(long pageNumber, byte[] page)
     {
         foreach (RowBound rb in EnumerateLiveRowBounds(page))
         {
@@ -1090,7 +1090,7 @@ public abstract class AccessBase : IAccessBase
     /// followed (they require LVAL chain traversal); those return <see cref="string.Empty"/>
     /// here. Used by writer-side catalog walks that only need scalar metadata columns.
     /// </summary>
-    private protected string DecodeSimpleColumnValue(byte[] page, int rowStart, int rowSize, ColumnInfo column)
+    internal string DecodeSimpleColumnValue(byte[] page, int rowStart, int rowSize, ColumnInfo column)
     {
         if (column == null || rowSize < _rowSz.NumCols)
         {
@@ -1154,13 +1154,7 @@ public abstract class AccessBase : IAccessBase
 
     // ── Inner types ──────────────────────────────────────────────────
 
-    private protected readonly record struct RowBound(int RowIndex, int RowStart, int RowSize);
-
-    /// <summary>Per-row coordinates that include the owning data page number — used by writer-side
-    /// scans that need to round-trip back to the page (update / delete / re-encrypt).</summary>
-    private protected readonly record struct RowLocation(long PageNumber, int RowIndex, int RowStart, int RowSize);
-
-    private protected sealed record CatalogEntry(string Name, long TDefPage);
+    internal readonly record struct RowBound(int RowIndex, int RowStart, int RowSize);
 
     /// <summary>Parsed row-trailer metadata — see <see cref="TryParseRowLayout"/>.</summary>
     internal readonly record struct RowLayout(
