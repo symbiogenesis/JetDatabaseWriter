@@ -46,7 +46,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private const int CascadeMaxDepth = 64;
 
     private readonly ReadOnlyMemory<char> _password;
-    private readonly LockFileCoordinator _lockFile;
+    private readonly LockFileCoordinator _lockFileCoordinator;
     private readonly bool _useByteRangeLocks;
     private readonly int _lockTimeoutMilliseconds;
     private readonly int _maxTransactionPageBudget;
@@ -89,10 +89,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Stream stream,
         byte[] header,
         ReadOnlyMemory<char> password,
-        bool useLockFile,
-        bool respectExistingLockFile,
-        string? lockFileUserName,
-        string? lockFileMachineName,
+        LockFileCoordinator lockFileCoordinator,
         bool useByteRangeLocks,
         int lockTimeoutMilliseconds,
         int maxTransactionPageBudget,
@@ -103,12 +100,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         : base(stream, header, path)
     {
         _password = password;
-        _lockFile = LockFileCoordinator.ForWriter(
-            path,
-            useLockFile,
-            respectExistingLockFile,
-            lockFileUserName,
-            lockFileMachineName);
+        _lockFileCoordinator = lockFileCoordinator;
         _useByteRangeLocks = useByteRangeLocks;
         _lockTimeoutMilliseconds = lockTimeoutMilliseconds;
         _maxTransactionPageBudget = maxTransactionPageBudget;
@@ -135,7 +127,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         (_pageKeys.Rc4DbKey, _pageKeys.AesPageKey) =
             EncryptionManager.ResolveReaderPageKeys(header, _format, isLegacyAesCfb, password);
 
-        using var lockGuard = _lockFile.AcquireWithRollback();
+        using var lockGuard = _lockFileCoordinator.AcquireWithRollback();
         _byteRangeLock = JetByteRangeLock.Create(stream, _useByteRangeLocks, _lockTimeoutMilliseconds);
         lockGuard.Commit();
     }
@@ -220,15 +212,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     inner.Position = 0;
                     byte[] innerHeader = await ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
 
+                    var lockFileCoordinator = LockFileCoordinator.ForWriter(
+                            path,
+                            options.UseLockFile,
+                            options.RespectExistingLockFile,
+                            options.LockFileUserName,
+                            options.LockFileMachineName);
+
                     return new AccessWriter(
                         path,
                         inner,
                         innerHeader,
                         options.Password,
-                        options.UseLockFile,
-                        options.RespectExistingLockFile,
-                        options.LockFileUserName,
-                        options.LockFileMachineName,
+                        lockFileCoordinator,
                         options.UseByteRangeLocks,
                         options.LockTimeoutMilliseconds,
                         options.MaxTransactionPageBudget,
@@ -250,10 +246,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 wrapped,
                 header,
                 options.Password,
-                options.UseLockFile,
-                options.RespectExistingLockFile,
-                options.LockFileUserName,
-                options.LockFileMachineName,
+                LockFileCoordinator.ForWriter(
+                    path,
+                    options.UseLockFile,
+                    options.RespectExistingLockFile,
+                    options.LockFileUserName,
+                    options.LockFileMachineName),
                 options.UseByteRangeLocks,
                 options.LockTimeoutMilliseconds,
                 options.MaxTransactionPageBudget,
@@ -4929,7 +4927,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // failure, and unconditionally releases the .ldb / .laccdb slot last.
         // Lock-file release runs after the agile re-wrap so the lock-file
         // accurately reflects "database still in use" while we re-encrypt.
-        await _lockFile.DisposeAfterAsync(
+        await _lockFileCoordinator.DisposeAfterAsync(
             DisposeActiveTransactionAsync,
             RewrapAndCloseOuterEncryptedStreamAsync,
             DisposeStateLockAsync,

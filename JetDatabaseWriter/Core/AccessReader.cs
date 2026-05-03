@@ -88,9 +88,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         _ownedDataPageIndex = new(BuildOwnedDataPageIndexAsync);
         _lockFile = LockFileCoordinator.ForReader(path, options);
         _strictParsing = options.StrictParsing;
-        LinkedSourcePathValidator = options.LinkedSourcePathValidator;
-        LinkedSourcePathAllowlist = LinkedTableManager.NormalizeAllowlist(options.LinkedSourcePathAllowlist, path);
-        LinkedSourceOpenOptions = LinkedTableManager.CreateLinkedSourceOpenOptions(options, LinkedSourcePathAllowlist, LinkedSourcePathValidator);
+        LinkedSourceOpenOptions = LinkedTableManager.CreateLinkedSourceOpenOptions(options, path);
         var password = LinkedSourceOpenOptions.Password;
 
         DiagnosticsEnabled = options.DiagnosticsEnabled;
@@ -147,14 +145,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>Gets the absolute path of the database backing this reader, or empty when opened from a stream. Used by <see cref="LinkedTableManager"/> to anchor relative source paths.</summary>
     internal string HostDatabasePath => _path;
 
-    /// <summary>Gets the cached options used to re-open linked-source databases referenced by this reader.</summary>
+    /// <summary>
+    /// Gets the cached options used to re-open linked-source databases referenced
+    /// by this reader. Carries the normalised allowlist (resolved against the host
+    /// database directory) and the optional path validator on its own properties,
+    /// so transitively linked databases inherit the same security policy.
+    /// </summary>
     internal AccessReaderOptions LinkedSourceOpenOptions { get; }
-
-    /// <summary>Gets the normalized allowlist of directories that linked-source paths must reside under (empty allows any directory).</summary>
-    internal string[] LinkedSourcePathAllowlist { get; }
-
-    /// <summary>Gets the optional callback that approves linked-source paths before opening.</summary>
-    internal Func<LinkedTableInfo, string, bool>? LinkedSourcePathValidator { get; }
 
     /// <summary>
     /// Asynchronously opens a JET database file and returns a new <see cref="AccessReader"/> instance.
