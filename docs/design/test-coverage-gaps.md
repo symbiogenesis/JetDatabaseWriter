@@ -60,6 +60,12 @@ out cases that fixture sweep does **not** specifically isolate.
   `LegacyFixedPointColumnDescriptor` vs `FixedPointColumnDescriptor`
   sign-byte handling for Money / NUMERIC keys (the fixture sweep exercises
   both paths positionally but does not isolate the sign-byte branch).
+  > **Sign-byte branch closed.** `IndexKeyEncoderTests.Numeric_SignByte_IsolatedAcrossFormatAndDirection`
+  > pins down all eight (`asc/desc × pos/neg × legacy/new-style`) sign-byte
+  > outcomes — see [IndexKeyEncoderTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexKeyEncoderTests.cs).
+  > The remaining open work under this bullet is Money (`T_MONEY = 0x05`,
+  > scaled int64) — the same isolated-cross-format theory has not yet been
+  > added for it; the fixture sweep covers it positionally only.
 - [ ] **`[J]` `[S]`** OLE long-value index keys — not present in the current
   Jackcess fixture set; needs a synthetic fixture.
 - [ ] **`[J]` `[S]`** Extended Date/Time (`SHORT_DATE_TIME` extended; 42-byte
