@@ -45,12 +45,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private const int CascadeMaxDepth = 64;
 
-    private readonly ReadOnlyMemory<char> _password;
+    private readonly AccessWriterOptions _options;
     private readonly LockFileCoordinator _lockFileCoordinator;
-    private readonly bool _useByteRangeLocks;
-    private readonly int _lockTimeoutMilliseconds;
-    private readonly int _maxTransactionPageBudget;
-    private readonly bool _useTransactionalWrites;
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeStateLockAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private readonly ReaderWriterLockSlim _stateLock = new(LockRecursionPolicy.NoRecursion);
 
@@ -88,23 +84,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         string path,
         Stream stream,
         byte[] header,
-        ReadOnlyMemory<char> password,
-        LockFileCoordinator lockFileCoordinator,
-        bool useByteRangeLocks,
-        int lockTimeoutMilliseconds,
-        int maxTransactionPageBudget,
-        bool useTransactionalWrites,
+        AccessWriterOptions options,
         Stream? outerEncryptedStream = null,
         bool outerEncryptedLeaveOpen = false,
         bool isAgileEncryptedRewrap = false)
         : base(stream, header, path)
     {
-        _password = password;
-        _lockFileCoordinator = lockFileCoordinator;
-        _useByteRangeLocks = useByteRangeLocks;
-        _lockTimeoutMilliseconds = lockTimeoutMilliseconds;
-        _maxTransactionPageBudget = maxTransactionPageBudget;
-        _useTransactionalWrites = useTransactionalWrites;
+        _options = options;
+        _lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
         _outerEncryptedStream = outerEncryptedStream;
         _outerEncryptedLeaveOpen = outerEncryptedLeaveOpen;
         _isAgileEncryptedRewrap = isAgileEncryptedRewrap;
@@ -125,10 +112,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // Jet4 RC4 database key and / or the legacy AES-128 page key when
         // applicable).
         (_pageKeys.Rc4DbKey, _pageKeys.AesPageKey) =
-            EncryptionManager.ResolveReaderPageKeys(header, _format, isLegacyAesCfb, password);
+            EncryptionManager.ResolveReaderPageKeys(header, _format, isLegacyAesCfb, options.Password);
 
         using var lockGuard = _lockFileCoordinator.AcquireWithRollback();
-        _byteRangeLock = JetByteRangeLock.Create(stream, _useByteRangeLocks, _lockTimeoutMilliseconds);
+        _byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
         lockGuard.Commit();
     }
 
@@ -212,23 +199,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     inner.Position = 0;
                     byte[] innerHeader = await ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
 
-                    var lockFileCoordinator = LockFileCoordinator.ForWriter(
-                            path,
-                            options.UseLockFile,
-                            options.RespectExistingLockFile,
-                            options.LockFileUserName,
-                            options.LockFileMachineName);
-
                     return new AccessWriter(
                         path,
                         inner,
                         innerHeader,
-                        options.Password,
-                        lockFileCoordinator,
-                        options.UseByteRangeLocks,
-                        options.LockTimeoutMilliseconds,
-                        options.MaxTransactionPageBudget,
-                        options.UseTransactionalWrites,
+                        options,
                         outerEncryptedStream: wrapped,
                         outerEncryptedLeaveOpen: leaveOpen,
                         isAgileEncryptedRewrap: true);
@@ -245,17 +220,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 path,
                 wrapped,
                 header,
-                options.Password,
-                LockFileCoordinator.ForWriter(
-                    path,
-                    options.UseLockFile,
-                    options.RespectExistingLockFile,
-                    options.LockFileUserName,
-                    options.LockFileMachineName),
-                options.UseByteRangeLocks,
-                options.LockTimeoutMilliseconds,
-                options.MaxTransactionPageBudget,
-                options.UseTransactionalWrites);
+                options);
         }
         catch
         {
@@ -4632,7 +4597,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             long baseLength = _stream.Length;
-            var journal = new PageJournal(baseLength, PageSize, _maxTransactionPageBudget);
+            var journal = new PageJournal(baseLength, PageSize, _options.MaxTransactionPageBudget);
             var tx = new JetTransaction(this, journal);
             ActiveJournal = journal;
             _activeTransaction = tx;
@@ -4653,7 +4618,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private async ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
     {
-        if (!_useTransactionalWrites || _activeTransaction is not null || _disposed)
+        if (!_options.UseTransactionalWrites || _activeTransaction is not null || _disposed)
         {
             await work(cancellationToken).ConfigureAwait(false);
             return;
@@ -4692,7 +4657,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private async ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
     {
-        if (!_useTransactionalWrites || _activeTransaction is not null || _disposed)
+        if (!_options.UseTransactionalWrites || _activeTransaction is not null || _disposed)
         {
             return await work(cancellationToken).ConfigureAwait(false);
         }
@@ -4960,7 +4925,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // For Agile-encrypted databases the underlying _stream is an in-memory
         // copy of the *decrypted* ACCDB. Re-encrypt it before tearing down so
         // the user's outer encrypted stream/file ends up with all writes.
-        if (!_isAgileEncryptedRewrap || _outerEncryptedStream is null || _password.IsEmpty)
+        if (!_isAgileEncryptedRewrap || _outerEncryptedStream is null || _options.Password.IsEmpty)
         {
             return;
         }
@@ -4999,7 +4964,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         byte[] inner = memory.ToArray();
 
         (byte[] encryptionInfo, byte[] encryptedPackage) =
-            OfficeCryptoAgile.Encrypt(inner, _password.Span);
+            OfficeCryptoAgile.Encrypt(inner, _options.Password.Span);
 
         byte[] cfb = CompoundFileWriter.Build(
         [
@@ -5985,7 +5950,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             FileShare = FileShare.ReadWrite,
             ValidateOnOpen = false,
-            Password = _password,
+            Password = _options.Password,
         };
 
         AccessReader reader;
@@ -6018,7 +5983,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             FileShare = FileShare.ReadWrite,
             ValidateOnOpen = false,
-            Password = _password,
+            Password = _options.Password,
         };
 
         AccessReader reader;
@@ -6052,7 +6017,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             FileShare = FileShare.ReadWrite,
             ValidateOnOpen = false,
             UseLockFile = false,
-            Password = _password,
+            Password = _options.Password,
         };
 
         AccessReader reader;
