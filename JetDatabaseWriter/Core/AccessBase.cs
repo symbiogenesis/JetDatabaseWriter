@@ -291,6 +291,9 @@ public abstract class AccessBase : IAccessBase
     private protected static ushort Ru16(byte[] b, int o) =>
         BinaryPrimitives.ReadUInt16LittleEndian(b.AsSpan(o, 2));
 
+    private protected static ushort Ru16(ReadOnlySpan<byte> b, int o) =>
+        BinaryPrimitives.ReadUInt16LittleEndian(b.Slice(o, 2));
+
     private protected static int Ri32(byte[] b, int o) =>
         BinaryPrimitives.ReadInt32LittleEndian(b.AsSpan(o, 4));
 
@@ -384,7 +387,7 @@ public abstract class AccessBase : IAccessBase
     /// JET4 compressed-string algorithm is applied first.
     /// </summary>
     /// <returns>The decoded string.</returns>
-    private protected static string DecodeJet4Text(byte[] b, int start, int len)
+    private protected static string DecodeJet4Text(ReadOnlySpan<byte> b, int start, int len)
     {
         if (len < 2)
         {
@@ -398,7 +401,7 @@ public abstract class AccessBase : IAccessBase
 
         // Plain UCS-2 LE — length must be even
         int evenLen = len & ~1;
-        return evenLen > 0 ? Encoding.Unicode.GetString(b, start, evenLen) : string.Empty;
+        return evenLen > 0 ? JetTypeInfo.DecodeUtf16LE(b.Slice(start, evenLen)) : string.Empty;
     }
 
     /// <summary>
@@ -407,7 +410,7 @@ public abstract class AccessBase : IAccessBase
     /// uncompressed (UCS-2) mode.
     /// </summary>
     /// <returns>The decompressed string.</returns>
-    private protected static string DecompressJet4(byte[] b, int start, int len)
+    private protected static string DecompressJet4(ReadOnlySpan<byte> b, int start, int len)
     {
         var sb = new StringBuilder(len);
         bool compressed = true;
@@ -439,7 +442,7 @@ public abstract class AccessBase : IAccessBase
                 int runLen = i - runStart;
                 if (runLen > 0)
                 {
-                    _ = sb.Append(Encoding.Unicode.GetString(b, runStart, runLen));
+                    JetTypeInfo.AppendUtf16LE(sb, b.Slice(runStart, runLen));
                 }
 
                 if (i + 1 >= end)
@@ -709,7 +712,7 @@ public abstract class AccessBase : IAccessBase
                 return -1;
             }
 
-            name = Encoding.Unicode.GetString(td, pos, len);
+            name = JetTypeInfo.DecodeUtf16LE(td.AsSpan(pos, len));
             pos += len;
             return len + 2;
         }
@@ -949,7 +952,7 @@ public abstract class AccessBase : IAccessBase
     /// bytes, no var-offset table, no EOD marker) — which is how Jet lays out
     /// rows for tables with zero variable-length columns.</param>
     /// <param name="layout">Receives the parsed layout on success.</param>
-    private protected bool TryParseRowLayout(byte[] page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
+    private protected bool TryParseRowLayout(ReadOnlySpan<byte> page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
     {
         layout = default;
         if (rowSize < _numColsFldSz)
@@ -1008,7 +1011,7 @@ public abstract class AccessBase : IAccessBase
     /// <paramref name="col"/> within a row whose layout has been parsed by
     /// <see cref="TryParseRowLayout"/>.
     /// </summary>
-    private protected ColumnSlice ResolveColumnSlice(byte[] page, int rowStart, int rowSize, in RowLayout layout, ColumnInfo col)
+    private protected ColumnSlice ResolveColumnSlice(ReadOnlySpan<byte> page, int rowStart, int rowSize, in RowLayout layout, ColumnInfo col)
     {
         bool nullBit = false;
         if (col.ColNum < layout.NumCols)

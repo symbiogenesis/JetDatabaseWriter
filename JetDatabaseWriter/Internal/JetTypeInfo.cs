@@ -3,6 +3,8 @@ namespace JetDatabaseWriter.Internal;
 using System;
 using System.Buffers.Binary;
 using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Text;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Internal.Models;
@@ -173,7 +175,7 @@ internal static class JetTypeInfo
     /// surface as <see cref="JetLimitationException"/> instead of being silently elided
     /// to the empty string — the contract the typed reader path relies on.
     /// </summary>
-    internal static string ReadFixedString(byte[] row, int start, byte type, int size, bool strictNumeric = false)
+    internal static string ReadFixedString(ReadOnlySpan<byte> row, int start, byte type, int size, bool strictNumeric = false)
     {
         try
         {
@@ -182,26 +184,26 @@ internal static class JetTypeInfo
                 case T_BYTE:
                     return row[start].ToString(CultureInfo.InvariantCulture);
                 case T_INT:
-                    return ((short)BinaryPrimitives.ReadUInt16LittleEndian(row.AsSpan(start, 2))).ToString(CultureInfo.InvariantCulture);
+                    return ((short)BinaryPrimitives.ReadUInt16LittleEndian(row.Slice(start, 2))).ToString(CultureInfo.InvariantCulture);
                 case T_LONG:
-                    return BinaryPrimitives.ReadInt32LittleEndian(row.AsSpan(start, 4)).ToString(CultureInfo.InvariantCulture);
+                    return BinaryPrimitives.ReadInt32LittleEndian(row.Slice(start, 4)).ToString(CultureInfo.InvariantCulture);
                 case T_FLOAT:
-                    return ReadSingleLittleEndian(row.AsSpan(start, 4)).ToString("G", CultureInfo.InvariantCulture);
+                    return ReadSingleLittleEndian(row.Slice(start, 4)).ToString("G", CultureInfo.InvariantCulture);
                 case T_DOUBLE:
-                    return ReadDoubleLittleEndian(row.AsSpan(start, 8)).ToString("G", CultureInfo.InvariantCulture);
+                    return ReadDoubleLittleEndian(row.Slice(start, 8)).ToString("G", CultureInfo.InvariantCulture);
                 case T_DATETIME:
-                    return DateTime.FromOADate(ReadDoubleLittleEndian(row.AsSpan(start, 8))).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                    return DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8))).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
                 case T_MONEY:
-                    return decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(row.AsSpan(start, 8))).ToString("F4", CultureInfo.InvariantCulture);
+                    return decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(row.Slice(start, 8))).ToString("F4", CultureInfo.InvariantCulture);
                 case T_GUID:
-                    return new Guid(row.AsSpan(start, 16)).ToString("B");
+                    return new Guid(row.Slice(start, 16)).ToString("B");
                 case T_NUMERIC:
                     return ReadNumericString(row, start, strictNumeric);
                 case T_COMPLEX:
                 case T_ATTACHMENT:
-                    return size >= 4 ? $"__CX:{BinaryPrimitives.ReadInt32LittleEndian(row.AsSpan(start, 4))}__" : string.Empty;
+                    return size >= 4 ? $"__CX:{BinaryPrimitives.ReadInt32LittleEndian(row.Slice(start, 4))}__" : string.Empty;
                 default:
-                    return ToHexStringNoSeparator(row.AsSpan(start, Math.Min(size, 8)));
+                    return ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8)));
             }
         }
         catch (ArgumentException)
@@ -249,7 +251,7 @@ internal static class JetTypeInfo
     /// <see langword="false"/> they collapse to <see cref="DBNull.Value"/>.
     /// </para>
     /// </summary>
-    internal static object ReadFixedTyped(byte[] row, int start, byte type, int size, bool strictNumeric = false)
+    internal static object ReadFixedTyped(ReadOnlySpan<byte> row, int start, byte type, int size, bool strictNumeric = false)
     {
         try
         {
@@ -263,28 +265,28 @@ internal static class JetTypeInfo
                     // the legacy "(short)Ru16(...)" cast throws OverflowException for
                     // values with the high bit set and ReadFixedString silently maps
                     // those to string.Empty → DBNull. The typed path keeps the value.
-                    return BinaryPrimitives.ReadInt16LittleEndian(row.AsSpan(start, 2));
+                    return BinaryPrimitives.ReadInt16LittleEndian(row.Slice(start, 2));
                 case T_LONG:
-                    return BinaryPrimitives.ReadInt32LittleEndian(row.AsSpan(start, 4));
+                    return BinaryPrimitives.ReadInt32LittleEndian(row.Slice(start, 4));
                 case T_FLOAT:
-                    return ReadSingleLittleEndian(row.AsSpan(start, 4));
+                    return ReadSingleLittleEndian(row.Slice(start, 4));
                 case T_DOUBLE:
-                    return ReadDoubleLittleEndian(row.AsSpan(start, 8));
+                    return ReadDoubleLittleEndian(row.Slice(start, 8));
                 case T_DATETIME:
-                    return DateTime.FromOADate(ReadDoubleLittleEndian(row.AsSpan(start, 8)));
+                    return DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8)));
                 case T_MONEY:
-                    return decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(row.AsSpan(start, 8)));
+                    return decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(row.Slice(start, 8)));
                 case T_GUID:
-                    return new Guid(row.AsSpan(start, 16));
+                    return new Guid(row.Slice(start, 16));
                 case T_NUMERIC:
                     return ReadNumericTyped(row, start, strictNumeric);
                 case T_COMPLEX:
                 case T_ATTACHMENT:
                     return size >= 4
-                        ? new ComplexIdRef(BinaryPrimitives.ReadInt32LittleEndian(row.AsSpan(start, 4)))
+                        ? new ComplexIdRef(BinaryPrimitives.ReadInt32LittleEndian(row.Slice(start, 4)))
                         : DBNull.Value;
                 default:
-                    return ToHexStringNoSeparator(row.AsSpan(start, Math.Min(size, 8)));
+                    return ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8)));
             }
         }
         catch (ArgumentException)
@@ -309,7 +311,7 @@ internal static class JetTypeInfo
     /// <see langword="true"/> (the typed-reader path) those conditions throw
     /// <see cref="JetLimitationException"/> so the caller can surface the schema mismatch.
     /// </summary>
-    private static string ReadNumericString(byte[] b, int start, bool strict)
+    private static string ReadNumericString(ReadOnlySpan<byte> b, int start, bool strict)
     {
         // Need bytes [start, start+15] — 16 total — even though the on-disk
         // T_NUMERIC slot is 17 bytes (the precision byte at offset 0 is currently unused).
@@ -326,9 +328,9 @@ internal static class JetTypeInfo
 
         byte scale = b[start + 1];
         bool negative = b[start + 2] != 0;
-        uint lo = BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(start + 4, 4));
-        uint mid = BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(start + 8, 4));
-        uint hi = BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(start + 12, 4));
+        uint lo = BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(start + 4, 4));
+        uint mid = BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(start + 8, 4));
+        uint hi = BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(start + 12, 4));
 
         if (scale > 28)
         {
@@ -365,7 +367,7 @@ internal static class JetTypeInfo
     /// collapse to <see cref="DBNull.Value"/> (the typed analogue of
     /// <see cref="ReadNumericString"/>'s empty-string return).
     /// </summary>
-    private static object ReadNumericTyped(byte[] b, int start, bool strict)
+    private static object ReadNumericTyped(ReadOnlySpan<byte> b, int start, bool strict)
     {
         if (start + 16 > b.Length)
         {
@@ -380,9 +382,9 @@ internal static class JetTypeInfo
 
         byte scale = b[start + 1];
         bool negative = b[start + 2] != 0;
-        uint lo = BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(start + 4, 4));
-        uint mid = BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(start + 8, 4));
-        uint hi = BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(start + 12, 4));
+        uint lo = BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(start + 4, 4));
+        uint mid = BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(start + 8, 4));
+        uint hi = BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(start + 12, 4));
 
         if (scale > 28)
         {
@@ -454,6 +456,57 @@ internal static class JetTypeInfo
 #else
         BitConverter.ToString(source.ToArray()).Replace("-", string.Empty, StringComparison.Ordinal);
 #endif
+
+    // ── UTF-16LE bytes \u2192 string helpers ─────────────────────────────────
+    // The on-disk text encoding for Jet4/ACE is UCS-2 LE, which is the exact
+    // in-memory layout of <c>char</c> on every platform .NET supports today
+    // (all little-endian). Re-interpreting the byte span as a char span
+    // therefore skips the validation pass and intermediate buffers that
+    // <c>Encoding.Unicode.GetString</c> performs. On a hypothetical big-endian
+    // host the JIT-constant <c>BitConverter.IsLittleEndian</c> check folds
+    // the fast path away and we fall back to <c>Encoding.Unicode</c>.
+
+    /// <summary>
+    /// Decodes a UCS-2 LE byte slice into a <see cref="string"/>. The slice
+    /// length must be even; the caller is responsible for trimming any odd
+    /// trailing byte before calling. Allocates exactly one string.
+    /// </summary>
+    internal static string DecodeUtf16LE(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.IsEmpty)
+        {
+            return string.Empty;
+        }
+
+        if (BitConverter.IsLittleEndian)
+        {
+            return new string(MemoryMarshal.Cast<byte, char>(bytes));
+        }
+
+        return Encoding.Unicode.GetString(bytes);
+    }
+
+    /// <summary>
+    /// Appends a UCS-2 LE byte slice to <paramref name="sb"/> without
+    /// allocating an intermediate <see cref="string"/>. The slice length
+    /// must be even; the caller is responsible for trimming any odd
+    /// trailing byte before calling.
+    /// </summary>
+    internal static void AppendUtf16LE(StringBuilder sb, ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.IsEmpty)
+        {
+            return;
+        }
+
+        if (BitConverter.IsLittleEndian)
+        {
+            _ = sb.Append(MemoryMarshal.Cast<byte, char>(bytes));
+            return;
+        }
+
+        _ = sb.Append(Encoding.Unicode.GetString(bytes));
+    }
 
     // ── Phase 3 typed primitive readers ───────────────────────────────
     // Used by RowMapper<T>'s compiled direct decoder. Each helper returns
