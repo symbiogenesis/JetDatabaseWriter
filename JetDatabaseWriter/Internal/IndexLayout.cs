@@ -30,9 +30,6 @@ internal readonly struct IndexLayout
     /// <summary>Offset (post <see cref="RealIdxFieldsOffset"/>) of <c>first_dp</c>: root page of the index B-tree.</summary>
     public const int FirstDpFieldOffset = Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset;
 
-    /// <summary>Offset (post <see cref="RealIdxFieldsOffset"/>) of the real-idx <c>flags</c> byte.</summary>
-    public const int FlagsFieldOffset = Constants.TableDefinition.Jet3.RealIdx.FlagsOffset;
-
     /// <summary>Offset (post <see cref="LogicalEntryFieldsOffset"/>) of <c>index_num</c>.</summary>
     public const int IndexNumFieldOffset = Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset;
 
@@ -69,13 +66,15 @@ internal readonly struct IndexLayout
         int realIdxPhysSize,
         int logicalEntrySize,
         int realIdxFieldsOffset,
-        int logicalEntryFieldsOffset)
+        int logicalEntryFieldsOffset,
+        int flagsOffsetWithinPhys)
     {
         Format = format;
         RealIdxPhysSize = realIdxPhysSize;
         LogicalEntrySize = logicalEntrySize;
         RealIdxFieldsOffset = realIdxFieldsOffset;
         LogicalEntryFieldsOffset = logicalEntryFieldsOffset;
+        FlagsOffsetWithinPhys = flagsOffsetWithinPhys;
     }
 
     /// <summary>Gets the database format this layout describes.</summary>
@@ -90,8 +89,9 @@ internal readonly struct IndexLayout
     /// <summary>
     /// Gets the byte offset within a real-idx physical descriptor at which
     /// the post-<c>col_map</c> field block begins (Jet3: 0, Jet4/ACE: 4).
-    /// Add to a phys slot start, then offset by <see cref="FirstDpFieldOffset"/>
-    /// or <see cref="FlagsFieldOffset"/>.
+    /// Add to a phys slot start, then offset by <see cref="FirstDpFieldOffset"/>.
+    /// (For the <c>flags</c> byte, use <see cref="FlagsOffsetWithinPhys"/>
+    /// instead — its placement is not a fixed shift on top of this offset.)
     /// </summary>
     public int RealIdxFieldsOffset { get; }
 
@@ -103,6 +103,16 @@ internal readonly struct IndexLayout
     /// </summary>
     public int LogicalEntryFieldsOffset { get; }
 
+    /// <summary>
+    /// Gets the absolute offset of the real-idx <c>flags</c> byte from the
+    /// start of the physical descriptor. Format-dependent because Jet4
+    /// inserts a 4-byte “unknown” gap between <c>first_dp</c> and
+    /// <c>flags</c> that Jet3 does not (Jet3: 38, Jet4/ACE: 46). This cannot
+    /// be expressed by adding a fixed constant to <see cref="RealIdxFieldsOffset"/>
+    /// because the gap is independent of the leading-cookie shift.
+    /// </summary>
+    public int FlagsOffsetWithinPhys { get; }
+
     /// <summary>Returns the layout matching <paramref name="format"/>.</summary>
     public static IndexLayout For(DatabaseFormat format) => format == DatabaseFormat.Jet3Mdb
         ? new IndexLayout(
@@ -110,13 +120,15 @@ internal readonly struct IndexLayout
             realIdxPhysSize: Constants.TableDefinition.Jet3.RealIdx.PhysSize,
             logicalEntrySize: Constants.TableDefinition.Jet3.LogicalIdx.EntrySize,
             realIdxFieldsOffset: 0,
-            logicalEntryFieldsOffset: 0)
+            logicalEntryFieldsOffset: 0,
+            flagsOffsetWithinPhys: Constants.TableDefinition.Jet3.RealIdx.FlagsOffset)
         : new IndexLayout(
             format,
             realIdxPhysSize: Constants.TableDefinition.Jet4.RealIdx.PhysSize,
             logicalEntrySize: Constants.TableDefinition.Jet4.LogicalIdx.EntrySize,
             realIdxFieldsOffset: 4,
-            logicalEntryFieldsOffset: 4);
+            logicalEntryFieldsOffset: 4,
+            flagsOffsetWithinPhys: Constants.TableDefinition.Jet4.RealIdx.FlagsOffset);
 
     /// <summary>Walks the 10-slot <c>col_map</c> in a real-idx physical descriptor, invoking <paramref name="onColumn"/> for each populated slot.</summary>
     /// <param name="td">TDEF byte buffer.</param>
@@ -187,7 +199,7 @@ internal readonly struct IndexLayout
     /// physical descriptor's <c>flags</c> byte begins.
     /// </summary>
     public int FlagsAbsoluteOffset(int physStart)
-        => physStart + RealIdxFieldsOffset + FlagsFieldOffset;
+        => physStart + FlagsOffsetWithinPhys;
 
     /// <summary>
     /// Returns the absolute byte offset within a TDEF buffer of the
@@ -299,7 +311,7 @@ internal readonly struct IndexLayout
         }
 
         int firstDpOffset = phys + RealIdxFieldsOffset + FirstDpFieldOffset;
-        int flagsOffset = phys + RealIdxFieldsOffset + FlagsFieldOffset;
+        int flagsOffset = phys + FlagsOffsetWithinPhys;
         info = new RealIdxSlot(phys, firstDpOffset, td[flagsOffset]);
         return true;
     }
