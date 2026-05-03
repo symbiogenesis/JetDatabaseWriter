@@ -243,8 +243,12 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         // (§4.2) are pinned by the format probe and emitted by the same code
         // path Jet4/ACE uses, parameterised on `IndexLeafPageBuilder.LeafPageLayout`.
 
-        // Read the TDEF page bytes (single-page TDEFs produced by this writer).
-        // Multi-page TDEF chains are not produced by CreateTableAsync today.
+        // Read the TDEF page bytes. CreateTableAsync may now emit multi-page
+        // TDEF chains for wide schemas (>32 col / >16 idx on Jet3, ≫50 col on
+        // Jet4 / ACE). The single-page in-place mutation path used here will
+        // bail (TdefPreambleStatus != Ok or a downstream layout check) on
+        // those tables; that is the same fall-back trigger documented in
+        // §7.9 of docs/design/index-and-relationship-format-notes.md.
         var (status, preamble) = await ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (status != TdefPreambleStatus.Ok)
         {
