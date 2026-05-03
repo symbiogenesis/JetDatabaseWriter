@@ -261,7 +261,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<DataTable> ReadFirstTableAsync(uint? maxRows = null, CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
@@ -320,7 +319,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         return await LinkedTableManager.GetLinkedTablesAsync(this, cancellationToken).ConfigureAwait(false);
     }
 
@@ -328,7 +326,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<List<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         List<CatalogEntry> entries = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
@@ -353,7 +350,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<DataTable> GetTablesAsDataTableAsync(CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         var dt = new DataTable("Tables");
         _ = dt.Columns.Add("TableName", typeof(string));
         _ = dt.Columns.Add("RowCount", typeof(long));
@@ -372,7 +368,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<long> GetRealRowCountAsync(string tableName, CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -415,7 +410,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -450,7 +444,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         where T : class, new()
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -738,7 +731,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -782,7 +774,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<List<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -859,7 +850,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<IReadOnlyList<IndexMetadata>> ListIndexesAsync(string tableName, CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -882,7 +872,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -954,7 +943,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<IReadOnlyList<AttachmentRecord>> GetAttachmentsAsync(string tableName, string columnName, CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         cancellationToken.ThrowIfCancellationRequested();
@@ -1022,7 +1010,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<IReadOnlyList<(int ConceptualTableId, object? Value)>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         cancellationToken.ThrowIfCancellationRequested();
@@ -1369,7 +1356,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
         return tables.ConvertAll(e => e.Name);
     }
@@ -1386,7 +1372,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         if (string.IsNullOrEmpty(tableName))
@@ -1504,7 +1489,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         where T : class, new()
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -1844,7 +1828,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -1903,7 +1886,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<DatabaseStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
@@ -1950,7 +1932,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
@@ -1977,7 +1958,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
