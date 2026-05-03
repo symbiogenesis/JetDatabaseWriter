@@ -454,6 +454,69 @@ internal static class JetTypeInfo
 #else
         BitConverter.ToString(source.ToArray()).Replace("-", string.Empty, StringComparison.Ordinal);
 #endif
+
+    // ── Phase 3 typed primitive readers ───────────────────────────────
+    // Used by RowMapper<T>'s compiled direct decoder. Each helper returns
+    // the unboxed CLR value for a single fixed-width column type, reading
+    // straight off the page bytes. Callers must validate that
+    // <c>start + size</c> is within the page; the helpers do not catch.
+
+    /// <summary>Direct byte read at <paramref name="start"/>.</summary>
+    internal static byte ReadByteAt(byte[] page, int start) => page[start];
+
+    /// <summary>Reads a little-endian Int16 (T_INT) at <paramref name="start"/>.</summary>
+    internal static short ReadInt16LE(byte[] page, int start) =>
+        BinaryPrimitives.ReadInt16LittleEndian(page.AsSpan(start, 2));
+
+    /// <summary>Reads a little-endian Int32 (T_LONG) at <paramref name="start"/>.</summary>
+    internal static int ReadInt32LE(byte[] page, int start) =>
+        BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4));
+
+    /// <summary>Reads a little-endian Int64 at <paramref name="start"/>.</summary>
+    internal static long ReadInt64LE(byte[] page, int start) =>
+        BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8));
+
+    /// <summary>Reads a little-endian Single (T_FLOAT) at <paramref name="start"/>.</summary>
+    internal static float ReadFloatLE(byte[] page, int start) =>
+        ReadSingleLittleEndian(page.AsSpan(start, 4));
+
+    /// <summary>Reads a little-endian Double (T_DOUBLE) at <paramref name="start"/>.</summary>
+    internal static double ReadDoubleLE(byte[] page, int start) =>
+        ReadDoubleLittleEndian(page.AsSpan(start, 8));
+
+    /// <summary>Reads a T_DATETIME (8-byte OLE date) at <paramref name="start"/>.</summary>
+    internal static DateTime ReadDateTimeLE(byte[] page, int start) =>
+        DateTime.FromOADate(ReadDoubleLittleEndian(page.AsSpan(start, 8)));
+
+    /// <summary>Reads a T_MONEY (8-byte OLE currency) at <paramref name="start"/>.</summary>
+    internal static decimal ReadMoneyLE(byte[] page, int start) =>
+        decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8)));
+
+    /// <summary>Reads a T_GUID (16-byte) at <paramref name="start"/>.</summary>
+    internal static Guid ReadGuidAt(byte[] page, int start) =>
+        new Guid(page.AsSpan(start, 16));
+
+    /// <summary>
+    /// Reads a T_NUMERIC value at <paramref name="start"/> as a typed
+    /// <see cref="decimal"/>, skipping the boxing the
+    /// <see cref="ReadFixedTyped"/> path performs. Throws
+    /// <see cref="OverflowException"/> / <see cref="ArgumentException"/> on
+    /// invalid scale or out-of-range values; the Phase 3 direct decoder
+    /// catches these and leaves the property at its default.
+    /// </summary>
+    internal static decimal ReadDecimalLE(byte[] page, int start)
+    {
+        byte scale = page[start + 1];
+        bool negative = page[start + 2] != 0;
+        uint lo = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(start + 4, 4));
+        uint mid = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(start + 8, 4));
+        uint hi = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(start + 12, 4));
+
+        // Bit-pattern reinterpretation: uint → int must be unchecked because
+        // the project sets <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>;
+        // mirrors ReadNumericTyped's well-trodden path.
+        return new decimal(unchecked((int)lo), unchecked((int)mid), unchecked((int)hi), negative, scale);
+    }
 }
 
 /// <summary>

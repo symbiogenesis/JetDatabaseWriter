@@ -68,6 +68,18 @@ internal static class RowMapper<T>
     }
 
     /// <summary>
+    /// Returns the compiled <see cref="Accessor"/> for the property whose name
+    /// matches <paramref name="header"/> (case-insensitive), or
+    /// <see langword="null"/> when no property matches. Used by the Phase 3
+    /// direct-decoder builder.
+    /// </summary>
+    internal static Accessor? TryGetAccessor(string header)
+    {
+        PropertyMap.TryGetValue(header, out Accessor? acc);
+        return acc;
+    }
+
+    /// <summary>
     /// Compiles a single delegate that materializes a fresh <typeparamref name="T"/>
     /// from an <c>object?[]</c> row in one call. The <c>new T()</c> is baked into
     /// the compiled expression tree itself — no captured delegates, no extra

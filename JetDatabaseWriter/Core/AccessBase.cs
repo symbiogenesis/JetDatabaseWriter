@@ -1170,7 +1170,7 @@ public abstract class AccessBase : IAccessBase
     private protected sealed record CatalogEntry(string Name, long TDefPage);
 
     /// <summary>Parsed row-trailer metadata — see <see cref="TryParseRowLayout"/>.</summary>
-    private protected readonly record struct RowLayout(
+    internal readonly record struct RowLayout(
         int NumCols,
         int NullMaskPos,
         int VarLen,
@@ -1178,7 +1178,7 @@ public abstract class AccessBase : IAccessBase
         int Eod);
 
     /// <summary>Classification returned by <see cref="ResolveColumnSlice"/>.</summary>
-    private protected enum ColumnSliceKind
+    internal enum ColumnSliceKind
     {
         /// <summary>Column is missing/empty/out-of-bounds — caller should emit empty/default.</summary>
         Empty,
@@ -1199,7 +1199,7 @@ public abstract class AccessBase : IAccessBase
     }
 
     /// <summary>Per-column slice produced by <see cref="ResolveColumnSlice"/>.</summary>
-    private protected readonly record struct ColumnSlice(
+    internal readonly record struct ColumnSlice(
         ColumnSliceKind Kind,
         int DataStart,
         int DataLen,
