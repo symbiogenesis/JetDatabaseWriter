@@ -667,6 +667,63 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
     }
 
+    /// <summary>
+    /// Round-trips DateTime values straddling the OADate epoch
+    /// (1899-12-30) and the Excel/Lotus 1900 phantom-leap-day window
+    /// (1900-02-28 / 03-01). Closes the §2.4 "DateTime values straddling
+    /// the 1899-12-30 epoch and the 1900 Excel-leap-year quirk" gap in
+    /// <c>docs/design/test-coverage-gaps.md</c>. Access stores DateTime as
+    /// an OADate <c>double</c>, which matches .NET's <see cref="DateTime.ToOADate"/>
+    /// — i.e. it does <em>not</em> reproduce Excel's phantom 1900-02-29.
+    /// </summary>
+    /// <param name="isoText">The ISO-formatted date/time to round-trip.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData("1899-12-29 00:00:00")] // day before epoch (negative OADate)
+    [InlineData("1899-12-30 00:00:00")] // OADate epoch (OADate == 0)
+    [InlineData("1899-12-30 12:34:56")] // epoch + sub-day
+    [InlineData("1899-12-31 00:00:00")] // day after epoch (OADate == 1)
+    [InlineData("1900-02-28 00:00:00")] // last real day before Excel's phantom leap
+    [InlineData("1900-03-01 00:00:00")] // first day after Excel's phantom leap
+    [InlineData("1904-01-01 00:00:00")] // Mac Office 1904 epoch — verify Access uses 1900, not 1904
+    public async Task InsertRow_DateTimeAroundOaDateEpochAnd1900Quirk_RoundTrips(string isoText)
+    {
+        var expected = DateTime.ParseExact(
+            isoText,
+            "yyyy-MM-dd HH:mm:ss",
+            System.Globalization.CultureInfo.InvariantCulture);
+
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        var temp = await CopyToStreamAsync(path);
+        string tableName = $"DtEpoch_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("D", typeof(DateTime)),
+        };
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, expected], TestContext.Current.CancellationToken);
+        }
+
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
+        {
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+            Assert.Equal(1, dt.Rows.Count);
+
+            var actual = Convert.ToDateTime(dt.Rows[0]["D"], System.Globalization.CultureInfo.InvariantCulture);
+            Assert.Equal(expected, actual);
+        }
+    }
+
     // ── InsertRow<T> (generic POCO) ────────────────────────────────────
 
     private sealed class WriterPoco
@@ -957,6 +1014,65 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
             Assert.Equal(1, dt.Rows.Count);
             Assert.Equal(memoValue, dt.Rows[0]["Content"]);
+        }
+    }
+
+    /// <summary>
+    /// Round-trips Memo strings containing embedded U+0000 (NUL)
+    /// characters — both inline (small) and over the inline-memo cap
+    /// (forcing the LVAL chain). Closes the §2.1 "Memo column with embedded
+    /// 0x00 bytes" gap in <c>docs/design/test-coverage-gaps.md</c>;
+    /// mirrors Jackcess <c>testEmbeddedNulls</c>. The Jet4 text encoder
+    /// treats any '\0' as non-compressible, so the on-disk payload is plain
+    /// UCS-2 LE and must survive without truncation at the first NUL.
+    /// </summary>
+    /// <param name="charCount">Total character count of the seeded Memo string.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(8)] // inline path
+    [InlineData(2048)] // forces LVAL chain (chars * 2 bytes/char > MaxInlineMemoBytes)
+    public async Task InsertRow_MemoWithEmbeddedNulls_RoundTrips(int charCount)
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        var temp = await CopyToStreamAsync(path);
+        string tableName = $"MemoNul_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Content", typeof(string)), // MEMO
+        };
+
+        // Build "AB\0CD\0..." pattern of the requested length so the encoder
+        // sees NULs distributed throughout the buffer, not only at the head.
+        var sb = new System.Text.StringBuilder(charCount);
+        char[] cycle = ['A', 'B', '\0', 'C', 'D', '\0'];
+        for (int i = 0; i < charCount; i++)
+        {
+            sb.Append(cycle[i % cycle.Length]);
+        }
+
+        string memoValue = sb.ToString();
+        Assert.Contains('\0', memoValue);
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [1, memoValue], TestContext.Current.CancellationToken);
+        }
+
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
+        {
+            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+            Assert.Equal(1, dt.Rows.Count);
+            string actual = Assert.IsType<string>(dt.Rows[0]["Content"]);
+            Assert.Equal(memoValue.Length, actual.Length);
+            Assert.Equal(memoValue, actual);
         }
     }
 
