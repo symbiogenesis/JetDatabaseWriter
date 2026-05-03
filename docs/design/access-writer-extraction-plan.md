@@ -21,7 +21,7 @@ Phases below are ordered by **biggest line reduction first**. Line numbers refer
 | 11 | LVAL encoding                   |   200 | 10,245 |
 | 12 | Stray nested utilities          |   150 | 10,395 |
 
-After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly **~2,100 lines** of pure orchestration: the constructor, public `OpenAsync`/`CreateDatabaseAsync` factories, the public CRUD/schema entry points, and `DisposeAsync`.
+After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly **~2,100 lines** of pure orchestration: the constructor, public `OpenAsync`/`CreateDatabaseAsync` factories, the public CRUD/schema entry points, and `DisposeAsync`. (Current state after Phases 1–2: **6,823 lines**.)
 
 > **No partial classes.** The maintainer dislikes splitting `AccessWriter` across multiple `partial` files — it hides the true size and complexity of the type and makes navigation worse. Every extraction below must land in a **properly-named type** under `Internal/`, with `AccessWriter` holding a private field of that type and forwarding through thin instance methods. Anything that genuinely cannot be lifted off `AccessWriter` (because it touches too much private state) must stay in `AccessWriter.cs` rather than be moved into a partial.
 >
@@ -45,20 +45,16 @@ Extracted to [JetDatabaseWriter/Internal/Relationships/RelationshipManager.cs](.
 - [x] Move nested types: `FkSidePlan`, `RelationshipRowSnapshot`, `FkTDefLayout`, `FkPairContext`, `TablePairComparer`, `FkRelationship`, `FkContext` (now nested in `RelationshipManager`; `FkContext` and `FkRelationship` are `internal` so AccessWriter can reference them as `RelationshipManager.FkContext` / `RelationshipManager.FkRelationship`).
 - [x] **Suggested home:** `Internal/Relationships/RelationshipManager.cs` ✓.
 
-## Phase 2 — Index maintenance (~2,820 lines)
+## Phase 2 — Index maintenance (~2,820 lines) ✅ DONE
 
-- [ ] Extract methods at lines **9380–12200**:
-  - `MaintainIndexesAsync`, `TryMaintainIndexesIncrementalAsync`
-  - `DescendToLeftmostLeafAsync`, `TryAppendToTailLeafAsync`
-  - `TrySurgicalMultiLevelMaintainAsync`, `DescendCapturingAsync`
-  - `TrySurgicalCrossLeafMaintainAsync`
-  - `GroupChangesByTargetLeafAsync`, `DescendOrLookupGroupAsync`, `GetEffectiveTailPageAsync`
-  - `TryStageIntermediateRewritesAsync`, `EncodeHintEntries`
-  - `ReadLastChildPointer`, `SelectChildForKey`
-  - `TrySpliceCatalogIndexEntryAsync`
-- [ ] Move nested types: `LeafGroup` (L10602), `IntermediateStagingState` (L11250).
-- [ ] Move diagnostic field `_lastIncrementalBail`.
-- [ ] **Suggested home:** `Internal/IndexMaintainer.cs`, alongside existing `IndexLeafIncremental` / `IndexBTreeBuilder`.
+Extracted to [JetDatabaseWriter/Internal/IndexMaintainer.cs](../../JetDatabaseWriter/Internal/IndexMaintainer.cs). `AccessWriter` holds a private `_indexMaintainer` field and exposes thin instance forwarders for `MaintainIndexesAsync` / `TryMaintainIndexesIncrementalAsync` / `TrySpliceCatalogIndexEntryAsync` so the many existing call sites (and `RelationshipManager.writer.MaintainIndexesAsync`) keep working. Diagnostic `_lastIncrementalBail` moved to `IndexMaintainer.LastIncrementalBail`. Static helpers `AddParentOp` / `AddParentOpsForSplitPages` moved with the index code (they had no other callers). `IndexLayout _indexLayout` was promoted from `private protected` to `internal` on `AccessBase` so `IndexMaintainer` can access it via `writer._indexLayout`.
+
+`AccessWriter.cs` shrank from **9,673 → 6,823 lines** (–2,850).
+
+- [x] Extracted methods: `MaintainIndexesAsync`, `TryMaintainIndexesIncrementalAsync`, `DescendToLeftmostLeafAsync`, `TryAppendToTailLeafAsync`, `TrySurgicalMultiLevelMaintainAsync`, `DescendCapturingAsync`, `PrepareAncestorReplaceWrites`, `PrepareAncestorSplitWrites`, `TrySurgicalCrossLeafMaintainAsync`, `GroupChangesByTargetLeafAsync`, `DescendOrLookupGroupAsync`, `GetEffectiveTailPageAsync`, `TryStageIntermediateRewritesAsync`, `EncodeHintEntries`, `ReadLastChildPointer`, `SelectChildForKey`, `TrySpliceCatalogIndexEntryAsync`.
+- [x] Moved nested types: `LeafGroup`, `IntermediateStagingState`.
+- [x] Moved diagnostic field `_lastIncrementalBail` (now `IndexMaintainer.LastIncrementalBail`).
+- [x] **Home:** `Internal/IndexMaintainer.cs`, alongside `IndexLeafIncremental` / `IndexBTreeBuilder` ✓.
 
 ## Phase 3 — Complex-column (Attachment / MultiValue) subsystem (~1,590 lines)
 
