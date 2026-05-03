@@ -39,5 +39,10 @@ internal static class GeneralTextIndexEncoder
     /// with the null flag.
     /// </summary>
     public static byte[] Encode(string? text, bool ascending)
-        => GeneralLegacyTextIndexEncoder.EncodeWithTables(text, ascending, Codes.Value, ExtCodes.Value);
+        => GeneralLegacyTextIndexEncoder.EncodeWithTables(
+            text,
+            ascending,
+            Codes.Value,
+            ExtCodes.Value,
+            GeneralLegacyTextIndexEncoder.LongRowSeparatorGeneral);
 }

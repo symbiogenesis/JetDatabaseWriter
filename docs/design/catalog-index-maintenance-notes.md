@@ -124,7 +124,7 @@ We never touch entries we did not insert. The "Databases" row (and any other row
 The shipped splice is exercised by:
 
 - `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` is hit on every `AccessWriter.CreateTableAsync` call against a real-idx-bearing catalog table; any user-table create going through the existing test suite covers it.
-- The `DIAG_RT_PROBE` post-mortem (FormatProbe §4 + §6) re-decodes the spliced leaves and asserts every original key still decodes losslessly and the new key sorts correctly.
+- The `DIAG_RT_DAO_BASELINE` probe (FormatProbe `DaoBaselineProbe`) re-decodes the spliced leaves and compares them against a DAO-authored copy of the same operation, asserting every original key still decodes losslessly and the new key sorts correctly.
 
 The two gating round-trip tests (§1) **do not yet pass**, but they fail on the new-table TDEF defect described in [`round-trip-test-failures.md`](round-trip-test-failures.md), not on the splice.
 

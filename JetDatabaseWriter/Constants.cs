@@ -245,6 +245,21 @@ internal static class Constants
         /// C&amp;R aborts with "could not find the object 'MSysDb'".
         /// </summary>
         public static readonly byte[] DefaultOwnerBlob = [0x71, 0x10];
+
+        /// <summary>
+        /// Placeholder bytes stamped into the <c>MSysObjects.LvProp</c>
+        /// variable column for user-table catalog rows when the writer has no
+        /// per-column persisted properties to emit. DAO Compact &amp; Repair's
+        /// catalog walk requires <c>LvProp</c> to be NOT NULL on every
+        /// user-authored Type=1 row -- the bytes themselves appear to be
+        /// opaque (DAO writes 12 bytes that do not begin with the
+        /// <c>MR2\0</c> property-block magic and that vary across runs,
+        /// suggesting uninitialized memory). We stamp 12 zero bytes so the
+        /// null-mask bit is set and the row's variable-offset table mirrors
+        /// the layout DAO produces. See
+        /// docs/design/round-trip-test-failures.md.
+        /// </summary>
+        public static readonly byte[] DefaultLvPropPlaceholder = new byte[12];
     }
 
     /// <summary>
