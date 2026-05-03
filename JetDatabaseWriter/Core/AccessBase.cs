@@ -83,11 +83,12 @@ public abstract class AccessBase : IAccessBase
     private volatile List<CatalogEntry>? _catalogCache;
 
     /// <summary>
-    /// Cooperative JET byte-range lock helper (Win32 <c>LockFileEx</c>). Initialised by
-    /// <see cref="AccessReader"/> / <see cref="AccessWriter"/> after construction.
-    /// Until set, page-write paths skip locking — equivalent to a disabled instance.
+    /// Cooperative JET byte-range lock helper (Win32 <c>LockFileEx</c>). Defaults to
+    /// <see cref="JetByteRangeLock.Disabled"/> so page-write paths can dispatch
+    /// without a null check; <see cref="AccessReader"/> / <see cref="AccessWriter"/>
+    /// replace it with a stream-bound instance once options are known.
     /// </summary>
-    private protected JetByteRangeLock? _byteRangeLock;
+    private protected JetByteRangeLock _byteRangeLock = JetByteRangeLock.Disabled;
 
     /// <summary>
     /// Gets or sets the in-memory page journal for an explicit <see cref="JetTransaction"/>.
@@ -101,9 +102,6 @@ public abstract class AccessBase : IAccessBase
 
     /// <summary>Gets the writer's internal I/O gate so derived types may serialise transaction commit / rollback.</summary>
     internal SemaphoreSlim IoGate => _ioGate;
-
-    /// <summary>Sentinel disposable used when no byte-range lock is active.</summary>
-    private static readonly IDisposable NullDisposable = new NullDisposableImpl();
 
     static AccessBase()
     {
@@ -765,7 +763,7 @@ public abstract class AccessBase : IAccessBase
             }
 
             byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
-            using IDisposable pageLock = _byteRangeLock?.AcquirePageLock(pageNumber, _pgSz) ?? NullDisposable;
+            using IDisposable pageLock = _byteRangeLock.AcquirePageLock(pageNumber, _pgSz);
             _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
             _stream.Write(toWrite, 0, _pgSz);
             _stream.Flush();
@@ -790,9 +788,7 @@ public abstract class AccessBase : IAccessBase
             }
 
             byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
-            IDisposable pageLock = _byteRangeLock is null
-                ? NullDisposable
-                : await _byteRangeLock.AcquirePageLockAsync(pageNumber, _pgSz, cancellationToken).ConfigureAwait(false);
+            IDisposable pageLock = await _byteRangeLock.AcquirePageLockAsync(pageNumber, _pgSz, cancellationToken).ConfigureAwait(false);
             try
             {
                 _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
@@ -822,7 +818,7 @@ public abstract class AccessBase : IAccessBase
 
             long pageNumber = _stream.Length / _pgSz;
             byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
-            using IDisposable pageLock = _byteRangeLock?.AcquirePageLock(pageNumber, _pgSz) ?? NullDisposable;
+            using IDisposable pageLock = _byteRangeLock.AcquirePageLock(pageNumber, _pgSz);
             _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
             _stream.Write(toWrite, 0, _pgSz);
             _stream.Flush();
@@ -848,9 +844,7 @@ public abstract class AccessBase : IAccessBase
 
             long pageNumber = _stream.Length / _pgSz;
             byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
-            IDisposable pageLock = _byteRangeLock is null
-                ? NullDisposable
-                : await _byteRangeLock.AcquirePageLockAsync(pageNumber, _pgSz, cancellationToken).ConfigureAwait(false);
+            IDisposable pageLock = await _byteRangeLock.AcquirePageLockAsync(pageNumber, _pgSz, cancellationToken).ConfigureAwait(false);
             try
             {
                 _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
@@ -1277,11 +1271,4 @@ public abstract class AccessBase : IAccessBase
         int DataStart,
         int DataLen,
         bool BoolValue);
-
-    private sealed class NullDisposableImpl : IDisposable
-    {
-        public void Dispose()
-        {
-        }
-    }
 }

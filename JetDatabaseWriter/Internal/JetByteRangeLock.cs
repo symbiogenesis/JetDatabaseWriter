@@ -89,6 +89,14 @@ internal sealed class JetByteRangeLock
     }
 
     /// <summary>
+    /// Gets a shared inert instance whose acquire methods always return the no-op
+    /// disposable. Used as the default for <see cref="Core.AccessBase"/> before a derived
+    /// reader/writer constructor has had a chance to bind real options, so callers can
+    /// dispatch through a non-nullable field without per-call null checks.
+    /// </summary>
+    public static JetByteRangeLock Disabled { get; } = new(handle: null, enabled: false, lockTimeoutMs: 0);
+
+    /// <summary>
     /// Acquires an exclusive byte-range lock on the database page at
     /// <paramref name="pageNumber"/>, blocking up to the configured timeout.
     /// Returns a disposable that releases the lock when disposed; on a disabled
