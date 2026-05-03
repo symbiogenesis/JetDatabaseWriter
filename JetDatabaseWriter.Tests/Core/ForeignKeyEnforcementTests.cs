@@ -293,10 +293,10 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         Assert.Equal(2, t.Rows.Count);
         Assert.All(t.AsEnumerable(), r => Assert.Equal(99, Convert.ToInt32(r["ParentId"], System.Globalization.CultureInfo.InvariantCulture)));
 
-        // Regression for `docs/design/test-coverage-gaps.md` §9: the
-        // parent-side `UpdateRowsAsync` must rewrite the PK column on disk,
-        // not only repoint the children. Reopen the parent table and assert
-        // the row carries the new PK value (and the old one is gone).
+        // The parent-side `UpdateRowsAsync` must rewrite the PK column on
+        // disk, not only repoint the children. Reopen the parent table
+        // and assert the row carries the new PK value (and the old one
+        // is gone).
         DataTable p = (await reader.ReadDataTableAsync(parent, cancellationToken: TestContext.Current.CancellationToken))!;
         DataRow parentRow = Assert.Single(p.AsEnumerable());
         Assert.Equal(99, Convert.ToInt32(parentRow["Id"], System.Globalization.CultureInfo.InvariantCulture));
@@ -305,7 +305,6 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Update_PkSide_WithCascade_RewritesParentRowOnDisk_SingleColumnPk()
     {
-        // Focused regression for `docs/design/test-coverage-gaps.md` §9.
         // The existing cascade-update tests assert the child-side index
         // repoint; this test isolates the parent-side observation: after
         // updating the parent row's PK, reopen the file and assert the
@@ -402,10 +401,9 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     }
 
     /// <summary>
-    /// Atomicity regression for <c>docs/design/test-coverage-gaps.md</c>
-    /// §9: a constraint violation deep in a multi-row insert must roll
-    /// back every row written earlier in the batch — the database must
-    /// look exactly as it did before the call.
+    /// Atomicity invariant: a constraint violation deep in a multi-row
+    /// insert must roll back every row written earlier in the batch —
+    /// the database must look exactly as it did before the call.
     /// </summary>
     /// <remarks>
     /// The pre-write unique check (covered by

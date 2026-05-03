@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Tests.Core;
 
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -37,11 +36,6 @@ public sealed class IndexFlagCombinationsTests
     [MemberData(nameof(Fixtures))]
     public async Task IndexFlags_Combinations_RoundTripFromDisk(string fixturePath)
     {
-        if (!File.Exists(fixturePath))
-        {
-            Assert.Skip($"Fixture not present: {fixturePath}");
-        }
-
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
@@ -92,11 +86,6 @@ public sealed class IndexFlagCombinationsTests
         // This is a cheap smoke test that complements the structural flag
         // round-trip above.
         string fixturePath = TestDatabases.TestIndexPropertiesV2007;
-        if (!File.Exists(fixturePath))
-        {
-            Assert.Skip($"Fixture not present: {fixturePath}");
-        }
-
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,

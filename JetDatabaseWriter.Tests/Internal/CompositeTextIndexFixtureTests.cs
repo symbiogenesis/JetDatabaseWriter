@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
-using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -54,12 +53,6 @@ public sealed class CompositeTextIndexFixtureTests
     [MemberData(nameof(Fixtures))]
     public async Task CompositeTextIndexes_LeafMatchesEncoder(string fixturePath)
     {
-        if (!File.Exists(fixturePath))
-        {
-            // Fixture isn't shipped in this slice of the test corpus; skip.
-            Assert.Skip($"Fixture not present: {fixturePath}");
-        }
-
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,

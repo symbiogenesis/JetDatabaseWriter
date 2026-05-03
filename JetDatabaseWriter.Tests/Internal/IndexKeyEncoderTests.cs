@@ -421,14 +421,13 @@ public sealed class IndexKeyEncoderTests
     }
 
     /// <summary>
-    /// Closes <c>docs/design/test-coverage-gaps.md</c> §1.1: the descending
-    /// non-null start flag (<c>0x80</c>) must never collapse into the
-    /// descending null marker (<c>0xFF</c>) — even when the inverted payload
-    /// happens to begin with <c>0xFF</c>. The start flag is written before
-    /// the inversion pass and is not flipped, so a descending non-null key
-    /// always begins with exactly one <c>0x80</c> byte and is therefore
-    /// unambiguously distinguishable from a single-byte <c>0xFF</c> null
-    /// entry, regardless of payload contents.
+    /// The descending non-null start flag (<c>0x80</c>) must never collapse
+    /// into the descending null marker (<c>0xFF</c>) — even when the
+    /// inverted payload happens to begin with <c>0xFF</c>. The start flag
+    /// is written before the inversion pass and is not flipped, so a
+    /// descending non-null key always begins with exactly one <c>0x80</c>
+    /// byte and is therefore unambiguously distinguishable from a
+    /// single-byte <c>0xFF</c> null entry, regardless of payload contents.
     /// </summary>
     [Fact]
     public void Text_DescendingNonNull_AlwaysStartsWith0x80_NeverCollapsesToNullFlag()
@@ -477,10 +476,8 @@ public sealed class IndexKeyEncoderTests
     /// <summary>
     /// Supplementary-Multilingual-Plane (SMP) characters route through the
     /// high+low surrogate handler in <c>GeneralLegacyTextIndexEncoder</c>.
-    /// Closes <c>docs/design/test-coverage-gaps.md</c> §1.1 "crazy code
-    /// surrogate pair coverage" — a synthetic round-trip rather than a
-    /// fixture-table assertion, since the Jackcess fixtures do not contain
-    /// SMP-plane indexed values.
+    /// Synthetic round-trip rather than a fixture-table assertion, since
+    /// the Jackcess fixtures do not contain SMP-plane indexed values.
     /// </summary>
     [Fact]
     public void Text_SmpPlaneCharacter_RoutesThroughSurrogateHandler()
@@ -521,12 +518,11 @@ public sealed class IndexKeyEncoderTests
     /// <summary>
     /// Right-to-left scripts (Hebrew, Arabic) and combining-diacritic
     /// NFC/NFD pairs round-trip through the encoder without throwing and
-    /// produce stable keys. Closes
-    /// <c>docs/design/test-coverage-gaps.md</c> §1.1: documents that
-    /// Access's General Legacy encoder treats NFC ("é") and NFD
-    /// ("e\u0301") as equivalent — both forms encode to the <em>same</em>
-    /// key bytes (the combining acute resolves to the same primary weight
-    /// + extras-section diacritic as the precomposed character).
+    /// produce stable keys. Documents that Access's General Legacy encoder
+    /// treats NFC ("é") and NFD ("e\u0301") as equivalent — both forms
+    /// encode to the <em>same</em> key bytes (the combining acute
+    /// resolves to the same primary weight + extras-section diacritic as
+    /// the precomposed character).
     /// </summary>
     [Fact]
     public void Text_RtlScriptsAndCombiningDiacritics_EncodeStably()

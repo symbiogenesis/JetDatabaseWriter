@@ -179,13 +179,12 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     }
 
     /// <summary>
-    /// Closes <c>docs/design/test-coverage-gaps.md</c> §5: round-trip rows
-    /// where the null-mask byte boundary falls exactly between columns.
-    /// The null mask is one bit per column; for column counts of
-    /// 8 / 9 / 16 / 17 / 24 / 25 the mask byte width changes by exactly
-    /// one byte, which is where mdbtools historically had off-by-one
-    /// bugs (a row with column 9 nullable would see the mask read as if
-    /// only 8 columns existed, dropping the value).
+    /// Round-trip rows where the null-mask byte boundary falls exactly
+    /// between columns. The null mask is one bit per column; for column
+    /// counts of 8 / 9 / 16 / 17 / 24 / 25 the mask byte width changes
+    /// by exactly one byte, which is where mdbtools historically had
+    /// off-by-one bugs (a row with column 9 nullable would see the mask
+    /// read as if only 8 columns existed, dropping the value).
     /// </summary>
     /// <param name="columnCount">Total number of nullable int columns to declare.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>

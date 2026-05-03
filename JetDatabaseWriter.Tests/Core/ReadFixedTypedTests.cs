@@ -171,10 +171,10 @@ public sealed class ReadFixedTypedTests
     [InlineData(-12345L, "-1.2345")]
     [InlineData(99999999999999L, "9999999999.9999")]
 
-    // OACurrency boundary regression for `docs/design/test-coverage-gaps.md`
-    // §2.4: the int64 range corresponds to ±922,337,203,685,477.5807. Verify
-    // these survive the decimal conversion without rounding (mdbtools / older
-    // ODBC paths historically clipped the high bits here).
+    // OACurrency boundary regression: the int64 range corresponds to
+    // ±922,337,203,685,477.5807. Verify these survive the decimal
+    // conversion without rounding (mdbtools / older ODBC paths
+    // historically clipped the high bits here).
     [InlineData(long.MaxValue, "922337203685477.5807")]
     [InlineData(long.MinValue + 1, "-922337203685477.5807")]
     [InlineData(long.MinValue, "-922337203685477.5808")]

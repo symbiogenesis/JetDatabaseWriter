@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
-using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -77,11 +76,6 @@ public sealed class NonTextSingleColumnIndexFixtureTests
     [MemberData(nameof(Fixtures))]
     public async Task NonTextSingleColumnIndexes_LeafMatchesEncoder(string fixturePath)
     {
-        if (!File.Exists(fixturePath))
-        {
-            Assert.Skip($"Fixture not present: {fixturePath}");
-        }
-
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
