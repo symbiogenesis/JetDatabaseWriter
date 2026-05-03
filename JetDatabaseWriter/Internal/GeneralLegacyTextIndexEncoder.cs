@@ -86,23 +86,9 @@ internal static class GeneralLegacyTextIndexEncoder
 
         // Truncate to the indexed-prefix length and strip trailing spaces
         // (Jackcess GeneralLegacyIndexCodes.toIndexCharSequence).
-        if (text.Length > MaxTextIndexCharLength)
-        {
-            text = text.Substring(0, MaxTextIndexCharLength);
-        }
+        var chars = text.AsSpan(0, Math.Min(text.Length, MaxTextIndexCharLength)).TrimEnd(' ');
 
-        int len = text.Length;
-        while (len > 0 && text[len - 1] == ' ')
-        {
-            len--;
-        }
-
-        if (len != text.Length)
-        {
-            text = text.Substring(0, len);
-        }
-
-        var bout = new List<byte>(text.Length + 4)
+        var bout = new List<byte>(chars.Length + 4)
         {
             ascending ? FlagAscendingNonNull : FlagDescendingNonNull,
         };
@@ -116,16 +102,15 @@ internal static class GeneralLegacyTextIndexEncoder
         List<byte>? crazyCodes = null;
         int charOffset = 0;
 
-        for (int i = 0; i < text.Length; i++)
+        foreach (char c in chars)
         {
-            char c = text[i];
             CharHandler ch = GetCharHandler(c);
-
             int curCharOffset = charOffset;
-            byte[]? bytes = ch.GetInlineBytes(c);
-            if (bytes is not null)
+
+            byte[]? inline = ch.GetInlineBytes(c);
+            if (inline is not null)
             {
-                bout.AddRange(bytes);
+                bout.AddRange(inline);
                 charOffset++;
             }
 
@@ -134,26 +119,25 @@ internal static class GeneralLegacyTextIndexEncoder
                 continue;
             }
 
-            bytes = ch.ExtraBytes;
+            byte[]? extra = ch.ExtraBytes;
             byte extraCodeModifier = ch.ExtraByteModifier;
-            if (bytes is not null || extraCodeModifier != 0)
+            if (extra is not null || extraCodeModifier != 0)
             {
-                extraCodes ??= new ExtraCodesStream(text.Length);
-                WriteExtraCodes(curCharOffset, bytes, extraCodeModifier, extraCodes);
+                extraCodes ??= new ExtraCodesStream(chars.Length);
+                WriteExtraCodes(curCharOffset, extra, extraCodeModifier, extraCodes);
             }
 
-            bytes = ch.UnprintableBytes;
-            if (bytes is not null)
+            byte[]? unprint = ch.UnprintableBytes;
+            if (unprint is not null)
             {
                 unprintableCodes ??= [];
-                WriteUnprintableCodes(curCharOffset, bytes, unprintableCodes, extraCodes);
+                WriteUnprintableCodes(curCharOffset, unprint, unprintableCodes, extraCodes);
             }
 
-            byte crazyFlag = ch.CrazyFlag;
-            if (crazyFlag != 0)
+            if (ch.CrazyFlag != 0)
             {
                 crazyCodes ??= [];
-                crazyCodes.Add(crazyFlag);
+                crazyCodes.Add(ch.CrazyFlag);
             }
         }
 
@@ -163,32 +147,29 @@ internal static class GeneralLegacyTextIndexEncoder
         bool hasUnprintableCodes = unprintableCodes is { Count: > 0 };
         bool hasCrazyCodes = crazyCodes is { Count: > 0 };
 
-        if (hasExtraCodes || hasUnprintableCodes || hasCrazyCodes)
+        if (hasExtraCodes)
         {
-            if (hasExtraCodes)
+            bout.AddRange(extraCodes!.Bytes);
+        }
+
+        if (hasCrazyCodes || hasUnprintableCodes)
+        {
+            bout.Add(EndText);
+            bout.Add(EndText);
+
+            if (hasCrazyCodes)
             {
-                bout.AddRange(extraCodes!.Bytes);
-            }
-
-            if (hasCrazyCodes || hasUnprintableCodes)
-            {
-                bout.Add(EndText);
-                bout.Add(EndText);
-
-                if (hasCrazyCodes)
-                {
-                    WriteCrazyCodes(crazyCodes!, bout);
-                    if (hasUnprintableCodes)
-                    {
-                        bout.Add(CrazyCodesUnprintSuffix);
-                    }
-                }
-
+                WriteCrazyCodes(crazyCodes!, bout);
                 if (hasUnprintableCodes)
                 {
-                    bout.Add(EndText);
-                    bout.AddRange(unprintableCodes!);
+                    bout.Add(CrazyCodesUnprintSuffix);
                 }
+            }
+
+            if (hasUnprintableCodes)
+            {
+                bout.Add(EndText);
+                bout.AddRange(unprintableCodes!);
             }
         }
 
@@ -208,15 +189,8 @@ internal static class GeneralLegacyTextIndexEncoder
         return [.. bout];
     }
 
-    private static CharHandler GetCharHandler(char c)
-    {
-        if (c <= LastChar)
-        {
-            return Codes.Value[c];
-        }
-
-        return ExtCodes.Value[c - FirstExtChar];
-    }
+    private static CharHandler GetCharHandler(char c) =>
+        c <= LastChar ? Codes.Value[c] : ExtCodes.Value[c - FirstExtChar];
 
     private static void WriteExtraCodes(
         int charOffset,
@@ -224,16 +198,15 @@ internal static class GeneralLegacyTextIndexEncoder
         byte extraCodeModifier,
         ExtraCodesStream extraCodes)
     {
-        int numChars = extraCodes.NumChars;
-        if (numChars < charOffset)
+        int fillChars = charOffset - extraCodes.NumChars;
+        if (fillChars > 0)
         {
-            int fillChars = charOffset - numChars;
             for (int i = 0; i < fillChars; i++)
             {
                 extraCodes.Bytes.Add(InternationalExtraPlaceholder);
             }
 
-            extraCodes.NumChars += fillChars;
+            extraCodes.NumChars = charOffset;
         }
 
         if (bytes is not null)
@@ -241,20 +214,15 @@ internal static class GeneralLegacyTextIndexEncoder
             extraCodes.Bytes.AddRange(bytes);
             extraCodes.NumChars++;
         }
-        else
+        else if (extraCodes.Bytes.Count > 0)
         {
             int lastIdx = extraCodes.Bytes.Count - 1;
-            if (lastIdx >= 0)
-            {
-                byte lastByte = extraCodes.Bytes[lastIdx];
-                lastByte = unchecked((byte)(lastByte + extraCodeModifier));
-                extraCodes.Bytes[lastIdx] = lastByte;
-            }
-            else
-            {
-                extraCodes.Bytes.Add(extraCodeModifier);
-                extraCodes.UnprintablePrefixLen = 1;
-            }
+            extraCodes.Bytes[lastIdx] = unchecked((byte)(extraCodes.Bytes[lastIdx] + extraCodeModifier));
+        }
+        else
+        {
+            extraCodes.Bytes.Add(extraCodeModifier);
+            extraCodes.UnprintablePrefixLen = 1;
         }
     }
 
@@ -296,19 +264,15 @@ internal static class GeneralLegacyTextIndexEncoder
         List<byte> unprintableCodes,
         ExtraCodesStream? extraCodes)
     {
-        int unprintCharOffset = charOffset;
-        if (extraCodes is not null)
-        {
-            unprintCharOffset = extraCodes.Bytes.Count
-                + (charOffset - extraCodes.NumChars)
-                - extraCodes.UnprintablePrefixLen;
-        }
+        int unprintCharOffset = extraCodes is null
+            ? charOffset
+            : extraCodes.Bytes.Count + (charOffset - extraCodes.NumChars) - extraCodes.UnprintablePrefixLen;
 
         int offset = (UnprintableCountStart + (UnprintableCountMultiplier * unprintCharOffset))
             | UnprintableOffsetFlags;
 
-        unprintableCodes.Add((byte)((offset >> 8) & 0xFF));
-        unprintableCodes.Add((byte)(offset & 0xFF));
+        unprintableCodes.Add(unchecked((byte)(offset >> 8)));
+        unprintableCodes.Add(unchecked((byte)offset));
         unprintableCodes.Add(UnprintableMidfix);
         unprintableCodes.AddRange(bytes);
     }
@@ -321,14 +285,10 @@ internal static class GeneralLegacyTextIndexEncoder
         {
             byte curByte = CrazyCodeStart;
             int idx = 0;
-            for (int i = 0; i < crazyCodes.Count; i++)
+            foreach (byte code in crazyCodes)
             {
-                byte nextByte = crazyCodes[i];
-                nextByte = unchecked((byte)(nextByte << ((2 - idx) * 2)));
-                curByte |= nextByte;
-
-                idx++;
-                if (idx == 3)
+                curByte |= unchecked((byte)(code << ((2 - idx) * 2)));
+                if (++idx == 3)
                 {
                     bout.Add(curByte);
                     curByte = CrazyCodeStart;
@@ -359,23 +319,19 @@ internal static class GeneralLegacyTextIndexEncoder
         for (int i = 0; i < numCodes; i++)
         {
             char c = (char)(firstChar + i);
-            CharHandler ch;
             if (char.IsHighSurrogate(c))
             {
-                ch = HighSurrogateHandler.Instance;
+                values[i] = HighSurrogateHandler.Instance;
             }
             else if (char.IsLowSurrogate(c))
             {
-                ch = LowSurrogateHandler.Instance;
+                values[i] = LowSurrogateHandler.Instance;
             }
             else
             {
-                string? line = reader.ReadLine()
-                    ?? throw new InvalidDataException($"Premature end of resource '{resourceName}' at index {i}.");
-                ch = ParseCodes(line);
+                values[i] = ParseCodes(reader.ReadLine()
+                    ?? throw new InvalidDataException($"Premature end of resource '{resourceName}' at index {i}."));
             }
-
-            values[i] = ch;
         }
 
         return values;
@@ -384,8 +340,7 @@ internal static class GeneralLegacyTextIndexEncoder
     private static CharHandler ParseCodes(string codeLine)
     {
         char prefix = codeLine[0];
-        string suffix = codeLine.Length > 1 ? codeLine.Substring(1) : string.Empty;
-        string[] parts = suffix.Split(',');
+        string[] parts = (codeLine.Length > 1 ? codeLine[1..] : string.Empty).Split(',');
 
         return prefix switch
         {
@@ -460,65 +415,50 @@ internal static class GeneralLegacyTextIndexEncoder
 
     private sealed class SimpleCharHandler(byte[] bytes) : CharHandler
     {
-        private readonly byte[] bytes = bytes;
-
         public override CharHandlerType Type => CharHandlerType.Simple;
 
-        public override byte[] GetInlineBytes(char c) => this.bytes;
+        public override byte[] GetInlineBytes(char c) => bytes;
     }
 
     private sealed class InternationalCharHandler(byte[] bytes, byte[] extraBytes) : CharHandler
     {
-        private readonly byte[] bytes = bytes;
-        private readonly byte[] extraBytes = extraBytes;
-
         public override CharHandlerType Type => CharHandlerType.International;
 
-        public override byte[] GetInlineBytes(char c) => this.bytes;
+        public override byte[] GetInlineBytes(char c) => bytes;
 
-        public override byte[] ExtraBytes => this.extraBytes;
+        public override byte[] ExtraBytes => extraBytes;
     }
 
     private sealed class UnprintableCharHandler(byte[] unprintBytes) : CharHandler
     {
-        private readonly byte[] unprintBytes = unprintBytes;
-
         public override CharHandlerType Type => CharHandlerType.Unprintable;
 
-        public override byte[] UnprintableBytes => this.unprintBytes;
+        public override byte[] UnprintableBytes => unprintBytes;
     }
 
     private sealed class UnprintableExtCharHandler(byte extraByteMod) : CharHandler
     {
-        private readonly byte extraByteMod = extraByteMod;
-
         public override CharHandlerType Type => CharHandlerType.UnprintableExt;
 
-        public override byte ExtraByteModifier => this.extraByteMod;
+        public override byte ExtraByteModifier => extraByteMod;
     }
 
     private sealed class InternationalExtCharHandler(byte[] bytes, byte[]? extraBytes, byte crazyFlag) : CharHandler
     {
-        private readonly byte[] bytes = bytes;
-        private readonly byte[]? extraBytes = extraBytes;
-        private readonly byte crazyFlag = crazyFlag;
-
         public override CharHandlerType Type => CharHandlerType.InternationalExt;
 
-        public override byte[] GetInlineBytes(char c) => this.bytes;
+        public override byte[] GetInlineBytes(char c) => bytes;
 
-        public override byte[]? ExtraBytes => this.extraBytes;
+        public override byte[]? ExtraBytes => extraBytes;
 
-        public override byte CrazyFlag => this.crazyFlag;
+        public override byte CrazyFlag => crazyFlag;
     }
 
     private sealed class SignificantCharHandler(byte[] bytes) : CharHandler
     {
-        private readonly byte[] bytes = bytes;
-
         public override CharHandlerType Type => CharHandlerType.Significant;
 
-        public override byte[] GetInlineBytes(char c) => this.bytes;
+        public override byte[] GetInlineBytes(char c) => bytes;
     }
 
     private sealed class IgnoredHandler : CharHandler
@@ -537,7 +477,7 @@ internal static class GeneralLegacyTextIndexEncoder
         public override byte[] GetInlineBytes(char c)
         {
             int idxC = c - 10238;
-            return [(byte)((idxC >> 8) & 0xFF), (byte)(idxC & 0xFF)];
+            return [unchecked((byte)(idxC >> 8)), unchecked((byte)idxC)];
         }
 
         public override byte[] ExtraBytes => SurrogateExtraBytes;
@@ -552,30 +492,17 @@ internal static class GeneralLegacyTextIndexEncoder
         public override byte[] GetInlineBytes(char c)
         {
             int charOffset = (c - 0xDC00) % 1024;
-            int idxOffset;
-            if (charOffset < 8)
+            int idxOffset = charOffset switch
             {
-                idxOffset = 9992;
-            }
-            else if (charOffset < 8 + 254)
-            {
-                idxOffset = 9990;
-            }
-            else if (charOffset < 8 + 254 + 254)
-            {
-                idxOffset = 9988;
-            }
-            else if (charOffset < 8 + 254 + 254 + 254)
-            {
-                idxOffset = 9986;
-            }
-            else
-            {
-                idxOffset = 9984;
-            }
+                < 8 => 9992,
+                < 8 + 254 => 9990,
+                < 8 + (254 * 2) => 9988,
+                < 8 + (254 * 3) => 9986,
+                _ => 9984,
+            };
 
             int idxC = c - idxOffset;
-            return [(byte)((idxC >> 8) & 0xFF), (byte)(idxC & 0xFF)];
+            return [unchecked((byte)(idxC >> 8)), unchecked((byte)idxC)];
         }
 
         public override byte[] ExtraBytes => SurrogateExtraBytes;
