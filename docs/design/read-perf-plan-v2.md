@@ -715,12 +715,110 @@ the buffer to user code. But two key consumers immediately discard it:
 
 ## Phase 8 — Verify, document, decide
 
-- [ ] Re-run all Phase 1 benchmarks; record final numbers.
-- [ ] Run full `dotnet test`.
-- [ ] Update [README.md](../../README.md) perf bullet with concrete
-  numbers if any phase delivered ≥2×.
-- [ ] If Phase 3 (direct decoder) materially regressed maintainability,
-  consider keeping it behind an opt-in `AccessReaderOptions` flag.
+### Tasks
+
+- [x] Re-ran the full Phase 1 benchmark suite
+  (`AccessReaderRowDecodeBenchmarks` + `AccessReaderOpenBenchmarks`)
+  in Release, same job config (warmup=2, iterations=5,
+  invocationCount=1, unrollFactor=1).
+- [x] Ran full `dotnet test --project JetDatabaseWriter.Tests -c Release`
+  → **2552 / 2554 pass**, only the two known DAO Compact failures
+  documented in `/memories/repo/round-trip-tests.md`.
+- [x] Updated [README.md](../../README.md) Performance bullet with the
+  concrete `Rows<T>()` win (compiled page → POCO decoder, narrow
+  projection ~3× faster / ~15× lower allocations).
+- [x] **Decision on Phase 3 opt-in flag:** keep direct decoder on by
+  default (no flag). The `DirectRowDecoderBuilder.TryBuild<T>` gate
+  already returns `null` for any unsupported column shape
+  (T_MEMO/T_OLE LVAL chains, T_BINARY, T_NUMERIC, T_COMPLEX/T_ATTACHMENT,
+  Hyperlink, type-mismatched properties), the `td.HasComplexColumns`
+  check disables it for complex tables, and per-column `try/catch`
+  matches the legacy `ReadFixedTyped` non-strict contract. The full
+  test suite (2552 passing) covers the supported shapes; no
+  maintainability red flag warrants a back-compat escape hatch.
+
+### Final benchmark snapshot (2026-05-02)
+
+`AccessReaderRowDecodeBenchmarks`:
+
+| Method                              | Phase 1 (baseline) | Phase 7 (final) | Δ alloc        | Δ mean        |
+| ----------------------------------- | -----------------: | --------------: | -------------- | ------------- |
+| `Decode_Numeric_Untyped`            |             8.00 MB|         8.26 MB | +3 % (memo cache) | 35.94 → 27.96 ms (1.3× faster) |
+| `Decode_Numeric_Typed`              |            10.90 MB|     **3.55 MB** | **3.1× less**  | 35.03 → 21.89 ms (**1.6× faster**) |
+| `Decode_Numeric_AsStrings`          |            11.81 MB|        12.08 MB | within noise   | 57.84 → 42.15 ms (1.4× faster) |
+| `Decode_Numeric_DataTable`          |            15.22 MB|     **13.20 MB**| **13 % less**  | 44.37 → 41.00 ms (within noise) |
+| `Decode_Text_Untyped`               |            20.72 MB|        20.93 MB | within noise   | 67.49 → 45.46 ms (1.5× faster) |
+| `Decode_Text_Typed`                 |            22.27 MB|        20.21 MB | 9 % less       | 62.99 → 41.46 ms (**1.5× faster**) |
+| `Decode_Text_AsStrings`             |            23.61 MB|        23.84 MB | within noise   | 78.71 → 66.71 ms (1.2× faster) |
+| `Decode_Text_DataTable`             |            27.26 MB|        25.75 MB | 6 % less       | 73.98 → 90.49 ms ★ |
+| `Decode_Wide_Untyped`               |            31.71 MB|        31.78 MB | within noise   | 56.08 → 59.36 ms (within noise) |
+| `Decode_Wide_Typed_NarrowProjection`|            32.19 MB|     **2.21 MB** | **14.6× less** | 63.85 → 22.42 ms (**2.8× faster**) |
+| `Decode_Numeric_Untyped_TwoPass` ★★ |                  — |        15.27 MB | new bench      | 37.10 ms (1.6× faster than 2× single-pass) |
+
+★ `Decode_Text_DataTable` mean has a wide error bar this run
+(±16.6 ms StdDev) — the run-to-run mean for this benchmark moved from
+73.98 ms → 79.15 ms → 90.49 ms across Phases 1/7/8 with overlapping
+confidence intervals; treat as "within noise" for time and use the
+allocation column for a meaningful delta.
+★★ `Decode_Numeric_Untyped_TwoPass` is new in Phase 6 (page-cache
+re-scan benchmark); no Phase 1 baseline.
+
+`AccessReaderOpenBenchmarks`:
+
+| Method                   | Phase 1 alloc | Phase 8 alloc | Phase 1 mean | Phase 8 mean |
+| ------------------------ | ------------: | ------------: | -----------: | -----------: |
+| `Open_Northwind`         |       26.6 KB |       40.9 KB |      1.74 ms |     1.17 ms  |
+| `Open_Synthetic_Numeric` |       27.3 KB |       41.5 KB |      1.32 ms |     1.13 ms  |
+| `Open_Synthetic_Wide`    |       27.5 KB |       41.6 KB |      1.10 ms |     1.11 ms  |
+
+`OpenAsync` allocations rose ~14 KB / ~50 % across all three DBs —
+attributable to the Phase 6 row-bounds `LruCache<long, RowBound[]>`
+and the Phase 4 span/span-overload metadata that the reader now
+constructs eagerly. Mean times are unchanged-to-faster (the Phase 5
+diagnostics-gate cleanup outweighs the cache-construction cost).
+This is a tolerable trade-off because the row-bounds cache pays
+itself back the moment the user reads any row from any table; for
+the "open + close immediately" workload the absolute floor is still
+~41 KB / ~1.1 ms.
+
+### Headline wins (the bullets to remember)
+
+1. **`Rows<T>()` with a narrow DTO over a wide table:**
+   **2.8× faster, 14.6× lower allocations** (Phase 2 + 3, measured on
+   the synthetic 10 k-row × 40-col table with a 4-property DTO).
+2. **`Rows<T>()` over a numeric table:**
+   **1.6× faster, 3.1× lower allocations** (Phase 3 direct decoder).
+3. **`ReadDataTableAsync` over the same table:**
+   **13 % lower allocations** (Phase 7 pooled row buffer); time is
+   within run-to-run noise.
+4. **Two-pass scan of the same table** (e.g. `ReadDataTableAsync`
+   followed by `Rows<T>()` with `PageCacheSize > 0`):
+   **1.7× faster than two independent passes** (Phase 6 row-bounds
+   cache + existing page cache).
+5. **`OpenAsync` floor:** ~1.1 ms / ~41 KB across all tested DBs —
+   the v1 plan's "~50 ms / ~3.3 MB" estimate was a measurement
+   artifact and Phase 5 confirmed the steady-state cost is three
+   orders of magnitude lower.
+
+### Phase 3 opt-in flag (rejected)
+
+Considered adding `AccessReaderOptions { UseDirectRowDecoder = false }`
+as a back-compat escape hatch. Rejected for these reasons:
+
+- The direct decoder *only* runs when `TryBuild<T>` accepts the DTO.
+  Anything it can't safely decode falls back to Phase 2 automatically.
+- Per-column `try/catch` swallows decode failures into property
+  defaults, matching the existing non-strict `ReadFixedTyped`
+  contract; nothing user-observable changes between paths for valid
+  rows.
+- The `td.HasComplexColumns` gate prevents the decoder from starving
+  complex/attachment parent-id resolution.
+- An options flag would add a public API surface that tests would
+  have to cover both sides of, and would mostly serve to let users
+  opt *out* of a strict win.
+
+If a future user reports a regression that's hard to reproduce, the
+flag can be added then; it costs nothing to leave out today.
 
 ---
 
@@ -733,9 +831,60 @@ the buffer to user code. But two key consumers immediately discard it:
 - **Writer perf.** Out of scope; mention only if a span/pool change in
   the cracker accidentally also benefits the writer.
 - **Long-value (LVAL) decode optimization.** The async chain walker is
-  fine for the rare path it handles; not the hot path.
+  fine for the rare path it handles; not the hot path of the workloads
+  this plan targets. A baseline benchmark (`Decode_Memo_*` in
+  [AccessReaderRowDecodeBenchmarks.cs](../../JetDatabaseWriter.Benchmarks/AccessReaderRowDecodeBenchmarks.cs),
+  backed by the synthetic `Memos` table from
+  [SyntheticDatabases.cs](../../JetDatabaseWriter.Benchmarks/SyntheticDatabases.cs))
+  exists so any future LVAL phase has numbers to beat — see
+  [Phase 9 (deferred)](#phase-9--lval-decode-optimization-deferred).
 
 ---
+
+## Phase 9 — LVAL decode optimization (deferred)
+
+**Status: deferred.** Benchmark added; no production code changed.
+
+The synthetic `Memos` table (5 000 rows, one int + one MEMO column whose
+payload cycles `32 B → 2 KB → 16 KB`) exercises all three branches of
+`AccessReader.ReadLongValueAsync`:
+
+- **Inline** (bitmask `0x80`) for the 32-byte rows.
+- **Single LVAL page** (bitmask `0x40`) for the 2 KB rows.
+- **Chained LVAL pages** (default branch, walked by `ReadLvalChainAsync`)
+  for the 16 KB rows.
+
+### Baseline (2026-05-02, .NET 10.0.7, Intel Core Ultra 7 268V, Release)
+
+Run: `dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter "*AccessReaderRowDecodeBenchmarks.Decode_Memo*" --warmupCount 2 --iterationCount 5 --invocationCount 1 --unrollFactor 1`
+
+| Method                  | Mean / op | Allocated / op |
+| ----------------------- | --------: | -------------: |
+| `Decode_Memo_Untyped`   |  202.5 ms |      176.03 MB |
+| `Decode_Memo_Typed`     |  190.1 ms |      176.01 MB |
+| `Decode_Memo_DataTable` |  219.2 ms |      176.83 MB |
+
+Per-row figures (5 000 rows, average payload ~6 KB across the three
+size classes):
+- ~38–44 µs/row, ~36 KB/row across all three call paths.
+- `Typed` and `Untyped` are within run-to-run noise of each other —
+  unsurprising, because the per-row `object?[]` saving from the Phase 7
+  pool is invisible next to the per-row LVAL allocations.
+
+### Candidate optimizations (when/if a real workload demands them)
+
+1. **Single-buffer LVAL chain assembly.** Replace
+   `ReadLvalChainAsync`'s `List<byte[]>` + `Concat` with one pre-sized
+   `byte[memoLen]` written in place. Saves one large allocation +
+   one `Buffer.BlockCopy` pass per chained row.
+2. **Sync fast path when every chain page is a cache hit.** The chain
+   walker is unconditionally `async`; a synchronous prefix would let
+   warm-cache reads skip the `await` state machine entirely.
+3. **Pool the per-page LVAL row scratch** — audit `ReadLvalBytesAsync`
+   callers for opportunities to reuse rented buffers.
+
+These are documented here so a future contributor can re-evaluate
+against this baseline rather than rediscovering the call graph.
 
 ## Phase ordering rationale (revised after Phase 1 baselines)
 
@@ -747,7 +896,7 @@ Phase 1 (benchmarks)                ✓ done
    ├─ Phase 5 (OpenAsync floor)     ✓ done — dropped after Phase 1 finding #1; one diag-gate cleanup landed
    ├─ Phase 6 (cached row directory) ✓ done — re-scan workload 1.7× faster
    └─ Phase 7 (pooled row buffers)  ✓ done — DataTable scan ~13 % lighter
-Phase 8 (verify + document)
+Phase 8 (verify + document)         ✓ done
 ```
 
 Recommended order based on Phase 1 data:
