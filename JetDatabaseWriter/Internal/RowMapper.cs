@@ -48,6 +48,26 @@ internal static class RowMapper<T>
     }
 
     /// <summary>
+    /// Returns a boolean mask the same length as <paramref name="headers"/> indicating
+    /// which header indices the compiled mapper actually consumes (i.e. those whose
+    /// header name maps to a settable property on <typeparamref name="T"/>). Used by
+    /// the read-path projection optimisation (Phase 2 of read-perf-plan-v2) to skip
+    /// per-row decode of columns that <typeparamref name="T"/> never reads.
+    /// </summary>
+    public static bool[] GetBoundColumnMask(IReadOnlyList<string> headers)
+    {
+        Guard.NotNull(headers, nameof(headers));
+        int count = headers.Count;
+        var mask = new bool[count];
+        for (int i = 0; i < count; i++)
+        {
+            mask[i] = PropertyMap.ContainsKey(headers[i]);
+        }
+
+        return mask;
+    }
+
+    /// <summary>
     /// Compiles a single delegate that materializes a fresh <typeparamref name="T"/>
     /// from an <c>object?[]</c> row in one call. The <c>new T()</c> is baked into
     /// the compiled expression tree itself — no captured delegates, no extra
