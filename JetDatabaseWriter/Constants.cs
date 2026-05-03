@@ -611,13 +611,20 @@ internal static class Constants
                 /// <summary>Size in bytes of one real-idx physical descriptor (col_map + flags).</summary>
                 public const int PhysSize = 39;
 
-                /// <summary>Start of the 30-byte <c>col_map</c> block (10 × {col_num(2), col_order(1)}).</summary>
-                public const int ColMapOffset = 4;
+                /// <summary>
+                /// Start of the 30-byte <c>col_map</c> block (10 × {col_num(2), col_order(1)}).
+                /// Per mdbtools <c>HACKING.md</c>: in Jet3 the phys descriptor is
+                /// <c>col_map(30) + used_pages(4) + first_dp(4) + flags(1) = 39</c>
+                /// with no leading magic prefix (the <c>0</c> here vs Jet4's
+                /// <c>4</c> reflects exactly that — Jet4 has a 4-byte magic
+                /// prefix in front of <c>col_map</c>, Jet3 does not).
+                /// </summary>
+                public const int ColMapOffset = 0;
 
-                /// <summary><c>first_dp</c> (4 bytes): root page of the index B-tree.</summary>
+                /// <summary><c>first_dp</c> (4 bytes): root page of the index B-tree. Lives at offset 34 = 30 (col_map) + 4 (used_pages).</summary>
                 public const int FirstDpOffset = 34;
 
-                /// <summary><c>flags</c> (1 byte): bit 0 = unique.</summary>
+                /// <summary><c>flags</c> (1 byte): bit 0 = unique. Lives at offset 38 = PhysSize - 1.</summary>
                 public const int FlagsOffset = 38;
             }
 

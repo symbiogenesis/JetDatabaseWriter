@@ -23,26 +23,24 @@ the test source is the canonical record of what's covered.
 
 ### 1.1 Text / sort-order encoders
 
-- [ ] **`[J]` `[S]`** Per-fixture byte-exact validation for **General** (2010+) and
-  **General 97** sort orders, mirroring the existing `GeneralLegacyEncoderFixtureTests`.
-  Current coverage validates only the `GeneralLegacy` encoder against
-  `testIndexCodes*` fixtures (V2000–V2007 in
-  [GeneralLegacyEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralLegacyEncoderFixtureTests.cs));
-  V2010 is excluded there because its default sort order is **General**, not
-  **General Legacy**. The V2010 long-row tables (`Table11`, `Table11_desc`)
-  are explicitly skipped — Jackcess does the same
-  ("TODO long rows not handled completely yet in V2010"). Closing the General /
-  General 97 gap would also let us re-include those tables.
+Byte-exact fixture validation across all five formats ships in
+[GeneralLegacyEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralLegacyEncoderFixtureTests.cs)
+(V2000 / V2003 / V2007),
+[GeneralEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralEncoderFixtureTests.cs)
+(V2010), and
+[General97EncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/General97EncoderFixtureTests.cs)
+(V1997), all driven through
+[TextIndexEncoderFixtureHarness.cs](../../JetDatabaseWriter.Tests/Internal/TextIndexEncoderFixtureHarness.cs).
+Property/structural assertions for the General + General 97 encoders are
+in [GeneralAndGeneral97EncoderUnitTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralAndGeneral97EncoderUnitTests.cs).
 
-  > **Canonical home for the upstream Jackcess long-row TODO.** The same
-  > limitation is referenced (and these tables/keys are skipped) from:
-  > [GeneralLegacyEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralLegacyEncoderFixtureTests.cs)
-  > (text long-row stress tables `Table11` / `Table11_desc`),
-  > [NonTextSingleColumnIndexFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/NonTextSingleColumnIndexFixtureTests.cs)
-  > (binary single-column long keys in V2010 `binIdxTest`),
-  > [IndexCodesAggregateDiagnosticTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexCodesAggregateDiagnosticTests.cs)
-  > (aggregate ignores Memo-keyed indexes), and the README "Limitations →
-  > Index keys" bullet. Repo-memory note: `/memories/repo/long-row-index-todo.md`.
+- [ ] **V2010 long-row stress tables (`Table11`, `Table11_desc`)** are
+  skipped across the General fixture sweep, §1.2 binary single-column
+  long keys, and Memo-keyed indexes. Mirrors the upstream Jackcess long-row
+  TODO ("long rows not handled completely yet in V2010 — truncates entry
+  at 508 bytes"); both our text/binary index-key encoders share the same
+  127-char prefix cap and ~508-byte leaf truncation. See
+  `/memories/repo/long-row-index-todo.md`.
 
 ### 1.2 Numeric / temporal / binary keys
 
@@ -56,16 +54,13 @@ through `IndexKeyEncoder.EncodeEntry` and compared positionally against the
 on-disk leaf entries (sorted unsigned). The remaining sub-items below call
 out cases that fixture sweep does **not** specifically isolate.
 
-- [ ] **`[J]` `[S]`** Per-format isolated assertion of
-  `LegacyFixedPointColumnDescriptor` vs `FixedPointColumnDescriptor`
-  sign-byte handling for Money / NUMERIC keys (the fixture sweep exercises
-  both paths positionally but does not isolate the sign-byte branch).
-  > **Sign-byte branch closed.** `IndexKeyEncoderTests.Numeric_SignByte_IsolatedAcrossFormatAndDirection`
-  > pins down all eight (`asc/desc × pos/neg × legacy/new-style`) sign-byte
-  > outcomes — see [IndexKeyEncoderTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexKeyEncoderTests.cs).
-  > The remaining open work under this bullet is Money (`T_MONEY = 0x05`,
-  > scaled int64) — the same isolated-cross-format theory has not yet been
-  > added for it; the fixture sweep covers it positionally only.
+- [ ] **`[J]` `[S]`** Money (`T_MONEY = 0x05`, scaled int64) sign-byte
+  isolated cross-format theory. The NUMERIC sign-byte branch is closed by
+  `IndexKeyEncoderTests.Numeric_SignByte_IsolatedAcrossFormatAndDirection`
+  in [IndexKeyEncoderTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexKeyEncoderTests.cs)
+  (all eight `asc/desc × pos/neg × legacy/new-style` outcomes); the
+  same shape is needed for Money, which the fixture sweep currently
+  covers positionally only.
 - [ ] **`[J]` `[S]`** OLE long-value index keys — not present in the current
   Jackcess fixture set; needs a synthetic fixture.
 - [ ] **`[J]` `[S]`** Extended Date/Time (`SHORT_DATE_TIME` extended; 42-byte
@@ -103,10 +98,9 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   `FirstDp=0` (or filtering as FK) for every index in those fixtures
   rather than the fixtures legitimately being empty. Same symptom appears
   for `compIndexTestV2003` (zero leaf entries, no non-FK index with
-  `first_dp` on Table1). Needs a targeted probe of the real-idx slot
-  parse against these specific fixtures — the data-driven `Assert.Skip`s
-  are masking what looks like a real reader gap, not a fixture-content
-  issue.
+  `first_dp` on Table1). Worth re-checking after the 2026-05-03 Jet3
+  `ColMapOffset` fix — the V1997 reader bug that fix closed had the same
+  symptom, but for Jet4/ACE fixtures so the root cause must differ.
 
 ### 1.4 Index flags & metadata
 
@@ -179,17 +173,6 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   ACE (these are referenced by Jackcess but not asserted).
 - [ ] **`[J]`** Querying `MSysQueries` row-set for a **parameterised** query
   definition; we have basic query metadata but no parameter assertions.
-- [x] ~~**`[L]`** **Multi-page TDEF emission**~~ — **Closed.** Discovered
-  while closing the >32-column / >16-index gap. The writer was previously
-  limited to a single TDEF page; it now emits a `0x02` page chain (linked
-  via the offset-4 next-page pointer) matching the reader's existing
-  `ReadTDefBytesAsync` stitching path. Covered by
-  `IndexWriterTests.CreateTable_TDefChainSpansMultiplePages_RoundTrips`
-  (Theory over Jet3 / Jet4 / ACE — uses 200 columns + 30 indexes to force
-  a multi-page chain on every format and asserts `chainLen > 1` on disk)
-  and by the now-`[Theory]`-form
-  `CreateTable_WithFiftyColumnsAndTwentyIndexes_RoundTripsWithoutTruncation`
-  (which previously skipped Jet3 because of the single-page limit).
 
 ---
 
@@ -240,12 +223,6 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ## Notes on prioritisation
 
-- Items in **§1.1** are the most directly actionable now that the
-  fixture-driven encoder harness exists; new sort orders (General,
-  General 97) plug into the same `Fixtures` `TheoryData` shape used by
-  `GeneralLegacyEncoderFixtureTests` and `CompositeTextIndexFixtureTests`.
-  Closing the General sort-order gap would also let V2010 fixtures (and
-  the `Table11` / `Table11_desc` long-row tables) re-enter scope.
 - Items in **§3** require new fixture authoring (Office tooling) and are
   larger.
 - Items in **§7** can be largely automated by extending the existing

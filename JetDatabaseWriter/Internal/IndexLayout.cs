@@ -51,13 +51,6 @@ internal readonly struct IndexLayout
     /// <summary>Offset (post <see cref="LogicalEntryFieldsOffset"/>) of <c>index_type</c>.</summary>
     public const int IndexTypeFieldOffset = Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset;
 
-    /// <summary>
-    /// Byte offset of the <c>col_map</c> block within a real-idx physical
-    /// descriptor. Starts immediately after the 4-byte umap pointer; identical
-    /// between Jet3 (PhysSize 39) and Jet4/ACE (PhysSize 52).
-    /// </summary>
-    public const int ColMapStartWithinPhys = Constants.TableDefinition.Jet3.RealIdx.ColMapOffset;
-
     /// <summary>Size in bytes of one <c>col_map</c> slot: <c>{col_num(2), col_order(1)}</c>.</summary>
     public const int ColMapSlotSize = Constants.TableDefinition.ColMapSlotSize;
 
@@ -67,7 +60,8 @@ internal readonly struct IndexLayout
         int logicalEntrySize,
         int realIdxFieldsOffset,
         int logicalEntryFieldsOffset,
-        int flagsOffsetWithinPhys)
+        int flagsOffsetWithinPhys,
+        int colMapStartWithinPhys)
     {
         Format = format;
         RealIdxPhysSize = realIdxPhysSize;
@@ -75,6 +69,7 @@ internal readonly struct IndexLayout
         RealIdxFieldsOffset = realIdxFieldsOffset;
         LogicalEntryFieldsOffset = logicalEntryFieldsOffset;
         FlagsOffsetWithinPhys = flagsOffsetWithinPhys;
+        ColMapStartWithinPhys = colMapStartWithinPhys;
     }
 
     /// <summary>Gets the database format this layout describes.</summary>
@@ -113,6 +108,16 @@ internal readonly struct IndexLayout
     /// </summary>
     public int FlagsOffsetWithinPhys { get; }
 
+    /// <summary>
+    /// Gets the byte offset of the <c>col_map</c> block within a real-idx
+    /// physical descriptor. Format-dependent because Jet4/ACE prepends a
+    /// 4-byte “magic” cookie before <c>col_map</c> that Jet3 does not
+    /// (Jet3: 0, Jet4/ACE: 4). Per mdbtools <c>HACKING.md</c>: Jet3 phys
+    /// descriptor is <c>col_map(30) + used_pages(4) + first_dp(4) + flags(1)</c>;
+    /// Jet4 phys descriptor is <c>magic(4) + col_map(30) + …</c>.
+    /// </summary>
+    public int ColMapStartWithinPhys { get; }
+
     /// <summary>Returns the layout matching <paramref name="format"/>.</summary>
     public static IndexLayout For(DatabaseFormat format) => format == DatabaseFormat.Jet3Mdb
         ? new IndexLayout(
@@ -121,20 +126,22 @@ internal readonly struct IndexLayout
             logicalEntrySize: Constants.TableDefinition.Jet3.LogicalIdx.EntrySize,
             realIdxFieldsOffset: 0,
             logicalEntryFieldsOffset: 0,
-            flagsOffsetWithinPhys: Constants.TableDefinition.Jet3.RealIdx.FlagsOffset)
+            flagsOffsetWithinPhys: Constants.TableDefinition.Jet3.RealIdx.FlagsOffset,
+            colMapStartWithinPhys: Constants.TableDefinition.Jet3.RealIdx.ColMapOffset)
         : new IndexLayout(
             format,
             realIdxPhysSize: Constants.TableDefinition.Jet4.RealIdx.PhysSize,
             logicalEntrySize: Constants.TableDefinition.Jet4.LogicalIdx.EntrySize,
             realIdxFieldsOffset: 4,
             logicalEntryFieldsOffset: 4,
-            flagsOffsetWithinPhys: Constants.TableDefinition.Jet4.RealIdx.FlagsOffset);
+            flagsOffsetWithinPhys: Constants.TableDefinition.Jet4.RealIdx.FlagsOffset,
+            colMapStartWithinPhys: Constants.TableDefinition.Jet4.RealIdx.ColMapOffset);
 
     /// <summary>Walks the 10-slot <c>col_map</c> in a real-idx physical descriptor, invoking <paramref name="onColumn"/> for each populated slot.</summary>
     /// <param name="td">TDEF byte buffer.</param>
     /// <param name="physStart">Absolute byte offset of the real-idx physical descriptor within <paramref name="td"/>.</param>
     /// <param name="onColumn">Callback receiving each non-padding (column, ascending) pair.</param>
-    public static void ReadColMap(ReadOnlySpan<byte> td, int physStart, Action<KeyColumn> onColumn)
+    public void ReadColMap(ReadOnlySpan<byte> td, int physStart, Action<KeyColumn> onColumn)
     {
         int colMapStart = physStart + ColMapStartWithinPhys;
         for (int slot = 0; slot < ColMapSlotCount; slot++)
@@ -157,7 +164,7 @@ internal readonly struct IndexLayout
     }
 
     /// <summary>Returns the absolute byte offset of a <c>col_map</c> slot's <c>col_num</c> within a TDEF buffer.</summary>
-    public static int ColMapSlotOffset(int physStart, int slot)
+    public int ColMapSlotOffset(int physStart, int slot)
         => physStart + ColMapStartWithinPhys + (slot * ColMapSlotSize);
 
     /// <summary>
@@ -167,7 +174,7 @@ internal readonly struct IndexLayout
     /// which is what every consumer that decodes a real-idx slot ultimately
     /// builds.
     /// </summary>
-    public static List<KeyColumn> ReadColMapEntries(ReadOnlySpan<byte> td, int physStart)
+    public List<KeyColumn> ReadColMapEntries(ReadOnlySpan<byte> td, int physStart)
     {
         var result = new List<KeyColumn>(ColMapSlotCount);
         int colMapStart = physStart + ColMapStartWithinPhys;
