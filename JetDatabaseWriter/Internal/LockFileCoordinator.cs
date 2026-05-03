@@ -52,21 +52,19 @@ internal sealed class LockFileCoordinator : IDisposable
                 MachineName: options.LockFileMachineName));
     }
 
-    /// <summary>Creates a coordinator wired up from explicit writer construction parameters.</summary>
-    public static LockFileCoordinator ForWriter(
-        string databasePath,
-        bool useLockFile,
-        bool respectExistingLockFile,
-        string? lockFileUserName,
-        string? lockFileMachineName)
-        => new(
+    /// <summary>Creates a coordinator wired up from <see cref="AccessWriterOptions"/>.</summary>
+    public static LockFileCoordinator ForWriter(string databasePath, AccessWriterOptions options)
+    {
+        Guard.NotNull(options, nameof(options));
+        return new LockFileCoordinator(
             databasePath,
             nameof(AccessWriter),
             new LockFileSettings(
-                Enabled: useLockFile,
-                RespectExisting: respectExistingLockFile,
-                UserName: lockFileUserName,
-                MachineName: lockFileMachineName));
+                Enabled: options.UseLockFile,
+                RespectExisting: options.RespectExistingLockFile,
+                UserName: options.LockFileUserName,
+                MachineName: options.LockFileMachineName));
+    }
 
     /// <summary>
     /// Creates a coordinator suitable for the writer's static re-encryption helpers,
@@ -74,12 +72,14 @@ internal sealed class LockFileCoordinator : IDisposable
     /// honour any existing lock-file.
     /// </summary>
     public static LockFileCoordinator ForReencrypt(string databasePath, AccessWriterOptions? options)
-        => ForWriter(
+        => new(
             databasePath,
-            useLockFile: options?.UseLockFile ?? true,
-            respectExistingLockFile: options?.RespectExistingLockFile ?? true,
-            lockFileUserName: options?.LockFileUserName,
-            lockFileMachineName: options?.LockFileMachineName);
+            nameof(AccessWriter),
+            new LockFileSettings(
+                Enabled: options?.UseLockFile ?? true,
+                RespectExisting: options?.RespectExistingLockFile ?? true,
+                UserName: options?.LockFileUserName,
+                MachineName: options?.LockFileMachineName));
 
     /// <summary>Gets a value indicating whether the coordinator will maintain a lock-file slot.</summary>
     public bool IsEnabled { get; }
