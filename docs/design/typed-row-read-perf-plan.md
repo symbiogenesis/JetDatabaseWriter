@@ -366,10 +366,65 @@ Notes:
   `/memories/repo/round-trip-tests.md`. No new regressions.
 
 ### Phase 7 — Verify & document
-- [ ] Re-run the Phase 0 benchmarks; record results in this doc.
-- [ ] Run full `dotnet test` (xUnit v3 / MTP; args go directly to
+- [x] Re-run the Phase 0 benchmarks; record results in this doc.
+- [x] Run full `dotnet test` (xUnit v3 / MTP; args go directly to
   `dotnet test`).
-- [ ] Update README perf section if numbers warrant it.
+- [x] Update README perf section if numbers warrant it.
+
+#### Post-optimization measurements (2026-05-02, .NET 10.0.7, Intel Core Ultra 7 268V)
+
+Same command, machine, and database as the Phase 0 baseline:
+
+`dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter "*AccessReaderBenchmarks.StreamRows*" --warmupCount 3 --iterationCount 5 --invocationCount 1 --unrollFactor 1`
+
+| Method                        | Mean / op  | Alloc / op | Δ Mean vs baseline | Δ Alloc vs baseline |
+| ----------------------------- | ---------: | ---------: | -----------------: | ------------------: |
+| `StreamRows_All` (catalog)    |  71.23 ms  |  3.27 MB   | +43.6 % (noise¹)   |   ±0 %              |
+| `StreamRowsAsStrings_All`     |  78.66 ms  |  3.27 MB   | +52.2 % (noise¹)   |   ±0 %              |
+| `StreamRows_All_Numeric`      |  67.42 ms  |  3.34 MB   |  +2.4 %            |  −0.9 %             |
+| `StreamRowsTyped_All_Numeric` |  72.10 ms  |  3.40 MB   |  +9.7 %            | **−19.4 %**         |
+
+¹ The `iterationCount=5 / invocationCount=1` configuration produces 18–47 %
+margin-of-error on these runs (see the BDN summary), so the catalog-table
+mean differences are within run-to-run noise. The bytes-allocated number
+is deterministic and is the better signal here.
+
+Headline results:
+- **`StreamRowsTyped_All_Numeric` allocations dropped from 4.22 MB → 3.40 MB
+  per op (~820 KB / ~6.3 KB per row).** This is the Phase 5 `RowMapper<T>`
+  delegate win materializing — no more per-column boxing for widening
+  conversions and no more `Convert.ChangeType` fallback when source and
+  target types match.
+- The untyped `StreamRows_All_Numeric` allocation also ticked down
+  (3.37 → 3.34 MB) from Phase 1's removal of per-column string formatting
+  on the fixed-width path.
+- Per-op timings on this benchmark are dominated by `OpenAsync` (catalog
+  + system table parsing, ≈3.3 MB allocation floor that is unchanged by
+  this work). A future benchmark that pre-opens the reader in `[GlobalSetup]`
+  and measures **only** the row enumeration would expose the per-row
+  decode wins more cleanly; the existing benchmarks were left as-is so
+  the Phase 0 numbers in this doc remain comparable.
+
+#### Test result
+
+`dotnet test --project JetDatabaseWriter.Tests --configuration Debug`
+
+- **2552 / 2554 pass.**
+- The two failures are
+  `AccessRoundTripTests.SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`
+  and `…CompositePk_AndMultiColumnFk_SurviveCompactAndRepair` — the
+  pre-existing DAO Compact baseline failures documented in
+  `/memories/repo/round-trip-tests.md` (Access engine `MSysDb` lookup
+  COMException, environmental and unrelated to typed-row decoding).
+
+#### README update
+
+The README only describes performance qualitatively
+([README.md](../../README.md) line 27 — "Configurable LRU page cache,
+optional parallel page reads, streams millions of rows without loading
+the file"). No numeric perf section exists today and the per-op deltas
+above are dominated by the `OpenAsync` floor, so no README change was
+made in this phase.
 
 ## Expected impact
 
