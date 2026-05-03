@@ -117,4 +117,5 @@ A useful tactical knob: keep `TrySpliceCatalogIndexEntryAsync`'s `_lastIncrement
 
 - [/memories/repo/round-trip-tests.md](memories/repo/round-trip-tests.md) — leaf-bytes verification + Jet4 layout invariants.
 - [docs/design/catalog-index-maintenance-notes.md](docs/design/catalog-index-maintenance-notes.md) — design rationale for the splice approach.
+- [docs/design/round-trip-diagnostics.md](docs/design/round-trip-diagnostics.md) — reusable bisection matrix (N1–N14) and page-dump probe recipe from the historical scratch tests; use when narrowing a new round-trip regression.
 - README §"Round-trip through Microsoft Access Compact & Repair" — testing methodology and known limitation.
