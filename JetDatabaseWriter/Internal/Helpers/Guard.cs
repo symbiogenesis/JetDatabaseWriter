@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Internal.Helpers;
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 
 /// <summary>
@@ -14,7 +15,7 @@ internal static class Guard
     /// .NET 6+ for JIT-friendlier codegen and falls back to a manual check on older targets.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void NotNull<T>(T value, string paramName)
+    public static void NotNull<T>([NotNull] T? value, string paramName)
         where T : class
     {
 #if NET6_0_OR_GREATER
@@ -27,7 +28,7 @@ internal static class Guard
 #endif
     }
 
-    public static void NotNullOrEmpty(string value, string paramName)
+    public static void NotNullOrEmpty([NotNull] string? value, string paramName)
     {
 #if NET6_0_OR_GREATER
         ArgumentException.ThrowIfNullOrEmpty(value, paramName);
