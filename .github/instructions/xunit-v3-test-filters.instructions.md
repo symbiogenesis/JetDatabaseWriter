@@ -34,6 +34,7 @@ Notes:
 - The legacy VSTest `--filter "FullyQualifiedName~..."` syntax does **not** work in MTP mode.
 - Do not use `dotnet test ... -- --filter-class ...` or other `--`-prefixed forwarding; on SDK 10 the args go directly to `dotnet test`.
 - Use the built-in MTP `--list-tests` switch to discover tests. To see xUnit's native discovery/run banner alongside MTP output, use `--xunit-info`.
+- `--nologo` is **not** a valid option under xUnit v3 with MTP and will cause `dotnet test` to fail with an unknown-option error. It was a VSTest-era switch; omit it. To quiet build output, use `--verbosity quiet` (a `dotnet test` build option) instead.
 
 ## Discovering tests
 
