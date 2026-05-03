@@ -86,6 +86,21 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   mdbtools' `mdb-index` dump for at least one fixture — provides an
   external sanity check. (The internal sweep validates ordering, but not
   the chain itself against an independent implementation.)
+- [ ] **`[J]` `[M]`** **`bigIndexTest*` fixtures surface zero scannable
+  B-trees / zero leaf entries / zero "applicable" single-column non-text
+  indexes across all four format variants (V2000, V2003, V2007, V2010)** in
+  [IndexBTreeStructuralFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexBTreeStructuralFixtureTests.cs)
+  and [NonTextSingleColumnIndexFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/NonTextSingleColumnIndexFixtureTests.cs).
+  These fixtures are purpose-built to stress wide/deep index B-trees, so
+  the consistent "nothing to scan" signal across three independent theory
+  tests strongly suggests our `ListIndexesAsync` path is returning
+  `FirstDp=0` (or filtering as FK) for every index in those fixtures
+  rather than the fixtures legitimately being empty. Same symptom appears
+  for `compIndexTestV2003` (zero leaf entries, no non-FK index with
+  `first_dp` on Table1). Needs a targeted probe of the real-idx slot
+  parse against these specific fixtures — the data-driven `Assert.Skip`s
+  are masking what looks like a real reader gap, not a fixture-content
+  issue.
 
 ### 1.4 Index flags & metadata
 
