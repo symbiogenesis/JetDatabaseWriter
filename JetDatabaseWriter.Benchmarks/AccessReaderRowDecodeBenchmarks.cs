@@ -19,6 +19,7 @@ public class AccessReaderRowDecodeBenchmarks
     private AccessReader _numericReader = null!;
     private AccessReader _textReader = null!;
     private AccessReader _wideReader = null!;
+    private AccessReader _numericReaderRescan = null!;
 
     [GlobalSetup]
     public async Task Setup()
@@ -27,6 +28,13 @@ public class AccessReaderRowDecodeBenchmarks
         _numericReader = await AccessReader.OpenAsync(SyntheticDatabases.NumericDbPath).ConfigureAwait(false);
         _textReader = await AccessReader.OpenAsync(SyntheticDatabases.TextDbPath).ConfigureAwait(false);
         _wideReader = await AccessReader.OpenAsync(SyntheticDatabases.WideDbPath).ConfigureAwait(false);
+
+        // Dedicated reader for the Phase 6 re-scan benchmark. Sized to hold
+        // every data page of NumericTable so the second pass is a pure cache
+        // hit and the row-bounds memoization shows up cleanly.
+        _numericReaderRescan = await AccessReader.OpenAsync(
+            SyntheticDatabases.NumericDbPath,
+            new AccessReaderOptions { PageCacheSize = 2048 }).ConfigureAwait(false);
     }
 
     [GlobalCleanup]
@@ -35,6 +43,7 @@ public class AccessReaderRowDecodeBenchmarks
         await _numericReader.DisposeAsync().ConfigureAwait(false);
         await _textReader.DisposeAsync().ConfigureAwait(false);
         await _wideReader.DisposeAsync().ConfigureAwait(false);
+        await _numericReaderRescan.DisposeAsync().ConfigureAwait(false);
     }
 
     // ── Numeric / date-heavy ──────────────────────────────────────────
@@ -156,6 +165,28 @@ public class AccessReaderRowDecodeBenchmarks
         {
             _ = row;
             count++;
+        }
+
+        return count;
+    }
+
+    // ── Re-scan (Phase 6 row-bounds cache) ────────────────────────────
+    // Two passes over the same table inside one op. With the page cache
+    // sized to hold every data page (default 256, NumericTable fits),
+    // the second pass should hit the row-bounds memo on every page and
+    // skip the per-page parse work the first pass paid.
+
+    [Benchmark]
+    public async Task<int> Decode_Numeric_Untyped_TwoPass()
+    {
+        int count = 0;
+        for (int pass = 0; pass < 2; pass++)
+        {
+            await foreach (object[] row in _numericReaderRescan.Rows(SyntheticDatabases.NumericTable).ConfigureAwait(false))
+            {
+                _ = row;
+                count++;
+            }
         }
 
         return count;

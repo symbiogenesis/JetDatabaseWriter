@@ -63,6 +63,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private readonly bool _strictParsing;
     private readonly LruCache<long, byte[]>? _pageCache;
 
+    // Phase 6 of read-perf-plan-v2: memoize the parsed live-row directory per
+    // data page. Same eviction profile as _pageCache (sized 1:1 with it) so a
+    // page that's still hot in the byte-cache also keeps its bounds array.
+    // Stale entries left behind after a page is evicted from _pageCache simply
+    // age out of this LRU on their own — correctness doesn't depend on the
+    // two caches being kept in lock-step.
+    private readonly LruCache<long, RowBound[]>? _rowBoundsCache;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessReader"/> class.
     /// Opens <paramref name="path"/> and detects the JET version.
@@ -93,6 +101,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         if (PageCacheSize > 0)
         {
             _pageCache = new LruCache<long, byte[]>(PageCacheSize, ReturnPage);
+            _rowBoundsCache = new LruCache<long, RowBound[]>(PageCacheSize);
         }
 
         bool isAccdbCfbEncrypted = EncryptionManager.IsCompoundFileEncrypted(hdr);
@@ -284,7 +293,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-                await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+                await foreach (List<string> row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
                 {
                     _ = dt.Rows.Add(row.ToArray());
                     if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
@@ -567,7 +576,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            foreach (RowBound rb in EnumerateLiveRowBounds(page))
+            foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
             {
                 if (rb.RowSize < _numColsFldSz)
                 {
@@ -625,7 +634,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            foreach (RowBound rb in EnumerateLiveRowBounds(page))
+            foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
             {
                 if (rb.RowSize < _numColsFldSz)
                 {
@@ -683,7 +692,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+            await foreach (List<string> row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
             {
                 yield return row.ToArray();
                 rowCount++;
@@ -1349,7 +1358,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-                foreach (RowBound rb in EnumerateLiveRowBounds(page))
+                foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
                 {
                     if (rb.RowSize < _numColsFldSz)
                     {
@@ -1490,7 +1499,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            foreach (RowBound rb in EnumerateLiveRowBounds(page))
+            foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -1552,7 +1561,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            foreach (RowBound rb in EnumerateLiveRowBounds(page))
+            foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -1768,7 +1777,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-                await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+                await foreach (List<string> row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
                 {
                     _ = dt.Rows.Add(row.ToArray());
                     if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
@@ -1919,6 +1928,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private async ValueTask DisposeReaderResourcesAsync()
     {
         _pageCache?.Clear();
+        _rowBoundsCache?.Clear();
         _ownedDataPageIndex.Dispose();
         InvalidateCatalogCache();
         await base.DisposeAsync().ConfigureAwait(false);
@@ -2545,7 +2555,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            await foreach (List<string> row in EnumerateRowsAsync(page, msys, cancellationToken).ConfigureAwait(false))
+            await foreach (List<string> row in EnumerateRowsAsync(pageNumber, page, msys, cancellationToken).ConfigureAwait(false))
             {
                 allRows++;
                 string typeStr = SafeGet(row, idxType);
@@ -2655,6 +2665,25 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return page;
     }
 
+    /// <summary>
+    /// Returns the live row-bound directory for <paramref name="page"/>, computing
+    /// it on first request and caching the result keyed by <paramref name="pageNumber"/>
+    /// when a page cache is configured. The returned array is owned by the cache —
+    /// callers must not mutate it. Used by the typed/untyped scan paths to avoid
+    /// re-parsing the row-offset trailer on repeated scans of the same table.
+    /// </summary>
+    private RowBound[] GetLiveRowBoundsCached(long pageNumber, byte[] page)
+    {
+        if (_rowBoundsCache is not null && _rowBoundsCache.TryGetValue(pageNumber, out RowBound[] cached))
+        {
+            return cached;
+        }
+
+        RowBound[] bounds = ComputeLiveRowBoundsArray(page);
+        _rowBoundsCache?.Add(pageNumber, bounds);
+        return bounds;
+    }
+
     private async ValueTask<(CatalogEntry Entry, TableDef Td)?> ResolveTableAsync(string tableName, CancellationToken cancellationToken)
     {
         List<CatalogEntry> tables = await GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
@@ -2687,12 +2716,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>Yields decoded rows from a single data page.</summary>
+    /// <param name="pageNumber">The page number, used to memoize the parsed live-row directory in the row-bounds cache.</param>
     /// <param name="page">The data page to enumerate rows from.</param>
     /// <param name="td">The table definition containing column information.</param>
     /// <param name="cancellationToken">A cancellation token to observe while waiting for rows.</param>
-    private async IAsyncEnumerable<List<string>> EnumerateRowsAsync(byte[] page, TableDef td, [EnumeratorCancellation] CancellationToken cancellationToken)
+    private async IAsyncEnumerable<List<string>> EnumerateRowsAsync(long pageNumber, byte[] page, TableDef td, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        foreach (RowBound rb in EnumerateLiveRowBounds(page))
+        foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -3210,7 +3240,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            await foreach (List<string> row in EnumerateRowsAsync(page, td, cancellationToken).ConfigureAwait(false))
+            await foreach (List<string> row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
             }
