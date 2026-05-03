@@ -3834,6 +3834,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// </summary>
     private async ValueTask<LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
     {
+        // Fast path: when the page is already in the LRU we can locate the row
+        // without going through the async ReadPage state machine. ReadLvalChainAsync
+        // is the hottest caller — every additional chain page is one less await.
+        if (TryLocateLvalRowSync(lvalDp, out LvalRowLocation cached))
+        {
+            return cached;
+        }
+
         int lvalPage = (int)(lvalDp >> 8);
         int lvalRow = (int)(lvalDp & 0xFF);
         if (lvalPage <= 0)
@@ -3842,6 +3850,48 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         byte[] page = await ReadPageCachedAsync(lvalPage, cancellationToken).ConfigureAwait(false);
+        return ParseLvalRowLocation(page, lvalPage, lvalRow);
+    }
+
+    /// <summary>
+    /// Synchronous variant of <see cref="LocateLvalRowAsync"/> that succeeds only when
+    /// the LVAL page is already resident in the page cache. Returns false on miss so the
+    /// caller can fall back to the async path. Saves a state-machine allocation per chain
+    /// step on warm-cache reads.
+    /// </summary>
+    private bool TryLocateLvalRowSync(uint lvalDp, out LvalRowLocation location)
+    {
+        if (_pageCache is null)
+        {
+            location = default;
+            return false;
+        }
+
+        int lvalPage = (int)(lvalDp >> 8);
+        if (lvalPage <= 0)
+        {
+            location = new([], 0, 0, $"invalid page {lvalPage}");
+            return true;
+        }
+
+        if (!_pageCache.TryGetValue(lvalPage, out byte[] page))
+        {
+            location = default;
+            return false;
+        }
+
+        int lvalRow = (int)(lvalDp & 0xFF);
+        location = ParseLvalRowLocation(page, lvalPage, lvalRow);
+        return true;
+    }
+
+    /// <summary>
+    /// Pure parse of a located LVAL row's bounds within an already-loaded page buffer.
+    /// Extracted from <see cref="LocateLvalRowAsync"/> so the sync fast path and async
+    /// fallback share identical logic.
+    /// </summary>
+    private LvalRowLocation ParseLvalRowLocation(byte[] page, int lvalPage, int lvalRow)
+    {
         if (page[0] != 0x01)
         {
             return new(page, 0, 0, $"page {lvalPage} not data page");
@@ -3879,23 +3929,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <summary>
-    /// Reads <paramref name="maxLen"/> bytes from a single LVAL data page / row.
-    /// </summary>
-    private async ValueTask<byte[]?> ReadLvalBytesAsync(uint lvalDp, int maxLen, CancellationToken cancellationToken)
-    {
-        LvalRowLocation loc = await LocateLvalRowAsync(lvalDp, cancellationToken).ConfigureAwait(false);
-        int rowSize = Math.Min(loc.Size, maxLen);
-        if (loc.Failed || rowSize <= 0)
-        {
-            return null;
-        }
-
-        var data = new byte[rowSize];
-        Buffer.BlockCopy(loc.Page, loc.Start, data, 0, rowSize);
-        return data;
-    }
-
-    /// <summary>
     /// Reads multi-page LVAL chains (bitmask 0x00). Follows LVAL page links until
     /// the entire memo is reconstructed or maxLen is reached.
     /// LVAL page format (mdbtools): [next_page(4)][data_length(4)][data...].
@@ -3903,7 +3936,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <returns>Success: concatenated data bytes from the entire LVAL chain, up to maxLen. Failure: error message.</returns>
     private async ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)
     {
-        var chunks = new List<byte[]>();
+        if (maxLen <= 0)
+        {
+            return LvalChainResult.Failure("no chunks read");
+        }
+
+        // Single pre-sized buffer: chain bytes are written in place rather than
+        // materialised as a List<byte[]> and re-Concat'd at the end. The chain
+        // walker is bounded by the same maxLen value, so the buffer fills to
+        // totalLen ≤ maxLen; we trim only on a short chain (rare in practice).
+        byte[] buffer = new byte[maxLen];
         int totalLen = 0;
         uint currentDp = firstLvalDp;
         var seen = new HashSet<uint>();
@@ -3936,9 +3978,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 if (wantData > 0 && loc.Start + 4 + wantData <= _pgSz)
                 {
-                    var chunk = new byte[wantData];
-                    Buffer.BlockCopy(loc.Page, loc.Start + 4, chunk, 0, wantData);
-                    chunks.Add(chunk);
+                    Buffer.BlockCopy(loc.Page, loc.Start + 4, buffer, totalLen, wantData);
                     totalLen += wantData;
                 }
             }
@@ -3952,30 +3992,21 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return LvalChainResult.Failure(ex.Message);
         }
 
-        return chunks.Count switch
+        if (totalLen == 0)
         {
-            0 => LvalChainResult.Failure("no chunks read"),
-            1 => LvalChainResult.Success(chunks[0]),
-            _ => LvalChainResult.Success(Concat(chunks, Math.Min(totalLen, maxLen))),
-        };
-
-        static byte[] Concat(List<byte[]> chunks, int finalLen)
-        {
-            var result = new byte[finalLen];
-            int pos = 0;
-            foreach (byte[] chunk in chunks)
-            {
-                int copyLen = Math.Min(chunk.Length, finalLen - pos);
-                Buffer.BlockCopy(chunk, 0, result, pos, copyLen);
-                pos += copyLen;
-                if (pos >= finalLen)
-                {
-                    break;
-                }
-            }
-
-            return result;
+            return LvalChainResult.Failure("no chunks read");
         }
+
+        if (totalLen == maxLen)
+        {
+            return LvalChainResult.Success(buffer);
+        }
+
+        // Short chain — declared memoLen overstated the truth. Trim so callers
+        // that read `data.Length` bytes don't decode trailing zeros.
+        var trimmed = new byte[totalLen];
+        Buffer.BlockCopy(buffer, 0, trimmed, 0, totalLen);
+        return LvalChainResult.Success(trimmed);
     }
 
     private async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
@@ -4000,9 +4031,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
             case 0x40:
                 // Single LVAL page — the header stores a pointer (page<<8 | row)
                 // to one LVAL page/row that holds the entire memo/OLE payload.
-                byte[]? lvalData = await ReadLvalBytesAsync(Ru32(row, start + 4), memoLen, cancellationToken).ConfigureAwait(false);
-                return lvalData != null
-                    ? DecodeLongValue(lvalData, 0, lvalData.Length, isOle)
+                // Decode directly off the LVAL page (no intermediate copy): the
+                // page buffer's lifetime is bounded by the page cache, and the
+                // decoder reads its slice synchronously before any await yields.
+                LvalRowLocation memoLoc = await LocateLvalRowAsync(Ru32(row, start + 4), cancellationToken).ConfigureAwait(false);
+                int memoSize = Math.Min(memoLoc.Size, memoLen);
+                return !memoLoc.Failed && memoSize > 0
+                    ? DecodeLongValue(memoLoc.Page, memoLoc.Start, memoSize, isOle)
                     : (isOle ? "(OLE)" : "(memo on LVAL page)");
 
             default:
@@ -4033,9 +4068,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return inlineLen <= 0 ? [] : DecodeOleValueBytes(row, memoStart, inlineLen);
 
             case 0x40:
-                byte[]? lvalData = await ReadLvalBytesAsync(Ru32(row, start + 4), memoLen, cancellationToken).ConfigureAwait(false);
-                return lvalData != null
-                    ? DecodeOleValueBytes(lvalData, 0, lvalData.Length)
+                LvalRowLocation oleLoc = await LocateLvalRowAsync(Ru32(row, start + 4), cancellationToken).ConfigureAwait(false);
+                int oleSize = Math.Min(oleLoc.Size, memoLen);
+                return !oleLoc.Failed && oleSize > 0
+                    ? DecodeOleValueBytes(oleLoc.Page, oleLoc.Start, oleSize)
                     : [];
 
             default:

@@ -25,10 +25,14 @@ internal static class SyntheticDatabases
     /// <summary>Wide table name (40 mixed columns).</summary>
     public const string WideTable = "Wide";
 
+    /// <summary>MEMO-heavy table name (one int + one MEMO column with mixed payload sizes).</summary>
+    public const string MemoTable = "Memos";
+
     private const int NumericRows = 25_000;
     private const int TextRows = 25_000;
     private const int WideRows = 10_000;
     private const int WideColumnCount = 40;
+    private const int MemoRows = 5_000;
 
     private static readonly string TempRoot = Path.Combine(Path.GetTempPath(), "JetBench");
 
@@ -37,6 +41,8 @@ internal static class SyntheticDatabases
     public static string TextDbPath => Path.Combine(TempRoot, $"Text_{TextRows}.accdb");
 
     public static string WideDbPath => Path.Combine(TempRoot, $"Wide_{WideColumnCount}c_{WideRows}.accdb");
+
+    public static string MemoDbPath => Path.Combine(TempRoot, $"Memo_{MemoRows}.accdb");
 
     /// <summary>
     /// Ensures all synthetic DBs exist on disk. Skips files that already
@@ -48,6 +54,7 @@ internal static class SyntheticDatabases
         await EnsureNumericAsync().ConfigureAwait(false);
         await EnsureTextAsync().ConfigureAwait(false);
         await EnsureWideAsync().ConfigureAwait(false);
+        await EnsureMemoAsync().ConfigureAwait(false);
     }
 
     private static async Task EnsureNumericAsync()
@@ -176,5 +183,60 @@ internal static class SyntheticDatabases
         }
 
         await w.InsertRowsAsync(WideTable, rows).ConfigureAwait(false);
+    }
+
+    private static async Task EnsureMemoAsync()
+    {
+        if (File.Exists(MemoDbPath))
+        {
+            return;
+        }
+
+        await using var w = await AccessWriter.CreateDatabaseAsync(MemoDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
+        await w.CreateTableAsync(
+            MemoTable,
+            new ColumnDefinition[]
+            {
+                new("Id", typeof(int)),
+                new("Body", typeof(string)), // maxLength=0 → MEMO (LVAL)
+            }).ConfigureAwait(false);
+
+        // Mix three payload sizes so the reader exercises all three LVAL
+        // branches roughly evenly:
+        //   - small  (~32 B):  inline (bitmask 0x80 — fits in row).
+        //   - medium (~2 KB):  single LVAL page (bitmask 0x40).
+        //   - large  (~16 KB): chained LVAL pages (default branch).
+        var rows = new List<object[]>(MemoRows);
+        for (int i = 0; i < MemoRows; i++)
+        {
+            int kind = i % 3;
+            int len = kind switch
+            {
+                0 => 32,
+                1 => 2_000,
+                _ => 16_000,
+            };
+
+            rows.Add(new object[] { i, MakeBody(i, len) });
+        }
+
+        await w.InsertRowsAsync(MemoTable, rows).ConfigureAwait(false);
+
+        static string MakeBody(int seed, int length)
+        {
+            // Repeating ASCII pattern with a per-row prefix so values are
+            // distinct (defeats potential page-level dedup) but cheap to
+            // construct.
+            var buf = new char[length];
+            string prefix = "row" + seed + ":";
+            int p = System.Math.Min(prefix.Length, length);
+            prefix.AsSpan(0, p).CopyTo(buf);
+            for (int j = p; j < length; j++)
+            {
+                buf[j] = (char)('a' + ((j + seed) % 26));
+            }
+
+            return new string(buf);
+        }
     }
 }

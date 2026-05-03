@@ -20,6 +20,7 @@ public class AccessReaderRowDecodeBenchmarks
     private AccessReader _textReader = null!;
     private AccessReader _wideReader = null!;
     private AccessReader _numericReaderRescan = null!;
+    private AccessReader _memoReader = null!;
 
     [GlobalSetup]
     public async Task Setup()
@@ -35,6 +36,7 @@ public class AccessReaderRowDecodeBenchmarks
         _numericReaderRescan = await AccessReader.OpenAsync(
             SyntheticDatabases.NumericDbPath,
             new AccessReaderOptions { PageCacheSize = 2048 }).ConfigureAwait(false);
+        _memoReader = await AccessReader.OpenAsync(SyntheticDatabases.MemoDbPath).ConfigureAwait(false);
     }
 
     [GlobalCleanup]
@@ -44,6 +46,7 @@ public class AccessReaderRowDecodeBenchmarks
         await _textReader.DisposeAsync().ConfigureAwait(false);
         await _wideReader.DisposeAsync().ConfigureAwait(false);
         await _numericReaderRescan.DisposeAsync().ConfigureAwait(false);
+        await _memoReader.DisposeAsync().ConfigureAwait(false);
     }
 
     // ── Numeric / date-heavy ──────────────────────────────────────────
@@ -190,5 +193,44 @@ public class AccessReaderRowDecodeBenchmarks
         }
 
         return count;
+    }
+
+    // ── Memo (LVAL) decode ────────────────────────────────────────────
+    // Mixes inline (32 B), single-LVAL-page (~2 KB), and chained-LVAL
+    // (~16 KB) payloads so each benchmark op exercises all three branches
+    // of ReadLongValueAsync / ReadLvalChainAsync. Establishes a baseline
+    // for any future LVAL decode-path optimization.
+
+    [Benchmark]
+    public async Task<int> Decode_Memo_Untyped()
+    {
+        int count = 0;
+        await foreach (object[] row in _memoReader.Rows(SyntheticDatabases.MemoTable).ConfigureAwait(false))
+        {
+            _ = row;
+            count++;
+        }
+
+        return count;
+    }
+
+    [Benchmark]
+    public async Task<int> Decode_Memo_Typed()
+    {
+        int count = 0;
+        await foreach (Models.MemoRow row in _memoReader.Rows<Models.MemoRow>(SyntheticDatabases.MemoTable).ConfigureAwait(false))
+        {
+            _ = row;
+            count++;
+        }
+
+        return count;
+    }
+
+    [Benchmark]
+    public async Task<int> Decode_Memo_DataTable()
+    {
+        var dt = await _memoReader.ReadDataTableAsync(SyntheticDatabases.MemoTable).ConfigureAwait(false);
+        return dt!.Rows.Count;
     }
 }

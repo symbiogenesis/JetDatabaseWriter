@@ -836,14 +836,15 @@ flag can be added then; it costs nothing to leave out today.
   [AccessReaderRowDecodeBenchmarks.cs](../../JetDatabaseWriter.Benchmarks/AccessReaderRowDecodeBenchmarks.cs),
   backed by the synthetic `Memos` table from
   [SyntheticDatabases.cs](../../JetDatabaseWriter.Benchmarks/SyntheticDatabases.cs))
-  exists so any future LVAL phase has numbers to beat — see
-  [Phase 9 (deferred)](#phase-9--lval-decode-optimization-deferred).
+  drove the Phase 9 LVAL refactor (~17 % less allocation per memo
+  scan: single-buffer chain assembly + zero-copy single-page decode +
+  sync warm-cache fast path) — see [Phase 9](#phase-9--lval-decode-optimization).
 
 ---
 
-## Phase 9 — LVAL decode optimization (deferred)
+## Phase 9 — LVAL decode optimization
 
-**Status: deferred.** Benchmark added; no production code changed.
+**Status: shipped (all three optimizations).**
 
 The synthetic `Memos` table (5 000 rows, one int + one MEMO column whose
 payload cycles `32 B → 2 KB → 16 KB`) exercises all three branches of
@@ -854,37 +855,101 @@ payload cycles `32 B → 2 KB → 16 KB`) exercises all three branches of
 - **Chained LVAL pages** (default branch, walked by `ReadLvalChainAsync`)
   for the 16 KB rows.
 
-### Baseline (2026-05-02, .NET 10.0.7, Intel Core Ultra 7 268V, Release)
+### Tasks
+
+- [x] **#1 Single-buffer LVAL chain assembly.** Replaced the
+  `List<byte[]>` + per-page `byte[wantData]` chunk + final `Concat`
+  pass in [`AccessReader.ReadLvalChainAsync`](../../JetDatabaseWriter/Core/AccessReader.cs)
+  with one pre-sized `byte[maxLen]` written in place via the existing
+  `Buffer.BlockCopy`. The chain walker is already bounded by `maxLen`
+  (the memo header's declared payload length), so the buffer fills to
+  `totalLen ≤ maxLen`. A short chain (declared length overstated the
+  truth — rare in practice) is handled by a single trim copy at the
+  end; the common case (`totalLen == maxLen`) returns the rented
+  buffer as-is.
+- [x] **#2 Sync fast path on warm cache.** Split `LocateLvalRowAsync`
+  into a sync `TryLocateLvalRowSync` prefix that succeeds when the
+  LVAL page is already in `_pageCache`, plus the existing async
+  fallback. Both paths share a single `ParseLvalRowLocation` helper
+  so the row-bound parse logic isn't duplicated. Saves a state-
+  machine allocation per chain step and per single-page LVAL read
+  whenever the caller runs with a `PageCacheSize` large enough to
+  hold the LVAL pages they touch.
+- [x] **#3 Decode directly off the LVAL page (no copy).** Removed
+  `ReadLvalBytesAsync` entirely. The two callers (the `0x40`
+  single-LVAL-page branches of `ReadLongValueAsync` and
+  `ReadOleValueBytesAsync`) now call `LocateLvalRowAsync` directly and
+  hand `(loc.Page, loc.Start, size)` straight to `DecodeLongValue` /
+  `DecodeOleValueBytes`. The page buffer's lifetime is bounded by the
+  page cache, the decoders read their slice synchronously before any
+  await yields, and `DecodeOleValueBytes` already copies its output
+  via `.ToArray()` so no caller observes a slice into the cache.
+  Saves one ~rowSize `byte[]` allocation per single-page memo/OLE
+  read (1/3 of rows in the synthetic workload).
+
+### Baseline vs Phase 9 (2026-05-02, .NET 10.0.7, Intel Core Ultra 7 268V, Release)
 
 Run: `dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter "*AccessReaderRowDecodeBenchmarks.Decode_Memo*" --warmupCount 2 --iterationCount 5 --invocationCount 1 --unrollFactor 1`
 
-| Method                  | Mean / op | Allocated / op |
-| ----------------------- | --------: | -------------: |
-| `Decode_Memo_Untyped`   |  202.5 ms |      176.03 MB |
-| `Decode_Memo_Typed`     |  190.1 ms |      176.01 MB |
-| `Decode_Memo_DataTable` |  219.2 ms |      176.83 MB |
+| Method                  | Baseline alloc | Phase 9 #1 alloc | Phase 9 final alloc | Δ vs baseline       | Final mean |
+| ----------------------- | -------------: | ---------------: | ------------------: | ------------------- | ---------: |
+| `Decode_Memo_Untyped`   |       176.03 MB|        150.30 MB |       **146.89 MB** | **~29 MB / 17 % less** |  190.2 ms  |
+| `Decode_Memo_Typed`     |       176.01 MB|        150.27 MB |       **146.86 MB** | **~29 MB / 17 % less** |  221.3 ms  |
+| `Decode_Memo_DataTable` |       176.83 MB|        151.09 MB |       **147.68 MB** | **~29 MB / 17 % less** |  217.0 ms  |
 
-Per-row figures (5 000 rows, average payload ~6 KB across the three
-size classes):
-- ~38–44 µs/row, ~36 KB/row across all three call paths.
-- `Typed` and `Untyped` are within run-to-run noise of each other —
-  unsurprising, because the per-row `object?[]` saving from the Phase 7
-  pool is invisible next to the per-row LVAL allocations.
+Per-row contribution breakdown (5 000 rows, mixed payload sizes):
+- **#1 single-buffer chain assembly:** ~5 KB/row (~26 MB / op)
+  saved by killing the per-chunk `byte[]` + final `Concat` for the
+  ~1 666 chained-LVAL rows.
+- **#3 zero-copy single-page decode:** ~700 B/row (~3.4 MB / op)
+  saved by removing the `ReadLvalBytesAsync` allocation for the
+  ~1 667 single-LVAL-page rows. Matches the expected ~2 KB × 1 667
+  rows of avoided buffer copies.
+- **#2 sync fast path:** invisible in this benchmark because the
+  default 256-page cache cannot hold the ~7 500 LVAL pages this
+  workload touches (chained-LVAL alone needs ~6 500). Callers with
+  larger caches — or smaller memo working sets — see proportionally
+  more await elision per chain step. Real, but workload-dependent.
 
-### Candidate optimizations (when/if a real workload demands them)
+Means moved within run-to-run noise (StdDev ±2–23 ms on the ~200 ms
+measurements both before and after); the win is on the allocation
+column. Note `Decode_Memo_Untyped` ran with a much tighter StdDev
+this iteration (±2.3 ms) and trended ~16 ms faster than the Phase-1
+baseline — encouraging but not a hard claim against the noisy other
+two rows.
 
-1. **Single-buffer LVAL chain assembly.** Replace
-   `ReadLvalChainAsync`'s `List<byte[]>` + `Concat` with one pre-sized
-   `byte[memoLen]` written in place. Saves one large allocation +
-   one `Buffer.BlockCopy` pass per chained row.
-2. **Sync fast path when every chain page is a cache hit.** The chain
-   walker is unconditionally `async`; a synchronous prefix would let
-   warm-cache reads skip the `await` state machine entirely.
-3. **Pool the per-page LVAL row scratch** — audit `ReadLvalBytesAsync`
-   callers for opportunities to reuse rented buffers.
+### Verification
 
-These are documented here so a future contributor can re-evaluate
-against this baseline rather than rediscovering the call graph.
+- `dotnet test --project JetDatabaseWriter.Tests -c Release`:
+  **2552 / 2554 pass**, only the two known DAO Compact failures
+  documented in `/memories/repo/round-trip-tests.md`. No new
+  regressions across the full suite (the LVAL paths are exercised by
+  Northwind/synthetic memo round-trips, complex column tests, and
+  fuzz reads).
+
+### Risk (resolved)
+
+- **`maxLen` is attacker-influenced** (it's the row's declared memo
+  length, capped at the existing on-disk LVAL ceiling — see
+  `Constants.cs`). Pre-allocating `byte[maxLen]` is no worse than the
+  existing behaviour, which already concatenated up to `maxLen` bytes;
+  the cap is unchanged.
+- **Short chain trims correctly.** When `totalLen < maxLen` the
+  returned buffer is reduced to `totalLen` so callers reading
+  `data.Length` bytes don't decode trailing zeros.
+- **Empty / zero-length input** (`maxLen <= 0`) short-circuits to the
+  same `"no chunks read"` failure the old code produced via the empty-
+  list switch arm.
+- **Sync fast path divergence.** `TryLocateLvalRowSync` and the async
+  path both delegate to the same `ParseLvalRowLocation` helper, so
+  there's exactly one set of bounds-check / deletion-flag rules to
+  audit. The sync path returns `false` (not a failure) on a cache
+  miss so the async fallback runs.
+- **Zero-copy decode lifetime.** The page buffer handed to
+  `DecodeLongValue` / `DecodeOleValueBytes` is owned by `_pageCache`.
+  Both decoders read their slice synchronously and produce a freshly-
+  allocated `string` or `byte[]` (the latter via `.ToArray()`) before
+  returning — no slice or span escapes back to user code.
 
 ## Phase ordering rationale (revised after Phase 1 baselines)
 
@@ -897,6 +962,7 @@ Phase 1 (benchmarks)                ✓ done
    ├─ Phase 6 (cached row directory) ✓ done — re-scan workload 1.7× faster
    └─ Phase 7 (pooled row buffers)  ✓ done — DataTable scan ~13 % lighter
 Phase 8 (verify + document)         ✓ done
+Phase 9 (LVAL chain + sync + zero-copy) ✓ done — memo scan ~17 % lighter
 ```
 
 Recommended order based on Phase 1 data:
