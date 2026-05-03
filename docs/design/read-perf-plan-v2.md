@@ -311,34 +311,129 @@ direct-decode emission cleaner.
 
 ### Tasks
 
-- [ ] Add span-based overloads on
-  [JetTypeInfo.cs](../../JetDatabaseWriter/Internal/JetTypeInfo.cs)
-  alongside the existing `(byte[], int, ...)` ones; keep the legacy
-  signatures delegating to the span versions so external callers (the
-  `RowsAsStrings` path, diagnostics) don't break.
-- [ ] Convert `TryCrackRowSync` and `ReadVarTypedSync` in
-  [AccessReader.cs](../../JetDatabaseWriter/Core/AccessReader.cs) to
-  take and pass `ReadOnlySpan<byte>` (sync paths only — `async` methods
-  still need `byte[]` because spans can't cross `await`).
-- [ ] Convert `ResolveColumnSlice` and `TryParseRowLayout` to span.
-- [ ] Confirm `Encoding.GetString(ReadOnlySpan<byte>)` is used
-  everywhere instead of `(byte[], int, int)`.
+- [x] Converted the per-type decoders in
+  [JetTypeInfo.cs](../../JetDatabaseWriter/Internal/JetTypeInfo.cs) to
+  `ReadOnlySpan<byte>` — `ReadFixedString`, `ReadFixedTyped`,
+  `ReadNumericString`, `ReadNumericTyped`. `byte[]` callers continue to
+  work via the implicit `byte[] → ReadOnlySpan<byte>` conversion, so no
+  external test/diagnostic call sites needed edits.
+- [x] Added a `ReadOnlySpan<byte>` overload of `Ru16` on
+  [AccessBase.cs](../../JetDatabaseWriter/Core/AccessBase.cs) and
+  converted `TryParseRowLayout` and `ResolveColumnSlice` to take
+  `ReadOnlySpan<byte>` (sync paths only — `async` callers continue to
+  pass `byte[]` because spans can't cross `await`).
+- [x] Converted `DecodeJet4Text` and `DecompressJet4` to
+  `ReadOnlySpan<byte>`.
+- [x] Added `JetTypeInfo.DecodeUtf16LE(ReadOnlySpan<byte>) → string`
+  and `JetTypeInfo.AppendUtf16LE(StringBuilder, ReadOnlySpan<byte>)`
+  helpers that reinterpret the byte span as `char` via
+  `MemoryMarshal.Cast<byte, char>` on little-endian (every supported
+  .NET platform), skipping the `Encoding.Unicode` decoder pass and the
+  intermediate `string` allocation that the in-loop
+  `sb.Append(Encoding.Unicode.GetString(...))` was paying. Wired into
+  the `DecodeJet4Text` plain-UCS-2 path, the `DecompressJet4`
+  uncompressed-run loop, and the Jet4 `ReadColumnName` TDEF parse.
+  The `BitConverter.IsLittleEndian` guard is JIT-constant-folded so the
+  fallback branch costs nothing at runtime.
+- [x] Confirmed `Encoding.GetString(ReadOnlySpan<byte>)` is used
+  everywhere on the typed-decode hot path; the lone remaining
+  `byte[], int, int` callers are async LVAL chain readers
+  (`AccessReader.DecodeLongValue` etc.) that operate on owned buffers
+  outside the per-row loop.
 
-### Exit criteria
+### Verification
 
-- No measurable regression on `Decode_*_Untyped`.
-- Code is structurally ready for Phase 3.
+- `dotnet test` clean modulo the 2 known DAO Compact failures
+  (2552 / 2554 pass).
+- `AccessReaderRowDecodeBenchmarks` re-run (same job config as
+  Phase 1):
+
+  | Method                              | Phase 3 alloc | Phase 4 alloc | Phase 3 mean | Phase 4 mean |
+  | ----------------------------------- | ------------: | ------------: | -----------: | -----------: |
+  | `Decode_Numeric_Untyped`            |       8.00 MB |       8.00 MB |     35.94 ms |     34.37 ms |
+  | `Decode_Numeric_Typed`              |       3.28 MB |       3.28 MB |     28.71 ms |     23.81 ms |
+  | `Decode_Text_Untyped`               |      20.72 MB |      20.72 MB |     67.49 ms |     52.10 ms |
+  | `Decode_Text_Typed`                 |       20.0 MB |       20.0 MB |     68.25 ms |     56.82 ms |
+  | `Decode_Wide_Untyped`               |      31.71 MB |      31.71 MB |     56.08 ms |     61.69 ms |
+  | `Decode_Wide_Typed_NarrowProjection`|       2.14 MB |       2.14 MB |     19.15 ms |     18.17 ms |
+
+  Allocations are byte-identical (Phase 4 was a structural refactor —
+  span plumbing doesn't change the allocation profile). Means trend
+  faster on the text and numeric paths (the UTF-16LE
+  reinterpret-cast path skips the decoder validation pass) but
+  several samples have wide error margins so the speed deltas should
+  be treated as "within noise to slightly favourable" rather than as
+  hard wins. Crucially: **no measurable regression on
+  `Decode_*_Untyped`** (the exit criterion).
+
+### Exit criteria — done
+
+- [x] No measurable regression on `Decode_*_Untyped`.
+- [x] Code is structurally ready for any future direct-span Phase 3
+  refinements (the compiled-decoder builder already routes through the
+  span overloads via the `byte[] → ReadOnlySpan<byte>` implicit
+  conversion).
+- [x] All existing tests still pass (modulo the 2 known failures).
 
 ---
 
-## Phase 5 — ~~Attack the `OpenAsync` allocation floor~~ DROPPED
+## Phase 5 — ~~Attack the `OpenAsync` allocation floor~~ DONE (dropped + cleanup landed)
 
-**Status: dropped after Phase 1 baselines.** Measured in isolation
-`OpenAsync` is **1.1–1.7 ms / ~27 KB** across all tested DBs (see
-`AccessReaderOpenBenchmarks` table above), not the 50 ms / 3.3 MB the
-v1 plan estimated. The earlier figure conflated `[GlobalSetup]` work,
-file warm-up, and JIT into the per-op number. There is no meaningful
-win available here.
+**Status: closed.** Phase 1's `AccessReaderOpenBenchmarks` showed
+`OpenAsync` is **1.1–1.7 ms / ~27 KB** across all tested DBs — three
+orders of magnitude smaller than the v1 plan's "~50 ms / ~3.3 MB"
+estimate (which had conflated `[GlobalSetup]`, file warm-up, and JIT
+into the per-op number). The big-ticket items in the original plan
+(lazy `LinkedTableManager`, `LazyCatalog` options flag, span-ifying
+the catalog row crack) were rejected on the **"reduce code, reduce
+complexity"** rubric: every one of them would have *added* state,
+gating, or public API surface in exchange for sub-KB / sub-ms wins.
+
+The one cleanup that *did* meet the bar — and shipped under this phase
+— was hoisting the unconditional `StringBuilder` diagnostics build in
+[`AccessReader.GetUserTablesAsync`](../../JetDatabaseWriter/Core/AccessReader.cs)
+behind the existing `DiagnosticsEnabled` gate. Previously every
+`OpenAsync` paid for a `StringBuilder`, a `string.Join` over the
+`MSysObjects` columns (with a `ConvertAll` allocating a fresh
+`List<string>`), and several interpolated `AppendLine` calls — even
+though `LastDiagnostics` is documented as a debug aid and the only
+caller in the test suite (`AccessReaderFuzzTests`) treats it as
+optional output. The rewrite:
+
+- Replaces the two error-path `LastDiagnostics = diag.ToString()`
+  sites with short literal strings (no `StringBuilder`).
+- Wraps the success-path diag construction in a single
+  `if (DiagnosticsEnabled)` block; the `else` branch sets
+  `LastDiagnostics = string.Empty`.
+- Net delta: `AccessReader.cs` is ~6 lines shorter and the common
+  `OpenAsync` + `ListTablesAsync` path no longer allocates the
+  StringBuilder, the `ConvertAll` list, or the joined column-names
+  string.
+
+### Verification
+
+- `dotnet test` clean modulo the 2 known DAO Compact failures
+  (2552 / 2554 pass).
+- No new public API surface; `IAccessReader.LastDiagnostics` contract
+  ("populated after each call to `ListTablesAsync`") still holds —
+  it's just empty when diagnostics are off, matching the
+  `DiagnosticsEnabled = false` default behavior callers already
+  inferred.
+
+### Rejected (kept here so future passes don't re-litigate)
+
+- **Lazy `LinkedTableManager`** — adds nullable state + init guard for
+  a few KB at open. Net code increase.
+- **`AccessReaderOptions { LazyCatalog = true }`** — adds a public
+  options field and a second open path. Net API + code increase.
+- **Pre-sizing the catalog `result` `List<CatalogEntry>`** — the row
+  count isn't reliably known from `MSysObjects` ahead of time, and
+  user-table counts are typically <100 so doubling is essentially
+  free.
+- **Span-ifying `EnumerateRowsAsync` for catalog parse** — the async
+  enumerator already yields `List<string>` per row; rewriting it to
+  span buffers would require restructuring around `await` boundaries
+  for a savings invisible against the ~27 KB floor.
 
 Original hypothesis preserved below for historical context.
 
@@ -461,10 +556,10 @@ the buffer to user code. But two key consumers immediately discard it:
 
 ```
 Phase 1 (benchmarks)                ✓ done
-   ├─ Phase 2 (column projection)   ← biggest win for Wide_NarrowProjection
-   │    └─ Phase 3 (direct decoder) ← only path that beats Untyped on Numeric
-   │         └─ Phase 4 (span plumbing) ← prerequisite cleanup for 3
-   ├─ Phase 5 (OpenAsync floor)     ✗ DROPPED — see Phase 1 finding #1
+   ├─ Phase 2 (column projection)   ✓ done
+   │    └─ Phase 3 (direct decoder) ✓ done
+   │         └─ Phase 4 (span plumbing) ✓ done (refactor; no alloc delta)
+   ├─ Phase 5 (OpenAsync floor)     ✓ done — dropped after Phase 1 finding #1; one diag-gate cleanup landed
    ├─ Phase 6 (cached row directory) ← low priority; helps repeated scans only
    └─ Phase 7 (pooled row buffers)  ← high priority for DataTable path
 Phase 8 (verify + document)

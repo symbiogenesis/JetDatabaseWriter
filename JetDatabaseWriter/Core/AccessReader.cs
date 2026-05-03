@@ -2512,21 +2512,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var diag = new StringBuilder();
-        _ = diag.AppendLine($"JET: {(_format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE")}  PageSize: {_pgSz}  TotalPages: {_stream.Length / _pgSz}");
-
         TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
-            _ = diag.AppendLine("ERROR: Page 2 is not a valid TDEF page (null returned).");
-            LastDiagnostics = diag.ToString();
+            LastDiagnostics = "ERROR: Page 2 is not a valid TDEF page (null returned).";
             var empty = new List<CatalogEntry>();
             SetCatalogCache(empty);
             return empty;
         }
-
-        _ = diag.AppendLine($"MSysObjects cols ({msys.Columns.Count}): " +
-            string.Join(", ", msys.Columns.ConvertAll(c => $"{c.Name}[0x{c.Type:X2}]")));
 
         int idxId = msys.FindColumnIndex("Id");
         int idxName = msys.FindColumnIndex("Name");
@@ -2535,8 +2528,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         if (idxName < 0 || idxType < 0)
         {
-            _ = diag.AppendLine("ERROR: Required catalog columns not found. Column name mismatch?");
-            LastDiagnostics = diag.ToString();
+            LastDiagnostics = "ERROR: Required catalog columns not found. Column name mismatch?";
             var empty = new List<CatalogEntry>();
             SetCatalogCache(empty);
             return empty;
@@ -2598,16 +2590,24 @@ public sealed class AccessReader : AccessBase, IAccessReader
             }
         }
 
-        _ = diag.AppendLine($"Catalog pages: {catPages}  Total rows scanned: {allRows}  User tables: {result.Count}");
         if (DiagnosticsEnabled)
         {
+            var diag = new StringBuilder();
+            _ = diag.AppendLine($"JET: {(_format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE")}  PageSize: {_pgSz}  TotalPages: {_stream.Length / _pgSz}");
+            _ = diag.AppendLine($"MSysObjects cols ({msys.Columns.Count}): " +
+                string.Join(", ", msys.Columns.ConvertAll(c => $"{c.Name}[0x{c.Type:X2}]")));
+            _ = diag.AppendLine($"Catalog pages: {catPages}  Total rows scanned: {allRows}  User tables: {result.Count}");
             foreach (CatalogEntry e in result)
             {
                 _ = diag.AppendLine($"  [{e.Name}] TDEF page {e.TDefPage}");
             }
-        }
 
-        LastDiagnostics = diag.ToString();
+            LastDiagnostics = diag.ToString();
+        }
+        else
+        {
+            LastDiagnostics = string.Empty;
+        }
 
         SetCatalogCache(result);
         return result;
