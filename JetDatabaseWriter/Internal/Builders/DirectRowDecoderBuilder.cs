@@ -1,10 +1,11 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Internal.Builders;
 
 using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
 using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
@@ -17,7 +18,7 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// columns and refuses (returns <see langword="null"/>) when any column
 /// requires the slow path — T_MEMO/T_OLE LVAL chains, T_BINARY, T_NUMERIC,
 /// T_COMPLEX/T_ATTACHMENT, or any property typed as
-/// <see cref="JetDatabaseWriter.Models.Hyperlink"/>.
+/// <see cref="Hyperlink"/>.
 /// </summary>
 internal static class DirectRowDecoderBuilder
 {

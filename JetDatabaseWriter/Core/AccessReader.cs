@@ -17,6 +17,7 @@ using JetDatabaseWriter.Core.Interfaces;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Collections;
 using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Internal.Models;
