@@ -46,7 +46,7 @@ public abstract class AccessBase : IAccessBase
     /// Per-format byte offsets and entry sizes for the TDEF page's real-idx
     /// physical descriptor (§3.1) and logical-idx entry (§3.2) sections.
     /// </summary>
-    private protected readonly IndexLayout _indexLayout;
+    internal readonly IndexLayout _indexLayout;
 
     internal readonly int _pgSz;
     internal readonly DatabaseFormat _format;
