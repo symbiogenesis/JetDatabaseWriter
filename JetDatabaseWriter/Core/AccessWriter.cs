@@ -4783,9 +4783,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // any other cooperating opener (Access, OLE DB JET / ACE, another
         // AccessWriter) blocks on its own commit attempt until our atomic
         // replay + commit-byte bump is durable on disk.
-        IDisposable commitLock = _byteRangeLock is null
-            ? NullDisposableInstance
-            : await _byteRangeLock.AcquireCommitLockAsync(isAccdb: DatabaseFormat == DatabaseFormat.AceAccdb, cancellationToken).ConfigureAwait(false);
+        IDisposable commitLock = await _byteRangeLock.AcquireCommitLockAsync(isAccdb: DatabaseFormat == DatabaseFormat.AceAccdb, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -4879,15 +4877,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         finally
         {
             _ = IoGate.Release();
-        }
-    }
-
-    private static readonly IDisposable NullDisposableInstance = new NullDisposableImpl();
-
-    private sealed class NullDisposableImpl : IDisposable
-    {
-        public void Dispose()
-        {
         }
     }
 
