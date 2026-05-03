@@ -47,6 +47,26 @@ await WriteMdbCatalogAppendixAsync(
     fixtures,
     Path.Combine(designDir, "format-probe-appendix-mdb-catalogs.md"));
 
+string? rtSource = Environment.GetEnvironmentVariable("DIAG_RT_PROBE");
+if (!string.IsNullOrWhiteSpace(rtSource))
+{
+    string baseline = Environment.GetEnvironmentVariable("DIAG_RT_BASELINE")
+        ?? Path.Combine(fixtures, "NorthwindTraders.accdb");
+    string outFile = Path.Combine(Path.GetDirectoryName(rtSource)!, "round-trip-diagnostic.md");
+    int rc = await JetDatabaseWriter.FormatProbe.RoundTripDiagnostic.RunAsync(rtSource, baseline, outFile);
+    if (rc != 0) return rc;
+}
+
+if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_RT_BISECT")))
+{
+    string baseline = Environment.GetEnvironmentVariable("DIAG_RT_BASELINE")
+        ?? Path.Combine(fixtures, "NorthwindTraders.accdb");
+    string workRoot = Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.RtBisect");
+    if (Directory.Exists(workRoot)) Directory.Delete(workRoot, true);
+    int rc = await JetDatabaseWriter.FormatProbe.RoundTripBisect.RunAsync(baseline, workRoot);
+    if (rc != 0) return rc;
+}
+
 Console.WriteLine("Done.");
 return 0;
 
