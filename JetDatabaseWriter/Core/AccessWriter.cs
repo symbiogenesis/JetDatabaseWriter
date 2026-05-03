@@ -463,6 +463,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         (byte[] tdefPage, int[] firstDpOffsets) = BuildTDefPageWithIndexOffsets(tableDef, resolvedIndexes);
         long tdefPageNumber = await AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
+        bool tdefDirty = false;
+
         // Emit one empty index leaf page per real index and patch its page
         // number into the corresponding `first_dp` field of the real-idx physical
         // descriptor. The leaf starts empty because CreateTableAsync inserts no
@@ -488,7 +490,29 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 Wi32(tdefPage, firstDpOffsets[i], checked((int)leafPageNumber));
             }
 
-            // Re-flush the TDEF with the patched first_dp values.
+            tdefDirty = true;
+        }
+
+        // Allocate a per-table usage-map data page and patch the TDEF
+        // `used_pages` / `free_pages` pointers (Jet4/ACE only). DAO Compact
+        // & Repair walks every catalog row and dereferences `used_pages` to
+        // enumerate the table's data pages; a zero pointer here aborts the
+        // walk with "could not find object 'MSysDb'". The companion
+        // `autonum_flag` byte at TDEF offset 0x18 is also patched to 0x01
+        // when any column carries the autonumber flag — Access checks this
+        // before consulting the autonum-next counter at 0x14. See
+        // docs/design/round-trip-test-failures.md.
+        if (_format != DatabaseFormat.Jet3Mdb)
+        {
+            long usageMapPageNumber = await AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
+            PatchUsageMapPointers(tdefPage, checked((int)usageMapPageNumber));
+            PatchAutoNumFlag(tdefPage, tableDef);
+            tdefDirty = true;
+        }
+
+        if (tdefDirty)
+        {
+            // Re-flush the TDEF with the patched first_dp / usage-map / autonum bytes.
             await WritePageAsync(tdefPageNumber, tdefPage, cancellationToken).ConfigureAwait(false);
         }
 
@@ -3744,6 +3768,25 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         Wi32(page, 8, Math.Max(0, namePos - 8));
+
+        // TDEF offset 0x0C..0x0F: Jet4/ACE format-wide magic constant 0x00000659.
+        // Every well-formed user-table and system-table TDEF in Access-authored .accdb
+        // and Jet4 .mdb fixtures (Northwind, Jackcess V2003/V2007/V2010) carries this
+        // exact value, regardless of database. Leaving it zero causes DAO 3011
+        // ("could not find object 'MSysDb'") during CompactDatabase. Jet3 uses this
+        // slot for a per-table page number, so leave it untouched there.
+        // See docs/design/round-trip-test-failures.md.
+        if (jet4)
+        {
+            Wi32(page, 0x0C, 0x00000659);
+
+            // TDEF offset 2..3 (Jet4/ACE only): free-space hint = page_size - tdef_len - 8.
+            // Every Access-authored TDEF in NorthwindTraders.accdb (52/52) carries this
+            // exact computation; the writer leaving it zero contributes to DAO 3011.
+            int tdefLen = Math.Max(0, namePos - 8);
+            Wu16(page, 2, Math.Max(0, _pgSz - tdefLen - 8));
+        }
+
         return (page, firstDpOffsets);
     }
 
@@ -3992,6 +4035,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         Wi32(db, offset + 8, Math.Max(0, namePos - offset - 8));
+
+        // TDEF offset 0x0C..0x0F: Jet4/ACE format-wide magic constant 0x00000659.
+        // See BuildTDefPageWithIndexOffsets / docs/design/round-trip-test-failures.md.
+        if (!isJet3)
+        {
+            Wi32(db, offset + 0x0C, 0x00000659);
+
+            // TDEF offset 2..3 (Jet4/ACE only): free-space hint = page_size - tdef_len - 8.
+            int tdefLen = Math.Max(0, namePos - offset - 8);
+            int pgSz = GetPageSize(format);
+            Wu16(db, offset + 2, Math.Max(0, pgSz - tdefLen - 8));
+        }
     }
 
     /// <summary>
@@ -4363,6 +4418,98 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Wi32(page, _dataPage.TDefOff, (int)tdefPage);
         Wu16(page, _dataPage.NumRows, 0);
         return page;
+    }
+
+    /// <summary>
+    /// Allocates and appends a per-table usage-map data page (page_type 0x01)
+    /// containing two empty inline-bitmap rows. Row 0 backs the table's
+    /// <c>used_pages</c> map; row 1 backs the <c>free_pages</c> map. Both
+    /// rows consist of a single <c>0x00</c> byte (Access "inline" usage-map
+    /// marker followed by a zero-length bitmap), so the table is reported as
+    /// owning no data pages until subsequent inserts populate the map. The
+    /// data-page back-pointer at offset <c>_dataPage.TDefOff</c> is left at 0
+    /// to match the layout of Access-authored usage-map data pages
+    /// (e.g. page 6 in <c>NorthwindTraders.accdb</c>).
+    /// </summary>
+    /// <remarks>
+    /// Used by <see cref="CreateTableInternalAsync"/> to satisfy DAO
+    /// Compact &amp; Repair, which dereferences each catalog row's
+    /// <c>used_pages</c> pointer and aborts the catalog walk when it is
+    /// zero. See docs/design/round-trip-test-failures.md.
+    /// </remarks>
+    private async ValueTask<long> AppendUsageMapPageAsync(CancellationToken cancellationToken)
+    {
+        byte[] page = new byte[_pgSz];
+        page[0] = 0x01;
+        page[1] = 0x01;
+
+        // Each row is 69 bytes: 1-byte type-0 marker (0x00) + 68 bytes of bitmap.
+        // 68 bytes = 544 bits covers pages 0..543, the minimum bitmap width
+        // Access reserves on Access-authored usage-map pages (verified against
+        // NorthwindTraders.accdb page 24, the usage-map data page for the
+        // single-column TDEF on page 23). DAO refuses to walk a 1-byte row.
+        // For an empty table the bitmap is all zeros (no pages owned / free).
+        // Row 0 = used_pages, row 1 = free_pages, both packed at the page tail.
+        const int rowSize = 69;
+        int row0Off = _pgSz - rowSize;
+        int row1Off = row0Off - rowSize;
+
+        // Bitmap bytes are zero by virtue of `new byte[]`; no explicit writes needed.
+        Wi32(page, _dataPage.TDefOff, 0);
+        Wu16(page, _dataPage.NumRows, 2);
+        Wu16(page, _dataPage.RowsStart, row0Off);
+        Wu16(page, _dataPage.RowsStart + 2, row1Off);
+
+        int freeSpace = row1Off - (_dataPage.RowsStart + 4);
+        Wu16(page, 2, freeSpace);
+
+        return await AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Patches the new TDEF's <c>used_pages</c> (offset 0x37..0x3A) and
+    /// <c>free_pages</c> (offset 0x3B..0x3E) pointers to reference the
+    /// freshly-allocated usage-map data page built by
+    /// <see cref="AppendUsageMapPageAsync"/>. Each pointer is encoded as
+    /// 1-byte row index followed by 3-byte LE page number — used_pages
+    /// references row 0, free_pages references row 1 (matches the row
+    /// ordering in Access-authored usage-map data pages, e.g. MSysObjects'
+    /// page 6 in <c>NorthwindTraders.accdb</c>). Jet4/ACE only; Jet3
+    /// stores per-table page-usage pointers in a different location
+    /// (see docs/design/index-and-relationship-format-notes.md §3.1).
+    /// </summary>
+    private static void PatchUsageMapPointers(byte[] tdefPage, int usageMapPageNumber)
+    {
+        // used_pages: row 0 (1 byte) + page (3 bytes LE)
+        tdefPage[0x37] = 0x00;
+        WriteUInt24(tdefPage, 0x38, usageMapPageNumber);
+
+        // free_pages: row 1 (1 byte) + page (3 bytes LE)
+        tdefPage[0x3B] = 0x01;
+        WriteUInt24(tdefPage, 0x3C, usageMapPageNumber);
+    }
+
+    /// <summary>
+    /// Sets the TDEF's <c>autonum_flag</c> byte (offset 0x18) to <c>0x01</c>
+    /// when any column in <paramref name="tableDef"/> carries the autonumber
+    /// flag bit (<c>0x04</c>). Access checks this byte before consulting the
+    /// autonum-next counter at offset 0x14, and DAO Compact &amp; Repair
+    /// rejects a TDEF whose autonumber column count disagrees with this
+    /// flag. Jet4/ACE only.
+    /// </summary>
+    private static void PatchAutoNumFlag(byte[] tdefPage, TableDef tableDef)
+    {
+        bool hasAutoNumber = false;
+        for (int i = 0; i < tableDef.Columns.Count; i++)
+        {
+            if ((tableDef.Columns[i].Flags & 0x04) != 0)
+            {
+                hasAutoNumber = true;
+                break;
+            }
+        }
+
+        tdefPage[0x18] = hasAutoNumber ? (byte)0x01 : (byte)0x00;
     }
 
     private void WriteRowToPage(long pageNumber, byte[] page, byte[] rowBytes)
