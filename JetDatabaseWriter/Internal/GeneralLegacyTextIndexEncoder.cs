@@ -56,7 +56,7 @@ internal static class GeneralLegacyTextIndexEncoder
     // dropping END_TEXT, extras, END_EXTRA_TEXT, and the unflipped
     // descending sentinel as needed. The exact derivation of 510 is
     // unconfirmed; likely page_size/8 - 2 for 4 KiB pages.
-    // See docs/design/long-row-index-encoding-resolution.md.
+    // See docs/design/long-row-index-encoding.md.
     internal const int MaxEntryLengthGeneralV2010 = 510;
     private const byte UnprintableMidfix = 0x06;
     private const byte CrazyCodeStart = 0x80;
@@ -78,7 +78,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
     // 2-chunk "long-row" separators reverse-engineered from Access-authored
     // testIndexCodes V2000/V2003/V2007/V2010 fixtures (Table11 / Table11_desc).
-    // See docs/design/long-row-index-encoding-investigation.md.
+    // See docs/design/long-row-index-encoding.md.
     internal static readonly byte[] LongRowSeparatorGeneralLegacy = [0x08, 0x07, 0x08, 0x04];
     internal static readonly byte[] LongRowSeparatorGeneral = [0x07, 0x09, 0x07, 0x06];
 
