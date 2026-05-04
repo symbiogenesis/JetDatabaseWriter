@@ -19,11 +19,13 @@ public sealed class DatabaseCache : IAsyncDisposable
     private static readonly AccessReaderOptions DefaultOptions = new() { UseLockFile = false };
 
     private readonly ConcurrentDictionary<string, Lazy<Task<byte[]>>> _fileCache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, Lazy<ValueTask<AccessReader>>> _readers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Lazy<Task<AccessReader>>> _readers = new(StringComparer.OrdinalIgnoreCase);
 
     public Task<byte[]> GetFileAsync(string path, CancellationToken cancellationToken = default) =>
-        _fileCache.GetOrAdd(path, (p) => new Lazy<Task<byte[]>>(
-            () => File.ReadAllBytesAsync(p, cancellationToken))).Value;
+        _fileCache.GetOrAdd(
+            path,
+            static (p, ct) => new Lazy<Task<byte[]>>(() => File.ReadAllBytesAsync(p, ct)),
+            cancellationToken).Value;
 
     /// <summary>
     /// Returns a writable <see cref="MemoryStream"/> containing a copy of
@@ -34,17 +36,19 @@ public sealed class DatabaseCache : IAsyncDisposable
     public async ValueTask<MemoryStream> CopyToStreamAsync(string path, CancellationToken cancellationToken = default)
     {
         byte[] bytes = await GetFileAsync(path, cancellationToken);
-        var ms = new MemoryStream();
-        await ms.WriteAsync(bytes, cancellationToken);
+        var ms = new MemoryStream(bytes.Length);
+        ms.Write(bytes);
         ms.Position = 0;
         return ms;
     }
 
-    public ValueTask<AccessReader> GetReaderAsync(string path, AccessReaderOptions options, CancellationToken cancellationToken = default) =>
-        _readers.GetOrAdd(path, (p) => new Lazy<ValueTask<AccessReader>>(
-            () => AccessReader.OpenAsync(p, options, cancellationToken))).Value;
+    public Task<AccessReader> GetReaderAsync(string path, AccessReaderOptions options, CancellationToken cancellationToken = default) =>
+        _readers.GetOrAdd(
+            path,
+            static (p, state) => new Lazy<Task<AccessReader>>(() => AccessReader.OpenAsync(p, state.Options, state.Token).AsTask()),
+            (Options: options, Token: cancellationToken)).Value;
 
-    public ValueTask<AccessReader> GetReaderAsync(string path, CancellationToken cancellationToken = default) =>
+    public Task<AccessReader> GetReaderAsync(string path, CancellationToken cancellationToken = default) =>
         GetReaderAsync(path, DefaultOptions, cancellationToken);
 
     public async ValueTask DisposeAsync()
@@ -55,21 +59,18 @@ public sealed class DatabaseCache : IAsyncDisposable
         {
             if (!lazy.IsValueCreated)
             {
-                throw new InvalidOperationException("A reader was never created for path: " + key);
+                exceptions ??= [];
+                exceptions.Add(new InvalidOperationException("A reader was never created for path: " + key));
+                continue;
             }
 
             try
             {
-                var valueTask = lazy.Value;
+                var task = await lazy.Value;
 
-                if (valueTask.IsCompletedSuccessfully)
+                if (task is not null)
                 {
-                    await valueTask.Result.DisposeAsync();
-                }
-                else if (!valueTask.IsFaulted && !valueTask.IsCanceled)
-                {
-                    var reader = await valueTask;
-                    await reader.DisposeAsync();
+                    await task.DisposeAsync();
                 }
             }
 #pragma warning disable CA1031 // Collect all failures so every reader is disposed
@@ -82,6 +83,7 @@ public sealed class DatabaseCache : IAsyncDisposable
         }
 
         _readers.Clear();
+        _fileCache.Clear();
 
         if (exceptions is { Count: > 0 })
         {
