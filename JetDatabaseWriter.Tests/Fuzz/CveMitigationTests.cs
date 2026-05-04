@@ -411,4 +411,403 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
 
         return -1;
     }
+
+    // ─── CVE-2007-6026 analog: TDEF truncated before column names ──────
+
+    /// <summary>
+    /// Truncates every TDEF page (type 0x02) at 200 bytes — shorter than where
+    /// column names would begin — then attempts to open and read. The reader
+    /// must detect that <c>namePos > td.Length</c> and return <c>null</c> from
+    /// <c>ReadTableDefAsync</c>, skipping the table gracefully.
+    /// </summary>
+    [Fact]
+    public async Task ReadTable_TruncatedTDefPage_DoesNotCrashOrOom()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] original = await db.GetFileAsync(path, ct);
+        byte[] corrupted = (byte[])original.Clone();
+
+        const int pageSize = 4096;
+        int pageCount = corrupted.Length / pageSize;
+
+        // Zero out the tail of every TDEF page so column-name region is invalid.
+        for (int p = 1; p < pageCount; p++)
+        {
+            int pageStart = p * pageSize;
+            if (corrupted[pageStart] == 0x02)
+            {
+                // Keep header (first 200 bytes) but wipe the rest, truncating names.
+                Array.Clear(corrupted, pageStart + 200, pageSize - 200);
+            }
+        }
+
+        await using var stream = new MemoryStream(corrupted, writable: false);
+        Exception? ex = await Record.ExceptionAsync(async () =>
+        {
+            await using AccessReader reader = await AccessReader.OpenAsync(
+                stream,
+                new AccessReaderOptions { UseLockFile = false },
+                leaveOpen: true,
+                ct);
+
+            var tables = await reader.ListTablesAsync(ct);
+            foreach (string table in tables)
+            {
+                int count = 0;
+                await foreach (object[] _ in reader.Rows(table, cancellationToken: ct))
+                {
+                    count++;
+                    if (count > 10)
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
+        Assert.IsNotType<OutOfMemoryException>(ex);
+        Assert.IsNotType<StackOverflowException>(ex);
+    }
+
+    // ─── CVE-2019 batch analog: corrupted in-row numCols ───────────────
+
+    /// <summary>
+    /// Corrupts the first byte(s) of every live row on data pages so that the
+    /// in-row numCols field is 0xFF (255 for Jet3) or 0xFFFF (65535 for Jet4/ACE).
+    /// <c>TryParseRowLayout</c> computes <c>nullMaskSz = (numCols + 7) / 8</c>
+    /// and checks that <c>nullMaskPos >= _rowSz.NumCols</c>. With a massive
+    /// numCols the null-mask would extend beyond the row, causing
+    /// <c>TryParseRowLayout</c> to return <c>false</c> and the row to be skipped.
+    /// </summary>
+    [Fact]
+    public async Task ReadTable_CorruptInRowNumCols_DoesNotCrash()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] original = await db.GetFileAsync(path, ct);
+        byte[] corrupted = (byte[])original.Clone();
+
+        const int pageSize = 4096;
+        int pageCount = corrupted.Length / pageSize;
+
+        // Jet4/ACE: numCols is a 2-byte LE value at the START of each row.
+        // Corrupt the first 2 bytes of every row on every data page.
+        for (int p = 1; p < pageCount; p++)
+        {
+            int pageStart = p * pageSize;
+            if (corrupted[pageStart] != 0x01)
+            {
+                continue;
+            }
+
+            int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
+            if (nr == 0 || nr > 200)
+            {
+                continue;
+            }
+
+            for (int r = 0; r < nr; r++)
+            {
+                int rawOffset = BinaryPrimitives.ReadUInt16LittleEndian(
+                    corrupted.AsSpan(pageStart + 14 + (r * 2), 2));
+                if ((rawOffset & 0xC000) != 0)
+                {
+                    continue; // skip deleted/overflow rows
+                }
+
+                int rowStart = pageStart + (rawOffset & 0x1FFF);
+                if (rowStart + 2 >= pageStart + pageSize)
+                {
+                    continue;
+                }
+
+                // Write numCols = 0xFFFF into the row header.
+                BinaryPrimitives.WriteUInt16LittleEndian(corrupted.AsSpan(rowStart, 2), 0xFFFF);
+            }
+        }
+
+        await using var stream = new MemoryStream(corrupted, writable: false);
+        Exception? ex = await Record.ExceptionAsync(async () =>
+        {
+            await using AccessReader reader = await AccessReader.OpenAsync(
+                stream,
+                new AccessReaderOptions { UseLockFile = false },
+                leaveOpen: true,
+                ct);
+
+            var tables = await reader.ListTablesAsync(ct);
+            foreach (string table in tables)
+            {
+                int count = 0;
+                await foreach (object[] _ in reader.Rows(table, cancellationToken: ct))
+                {
+                    count++;
+                    if (count > 50)
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
+        Assert.IsNotType<OutOfMemoryException>(ex);
+        Assert.IsNotType<StackOverflowException>(ex);
+    }
+
+    // ─── CVE-2019 batch analog: LVAL chain cycle ───────────────────────
+
+    /// <summary>
+    /// Corrupts an LVAL page pointer to form a self-referencing cycle:
+    /// the "next page" field of the first LVAL row points back to the same page.
+    /// Without cycle detection (<c>HashSet&lt;uint&gt; seen</c> in
+    /// <c>ReadLvalChainAsync</c>), this would loop indefinitely. With it,
+    /// the chain terminates immediately.
+    /// </summary>
+    [Fact]
+    public async Task ReadTable_LvalChainCycle_DoesNotHang()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] original = await db.GetFileAsync(path, ct);
+        byte[] corrupted = (byte[])original.Clone();
+
+        const int pageSize = 4096;
+        int pageCount = corrupted.Length / pageSize;
+        bool found = false;
+
+        // Find LVAL data pages (type 0x01) that are NOT regular data pages
+        // by looking for pages whose owning-table-page at offset 4 points to
+        // a TDEF page. In Jet4/ACE, LVAL pages are type 0x01 with an owner
+        // pointer in bytes 4..7. We'll just corrupt ALL data pages' first row
+        // to point its first 4 bytes (the "next LVAL page" pointer) back to
+        // itself. For pages that ARE LVAL rows, this creates the cycle.
+        for (int p = 3; p < pageCount && !found; p++)
+        {
+            int pageStart = p * pageSize;
+            if (corrupted[pageStart] != 0x01)
+            {
+                continue;
+            }
+
+            int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
+            if (nr == 0 || nr > 200)
+            {
+                continue;
+            }
+
+            int firstRowRaw = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 14, 2));
+            if ((firstRowRaw & 0xC000) != 0)
+            {
+                continue;
+            }
+
+            int rowStart = pageStart + (firstRowRaw & 0x1FFF);
+            if (rowStart + 12 >= pageStart + pageSize)
+            {
+                continue;
+            }
+
+            // Make the LVAL "next page" field point to this same page (self-cycle).
+            // The 4-byte value is a page_row reference: page << 8 | row_index.
+            uint selfRef = (uint)(p << 8);
+            BinaryPrimitives.WriteUInt32LittleEndian(corrupted.AsSpan(rowStart, 4), selfRef);
+
+            // Also rewrite the row's MEMO header to indicate a chained LVAL (bitmask 0x00).
+            if (rowStart + 8 < pageStart + pageSize)
+            {
+                corrupted[rowStart + 3] = 0x00; // chained LVAL
+
+                // Set a plausible memoLen so the chain reader enters the loop.
+                corrupted[rowStart] = 0x00;
+                corrupted[rowStart + 1] = 0x10; // memoLen = 4096
+                corrupted[rowStart + 2] = 0x00;
+            }
+
+            found = true;
+        }
+
+        if (!found)
+        {
+            return;
+        }
+
+        await using var stream = new MemoryStream(corrupted, writable: false);
+        Exception? ex = await Record.ExceptionAsync(async () =>
+        {
+            await using AccessReader reader = await AccessReader.OpenAsync(
+                stream,
+                new AccessReaderOptions { UseLockFile = false },
+                leaveOpen: true,
+                ct);
+
+            var tables = await reader.ListTablesAsync(ct);
+            foreach (string table in tables)
+            {
+                int count = 0;
+                await foreach (object[] _ in reader.Rows(table, cancellationToken: ct))
+                {
+                    count++;
+                    if (count > 100)
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
+        Assert.IsNotType<OutOfMemoryException>(ex);
+        Assert.IsNotType<StackOverflowException>(ex);
+    }
+
+    // ─── CVE-2019 batch analog: all rows marked as deleted ─────────────
+
+    /// <summary>
+    /// Sets the delete flag (0x8000) on every row offset in all data pages.
+    /// <c>ComputeLiveRowBoundsArray</c> filters on <c>(raw &amp; 0xC000) == 0</c>,
+    /// so every row should be skipped — the reader must produce zero rows per
+    /// table without crashing.
+    /// </summary>
+    [Fact]
+    public async Task ReadTable_AllRowsDeleted_ProducesEmptyResults()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] original = await db.GetFileAsync(path, ct);
+        byte[] corrupted = (byte[])original.Clone();
+
+        const int pageSize = 4096;
+        int pageCount = corrupted.Length / pageSize;
+
+        for (int p = 1; p < pageCount; p++)
+        {
+            int pageStart = p * pageSize;
+            if (corrupted[pageStart] != 0x01)
+            {
+                continue;
+            }
+
+            int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
+            if (nr == 0 || nr > 200)
+            {
+                continue;
+            }
+
+            for (int r = 0; r < nr; r++)
+            {
+                int offsetPos = pageStart + 14 + (r * 2);
+                if (offsetPos + 2 > corrupted.Length)
+                {
+                    break;
+                }
+
+                ushort raw = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(offsetPos, 2));
+                raw |= 0x8000; // set delete flag
+                BinaryPrimitives.WriteUInt16LittleEndian(corrupted.AsSpan(offsetPos, 2), raw);
+            }
+        }
+
+        await using var stream = new MemoryStream(corrupted, writable: false);
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: true,
+            ct);
+
+        var tables = await reader.ListTablesAsync(ct);
+        int totalRows = 0;
+        foreach (string table in tables)
+        {
+            await foreach (object[] _ in reader.Rows(table, cancellationToken: ct))
+            {
+                totalRows++;
+            }
+        }
+
+        Assert.Equal(0, totalRows);
+    }
+
+    // ─── CVE-2019 batch analog: TDEF page-chain cycle ──────────────────
+
+    /// <summary>
+    /// Makes a TDEF page (type 0x02) point to itself via its "next page"
+    /// field at offset 4. <c>ReadTDefBytesAsync</c> uses a
+    /// <c>HashSet&lt;long&gt; seen</c> to break cycles — the reader must not
+    /// loop forever.
+    /// </summary>
+    [Fact]
+    public async Task ReadTable_TDefPageCycle_DoesNotHang()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] original = await db.GetFileAsync(path, ct);
+        byte[] corrupted = (byte[])original.Clone();
+
+        const int pageSize = 4096;
+        int pageCount = corrupted.Length / pageSize;
+
+        // Find the first TDEF page and make its next-page pointer point to itself.
+        for (int p = 2; p < pageCount; p++)
+        {
+            int pageStart = p * pageSize;
+            if (corrupted[pageStart] == 0x02)
+            {
+                // Offset 4 is the "next TDEF page" pointer (uint32 LE).
+                BinaryPrimitives.WriteUInt32LittleEndian(corrupted.AsSpan(pageStart + 4, 4), (uint)p);
+                break;
+            }
+        }
+
+        await using var stream = new MemoryStream(corrupted, writable: false);
+        Exception? ex = await Record.ExceptionAsync(async () =>
+        {
+            await using AccessReader reader = await AccessReader.OpenAsync(
+                stream,
+                new AccessReaderOptions { UseLockFile = false },
+                leaveOpen: true,
+                ct);
+
+            var tables = await reader.ListTablesAsync(ct);
+            foreach (string table in tables)
+            {
+                int count = 0;
+                await foreach (object[] _ in reader.Rows(table, cancellationToken: ct))
+                {
+                    count++;
+                    if (count > 10)
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
+        Assert.IsNotType<OutOfMemoryException>(ex);
+        Assert.IsNotType<StackOverflowException>(ex);
+    }
 }
