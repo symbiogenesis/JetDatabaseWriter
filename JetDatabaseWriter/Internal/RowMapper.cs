@@ -6,7 +6,7 @@ using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 

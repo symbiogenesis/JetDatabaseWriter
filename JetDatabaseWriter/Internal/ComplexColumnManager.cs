@@ -9,7 +9,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;

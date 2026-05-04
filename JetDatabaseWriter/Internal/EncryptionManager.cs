@@ -9,7 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
 /// Centralizes all JET / ACE / ACCDB encryption logic — header detection,

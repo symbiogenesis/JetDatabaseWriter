@@ -2,8 +2,8 @@ namespace JetDatabaseWriter.Models;
 
 using System;
 using System.Collections.Generic;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
-using JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>
 /// Defines a logical index that

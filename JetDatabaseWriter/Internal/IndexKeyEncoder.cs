@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Numerics;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Internal.Helpers;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 

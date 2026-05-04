@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Text;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Internal.Helpers;
 using Xunit;
 

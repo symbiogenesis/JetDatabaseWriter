@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Internal;
 
 using System;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
 /// Bundles the configuration and runtime state required to maintain a JET

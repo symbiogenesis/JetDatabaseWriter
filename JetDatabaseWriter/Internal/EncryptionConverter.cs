@@ -9,7 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
-using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
 /// Implements the read-decrypt-rewrite pipeline used by
