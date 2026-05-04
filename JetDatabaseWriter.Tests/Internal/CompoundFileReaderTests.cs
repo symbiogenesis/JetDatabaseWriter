@@ -481,6 +481,194 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x78), sizeLow);
     }
 
+    // ── CVE-2019-0560 analog: OLE info disclosure via sector padding ──
+    //
+    // CVE-2019-0560 describes OLE parsers leaking uninitialized memory
+    // by returning sector-sized buffers without truncating to the
+    // declared stream size. Our AllocateChainBuffer truncates to
+    // exactSize; this test verifies no trailing sector padding is
+    // exposed to callers.
+
+    /// <summary>
+    /// Builds a synthetic CFB where the declared stream size (10 bytes) is
+    /// smaller than a full sector (512 bytes). Fills the remainder of the
+    /// data sector with a sentinel value (0xCC) to simulate uninitialized
+    /// disk content. Verifies that <see cref="CompoundFileReader.ReadStreamsAsync"/>
+    /// returns exactly 10 bytes — none of the trailing 0xCC padding leaks.
+    /// </summary>
+    [Fact]
+    public async Task ReadStreams_StreamShorterThanSector_DoesNotLeakSectorPadding()
+    {
+        // Build a minimal v3 CFB with a 10-byte stream occupying one
+        // 512-byte sector. Fill the unused portion with a sentinel.
+        const int Ss = 512;
+        const int StreamSize = 10;
+        const byte Sentinel = 0xCC;
+        const int SectorCount = 3; // dir, data, FAT
+
+        byte[] file = new byte[Ss + (SectorCount * Ss)];
+
+        // ── Header ────────────────────────────────────────────────────
+        Span<byte> h = file.AsSpan(0, Ss);
+        CompoundFileReader.CfbSignature.CopyTo(h);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C), 0xFFFE);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1E), 9);          // 2^9 = 512
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x20), 6);          // 2^6 = 64
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x2C), 1);          // NumFatSectors = 1
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x30), 0);          // FirstDirSector = 0
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x38), 0);          // MiniStreamCutoff = 0 (all regular FAT)
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x3C), 0xFFFFFFFE); // FirstMiniFat = EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x40), 0);          // NumMiniFatSectors
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x44), 0xFFFFFFFE); // FirstDifatSector = EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x48), 0);          // NumDifatSectors = 0
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C), 2);          // DIFAT[0] = sector 2 (FAT)
+        for (int i = 1; i < 109; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C + (i * 4)), 0xFFFFFFFF);
+        }
+
+        // ── Sector 0: Directory ───────────────────────────────────────
+        int dirOff = Ss;
+        WriteDirEntry(file, dirOff, "Root Entry", 5, 0xFFFFFFFE, 0, child: 1);
+        WriteDirEntry(file, dirOff + 128, "TestStream", 2, 1, (uint)StreamSize, child: 0xFFFFFFFF);
+        WriteDirEntryUnused(file, dirOff + 256);
+        WriteDirEntryUnused(file, dirOff + 384);
+
+        // ── Sector 1: Data — 10 valid bytes + sentinel padding ────────
+        int dataOff = Ss + (1 * Ss);
+        for (int i = 0; i < StreamSize; i++)
+        {
+            file[dataOff + i] = unchecked((byte)i);
+        }
+
+        // Fill remainder of sector with sentinel to simulate disk garbage.
+        for (int i = StreamSize; i < Ss; i++)
+        {
+            file[dataOff + i] = Sentinel;
+        }
+
+        // ── Sector 2: FAT ─────────────────────────────────────────────
+        int fatOff = Ss + (2 * Ss);
+        for (int i = 0; i < 128; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (i * 4)), 0xFFFFFFFF);
+        }
+
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (0 * 4)), 0xFFFFFFFE); // sector 0 dir → EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (1 * 4)), 0xFFFFFFFE); // sector 1 data → EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (2 * 4)), 0xFFFFFFFD); // sector 2 FAT → FatSect
+
+        await using var ms = new MemoryStream(file);
+        var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
+
+        Assert.True(streams.ContainsKey("TestStream"));
+        byte[] payload = streams["TestStream"];
+
+        // The returned buffer must be exactly StreamSize bytes — no
+        // trailing sector padding is leaked (CVE-2019-0560 mitigation).
+        Assert.Equal(StreamSize, payload.Length);
+
+        // Verify the valid bytes are correct.
+        for (int i = 0; i < StreamSize; i++)
+        {
+            Assert.Equal(unchecked((byte)i), payload[i]);
+        }
+    }
+
+    /// <summary>
+    /// A stream whose declared size is not sector-aligned but spans
+    /// multiple sectors must still be truncated to the exact declared
+    /// size. No trailing bytes from the final sector are included.
+    /// </summary>
+    [Fact]
+    public async Task ReadStreams_MultiSectorStream_TruncatedToExactSize()
+    {
+        // Stream of 600 bytes spans 2 × 512 sectors = 1024 capacity.
+        // The trailing 424 bytes of sector 2 must not be returned.
+        const int Ss = 512;
+        const int StreamSize = 600;
+        const byte Sentinel = 0xDD;
+        const int SectorCount = 4; // dir, data0, data1, FAT
+
+        byte[] file = new byte[Ss + (SectorCount * Ss)];
+
+        // ── Header ────────────────────────────────────────────────────
+        Span<byte> h = file.AsSpan(0, Ss);
+        CompoundFileReader.CfbSignature.CopyTo(h);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C), 0xFFFE);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1E), 9);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x20), 6);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x2C), 1);          // NumFatSectors
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x30), 0);          // FirstDirSector
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x38), 0);          // MiniStreamCutoff = 0
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x3C), 0xFFFFFFFE); // FirstMiniFat = EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x40), 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x44), 0xFFFFFFFE); // FirstDifatSector = EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x48), 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C), 3);          // DIFAT[0] = sector 3 (FAT)
+        for (int i = 1; i < 109; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C + (i * 4)), 0xFFFFFFFF);
+        }
+
+        // ── Sector 0: Directory ───────────────────────────────────────
+        int dirOff = Ss;
+        WriteDirEntry(file, dirOff, "Root Entry", 5, 0xFFFFFFFE, 0, child: 1);
+        WriteDirEntry(file, dirOff + 128, "TestStream", 2, 1, (uint)StreamSize, child: 0xFFFFFFFF);
+        WriteDirEntryUnused(file, dirOff + 256);
+        WriteDirEntryUnused(file, dirOff + 384);
+
+        // ── Sector 1: Data (first 512 bytes) ─────────────────────────
+        int data0Off = Ss + (1 * Ss);
+        for (int i = 0; i < Ss; i++)
+        {
+            file[data0Off + i] = unchecked((byte)i);
+        }
+
+        // ── Sector 2: Data (remaining 88 bytes + sentinel padding) ───
+        int data1Off = Ss + (2 * Ss);
+        for (int i = 0; i < StreamSize - Ss; i++)
+        {
+            file[data1Off + i] = unchecked((byte)(Ss + i));
+        }
+
+        for (int i = StreamSize - Ss; i < Ss; i++)
+        {
+            file[data1Off + i] = Sentinel;
+        }
+
+        // ── Sector 3: FAT ─────────────────────────────────────────────
+        int fatOff = Ss + (3 * Ss);
+        for (int i = 0; i < 128; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (i * 4)), 0xFFFFFFFF);
+        }
+
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (0 * 4)), 0xFFFFFFFE); // dir → EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (1 * 4)), 2);          // data chain: 1 → 2
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (2 * 4)), 0xFFFFFFFE); // data chain: 2 → EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (3 * 4)), 0xFFFFFFFD); // FAT sector
+
+        await using var ms = new MemoryStream(file);
+        var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
+
+        Assert.True(streams.ContainsKey("TestStream"));
+        byte[] payload = streams["TestStream"];
+
+        // Exact declared size — no final-sector padding leaked.
+        Assert.Equal(StreamSize, payload.Length);
+
+        // Verify no sentinel bytes snuck in.
+        for (int i = 0; i < payload.Length; i++)
+        {
+            Assert.Equal(unchecked((byte)i), payload[i]);
+        }
+    }
+
     private static void WriteDirEntryUnused(byte[] file, int offset)
     {
         Span<byte> e = file.AsSpan(offset, 128);
