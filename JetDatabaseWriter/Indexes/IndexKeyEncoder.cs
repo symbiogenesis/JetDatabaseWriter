@@ -28,8 +28,9 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// data bytes intact and intermediate length bytes at <c>0x09</c> with the
 /// final length byte at the actual segment length, descending bit-flips
 /// every data byte and the FINAL length byte but leaves intermediate length
-/// bytes at <c>0x09</c>). MEMO, OLE, complex, and DATETIMEEXT are still
-/// deferred (no clean HACKING.md spec for any of them).
+/// bytes at <c>0x09</c>). MEMO, OLE, and complex are still
+/// deferred (no clean HACKING.md spec for any of them). DATETIMEEXT uses
+/// the same general-binary-entry packing with its 42-byte fixed payload.
 /// </para>
 /// <para>
 /// The encoded layout is one flag byte (0x7F asc / 0x80 desc for non-null,
@@ -105,6 +106,14 @@ internal static class IndexKeyEncoder
         if (columnType == T_BINARY)
         {
             return EncodeBinaryEntry(value!, ascending);
+        }
+
+        // Date/Time Extended (42-byte fixed) uses the same general-binary-entry
+        // packing as GUID/BINARY — the raw in-row bytes are segmented into
+        // 9-byte chunks with 0x09 intermediate length markers.
+        if (columnType == T_DATETIMEEXT)
+        {
+            return EncodeDateTimeExtEntry(value!, ascending);
         }
 
         // Text / Memo route through the dedicated General Legacy encoder which
@@ -189,7 +198,7 @@ internal static class IndexKeyEncoder
             default:
                 throw new NotSupportedException(
                     $"Index key encoding for column type 0x{columnType:X2} is not supported. " +
-                    "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, GUID, BINARY, TEXT, MEMO.");
+                    "Supported types: BYTE, INT, LONG, MONEY, FLOAT, DOUBLE, DATETIME, DATETIMEEXT, GUID, BINARY, TEXT, MEMO.");
         }
     }
 
@@ -270,6 +279,30 @@ internal static class IndexKeyEncoder
             Memory<byte> mem => mem.ToArray(),
             _ => throw new ArgumentException(
                 $"Cannot coerce value of type {value.GetType().Name} to byte[] for T_BINARY index key encoding.",
+                nameof(value)),
+        };
+
+        return EncodeGeneralBinaryEntry(data, ascending);
+    }
+
+    /// <summary>
+    /// Date/Time Extended (<c>T_DATETIMEEXT = 0x14</c>) sort-key encoding.
+    /// The 42-byte fixed in-row representation is packed via the same
+    /// general-binary-entry segmenting used for GUID and BINARY: 6 segments
+    /// of 9 bytes each (8 data + 1 length), yielding a 55-byte result
+    /// (1 flag + 54 segment bytes). The final segment carries 2 valid bytes
+    /// (42 mod 8 = 2) with a length trailer of <c>0x02</c>.
+    /// </summary>
+    private static byte[] EncodeDateTimeExtEntry(object value, bool ascending)
+    {
+        byte[] data = value switch
+        {
+            byte[] b when b.Length == 42 => b,
+            byte[] b => throw new ArgumentException(
+                $"T_DATETIMEEXT expects exactly 42 bytes but received {b.Length}.",
+                nameof(value)),
+            _ => throw new ArgumentException(
+                $"Cannot coerce value of type {value.GetType().Name} to byte[42] for T_DATETIMEEXT index key encoding.",
                 nameof(value)),
         };
 

@@ -14,11 +14,8 @@ using Xunit;
 /// Validates that the reader identifies version-history complex columns from
 /// the Jackcess <c>complexDataTest</c> fixtures. These fixtures contain columns
 /// of all three complex subtypes (Attachment, MultiValue, VersionHistory).
-/// The reader currently reports the version-history column with
-/// <c>Kind = Unknown</c> because the discriminator does not yet recognize
-/// the <c>MSysComplexTypeVH_*</c> template table pattern — the column IS
-/// present (named <c>VersionHistory_*</c>) but mis-classified.
-/// Partially closes §2.2 gap: "Versioned-text column.".
+/// Closes §2.2 gap: "Fix the complex-column Kind discriminator so
+/// version-history columns report VersionHistory instead of Unknown.".
 /// </summary>
 public sealed class VersionHistoryComplexColumnTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
@@ -86,11 +83,7 @@ public sealed class VersionHistoryComplexColumnTests(DatabaseCache db) : IClassF
 
         Assert.Contains(complex, c => c.Kind == ComplexColumnKind.Attachment);
         Assert.Contains(complex, c => c.Kind == ComplexColumnKind.MultiValue);
-
-        // Version-history is present but currently reported as Unknown.
-        Assert.Contains(complex, c =>
-            c.ColumnName.StartsWith("VersionHistory", System.StringComparison.Ordinal)
-            && c.ComplexTypeName.Contains("VH", System.StringComparison.Ordinal));
+        Assert.Contains(complex, c => c.Kind == ComplexColumnKind.VersionHistory);
     }
 
     /// <summary>
