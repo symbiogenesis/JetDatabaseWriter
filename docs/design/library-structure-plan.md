@@ -483,33 +483,33 @@ Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then 
 | # | Action | Source | Target | Status |
 |--:|--------|--------|--------|--------|
 | 69 | **Extract** | `AccessWriter` → constraint methods | `Schema/ConstraintRegistry.cs` | ✅ |
-| 70 | **Extract** | `AccessWriter` → LVAL encode methods | `ValueEncoding/LongValueEncoder.cs` |
-| 71 | **Extract** | `AccessWriter` → transaction lifecycle | `Transactions/TransactionLifecycle.cs` |
-| 72 | **Extract** | `AccessWriter` → unique-index checks | `Indexes/UniqueIndexChecker.cs` |
-| 73 | **Extract** | `AccessWriter` → catalog helpers | `Catalog/CatalogWriter.cs` |
-| 74 | **Extract** | `AccessWriter` → row encode + page insert | `ValueEncoding/RowEncoder.cs` + `Pages/DataPageInserter.cs` |
-| 75 | **Extract** | `AccessReader` → row decode logic | `ValueDecoding/RowDecoder.cs` |
-| 76 | **Extract** | `AccessReader` → LVAL read logic | `ValueDecoding/LongValueDecoder.cs` |
-| 77 | **Extract** | `AccessBase` → catalog read helpers | `Catalog/CatalogReader.cs` |
+| 70 | **Extract** | `AccessWriter` → LVAL encode methods | `ValueEncoding/LongValueEncoder.cs` | ✅ |
+| 71 | **Extract** | `AccessWriter` → transaction lifecycle | `Transactions/TransactionLifecycle.cs` | ✅ |
+| 72 | **Extract** | `AccessWriter` → unique-index checks | `Indexes/UniqueIndexChecker.cs` | ✅ |
+| 73 | **Extract** | `AccessWriter` → catalog helpers | `Catalog/CatalogWriter.cs` | ✅ |
+| 74 | **Extract** | `AccessWriter` → row encode + page insert | `ValueEncoding/RowEncoder.cs` + `Pages/DataPageInserter.cs` | ✅ |
+| 75 | **Extract** | `AccessReader` → LVAL read logic | `ValueDecoding/LongValueDecoder.cs` | ✅ |
 
-> **Step 69 + 78 completed:** Nested `AccessWriter.ColumnConstraint` promoted to `Schema/Models/ColumnConstraint.cs`. All constraint management logic (`Register`, `Unregister`, `Rename`, `ApplyAsync`, `RestoreAutoCounters`, `HydrateFromTableDef`, `TdefTypeToClrType`, `GetNextAutoValueAsync`, `ToConstraint`, `IsIntegralType`, `ConvertIntegral`) extracted to `Schema/ConstraintRegistry.cs`. `AccessWriter` now holds a `ConstraintRegistry` instance (injected with a `ReadTableSnapshotAsync` delegate) and delegates all constraint operations. `ConstraintRegistry.TryGet` added for schema-evolution paths that need direct constraint list access. All 3078 tests pass.
+> **Step 69 + 76 completed:** Nested `AccessWriter.ColumnConstraint` promoted to `Schema/Models/ColumnConstraint.cs`. All constraint management logic (`Register`, `Unregister`, `Rename`, `ApplyAsync`, `RestoreAutoCounters`, `HydrateFromTableDef`, `TdefTypeToClrType`, `GetNextAutoValueAsync`, `ToConstraint`, `IsIntegralType`, `ConvertIntegral`) extracted to `Schema/ConstraintRegistry.cs`. `AccessWriter` now holds a `ConstraintRegistry` instance (injected with a `ReadTableSnapshotAsync` delegate) and delegates all constraint operations. `ConstraintRegistry.TryGet` added for schema-evolution paths that need direct constraint list access. All 3078 tests pass.
+>
+> **Steps 70–75 completed:** All extractable writer helpers (`LongValueEncoder`, `TransactionLifecycle`, `UniqueIndexChecker`, `CatalogWriter`, `RowEncoder`, `DataPageInserter`) and reader helpers (`LongValueDecoder`) extracted into domain-correct folders. Each god class now holds a field for its helper and delegates via thin forwarders. `AccessWriter` reduced from ~4300 → ~3150 lines; `AccessReader` from ~3700 → ~3840 lines (net neutral after LVAL extraction offset by prior growth). All 3081 tests pass.
 
 ### Phase J — Promote nested types
 
 | # | Action | Source | Target |
 |--:|--------|--------|--------|
-| 78 | **Promote** | Nested `AccessWriter.ColumnConstraint` | `Schema/Models/ColumnConstraint.cs` | ✅ |
-| 79 | **Promote** | Nested `AccessWriter.PreEncodedLongValue` | `ValueEncoding/Models/PreEncodedLongValue.cs` |
-| 80 | **Promote** | Nested `EncryptionManager.PageDecryptionKeys` | `Encryption/Models/PageDecryptionKeys.cs` |
+| 76 | **Promote** | Nested `AccessWriter.ColumnConstraint` | `Schema/Models/ColumnConstraint.cs` | ✅ |
+| 77 | **Promote** | Nested `AccessWriter.PreEncodedLongValue` | `ValueEncoding/Models/PreEncodedLongValue.cs` |
+| 78 | **Promote** | Nested `EncryptionManager.PageDecryptionKeys` | `Encryption/Models/PageDecryptionKeys.cs` |
 
 ### Phase K — Interface segregation & cleanup
 
 | # | Action | Target |
 |--:|--------|--------|
-| 81 | **Split** `IAccessWriter` into `IAccessWriter` (DML) + `IAccessSchema` (DDL); `AccessWriter` implements both |
-| 82 | Update all `namespace` declarations to match new folder paths |
-| 83 | Delete empty `Core/` folder |
-| 84 | Delete empty `Internal/` folder |
+| 79 | **Split** `IAccessWriter` into `IAccessWriter` (DML) + `IAccessSchema` (DDL); `AccessWriter` implements both |
+| 80 | Update all `namespace` declarations to match new folder paths |
+| 81 | Delete empty `Core/` folder |
+| 82 | Delete empty `Internal/` folder |
 
 ---
 

@@ -10,6 +10,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.CompoundFile;
@@ -30,6 +31,7 @@ using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueEncoding;
+using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
 using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
@@ -46,8 +48,8 @@ using UniqueIndexDescriptor = JetDatabaseWriter.Indexes.IndexLayout.UniqueIndexD
 /// </summary>
 public sealed class AccessWriter : AccessBase, IAccessWriter
 {
-    private const int MaxInlineMemoBytes = 1024;
-    private const int MaxInlineOleBytes = 256;
+    internal const int MaxInlineMemoBytes = 1024;
+    internal const int MaxInlineOleBytes = 256;
 
     /// <summary>
     /// Maximum recursion depth for cascade-delete / cascade-update chains.
@@ -79,6 +81,24 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// AccessWriter keeps thin compatibility forwarders for existing callers.</summary>
     private readonly TDefPageBuilder _tdefPageBuilder;
 
+    /// <summary>Owns LVAL chain encoding: pre-encode oversized MEMO/OLE/Attachment payloads.</summary>
+    private readonly LongValueEncoder _longValueEncoder;
+
+    /// <summary>Owns pre-write unique-index violation checks.</summary>
+    private readonly UniqueIndexChecker _uniqueIndexChecker;
+
+    /// <summary>Owns transaction lifecycle: begin, commit, rollback, auto-commit wrapping.</summary>
+    private readonly TransactionLifecycle _transactionLifecycle;
+
+    /// <summary>Owns catalog (MSysObjects) write operations: insert, rename, ACE rows.</summary>
+    private readonly CatalogWriter _catalogWriter;
+
+    /// <summary>Encodes value arrays into on-disk row byte layouts.</summary>
+    private readonly RowEncoder _rowEncoder;
+
+    /// <summary>Owns data-page allocation and row insertion mechanics.</summary>
+    private readonly DataPageInserter _dataPageInserter;
+
     /// <summary>Gets the foreign-key / relationship subsystem. The bulk of
     /// FK code (catalog rows, per-TDEF logical-index entries, runtime
     /// referential-integrity enforcement) lives there; <see cref="AccessWriter"/>
@@ -105,11 +125,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// that apply constraints directly without a pass-through forwarder.</summary>
     internal ConstraintRegistry Constraints { get; }
 
-    // Active explicit transaction. Writer disposal rolls back any in-flight
-    // transaction through JetTransaction.DisposeAsync before clearing the
-    // field so analyzers can see the owned resource is disposed.
+    /// <summary>Gets the writer options.</summary>
+    internal AccessWriterOptions Options => _options;
+
+    /// <summary>Gets or sets the active explicit transaction.</summary>
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeActiveTransactionAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
-    private JetTransaction? _activeTransaction;
+    internal JetTransaction? ActiveTransaction { get; set; }
+
+    /// <summary>Gets the cooperative JET byte-range lock helper.</summary>
+    internal JetByteRangeLock ByteRangeLock => _byteRangeLock;
+
     private long _cachedInsertTDefPage = -1;
     private long _cachedInsertPageNumber = -1;
 
@@ -132,6 +157,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         _indexMaintainer = new IndexMaintainer(this);
         ComplexColumns = new ComplexColumnManager(this);
         _tdefPageBuilder = new TDefPageBuilder(this);
+        _longValueEncoder = new LongValueEncoder(this);
+        _uniqueIndexChecker = new UniqueIndexChecker(this);
+        _transactionLifecycle = new TransactionLifecycle(this);
+        _catalogWriter = new CatalogWriter(this);
+        _rowEncoder = new RowEncoder(this);
+        _dataPageInserter = new DataPageInserter(this);
         Constraints = new ConstraintRegistry(
             async (tableName, ct) => await ReadTableSnapshotAsync(tableName, ct).ConfigureAwait(false));
 
@@ -363,8 +394,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         stream.Position = 0;
 
         AccessWriter writer = await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
-        await writer.ComplexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
-        return writer;
+        try
+        {
+            await writer.ComplexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+            return writer;
+        }
+        catch
+        {
+            await writer.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     /// <inheritdoc/>
@@ -1566,36 +1605,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// concurrent transaction is supported per <see cref="AccessWriter"/>).
     /// </exception>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
-    public async ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
-    {
-        if (_disposed)
-        {
-            throw new ObjectDisposedException(nameof(AccessWriter));
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        await IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (_activeTransaction is not null)
-            {
-                throw new InvalidOperationException(
-                    "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
-            }
-
-            long baseLength = _stream.Length;
-            var journal = new PageJournal(baseLength, PageSize, _options.MaxTransactionPageBudget);
-            var tx = new JetTransaction(this, journal);
-            ActiveJournal = journal;
-            _activeTransaction = tx;
-            return tx;
-        }
-        finally
-        {
-            _ = IoGate.Release();
-        }
-    }
+    public ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
+        => _transactionLifecycle.BeginTransactionAsync(cancellationToken);
 
     /// <summary>
     /// If <see cref="AccessWriterOptions.UseTransactionalWrites"/> is enabled
@@ -1604,80 +1615,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// crash mid-call leaves the database in its pre-call state. Otherwise
     /// invokes <paramref name="work"/> directly (today's flush-per-page path).
     /// </summary>
-    internal async ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
-    {
-        if (!_options.UseTransactionalWrites || _activeTransaction is not null || _disposed)
-        {
-            await work(cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        JetTransaction tx = await BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await work(cancellationToken).ConfigureAwait(false);
-            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            try
-            {
-                if (!tx.IsTerminated)
-                {
-                    await tx.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                }
-            }
-            catch (InvalidOperationException)
-            {
-                // Already terminated by a concurrent commit/rollback path.
-            }
-            catch (IOException)
-            {
-                // Best-effort rollback; surface the original failure.
-            }
-
-            throw;
-        }
-    }
+    internal ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
+        => _transactionLifecycle.RunAutoCommitAsync(work, cancellationToken);
 
     /// <summary>
     /// Generic-result variant of <see cref="RunAutoCommitAsync(Func{CancellationToken, ValueTask}, CancellationToken)"/>.
     /// </summary>
-    internal async ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
-    {
-        if (!_options.UseTransactionalWrites || _activeTransaction is not null || _disposed)
-        {
-            return await work(cancellationToken).ConfigureAwait(false);
-        }
-
-        JetTransaction tx = await BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            TResult result = await work(cancellationToken).ConfigureAwait(false);
-            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return result;
-        }
-        catch
-        {
-            try
-            {
-                if (!tx.IsTerminated)
-                {
-                    await tx.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                }
-            }
-            catch (InvalidOperationException)
-            {
-                // Already terminated.
-            }
-            catch (IOException)
-            {
-                // Best-effort rollback.
-            }
-
-            throw;
-        }
-    }
+    internal ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
+        => _transactionLifecycle.RunAutoCommitAsync(work, cancellationToken);
 
     /// <summary>
     /// Commits the supplied <paramref name="transaction"/>: detaches the
@@ -1685,187 +1630,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// page-number order) through the normal page-write pipeline so that
     /// per-page encryption and cooperative byte-range locks are honoured.
     /// </summary>
-    /// <remarks>
-    /// Mirrors the JET page-shadow commit protocol: acquires the cooperative
-    /// commit-lock sentinel via <see cref="JetByteRangeLock.AcquireCommitLockAsync"/>,
-    /// replays the journal, increments the page-0 commit-lock byte at offset
-    /// <c>0x14</c> so other openers can detect the schema/data version bump,
-    /// flushes to disk (<c>FileStream.Flush(flushToDisk: true)</c> when the
-    /// stream is a <see cref="FileStream"/>), and finally releases the
-    /// commit-lock sentinel.
-    /// </remarks>
-    internal async ValueTask CommitTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
-    {
-        Guard.NotNull(transaction, nameof(transaction));
-
-        if (_disposed)
-        {
-            throw new ObjectDisposedException(nameof(AccessWriter));
-        }
-
-        PageJournal journal;
-        await IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (transaction.IsTerminated)
-            {
-                throw new InvalidOperationException("The transaction has already been committed or rolled back.");
-            }
-
-            if (!ReferenceEquals(_activeTransaction, transaction))
-            {
-                throw new InvalidOperationException("The transaction is not active on this writer.");
-            }
-
-            journal = transaction.Journal;
-
-            // Detach the journal first so the page-write loop below routes
-            // straight to disk (otherwise WritePageAsync would re-journal the
-            // same bytes back into the journal we are draining).
-            ActiveJournal = null;
-            _activeTransaction = null;
-        }
-        finally
-        {
-            _ = IoGate.Release();
-        }
-
-        // Acquire the JET commit-lock sentinel for the entire replay window so
-        // any other cooperating opener (Access, OLE DB JET / ACE, another
-        // AccessWriter) blocks on its own commit attempt until our atomic
-        // replay + commit-byte bump is durable on disk.
-        IDisposable commitLock = await _byteRangeLock.AcquireCommitLockAsync(isAccdb: DatabaseFormat == DatabaseFormat.AceAccdb, cancellationToken).ConfigureAwait(false);
-
-        try
-        {
-            try
-            {
-                foreach (KeyValuePair<long, byte[]> entry in journal.EnumerateInOrder())
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    await WritePageAsync(entry.Key, entry.Value, cancellationToken).ConfigureAwait(false);
-                }
-
-                // Bump the page-0 commit-lock byte at offset 0x14 so any reader
-                // that participates in the protocol can detect the version
-                // change and refresh its catalog cache. Done after page replay
-                // and before the durability flush so a torn write that loses
-                // the commit-byte update leaves the prior catalog version in
-                // force.
-                await BumpCommitLockByteAsync(cancellationToken).ConfigureAwait(false);
-
-                // FlushToDisk(true) for FileStream-backed databases makes
-                // every preceding write durable past an OS / process crash.
-                // Other stream types (MemoryStream, the in-memory ACCDB
-                // re-encryption buffer) just FlushAsync.
-                await FlushDurableAsync(cancellationToken).ConfigureAwait(false);
-
-                transaction.MarkCommitted();
-            }
-            catch
-            {
-                // Mid-commit failure: the on-disk file may now be partially
-                // mutated. Mark the transaction terminated so the caller cannot
-                // commit again, but propagate the original exception.
-                transaction.MarkRolledBack();
-                throw;
-            }
-        }
-        finally
-        {
-            commitLock.Dispose();
-        }
-    }
-
-    /// <summary>
-    /// Increments the page-0 "commit lock byte" at header offset <c>0x14</c>
-    /// (with simple wrap-around). Mirrors the JET signal that schema /
-    /// catalog state has changed; other cooperating openers consult this byte
-    /// to know when to refresh.
-    /// </summary>
-    private async ValueTask BumpCommitLockByteAsync(CancellationToken cancellationToken)
-    {
-        // Page 0 is always plaintext (PrepareEncryptedPageForWrite skips it),
-        // so we can read-modify-write byte 0x14 without going through the
-        // page-encryption pipeline.
-        byte[] page0 = await ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            page0[0x14] = unchecked((byte)(page0[0x14] + 1));
-            await WritePageAsync(0, page0, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            ReturnPage(page0);
-        }
-    }
-
-    /// <summary>
-    /// Flushes the underlying stream durably. For <see cref="FileStream"/> uses
-    /// <see cref="FileStream.Flush(bool)"/> with <c>flushToDisk: true</c> so
-    /// the OS write-back cache is forced past the storage device's volatile
-    /// cache; for other stream types falls back to <see cref="Stream.FlushAsync(CancellationToken)"/>.
-    /// </summary>
-    private async ValueTask FlushDurableAsync(CancellationToken cancellationToken)
-    {
-        await IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (_stream is FileStream fs)
-            {
-                // FileStream.Flush(true) is the only way to push the OS
-                // write-back cache through to the storage device's volatile
-                // cache; there is no async equivalent in BCL.
-#pragma warning disable CA1849
-                fs.Flush(flushToDisk: true);
-#pragma warning restore CA1849
-            }
-            else
-            {
-                await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            }
-        }
-        finally
-        {
-            _ = IoGate.Release();
-        }
-    }
+    internal ValueTask CommitTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
+        => _transactionLifecycle.CommitTransactionAsync(transaction, cancellationToken);
 
     /// <summary>
     /// Rolls back the supplied <paramref name="transaction"/>: discards the
     /// in-memory journal without touching the database file.
     /// </summary>
-    internal async ValueTask RollbackTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
-    {
-        Guard.NotNull(transaction, nameof(transaction));
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        // Allow rollback during dispose: skip the disposed-check so a
-        // JetTransaction.DisposeAsync after writer-dispose is a quiet no-op
-        // when the writer has already cleaned up the active transaction.
-        await IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (transaction.IsTerminated)
-            {
-                throw new InvalidOperationException("The transaction has already been committed or rolled back.");
-            }
-
-            if (!ReferenceEquals(_activeTransaction, transaction))
-            {
-                throw new InvalidOperationException("The transaction is not active on this writer.");
-            }
-
-            ActiveJournal = null;
-            _activeTransaction = null;
-            transaction.MarkRolledBack();
-        }
-        finally
-        {
-            _ = IoGate.Release();
-        }
-    }
+    internal ValueTask RollbackTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
+        => _transactionLifecycle.RollbackTransactionAsync(transaction, cancellationToken);
 
     /// <inheritdoc/>
     [SuppressMessage("Usage", "CA2215:Dispose methods should call base class dispose", Justification = "base.DisposeAsync is passed as the final step to LockFileCoordinator.DisposeAfterAsync.")]
@@ -1892,19 +1665,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // Drop any in-flight transaction so its journal does not survive
         // dispose. Nothing has been written to disk for an uncommitted
         // transaction, so this is equivalent to an implicit rollback.
-        if (_activeTransaction is null)
+        if (ActiveTransaction is null)
         {
             return;
         }
 
         try
         {
-            await _activeTransaction.DisposeAsync().ConfigureAwait(false);
+            await ActiveTransaction.DisposeAsync().ConfigureAwait(false);
         }
         finally
         {
             ActiveJournal = null;
-            _activeTransaction = null;
+            ActiveTransaction = null;
         }
     }
 
@@ -2073,40 +1846,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         await AdjustTDefRowCountAsync(tdefPage, -locations.Count, cancellationToken).ConfigureAwait(false);
     }
 
-    private static byte[]? EncodeOleValue(object value)
-    {
-        // When the row pre-encode pass has already pushed an oversized
-        // payload to LVAL pages, the sentinel carries the finished 12-byte
-        // header and we just splice it through.
-        if (value is PreEncodedLongValue pre)
-        {
-            return pre.HeaderBytes;
-        }
-
-        byte[]? data = value as byte[];
-        if (data == null)
-        {
-            string? stringValue = value as string;
-            if (string.IsNullOrEmpty(stringValue))
-            {
-                return null;
-            }
-
-            data = Encoding.UTF8.GetBytes(stringValue);
-        }
-
-        // Anything larger than the inline cap should have been routed through
-        // the LVAL pre-encode pass already; reaching here means the caller is
-        // bypassing InsertRowDataLocAsync's hook (e.g. internal system-table
-        // writes), in which case the cap still applies.
-        if (data.Length > MaxInlineOleBytes)
-        {
-            throw new JetLimitationException($"OLE value is {data.Length} bytes, which exceeds the inline limit of {MaxInlineOleBytes} bytes.");
-        }
-
-        return WrapInlineLongValue(data);
-    }
-
     private static bool ValuesEqual(object? left, object? right)
     {
         bool leftDbNull = left == null || left is DBNull;
@@ -2212,220 +1951,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     internal static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, DatabaseFormat format)
         => TDefPageBuilder.BuildTableDefinition(columns, format);
 
-    private static void SetNullMaskBit(byte[] mask, int columnNumber, bool state)
-    {
-        if (columnNumber < 0)
-        {
-            return;
-        }
-
-        int byteIndex = columnNumber / 8;
-        int bitIndex = columnNumber % 8;
-        if (byteIndex >= mask.Length)
-        {
-            return;
-        }
-
-        if (state)
-        {
-            mask[byteIndex] = (byte)(mask[byteIndex] | (1 << bitIndex));
-        }
-    }
-
-    private static byte[]? WrapInlineLongValue(byte[]? data)
-    {
-        if (data == null)
-        {
-            return null;
-        }
-
-        var buffer = new byte[12 + data.Length];
-        WriteUInt24(buffer, 0, data.Length);
-        buffer[3] = 0x80;
-        Buffer.BlockCopy(data, 0, buffer, 12, data.Length);
-        return buffer;
-    }
-
-    // ── LVAL chain emission for oversized MEMO / OLE / Attachment payloads ──
-    // The 12-byte LVAL header (read by AccessReader.ReadLongValueAsync) is:
-    //   [memo_len: 3 bytes LE][bitmask: 1 byte][lval_dp: 4 bytes LE][unknown: 4 bytes]
-    // bitmask values:
-    //   0x80 — inline (data follows the 12-byte header in the row body)
-    //   0x40 — single LVAL page (payload occupies one LVAL row at lval_dp)
-    //   0x00 — chained LVAL pages ([next_lval_dp(4 LE)][chunk_bytes] per row, terminator next_lval_dp = 0)
-    // lval_dp encoding: ((page_number << 8) | row_index_within_page).
-
-    /// <summary>
-    /// Sentinel produced by <see cref="PreEncodeLongValuesAsync"/>. The wrapped
-    /// 12-byte LVAL header already references LVAL pages allocated earlier in
-    /// the row-insert pipeline, so <see cref="EncodeOleValue"/> /
-    /// <see cref="EncodeVariableValue"/> just splice <see cref="HeaderBytes"/>
-    /// straight into the row body without any further encoding.
-    /// </summary>
-    private sealed class PreEncodedLongValue(byte[] headerBytes)
-    {
-        public byte[] HeaderBytes { get; } = headerBytes;
-    }
-
-    /// <summary>
-    /// Pre-encode pass for <see cref="InsertRowDataLocAsync"/>: any MEMO / OLE
-    /// value whose payload exceeds the inline cap is written to one or more
-    /// freshly-appended LVAL data pages here, and the in-row value is replaced
-    /// with a <see cref="PreEncodedLongValue"/> sentinel carrying the matching
-    /// 12-byte header. Returns the same array reference when no large payloads
-    /// were found and a defensively-cloned array otherwise so the caller's
-    /// original <c>values</c> stays untouched.
-    /// </summary>
-    private async ValueTask<object[]> PreEncodeLongValuesAsync(TableDef tableDef, object[] values, CancellationToken cancellationToken)
-    {
-        object[]? result = null;
-        for (int i = 0; i < tableDef.Columns.Count; i++)
-        {
-            ColumnInfo col = tableDef.Columns[i];
-            if (col.IsFixed || (col.Type != T_OLE && col.Type != T_MEMO))
-            {
-                continue;
-            }
-
-            object value = values[i];
-            if (value is null or DBNull or PreEncodedLongValue)
-            {
-                continue;
-            }
-
-            byte[]? data;
-            int inlineCap;
-            if (col.Type == T_OLE)
-            {
-                data = value as byte[];
-                if (data == null)
-                {
-                    continue;
-                }
-
-                inlineCap = MaxInlineOleBytes;
-            }
-            else
-            {
-                string? text = value as string ?? Convert.ToString(value, CultureInfo.InvariantCulture);
-                if (string.IsNullOrEmpty(text))
-                {
-                    continue;
-                }
-
-                data = _format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(text) : _ansiEncoding.GetBytes(text);
-                inlineCap = MaxInlineMemoBytes;
-            }
-
-            if (data.Length <= inlineCap)
-            {
-                continue;
-            }
-
-            byte[] header = await EncodeAsLvalChainAsync(data, cancellationToken).ConfigureAwait(false);
-            result ??= (object[])values.Clone();
-            result[i] = new PreEncodedLongValue(header);
-        }
-
-        return result ?? values;
-    }
-
-    /// <summary>
-    /// Allocates one (single-page LVAL, bitmask <c>0x40</c>) or many (chained
-    /// LVAL pages, bitmask <c>0x00</c>) LVAL data pages for a payload that is
-    /// too large for the inline form, returning the resulting 12-byte LVAL
-    /// header. Pages are appended in reverse so each predecessor row can hold
-    /// its successor's <c>lval_dp</c> pointer.
-    /// </summary>
-    private async ValueTask<byte[]> EncodeAsLvalChainAsync(byte[] data, CancellationToken cancellationToken)
-    {
-        if (data.Length > Constants.LongValue.MaxPayloadBytes)
-        {
-            throw new JetLimitationException(
-                $"Long value is {data.Length} bytes, which exceeds the JET 24-bit LVAL length limit of {Constants.LongValue.MaxPayloadBytes} bytes.");
-        }
-
-        // One row per LVAL page. The row table costs 2 bytes for a single offset.
-        int singleRowMax = _pgSz - _dataPage.RowsStart - 2;
-        int chainRowMax = singleRowMax - 4; // first 4 bytes of each chained row are the next-pointer
-
-        var header = new byte[12];
-        WriteUInt24(header, 0, data.Length);
-
-        if (data.Length <= singleRowMax)
-        {
-            byte[] page = BuildSingleLvalPageBuffer(data);
-            long pageNumber = await AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
-            header[3] = 0x40;
-            uint lvalDp = unchecked((uint)((pageNumber << 8) | 0));
-            Wi32(header, 4, (int)lvalDp);
-            return header;
-        }
-
-        // Chunk size for chained rows. Allocating in reverse means each newly
-        // appended page's row carries the previously-appended page's lval_dp
-        // as its [next_dp] prefix.
-        int chunkCount = (data.Length + chainRowMax - 1) / chainRowMax;
-        uint nextDp = 0;
-        for (int i = chunkCount - 1; i >= 0; i--)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            int chunkStart = i * chainRowMax;
-            int chunkLen = Math.Min(chainRowMax, data.Length - chunkStart);
-            byte[] page = BuildChainLvalPageBuffer(data, chunkStart, chunkLen, nextDp);
-            long pageNumber = await AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
-            nextDp = unchecked((uint)((pageNumber << 8) | 0));
-        }
-
-        header[3] = 0x00;
-        Wi32(header, 4, (int)nextDp);
-        return header;
-    }
-
-    /// <summary>
-    /// Builds a single-row LVAL data page (bitmask <c>0x40</c> form): the row
-    /// body is the entire payload with no next-pointer prefix.
-    /// </summary>
-    private byte[] BuildSingleLvalPageBuffer(byte[] payload)
-    {
-        byte[] page = new byte[_pgSz];
-        page[0] = 0x01; // page_type = data page (the reader treats LVAL pages as type 0x01 with tdef_page = 0)
-        page[1] = 0x01;
-        Wi32(page, _dataPage.TDefOff, 0);
-        Wu16(page, _dataPage.NumRows, 1);
-
-        int rowStart = _pgSz - payload.Length;
-        Buffer.BlockCopy(payload, 0, page, rowStart, payload.Length);
-        Wu16(page, _dataPage.RowsStart, rowStart);
-
-        int freeSpace = rowStart - (_dataPage.RowsStart + 2);
-        Wu16(page, 2, freeSpace);
-        return page;
-    }
-
-    /// <summary>
-    /// Builds a single-row LVAL data page in chained form (bitmask <c>0x00</c>):
-    /// the first 4 bytes of the row are the next-row pointer (<c>page&lt;&lt;8 | row</c>,
-    /// little-endian; <c>0</c> on the terminal page) and the remainder is the chunk payload.
-    /// </summary>
-    private byte[] BuildChainLvalPageBuffer(byte[] data, int offset, int length, uint nextDp)
-    {
-        byte[] page = new byte[_pgSz];
-        page[0] = 0x01;
-        page[1] = 0x01;
-        Wi32(page, _dataPage.TDefOff, 0);
-        Wu16(page, _dataPage.NumRows, 1);
-
-        int rowLen = 4 + length;
-        int rowStart = _pgSz - rowLen;
-        Wi32(page, rowStart, (int)nextDp);
-        Buffer.BlockCopy(data, offset, page, rowStart + 4, length);
-        Wu16(page, _dataPage.RowsStart, rowStart);
-
-        int freeSpace = rowStart - (_dataPage.RowsStart + 2);
-        Wu16(page, 2, freeSpace);
-        return page;
-    }
+    private ValueTask<object[]> PreEncodeLongValuesAsync(TableDef tableDef, object[] values, CancellationToken cancellationToken)
+        => _longValueEncoder.PreEncodeLongValuesAsync(tableDef, values, cancellationToken);
 
     private static FileStream CreateStream(string path) =>
         OpenDatabaseFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
@@ -2610,58 +2137,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     }
 
     internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, CancellationToken cancellationToken = default)
-        => InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags: 0, cancellationToken);
+        => _catalogWriter.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, cancellationToken);
 
-    internal async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
-    {
-        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        object[] values = msys.CreateNullValueRow();
-        DateTime now = DateTime.UtcNow;
-
-        msys.SetValueByName(values, "Id", (int)tdefPageNumber);
-        msys.SetValueByName(values, "ParentId", Constants.SystemObjects.TablesParentId);
-        msys.SetValueByName(values, "Name", tableName);
-        msys.SetValueByName(values, "Type", (short)Constants.SystemObjects.UserTableType);
-        msys.SetValueByName(values, "DateCreate", now);
-        msys.SetValueByName(values, "DateUpdate", now);
-        msys.SetValueByName(values, "Flags", unchecked((int)catalogFlags));
-
-        // Microsoft Access stamps MSysObjects.Owner with a per-file 2-byte
-        // token that varies across databases (verified across ~80 Jet3 / Jet4 /
-        // ACE fixtures: e.g. NorthwindTraders.accdb uses 0x71 0x10, nwind.mdb
-        // 0x03 0x01, ComplexFields.accdb 0xC8 0xB1, AdventureLT2008.mdb 0xEC
-        // 0xC7). The exact bytes appear to be derived from file/owner identity
-        // and are opaque to DAO Compact & Repair, which only requires the
-        // column to be non-null on user-authored Type=1 / Type=8 catalog rows
-        // (Access itself leaves the 10 hidden system-managed Type=1 rows with
-        // Owner=NULL on every modern .accdb). We stamp a fixed 2-byte sentinel
-        // -- DefaultOwnerBlob (0x71 0x10, the value Access uses in
-        // NorthwindTraders.accdb) -- which satisfies the non-null check on
-        // every JET / ACE format we support, with no version gate required.
-        msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
-
-        // LvProp is the OLE/LongBinary cell carrying per-column persisted properties
-        // (DefaultValue, ValidationRule, ValidationText, Description). Only emitted on
-        // the full 17-column catalog schema (the slim 9-column legacy schema lacks the
-        // column entirely, so SetValue is a no-op). DAO Compact & Repair requires
-        // LvProp to be NOT NULL on every user-authored Type=1 catalog row -- when no
-        // per-column properties are declared the writer falls back to a 12-byte
-        // placeholder (DefaultLvPropPlaceholder) so the null-mask bit is set and the
-        // row's var-offset table mirrors what DAO emits. See
-        // docs/design/round-trip-test-failures.md.
-        msys.SetValueByName(values, "LvProp", lvProp ?? Constants.SystemObjects.DefaultLvPropPlaceholder);
-
-        // Insert the new MSysObjects row, then splice its index entry into
-        // the rightmost leaf of every real-idx slot WITHOUT re-encoding any
-        // pre-existing entries. This keeps Microsoft Access's PK Id index
-        // pointing at the new TDEF row so DAO Compact &amp; Repair can locate
-        // it, while preserving the byte-for-byte content of Access-authored
-        // catalog rows the writer cannot losslessly re-encode (e.g. the
-        // special "Databases" properties row's LvProp blob). See
-        // docs/design/catalog-index-maintenance-notes.md.
-        RowLocation loc = await InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
-        _ = await TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
-    }
+    internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
+        => _catalogWriter.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags, cancellationToken);
 
     /// <summary>
     /// Inserts 3 ACE (Access Control Entry) rows into <c>MSysACEs</c> for a
@@ -2669,79 +2148,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// pass requires every user table to have owner / admins / users entries;
     /// without them DAO aborts with err 3011 "could not find 'MSysDb'".
     /// </summary>
-    private async ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
-    {
-        long acesTdefPage = await Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        if (acesTdefPage <= 0)
-        {
-            return;
-        }
-
-        TableDef acesDef = await ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-
-        // Harvest the Admins group SID from an existing ACE row (the long
-        // ~102-byte blob that is the same on every row in the database).
-        byte[]? adminsSid = await HarvestAdminsSidAsync(acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
-
-        byte[][] sids = adminsSid != null
-            ? [Constants.Aces.OwnerSid, adminsSid, Constants.Aces.UsersSid]
-            : [Constants.Aces.OwnerSid, Constants.Aces.UsersSid];
-
-        foreach (byte[] sid in sids)
-        {
-            object[] row = acesDef.CreateNullValueRow();
-            acesDef.SetValueByName(row, "ObjectId", (int)tdefPageNumber);
-            acesDef.SetValueByName(row, "ACM", Constants.Aces.DefaultAcm);
-            acesDef.SetValueByName(row, "FInheritable", true);
-            acesDef.SetValueByName(row, "SID", sid);
-            await InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, row, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// Reads an existing ACE row from <c>MSysACEs</c> and extracts the
-    /// Admins-group SID (the long ~102-byte blob). All ACE rows in a database
-    /// share the same Admins SID; we harvest it from any row whose SID is
-    /// longer than the 2-byte owner/users sentinels.
-    /// </summary>
-    private async ValueTask<byte[]?> HarvestAdminsSidAsync(long acesTdefPage, TableDef acesDef, CancellationToken cancellationToken)
-    {
-        ColumnInfo? sidCol = acesDef.FindColumn("SID");
-        if (sidCol == null)
-        {
-            return null;
-        }
-
-        long total = _stream.Length / _pgSz;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != acesTdefPage)
-                {
-                    continue;
-                }
-
-                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
-                {
-                    string hex = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, sidCol);
-
-                    // Longer than 4 hex chars means > 2 bytes (not owner/users short SIDs).
-                    if (hex.Length > 4)
-                    {
-                        return ParseHexBytes(hex);
-                    }
-                }
-            }
-            finally
-            {
-                ReturnPage(page);
-            }
-        }
-
-        return null;
-    }
+    private ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
+        => _catalogWriter.InsertAceRowsForTableAsync(tdefPageNumber, cancellationToken);
 
     private async ValueTask RewriteTableAsync(
         string tableName,
@@ -2902,38 +2310,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    private async ValueTask RenameTableInCatalogAsync(string oldName, string newName, byte[]? lvProp, CancellationToken cancellationToken)
-    {
-        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-
-        long? tdefPage = null;
-        foreach (CatalogRow row in rows)
-        {
-            if (row.ObjectType != Constants.SystemObjects.UserTableType)
-            {
-                continue;
-            }
-
-            if (!string.Equals(row.Name, oldName, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            tdefPage = row.TDefPage;
-            await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
-            break;
-        }
-
-        if (tdefPage == null)
-        {
-            throw new InvalidOperationException($"Catalog row for '{oldName}' was not found during rename.");
-        }
-
-        await InsertCatalogEntryAsync(newName, tdefPage.Value, lvProp, cancellationToken).ConfigureAwait(false);
-        Constraints.Rename(oldName, newName);
-        InvalidateCatalogCache();
-    }
+    private ValueTask RenameTableInCatalogAsync(string oldName, string newName, byte[]? lvProp, CancellationToken cancellationToken)
+        => _catalogWriter.RenameTableInCatalogAsync(oldName, newName, lvProp, cancellationToken);
 
     private ColumnDefinition BuildColumnDefinitionFromInfo(ColumnInfo column)
     {
@@ -3446,572 +2824,37 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    private async ValueTask<PageInsertTarget> FindInsertTargetAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
-    {
-        if (TryGetCachedInsertPageNumber(tdefPage, out long cachedPageNumber))
-        {
-            byte[] cached = await ReadPageAsync(cachedPageNumber, cancellationToken).ConfigureAwait(false);
-            if (cached[0] == 0x01 && Ri32(cached, _dataPage.TDefOff) == tdefPage && CanInsertRow(cached, rowLength))
-            {
-                return new PageInsertTarget { PageNumber = cachedPageNumber, Page = cached };
-            }
-
-            ReturnPage(cached);
-        }
-
-        long total = _stream.Length / _pgSz;
-        PageInsertTarget? candidate = null;
-
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            if (Ri32(page, _dataPage.TDefOff) != tdefPage)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            if (CanInsertRow(page, rowLength))
-            {
-                if (candidate != null)
-                {
-                    ReturnPage(candidate.Page);
-                }
-
-                candidate = new PageInsertTarget { PageNumber = pageNumber, Page = page };
-            }
-            else
-            {
-                ReturnPage(page);
-            }
-        }
-
-        if (candidate != null)
-        {
-            SetCachedInsertPageNumber(tdefPage, candidate.PageNumber);
-            return candidate;
-        }
-
-        long newPageNumber = await AppendPageAsync(CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
-        SetCachedInsertPageNumber(tdefPage, newPageNumber);
-        return new PageInsertTarget
-        {
-            PageNumber = newPageNumber,
-            Page = await ReadPageAsync(newPageNumber, cancellationToken).ConfigureAwait(false),
-        };
-    }
+    private ValueTask<PageInsertTarget> FindInsertTargetAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
+        => _dataPageInserter.FindInsertTargetAsync(tdefPage, rowLength, cancellationToken);
 
     private bool CanInsertRow(byte[] page, int rowLength)
-    {
-        int numRows = Ru16(page, _dataPage.NumRows);
-
-        // JET row IDs encode the per-page row index as a single byte (0..255),
-        // so a data page can hold at most 256 distinct row slots. Capping at
-        // 255 matches Jackcess and keeps the (byte) cast in the index-rebuild
-        // path safe under <CheckForOverflowUnderflow>true.
-        if (numRows >= Constants.DataPage.MaxRowsPerPage)
-        {
-            return false;
-        }
-
-        int dataStart = GetFirstRowStart(page, numRows);
-        int nextOffsetPos = _dataPage.RowsStart + ((numRows + 1) * 2);
-        return dataStart - nextOffsetPos >= rowLength;
-    }
+        => _dataPageInserter.CanInsertRow(page, rowLength);
 
     private int GetFirstRowStart(byte[] page, int numRows)
-    {
-        int first = _pgSz;
-        for (int i = 0; i < numRows; i++)
-        {
-            int raw = Ru16(page, _dataPage.RowsStart + (i * 2));
-            int start = raw & 0x1FFF;
-            if (start > 0 && start < first)
-            {
-                first = start;
-            }
-        }
-
-        return first;
-    }
+        => _dataPageInserter.GetFirstRowStart(page, numRows);
 
     private byte[] CreateEmptyDataPage(long tdefPage)
-    {
-        byte[] page = new byte[_pgSz];
-        page[0] = 0x01;
-        page[1] = 0x01;
-        Wu16(page, 2, _pgSz - _dataPage.RowsStart);
-        Wi32(page, _dataPage.TDefOff, (int)tdefPage);
-        Wu16(page, _dataPage.NumRows, 0);
-        return page;
-    }
+        => _dataPageInserter.CreateEmptyDataPage(tdefPage);
 
-    /// <summary>
-    /// Allocates and appends a per-table usage-map data page (page_type 0x01)
-    /// containing two empty inline-bitmap rows. Row 0 backs the table's
-    /// <c>used_pages</c> map; row 1 backs the <c>free_pages</c> map. Both
-    /// rows consist of a single <c>0x00</c> byte (Access "inline" usage-map
-    /// marker followed by a zero-length bitmap), so the table is reported as
-    /// owning no data pages until subsequent inserts populate the map. The
-    /// data-page back-pointer at offset <c>_dataPage.TDefOff</c> is left at 0
-    /// to match the layout of Access-authored usage-map data pages
-    /// (e.g. page 6 in <c>NorthwindTraders.accdb</c>).
-    /// </summary>
-    /// <remarks>
-    /// Used by <see cref="CreateTableInternalAsync"/> to satisfy DAO
-    /// Compact &amp; Repair, which dereferences each catalog row's
-    /// <c>used_pages</c> pointer and aborts the catalog walk when it is
-    /// zero. See docs/design/round-trip-test-failures.md.
-    /// </remarks>
-    private async ValueTask<long> AppendUsageMapPageAsync(CancellationToken cancellationToken)
-    {
-        byte[] page = new byte[_pgSz];
-        page[0] = 0x01;
-        page[1] = 0x01;
+    private ValueTask<long> AppendUsageMapPageAsync(CancellationToken cancellationToken)
+        => _dataPageInserter.AppendUsageMapPageAsync(cancellationToken);
 
-        // Each row is 69 bytes: 1-byte type-0 marker (0x00) + 68 bytes of bitmap.
-        // 68 bytes = 544 bits covers pages 0..543, the minimum bitmap width
-        // Access reserves on Access-authored usage-map pages (verified against
-        // NorthwindTraders.accdb page 24, the usage-map data page for the
-        // single-column TDEF on page 23). DAO refuses to walk a 1-byte row.
-        // For an empty table the bitmap is all zeros (no pages owned / free).
-        // Row 0 = used_pages, row 1 = free_pages, both packed at the page tail.
-        const int rowSize = 69;
-        int row0Off = _pgSz - rowSize;
-        int row1Off = row0Off - rowSize;
-
-        // Bitmap bytes are zero by virtue of `new byte[]`; no explicit writes needed.
-        Wi32(page, _dataPage.TDefOff, 0);
-        Wu16(page, _dataPage.NumRows, 2);
-        Wu16(page, _dataPage.RowsStart, row0Off);
-        Wu16(page, _dataPage.RowsStart + 2, row1Off);
-
-        int freeSpace = row1Off - (_dataPage.RowsStart + 4);
-        Wu16(page, 2, freeSpace);
-
-        return await AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Patches the new TDEF's <c>used_pages</c> (offset 0x37..0x3A) and
-    /// <c>free_pages</c> (offset 0x3B..0x3E) pointers to reference the
-    /// freshly-allocated usage-map data page built by
-    /// <see cref="AppendUsageMapPageAsync"/>. Each pointer is encoded as
-    /// 1-byte row index followed by 3-byte LE page number — used_pages
-    /// references row 0, free_pages references row 1 (matches the row
-    /// ordering in Access-authored usage-map data pages, e.g. MSysObjects'
-    /// page 6 in <c>NorthwindTraders.accdb</c>). Jet4/ACE only; Jet3
-    /// stores per-table page-usage pointers in a different location
-    /// (see docs/design/index-and-relationship-format-notes.md §3.1).
-    /// </summary>
     private static void PatchUsageMapPointers(byte[] tdefPage, int usageMapPageNumber)
-    {
-        // used_pages: row 0 (1 byte) + page (3 bytes LE)
-        tdefPage[0x37] = 0x00;
-        WriteUInt24(tdefPage, 0x38, usageMapPageNumber);
+        => DataPageInserter.PatchUsageMapPointers(tdefPage, usageMapPageNumber);
 
-        // free_pages: row 1 (1 byte) + page (3 bytes LE)
-        tdefPage[0x3B] = 0x01;
-        WriteUInt24(tdefPage, 0x3C, usageMapPageNumber);
-    }
-
-    /// <summary>
-    /// Sets the TDEF's <c>autonum_flag</c> byte (offset 0x18) to <c>0x01</c>
-    /// when any column in <paramref name="tableDef"/> carries the autonumber
-    /// flag bit (<c>0x04</c>). Access checks this byte before consulting the
-    /// autonum-next counter at offset 0x14, and DAO Compact &amp; Repair
-    /// rejects a TDEF whose autonumber column count disagrees with this
-    /// flag. Jet4/ACE only.
-    /// </summary>
     private static void PatchAutoNumFlag(byte[] tdefPage, TableDef tableDef)
-    {
-        bool hasAutoNumber = false;
-        for (int i = 0; i < tableDef.Columns.Count; i++)
-        {
-            if ((tableDef.Columns[i].Flags & 0x04) != 0)
-            {
-                hasAutoNumber = true;
-                break;
-            }
-        }
-
-        tdefPage[0x18] = hasAutoNumber ? (byte)0x01 : (byte)0x00;
-    }
+        => DataPageInserter.PatchAutoNumFlag(tdefPage, tableDef);
 
     private void WriteRowToPage(long pageNumber, byte[] page, byte[] rowBytes)
-    {
-        int numRows = Ru16(page, _dataPage.NumRows);
-        int firstRowStart = GetFirstRowStart(page, numRows);
-        int rowStart = firstRowStart - rowBytes.Length;
-        int rowOffsetPos = _dataPage.RowsStart + (numRows * 2);
+        => _dataPageInserter.WriteRowToPage(pageNumber, page, rowBytes);
 
-        Buffer.BlockCopy(rowBytes, 0, page, rowStart, rowBytes.Length);
-        Wu16(page, rowOffsetPos, rowStart);
-        Wu16(page, _dataPage.NumRows, numRows + 1);
-
-        int freeSpace = rowStart - (_dataPage.RowsStart + ((numRows + 1) * 2));
-        if (freeSpace < 0)
-        {
-            throw new InvalidDataException("Insufficient free space remained on the target page.");
-        }
-
-        Wu16(page, 2, freeSpace);
-        WritePage(pageNumber, page);
-    }
-
-    private async ValueTask WriteRowToPageAsync(long pageNumber, byte[] page, byte[] rowBytes, CancellationToken cancellationToken)
-    {
-        int numRows = Ru16(page, _dataPage.NumRows);
-        int firstRowStart = GetFirstRowStart(page, numRows);
-        int rowStart = firstRowStart - rowBytes.Length;
-        int rowOffsetPos = _dataPage.RowsStart + (numRows * 2);
-
-        Buffer.BlockCopy(rowBytes, 0, page, rowStart, rowBytes.Length);
-        Wu16(page, rowOffsetPos, rowStart);
-        Wu16(page, _dataPage.NumRows, numRows + 1);
-
-        int freeSpace = rowStart - (_dataPage.RowsStart + ((numRows + 1) * 2));
-        if (freeSpace < 0)
-        {
-            throw new InvalidDataException("Insufficient free space remained on the target page.");
-        }
-
-        Wu16(page, 2, freeSpace);
-        await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
-    }
+    private ValueTask WriteRowToPageAsync(long pageNumber, byte[] page, byte[] rowBytes, CancellationToken cancellationToken)
+        => _dataPageInserter.WriteRowToPageAsync(pageNumber, page, rowBytes, cancellationToken);
 
     private byte[] SerializeRow(TableDef tableDef, object[] values)
-    {
-        int numCols = 0;
-        int maxFixedEnd = 0;
-        int maxDefinedVarIdx = -1;
-        for (int i = 0; i < tableDef.Columns.Count; i++)
-        {
-            ColumnInfo col = tableDef.Columns[i];
-            numCols = Math.Max(numCols, col.ColNum + 1);
-            if (col.IsFixed && col.Type != T_BOOL)
-            {
-                maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + JetTypeInfo.GetFixedSize(col.Type));
-            }
-            else if (!col.IsFixed)
-            {
-                maxDefinedVarIdx = Math.Max(maxDefinedVarIdx, col.VarIdx);
-            }
-        }
+        => _rowEncoder.SerializeRow(tableDef, values);
 
-        var nullMask = new byte[(numCols + 7) / 8];
-        var fixedArea = new byte[maxFixedEnd];
-        int fixedAreaSize = 0;
-        var varEntries = maxDefinedVarIdx >= 0 ? new byte[maxDefinedVarIdx + 1][] : [];
-        int varPayloadSize = 0;
-
-        for (int i = 0; i < tableDef.Columns.Count; i++)
-        {
-            ColumnInfo column = tableDef.Columns[i];
-            object value = values[i] ?? DBNull.Value;
-
-            if (column.Type == T_BOOL)
-            {
-                if (value is not DBNull && Convert.ToBoolean(value, CultureInfo.InvariantCulture))
-                {
-                    SetNullMaskBit(nullMask, column.ColNum, true);
-                }
-
-                continue;
-            }
-
-            if (value is DBNull)
-            {
-                // Complex columns (T_ATTACHMENT / T_COMPLEX) store a 4-byte
-                // ConceptualTableID in the fixed area. The ID is initially
-                // null and patched in-place later by PatchParentComplexSlotAsync
-                // when the first attachment or multi-value item is added.
-                // The fixed area must always reserve space for these slots so
-                // the in-place patch doesn't land outside the row bounds.
-                if (column.IsFixed && (column.Type == T_ATTACHMENT || column.Type == T_COMPLEX))
-                {
-                    fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + JetTypeInfo.GetFixedSize(column.Type));
-                }
-
-                continue;
-            }
-
-            if (column.IsFixed)
-            {
-                if (!CanStoreFixedColumn(column))
-                {
-                    continue;
-                }
-
-                int fixedSize = JetTypeInfo.GetFixedSize(column.Type);
-                if (fixedSize <= 0)
-                {
-                    continue;
-                }
-
-                int written = TryEncodeFixedValue(column, value, fixedArea.AsSpan(column.FixedOff, fixedSize));
-                if (written == 0)
-                {
-                    continue;
-                }
-
-                fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + written);
-                SetNullMaskBit(nullMask, column.ColNum, true);
-            }
-            else
-            {
-                byte[]? variableValue = EncodeVariableValue(column, value);
-                if (variableValue == null)
-                {
-                    continue;
-                }
-
-                varEntries[column.VarIdx] = variableValue;
-                varPayloadSize += variableValue.Length;
-                SetNullMaskBit(nullMask, column.ColNum, true);
-            }
-        }
-
-        // Emit the full variable-column slot count declared by the TableDef
-        // schema, not just up through the highest non-null var column. Microsoft
-        // Access stamps every catalog/system-table row with the schema's full
-        // varLen and writes zero-length entries (offset == EOD) for trailing
-        // null vars; DAO Compact & Repair's catalog walk rejects rows whose
-        // var-offset table is shorter than the schema's variable-column count.
-        // See docs/design/round-trip-test-failures.md (hypothesis #6).
-        int varLen = maxDefinedVarIdx + 1;
-        int baseRowLength = _rowSz.NumCols + fixedAreaSize + varPayloadSize + _rowSz.Eod + (varLen * _rowSz.VarEntry) + _rowSz.VarLen + nullMask.Length;
-
-        // Jet3 rows include a jump table whose size depends on total row length.
-        int jumpSize = _format != DatabaseFormat.Jet3Mdb ? 0 : baseRowLength / 256;
-        int rowLength = baseRowLength + jumpSize;
-        int finalJump = _format != DatabaseFormat.Jet3Mdb ? 0 : rowLength / 256;
-        if (finalJump != jumpSize)
-        {
-            jumpSize = finalJump;
-            rowLength = baseRowLength + jumpSize;
-        }
-
-        var row = new byte[rowLength];
-        int pos = 0;
-
-        WriteField(row, pos, _rowSz.NumCols, numCols);
-        pos += _rowSz.NumCols;
-
-        if (fixedAreaSize > 0)
-        {
-            Buffer.BlockCopy(fixedArea, 0, row, pos, fixedAreaSize);
-            pos += fixedAreaSize;
-        }
-
-        int currentOffset = _rowSz.NumCols + fixedAreaSize;
-        var variableOffsets = varLen > 0 ? new int[varLen] : [];
-        for (int varIndex = 0; varIndex < varLen; varIndex++)
-        {
-            variableOffsets[varIndex] = currentOffset;
-            byte[]? payload = varEntries[varIndex];
-            if (payload != null)
-            {
-                Buffer.BlockCopy(payload, 0, row, pos, payload.Length);
-                pos += payload.Length;
-                currentOffset += payload.Length;
-            }
-        }
-
-        WriteField(row, pos, _rowSz.Eod, currentOffset);
-        pos += _rowSz.Eod;
-
-        for (int varIndex = varLen - 1; varIndex >= 0; varIndex--)
-        {
-            WriteField(row, pos, _rowSz.VarEntry, variableOffsets[varIndex]);
-            pos += _rowSz.VarEntry;
-        }
-
-        // Jet3 jump table (entries are zero for newly written rows).
-        pos += jumpSize;
-
-        WriteField(row, pos, _rowSz.VarLen, varLen);
-        pos += _rowSz.VarLen;
-        Buffer.BlockCopy(nullMask, 0, row, pos, nullMask.Length);
-
-        return row;
-    }
-
-    private bool CanStoreFixedColumn(ColumnInfo column)
-    {
-        int size = JetTypeInfo.GetFixedSize(column.Type);
-        return size >= 0 && column.FixedOff >= 0 && column.FixedOff + size < _pgSz;
-    }
-
-    private int TryEncodeFixedValue(ColumnInfo column, object value, Span<byte> dest)
-    {
-        switch (column.Type)
-        {
-            case T_BYTE:
-                dest[0] = Convert.ToByte(value, CultureInfo.InvariantCulture);
-                return 1;
-
-            case T_INT:
-                BinaryPrimitives.WriteInt16LittleEndian(dest, Convert.ToInt16(value, CultureInfo.InvariantCulture));
-                return 2;
-
-            case T_LONG:
-                BinaryPrimitives.WriteInt32LittleEndian(dest, Convert.ToInt32(value, CultureInfo.InvariantCulture));
-                return 4;
-
-            case T_FLOAT:
-                BinaryPrimitives.WriteInt32LittleEndian(
-                    dest,
-                    BitConverter.SingleToInt32Bits(Convert.ToSingle(value, CultureInfo.InvariantCulture)));
-                return 4;
-
-            case T_DOUBLE:
-                BinaryPrimitives.WriteInt64LittleEndian(
-                    dest,
-                    BitConverter.DoubleToInt64Bits(Convert.ToDouble(value, CultureInfo.InvariantCulture)));
-                return 8;
-
-            case T_DATETIME:
-                BinaryPrimitives.WriteInt64LittleEndian(
-                    dest,
-                    BitConverter.DoubleToInt64Bits(Convert.ToDateTime(value, CultureInfo.InvariantCulture).ToOADate()));
-                return 8;
-
-            case T_MONEY:
-                BinaryPrimitives.WriteInt64LittleEndian(
-                    dest,
-                    decimal.ToOACurrency(Convert.ToDecimal(value, CultureInfo.InvariantCulture)));
-                return 8;
-
-            case T_NUMERIC:
-                EncodeNumericValue(Convert.ToDecimal(value, CultureInfo.InvariantCulture), dest);
-                return 17;
-
-            case T_GUID:
-                {
-                    Guid g = value is Guid guid
-                        ? guid
-                        : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!);
-                    if (!g.TryWriteBytes(dest))
-                    {
-                        return 0;
-                    }
-
-                    return 16;
-                }
-
-            default:
-                return 0;
-        }
-    }
-
-    private byte[]? EncodeVariableValue(ColumnInfo column, object value)
-    {
-        switch (column.Type)
-        {
-            case T_TEXT:
-                return EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.Size);
-            case T_BINARY:
-                return EncodeBinaryValue(value, column.Size);
-            case T_MEMO:
-                if (value is PreEncodedLongValue preMemo)
-                {
-                    return preMemo.HeaderBytes;
-                }
-
-                return EncodeMemoValue(Convert.ToString(value, CultureInfo.InvariantCulture));
-            case T_OLE:
-                return EncodeOleValue(value);
-            default:
-                return null;
-        }
-    }
-
-    private byte[]? EncodeTextValue(string? value, int maxSize)
-    {
-        if (value == null)
-        {
-            return null;
-        }
-
-        byte[] bytes = _format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(value) : _ansiEncoding.GetBytes(value);
-        if (maxSize > 0 && bytes.Length > maxSize)
-        {
-            // For Jet4 compressed text (FF FE prefix + 1 byte/char) any byte
-            // boundary within the payload is a valid character boundary, so we
-            // can truncate freely. For plain UCS-2 we must stay aligned to a
-            // 2-byte char. Jet3 ANSI is 1 byte/char.
-            bool isCompressedJet4 = _format != DatabaseFormat.Jet3Mdb && bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE;
-            int allowed = _format != DatabaseFormat.Jet3Mdb && !isCompressedJet4 ? maxSize & ~1 : maxSize;
-            if (allowed <= 0)
-            {
-                return [];
-            }
-
-            Array.Resize(ref bytes, allowed);
-        }
-
-        return bytes;
-    }
-
-    private byte[]? EncodeBinaryValue(object value, int maxSize)
-    {
-        byte[]? bytes = value as byte[];
-        if (bytes == null)
-        {
-            string? stringValue = Convert.ToString(value, CultureInfo.InvariantCulture);
-            if (string.IsNullOrEmpty(stringValue))
-            {
-                return null;
-            }
-
-            bytes = _ansiEncoding.GetBytes(stringValue);
-        }
-
-        if (maxSize > 0 && bytes.Length > maxSize)
-        {
-            Array.Resize(ref bytes, maxSize);
-        }
-
-        return bytes;
-    }
-
-    private byte[]? EncodeMemoValue(string? value)
-    {
-        if (value == null)
-        {
-            return null;
-        }
-
-        byte[] data = _format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(value) : _ansiEncoding.GetBytes(value);
-        if (data.Length > MaxInlineMemoBytes)
-        {
-            throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {MaxInlineMemoBytes} bytes.");
-        }
-
-        return WrapInlineLongValue(data);
-    }
-
-    private void EncodeNumericValue(decimal value, Span<byte> dest)
-    {
-        Span<byte> mantissa = dest.Slice(4, 12);
-        NumericEncoder.Decompose(value, mantissa, out bool negative, out int scale);
-
-        dest[0] = NumericEncoder.ComputePrecision(mantissa);
-        dest[1] = (byte)scale;
-        dest[2] = negative ? (byte)1 : (byte)0;
-        dest[3] = 0;
-    }
-
-    private bool TryGetCachedInsertPageNumber(long tdefPage, out long pageNumber)
+    internal bool TryGetCachedInsertPageNumber(long tdefPage, out long pageNumber)
     {
         _stateLock.EnterReadLock();
         try
@@ -4031,7 +2874,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    private void SetCachedInsertPageNumber(long tdefPage, long pageNumber)
+    internal void SetCachedInsertPageNumber(long tdefPage, long pageNumber)
     {
         _stateLock.EnterWriteLock();
         try
@@ -4045,78 +2888,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
-    {
-        ColumnInfo? idColumn = msys.FindColumn("Id");
-        ColumnInfo? nameColumn = msys.FindColumn("Name");
-        ColumnInfo? typeColumn = msys.FindColumn("Type");
-        ColumnInfo? flagsColumn = msys.FindColumn("Flags");
-        if (nameColumn == null || typeColumn == null)
-        {
-            return [];
-        }
-
-        var result = new List<CatalogRow>();
-        long total = _stream.Length / _pgSz;
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            if (Ri32(page, _dataPage.TDefOff) != 2)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
-            {
-                result.Add(new CatalogRow(
-                    PageNumber: row.PageNumber,
-                    RowIndex: row.RowIndex,
-                    Name: DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameColumn),
-                    ObjectType: ParseInt32(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, typeColumn)),
-                    Flags: ParseInt64(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flagsColumn!)),
-                    TDefPage: ParseInt64(DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn!)) & 0x00FFFFFFL));
-            }
-
-            ReturnPage(page);
-        }
-
-        return result;
-    }
+    internal ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
+        => _catalogWriter.GetCatalogRowsAsync(msys, cancellationToken);
 
     internal int ParseInt32(string value)
     {
         int parsed;
         return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed) ? parsed : 0;
-    }
-
-    private long ParseInt64(string value)
-    {
-        long parsed;
-        return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed) ? parsed : 0L;
-    }
-
-    private static byte[] ParseHexBytes(string hex)
-    {
-#if NET5_0_OR_GREATER
-        return Convert.FromHexString(hex);
-#else
-        byte[] bytes = new byte[hex.Length / 2];
-        for (int i = 0; i < bytes.Length; i++)
-        {
-            bytes[i] = byte.Parse(hex.AsSpan(i * 2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
-        }
-
-        return bytes;
-#endif
     }
 
     internal async ValueTask<List<RowLocation>> GetLiveRowLocationsAsync(long tdefPage, CancellationToken cancellationToken)
@@ -4326,7 +3104,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         CancellationToken cancellationToken)
         => _indexMaintainer.TryMaintainIndexesIncrementalAsync(tdefPage, tableDef, insertedRows, deletedRows, cancellationToken);
 
-    private ValueTask<bool> TrySpliceCatalogIndexEntryAsync(
+    internal ValueTask<bool> TrySpliceCatalogIndexEntryAsync(
         long tdefPage,
         TableDef tableDef,
         RowLocation newRowLoc,
@@ -4334,256 +3112,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         CancellationToken cancellationToken)
         => _indexMaintainer.TrySpliceCatalogIndexEntryAsync(tdefPage, tableDef, newRowLoc, newRowValues, cancellationToken);
 
-    /// <summary>
-    /// parse the TDEF page and return one descriptor per <em>unique</em>
-    /// real-idx slot (uniqueness is signalled either by the §3.1 real-idx
-    /// <c>flags &amp; 0x01</c> bit or by an associated logical-idx entry whose
-    /// <c>index_type = 0x01</c> primary-key discriminator). Returns an empty
-    /// list on Jet3 (no index emission) or when the TDEF declares no indexes.
-    /// </summary>
-    private async ValueTask<List<UniqueIndexDescriptor>> LoadUniqueIndexDescriptorsAsync(
-        long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
-    {
-        var result = new List<UniqueIndexDescriptor>();
-
-        byte[] tdefPageBytes = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        byte[] tdefBuffer;
-        try
-        {
-            tdefBuffer = (byte[])tdefPageBytes.Clone();
-        }
-        finally
-        {
-            ReturnPage(tdefPageBytes);
-        }
-
-        int numCols = Ru16(tdefBuffer, _tdef.NumCols);
-        int numIdx = Ri32(tdefBuffer, _tdef.NumCols + 2);
-        int numRealIdx = Ri32(tdefBuffer, _tdef.NumRealIdx);
-        if (numIdx <= 0 || numRealIdx <= 0 || numIdx > 1000 || numRealIdx > 1000)
-        {
-            return result;
-        }
-
-        int colStart = _tdef.BlockEnd + (numRealIdx * _tdef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * _colDesc.Size);
-        for (int i = 0; i < numCols; i++)
-        {
-            if (ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
-            {
-                return result;
-            }
-        }
-
-        int realIdxDescStart = namePos;
-        var anchors = _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
-        List<string> logIdxNames = Relationships.ReadLogicalIdxNames(tdefBuffer, anchors.LogIdxNamesStart, numIdx);
-
-        // Decode the index catalog (with per-real-idx names so the
-        // unique-violation error message can quote the originating
-        // logical-idx) and pre-resolve each slot's key columns against the
-        // table snapshot in one shot.
-        IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
-            tdefBuffer, _indexLayout, anchors, tableDef.Columns, logIdxNames);
-
-        foreach ((int realIdxNum, RealIdxEntry slot) in catalog.RealIdxByNum)
-        {
-            if (!catalog.Catalog.IsUniqueOrPk(realIdxNum))
-            {
-                continue;
-            }
-
-            // Skip indexes whose key columns failed to resolve against the
-            // snapshot (deleted-column gap) — same fall-through model as
-            // MaintainIndexesAsync.
-            if (!catalog.TryGetKeyColumnInfos(realIdxNum, out List<KeyColumnInfo> keyColInfos))
-            {
-                continue;
-            }
-
-            result.Add(new UniqueIndexDescriptor(realIdxNum, catalog.Catalog.GetNameOrFallback(realIdxNum), keyColInfos));
-        }
-
-        return result;
-    }
-
-    /// <summary>
-    /// encode the composite index key for one row using a previously
-    /// computed canonical numeric scale per key column.
-    /// All key column types accepted by <see cref="IndexHelpers.ResolveIndexes"/> have
-    /// matching <see cref="IndexKeyEncoder"/> support; any encoder failure
-    /// propagates to the caller as an unrecoverable error.
-    /// </summary>
-    private byte[] EncodeCompositeKeyForUniqueCheck(
-        UniqueIndexDescriptor descriptor,
-        object[] row,
-        int[] numericTargetScales)
-    {
-        bool legacyNumeric = _format == DatabaseFormat.Jet4Mdb;
-        byte[][] perColumn = new byte[descriptor.KeyColumns.Count][];
-        int totalLen = 0;
-        for (int k = 0; k < descriptor.KeyColumns.Count; k++)
-        {
-            (ColumnInfo col, int snapIdx, bool ascending) = descriptor.KeyColumns[k];
-            object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
-            object? value = cell is null or DBNull ? null : cell;
-            perColumn[k] = col.Type == T_NUMERIC
-                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, (byte)numericTargetScales[k], legacyNumeric)
-                : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
-            totalLen += perColumn[k].Length;
-        }
-
-        byte[] composite = new byte[totalLen];
-        int offset = 0;
-        for (int k = 0; k < perColumn.Length; k++)
-        {
-            Buffer.BlockCopy(perColumn[k], 0, composite, offset, perColumn[k].Length);
-            offset += perColumn[k].Length;
-        }
-
-        return composite;
-    }
-
-    /// <summary>
-    /// pre-write unique-index validation for an insert batch. Loads the
-    /// table snapshot once, encodes the existing-row keys + the pending-row
-    /// keys for every unique index, and throws
-    /// <see cref="InvalidOperationException"/> on the first collision (existing
-    /// vs. pending or pending vs. pending). All key column types accepted by
-    /// <see cref="IndexHelpers.ResolveIndexes"/> have matching <see cref="IndexKeyEncoder"/>
-    /// support, so encoder rejection propagates as an unrecoverable error
-    /// rather than being silently skipped.
-    /// <para>
-    /// Pending rows MUST already have had <c>ApplyConstraintsAsync</c> applied
-    /// (auto-increment values resolved, defaults substituted) — the encoder
-    /// works against the on-disk row payload.
-    /// </para>
-    /// </summary>
-    private async ValueTask CheckUniqueIndexesPreInsertAsync(
+    private ValueTask CheckUniqueIndexesPreInsertAsync(
         long tdefPage,
         TableDef tableDef,
         string tableName,
         List<object[]> pendingRows,
         CancellationToken cancellationToken)
-    {
-        if (pendingRows.Count == 0)
-        {
-            return;
-        }
+        => _uniqueIndexChecker.CheckUniqueIndexesPreInsertAsync(tdefPage, tableDef, tableName, pendingRows, cancellationToken);
 
-        List<UniqueIndexDescriptor> descriptors = await LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
-        if (descriptors.Count == 0)
-        {
-            return;
-        }
-
-        using DataTable snapshot = await ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
-        CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingRows, replaceAtSnapshotIndex: null);
-    }
-
-    /// <summary>
-    /// pre-write unique-index validation for an update batch. The caller
-    /// supplies the table snapshot it already loaded (saving a redundant
-    /// scan) plus the per-row replacement payloads keyed by snapshot row
-    /// index.
-    /// </summary>
-    private async ValueTask CheckUniqueIndexesPreUpdateAsync(
+    private ValueTask CheckUniqueIndexesPreUpdateAsync(
         long tdefPage,
         TableDef tableDef,
         string tableName,
         DataTable snapshot,
         List<(int Index, object[] NewRow)> updates,
         CancellationToken cancellationToken)
-    {
-        if (updates.Count == 0)
-        {
-            return;
-        }
-
-        List<UniqueIndexDescriptor> descriptors = await LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
-        if (descriptors.Count == 0)
-        {
-            return;
-        }
-
-        var replaceAt = new Dictionary<int, object[]>(updates.Count);
-        foreach ((int idx, object[] newRow) in updates)
-        {
-            replaceAt[idx] = newRow;
-        }
-
-        CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingInsertRows: [], replaceAtSnapshotIndex: replaceAt);
-    }
-
-    /// <summary>
-    /// core: builds the post-mutation effective row set (snapshot rows
-    /// optionally replaced at <paramref name="replaceAtSnapshotIndex"/> plus
-    /// <paramref name="pendingInsertRows"/> appended), encodes the composite
-    /// key per unique index, and detects any collision. Throws
-    /// <see cref="InvalidOperationException"/> on first violation.
-    /// </summary>
-    private void CheckUniqueIndexesCore(
-        string tableName,
-        List<UniqueIndexDescriptor> descriptors,
-        DataTable snapshot,
-        List<object[]> pendingInsertRows,
-        Dictionary<int, object[]>? replaceAtSnapshotIndex)
-    {
-        int snapshotRowCount = snapshot.Rows.Count;
-        int pendingCount = pendingInsertRows.Count;
-        int totalRows = snapshotRowCount + pendingCount;
-
-        foreach (UniqueIndexDescriptor descriptor in descriptors)
-        {
-            // Canonical scale = column's DECLARED scale.
-            int[] numericTargetScales = new int[descriptor.KeyColumns.Count];
-            for (int k = 0; k < descriptor.KeyColumns.Count; k++)
-            {
-                ColumnInfo kCol = descriptor.KeyColumns[k].Col;
-                numericTargetScales[k] = kCol.Type == T_NUMERIC ? kCol.NumericScale : -1;
-            }
-
-            // Encode every effective row's key. Collect into a HashSet keyed
-            // by composite key bytes; first collision triggers the throw.
-            var seen = new HashSet<byte[]>(ByteArrayEqualityComparer.Instance);
-
-            for (int r = 0; r < snapshotRowCount; r++)
-            {
-                object[] effectiveRow;
-                if (replaceAtSnapshotIndex != null && replaceAtSnapshotIndex.TryGetValue(r, out object[]? rep))
-                {
-                    effectiveRow = rep;
-                }
-                else
-                {
-                    effectiveRow = snapshot.Rows[r].ItemArray;
-                }
-
-                byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, effectiveRow, numericTargetScales);
-
-                if (!seen.Add(key))
-                {
-                    throw new InvalidOperationException(
-                        $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. " +
-                        "The conflict was detected before any row was written; the table is unchanged.");
-                }
-            }
-
-            for (int p = 0; p < pendingCount; p++)
-            {
-                byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, pendingInsertRows[p], numericTargetScales);
-
-                if (!seen.Add(key))
-                {
-                    throw new InvalidOperationException(
-                        $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. " +
-                        "The conflict was detected before any row was written; the table is unchanged.");
-                }
-            }
-
-            _ = totalRows;
-        }
-    }
+        => _uniqueIndexChecker.CheckUniqueIndexesPreUpdateAsync(tdefPage, tableDef, tableName, snapshot, updates, cancellationToken);
 
     internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
     {

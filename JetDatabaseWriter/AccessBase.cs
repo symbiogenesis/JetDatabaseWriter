@@ -242,14 +242,14 @@ public abstract class AccessBase : IAccessBase
     // live in JetTypeInfo so the per-type byte→value switches don't take an
     // upward dependency on Core.
 
-    private protected static void WriteUInt24(byte[] b, int o, int value)
+    internal static void WriteUInt24(byte[] b, int o, int value)
     {
         Span<byte> span = b.AsSpan(o, 3);
         BinaryPrimitives.WriteUInt16LittleEndian(span, (ushort)(value & 0xFFFF));
         span[2] = (byte)((value >> 16) & 0xFF);
     }
 
-    private protected static void WriteField(byte[] b, int o, int fieldSize, int value)
+    internal static void WriteField(byte[] b, int o, int fieldSize, int value)
     {
         if (fieldSize == 1)
         {
@@ -275,7 +275,7 @@ public abstract class AccessBase : IAccessBase
     /// characters), so 1- and 2-character strings are still written as
     /// plain UCS-2 to avoid the 2-byte marker overhead.
     /// </remarks>
-    private protected static byte[] EncodeJet4Text(string value)
+    internal static byte[] EncodeJet4Text(string value)
     {
         if (string.IsNullOrEmpty(value))
         {
@@ -318,7 +318,7 @@ public abstract class AccessBase : IAccessBase
     /// JET4 compressed-string algorithm is applied first.
     /// </summary>
     /// <returns>The decoded string.</returns>
-    private protected static string DecodeJet4Text(ReadOnlySpan<byte> b, int start, int len)
+    internal static string DecodeJet4Text(ReadOnlySpan<byte> b, int start, int len)
     {
         if (len < 2)
         {
@@ -682,7 +682,7 @@ public abstract class AccessBase : IAccessBase
         return copy;
     }
 
-    private protected void WritePage(long pageNumber, byte[] page)
+    internal void WritePage(long pageNumber, byte[] page)
     {
         _ioGate.Wait();
         try
