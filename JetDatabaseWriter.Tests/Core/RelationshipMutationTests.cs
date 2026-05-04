@@ -24,7 +24,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task DropRelationshipAsync_RemovesAllCatalogRows()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("DPar");
         string child = MakeTableName("DChi");
@@ -53,7 +53,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task DropRelationshipAsync_RemovesFkLogicalIdxEntriesFromBothSides()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("DXP");
         string child = MakeTableName("DXC");
@@ -89,7 +89,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task DropRelationshipAsync_NotFound_Throws()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -99,7 +99,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task DropRelationshipAsync_EmptyName_Throws()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -109,7 +109,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task RenameRelationshipAsync_UpdatesEveryCatalogRow()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("RPar");
         string child = MakeTableName("RChi");
@@ -144,7 +144,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task RenameRelationshipAsync_DuplicateNewName_Throws()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("RDP");
         string child = MakeTableName("RDC");
@@ -171,7 +171,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task RenameRelationshipAsync_NotFound_Throws()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -181,7 +181,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task RenameRelationshipAsync_SameName_IsNoOp()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
@@ -193,7 +193,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task RenameRelationshipAsync_UpdatesTDefLogicalIdxNameCookies()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("RNP");
         string child = MakeTableName("RNC");
@@ -228,7 +228,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     [Fact]
     public async Task DropRelationshipAsync_ReclaimsTrailingRealIdxSlot()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("DRP");
         string child = MakeTableName("DRC");
@@ -293,14 +293,5 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
     {
         stream.Position = 0;
         return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken);
-    }
-
-    private async ValueTask<MemoryStream> CopyToStreamAsync(string sourcePath)
-    {
-        byte[] bytes = await db.GetFileAsync(sourcePath, TestContext.Current.CancellationToken);
-        var ms = new MemoryStream();
-        await ms.WriteAsync(bytes, TestContext.Current.CancellationToken);
-        ms.Position = 0;
-        return ms;
     }
 }
