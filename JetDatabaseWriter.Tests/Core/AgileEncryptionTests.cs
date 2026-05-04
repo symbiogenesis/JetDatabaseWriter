@@ -1,10 +1,12 @@
 namespace JetDatabaseWriter.Tests.Core;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Models;
@@ -289,6 +291,99 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // 6. HMAC / DATA INTEGRITY — tampered ciphertext is not detected
+    // ═══════════════════════════════════════════════════════════════════
+    //
+    // The Agile spec (MS-OFFCRYPTO §2.3.4.14) mandates computing an
+    // HMAC-SHA512 over the EncryptedPackage and storing the result in
+    // the <dataIntegrity> element. A compliant reader should reject a
+    // tampered EncryptedPackage when the HMAC does not match.
+    //
+    // Currently, this library does NOT verify the dataIntegrity HMAC
+    // (the ParseDescriptor does not even extract the element's attributes).
+    // These tests document the current behaviour: a single-bit flip in
+    // the encrypted ciphertext either silently corrupts the decrypted
+    // output or produces a decryption error — but does NOT raise an
+    // HMAC integrity failure. If HMAC verification is added in the
+    // future, these tests should be updated to expect the new error.
+
+    /// <summary>
+    /// Tampers with a single byte in the <c>EncryptedPackage</c> stream
+    /// (past the 8-byte size prefix, inside the first AES-CBC segment).
+    /// Because the dataIntegrity HMAC is not verified, this does NOT
+    /// throw an integrity-check error — it either corrupts the plaintext
+    /// or causes a downstream parse failure. Demonstrates that HMAC
+    /// verification is not yet enforced.
+    /// </summary>
+    [Fact]
+    public async Task Agile_TamperedEncryptedPackage_DoesNotThrowHmacError()
+    {
+        byte[] data = await BuildAgileEncryptedFixtureAsync();
+
+        // Locate the EncryptedPackage stream by finding the CFB directory
+        // entry. For our fixture builder, the EncryptedPackage starts after
+        // the EncryptionInfo sectors. We flip a byte deep inside the
+        // ciphertext (offset 16 past the 8-byte size prefix) to avoid
+        // corrupting the size header.
+        int tamperOffset = FindEncryptedPackageDataOffset(data) + 16;
+        data[tamperOffset] ^= 0xFF;
+
+        await using var ms = new MemoryStream(data, writable: false);
+
+        // The open should still succeed (password verifier is intact).
+        // The tampered ciphertext will decrypt to garbage, causing a
+        // downstream JET format error — but NOT an HMAC integrity error.
+        Exception? ex = await Record.ExceptionAsync(async () =>
+        {
+            await using var reader = await AccessReader.OpenAsync(
+                ms,
+                CorrectPasswordOptions(),
+                leaveOpen: true,
+                TestContext.Current.CancellationToken);
+
+            // Attempt to read the catalog — this will likely fail because
+            // the decrypted page data is corrupted.
+            await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        });
+
+        // The key assertion: whatever error occurs, it is NOT an HMAC
+        // integrity failure (because HMAC verification is not implemented).
+        // If HMAC verification is added later, this test should be updated
+        // to expect an InvalidDataException with "integrity" in the message.
+        if (ex != null)
+        {
+            Assert.DoesNotContain("integrity", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("HMAC", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    /// <summary>
+    /// Tampers with the password verifier section (different from HMAC):
+    /// confirms that password verification still rejects the wrong password
+    /// even without HMAC, proving that authentication relies on the
+    /// verifier hash triple, not the dataIntegrity HMAC.
+    /// </summary>
+    [Fact]
+    public async Task Agile_WrongPassword_StillRejected_IndependentOfHmac()
+    {
+        byte[] data = await BuildAgileEncryptedFixtureAsync();
+
+        await using var ms = new MemoryStream(data, writable: false);
+        var options = new AccessReaderOptions
+        {
+            Password = "not_the_password".AsMemory(),
+            UseLockFile = false,
+        };
+
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            async () => await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken));
+
+        // This proves the password verifier (SHA-512 hash chain) provides
+        // authentication independent of the HMAC mechanism.
+        Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════════
 
@@ -297,6 +392,37 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
         Password = TestDatabases.AesEncryptedPassword.AsMemory(),
         UseLockFile = false,
     };
+
+    /// <summary>
+    /// Finds the file offset of the EncryptedPackage stream's data
+    /// (the first byte of its first sector) in the CFB fixture.
+    /// </summary>
+    private static int FindEncryptedPackageDataOffset(byte[] cfbFile)
+    {
+        // The fixture builder uses v4 (4096-byte sectors). The directory
+        // is at sector 1. Scan directory entries to find "EncryptedPackage".
+        const int SectorSize = 4096;
+        int dirOffset = SectorSize + (1 * SectorSize); // sector 1
+
+        for (int entry = 0; entry < 4; entry++)
+        {
+            int off = dirOffset + (entry * 128);
+            ushort nameLen = BinaryPrimitives.ReadUInt16LittleEndian(cfbFile.AsSpan(off + 0x40, 2));
+            if (nameLen == 0 || nameLen > 64)
+            {
+                continue;
+            }
+
+            string name = Encoding.Unicode.GetString(cfbFile, off, nameLen - 2);
+            if (name == "EncryptedPackage")
+            {
+                uint startSector = BinaryPrimitives.ReadUInt32LittleEndian(cfbFile.AsSpan(off + 0x74, 4));
+                return SectorSize + ((int)startSector * SectorSize);
+            }
+        }
+
+        throw new InvalidOperationException("EncryptedPackage directory entry not found in CFB fixture.");
+    }
 
     private async Task<byte[]> BuildAgileEncryptedFixtureAsync()
     {
