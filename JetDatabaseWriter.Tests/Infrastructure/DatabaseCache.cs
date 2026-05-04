@@ -25,6 +25,21 @@ public sealed class DatabaseCache : IAsyncDisposable
         _fileCache.GetOrAdd(path, (p) => new Lazy<Task<byte[]>>(
             () => File.ReadAllBytesAsync(p, cancellationToken))).Value;
 
+    /// <summary>
+    /// Returns a writable <see cref="MemoryStream"/> containing a copy of
+    /// the file at <paramref name="path"/>. The cached bytes are never
+    /// mutated — each call produces an independent stream positioned at 0.
+    /// </summary>
+    /// <returns>A <see cref="MemoryStream"/> containing the file's bytes, positioned at 0.</returns>
+    public async ValueTask<MemoryStream> CopyToStreamAsync(string path, CancellationToken cancellationToken = default)
+    {
+        byte[] bytes = await GetFileAsync(path, cancellationToken);
+        var ms = new MemoryStream();
+        await ms.WriteAsync(bytes, cancellationToken);
+        ms.Position = 0;
+        return ms;
+    }
+
     public ValueTask<AccessReader> GetReaderAsync(string path, AccessReaderOptions options, CancellationToken cancellationToken = default) =>
         _readers.GetOrAdd(path, (p) => new Lazy<ValueTask<AccessReader>>(
             () => AccessReader.OpenAsync(p, options, cancellationToken))).Value;
