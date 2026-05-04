@@ -132,7 +132,7 @@ internal static class IndexKeyEncoder
         // Always emit the ascending flag here; if descending, the loop below
         // ones-complements the entire block (turning 0x7F → 0x80, etc.) per §5.
         result[0] = FlagAscendingNonNull;
-        Buffer.BlockCopy(key, 0, result, 1, key.Length);
+        key.AsSpan().CopyTo(result.AsSpan(1));
 
         if (!ascending)
         {
@@ -155,41 +155,53 @@ internal static class IndexKeyEncoder
                 return [ToByte(value)];
 
             case T_INT:
-                return EncodeSignedBigEndian(ToInt16(value), 2);
+                {
+                    byte[] r = new byte[2];
+                    BinaryPrimitives.WriteInt16BigEndian(r, ToInt16(value));
+                    r[0] ^= 0x80;
+                    return r;
+                }
 
             case T_LONG:
-                return EncodeSignedBigEndian(ToInt32(value), 4);
+                {
+                    byte[] r = new byte[4];
+                    BinaryPrimitives.WriteInt32BigEndian(r, ToInt32(value));
+                    r[0] ^= 0x80;
+                    return r;
+                }
 
             case T_MONEY:
                 {
-                    // Currency is stored as int64 = decimal × 10000 (OLE Automation
-                    // currency encoding); decimal.ToOACurrency applies the
-                    // banker's-rounding policy specified by the OLE Automation
-                    // type-conversion rules that VBA's CCur() also uses.
                     long scaled = decimal.ToOACurrency(ToDecimal(value));
-                    return EncodeSignedBigEndian(scaled, 8);
+                    byte[] r = new byte[8];
+                    BinaryPrimitives.WriteInt64BigEndian(r, scaled);
+                    r[0] ^= 0x80;
+                    return r;
                 }
 
             case T_FLOAT:
                 {
-                    byte[] be = new byte[4];
-                    BinaryPrimitives.WriteInt32BigEndian(be, BitConverter.SingleToInt32Bits(ToSingle(value)));
-                    return TwiddleIeeeBigEndian(be);
+                    byte[] r = new byte[4];
+                    BinaryPrimitives.WriteInt32BigEndian(r, BitConverter.SingleToInt32Bits(ToSingle(value)));
+                    TwiddleIeeeBigEndianInPlace(r);
+                    return r;
                 }
 
             case T_DOUBLE:
                 {
-                    byte[] be = new byte[8];
-                    BinaryPrimitives.WriteInt64BigEndian(be, BitConverter.DoubleToInt64Bits(ToDouble(value)));
-                    return TwiddleIeeeBigEndian(be);
+                    byte[] r = new byte[8];
+                    BinaryPrimitives.WriteInt64BigEndian(r, BitConverter.DoubleToInt64Bits(ToDouble(value)));
+                    TwiddleIeeeBigEndianInPlace(r);
+                    return r;
                 }
 
             case T_DATETIME:
                 {
                     DateTime dt = ToDateTime(value);
-                    byte[] be = new byte[8];
-                    BinaryPrimitives.WriteInt64BigEndian(be, BitConverter.DoubleToInt64Bits(dt.ToOADate()));
-                    return TwiddleIeeeBigEndian(be);
+                    byte[] r = new byte[8];
+                    BinaryPrimitives.WriteInt64BigEndian(r, BitConverter.DoubleToInt64Bits(dt.ToOADate()));
+                    TwiddleIeeeBigEndianInPlace(r);
+                    return r;
                 }
 
             case T_BOOL:
@@ -562,11 +574,31 @@ internal static class IndexKeyEncoder
     /// </summary>
     private static byte[] EncodeSignedBigEndian(long value, int byteCount)
     {
+        byte[] result = new byte[byteCount];
         Span<byte> tmp = stackalloc byte[8];
         BinaryPrimitives.WriteInt64BigEndian(tmp, value);
-        byte[] result = tmp.Slice(8 - byteCount, byteCount).ToArray();
+        tmp.Slice(8 - byteCount, byteCount).CopyTo(result);
         result[0] ^= 0x80;
         return result;
+    }
+
+    /// <summary>
+    /// IEEE-754 sort-key twiddle (in-place): if the sign bit is zero (non-negative)
+    /// flip the sign bit; otherwise (negative) ones-complement every byte.
+    /// </summary>
+    private static void TwiddleIeeeBigEndianInPlace(byte[] be)
+    {
+        if ((be[0] & 0x80) == 0)
+        {
+            be[0] ^= 0x80;
+        }
+        else
+        {
+            for (int i = 0; i < be.Length; i++)
+            {
+                be[i] = unchecked((byte)~be[i]);
+            }
+        }
     }
 
     /// <summary>
@@ -576,20 +608,7 @@ internal static class IndexKeyEncoder
     /// </summary>
     private static byte[] TwiddleIeeeBigEndian(byte[] be)
     {
-        if ((be[0] & 0x80) == 0)
-        {
-            // Non-negative: flip the sign bit to push these above the encoded negatives.
-            be[0] ^= 0x80;
-        }
-        else
-        {
-            // Negative: complement every byte so larger-magnitude negatives sort first.
-            for (int i = 0; i < be.Length; i++)
-            {
-                be[i] = unchecked((byte)~be[i]);
-            }
-        }
-
+        TwiddleIeeeBigEndianInPlace(be);
         return be;
     }
 

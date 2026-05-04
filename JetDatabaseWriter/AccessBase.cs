@@ -361,7 +361,51 @@ public abstract class AccessBase : IAccessBase
     /// <returns>The decompressed string.</returns>
     private protected static string DecompressJet4(ReadOnlySpan<byte> b, int start, int len)
     {
-        var sb = new StringBuilder(len);
+        // Fast path: if no 0x00 byte appears in the data, the entire string
+        // is compressed Latin-1 with no mode switches. This is the overwhelming
+        // majority of text values in real Jet4 databases.
+        int end = start + len;
+        bool allCompressed = true;
+        for (int j = start; j < end; j++)
+        {
+            if (b[j] == 0x00)
+            {
+                allCompressed = false;
+                break;
+            }
+        }
+
+        if (allCompressed)
+        {
+            return CreateFromCompressed(b, start, len);
+        }
+
+        return DecompressJet4Slow(b, start, len);
+    }
+
+    private static string CreateFromCompressed(ReadOnlySpan<byte> b, int start, int len)
+    {
+        var chars = new char[len];
+        for (int k = 0; k < len; k++)
+        {
+            chars[k] = (char)b[start + k];
+        }
+
+        return new string(chars);
+    }
+
+    private static string DecompressJet4Slow(ReadOnlySpan<byte> b, int start, int len)
+    {
+        // Two-pass: count output chars first, then fill directly into char[].
+        int charCount = CountDecompressedChars(b, start, len);
+        var chars = new char[charCount];
+        FillDecompressed(b, start, len, chars);
+        return new string(chars);
+    }
+
+    private static int CountDecompressedChars(ReadOnlySpan<byte> b, int start, int len)
+    {
+        int count = 0;
         bool compressed = true;
         int i = start, end = start + len;
 
@@ -376,12 +420,53 @@ public abstract class AccessBase : IAccessBase
                     continue;
                 }
 
-                _ = sb.Append((char)b[i++]);
+                count++;
+                i++;
             }
             else
             {
-                // Find the end of the uncompressed run: either a 0x00 0x00
-                // terminator at a pair boundary, or the end of the buffer.
+                int runStart = i;
+                while (i + 1 < end && !(b[i] == 0x00 && b[i + 1] == 0x00))
+                {
+                    i += 2;
+                }
+
+                count += (i - runStart) / 2;
+
+                if (i + 1 >= end)
+                {
+                    break;
+                }
+
+                compressed = true;
+                i += 2;
+            }
+        }
+
+        return count;
+    }
+
+    private static void FillDecompressed(ReadOnlySpan<byte> b, int start, int len, Span<char> output)
+    {
+        int pos = 0;
+        bool compressed = true;
+        int i = start, end = start + len;
+
+        while (i < end)
+        {
+            if (compressed)
+            {
+                if (b[i] == 0x00)
+                {
+                    compressed = false;
+                    i++;
+                    continue;
+                }
+
+                output[pos++] = (char)b[i++];
+            }
+            else
+            {
                 int runStart = i;
                 while (i + 1 < end && !(b[i] == 0x00 && b[i + 1] == 0x00))
                 {
@@ -389,9 +474,9 @@ public abstract class AccessBase : IAccessBase
                 }
 
                 int runLen = i - runStart;
-                if (runLen > 0)
+                for (int r = 0; r < runLen; r += 2)
                 {
-                    JetTypeInfo.AppendUtf16LE(sb, b.Slice(runStart, runLen));
+                    output[pos++] = (char)(b[runStart + r] | (b[runStart + r + 1] << 8));
                 }
 
                 if (i + 1 >= end)
@@ -399,13 +484,10 @@ public abstract class AccessBase : IAccessBase
                     break;
                 }
 
-                // Consume the 0x00 0x00 terminator and switch back to compressed mode.
                 compressed = true;
                 i += 2;
             }
         }
-
-        return sb.ToString();
     }
 
     // ── File-stream factory ──────────────────────────────────────────

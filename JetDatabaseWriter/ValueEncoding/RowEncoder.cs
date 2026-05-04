@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.ValueEncoding;
 
 using System;
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Text;
@@ -47,6 +48,9 @@ internal sealed class RowEncoder(AccessWriter writer)
     }
 
     internal static void SetNullMaskBit(byte[] mask, int columnNumber, bool state)
+        => SetNullMaskBit(mask.AsSpan(), columnNumber, state);
+
+    internal static void SetNullMaskBit(Span<byte> mask, int columnNumber, bool state)
     {
         if (columnNumber < 0)
         {
@@ -166,10 +170,22 @@ internal sealed class RowEncoder(AccessWriter writer)
             }
         }
 
-        var nullMask = new byte[(numCols + 7) / 8];
-        var fixedArea = new byte[maxFixedEnd];
+        int nullMaskLen = (numCols + 7) / 8;
+        int varLen = maxDefinedVarIdx + 1;
+
+        // Use ArrayPool for the fixed-area workspace to avoid per-row heap allocation.
+        byte[] fixedArea = maxFixedEnd > 0 ? ArrayPool<byte>.Shared.Rent(maxFixedEnd) : [];
+        if (maxFixedEnd > 0)
+        {
+            fixedArea.AsSpan(0, maxFixedEnd).Clear();
+        }
+
+        // Stack-allocate nullMask for typical table widths (up to 256 columns → 32 bytes).
+        Span<byte> nullMask = nullMaskLen <= 32 ? stackalloc byte[nullMaskLen] : new byte[nullMaskLen];
+        nullMask.Clear();
+
         int fixedAreaSize = 0;
-        var varEntries = maxDefinedVarIdx >= 0 ? new byte[maxDefinedVarIdx + 1][] : [];
+        var varEntries = varLen > 0 ? new byte[varLen][] : [];
         int varPayloadSize = 0;
 
         for (int i = 0; i < tableDef.Columns.Count; i++)
@@ -233,8 +249,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             }
         }
 
-        int varLen = maxDefinedVarIdx + 1;
-        int baseRowLength = writer._rowSz.NumCols + fixedAreaSize + varPayloadSize + writer._rowSz.Eod + (varLen * writer._rowSz.VarEntry) + writer._rowSz.VarLen + nullMask.Length;
+        int baseRowLength = writer._rowSz.NumCols + fixedAreaSize + varPayloadSize + writer._rowSz.Eod + (varLen * writer._rowSz.VarEntry) + writer._rowSz.VarLen + nullMaskLen;
 
         int jumpSize = writer._format != DatabaseFormat.Jet3Mdb ? 0 : baseRowLength / 256;
         int rowLength = baseRowLength + jumpSize;
@@ -257,8 +272,16 @@ internal sealed class RowEncoder(AccessWriter writer)
             pos += fixedAreaSize;
         }
 
+        // Return the pooled buffer now that we've copied its contents.
+        if (maxFixedEnd > 0)
+        {
+            ArrayPool<byte>.Shared.Return(fixedArea);
+        }
+
         int currentOffset = writer._rowSz.NumCols + fixedAreaSize;
-        var variableOffsets = varLen > 0 ? new int[varLen] : [];
+
+        // Stack-allocate variable offsets for typical tables (up to 128 var columns).
+        Span<int> variableOffsets = varLen <= 128 ? stackalloc int[varLen] : new int[varLen];
         for (int varIndex = 0; varIndex < varLen; varIndex++)
         {
             variableOffsets[varIndex] = currentOffset;
@@ -284,7 +307,7 @@ internal sealed class RowEncoder(AccessWriter writer)
 
         WriteField(row, pos, writer._rowSz.VarLen, varLen);
         pos += writer._rowSz.VarLen;
-        Buffer.BlockCopy(nullMask, 0, row, pos, nullMask.Length);
+        nullMask.CopyTo(row.AsSpan(pos));
 
         return row;
     }
