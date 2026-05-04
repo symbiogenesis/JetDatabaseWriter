@@ -21,7 +21,7 @@ Phases below are ordered by **biggest line reduction first**. Line numbers refer
 | 11 | LVAL encoding                   |   200 | 10,245 |
 | 12 | Stray nested utilities          |   150 | 10,395 |
 
-After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly **~2,100 lines** of pure orchestration: the constructor, public `OpenAsync`/`CreateDatabaseAsync` factories, the public CRUD/schema entry points, and `DisposeAsync`. (Current state after Phases 1–5: **~4,580 lines**.)
+After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly **~2,100 lines** of pure orchestration: the constructor, public `OpenAsync`/`CreateDatabaseAsync` factories, the public CRUD/schema entry points, and `DisposeAsync`. (Current state after Phases 1–6: **~4,350 lines**.)
 
 > **No partial classes.** The maintainer dislikes splitting `AccessWriter` across multiple `partial` files — it hides the true size and complexity of the type and makes navigation worse. Every extraction below must land in a **properly-named type** under `Internal/`, with `AccessWriter` holding a private field of that type and forwarding through thin instance methods. Anything that genuinely cannot be lifted off `AccessWriter` (because it touches too much private state) must stay in `AccessWriter.cs` rather than be moved into a partial.
 >
@@ -89,13 +89,14 @@ Extracted to [JetDatabaseWriter/Internal/Builders/TDefPageBuilder.cs](../../JetD
 - [x] Moved helper routines with the builder: `SplitLogicalTDefIntoPages`, `LogicalToPhysicalTDefOffset`, `BuildSlimCatalogColumns`, `BuildFullCatalogColumns`.
 - [x] **Home:** `Internal/Builders/TDefPageBuilder.cs`, alongside `IndexBTreeBuilder`, `IndexLeafPageBuilder`, `ColumnPropertyBlockBuilder` ✓.
 
-## Phase 6 — Encryption / re-encryption operations (~400 lines)
+## Phase 6 — Encryption / re-encryption operations (~400 lines) ✅ DONE
 
-- [ ] Extract methods at lines **4178–4580**:
-  - `DetectEncryptionFormatAsync` (×2), `ChangePasswordAsync` (×2)
-  - `EncryptAsync` (×2), `DecryptAsync` (×2)
-  - `ReencryptFileAsync`, `ReplaceFileAtomicAsync`, `ReencryptStreamAsync`, `ReencryptCoreAsync`
-- [ ] **Home:** `Internal/EncryptionManager.cs` (existing, 605 lines). Already described as centralizing "all JET/ACE/ACCDB encryption logic — header detection, password verification, key derivation, and per-page decryption." File-level encrypt/decrypt/re-encrypt/password-change is the write-side counterpart. No new file needed.
+Extracted to [JetDatabaseWriter/Internal/EncryptionManager.cs](../../JetDatabaseWriter/Internal/EncryptionManager.cs). `AccessWriter` now keeps only thin public static forwarders for `DetectEncryptionFormatAsync`, `ChangePasswordAsync`, `EncryptAsync`, and `DecryptAsync`, while `EncryptionManager` owns the full file/stream re-encryption orchestration (`ReencryptFileAsync`, `ReplaceFileAtomicAsync`, `ReencryptStreamAsync`, `ReencryptCoreAsync`) alongside the existing header detection and page-encryption logic.
+
+`AccessWriter.cs` shrank from **4,577 → 4,353 lines** (–224).
+
+- [x] Extracted methods: `DetectEncryptionFormatAsync` (×2), `ChangePasswordAsync` (×2), `EncryptAsync` (×2), `DecryptAsync` (×2), `ReencryptFileAsync`, `ReplaceFileAtomicAsync`, `ReencryptStreamAsync`, `ReencryptCoreAsync`.
+- [x] **Home:** `Internal/EncryptionManager.cs` (existing). File-level encrypt/decrypt/re-encrypt/password-change now lives beside the rest of the JET/ACE/ACCDB encryption logic ✓.
 
 ## Phase 7 — Transaction lifecycle (~300 lines)
 
