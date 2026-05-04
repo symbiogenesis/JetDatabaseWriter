@@ -1,14 +1,34 @@
-# Round-Trip Test Failures — Investigation Status
+﻿# Round-Trip Test Failures — Investigation Status
 
-**Status (2026-05-03 night):** Both gating tests still fail under DAO Compact & Repair with err 3011 `'MSysDb'`. Two of the three originally-confirmed protocol gaps have now been fixed:
+**Status (2026-05-03):** Both gating tests still fail under DAO Compact & Repair with err 3011 `'MSysDb'`. All originally-confirmed protocol gaps have been fixed; the failure has been **isolated to two MSysObjects index leaf pages** via binary page-level bisection.
 
-- ✅ **LvProp**: `Constants.SystemObjects.DefaultLvPropPlaceholder` (12 zero bytes) stamped when `JetExpressionConverter.BuildLvPropBlob` returns null. Necessary but not sufficient alone.
-- ✅ **MSysACEs**: `InsertAceRowsForTableAsync` now inserts 3 ACE rows (owner/admins/users) per new user table via `InsertSystemRowAndMaintainAsync`. Harvests the Admins-group SID dynamically from existing ACE rows. Gated on `catalogFlags == 0` (user tables only). Constants in `Constants.Aces` (DefaultAcm, OwnerSid, UsersSid).
-- ✅ **GPM (page 1) ruled out for append-only writes**: Page 1's bitmap uses convention "1 = free, 0 = in-use". For pages appended beyond the original file size, bits are already 0 (in-use by default) because the bitmap simply doesn't extend that far — unset bits = in-use. DAO only modifies page 1 when *reusing* free pages (clearing their "free" bits); the writer's append-only allocator never needs to touch page 1.
+**Fixes landed (all necessary but collectively not yet sufficient):**
 
-The remaining trigger is unknown — both fixes together still produce the `MSysDb (3011)` rejection. Next candidates to investigate: col-desc magic stamps (`0x00000659` inside column descriptors), DB-header modify counter, or some undiscovered structural gap.
+- ✅ **LvProp**: `Constants.SystemObjects.DefaultLvPropPlaceholder` (12 zero bytes) stamped when `JetExpressionConverter.BuildLvPropBlob` returns null.
+- ✅ **MSysACEs**: `InsertAceRowsForTableAsync` inserts 3 ACE rows (owner/admins/users) per new user table. Harvests the Admins-group SID dynamically. Gated on `catalogFlags == 0` (user tables only). Column name corrected from `"Inheritable"` to `"FInheritable"` (the TDEF column name for the boolean ACE field).
+- ✅ **GPM (page 1) ruled out for append-only writes**: Page 1's bitmap uses convention "1 = free, 0 = in-use". Pages appended beyond original file size already have bits = 0 (in-use by default).
+- ✅ **TDEF magic stamps (`0x00000659`)**: Stamped in column descriptors (bytes 1–4), real-idx physical descriptors (first 4 bytes), and logical-idx entry descriptors (first 4 bytes) across `BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, and `RelationshipManager.EmitFkLogicalIdxAsync`.
+- ✅ **Real-idx flags byte**: `0x80` bit set at `Constants.TableDefinition.Jet4.RealIdx.FlagsOffset` for FK backing indexes.
+- ✅ **DB-header modify counter at `0x0E02`**: Manually patched from `0x00` to `0x04` — **RULED OUT** (still fails).
 
-The DAO-authored baseline probe (see [DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs)) has produced empirical ground truth: a copy of `NorthwindTraders.accdb` to which the **same** `RT_Customers` table was added via `DAO.DBEngine.120` (the engine path Access UI uses) survives DAO compact ✅, while the writer's copy of the same fixture fails ❌. The probe's full diff (`%TEMP%\JetDatabaseWriter.RtDaoBaseline\dao-baseline-diff.md`) reveals several structural differences — see "DAO baseline differences (2026-05-03 evening)" below.
+**Root cause isolated via binary page-level bisection (2026-05-03):**
+
+A binary patch experiment on the N1 reproducer (single empty `RT_Customers` table) revealed:
+- Reverting ALL shared-range modified pages (2, 3, 8, 2790, 2994, 2998) to original while keeping 6 appended pages (3008–3013) → DAO compact **PASSES**.
+- Testing each changed page individually (keep ONE modified, revert rest to original):
+
+| Page | What it is | Keep-one result |
+|---|---|---|
+| 2 | MSysObjects TDEF | ✅ PASS |
+| 3 | MSysACEs TDEF | ✅ PASS |
+| 8 | MSysObjects PK (`Id`) index leaf | 🔴 **FAIL** |
+| 2790 | MSysObjects `ParentIdName` composite index leaf | 🔴 **FAIL** |
+| 2994 | MSysObjects data page (new catalog row) | ✅ PASS |
+| 2998 | MSysACEs data page | ✅ PASS |
+
+**Pages 8 and 2790 individually trigger the DAO err 3011.** The defect is in the writer's MSysObjects index leaf splice — specifically in how `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` modifies these two leaf pages. The TDEF, data pages, MSysACEs, and appended user-table pages are all fine in isolation.
+
+The DAO-authored baseline probe (see [DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs)) has produced empirical ground truth: a copy of `NorthwindTraders.accdb` to which the **same** `RT_Customers` table was added via `DAO.DBEngine.120` (the engine path Access UI uses) survives DAO compact ✅, while the writer's copy of the same fixture fails ❌.
 
 ## Tests in question
 
@@ -38,19 +58,21 @@ The Microsoft Access database engine could not find the object 'MSysDb'.
 A single empty `RT_Customers` table, no relationship, no inserts:
 
 ```
-Diff pages (shared range): 2, 8, 2790, 2994
-Pages added              : new TDEF, new PK leaf, new usage-map page (+3)
+Diff pages (shared range): 2, 3, 8, 2790, 2994, 2998
+Pages added              : new TDEF, new PK leaf, new usage-map page (+3 to +6 depending on rels/ACEs)
 ```
 
-| Page | What's there | Status |
-|---|---|---|
-| 2 | MSysObjects TDEF | ✅ correct (`row_count` +1, per-real-idx entry counts +1) |
-| 8 | MSysObjects PK (`Id`) leaf | ✅ splice byte-clean |
-| 2790 | MSysObjects `ParentIdName` composite leaf | ✅ splice byte-clean |
-| 2994 | MSysObjects data page hosting the new row | ✅ row body structurally well-formed (decodes correctly; entries / EOD / nullmask / varLen all match Access-authored Type=1 rows) — see "Empirical findings 2026-05-03" |
-| New TDEF page (3008) | RT_Customers TDEF | 🔴 only superficially verified ("byte-shape-identical to baseline" header bytes); body / index descriptors / column descriptors not yet diffed against an Access-authored RT_-prefix table |
-| New PK leaf (3009) | RT_Customers PK leaf (page_type=0x04, parent=3008) | 🟡 empty leaf, well-formed in isolation |
-| New usage-map page (3010) | RT_Customers used/free pages (page_type=0x01) | 🟡 byte-identical to a baseline usage-map page in isolation — bitmap *contents* (which bits set) not yet diffed against an Access-UI baseline |
+| Page | What's there | Keep-one bisect | Status |
+|---|---|:---:|---|
+| 2 | MSysObjects TDEF | ✅ PASS | Correct (`row_count` +1, per-real-idx entry counts +1) |
+| 3 | MSysACEs TDEF | ✅ PASS | Correct (`row_count` +3, ACE rows inserted with `FInheritable` column name fix) |
+| 8 | MSysObjects PK (`Id`) leaf | 🔴 **FAIL** | **Splice triggers DAO rejection.** ~1801 byte diffs vs original. |
+| 2790 | MSysObjects `ParentIdName` composite leaf | 🔴 **FAIL** | **Splice triggers DAO rejection.** ~3576 byte diffs vs original. |
+| 2994 | MSysObjects data page hosting the new row | ✅ PASS | Row body structurally well-formed |
+| 2998 | MSysACEs data page | ✅ PASS | ACE rows correctly inserted |
+| New TDEF page (3008) | RT_Customers TDEF | ✅ (appended pages all pass) | Header + magic stamps + usage-map pointers all correct |
+| New PK leaf (3009) | RT_Customers PK leaf (page_type=0x04, parent=3008) | ✅ | Empty leaf, well-formed |
+| New usage-map page (3010) | RT_Customers used/free pages (page_type=0x01) | ✅ | Byte-identical to baseline |
 
 Page 5 of NorthwindTraders is `page_type=0x02` (a TDEF page), NOT a global page-allocation map. There is no evidence Jet/ACE has a centralised GPM separate from per-table usage maps; an earlier note in this document claiming page 5 was the GPM was **incorrect** and has been removed.
 
@@ -72,7 +94,7 @@ All in `AccessWriter.cs` / `Constants.cs` unless noted; Jet4/ACE only where appl
 
 ### MSysObjects index splice
 
-`InsertCatalogEntryAsync` calls `IndexMaintainer.TrySpliceCatalogIndexEntryAsync`, which walks every real-idx slot of MSysObjects, descends to the rightmost leaf, encodes the new composite key, and splices it in via `IndexLeafPageBuilder.BuildLeafPage`. Verified byte-clean for both real-idx slots (PK `Id`, composite `ParentIdName`).
+`InsertCatalogEntryAsync` calls `IndexMaintainer.TrySpliceCatalogIndexEntryAsync`, which walks every real-idx slot of MSysObjects, descends to the rightmost leaf, encodes the new composite key, and splices it in via `IndexLeafPageBuilder.BuildLeafPage`. **Binary page-level bisection has identified the spliced leaf pages (8 and 2790) as the root cause of the DAO rejection** — the splice produces pages that DAO cannot accept, even though the entries decode correctly through the writer's own reader. The byte-level divergence from a DAO-authored splice has not yet been identified.
 
 Supporting fixes (each was a real defect; each is regression-guarded):
 
@@ -95,7 +117,20 @@ Supporting fixes (each was a real defect; each is regression-guarded):
 - Harvests the Admins-group SID dynamically from existing ACE rows (any SID > 2 bytes on an existing ACE data page).
 - Uses `InsertSystemRowAndMaintainAsync` pattern (row insertion + index maintenance on MSysACEs).
 - Constants in `Constants.Aces`: `DefaultAcm = 0x000FFEFF`, `OwnerSid = [0x71, 0x10]`, `UsersSid = [0x70, 0x10]`.
-- Column values per row: `ObjectId = (int)tdefPageNumber`, `ACM = DefaultAcm`, `Inheritable = true`, `SID = <varies>`.
+- Column values per row: `ObjectId = (int)tdefPageNumber`, `ACM = DefaultAcm`, `FInheritable = true`, `SID = <varies>`.
+- **Bug fix (2026-05-03):** `SetValueByName("Inheritable", true)` was silently failing because the MSysACEs TDEF column is named `"FInheritable"`, not `"Inheritable"`. `TableDef.SetValueByName` returns without writing when the name doesn't match. Fixed to `SetValueByName("FInheritable", true)`.
+
+### TDEF magic stamps (`0x00000659`, added 2026-05-03)
+
+- Column descriptors: bytes 1–4 after the column-type byte stamped with `0x00000659` via `Wi32(page, o + 1, 0x00000659)`.
+- Real-idx physical descriptors: first 4 bytes stamped with `0x00000659`.
+- Logical-idx entry descriptors: first 4 bytes (at `logEntry - LogicalEntryFieldsOffset`) stamped with `0x00000659`.
+- Applied in three code paths: `BuildTDefPagesWithIndexOffsets` (user tables), `BuildMSysObjectsTDef` (MSysObjects cols), `RelationshipManager.EmitFkLogicalIdxAsync` (FK backing indexes).
+- **Binary page bisection confirmed**: TDEF pages (2, 3) pass individually — magic stamps are correct and not the trigger.
+
+### DB-header modify counter — ruled out (2026-05-03)
+
+Manually patching file offset `0x0E02` from `0x00` to `0x04` (matching DAO's bump) on a writer-produced file still fails DAO compact. The modify counter is not validated by DAO's compact path.
 
 ### GPM (page 1) — ruled out for append-only (2026-05-03)
 
@@ -230,13 +265,13 @@ col  varIdx  fixedOff  type  flags  name
 
 The earlier confusion about whether the 12-byte payload was at varIdx 8 (LvProp) or varIdx 9 (LvModule) is resolved: it is at varIdx 8 — **LvProp** has 12 bytes, **LvModule** has 0 bytes (NULL).
 
-### 5. Format magic `0x00000659` stamped inside column descriptors
+### 5. Format magic `0x00000659` stamped inside column descriptors — fix landed, ruled out as trigger
 
-Inside DAO's TDEF column descriptors, the 4 bytes immediately after the column-type byte are `59 06 00 00` (`= 0x00000659`, the same format magic the writer already stamps in the TDEF header at offset `0x0C`). The writer leaves these zero. Differences appear at TDEF offsets `0x4D-0x4F`, `0x66-0x68`, plus other interior magic stamps in the index-descriptor block.
+Inside DAO's TDEF column descriptors, the 4 bytes immediately after the column-type byte are `59 06 00 00` (`= 0x00000659`, the same format magic the writer already stamps in the TDEF header at offset `0x0C`). **Fix landed:** writer now stamps these in all three TDEF-building paths (`BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, `RelationshipManager.EmitFkLogicalIdxAsync`). Also stamps real-idx physical and logical-idx entry descriptors. **Binary page bisection confirmed TDEF pages (2, 3) individually PASS** — magic stamps are correct and not the trigger.
 
-### 6. Page 0 (DB header) — modify counter
+### 6. Page 0 (DB header) — modify counter — RULED OUT
 
-DAO bumps a single byte at file offset `0x0E02` from `0x00 → 0x04`. Likely a "modification counter" or "schema version" field Access touches on every catalog write. The writer never updates the DB header.
+DAO bumps a single byte at file offset `0x0E02` from `0x00 → 0x04`. Manually patching this to match DAO's value still fails DAO compact. **Not validated by DAO's compact path.**
 
 ### 7. DAO uses raw UTF-16 in catalog `Name`; writer uses compressed UCS-2 (cosmetic, already known)
 
@@ -244,42 +279,43 @@ Re-confirmed — does not block compact (bisect proved this earlier).
 
 ### Likelihood ranking for the `MSysDb (3011)` trigger
 
-**Updated 2026-05-03 night:** GPM ruled out for append-only; MSysACEs fix landed but not yet proven sufficient. Remaining candidates:
+**Updated 2026-05-03:** Binary page-level bisection has **conclusively identified pages 8 and 2790** (MSysObjects PK and ParentIdName index leaf pages) as the sole triggers. All other page modifications pass individually. All previous candidates (MSysACEs, magic stamps, modify counter) are now **ruled out as independent triggers**.
 
-1. **#3 missing `MSysACEs` rows — fix landed, not yet proven** — 3 ACE rows now inserted per new user table. Still failing; either ACE row content is wrong or the trigger is elsewhere.
-2. **#5 col-desc magic `0x00000659` inside column descriptors** — DAO stamps these; writer leaves zero. May be required for DAO's TDEF-validation pass during compact.
-3. **#6 DB-header modify counter** — DAO bumps `0x0E02`; writer never touches page 0. Lower priority but untested.
+The root cause is in `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` / `IndexLeafPageBuilder.BuildLeafPage`. Possible sub-causes:
 
-Previously confirmed fixed:
-- ~~#2 GPM page 1~~ — ruled out for append-only writes (bits already 0 = in-use).
-- ~~#4 NULL `LvProp`~~ — fix landed (12 zero bytes); necessary but not sufficient alone.
+1. **Leaf page header fields** — `free_space`, `tail_entry_offset`, `pref_len`, entry-start bitmask, or the `unknown(0)` Jet4 field at offset 8 may be set incorrectly after splice.
+2. **Entry encoding** — sort key bytes, row pointer format, or entry-start bitmask bits may diverge from DAO's encoding.
+3. **Page-shared prefix compression** — the recomputed `pref_len` may not match what DAO expects.
+4. **Free space / padding** — the splice may leave trailing garbage or incorrect free-space accounting.
 
 ## Hypothesis matrix
 
 | # | Hypothesis | Status | Evidence |
 |---|---|:---:|---|
-| 1 | Splice key encoding wrong (text NFC, ParentId byte order, etc.) | ✅ ruled out | FormatProbe §6 re-encodes each new row's key via `IndexKeyEncoder` and finds both keys present on the spliced leaves. |
+| 1 | Splice key encoding wrong (text NFC, ParentId byte order, etc.) | 🟡 re-opened | Binary bisection proves spliced leaf pages are the trigger. Key encoding previously verified by re-decoding through `IndexKeyEncoder`, but DAO may validate byte layout more strictly. |
 | 2 | Per-real-idx skip-block stale (`num_idx_rows` not bumped with `row_count`) | ✅ fixed | `UpdateRowCountAsync` mirrors row-count delta into `num_idx_rows`. Guarded. |
 | 3 | Real-idx `flags` byte at wrong offset / missing `0x80` UNKNOWN bit | ✅ fixed | Now uses `IndexLayout.FlagsOffsetWithinPhys` and `Constants.TableDefinition` flag constants. Guarded. |
 | 4 | Relationship / row-insert paths break compact | ✅ ruled out | N1 reproducer is a single empty `CreateTableAsync` call and still fails. |
-| 5 | New TDEF page malformed | ✅ fixed | All sub-faults landed; TDEF header bytes 0..0x3F now byte-shape-identical to baseline. |
-| 6 | New MSysObjects row variable-length area | 🟡 partially fixed (2026-05-03 evening) | DAO writes 12-byte LvProp at varIdx 8; writer left it NULL. Fix landed: `Constants.SystemObjects.DefaultLvPropPlaceholder` stamps 12 zero bytes when no per-column properties are declared. Writer row now has `nullMask = FF 40 00` matching DAO. **DAO still rejects after this fix alone** — necessary but not sufficient. Remaining gaps in row body (raw UTF-16 vs compressed UCS-2 for Name, etc.) are cosmetic. |
-| 7 | Global page-allocation map missing the new TDEF / PK-leaf / usage-map pages | ✅ ruled out for append-only (2026-05-03 night) | Page 1 bitmap uses "1 = free, 0 = in-use". Pages appended beyond old file size already have bits = 0 (in-use by default). DAO only touches page 1 when *reusing* free-list pages; writer's append-only allocator never needs GPM updates. |
+| 5 | New TDEF page malformed | ✅ fixed | All sub-faults landed; TDEF pages individually pass binary bisection. |
+| 6 | New MSysObjects row variable-length area | ✅ fixed | LvProp 12-byte placeholder landed. Data page (2994) individually passes binary bisection. |
+| 7 | Global page-allocation map (page 1) | ✅ ruled out | Append-only pages already "in-use". |
 | 8 | Test infra wrong | ✅ ruled out | FormatProbe N1 reproducer is hand-rolled writer-only; same DAO error. |
-| 9 | DAO requires `MSysACEs` / `MSysAccessStorage` / `MSysComplexColumns` / `MSysNavPaneGroups` / `MSysNameMap` rows | � MSysACEs fix landed (2026-05-03 night); still failing | `InsertAceRowsForTableAsync` inserts 3 ACE rows per new user table. DAO compact still rejects after this fix — either the ACE rows have incorrect content, or the trigger is elsewhere. NavPane/NameMap remain low priority. |
+| 9 | MSysACEs rows missing or malformed | ✅ ruled out | MSysACEs pages (3, 2998) individually pass binary bisection. FInheritable column name bug fixed. |
 | 10 | New row's `ParentId = 0x0F000001` is the wrong group | ✅ ruled out | Existing Northwind Type=1 user-table rows already use `0x0F000001`. |
-| 11 | TDEF back-pointer wrong | ✅ ruled out | All TDEF header bytes outside the originally-divergent fields are byte-identical to baseline. |
-| 12 | Catalog `Name` column written in compressed UCS-2 (`FF FE` marker + 1B/char) instead of raw UTF-16 LE | ✅ ruled out as the blocker | Disabling `EncodeJet4Text` compression entirely did not change bisect output. *Cosmetically* unlike Access-authored rows but not the trigger. |
-
+| 11 | TDEF back-pointer wrong | ✅ ruled out | TDEF pages individually pass binary bisection. |
+| 12 | Catalog `Name` compression (UCS-2 vs UTF-16) | ✅ ruled out | Cosmetic only; bisect proved. |
+| 13 | Col-desc magic `0x00000659` inside TDEF column/index descriptors | ✅ fixed & ruled out | Stamps landed in all three TDEF paths. TDEF pages individually pass binary bisection. |
+| 14 | DB-header modify counter at `0x0E02` | ✅ ruled out | Manual patch still fails. |
+| **15** | **MSysObjects index leaf splice (pages 8 and 2790)** | 🔴 **ROOT CAUSE** | **Binary page-level bisection: pages 8 and 2790 each individually trigger DAO err 3011.** All other modified pages pass individually. The defect is in `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` / `IndexLeafPageBuilder.BuildLeafPage`. |
 ## Recommended next steps (priority order)
 
-The DAO baseline probe has answered the "diff against ground truth" item. **LvProp (#4) is fixed. MSysACEs (#2) is fixed. GPM (#1) is ruled out for append-only.** The `MSysDb (3011)` rejection persists — remaining candidates:
+**The root cause has been isolated to the MSysObjects index leaf splice** (hypothesis #15). All other fixes are necessary background but not the trigger. Next steps focus on the splice path in `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` / `IndexLeafPageBuilder.BuildLeafPage`:
 
-1. **Verify MSysACEs row content is correct.** The 3 ACE rows are now inserted, but DAO may require specific column ordering, exact byte layout, or particular SID values that differ from what the writer emits. Compare writer-authored ACE rows byte-for-byte against DAO baseline.
-2. **Col-desc magic `0x00000659` inside TDEF column descriptors.** DAO stamps 4 bytes after the column-type byte; writer leaves these zero. May be required for DAO's TDEF validation pass.
-3. **Page 0 (DB header) modify counter at offset `0x0E02`.** DAO bumps this on every catalog write. May be a schema-version check that DAO compact uses to validate file integrity.
-4. **Investigate free-page reuse.** DAO reuses freed pages; writer always appends. Likely tolerable but untested — DAO compact is what *creates* free pages, so a fresh-write file with no free pages should be valid.
-5. **Aesthetic: switch `EncodeJet4Text` to raw UTF-16 in catalog `Name`.** Re-confirmed cosmetic only.
+1. **Byte-level diff of pages 8 and 2790** between the writer's output and the DAO baseline (via `DIAG_RT_DAO_BASELINE` probe's page dumps at `%TEMP%\JetDatabaseWriter.RtDaoBaseline\pages\`). Identify the exact byte divergences on each leaf page.
+2. **Inspect `IndexLeafPageBuilder.BuildLeafPage`** for header field accounting errors — especially `free_space`, `tail_entry_offset`, `pref_len`, the `unknown(0)` Jet4 field at offset 8, and the entry-start bitmask width/content.
+3. **Compare sort-key encoding** for the new MSysObjects row's key against the DAO baseline's key bytes for the same row.
+4. **Check for trailing garbage** — the splice may not zero out bytes beyond the last entry, or may leave stale content from the pre-splice page.
+5. **Investigate whether DAO requires specific byte ordering in the entry-start bitmask** that the writer's recomputation does not preserve.
 
 ## FormatProbe diagnostic harness
 
