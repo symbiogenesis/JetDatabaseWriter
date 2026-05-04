@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -497,6 +498,73 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
             Assert.Equal(0, rowCount);
         }
+    }
+
+    /// <summary>
+    /// §5 coverage gap: a table with more than 127 variable-length columns
+    /// exercises the 2-byte <c>num_var_cols</c> field in the row trailer
+    /// (Jet4/ACE uses <c>uint16</c> for all trailer fields). Historically
+    /// mdbtools' <c>pkrep</c> uncovered truncation bugs in the 1-byte path;
+    /// this test verifies the writer and reader handle the wide field
+    /// correctly across a full round-trip.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task CreateTable_Over127VarColumns_RoundTrips()
+    {
+        const int VarColCount = 130;
+        var ms = new MemoryStream();
+
+        var columns = new List<ColumnDefinition>(VarColCount + 1)
+        {
+            new("Id", typeof(int)),
+        };
+        for (int i = 0; i < VarColCount; i++)
+        {
+            columns.Add(new ColumnDefinition($"V{i:D3}", typeof(string), maxLength: 50));
+        }
+
+        var rowValues = new object[VarColCount + 1];
+        rowValues[0] = 1;
+        for (int i = 0; i < VarColCount; i++)
+        {
+            rowValues[i + 1] = $"val{i}";
+        }
+
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            DatabaseFormat.AceAccdb,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("Wide", columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Wide", rowValues, TestContext.Current.CancellationToken);
+        }
+
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(
+            ms,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var meta = await reader.GetColumnMetadataAsync("Wide", TestContext.Current.CancellationToken);
+        Assert.Equal(VarColCount + 1, meta.Count);
+
+        var rows = new List<object[]>();
+        await foreach (object[] row in reader.Rows("Wide", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            rows.Add(row);
+        }
+
+        var only = Assert.Single(rows);
+        Assert.Equal(1, only[0]);
+
+        // Spot-check a few columns spanning the boundary.
+        Assert.Equal("val0", only[1]?.ToString());
+        Assert.Equal("val126", only[127]?.ToString());
+        Assert.Equal("val127", only[128]?.ToString());
+        Assert.Equal("val129", only[130]?.ToString());
     }
 
     [Theory]

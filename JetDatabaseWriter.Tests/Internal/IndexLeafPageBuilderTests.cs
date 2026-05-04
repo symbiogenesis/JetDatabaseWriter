@@ -267,6 +267,56 @@ public sealed class IndexLeafPageBuilderTests
         Assert.Equal(0, ReadU16(page, 20));
     }
 
+    // ── §7 Robustness: corrupt entry-mask ─────────────────────────────
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public void DecodeEntries_BitmaskClaimsMoreEntriesThanFreeSpaceAllows_DoesNotOverread(DatabaseFormat format)
+    {
+        // Build a valid page with 2 entries, then corrupt the bitmask to
+        // set bits beyond the payload end. DecodeEntries must return the
+        // entries it can safely parse without reading past payloadEnd.
+        int pageSize = PageSizeOf(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        byte[] k1 = IndexKeyEncoder.EncodeEntry(0x04, 1, ascending: true);
+        byte[] k2 = IndexKeyEncoder.EncodeEntry(0x04, 2, ascending: true);
+        var entries = new[]
+        {
+            new IndexEntry(k1, 1, 0),
+            new IndexEntry(k2, 1, 1),
+        };
+
+        byte[] page = IndexLeafPageBuilder.BuildLeafPage(
+            layout, pageSize, 100, entries, 0, 0, 0, enablePrefixCompression: false);
+
+        // Set every bit in the bitmask region to 1 — claims an entry at
+        // every byte offset, many of which are beyond the actual payload.
+        for (int i = layout.BitmaskOffset; i < layout.FirstEntryOffset; i++)
+        {
+            page[i] = 0xFF;
+        }
+
+        // Must not throw or read garbage — the decoder should stop at payloadEnd.
+        // If we reach here, the decoder handled the corrupt bitmask gracefully.
+        _ = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public void DecodeEntries_FreeSpaceEqualsFullPayload_ReturnsEmpty(DatabaseFormat format)
+    {
+        // An empty leaf page should decode zero entries (payloadEnd == firstEntryOffset).
+        int pageSize = PageSizeOf(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        byte[] page = IndexLeafPageBuilder.BuildLeafPage(
+            layout, pageSize, 100, [], 0, 0, 0, enablePrefixCompression: false);
+
+        var decoded = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
+        Assert.Empty(decoded);
+    }
+
     private static int PageSizeOf(DatabaseFormat fmt) =>
         fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 

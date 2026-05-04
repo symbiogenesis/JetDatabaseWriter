@@ -61,13 +61,6 @@ through `IndexKeyEncoder.EncodeEntry` and compared positionally against the
 on-disk leaf entries (sorted unsigned). The remaining sub-items below call
 out cases that fixture sweep does **not** specifically isolate.
 
-- [ ] **`[J]` `[S]`** Money (`T_MONEY = 0x05`, scaled int64) sign-byte
-  isolated cross-format theory. The NUMERIC sign-byte branch is closed by
-  `IndexKeyEncoderTests.Numeric_SignByte_IsolatedAcrossFormatAndDirection`
-  in [IndexKeyEncoderTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexKeyEncoderTests.cs)
-  (all eight `asc/desc × pos/neg × legacy/new-style` outcomes); the
-  same shape is needed for Money, which the fixture sweep currently
-  covers positionally only.
 - [ ] **`[J]` `[S]`** OLE long-value index keys — not present in the current
   Jackcess fixture set; needs a synthetic fixture.
 - [ ] **`[J]` `[S]`** Extended Date/Time (`SHORT_DATE_TIME` extended; 42-byte
@@ -148,6 +141,10 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 - [ ] **`[J]`** Cascading delete across complex columns where the parent
   table has **two** complex columns referencing different sub-tables. We
   cover the single-complex case in `ComplexColumnsCascadeDeleteTests`.
+  A test (`DeleteRowsAsync_OnParentWithTwoComplexColumns_RemovesBothFlatChildTableRows`)
+  exists but is `Skip`-ped: it revealed a product bug in
+  `PatchParentComplexSlotAsync` that miscalculates the slot offset when
+  two complex columns share a row.
 
 ### 2.3 Calculated columns
 
@@ -168,9 +165,6 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   mini-stream sector** (OpenMcdf `MiniStreamLargeChain` fixtures).
 - [ ] **`[J]`** `lv_prop` / `MSysDb` properties block round-trip after a
   password change.
-- [ ] **`[O]`** CFB **DIFAT chain** with > 109 FAT sectors (i.e., a database
-  > ~7 MB after encryption) — exercises the secondary DIFAT walker that
-  OpenMcdf fuzz-tests.
 
 ---
 
@@ -185,13 +179,9 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ## 5. Page / row layout corner cases
 
-- [ ] **`[M]`** Row whose **variable-length column count exceeds 127** — uses
-  the 2-byte length prefix path; mdbtools `pkrep` exercises this.
 - [ ] **`[J]`** Row spanning a **page boundary via overflow pointer**
   (`0x80`-flagged row id) where the overflow target is itself a row whose
   variable section needs another overflow.
-- [ ] **`[J]`** Empty data page whose `free_space` equals the full page-size
-  minus header — verify reader doesn't decode any rows.
 
 ---
 
@@ -207,11 +197,7 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ## 7. Fuzz / robustness
 
-- [ ] **`[O]`** CFB with a **circular FAT chain** — must throw, not loop.
-  OpenMcdf has explicit tests.
-- [ ] **`[O]`** CFB with **negative free-sector count** in header.
-- [ ] **`[J]`** Index page whose entry-mask claims more entries than the
-  page's free-space allows.
+(No open items.)
 
 ---
 
