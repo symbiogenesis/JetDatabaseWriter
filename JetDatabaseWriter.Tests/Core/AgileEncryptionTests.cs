@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -351,6 +352,37 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
         // This proves the password verifier (SHA-512 hash chain) provides
         // authentication independent of the HMAC mechanism.
         Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 7. NULL GUARD — AesCbcRaw rejects null arguments before dereference
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void Agile_Decrypt_NullEncryptionInfo_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(
+            () => OfficeCryptoAgile.Decrypt(null!, new byte[64], "pw"));
+    }
+
+    [Fact]
+    public void Agile_Decrypt_NullEncryptedPackage_ThrowsArgumentNullException()
+    {
+        // Build a minimal valid-looking EncryptionInfo header (version 4.4, flag 0x40).
+        byte[] fakeInfo = new byte[16];
+        fakeInfo[0] = 0x04; // major
+        fakeInfo[2] = 0x04; // minor
+        fakeInfo[4] = 0x40; // AgileEncryption flag
+
+        Assert.Throws<ArgumentNullException>(
+            () => OfficeCryptoAgile.Decrypt(fakeInfo, null!, "pw"));
+    }
+
+    [Fact]
+    public void Agile_Encrypt_NullInnerPackage_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(
+            () => OfficeCryptoAgile.Encrypt(null!, "pw"));
     }
 
     // ═══════════════════════════════════════════════════════════════════
