@@ -1411,21 +1411,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <param name="path">Path to the .mdb or .accdb file.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> yielding the detected format.</returns>
-    public static async ValueTask<AccessEncryptionFormat> DetectEncryptionFormatAsync(
+    public static ValueTask<AccessEncryptionFormat> DetectEncryptionFormatAsync(
         string path,
         CancellationToken cancellationToken = default)
-    {
-        Guard.NotNullOrEmpty(path, nameof(path));
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException($"Database file not found: {path}", path);
-        }
-
-        await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
-        return await DetectEncryptionFormatAsync(fs, cancellationToken).ConfigureAwait(false);
-    }
+        => EncryptionManager.DetectEncryptionFormatAsync(path, cancellationToken);
 
     /// <summary>
     /// Detects the on-disk encryption format of the database in <paramref name="stream"/>
@@ -1434,42 +1423,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// <param name="stream">A readable, seekable stream containing the database bytes.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> yielding the detected format.</returns>
-    public static async ValueTask<AccessEncryptionFormat> DetectEncryptionFormatAsync(
+    public static ValueTask<AccessEncryptionFormat> DetectEncryptionFormatAsync(
         Stream stream,
         CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(stream, nameof(stream));
-        if (!stream.CanRead || !stream.CanSeek)
-        {
-            throw new ArgumentException("Stream must be readable and seekable.", nameof(stream));
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        long origin = stream.Position;
-        try
-        {
-            _ = stream.Seek(0, SeekOrigin.Begin);
-            byte[] sniff = new byte[0x80];
-            int read = 0;
-            while (read < sniff.Length)
-            {
-                int got = await stream.ReadAsync(sniff.AsMemory(read, sniff.Length - read), cancellationToken).ConfigureAwait(false);
-                if (got == 0)
-                {
-                    break;
-                }
-
-                read += got;
-            }
-
-            return EncryptionConverter.Detect(sniff);
-        }
-        finally
-        {
-            _ = stream.Seek(origin, SeekOrigin.Begin);
-        }
-    }
+        => EncryptionManager.DetectEncryptionFormatAsync(stream, cancellationToken);
 
     /// <summary>
     /// Changes the password of an already-encrypted JET / ACE database in place,
@@ -1493,18 +1450,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         string newPassword,
         AccessWriterOptions? options = null,
         CancellationToken cancellationToken = default)
-    {
-        Guard.NotNullOrEmpty(path, nameof(path));
-        Guard.NotNullOrEmpty(newPassword, nameof(newPassword));
-        return ReencryptFileAsync(
-            path,
-            oldPassword,
-            newPassword,
-            targetFormat: null,
-            requireSourceEncrypted: true,
-            options,
-            cancellationToken);
-    }
+        => EncryptionManager.ChangePasswordAsync(path, oldPassword, newPassword, options, cancellationToken);
 
     /// <summary>
     /// Encrypts a currently-unencrypted JET / ACE database in place, applying the
@@ -1528,25 +1474,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         AccessEncryptionFormat targetFormat,
         AccessWriterOptions? options = null,
         CancellationToken cancellationToken = default)
-    {
-        Guard.NotNullOrEmpty(path, nameof(path));
-        Guard.NotNullOrEmpty(newPassword, nameof(newPassword));
-        if (targetFormat == AccessEncryptionFormat.None)
-        {
-            throw new ArgumentException(
-                "Target format must not be None. Use DecryptAsync to remove encryption.",
-                nameof(targetFormat));
-        }
-
-        return ReencryptFileAsync(
-            path,
-            oldPassword: null,
-            newPassword,
-            targetFormat,
-            requireSourceEncrypted: false,
-            options,
-            cancellationToken);
-    }
+        => EncryptionManager.EncryptAsync(path, newPassword, targetFormat, options, cancellationToken);
 
     /// <summary>
     /// Removes encryption from a JET / ACE database in place, leaving an
@@ -1564,17 +1492,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         string oldPassword,
         AccessWriterOptions? options = null,
         CancellationToken cancellationToken = default)
-    {
-        Guard.NotNullOrEmpty(path, nameof(path));
-        return ReencryptFileAsync(
-            path,
-            oldPassword,
-            newPassword: null,
-            targetFormat: AccessEncryptionFormat.None,
-            requireSourceEncrypted: true,
-            options,
-            cancellationToken);
-    }
+        => EncryptionManager.DecryptAsync(path, oldPassword, options, cancellationToken);
 
     /// <summary>
     /// Stream-based equivalent of
@@ -1592,17 +1510,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         string oldPassword,
         string newPassword,
         CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(stream, nameof(stream));
-        Guard.NotNullOrEmpty(newPassword, nameof(newPassword));
-        return ReencryptStreamAsync(
-            stream,
-            oldPassword,
-            newPassword,
-            targetFormat: null,
-            requireSourceEncrypted: true,
-            cancellationToken);
-    }
+        => EncryptionManager.ChangePasswordAsync(stream, oldPassword, newPassword, cancellationToken);
 
     /// <summary>
     /// Stream-based equivalent of
@@ -1618,24 +1526,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         string newPassword,
         AccessEncryptionFormat targetFormat,
         CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(stream, nameof(stream));
-        Guard.NotNullOrEmpty(newPassword, nameof(newPassword));
-        if (targetFormat == AccessEncryptionFormat.None)
-        {
-            throw new ArgumentException(
-                "Target format must not be None. Use DecryptAsync to remove encryption.",
-                nameof(targetFormat));
-        }
-
-        return ReencryptStreamAsync(
-            stream,
-            oldPassword: null,
-            newPassword,
-            targetFormat,
-            requireSourceEncrypted: false,
-            cancellationToken);
-    }
+        => EncryptionManager.EncryptAsync(stream, newPassword, targetFormat, cancellationToken);
 
     /// <summary>
     /// Stream-based equivalent of
@@ -1649,154 +1540,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Stream stream,
         string oldPassword,
         CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(stream, nameof(stream));
-        return ReencryptStreamAsync(
-            stream,
-            oldPassword,
-            newPassword: null,
-            targetFormat: AccessEncryptionFormat.None,
-            requireSourceEncrypted: true,
-            cancellationToken);
-    }
-
-    private static async ValueTask ReencryptFileAsync(
-        string path,
-        string? oldPassword,
-        string? newPassword,
-        AccessEncryptionFormat? targetFormat,
-        bool requireSourceEncrypted,
-        AccessWriterOptions? options,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException($"Database file not found: {path}", path);
-        }
-
-        // Honour any existing lockfile while we rewrite. `using` releases the
-        // slot on every exit path; AcquireThen/DisposeAfterAsync would force
-        // either an empty setup-lambda or wrap the entire async body in a
-        // cleanup-named call, both of which obscure the intent here.
-        using var lockFile = LockFileCoordinator.ForReencrypt(path, options);
-        lockFile.Acquire();
-
-        byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-        await using var sourceStream = new MemoryStream(sourceBytes, writable: false);
-
-        byte[] result = await ReencryptCoreAsync(
-            sourceStream,
-            oldPassword,
-            newPassword,
-            targetFormat,
-            requireSourceEncrypted,
-            cancellationToken).ConfigureAwait(false);
-
-        await ReplaceFileAtomicAsync(path, result, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Writes <paramref name="contents"/> to a sibling temp file and atomically
-    /// replaces <paramref name="path"/>. Falls back to delete-then-move on
-    /// platforms / filesystems that reject <see cref="File.Replace(string, string, string?, bool)"/>.
-    /// </summary>
-    private static async ValueTask ReplaceFileAtomicAsync(string path, byte[] contents, CancellationToken cancellationToken)
-    {
-        string tempPath = path + ".reenc-" + Guid.NewGuid().ToString("N") + ".tmp";
-        await using (var fs = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
-        {
-            await fs.WriteAsync(contents.AsMemory(), cancellationToken).ConfigureAwait(false);
-            await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        try
-        {
-            File.Replace(tempPath, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
-        }
-        catch (PlatformNotSupportedException)
-        {
-            // Some filesystems / platforms don't support File.Replace.
-            File.Delete(path);
-            File.Move(tempPath, path);
-        }
-        catch (IOException)
-        {
-            // Fallback for filesystems that reject Replace (e.g. across volumes).
-            File.Delete(path);
-            File.Move(tempPath, path);
-        }
-    }
-
-    private static async ValueTask ReencryptStreamAsync(
-        Stream stream,
-        string? oldPassword,
-        string? newPassword,
-        AccessEncryptionFormat? targetFormat,
-        bool requireSourceEncrypted,
-        CancellationToken cancellationToken)
-    {
-        Guard.NotNull(stream, nameof(stream));
-        if (!stream.CanRead || !stream.CanWrite || !stream.CanSeek)
-        {
-            throw new ArgumentException("Stream must be readable, writable, and seekable.", nameof(stream));
-        }
-
-        byte[] result = await ReencryptCoreAsync(
-            stream,
-            oldPassword,
-            newPassword,
-            targetFormat,
-            requireSourceEncrypted,
-            cancellationToken).ConfigureAwait(false);
-
-        _ = stream.Seek(0, SeekOrigin.Begin);
-        await stream.WriteAsync(result.AsMemory(), cancellationToken).ConfigureAwait(false);
-        stream.SetLength(result.Length);
-        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async ValueTask<byte[]> ReencryptCoreAsync(
-        Stream source,
-        string? oldPassword,
-        string? newPassword,
-        AccessEncryptionFormat? targetFormat,
-        bool requireSourceEncrypted,
-        CancellationToken cancellationToken)
-    {
-        ReadOnlyMemory<char> oldPwd = oldPassword.AsMemory();
-        ReadOnlyMemory<char> newPwd = newPassword.AsMemory();
-
-        // Peek the format up front so EncryptAsync / DecryptAsync /
-        // ChangePasswordAsync produce a clear InvalidOperationException
-        // (instead of an UnauthorizedAccessException from the decrypt
-        // step) when the source file is in the wrong state for the
-        // requested operation.
-        long origPos = source.Position;
-        AccessEncryptionFormat detectedFormat = await DetectEncryptionFormatAsync(source, cancellationToken).ConfigureAwait(false);
-        _ = source.Seek(origPos, SeekOrigin.Begin);
-
-        if (requireSourceEncrypted && detectedFormat == AccessEncryptionFormat.None)
-        {
-            throw new InvalidOperationException(
-                "The source database is not encrypted. Use EncryptAsync to add a password.");
-        }
-
-        if (!requireSourceEncrypted && detectedFormat != AccessEncryptionFormat.None)
-        {
-            throw new InvalidOperationException(
-                $"The source database is already encrypted ({detectedFormat}). Use ChangePasswordAsync or DecryptAsync.");
-        }
-
-        (byte[] plaintext, AccessEncryptionFormat sourceFormat) = await EncryptionConverter
-            .ReadDecryptedAsync(source, oldPwd, cancellationToken)
-            .ConfigureAwait(false);
-
-        // Default target = same as source when caller didn't override.
-        AccessEncryptionFormat effectiveTarget = targetFormat ?? sourceFormat;
-        return EncryptionConverter.ApplyEncryption(plaintext, effectiveTarget, newPwd);
-    }
+        => EncryptionManager.DecryptAsync(stream, oldPassword, cancellationToken);
 
     /// <summary>
     /// Begins an explicit page-buffered transaction against this writer. While
