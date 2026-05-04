@@ -7,9 +7,10 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Internal;
-using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using Xunit;
 
 #pragma warning disable SA1202 // Tests intentionally interleave public test methods with private fixture helpers.

@@ -3,6 +3,8 @@ namespace JetDatabaseWriter.Internal.Models;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
 internal sealed class TableDef

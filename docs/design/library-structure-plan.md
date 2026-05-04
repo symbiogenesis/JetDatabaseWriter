@@ -435,21 +435,23 @@ Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then 
 
 > **Completed:** Namespaces changed from `JetDatabaseWriter.Internal` → `JetDatabaseWriter.Indexes`, `JetDatabaseWriter.Internal.Builders` (index builders) → `JetDatabaseWriter.Indexes`, `JetDatabaseWriter.Internal.Helpers` (IndexHelpers) → `JetDatabaseWriter.Indexes.Helpers`, `JetDatabaseWriter.Internal` (collation encoders) → `JetDatabaseWriter.Indexes.Collation`, and `JetDatabaseWriter.Internal.Models` (index models) → `JetDatabaseWriter.Indexes.Models`. All `using` statements updated in library, test, benchmark, and probe projects. Using aliases for `IndexLayout` nested types updated in `AccessWriter` and `IndexMaintainer`.
 
-### Phase F — Schema (DDL, column type info, TDef building)
+### Phase F — Schema (DDL, column type info, TDef building) ✅
 
-| # | Action | From | To |
-|--:|--------|------|-----|
-| 47 | Move | `Internal/Builders/TDefPageBuilder.cs` | `Schema/TDefPageBuilder.cs` |
-| 48 | Move | `Internal/Builders/ColumnPropertyBlockBuilder.cs` | `Schema/ColumnPropertyBlockBuilder.cs` |
-| 49 | Move | `Internal/JetTypeInfo.cs` | `Schema/JetTypeInfo.cs` |
-| 50 | Move | `Internal/JetExpressionConverter.cs` | `Schema/JetExpressionConverter.cs` |
-| 51 | Move | `Internal/Helpers/CalculatedColumnUtil.cs` | `Schema/CalculatedColumnUtil.cs` |
-| 52 | Move | `Internal/Models/ColumnInfo.cs` | `Schema/Models/ColumnInfo.cs` |
-| 53 | Move | `Internal/Models/ColumnPropertyBlock.cs` | `Schema/Models/ColumnPropertyBlock.cs` |
-| 54 | Move | `Internal/Models/ColumnPropertyEntry.cs` | `Schema/Models/ColumnPropertyEntry.cs` |
-| 55 | Move | `Internal/Models/ColumnPropertyTarget.cs` | `Schema/Models/ColumnPropertyTarget.cs` |
-| 56 | Move | `Internal/Models/ColumnPropertyChunkType.cs` | `Schema/Models/ColumnPropertyChunkType.cs` |
-| 57 | Move | `Internal/Models/ColumnPropertyUnknownChunk.cs` | `Schema/Models/ColumnPropertyUnknownChunk.cs` |
+| # | Action | From | To | Status |
+|--:|--------|------|-----|--------|
+| 47 | Move | `Internal/Builders/TDefPageBuilder.cs` | `Schema/TDefPageBuilder.cs` | ✅ |
+| 48 | Move | `Internal/Builders/ColumnPropertyBlockBuilder.cs` | `Schema/ColumnPropertyBlockBuilder.cs` | ✅ |
+| 49 | Move | `Internal/JetTypeInfo.cs` | `Schema/JetTypeInfo.cs` | ✅ |
+| 50 | Move | `Internal/JetExpressionConverter.cs` | `Schema/JetExpressionConverter.cs` | ✅ |
+| 51 | Move | `Internal/Helpers/CalculatedColumnUtil.cs` | `Schema/CalculatedColumnUtil.cs` | ✅ |
+| 52 | Move | `Internal/Models/ColumnInfo.cs` | `Schema/Models/ColumnInfo.cs` | ✅ |
+| 53 | Move | `Internal/Models/ColumnPropertyBlock.cs` | `Schema/Models/ColumnPropertyBlock.cs` | ✅ |
+| 54 | Move | `Internal/Models/ColumnPropertyEntry.cs` | `Schema/Models/ColumnPropertyEntry.cs` | ✅ |
+| 55 | Move | `Internal/Models/ColumnPropertyTarget.cs` | `Schema/Models/ColumnPropertyTarget.cs` | ✅ |
+| 56 | Move | `Internal/Models/ColumnPropertyChunkType.cs` | `Schema/Models/ColumnPropertyChunkType.cs` | ✅ |
+| 57 | Move | `Internal/Models/ColumnPropertyUnknownChunk.cs` | `Schema/Models/ColumnPropertyUnknownChunk.cs` | ✅ |
+
+> **Completed:** Namespaces changed from `JetDatabaseWriter.Internal.Builders` (TDefPageBuilder, ColumnPropertyBlockBuilder) → `JetDatabaseWriter.Schema`, `JetDatabaseWriter.Internal` (JetTypeInfo, JetExpressionConverter) → `JetDatabaseWriter.Schema`, `JetDatabaseWriter.Internal.Helpers` (CalculatedColumnUtil) → `JetDatabaseWriter.Schema`, and `JetDatabaseWriter.Internal.Models` (ColumnInfo, ColumnProperty* files) → `JetDatabaseWriter.Schema.Models`. All `using` statements updated in library, test, benchmark, and probe projects. `cref` references in Constants.cs updated. `Internal/Helpers/` now contains only `DecimalNumeric.cs`.
 
 ### Phase G — Catalog (system-table access)
 

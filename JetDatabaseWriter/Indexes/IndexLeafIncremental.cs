@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Schema;
 
 /// <summary>
 /// Single-leaf fast-path helper: in-place incremental insert and delete

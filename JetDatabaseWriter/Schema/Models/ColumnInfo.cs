@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal.Models;
+namespace JetDatabaseWriter.Schema.Models;
 
 using static JetDatabaseWriter.Constants.ColumnTypes;
 

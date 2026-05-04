@@ -25,6 +25,8 @@ using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Relationships;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 

@@ -9,6 +9,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
 /// <summary>

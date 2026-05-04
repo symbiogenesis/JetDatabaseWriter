@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
 /// Encapsulates the per-format byte offsets and entry sizes for a TDEF

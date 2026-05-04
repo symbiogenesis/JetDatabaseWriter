@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Schema.Models;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper

@@ -22,9 +22,10 @@ using JetDatabaseWriter;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
-using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 
 internal static class LongRowBisect
 {

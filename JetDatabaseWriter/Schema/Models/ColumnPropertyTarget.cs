@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal.Models;
+namespace JetDatabaseWriter.Schema.Models;
 
 using System;
 using System.Collections.Generic;
