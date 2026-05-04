@@ -355,17 +355,25 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         using var operation = EnterOperation();
         var dt = new DataTable("Tables");
-        _ = dt.Columns.Add("TableName", typeof(string));
-        _ = dt.Columns.Add("RowCount", typeof(long));
-        _ = dt.Columns.Add("ColumnCount", typeof(int));
-
-        List<TableStat> stats = await GetTableStatsAsync(cancellationToken).ConfigureAwait(false);
-        foreach (TableStat s in stats)
+        try
         {
-            _ = dt.Rows.Add(s.Name, s.RowCount, s.ColumnCount);
-        }
+            _ = dt.Columns.Add("TableName", typeof(string));
+            _ = dt.Columns.Add("RowCount", typeof(long));
+            _ = dt.Columns.Add("ColumnCount", typeof(int));
 
-        return dt;
+            List<TableStat> stats = await GetTableStatsAsync(cancellationToken).ConfigureAwait(false);
+            foreach (TableStat s in stats)
+            {
+                _ = dt.Rows.Add(s.Name, s.RowCount, s.ColumnCount);
+            }
+
+            return dt;
+        }
+        catch
+        {
+            dt.Dispose();
+            throw;
+        }
     }
 
     /// <inheritdoc/>
