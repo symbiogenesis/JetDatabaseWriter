@@ -21,6 +21,30 @@ internal static class NameCleaner
 
     internal static string SanitizeToPascalCase(string raw)
     {
+        if (raw.Length == 0)
+        {
+            return "Unknown";
+        }
+
+        // Fast path: if already a valid PascalCase identifier, return as-is.
+        if (char.IsUpper(raw[0]))
+        {
+            bool clean = true;
+            for (int i = 1; i < raw.Length; i++)
+            {
+                if (!char.IsLetterOrDigit(raw[i]))
+                {
+                    clean = false;
+                    break;
+                }
+            }
+
+            if (clean)
+            {
+                return raw;
+            }
+        }
+
         // Reserve index 0 for a possible '_' prefix when the first char is a digit.
         Span<char> buffer = raw.Length < 128
             ? stackalloc char[raw.Length + 1]
