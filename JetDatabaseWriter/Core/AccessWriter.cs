@@ -3768,6 +3768,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
 
             page[o + _colDesc.TypeOff] = col.Type;
+
+            // Jet4/ACE column descriptors carry the format-wide magic 0x00000659
+            // in bytes 1..4 (immediately after the type byte). DAO's TDEF
+            // validation checks this during CompactDatabase; leaving it zero
+            // causes err 3011 "MSysDb". Jet3 has no such field (col_num is at
+            // offset 1 there).
+            if (jet4)
+            {
+                Wi32(page, o + 1, Constants.TableDefinition.Jet4FormatMagic);
+            }
+
             Wu16(page, o + _colDesc.NumOff, col.ColNum);
             Wu16(page, o + _colDesc.VarOff, col.VarIdx);
             page[o + _colDesc.FlagsOff] = col.Flags;
@@ -3844,11 +3855,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 ResolvedIndex ri = indexes[i];
 
                 // ── Real-index physical descriptor ─────────────────────────
-                // §3.1 Jet4 (52 bytes): unknown(4) + col_map(30) + used_pages(4)
+                // §3.1 Jet4 (52 bytes): magic(4) + col_map(30) + used_pages(4)
                 //                     + first_dp(4) + flags(1) + unknown(9).
-                // §3.1 Jet3 (39 bytes): unknown(4) + col_map(30) + first_dp(4)
+                // §3.1 Jet3 (39 bytes): col_map(30) + used_pages(4) + first_dp(4)
                 //                     + flags(1).
                 int phys = _indexLayout.RealIdxPhysOffset(realIdxPhysStart, i);
+
+                // Jet4/ACE real-idx physical descriptors begin with a 4-byte
+                // format magic cookie (0x00000659). DAO checks this during
+                // CompactDatabase; zero causes err 3011.
+                if (jet4)
+                {
+                    Wi32(page, phys, Constants.TableDefinition.Jet4FormatMagic);
+                }
 
                 // col_map: 10 × { col_num(2), col_order(1) }. First N slots = our
                 // key columns (per-column ascending/descending), remaining
@@ -3900,11 +3919,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 firstDpOffsets[i] = _indexLayout.FirstDpAbsoluteOffset(phys);
 
                 // ── Logical-index entry ─────────────────────────────────────
-                // §3.2 Jet4 (28 bytes): unknown(4) + index_num(4) + index_num2(4)
+                // §3.2 Jet4 (28 bytes): magic(4) + index_num(4) + index_num2(4)
                 //   + rel_tbl_type(1) + rel_idx_num(4) + rel_tbl_page(4)
                 //   + cascade_ups(1) + cascade_dels(1) + index_type(1) + trailing(4).
                 // §3.2 Jet3 (20 bytes): same fields, no leading cookie / trailing tail.
                 int log = _indexLayout.LogicalIdxFieldsOffset(logIdxStart, i);
+
+                // Jet4/ACE logical-idx entries begin with a 4-byte format magic
+                // cookie (0x00000659). DAO checks this during CompactDatabase.
+                if (jet4)
+                {
+                    Wi32(page, log - _indexLayout.LogicalEntryFieldsOffset, Constants.TableDefinition.Jet4FormatMagic);
+                }
+
                 Wi32(page, log + IndexLayout.IndexNumFieldOffset, i);     // index_num
                 Wi32(page, log + IndexLayout.IndexNum2FieldOffset, i);    // index_num2 (one real per logical)
                 Wi32(page, log + IndexLayout.RelIdxNumFieldOffset, -1);   // rel_idx_num = 0xFFFFFFFF (not a FK)
@@ -3953,7 +3980,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // See docs/design/round-trip-test-failures.md.
         if (jet4)
         {
-            Wi32(page, 0x0C, 0x00000659);
+            Wi32(page, 0x0C, Constants.TableDefinition.Jet4FormatMagic);
 
             // TDEF offset 2..3 (Jet4/ACE only): free-space hint = page_size - tdef_len - 8.
             // Every Access-authored TDEF in NorthwindTraders.accdb (52/52) carries this
@@ -4275,6 +4302,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             int o = colStart + (i * colDescSz);
 
             db[o + colTypeOff] = col.Type;
+
+            // Jet4/ACE column descriptors carry 0x00000659 in bytes 1..4
+            // (same format magic as the TDEF header offset 0x0C). Jet3 has
+            // no such field (col_num is at offset 1).
+            if (!isJet3)
+            {
+                Wi32(db, o + 1, Constants.TableDefinition.Jet4FormatMagic);
+            }
+
             Wu16(db, o + colNumOff, col.ColNum);
             Wu16(db, o + colVarOff, col.VarIdx);
             db[o + colFlagsOff] = col.Flags;
@@ -4306,7 +4342,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // See BuildTDefPageWithIndexOffsets / docs/design/round-trip-test-failures.md.
         if (!isJet3)
         {
-            Wi32(db, offset + 0x0C, 0x00000659);
+            Wi32(db, offset + 0x0C, Constants.TableDefinition.Jet4FormatMagic);
 
             // TDEF offset 2..3 (Jet4/ACE only): free-space hint = page_size - tdef_len - 8.
             int tdefLen = Math.Max(0, namePos - offset - 8);

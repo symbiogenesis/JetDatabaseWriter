@@ -629,6 +629,17 @@ internal static class Constants
         public const byte UnknownIndexFlag = 0x80;
 
         /// <summary>
+        /// Jet4/ACE format-wide magic cookie stamped at the start of every
+        /// column descriptor (bytes 1..4), real-idx physical descriptor
+        /// (bytes 0..3), logical-idx entry (bytes 0..3), and in the TDEF
+        /// header at offset <c>0x0C</c>. DAO's TDEF-validation pass during
+        /// <c>CompactDatabase</c> checks this value; omitting it causes
+        /// err 3011 "could not find object 'MSysDb'". Jet3 does not use
+        /// this field.
+        /// </summary>
+        public const int Jet4FormatMagic = 0x00000659;
+
+        /// <summary>
         /// Number of <c>col_map</c> slots in a real-idx physical descriptor
         /// (always 10). Format-invariant across Jet3 and Jet4/ACE.
         /// </summary>
