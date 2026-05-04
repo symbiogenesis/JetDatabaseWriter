@@ -651,7 +651,7 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 
 ## Encryption Support
 
-All password-protected formats produced by Microsoft Access from Access 97 through Microsoft 365 are fully **read- and write-supported**. Supply the password via [`AccessReaderOptions.Password`](JetDatabaseWriter/Core/AccessReaderOptions.cs) or [`AccessWriterOptions.Password`](JetDatabaseWriter/Core/AccessWriterOptions.cs); the format is auto-detected from the file header.
+All password-protected formats produced by Microsoft Access from Access 97 through Microsoft 365 are fully **read- and write-supported**. Supply the password via [`AccessReaderOptions.Password`](JetDatabaseWriter/AccessReaderOptions.cs) or [`AccessWriterOptions.Password`](JetDatabaseWriter/AccessWriterOptions.cs); the format is auto-detected from the file header.
 
 - **In-place mutation.** All formats (Jet3 XOR, Jet4 RC4, ACCDB legacy `;pwd=`, AES-128 CFB-wrapped, and Office Crypto API "Agile") are writable in place — modified pages are re-encrypted on flush, and Agile containers are re-emitted on `DisposeAsync`.
 - **Encryption mutation APIs.** `AccessWriter.EncryptAsync(path, password, AccessEncryptionFormat, …)`, `AccessWriter.DecryptAsync(path, password, …)`, and `AccessWriter.ChangePasswordAsync(path, oldPassword, newPassword, …)` add, remove, or rotate encryption (and switch formats) on an existing file. Use `AccessWriter.DetectEncryptionFormatAsync(path)` to discover the current format.

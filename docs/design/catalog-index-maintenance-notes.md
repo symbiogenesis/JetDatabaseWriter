@@ -74,7 +74,7 @@ The full-rebuild `InsertSystemRowAndMaintainAsync` path was rejected for a separ
 
 Per-leaf entry format follows the standard rules in [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4: `entry_start` bitmask + sort-key bytes + 4-byte row pointer (`page << 8 | row_index_within_page`). Page-shared prefix compression (§4.4.1, `pref_len` header field) is the only compression scheme; the previously-suspected per-entry incremental scheme does not exist (§4.4.2).
 
-The Text column `Name` uses the **General Legacy** text encoder (`JetDatabaseWriter/Internal/GeneralLegacyTextIndexEncoder.cs`). That encoder is already shipped and exercised by user-table indexes; it is reusable here.
+The Text column `Name` uses the **General Legacy** text encoder (`JetDatabaseWriter/Indexes/Collation/GeneralLegacyTextIndexEncoder.cs`). That encoder is already shipped and exercised by user-table indexes; it is reusable here.
 
 ## 4. Design as shipped
 
