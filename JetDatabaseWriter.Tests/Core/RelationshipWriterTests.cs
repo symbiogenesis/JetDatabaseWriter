@@ -26,7 +26,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_SingleColumn_AppendsOneMSysRelationshipsRow()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("Parent");
         string child = MakeTableName("Child");
@@ -63,7 +63,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_MultiColumn_AppendsOneRowPerColumn()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("MParent");
         string child = MakeTableName("MChild");
@@ -106,7 +106,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_CascadeAndNoEnforce_EncodesGrbitFlags()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("CParent");
         string child = MakeTableName("CChild");
@@ -140,7 +140,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_DuplicateName_Throws()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("DParent");
         string child = MakeTableName("DChild");
@@ -160,7 +160,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_UnknownTable_Throws()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("UParent");
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
@@ -175,7 +175,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_UnknownColumn_Throws()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("EParent");
         string child = MakeTableName("EChild");
@@ -236,7 +236,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_SingleColumn_EmitsFkLogicalIdxEntriesOnBothSides()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("BParent");
         string child = MakeTableName("BChild");
@@ -278,7 +278,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_CascadeFlags_OnFkSideOnly()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("CFParent");
         string child = MakeTableName("CFChild");
@@ -317,7 +317,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_MultiColumn_EmitsFkLogicalIdxEntriesOnBothSides()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("MBParent");
         string child = MakeTableName("MBChild");
@@ -357,7 +357,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_RealIdxSharing_ReusesExistingPkIndex()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string parent = MakeTableName("SParent");
         string child = MakeTableName("SChild");
@@ -392,7 +392,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateRelationshipAsync_SelfReferential_DistinctIndexNames()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         string table = MakeTableName("SelfRef");
         string relName = $"FK_{table}_{table}";
@@ -443,14 +443,5 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     {
         stream.Position = 0;
         return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken);
-    }
-
-    private async ValueTask<MemoryStream> CopyToStreamAsync(string sourcePath)
-    {
-        byte[] bytes = await db.GetFileAsync(sourcePath, TestContext.Current.CancellationToken);
-        var ms = new MemoryStream();
-        await ms.WriteAsync(bytes, TestContext.Current.CancellationToken);
-        ms.Position = 0;
-        return ms;
     }
 }

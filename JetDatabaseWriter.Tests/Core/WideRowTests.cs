@@ -28,7 +28,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task WideRows_RoundTrip_ReturnsAllRows(string path)
     {
-        await using var ms = await CopyToStreamAsync(path);
+        await using var ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         if (!IsJet4(ms))
         {
             return; // wide-row layout under test only applies to Jet4/ACE
@@ -71,7 +71,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task WideRows_GetRealRowCount_MatchesInsertCount(string path)
     {
-        await using var ms = await CopyToStreamAsync(path);
+        await using var ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         if (!IsJet4(ms))
         {
             return;
@@ -107,7 +107,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task WideRows_StreamRows_YieldsAllRows(string path)
     {
-        await using var ms = await CopyToStreamAsync(path);
+        await using var ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         if (!IsJet4(ms))
         {
             return;
@@ -146,7 +146,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     public async Task WideRows_CellValues_AreRoundTripped(string path)
     {
         // Verify that the actual cell values survive a wide-row round-trip.
-        await using var ms = await CopyToStreamAsync(path);
+        await using var ms = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         if (!IsJet4(ms))
         {
             return;
@@ -305,14 +305,5 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     {
         stream.Position = 0;
         return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken);
-    }
-
-    private async ValueTask<MemoryStream> CopyToStreamAsync(string sourcePath)
-    {
-        byte[] bytes = await db.GetFileAsync(sourcePath, TestContext.Current.CancellationToken);
-        var ms = new MemoryStream();
-        await ms.WriteAsync(bytes, TestContext.Current.CancellationToken);
-        ms.Position = 0;
-        return ms;
     }
 }

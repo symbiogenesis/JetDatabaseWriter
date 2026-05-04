@@ -24,7 +24,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Insert_WithEnforce_RejectsRowReferencingMissingParent()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
@@ -44,7 +44,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Insert_WithEnforce_AllowsRowWhenParentExists()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
@@ -67,7 +67,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Insert_WithNullForeignKey_IsAllowed()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
@@ -89,7 +89,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Insert_WithEnforceDisabled_AllowsAnyValue()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
@@ -116,7 +116,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Insert_BulkSelfReferential_LaterRowsCanReferenceEarlierRows()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string table = MakeTableName("Tree");
 
         await using (var writer = await OpenWriterAsync(temp))
@@ -148,7 +148,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Update_FkSide_RejectsChangeToMissingParent()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
@@ -174,7 +174,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Delete_PkSide_WithoutCascade_RejectsWhenChildrenExist()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
@@ -195,7 +195,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Delete_PkSide_WithCascade_DeletesChildren()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
@@ -230,7 +230,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Update_PkSide_WithoutCascade_RejectsKeyChangeWhenChildrenReference()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
@@ -256,7 +256,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Update_PkSide_WithCascade_PropagatesNewKeyToChildren()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("P");
         string child = MakeTableName("C");
 
@@ -309,7 +309,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // repoint; this test isolates the parent-side observation: after
         // updating the parent row's PK, reopen the file and assert the
         // parent table now exposes only the new PK value.
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("UPP");
         string child = MakeTableName("UPC");
 
@@ -380,7 +380,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Insert_MultiColumnFk_EnforcesAllColumns()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("MP");
         string child = MakeTableName("MC");
 
@@ -418,7 +418,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task InsertRows_WithFkViolationDeepInBatch_RollsBackEntireBatch()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("AP");
         string child = MakeTableName("AC");
 
@@ -489,7 +489,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // a child row whose FK matches a parent key buried deep in the
         // table. The seek path must find it without loading every parent
         // row into memory; functional verification only.
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("BP");
         string child = MakeTableName("BC");
 
@@ -534,7 +534,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // string equality (BuildCompositeKey/AppendNormalized); the seeker
         // path now relies on the byte-identical encoding round-trip that
         // the writer uses when building the leaf.
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("TP");
         string child = MakeTableName("TC");
 
@@ -567,7 +567,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // (FkContext.SeekIndexes) is reused across rows and (2) self-ref
         // pending tracking does not accidentally reject a real parent key
         // that is also the FK column of a previously-inserted child.
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("BP");
         string child = MakeTableName("BC");
 
@@ -610,7 +610,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // O(N) child snapshot scan. Functional verification only — proves the
         // post-state is correct at scale; the snapshot fallback would also
         // pass this test.
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("DP");
         string child = MakeTableName("DC");
 
@@ -662,7 +662,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         // cascade-update via child-side index-seek. Move PK 7 → 999 and
         // assert all children that referenced 7 now reference 999, and the
         // rest are unchanged.
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string parent = MakeTableName("UP");
         string child = MakeTableName("UC");
 
@@ -733,7 +733,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     [Fact]
     public async Task Update_SelfReferentialFk_WithCascade_PropagatesToChildRowsInSameTable()
     {
-        var temp = await CopyToStreamAsync(TestDatabases.NorthwindTraders);
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string tbl = MakeTableName("SR");
 
         await using (var writer = await OpenWriterAsync(temp))
@@ -822,14 +822,5 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     {
         stream.Position = 0;
         return AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true);
-    }
-
-    private async ValueTask<MemoryStream> CopyToStreamAsync(string sourcePath)
-    {
-        byte[] bytes = await db.GetFileAsync(sourcePath, TestContext.Current.CancellationToken);
-        var ms = new MemoryStream();
-        await ms.WriteAsync(bytes, TestContext.Current.CancellationToken);
-        ms.Position = 0;
-        return ms;
     }
 }
