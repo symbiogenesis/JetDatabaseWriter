@@ -47,8 +47,7 @@ in [GeneralAndGeneral97EncoderUnitTests.cs](../../JetDatabaseWriter.Tests/Intern
   single-column long keys in V2010 `binIdxTest` and Memo-keyed indexes via
   [IndexCodesAggregateDiagnosticTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexCodesAggregateDiagnosticTests.cs)
   also still run un-asserted for the same reason. See
-  [long-row-index-encoding-investigation.md](long-row-index-encoding-investigation.md)
-  and [long-row-index-encoding-resolution.md](long-row-index-encoding-resolution.md).
+  [long-row-index-encoding.md](long-row-index-encoding.md).
 
 ### 1.2 Numeric / temporal / binary keys
 
