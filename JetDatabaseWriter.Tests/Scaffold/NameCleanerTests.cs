@@ -93,4 +93,70 @@ public class NameCleanerTests
     {
         Assert.Equal("ABCDef", NameCleaner.ToClassName("a_b-c.def"));
     }
+
+    [Theory]
+    [InlineData("_table", "Table")]
+    [InlineData("__double", "Double")]
+    [InlineData("-leading-dash", "LeadingDash")]
+    public void ToClassName_Leading_Separators_Do_Not_Produce_Extra_Capitals(string input, string expected)
+    {
+        Assert.Equal(expected, NameCleaner.ToClassName(input));
+    }
+
+    [Theory]
+    [InlineData("table_", "Table")]
+    [InlineData("name-", "Name")]
+    [InlineData("end.", "End")]
+    public void ToClassName_Trailing_Separators_Are_Ignored(string input, string expected)
+    {
+        Assert.Equal(expected, NameCleaner.ToClassName(input));
+    }
+
+    [Theory]
+    [InlineData("a", "A")]
+    [InlineData("Z", "Z")]
+    [InlineData("5", "_5")]
+    public void ToClassName_Single_Character_Input(string input, string expected)
+    {
+        Assert.Equal(expected, NameCleaner.ToClassName(input));
+    }
+
+    [Fact]
+    public void ToClassName_Long_Input_Uses_Heap_Allocation()
+    {
+        // Names >= 128 chars exercise the heap-allocated array path
+        string longName = new string('a', 130);
+        string result = NameCleaner.ToClassName(longName);
+        Assert.Equal("A" + new string('a', 129), result);
+    }
+
+    [Theory]
+    [InlineData("123", "_123")]
+    [InlineData("0abc", "_0abc")]
+    public void ToPropertyName_Prefixes_Underscore_When_Starts_With_Digit(string input, string expected)
+    {
+        Assert.Equal(expected, NameCleaner.ToPropertyName(input));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("...")]
+    [InlineData("_ _ _")]
+    public void ToPropertyName_Returns_Unknown_For_Unsanitizable_Input(string input)
+    {
+        Assert.Equal("Unknown", NameCleaner.ToPropertyName(input));
+    }
+
+    [Fact]
+    public void SanitizeToPascalCase_Uppercases_After_Each_Separator_Type()
+    {
+        Assert.Equal("ABCD", NameCleaner.SanitizeToPascalCase("a b-c.d"));
+    }
+
+    [Fact]
+    public void SanitizeToPascalCase_Preserves_Existing_Casing_Mid_Word()
+    {
+        // Only the first char after a boundary is capitalized; others are left as-is
+        Assert.Equal("MyHTTPClient", NameCleaner.SanitizeToPascalCase("my_hTTPClient"));
+    }
 }
