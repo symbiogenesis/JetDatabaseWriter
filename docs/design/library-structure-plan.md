@@ -453,13 +453,15 @@ Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then 
 
 > **Completed:** Namespaces changed from `JetDatabaseWriter.Internal.Builders` (TDefPageBuilder, ColumnPropertyBlockBuilder) → `JetDatabaseWriter.Schema`, `JetDatabaseWriter.Internal` (JetTypeInfo, JetExpressionConverter) → `JetDatabaseWriter.Schema`, `JetDatabaseWriter.Internal.Helpers` (CalculatedColumnUtil) → `JetDatabaseWriter.Schema`, and `JetDatabaseWriter.Internal.Models` (ColumnInfo, ColumnProperty* files) → `JetDatabaseWriter.Schema.Models`. All `using` statements updated in library, test, benchmark, and probe projects. `cref` references in Constants.cs updated. `Internal/Helpers/` now contains only `DecimalNumeric.cs`.
 
-### Phase G — Catalog (system-table access)
+### Phase G — Catalog (system-table access) ✅
 
-| # | Action | From | To |
-|--:|--------|------|-----|
-| 58 | Move | `Internal/Models/CatalogEntry.cs` | `Catalog/Models/CatalogEntry.cs` |
-| 59 | Move | `Internal/Models/CatalogRow.cs` | `Catalog/Models/CatalogRow.cs` |
-| 60 | Move | `Internal/Models/TableDef.cs` | `Catalog/Models/TableDef.cs` |
+| # | Action | From | To | Status |
+|--:|--------|------|-----|--------|
+| 58 | Move | `Internal/Models/CatalogEntry.cs` | `Catalog/Models/CatalogEntry.cs` | ✅ |
+| 59 | Move | `Internal/Models/CatalogRow.cs` | `Catalog/Models/CatalogRow.cs` | ✅ |
+| 60 | Move | `Internal/Models/TableDef.cs` | `Catalog/Models/TableDef.cs` | ✅ |
+
+> **Completed:** Namespaces changed from `JetDatabaseWriter.Internal.Models` → `JetDatabaseWriter.Catalog.Models`. All `using` statements updated in library, test, benchmark, and probe projects. Fully-qualified reference in `IndexWriterTests.cs` updated. All 3078 tests pass.
 
 ### Phase H — Decoding & Pages (read-path plumbing)
 

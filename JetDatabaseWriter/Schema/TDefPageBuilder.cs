@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Schema;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
