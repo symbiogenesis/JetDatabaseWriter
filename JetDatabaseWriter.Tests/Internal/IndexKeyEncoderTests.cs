@@ -1076,6 +1076,86 @@ public sealed class IndexKeyEncoderTests
         Assert.Equal((byte)expectedSignByte, encoded[1]);
     }
 
+    /// <summary>
+    /// Isolated sign-byte verification for <c>T_MONEY</c> across all four
+    /// <c>asc/desc × pos/neg</c> outcomes. Money uses
+    /// <c>EncodeSignedBigEndian(scaled, 8)</c> which writes the scaled int64
+    /// in big-endian order and XORs the top byte with <c>0x80</c>. The flag
+    /// byte precedes the 8-byte payload, so <c>encoded[1]</c> carries the
+    /// sign information: non-negative scaled values (top BE byte &lt; 0x80
+    /// before XOR) become <c>≥ 0x80</c>, and negative values (top BE byte
+    /// ≥ 0x80 before XOR) become <c>&lt; 0x80</c>. Descending is the
+    /// ones-complement of ascending, so the sign byte flips accordingly.
+    /// </summary>
+    [Theory]
+    [InlineData(true, false, 0x80)] // asc, pos: scaled=10000, top BE byte=0x00, XOR 0x80 → 0x80
+    [InlineData(true, true, 0x7F)] // asc, neg: scaled=-10000, top BE byte=0xFF, XOR 0x80 → 0x7F
+    [InlineData(false, false, 0x7F)] // desc, pos: ones-complement of 0x80 → 0x7F
+    [InlineData(false, true, 0x80)] // desc, neg: ones-complement of 0x7F → 0x80
+    public void Money_SignByte_IsolatedAcrossDirection(bool ascending, bool negative, int expectedSignByte)
+    {
+        decimal value = negative ? -1m : 1m;
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_MONEY, value, ascending);
+
+        // Layout: encoded[0] = entry-flag (0x7F asc / 0x80 desc); encoded[1..8] = 8-byte payload.
+        Assert.Equal(9, encoded.Length);
+        Assert.Equal(ascending ? (byte)0x7F : (byte)0x80, encoded[0]);
+        Assert.Equal((byte)expectedSignByte, encoded[1]);
+    }
+
+    /// <summary>
+    /// Full ascending + descending ordering matrix for <c>T_MONEY</c>,
+    /// mirroring <see cref="Float_NegativeAndPositive_OrderCorrectly_AscendingAndDescending"/>
+    /// and <see cref="Double_NegativeAndPositive_OrderCorrectly_AscendingAndDescending"/>.
+    /// Closes the §1.2 coverage gap: the fixture sweep covers Money
+    /// positionally only; this test isolates the encoding correctness
+    /// across the full value range including negative boundary values.
+    /// </summary>
+    [Fact]
+    public void Money_NegativeAndPositive_OrderCorrectly_AscendingAndDescending()
+    {
+        // OACurrency range: ±922,337,203,685,477.5807
+        decimal[] values =
+        [
+            -922337203685477.5808m,
+            -1000m,
+            -1m,
+            -0.0001m,
+            0m,
+            0.0001m,
+            1m,
+            1000m,
+            922337203685477.5807m,
+        ];
+
+        byte[][] asc = new byte[values.Length][];
+        byte[][] desc = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++)
+        {
+            asc[i] = IndexKeyEncoder.EncodeEntry(T_MONEY, values[i], ascending: true);
+            desc[i] = IndexKeyEncoder.EncodeEntry(T_MONEY, values[i], ascending: false);
+
+            // MONEY key length: flag(1) + 8 bytes = 9.
+            Assert.Equal(9, asc[i].Length);
+            Assert.Equal(9, desc[i].Length);
+
+            // Descending must be the bitwise complement of ascending.
+            for (int j = 0; j < asc[i].Length; j++)
+            {
+                Assert.Equal(unchecked((byte)~asc[i][j]), desc[i][j]);
+            }
+        }
+
+        for (int i = 1; i < values.Length; i++)
+        {
+            int cmpAsc = CompareLex(asc[i - 1], asc[i]);
+            int cmpDesc = CompareLex(desc[i - 1], desc[i]);
+
+            Assert.True(cmpAsc < 0, $"Ascending order violated: {values[i - 1]} → {values[i]}.");
+            Assert.True(cmpDesc > 0, $"Descending order violated: {values[i - 1]} → {values[i]}.");
+        }
+    }
+
     private static int CompareLex(byte[] a, byte[] b)
     {
         int n = Math.Min(a.Length, b.Length);

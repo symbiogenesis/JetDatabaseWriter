@@ -460,6 +460,45 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
     }
 
+    /// <summary>
+    /// Verifies that enumerating <see cref="AccessReader.Rows"/> on a newly
+    /// created table with zero inserted rows yields no results. Complements
+    /// <see cref="CreateTable_NewTable_StartsEmpty"/> which only checks the
+    /// row count; this test exercises the data-page decode path against an
+    /// empty data page whose <c>free_space</c> equals the full page-size
+    /// minus header (§5 coverage gap).
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task CreateTable_NewTable_RowsEnumerationYieldsNothing(string path)
+    {
+        var temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
+        string newTableName = $"TestTable_{Guid.NewGuid():N}".Substring(0, 20);
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)),
+            new("Value", typeof(string), maxLength: 255),
+        };
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(newTableName, columns, TestContext.Current.CancellationToken);
+        }
+
+        await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
+        {
+            int rowCount = 0;
+            await foreach (object[] row in reader.Rows(newTableName, cancellationToken: TestContext.Current.CancellationToken))
+            {
+                rowCount++;
+            }
+
+            Assert.Equal(0, rowCount);
+        }
+    }
+
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task CreateTable_ThenInsert_DataIsReadable(string path)
