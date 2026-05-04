@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Core;
+namespace JetDatabaseWriter;
 
 using System;
 using System.Buffers;
@@ -8,9 +8,9 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Core.Interfaces;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Internal.Transactions;

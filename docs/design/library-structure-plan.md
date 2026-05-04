@@ -354,17 +354,19 @@ JetDatabaseWriter/
 
 Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then structural reorganization, then the big extractions last.
 
-### Phase A — Eliminate `Core/` indirection (pure moves, no logic change)
+### Phase A — Eliminate `Core/` indirection (pure moves, no logic change) ✅
 
-| # | Action | From | To |
-|--:|--------|------|-----|
-| 1 | Move | `Core/Interfaces/` (4 files) | `Interfaces/` |
-| 2 | Move | `Core/AccessBase.cs` | `AccessBase.cs` (root) |
-| 3 | Move | `Core/AccessReader.cs` | `AccessReader.cs` (root) |
-| 4 | Move | `Core/AccessWriter.cs` | `AccessWriter.cs` (root) |
-| 5 | Move | `Core/AccessReaderOptions.cs` | `AccessReaderOptions.cs` (root) |
-| 6 | Move | `Core/AccessWriterOptions.cs` | `AccessWriterOptions.cs` (root) |
-| 7 | Move | `Core/JetTransaction.cs` | `JetTransaction.cs` (root) |
+| # | Action | From | To | Status |
+|--:|--------|------|-----|--------|
+| 1 | Move | `Core/Interfaces/` (4 files) | `Interfaces/` | ✅ |
+| 2 | Move | `Core/AccessBase.cs` | `AccessBase.cs` (root) | ✅ |
+| 3 | Move | `Core/AccessReader.cs` | `AccessReader.cs` (root) | ✅ |
+| 4 | Move | `Core/AccessWriter.cs` | `AccessWriter.cs` (root) | ✅ |
+| 5 | Move | `Core/AccessReaderOptions.cs` | `AccessReaderOptions.cs` (root) | ✅ |
+| 6 | Move | `Core/AccessWriterOptions.cs` | `AccessWriterOptions.cs` (root) | ✅ |
+| 7 | Move | `Core/JetTransaction.cs` | `JetTransaction.cs` (root) | ✅ |
+
+> **Completed:** Namespace changed from `JetDatabaseWriter.Core` → `JetDatabaseWriter` and `JetDatabaseWriter.Core.Interfaces` → `JetDatabaseWriter.Interfaces`. All `using` statements and `cref` references updated solution-wide. `Core/` directory deleted.
 
 ### Phase B — Infrastructure (generic utilities)
 

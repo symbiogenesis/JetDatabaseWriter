@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Helpers;

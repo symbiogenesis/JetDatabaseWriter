@@ -2,8 +2,7 @@ namespace JetDatabaseWriter.Models;
 
 using System;
 using System.Collections.Generic;
-using JetDatabaseWriter.Core;
-using JetDatabaseWriter.Core.Interfaces;
+using JetDatabaseWriter.Interfaces;
 
 /// <summary>
 /// Defines a column for use with <see cref="IAccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, System.Threading.CancellationToken)"/>.

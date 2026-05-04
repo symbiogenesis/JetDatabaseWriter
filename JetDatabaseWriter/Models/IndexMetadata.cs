@@ -1,8 +1,8 @@
 namespace JetDatabaseWriter.Models;
 
 using System.Collections.Generic;
-using JetDatabaseWriter.Core.Interfaces;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Interfaces;
 
 /// <summary>
 /// Metadata describing a single JET logical index, parsed directly from the

@@ -5,7 +5,7 @@ using System.IO;
 
 /// <summary>
 /// Owns the JET lock-file companion (.ldb / .laccdb) for the lifetime of an open
-/// <see cref="Core.AccessReader"/> or <see cref="Core.AccessWriter"/> connection.
+/// <see cref="AccessReader"/> or <see cref="AccessWriter"/> connection.
 /// </summary>
 /// <remarks>
 /// <para>

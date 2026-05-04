@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Models;
 
 using System;
 using System.Collections.Generic;
-using JetDatabaseWriter.Core.Interfaces;
+using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>

@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Core;
+namespace JetDatabaseWriter;
 
 using System;
 using System.Threading;

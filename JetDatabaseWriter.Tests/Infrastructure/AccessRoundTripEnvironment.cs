@@ -49,8 +49,8 @@ internal static class AccessRoundTripEnvironment
     /// <summary>
     /// Runs <c>DAO.DBEngine.120.CompactDatabase(source, dest)</c> through a
     /// bitness-matched <c>powershell.exe</c>. The source file MUST be closed
-    /// (no open <see cref="JetDatabaseWriter.Core.AccessWriter"/> /
-    /// <see cref="JetDatabaseWriter.Core.AccessReader"/>) before calling.
+    /// (no open <see cref="JetDatabaseWriter.AccessWriter"/> /
+    /// <see cref="JetDatabaseWriter.AccessReader"/>) before calling.
     /// </summary>
     /// <param name="source">Existing database file to compact.</param>
     /// <param name="dest">Output path; will be overwritten if it exists.</param>

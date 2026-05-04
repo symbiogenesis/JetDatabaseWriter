@@ -4,7 +4,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Benchmarks.Models;
-using JetDatabaseWriter.Core;
 
 /// <summary>
 /// Per-row decode benchmarks: isolate per-row decode cost from the
