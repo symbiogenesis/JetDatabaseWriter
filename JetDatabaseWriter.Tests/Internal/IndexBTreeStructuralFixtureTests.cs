@@ -84,7 +84,6 @@ public sealed class IndexBTreeStructuralFixtureTests
     /// assertEquals(512, index.getIndexData().getEntryCount())</c>.
     /// </summary>
     /// <param name="fixturePath">Absolute path to the compIndexTest fixture under test.</param>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(CompIndexFixtures))]
     public async Task CompIndex_RowCount_EqualsLeafEntryCount(string fixturePath)
@@ -131,7 +130,6 @@ public sealed class IndexBTreeStructuralFixtureTests
     /// degrade into noise.)
     /// </summary>
     /// <param name="fixturePath">Absolute path to a Jackcess fixture under test.</param>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(AllJackcessFixtures))]
     public async Task LeafChain_IsSortedByUnsignedByteOrder(string fixturePath)
@@ -212,7 +210,6 @@ public sealed class IndexBTreeStructuralFixtureTests
     /// (per Jackcess <c>RowIdImpl</c>) has page_type 0x01 (DATA).
     /// </summary>
     /// <param name="fixturePath">Absolute path to a Jackcess fixture under test.</param>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(AllJackcessFixtures))]
     public async Task LeafEntryTrailers_PointAtValidDataPages(string fixturePath)

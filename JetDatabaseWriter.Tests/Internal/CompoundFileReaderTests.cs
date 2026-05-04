@@ -228,7 +228,6 @@ public sealed class CompoundFileReaderTests
     /// verifying that <see cref="CompoundFileReader.ReadStreamsAsync"/>
     /// walks the extension chain and recovers the embedded stream.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task ReadStreams_SyntheticDifatExtension_RecoversStream()
     {
@@ -252,7 +251,6 @@ public sealed class CompoundFileReaderTests
     /// to itself. The reader's DIFAT cycle-detection visited-set
     /// catches the duplicate immediately and throws <see cref="InvalidDataException"/>.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task ReadStreams_SyntheticDifatLoop_DoesNotHang()
     {
@@ -293,7 +291,6 @@ public sealed class CompoundFileReaderTests
     /// (OOM). The reader now clamps to the physical sector count
     /// derivable from the stream length.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task ReadStreams_DifatOverflow_HugeNumFatSectors_DoesNotOom()
     {
@@ -318,7 +315,6 @@ public sealed class CompoundFileReaderTests
     /// I/O rounds (CPU/IO DoS). The reader now clamps the walk to the
     /// stream's physical sector count and detects cycles.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task ReadStreams_DifatOverflow_HugeNumDifatSectors_DoesNotSpin()
     {
@@ -343,7 +339,6 @@ public sealed class CompoundFileReaderTests
     /// stream's physical size. A tiny file cannot declare thousands of
     /// DIFAT sectors without the reader silently clamping the walk.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task ReadStreams_DifatOverflow_NumDifatSectorsClampedToStreamLength()
     {
@@ -369,7 +364,6 @@ public sealed class CompoundFileReaderTests
     /// End-to-end: a well-formed DIFAT extension file still round-trips
     /// correctly after all hardening changes.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task ReadStreams_DifatOverflow_LegitDifatExtension_StillWorks()
     {

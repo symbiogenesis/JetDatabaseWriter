@@ -387,7 +387,6 @@ public sealed class IndexWriterTests
     /// in one page at this size and exercise the legacy single-page path.
     /// </para>
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
@@ -464,7 +463,6 @@ public sealed class IndexWriterTests
     /// survives the round-trip through <see cref="AccessReader"/>.
     /// </summary>
     /// <param name="format">The on-disk format under test.</param>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]

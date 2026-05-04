@@ -40,7 +40,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     /// as user tables (verified by hand-decoding MSysObjects). Names like
     /// "Customers"/"Employees"/"Suppliers" appear only as Forms/Macros there.
     /// </remarks>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task Nwind_ListTables_IncludesOrdersAndUmsätze()
     {
@@ -58,7 +57,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     }
 
     /// <summary>Mirror of <c>mdb-count nwind.mdb "Umsätze"</c> from mdbtools' test_script.sh.</summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task Nwind_Umsätze_HasRows()
     {
@@ -81,7 +79,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     /// (Description, DefaultValueExpression, ValidationRule, ValidationText) are
     /// reachable for every column in the target table.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task Nwind_Umsätze_DumpsColumnPropertiesWithoutError()
     {
@@ -95,7 +92,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     }
 
     /// <summary>Mirror of <c>mdb-json nwind.mdb "Umsätze"</c> from mdbtools' test_script.sh — every row decodes without throwing.</summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task Nwind_Umsätze_StreamsToCompletion()
     {
@@ -125,7 +121,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     /// Customers, but the bundled nwind.mdb has Customers only as Forms; Orders
     /// is the closest analogue.)
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task Nwind_Orders_TakeTen_ReturnsTenRows()
     {
@@ -148,7 +143,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     /// (mdbtestdata/sql/nwind.sql tests City='Helsinki' on Customers; Customers
     /// is not present as a table in the bundled fixture.)
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task Nwind_Orders_WhereShipCountryFinland_ReturnsNonEmpty()
     {
@@ -174,7 +168,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     /// (mdbtestdata/sql/nwind.sql tests CompanyName LIKE 'Océ%' on Customers;
     /// Customers is not present as a table in the bundled fixture.)
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task Nwind_Umsätze_NonAsciiTableName_StreamsAtLeastOneRow()
     {
@@ -192,7 +185,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     }
 
     /// <summary>Mirror of <c>mdb-ver nwind.mdb</c> from mdbtools' test_script.sh — surfaces a non-empty version string.</summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task Nwind_Statistics_ReportsVersion()
     {
@@ -215,7 +207,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     /// in the file makes the decoder throw" check that mdbtools' shell tests
     /// exit-zero by accident; we make it explicit.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task Nwind_EveryTable_StreamsToCompletion()
     {
@@ -230,7 +221,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     // ── ASampleDatabase.accdb (ACE / Access 2007+) ────────────────────────────
 
     /// <summary>Mirror of <c>mdb-tables ASampleDatabase.accdb</c> — the named table is present.</summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task ASampleDatabase_ListTables_ContainsAssetItems()
     {
@@ -246,7 +236,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     }
 
     /// <summary>Mirror of <c>mdb-count ASampleDatabase.accdb "Asset Items"</c>.</summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task ASampleDatabase_AssetItems_HasRows()
     {
@@ -265,7 +254,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     /// Mirror of <c>mdb-prop ASampleDatabase.accdb "Asset Items"</c> from mdbtools'
     /// test_script.sh — the persisted column-property block dumps without throwing.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task ASampleDatabase_AssetItems_DumpsColumnPropertiesWithoutError()
     {
@@ -279,7 +267,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     }
 
     /// <summary>Mirror of <c>mdb-json ASampleDatabase.accdb "Asset Items"</c> — every row decodes without throwing.</summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task ASampleDatabase_AssetItems_StreamsToCompletion()
     {
@@ -305,7 +292,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     /// <summary>
     /// Conformance: every user table in ASampleDatabase.accdb streams to completion.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task ASampleDatabase_EveryTable_StreamsToCompletion()
     {
@@ -324,7 +310,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     /// the date column parser. The fixture must contain at least one Date/Time
     /// column, and every row must decode without throwing.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task DateTestDatabase_HasDateColumn_AndStreamsToCompletion()
     {
@@ -359,7 +344,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     /// All Date/Time values in DateTestDatabase.mdb decode to <see cref="System.DateTime"/>
     /// (or <see cref="System.DBNull"/>) — never to a string or to the wrong CLR type.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task DateTestDatabase_DateColumns_ProduceDateTimeValues()
     {
@@ -409,7 +393,6 @@ public sealed class MdbtoolsConformanceTests(DatabaseCache db) : IClassFixture<D
     /// <see cref="AccessReader.ReadDataTableAsync"/> returns a <see cref="DataTable"/> whose
     /// <c>DataType</c> for the date column is <see cref="System.DateTime"/>.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task DateTestDatabase_DataTable_DateColumnHasDateTimeDataType()
     {

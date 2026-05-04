@@ -23,7 +23,6 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// <summary>
     /// The fixture can be opened and its table listed without throwing.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task OverflowTestV2010_OpensAndListsTable()
     {
@@ -40,7 +39,6 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// Reading <c>Table1</c> completes without throwing. The Jackcess fixture
     /// has 7 rows total; the V2010 reader is able to read all of them.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task Table1_ReadsAllRows_WithoutThrowing()
     {
@@ -59,7 +57,6 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// The rows that are read have valid (non-null) row arrays
     /// and at least one column.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task Table1_AllRows_HaveValidData()
     {
@@ -86,7 +83,6 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// deleted-column schema gaps that trigger
     /// <c>JetLimitationException</c> — those are excluded.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [InlineData(nameof(TestDatabases.OverflowTestV2010))]
     [InlineData(nameof(TestDatabases.OverflowTestV2007))]

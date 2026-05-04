@@ -25,7 +25,6 @@ public sealed class TypePromotionFixtureTests(DatabaseCache db) : IClassFixture<
     /// <summary>
     /// The fixture lists at least one user table without throwing.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.Promotion), MemberType = typeof(TestDatabases))]
     public async Task Promotion_ListTables_ReturnsNonEmpty(string path)
@@ -41,7 +40,6 @@ public sealed class TypePromotionFixtureTests(DatabaseCache db) : IClassFixture<
     /// Every table in the fixture exposes at least one column via
     /// <see cref="AccessReader.GetColumnMetadataAsync"/>.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.Promotion), MemberType = typeof(TestDatabases))]
     public async Task Promotion_AllTables_HaveColumns(string path)
@@ -61,7 +59,6 @@ public sealed class TypePromotionFixtureTests(DatabaseCache db) : IClassFixture<
     /// All rows in every table stream without throwing, confirming that
     /// promoted column type descriptors are decoded correctly.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.Promotion), MemberType = typeof(TestDatabases))]
     public async Task Promotion_AllTables_StreamAllRows_WithoutThrowing(string path)
