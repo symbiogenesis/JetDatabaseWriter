@@ -55,6 +55,8 @@ public abstract class AccessBase : IAccessBase
     private protected readonly int _codePage;
     private protected readonly string _path;
 
+    internal Encoding AnsiEncoding => _ansiEncoding;
+
     /// <summary>
     /// Per-page decryption keys (Jet3 XOR, Jet4 RC4, ACCDB AES). Populated during
     /// reader construction by <see cref="EncryptionManager"/>. Mutated only on the
