@@ -314,4 +314,126 @@ public sealed class ComplexColumnsRowApiTests
                 42,
                 TestContext.Current.CancellationToken));
     }
+
+    /// <summary>
+    /// §2.2 gap: attachment with a zero-byte payload. The wrapper must
+    /// encode and decode cleanly even when <c>FileData.Length == 0</c>.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task AddAttachmentAsync_ZeroBytePayload_RoundTrips()
+    {
+        var ms = new MemoryStream();
+
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            DatabaseFormat.AceAccdb,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "Documents",
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                "Documents",
+                [1, DBNull.Value],
+                TestContext.Current.CancellationToken);
+
+            await writer.AddAttachmentAsync(
+                "Documents",
+                "Files",
+                new Dictionary<string, object> { ["Id"] = 1 },
+                new AttachmentInput("empty.dat", Array.Empty<byte>()),
+                TestContext.Current.CancellationToken);
+        }
+
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(
+            ms,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var attachments = await reader.GetAttachmentsAsync(
+            "Documents",
+            "Files",
+            TestContext.Current.CancellationToken);
+
+        var single = Assert.Single(attachments);
+        Assert.Equal("empty.dat", single.FileName);
+        Assert.NotNull(single.FileData);
+        Assert.Empty(single.FileData);
+    }
+
+    /// <summary>
+    /// §2.2 gap: multi-value text column with mixed value lengths. Covers
+    /// the <c>T_TEXT</c> element path in the flat child table, including
+    /// an empty-string value to exercise the zero-length variable-column
+    /// entry.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task AddMultiValueItemAsync_TextWithMixedLengths_RoundTrips()
+    {
+        var ms = new MemoryStream();
+
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            DatabaseFormat.AceAccdb,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "Products",
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Tags", typeof(object))
+                    {
+                        IsMultiValue = true,
+                        MultiValueElementType = typeof(string),
+                    },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                "Products",
+                [1, DBNull.Value],
+                TestContext.Current.CancellationToken);
+
+            var key = new Dictionary<string, object> { ["Id"] = 1 };
+
+            // Mixed lengths: empty string, short, medium, long.
+            await writer.AddMultiValueItemAsync("Products", "Tags", key, string.Empty, TestContext.Current.CancellationToken);
+            await writer.AddMultiValueItemAsync("Products", "Tags", key, "a", TestContext.Current.CancellationToken);
+            await writer.AddMultiValueItemAsync("Products", "Tags", key, "medium-tag", TestContext.Current.CancellationToken);
+            await writer.AddMultiValueItemAsync("Products", "Tags", key, new string('x', 80), TestContext.Current.CancellationToken);
+        }
+
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(
+            ms,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var items = await reader.GetMultiValueItemsAsync(
+            "Products",
+            "Tags",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(4, items.Count);
+
+        var values = items
+            .Select(i => i.Value?.ToString() ?? string.Empty)
+            .OrderBy(v => v.Length)
+            .ToArray();
+
+        Assert.Equal(string.Empty, values[0]);
+        Assert.Equal("a", values[1]);
+        Assert.Equal("medium-tag", values[2]);
+        Assert.Equal(new string('x', 80), values[3]);
+    }
 }

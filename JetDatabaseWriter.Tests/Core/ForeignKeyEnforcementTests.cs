@@ -809,6 +809,121 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         Assert.Equal(2, repointed);
     }
 
+    /// <summary>
+    /// §6 gap: many-to-many through a junction table where both FKs have
+    /// <c>EnforceReferentialIntegrity = true</c> and <c>CascadeDeletes = true</c>.
+    /// Deleting a parent row must cascade into the junction table, removing
+    /// junction rows that reference the deleted key while leaving the other
+    /// parent's rows intact.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task Delete_ManyToMany_CascadesJunctionRows()
+    {
+        var temp = await db.CopyToStreamAsync(
+            TestDatabases.NorthwindTraders,
+            TestContext.Current.CancellationToken);
+
+        string students = MakeTableName("S");
+        string courses = MakeTableName("Cr");
+        string junction = MakeTableName("SC");
+
+        await using (var writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(
+                students,
+                [new("StudentId", typeof(int)) { IsPrimaryKey = true, IsNullable = false }],
+                TestContext.Current.CancellationToken);
+
+            await writer.CreateTableAsync(
+                courses,
+                [new("CourseId", typeof(int)) { IsPrimaryKey = true, IsNullable = false }],
+                TestContext.Current.CancellationToken);
+
+            await writer.CreateTableAsync(
+                junction,
+                [
+                    new("Id", typeof(int)),
+                    new("StudentId", typeof(int)),
+                    new("CourseId", typeof(int)),
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition(
+                    $"FK_{junction}_S",
+                    students,
+                    "StudentId",
+                    junction,
+                    "StudentId")
+                {
+                    EnforceReferentialIntegrity = true,
+                    CascadeDeletes = true,
+                },
+                TestContext.Current.CancellationToken);
+
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition(
+                    $"FK_{junction}_C",
+                    courses,
+                    "CourseId",
+                    junction,
+                    "CourseId")
+                {
+                    EnforceReferentialIntegrity = true,
+                    CascadeDeletes = true,
+                },
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowsAsync(
+                students,
+                [[1], [2]],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowsAsync(
+                courses,
+                [[10], [20]],
+                TestContext.Current.CancellationToken);
+
+            // Enrollments: student 1 → courses 10+20, student 2 → course 10.
+            await writer.InsertRowsAsync(
+                junction,
+                [[1, 1, 10], [2, 1, 20], [3, 2, 10]],
+                TestContext.Current.CancellationToken);
+
+            // Delete student 1 — should cascade-delete junction rows 1 and 2.
+            int deleted = await writer.DeleteRowsAsync(
+                students,
+                "StudentId",
+                1,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(1, deleted);
+        }
+
+        await using var reader = await OpenReaderAsync(temp);
+
+        // Student table: only student 2 remains.
+        DataTable s = (await reader.ReadDataTableAsync(
+            students,
+            cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Equal(1, s.Rows.Count);
+        Assert.Equal(2, (int)s.Rows[0]["StudentId"]);
+
+        // Junction table: only the student-2 / course-10 row survives.
+        DataTable j = (await reader.ReadDataTableAsync(
+            junction,
+            cancellationToken: TestContext.Current.CancellationToken))!;
+        var only = Assert.Single(j.AsEnumerable());
+        Assert.Equal(2, (int)only["StudentId"]);
+        Assert.Equal(10, (int)only["CourseId"]);
+
+        // Courses table: both courses still exist (no cascade from junction→course).
+        DataTable c = (await reader.ReadDataTableAsync(
+            courses,
+            cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Equal(2, c.Rows.Count);
+    }
+
     private static string MakeTableName(string prefix) =>
         $"{prefix}_{Guid.NewGuid():N}".Substring(0, Math.Min(18, prefix.Length + 11));
 

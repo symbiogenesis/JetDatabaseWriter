@@ -133,15 +133,10 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 ### 2.2 Complex columns (Multi-Value, Attachment, Versioned text)
 
 - [ ] **`[J]`** `testComplex.accdb` round-trip per complex sub-type:
-  - Multi-value text **with mixed value lengths** including null members.
-  - Attachment with **0-byte payload** and **deflate-compressed** payload;
+  - Attachment with **deflate-compressed** payload;
     verify our reader matches Jackcess `AttachmentImpl.getFileData`.
   - Versioned-text column with > 100 historical versions to exercise the
     LVAL chain inside the per-row complex sub-table.
-- [ ] **`[J]`** Cascading delete across complex columns where the parent
-  table has **two** complex columns referencing different sub-tables. We
-  cover both the single-complex case and the two-complex case in
-  `ComplexColumnsCascadeDeleteTests`.
 
 ### 2.3 Calculated columns
 
@@ -186,9 +181,6 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 - [ ] **`[J]`** Linked table to a CSV / text file (the `MSysObjects.Type`
   variant we don't currently surface).
-- [ ] **`[J]`** Many-to-many through a junction table where both FKs have
-  `enforce_referential_integrity=true` — assert relationship mutation
-  ordering.
 
 ---
 
