@@ -1,10 +1,11 @@
 namespace JetDatabaseWriter.Benchmarks;
 
+using System;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Infrastructure;
 
 [MemoryDiagnoser]
-public class LruCacheBenchmarks
+public class LruCacheBenchmarks : IDisposable
 {
     private LruCache<int, string> _cache = null!;
 
@@ -58,6 +59,20 @@ public class LruCacheBenchmarks
         {
             _cache.TryGetValue(i % Capacity, out _);
             _cache.Add(i % Capacity, $"v{i}");
+        }
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _cache.Dispose();
         }
     }
 }
