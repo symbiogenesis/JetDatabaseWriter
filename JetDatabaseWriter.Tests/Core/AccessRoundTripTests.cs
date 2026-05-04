@@ -117,6 +117,14 @@ public sealed class AccessRoundTripTests
             [FkName],
             TestContext.Current.CancellationToken);
 
+        // Pre-compact sanity: verify our own reader can parse the writer's output.
+        AssertPreCompactConsistency(pre, [Parent, Child], [FkName], expectedParentRows: 3, expectedChildRows: 3);
+
+        // Verify TDEF structural invariants on the writer-produced file before
+        // handing it to DAO, so a failure here clearly points at the writer
+        // rather than DAO's interpretation of the output.
+        await AssertTdefMagicStampsAsync(session.SourcePath, [Parent, Child], TestContext.Current.CancellationToken);
+
         session.RunDaoCompact();
 
         var post = await CaptureSnapshotAsync(
@@ -130,8 +138,7 @@ public sealed class AccessRoundTripTests
         Assert.Contains(post.Indexes[Child], i => i.IsForeignKey && i.Columns == "CustomerID" && i.CascadeDeletes);
     }
 
-    [Fact(
-        Skip = "DAO Compact & Repair rejects the writer's output with err 3011 'MSysDb' until the page-1 global page-allocation map and MSysACEs row insertion are implemented. See docs/design/round-trip-test-failures.md for the full investigation, the DAO-authored ground-truth probe (DIAG_RT_DAO_BASELINE), and the prioritized remaining work.")]
+    [Fact]
     public async Task CompositePk_AndMultiColumnFk_SurviveCompactAndRepair()
     {
         await using var session = await RoundTripSession.CreateAsync(TestContext.Current.CancellationToken);
@@ -199,6 +206,9 @@ public sealed class AccessRoundTripTests
             [Parent, Child],
             [FkName],
             TestContext.Current.CancellationToken);
+
+        AssertPreCompactConsistency(pre, [Parent, Child], [FkName], expectedParentRows: 2, expectedChildRows: 3);
+        await AssertTdefMagicStampsAsync(session.SourcePath, [Parent, Child], TestContext.Current.CancellationToken);
 
         session.RunDaoCompact();
 
@@ -279,6 +289,103 @@ public sealed class AccessRoundTripTests
         Assert.True(
             pre.RelationshipRowCount == 0 || post.RelationshipRowCount > 0,
             $"MSysRelationships rows for declared FKs disappeared after compact (pre={pre.RelationshipRowCount}, post={post.RelationshipRowCount}).");
+    }
+
+    /// <summary>
+    /// Validates pre-compact snapshot consistency: tables exist, rows present,
+    /// FK relationship rows recorded. Failures here indicate a writer bug
+    /// (output is unreadable by our own reader) rather than a DAO issue.
+    /// </summary>
+    private static void AssertPreCompactConsistency(
+        Snapshot snap,
+        IReadOnlyList<string> tables,
+        IReadOnlyList<string> fkNames,
+        int expectedParentRows,
+        int expectedChildRows)
+    {
+        Assert.True(snap.Indexes.ContainsKey(tables[0]), $"Pre-compact: parent table '{tables[0]}' not found by reader.");
+        Assert.True(snap.Indexes.ContainsKey(tables[1]), $"Pre-compact: child table '{tables[1]}' not found by reader.");
+
+        Assert.Equal(expectedParentRows, snap.RowCounts[tables[0]]);
+        Assert.Equal(expectedChildRows, snap.RowCounts[tables[1]]);
+
+        Assert.Contains(snap.Indexes[tables[0]], i => i.Kind == IndexKind.PrimaryKey);
+        Assert.True(snap.RelationshipRowCount > 0, $"Pre-compact: no MSysRelationships rows for {string.Join(", ", fkNames)}.");
+    }
+
+    /// <summary>
+    /// Reads the TDEF page for each table and asserts that the Jet4/ACE format
+    /// magic (<c>0x00000659</c>) is stamped in the TDEF header, column
+    /// descriptors, and index descriptors. Failures here point to a writer
+    /// bug in TDEF construction rather than a DAO compact issue.
+    /// </summary>
+    private static async Task AssertTdefMagicStampsAsync(
+        string dbPath,
+        IReadOnlyList<string> tableNames,
+        CancellationToken ct)
+    {
+        byte[] fileBytes = await File.ReadAllBytesAsync(dbPath, ct);
+        const int PageSize = 4096;
+
+        await using var reader = await AccessReader.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false }, ct);
+        foreach (string tableName in tableNames)
+        {
+            var entry = await reader.GetCatalogEntryAsync(tableName, ct);
+            Assert.True(entry is not null, $"{tableName}: catalog entry not found.");
+            int tdefPage = (int)entry.TDefPage;
+
+            int off = tdefPage * PageSize;
+            Assert.True(
+                fileBytes[off] == 0x02 && fileBytes[off + 1] == 0x01,
+                $"{tableName}: page {tdefPage} is not a TDEF (type=0x{fileBytes[off]:X2}{fileBytes[off + 1]:X2}).");
+
+            int headerMagic = BitConverter.ToInt32(fileBytes, off + 0x0C);
+            Assert.True(
+                headerMagic == 0x00000659,
+                $"{tableName}: TDEF header magic at 0x0C = 0x{headerMagic:X8}, expected 0x00000659.");
+
+            int numCols = BitConverter.ToUInt16(fileBytes, off + 45);
+            int numRealIdx = BitConverter.ToInt32(fileBytes, off + 51);
+            int numIdx = BitConverter.ToInt32(fileBytes, off + 47);
+            int colStart = off + 63 + (numRealIdx * 12);
+
+            for (int c = 0; c < numCols; c++)
+            {
+                int o = colStart + (c * 25);
+                int colMagic = BitConverter.ToInt32(fileBytes, o + 1);
+                Assert.True(
+                    colMagic == 0x00000659,
+                    $"{tableName}: column[{c}] descriptor magic = 0x{colMagic:X8}, expected 0x00000659.");
+            }
+
+            // Walk past column names to reach real-idx physical descriptors.
+            int namePos = colStart + (numCols * 25);
+            for (int c = 0; c < numCols; c++)
+            {
+                int nameLen = BitConverter.ToUInt16(fileBytes, namePos);
+                namePos += 2 + nameLen;
+            }
+
+            for (int i = 0; i < numRealIdx; i++)
+            {
+                int phys = namePos + (i * 52);
+                int idxMagic = BitConverter.ToInt32(fileBytes, phys);
+                Assert.True(
+                    idxMagic == 0x00000659,
+                    $"{tableName}: real-idx[{i}] magic = 0x{idxMagic:X8}, expected 0x00000659.");
+            }
+
+            // Logical-idx entries start after real-idx physical descriptors.
+            int logStart = namePos + (numRealIdx * 52);
+            for (int i = 0; i < numIdx; i++)
+            {
+                int logEntry = logStart + (i * 28);
+                int logMagic = BitConverter.ToInt32(fileBytes, logEntry);
+                Assert.True(
+                    logMagic == 0x00000659,
+                    $"{tableName}: logical-idx[{i}] magic = 0x{logMagic:X8}, expected 0x00000659.");
+            }
+        }
     }
 
     private sealed record IndexSummary(

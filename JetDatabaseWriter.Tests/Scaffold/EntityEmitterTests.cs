@@ -375,4 +375,61 @@ public class EntityEmitterTests
         Assert.Contains("int?", result, StringComparison.Ordinal);
         Assert.DoesNotContain("int??", result, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Emit_XmlDocSummary_Escapes_Ampersand()
+    {
+        var columns = new List<ColumnMetadata>
+        {
+            new() { Name = "A&B", ClrType = typeof(string), IsNullable = true, TypeName = "Text", Size = ColumnSize.FromBytes(50) },
+        };
+
+        string result = EntityEmitter.Emit("Item", columns, "NS", useRecords: false, nullable: false);
+
+        Assert.Contains("&amp;", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("& ", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Emit_XmlDocSummary_Escapes_Angle_Brackets()
+    {
+        var columns = new List<ColumnMetadata>
+        {
+            new() { Name = "X", ClrType = typeof(string), IsNullable = true, TypeName = "Memo<Long>", Size = ColumnSize.FromBytes(50) },
+        };
+
+        string result = EntityEmitter.Emit("Item", columns, "NS", useRecords: false, nullable: false);
+
+        Assert.Contains("&lt;", result, StringComparison.Ordinal);
+        Assert.Contains("&gt;", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Emit_XmlDocSummary_Wraps_In_Summary_Tags()
+    {
+        var columns = new List<ColumnMetadata>
+        {
+            new() { Name = "Id", ClrType = typeof(int), IsNullable = false, TypeName = "Long Integer", Size = ColumnSize.FromBytes(4) },
+        };
+
+        string result = EntityEmitter.Emit("Item", columns, "NS", useRecords: false, nullable: false);
+
+        Assert.Contains("/// <summary>Column: Id", result, StringComparison.Ordinal);
+        Assert.Contains("</summary>", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Emit_XmlDocSummary_Preserves_Quotes_In_Text_Content()
+    {
+        // Quotes are valid in XML text content and don't require escaping.
+        var columns = new List<ColumnMetadata>
+        {
+            new() { Name = "Note\"s", ClrType = typeof(string), IsNullable = true, TypeName = "Text", Size = ColumnSize.FromBytes(50) },
+        };
+
+        string result = EntityEmitter.Emit("Item", columns, "NS", useRecords: false, nullable: false);
+
+        Assert.Contains("Note\"s", result, StringComparison.Ordinal);
+        Assert.Contains("</summary>", result, StringComparison.Ordinal);
+    }
 }
