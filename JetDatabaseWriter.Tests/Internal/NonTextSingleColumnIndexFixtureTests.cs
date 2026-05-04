@@ -54,15 +54,18 @@ public sealed class NonTextSingleColumnIndexFixtureTests
                 TestDatabases.IndexTestV2003,
                 TestDatabases.IndexTestV2007,
                 TestDatabases.IndexTestV2010,
-                TestDatabases.BigIndexTestV2000,
-                TestDatabases.BigIndexTestV2003,
-                TestDatabases.BigIndexTestV2007,
-                TestDatabases.BigIndexTestV2010,
-                TestDatabases.BinIdxTestV2010,
-                TestDatabases.FixedNumericTestV2000,
-                TestDatabases.FixedNumericTestV2003,
-                TestDatabases.FixedNumericTestV2007,
-                TestDatabases.FixedNumericTestV2010,
+
+                // BigIndexTest V2000–V2010 excluded: ListIndexesAsync
+                // returns FirstDp=0 for all indexes in these fixtures
+                // (test-coverage-gaps.md §1.3).
+
+                // BinIdxTest V2010 excluded: binary single-column indexes
+                // are intentionally filtered out (test-coverage-gaps.md
+                // §1.1).
+
+                // FixedNumericTest V2000–V2010 excluded: ListIndexesAsync
+                // returns FirstDp=0 for all indexes in these fixtures
+                // (same §1.3 gap as bigIndexTest).
             })
             {
                 data.Add(p);
@@ -253,7 +256,7 @@ public sealed class NonTextSingleColumnIndexFixtureTests
 
         if (indexesValidated == 0)
         {
-            Assert.Skip($"No applicable single-column non-text indexes in '{fixturePath}'.");
+            Assert.Fail($"No applicable single-column non-text indexes in '{fixturePath}'.");
         }
 
         if (failures.Length > 0)

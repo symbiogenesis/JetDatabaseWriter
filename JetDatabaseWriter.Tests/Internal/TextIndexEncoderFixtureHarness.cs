@@ -35,7 +35,6 @@ internal static class TextIndexEncoderFixtureHarness
         string fixturePath,
         EncodeText encode,
         IReadOnlyCollection<string>? skipTables = null,
-        bool skipIfNoIndexes = false,
         CancellationToken ct = default)
     {
         await using AccessReader reader = await AccessReader.OpenAsync(
@@ -116,16 +115,6 @@ internal static class TextIndexEncoderFixtureHarness
                 totalIndexesValidated++;
                 totalKeysValidated += encoded.Count;
             }
-        }
-
-        if (totalIndexesValidated == 0 && skipIfNoIndexes)
-        {
-            Assert.Skip(
-                $"No single-column Text/Memo indexes with a populated first_dp "
-                + $"were found in '{fixturePath}'. This usually indicates the "
-                + "reader cannot expose this fixture's indexes (e.g. the V1997 "
-                + "index-descriptor read path does not populate first_dp / "
-                + "per-column references yet — see test-coverage-gaps.md §1.3).");
         }
 
         string noIndexesMsg =
