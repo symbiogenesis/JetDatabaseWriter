@@ -491,6 +491,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         if (resolvedIndexes.Count > 0)
         {
             var layout = IndexLeafPageBuilder.GetLayout(_format);
+            var leafPageNumbers = new long[resolvedIndexes.Count];
 
             for (int i = 0; i < resolvedIndexes.Count; i++)
             {
@@ -504,7 +505,23 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     tailPage: 0,
                     enablePrefixCompression: false);
                 long leafPageNumber = await AppendPageAsync(leafPage, cancellationToken).ConfigureAwait(false);
+                leafPageNumbers[i] = leafPageNumber;
                 WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
+            }
+
+            if (_format != DatabaseFormat.Jet3Mdb)
+            {
+                // DAO-authored TDEFs point each real index's used_pages field at a
+                // dedicated data page row whose bitmap marks that index's first leaf.
+                // Emit the same row+page structure here so CompactDatabase can walk
+                // the index allocation chain instead of seeing an empty descriptor.
+                long indexUsageMapPageNumber = await AppendIndexUsageMapPageAsync(leafPageNumbers, cancellationToken).ConfigureAwait(false);
+                for (int i = 0; i < usedPagesLogicalOffsets.Length; i++)
+                {
+                    int usedPagesOffset = usedPagesLogicalOffsets[i];
+                    tdefPages[usedPagesOffset / _pgSz][usedPagesOffset % _pgSz] = checked((byte)(i + 2));
+                    WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)indexUsageMapPageNumber));
+                }
             }
 
             tdefDirty = true;
