@@ -8,7 +8,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Benchmarks.Models;
-using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Models;
 
 /// <summary>

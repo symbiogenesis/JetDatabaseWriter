@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Internal;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Models;
 

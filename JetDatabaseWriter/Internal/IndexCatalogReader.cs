@@ -7,7 +7,7 @@ using JetDatabaseWriter.Internal.Models;
 /// <summary>
 /// Single-pass decoder of a TDEF page's index catalog: combines the real-idx
 /// physical-descriptor walk (§3.1) and the logical-idx entry walk (§3.2) into
-/// one call so that <see cref="JetDatabaseWriter.Core.AccessWriter"/>'s
+/// one call so that <see cref="JetDatabaseWriter.AccessWriter"/>'s
 /// catalog-touching methods (<c>MaintainIndexesAsync</c>,
 /// <c>LoadUniqueIndexDescriptorsAsync</c>, <c>TrySpliceCatalogIndexEntryAsync</c>)
 /// no longer re-implement the same ~50-line decode each.
@@ -120,7 +120,7 @@ internal static class IndexCatalogReader
     /// callers that need to bail vs. skip on resolve failure can branch on
     /// the lookup result via <see cref="ResolvedIndexCatalog.TryGetKeyColumnInfos"/>.
     /// Collapses the catalog-touching prelude shared by every catalog-using
-    /// path in <see cref="JetDatabaseWriter.Core.AccessWriter"/>.
+    /// path in <see cref="JetDatabaseWriter.AccessWriter"/>.
     /// </summary>
     public static ResolvedIndexCatalog ReadResolved(
         byte[] tdefBuffer,
@@ -181,7 +181,7 @@ internal static class IndexCatalogReader
     /// Result of <see cref="ReadResolved"/>: bundles the decoded
     /// <see cref="IndexCatalog"/> with the <c>ColNum → snapshot index</c>
     /// lookup and the per-real-idx pre-resolved key columns. Catalog-touching
-    /// paths in <see cref="JetDatabaseWriter.Core.AccessWriter"/> can iterate
+    /// paths in <see cref="JetDatabaseWriter.AccessWriter"/> can iterate
     /// <see cref="IndexCatalog.RealIdxByNum"/> and call
     /// <see cref="TryGetKeyColumnInfos"/> directly rather than re-running the
     /// snapshot-map build + per-slot resolve loop.

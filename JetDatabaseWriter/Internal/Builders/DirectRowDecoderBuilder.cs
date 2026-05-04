@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
-using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Internal.Models;

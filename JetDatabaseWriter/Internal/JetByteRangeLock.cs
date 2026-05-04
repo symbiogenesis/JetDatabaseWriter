@@ -90,7 +90,7 @@ internal sealed class JetByteRangeLock
 
     /// <summary>
     /// Gets a shared inert instance whose acquire methods always return the no-op
-    /// disposable. Used as the default for <see cref="Core.AccessBase"/> before a derived
+    /// disposable. Used as the default for <see cref="AccessBase"/> before a derived
     /// reader/writer constructor has had a chance to bind real options, so callers can
     /// dispatch through a non-nullable field without per-call null checks.
     /// </summary>
@@ -137,7 +137,7 @@ internal sealed class JetByteRangeLock
     /// schema-changing transaction commits and increments of the page-0
     /// commit-lock byte (header offset <c>0x14</c>). Held only across the
     /// atomic-replay window inside
-    /// <see cref="Core.AccessWriter.CommitTransactionAsync"/>.
+    /// <see cref="AccessWriter.CommitTransactionAsync"/>.
     /// </summary>
     /// <param name="isAccdb">True when the target database is ACE (.accdb), which uses sentinel offset <c>0xFFFFFFFC</c>; otherwise <c>0xFFFFFFFE</c> (Jet3/Jet4).</param>
     /// <param name="cancellationToken">Cancellation token.</param>

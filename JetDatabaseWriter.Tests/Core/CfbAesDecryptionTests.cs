@@ -7,7 +7,6 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;

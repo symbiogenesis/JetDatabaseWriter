@@ -2,13 +2,12 @@ namespace JetDatabaseWriter.Internal;
 
 using System;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>
 /// Bundles the configuration and runtime state required to maintain a JET
 /// lock-file (<c>.ldb</c> / <c>.laccdb</c>) slot for the lifetime of an
-/// <see cref="Core.AccessReader"/> or <see cref="Core.AccessWriter"/>.
+/// <see cref="AccessReader"/> or <see cref="AccessWriter"/>.
 /// </summary>
 /// <remarks>
 /// The coordinator is a no-op when <see cref="IsEnabled"/> is <c>false</c>

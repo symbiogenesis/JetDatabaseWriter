@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Tests.Core;
 
 using System;
-using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 

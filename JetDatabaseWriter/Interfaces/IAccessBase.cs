@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Core.Interfaces;
+namespace JetDatabaseWriter.Interfaces;
 
 using System;
 using JetDatabaseWriter.Enums;

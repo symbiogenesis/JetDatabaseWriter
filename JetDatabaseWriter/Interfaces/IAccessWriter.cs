@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Core.Interfaces;
+namespace JetDatabaseWriter.Interfaces;
 
 using System.Collections.Generic;
 using System.Threading;

@@ -1,9 +1,9 @@
-namespace JetDatabaseWriter.Core;
+namespace JetDatabaseWriter;
 
 using System;
 using System.Collections.Generic;
 using System.IO;
-using JetDatabaseWriter.Core.Interfaces;
+using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 
 /// <summary>

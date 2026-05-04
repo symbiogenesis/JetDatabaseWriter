@@ -5,9 +5,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Core;
-using JetDatabaseWriter.Core.Interfaces;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
 

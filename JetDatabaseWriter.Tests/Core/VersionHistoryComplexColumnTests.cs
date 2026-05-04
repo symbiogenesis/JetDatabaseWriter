@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Tests.Core;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;

@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Core.Interfaces;
+using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 
 /// <summary>

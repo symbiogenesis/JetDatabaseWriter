@@ -6,7 +6,6 @@ using System.Data;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Core;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Models;
