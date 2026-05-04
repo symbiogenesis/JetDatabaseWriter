@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal.Helpers;
+namespace JetDatabaseWriter.Schema;
 
 using System;
 using System.Buffers.Binary;

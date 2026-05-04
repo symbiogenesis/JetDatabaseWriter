@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
 /// Centralises all logic for discovering, resolving, and opening linked tables

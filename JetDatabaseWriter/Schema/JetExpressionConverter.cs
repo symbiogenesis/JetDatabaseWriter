@@ -1,11 +1,10 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Schema;
 
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Models;
 
 /// <summary>

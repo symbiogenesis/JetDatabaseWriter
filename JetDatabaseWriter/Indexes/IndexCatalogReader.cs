@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Indexes;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
 /// Single-pass decoder of a TDEF page's index catalog: combines the real-idx

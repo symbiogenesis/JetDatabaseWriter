@@ -86,7 +86,7 @@ internal static class Constants
 
         /// <summary>
         /// Calculated-column expression string (Access 2010+, ACCDB only). Written as a
-        /// <see cref="Internal.Models.ColumnPropertyBlock.DataTypeMemo"/> entry. Contains the Jet/VBA
+        /// <see cref="Schema.Models.ColumnPropertyBlock.DataTypeMemo"/> entry. Contains the Jet/VBA
         /// expression Microsoft Access evaluates to compute the cached column value
         /// (e.g. <c>"[FirstName] &amp; \" \" &amp; [LastName]"</c>). See Jackcess <c>PropertyMap.EXPRESSION_PROP</c>.
         /// </summary>
@@ -94,7 +94,7 @@ internal static class Constants
 
         /// <summary>
         /// Calculated-column result data type (Access 2010+, ACCDB only). Written as a
-        /// <see cref="Internal.Models.ColumnPropertyBlock.DataTypeByte"/> entry holding
+        /// <see cref="Schema.Models.ColumnPropertyBlock.DataTypeByte"/> entry holding
         /// the JET column-type code (<see cref="ColumnTypes"/>) of the value the
         /// expression produces. Distinguishes the logical CLR type of the column from
         /// the on-disk storage which always carries a 23-byte calculated-value wrapper.

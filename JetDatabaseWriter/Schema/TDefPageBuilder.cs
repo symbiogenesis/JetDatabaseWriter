@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal.Builders;
+namespace JetDatabaseWriter.Schema;
 
 using System;
 using System.Collections.Generic;
@@ -8,6 +8,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
 #pragma warning disable SA1204

@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal.Builders;
+namespace JetDatabaseWriter.Schema;
 
 using System;
 using System.Buffers.Binary;
@@ -7,7 +7,7 @@ using System.IO;
 using System.Text;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
 /// Mutable builder + serializer for <c>MSysObjects.LvProp</c> blobs

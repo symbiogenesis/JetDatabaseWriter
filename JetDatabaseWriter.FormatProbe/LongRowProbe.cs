@@ -19,9 +19,10 @@ using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Indexes;
-using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 
 internal static class LongRowProbe
 {

@@ -8,6 +8,8 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
 /// <summary>

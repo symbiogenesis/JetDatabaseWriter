@@ -16,6 +16,8 @@ using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 

@@ -3,7 +3,7 @@ namespace JetDatabaseWriter.Tests.Internal;
 using System.IO;
 using System.Text;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Schema.Models;
 using Xunit;
 
 public class ColumnPropertyBlockTests
