@@ -49,22 +49,16 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
             {
                 columns = await reader.GetColumnMetadataAsync(table, cancellationToken);
             }
-            catch (InvalidOperationException ex)
-            {
-                await error.WriteLineAsync($"  Warning: skipping table '{table}': {ex.Message}");
-                continue;
-            }
-            catch (IOException ex)
+            catch (Exception ex) when (ex is InvalidOperationException or IOException)
             {
                 await error.WriteLineAsync($"  Warning: skipping table '{table}': {ex.Message}");
                 continue;
             }
 
             string className = NameCleaner.ToClassName(table);
-            string source = EntityEmitter.Emit(className, columns, ns, useRecords, nullable);
-            string filePath = Path.Combine(outputDir, $"{className}.cs");
+            var filePath = Path.Combine(outputDir, $"{className}.cs");
 
-            await File.WriteAllTextAsync(filePath, source, cancellationToken);
+            await File.WriteAllTextAsync(filePath, EntityEmitter.Emit(className, columns, ns, useRecords, nullable), cancellationToken);
             await output.WriteLineAsync($"  {table} -> {className}.cs ({columns.Count} columns)");
             generated++;
         }
