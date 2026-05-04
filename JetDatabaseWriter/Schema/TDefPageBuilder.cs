@@ -247,6 +247,16 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     flagsByte |= Constants.TableDefinition.UniqueIndexFlag;
                 }
 
+                if (ri.IgnoreNulls)
+                {
+                    flagsByte |= Constants.TableDefinition.IgnoreNullsIndexFlag;
+                }
+
+                if (ri.IsRequired && !ri.IsPrimaryKey)
+                {
+                    flagsByte |= Constants.TableDefinition.RequiredIndexFlag;
+                }
+
                 page[writer._indexLayout.FlagsAbsoluteOffset(phys)] = flagsByte;
                 if (jet4)
                 {

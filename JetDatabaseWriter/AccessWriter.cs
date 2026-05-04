@@ -827,6 +827,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                         {
                             IsPrimaryKey = true,
                             DescendingColumns = descendingCols,
+                            IgnoreNulls = idx.IgnoreNulls,
                         });
                     }
                     else
@@ -835,6 +836,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                         {
                             IsUnique = idx.IsUnique,
                             DescendingColumns = descendingCols,
+                            IgnoreNulls = idx.IgnoreNulls,
+                            IsRequired = idx.IsRequired,
                         });
                     }
                 }

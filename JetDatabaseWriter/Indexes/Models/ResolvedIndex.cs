@@ -7,7 +7,7 @@ using JetDatabaseWriter.Models;
 /// Resolved per-index column-number / direction / uniqueness tuple consumed
 /// by the TDEF emitter and the maintenance loop.
 /// </summary>
-internal readonly struct ResolvedIndex(string name, IReadOnlyList<int> columnNumbers, IReadOnlyList<bool> ascending, bool isPrimaryKey, bool isUnique)
+internal readonly struct ResolvedIndex(string name, IReadOnlyList<int> columnNumbers, IReadOnlyList<bool> ascending, bool isPrimaryKey, bool isUnique, bool ignoreNulls, bool isRequired)
 {
     public string Name { get; } = name;
 
@@ -25,4 +25,10 @@ internal readonly struct ResolvedIndex(string name, IReadOnlyList<int> columnNum
     /// <see cref="IndexDefinition.IsUnique"/>.
     /// </summary>
     public bool IsUnique { get; } = isUnique;
+
+    /// <summary>Gets a value indicating whether the index ignores rows with null keys.</summary>
+    public bool IgnoreNulls { get; } = ignoreNulls;
+
+    /// <summary>Gets a value indicating whether the indexed columns must be non-null.</summary>
+    public bool IsRequired { get; } = isRequired;
 }
