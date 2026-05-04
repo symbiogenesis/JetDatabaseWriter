@@ -1832,7 +1832,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 case T_BINARY:
                     return row.AsSpan(start, len).ToArray();
                 case T_OLE:
-                    return await ReadOleValueBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
+                    return await _longValueDecoder.ReadOleValueBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -2935,7 +2935,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 case T_MEMO:
                 case T_OLE:
-                    return await ReadLongValueAsync(row, start, len, col.Type == T_OLE, cancellationToken).ConfigureAwait(false);
+                    return await _longValueDecoder.ReadLongValueAsync(row, start, len, col.Type == T_OLE, cancellationToken).ConfigureAwait(false);
 
                 case T_BYTE:
                 case T_INT:
@@ -3071,8 +3071,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (buffer[i] is LongValueRef lvr)
             {
                 buffer[i] = lvr.IsOle
-                    ? (object)await ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
-                    : await ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
+                    ? (object)await _longValueDecoder.ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
+                    : await _longValueDecoder.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -3093,8 +3093,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (row[i] is LongValueRef lvr)
             {
                 row[i] = lvr.IsOle
-                    ? (object)await ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
-                    : await ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
+                    ? (object)await _longValueDecoder.ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
+                    : await _longValueDecoder.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -3327,7 +3327,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                             return isOle
                                 ? (object)DecodeOleValueBytes(page, memoStart, inlineLen)
-                                : DecodeLongValue(page, memoStart, inlineLen, isOle: false);
+                                : _longValueDecoder.DecodeLongValue(page, memoStart, inlineLen, isOle: false);
                         }
 
                         // Single-LVAL (0x40) or chained LVAL (0x00) — defer to
@@ -3815,23 +3815,4 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // 0x80 = inline data immediately after the 12-byte header
     // 0x40 = single LVAL page:  lval_dp = (page << 8) | row_index
     // 0x00 = chained LVAL pages (not decoded; placeholder returned)
-
-    /// <summary>
-    /// Locates a single LVAL row within its data page. Shared by single-page and chained
-    /// LVAL readers. lval_dp encoding: upper 24 bits = page number, lower 8 bits = row index.
-    /// </summary>
-    private ValueTask<ValueDecoding.LongValueDecoder.LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
-        => _longValueDecoder.LocateLvalRowAsync(lvalDp, cancellationToken);
-
-    private ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)
-        => _longValueDecoder.ReadLvalChainAsync(firstLvalDp, maxLen, cancellationToken);
-
-    private ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
-        => _longValueDecoder.ReadLongValueAsync(row, start, len, isOle, cancellationToken);
-
-    private ValueTask<byte[]> ReadOleValueBytesAsync(byte[] row, int start, int len, CancellationToken cancellationToken)
-        => _longValueDecoder.ReadOleValueBytesAsync(row, start, len, cancellationToken);
-
-    private string DecodeLongValue(byte[] buffer, int offset, int length, bool isOle)
-        => _longValueDecoder.DecodeLongValue(buffer, offset, length, isOle);
 }
