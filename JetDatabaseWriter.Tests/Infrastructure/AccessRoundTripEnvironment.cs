@@ -113,6 +113,57 @@ internal static class AccessRoundTripEnvironment
         }
     }
 
+    /// <summary>
+    /// Runs an arbitrary PowerShell script through the bitness-matched host
+    /// that can activate <c>DAO.DBEngine.120</c>. The script receives no
+    /// special variables — callers embed paths/values via string literals.
+    /// </summary>
+    /// <param name="script">PowerShell script body to execute.</param>
+    /// <param name="workDir">Directory for the temp .ps1 file.</param>
+    /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
+    /// <returns>Process exit code, captured stdout, captured stderr.</returns>
+    public static CompactResult RunDaoScript(string script, string workDir, TimeSpan timeout)
+    {
+        if (!IsAvailable)
+        {
+            throw new InvalidOperationException(SkipReason);
+        }
+
+        string scriptPath = Path.Combine(workDir, $"dao-script-{Guid.NewGuid():N}.ps1");
+        File.WriteAllText(scriptPath, script);
+
+        try
+        {
+            var psi = new ProcessStartInfo(PowerShellPath!)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add("-NoProfile");
+            psi.ArgumentList.Add("-ExecutionPolicy");
+            psi.ArgumentList.Add("Bypass");
+            psi.ArgumentList.Add("-File");
+            psi.ArgumentList.Add(scriptPath);
+
+            using var p = Process.Start(psi)!;
+            string stdout = p.StandardOutput.ReadToEnd();
+            string stderr = p.StandardError.ReadToEnd();
+            if (!p.WaitForExit((int)timeout.TotalMilliseconds))
+            {
+                TryKill(p);
+                return new CompactResult(-1, stdout, stderr + $"\n[timeout after {timeout.TotalSeconds}s]");
+            }
+
+            return new CompactResult(p.ExitCode, stdout, stderr);
+        }
+        finally
+        {
+            TryDelete(scriptPath);
+        }
+    }
+
     private static ProbeResult DetectCore()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
