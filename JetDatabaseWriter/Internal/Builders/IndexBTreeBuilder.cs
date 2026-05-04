@@ -416,6 +416,19 @@ internal static class IndexBTreeBuilder
             payloadCursor += entryLen;
         }
 
+        // Sentinel bit: one-past-the-end marker at the position immediately
+        // after the last entry (same convention as leaf pages — see
+        // IndexLeafPageBuilder.BuildLeafPage). Access/DAO validates this
+        // sentinel during Compact & Repair on intermediate pages too.
+        {
+            int sentinelBitIndex = payloadCursor - layout.FirstEntryOffset;
+            int sentinelByteOff = layout.BitmaskOffset + (sentinelBitIndex / 8);
+            if (sentinelByteOff < layout.FirstEntryOffset)
+            {
+                page[sentinelByteOff] |= (byte)(1 << (sentinelBitIndex % 8));
+            }
+        }
+
         Wu16(page, 2, payloadLimit - payloadCursor); // free_space
         return page;
     }
