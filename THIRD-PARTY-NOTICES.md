@@ -5,8 +5,8 @@ JetDatabaseWriter incorporates material from the following third-party sources.
 ## Apache Jackcess
 
 The General Legacy text index sort-key tables embedded in this assembly
-(`Internal/IndexCodeTables/index_codes_genleg.txt.gz` and
-`Internal/IndexCodeTables/index_codes_ext_genleg.txt.gz`) are taken verbatim
+(`Indexes/CodeTables/index_codes_genleg.txt.gz` and
+`Indexes/CodeTables/index_codes_ext_genleg.txt.gz`) are taken verbatim
 from the Apache Jackcess project resource files
 `com/healthmarketscience/jackcess/index_codes_genleg.txt` and
 `index_codes_ext_genleg.txt`.
@@ -14,7 +14,7 @@ from the Apache Jackcess project resource files
 Source: https://github.com/jahlborn/jackcess
 
 The character-handler state machine in
-`JetDatabaseWriter/Internal/GeneralLegacyTextIndexEncoder.cs` is a C# port of
+`JetDatabaseWriter/Indexes/Collation/GeneralLegacyTextIndexEncoder.cs` is a C# port of
 `com.healthmarketscience.jackcess.impl.GeneralLegacyIndexCodes` from the same
 project.
 

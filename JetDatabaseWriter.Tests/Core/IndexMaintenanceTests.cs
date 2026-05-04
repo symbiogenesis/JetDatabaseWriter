@@ -19,9 +19,9 @@ using Xunit;
 /// <see cref="IAccessWriter.InsertRowsAsync(string, IEnumerable{object[]}, System.Threading.CancellationToken)"/>,
 /// <see cref="IAccessWriter.UpdateRowsAsync"/>,
 /// <see cref="IAccessWriter.DeleteRowsAsync"/>, and the copy-and-swap path used by
-/// <see cref="IAccessWriter.AddColumnAsync"/> /
-/// <see cref="IAccessWriter.DropColumnAsync"/> /
-/// <see cref="IAccessWriter.RenameColumnAsync"/>.
+/// <see cref="IAccessSchema.AddColumnAsync"/> /
+/// <see cref="IAccessSchema.DropColumnAsync"/> /
+/// <see cref="IAccessSchema.RenameColumnAsync"/>.
 /// Tests run against both Jet3 and Jet4/ACE formats via <c>[Theory]</c> parameters.
 /// <para>
 /// The library does not expose an internal API to walk an index B-tree, so

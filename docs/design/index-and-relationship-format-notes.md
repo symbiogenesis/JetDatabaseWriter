@@ -405,8 +405,8 @@ New file: [JetDatabaseWriter/Internal/GeneralLegacyTextIndexEncoder.cs](../../Je
 
 Embedded resources (gzipped to keep the assembly small):
 
-- [JetDatabaseWriter/Internal/IndexCodeTables/index_codes_genleg.txt.gz](../../JetDatabaseWriter/Internal/IndexCodeTables/index_codes_genleg.txt.gz) — per-codepoint handler table for `U+0000..U+00FF` (256 entries).
-- [JetDatabaseWriter/Internal/IndexCodeTables/index_codes_ext_genleg.txt.gz](../../JetDatabaseWriter/Internal/IndexCodeTables/index_codes_ext_genleg.txt.gz) — sparse handler table for `U+0100..U+FFFF`.
+- [JetDatabaseWriter/Indexes/CodeTables/index_codes_genleg.txt.gz](../../JetDatabaseWriter/Indexes/CodeTables/index_codes_genleg.txt.gz) — per-codepoint handler table for `U+0000..U+00FF` (256 entries).
+- [JetDatabaseWriter/Indexes/CodeTables/index_codes_ext_genleg.txt.gz](../../JetDatabaseWriter/Indexes/CodeTables/index_codes_ext_genleg.txt.gz) — sparse handler table for `U+0100..U+FFFF`.
 
 Each line in the resource files declares one of six handler kinds:
 

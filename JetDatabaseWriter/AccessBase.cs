@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
@@ -66,9 +67,9 @@ public abstract class AccessBase : IAccessBase
     /// Per-page decryption keys (Jet3 XOR, Jet4 RC4, ACCDB AES). Populated during
     /// reader construction by <see cref="EncryptionManager"/>. Mutated only on the
     /// constructor thread; consulted by every page read via
-    /// <see cref="EncryptionManager.DecryptPageInPlace(byte[], long, int, EncryptionManager.PageDecryptionKeys)"/>.
+    /// <see cref="EncryptionManager.DecryptPageInPlace(byte[], long, int, PageDecryptionKeys)"/>.
     /// </summary>
-    private protected readonly EncryptionManager.PageDecryptionKeys _pageKeys = new();
+    private protected readonly PageDecryptionKeys _pageKeys = new();
 
     internal bool _disposed;
     private readonly SemaphoreSlim _ioGate = new(1, 1);

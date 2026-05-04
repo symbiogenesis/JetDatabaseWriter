@@ -13,7 +13,7 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// Round-trip tests for <see cref="IAccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, System.Threading.CancellationToken)"/>:
+/// Round-trip tests for <see cref="IAccessSchema.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, System.Threading.CancellationToken)"/>:
 /// emit single-column non-unique ascending logical indexes into the new table's
 /// TDEF page chain, and confirm they are surfaced by
 /// <see cref="IAccessReader.ListIndexesAsync"/>. The build also appends

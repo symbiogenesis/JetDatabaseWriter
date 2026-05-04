@@ -7,7 +7,7 @@ using JetDatabaseWriter.Interfaces;
 
 /// <summary>
 /// Defines a foreign-key relationship that
-/// <see cref="IAccessWriter.CreateRelationshipAsync(RelationshipDefinition, System.Threading.CancellationToken)"/>
+/// <see cref="IAccessSchema.CreateRelationshipAsync(RelationshipDefinition, System.Threading.CancellationToken)"/>
 /// emits as one row per FK column into the <c>MSysRelationships</c> system table.
 /// </summary>
 /// <remarks>

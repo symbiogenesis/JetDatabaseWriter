@@ -42,7 +42,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
     /// Asynchronously creates a foreign-key relationship between two existing user
     /// tables by appending one row per FK column to the <c>MSysRelationships</c>
     /// system table. See
-    /// <see cref="IAccessWriter.CreateRelationshipAsync(RelationshipDefinition, CancellationToken)"/>
+    /// <see cref="IAccessSchema.CreateRelationshipAsync(RelationshipDefinition, CancellationToken)"/>
     /// for the full contract.
     /// </summary>
     /// <param name="relationship">The relationship to create.</param>

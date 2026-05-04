@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using JetDatabaseWriter.Interfaces;
 
 /// <summary>
-/// Defines a column for use with <see cref="IAccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, System.Threading.CancellationToken)"/>.
+/// Defines a column for use with <see cref="IAccessSchema.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, System.Threading.CancellationToken)"/>.
 /// </summary>
 public sealed record ColumnDefinition
 {
