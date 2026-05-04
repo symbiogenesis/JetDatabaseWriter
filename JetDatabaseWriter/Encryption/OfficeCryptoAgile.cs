@@ -482,6 +482,10 @@ internal static class OfficeCryptoAgile
 
     private static byte[] AesCbcDecrypt(byte[] cipher, byte[] key, byte[] iv)
     {
+        Guard.NotNull(cipher, nameof(cipher));
+        Guard.NotNull(key, nameof(key));
+        Guard.NotNull(iv, nameof(iv));
+
         // Agile uses raw (no PKCS#7) AES-CBC throughout; the IV is the salt
         // truncated/padded to the AES block size.
         byte[] paddedIv = NormalizeIv(iv, 16);
