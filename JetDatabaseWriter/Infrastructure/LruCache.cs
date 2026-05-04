@@ -3,15 +3,18 @@ namespace JetDatabaseWriter.Infrastructure;
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Threading;
 
 /// <summary>
 /// Thread-safe LRU (Least Recently Used) cache implementation.
 /// Uses an array-backed doubly-linked list with a sentinel node to eliminate
 /// per-entry heap allocations and improve CPU cache locality.
+/// Uses <see cref="ReaderWriterLockSlim"/> so concurrent readers (cache hits
+/// that don't MoveToFront) pay only the shared-lock cost.
 /// </summary>
 /// <typeparam name="TKey">The type of keys in the cache.</typeparam>
 /// <typeparam name="TValue">The type of values in the cache.</typeparam>
-internal sealed class LruCache<TKey, TValue>
+internal sealed class LruCache<TKey, TValue> : IDisposable
     where TKey : notnull
 {
     private const int Sentinel = 0;
@@ -20,7 +23,7 @@ internal sealed class LruCache<TKey, TValue>
     private readonly Dictionary<TKey, int> _map;
     private readonly Node[] _nodes;
     private readonly Action<TValue>? _onEvict;
-    private readonly object _lock = new();
+    private readonly ReaderWriterLockSlim _lock = new();
     private int _nextSlot = 1; // 0 is reserved for sentinel
     private long _hits;
     private long _misses;
@@ -39,9 +42,14 @@ internal sealed class LruCache<TKey, TValue>
     {
         get
         {
-            lock (_lock)
+            _lock.EnterReadLock();
+            try
             {
                 return _map.Count;
+            }
+            finally
+            {
+                _lock.ExitReadLock();
             }
         }
     }
@@ -51,9 +59,14 @@ internal sealed class LruCache<TKey, TValue>
     {
         get
         {
-            lock (_lock)
+            _lock.EnterReadLock();
+            try
             {
                 return _hits;
+            }
+            finally
+            {
+                _lock.ExitReadLock();
             }
         }
     }
@@ -63,16 +76,22 @@ internal sealed class LruCache<TKey, TValue>
     {
         get
         {
-            lock (_lock)
+            _lock.EnterReadLock();
+            try
             {
                 return _misses;
+            }
+            finally
+            {
+                _lock.ExitReadLock();
             }
         }
     }
 
     public bool TryGetValue(TKey key, out TValue value)
     {
-        lock (_lock)
+        _lock.EnterWriteLock();
+        try
         {
             if (_map.TryGetValue(key, out int idx))
             {
@@ -90,11 +109,16 @@ internal sealed class LruCache<TKey, TValue>
             _misses++;
             return false;
         }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
     }
 
     public void Add(TKey key, TValue value)
     {
-        lock (_lock)
+        _lock.EnterWriteLock();
+        try
         {
             if (_map.TryGetValue(key, out int existingIdx))
             {
@@ -132,11 +156,16 @@ internal sealed class LruCache<TKey, TValue>
             Prepend(nodeIdx);
             _map[key] = nodeIdx;
         }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
     }
 
     public void Clear()
     {
-        lock (_lock)
+        _lock.EnterWriteLock();
+        try
         {
             if (_onEvict != null)
             {
@@ -156,6 +185,10 @@ internal sealed class LruCache<TKey, TValue>
             _nodes[Sentinel].Next = Sentinel;
             _nodes[Sentinel].Prev = Sentinel;
             _nextSlot = 1;
+        }
+        finally
+        {
+            _lock.ExitWriteLock();
         }
     }
 
@@ -191,5 +224,10 @@ internal sealed class LruCache<TKey, TValue>
         public TValue Value;
         public int Prev;
         public int Next;
+    }
+
+    public void Dispose()
+    {
+        _lock.Dispose();
     }
 }

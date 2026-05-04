@@ -8,7 +8,7 @@ public class LruCacheTests
     [Fact]
     public void Add_And_TryGetValue_Returns_Stored_Value()
     {
-        var cache = new LruCache<string, int>(4);
+        using var cache = new LruCache<string, int>(4);
 
         cache.Add("a", 1);
 
@@ -19,7 +19,7 @@ public class LruCacheTests
     [Fact]
     public void TryGetValue_Missing_Key_Returns_False()
     {
-        var cache = new LruCache<string, int>(4);
+        using var cache = new LruCache<string, int>(4);
 
         Assert.False(cache.TryGetValue("missing", out _));
     }
@@ -27,7 +27,7 @@ public class LruCacheTests
     [Fact]
     public void Count_Reflects_Number_Of_Entries()
     {
-        var cache = new LruCache<string, int>(4);
+        using var cache = new LruCache<string, int>(4);
 
         Assert.Equal(0, cache.Count);
 
@@ -40,7 +40,7 @@ public class LruCacheTests
     [Fact]
     public void Add_Duplicate_Key_Updates_Value()
     {
-        var cache = new LruCache<string, int>(4);
+        using var cache = new LruCache<string, int>(4);
 
         cache.Add("a", 1);
         cache.Add("a", 42);
@@ -53,7 +53,7 @@ public class LruCacheTests
     [Fact]
     public void Evicts_Least_Recently_Used_When_At_Capacity()
     {
-        var cache = new LruCache<string, int>(3);
+        using var cache = new LruCache<string, int>(3);
 
         cache.Add("a", 1);
         cache.Add("b", 2);
@@ -72,7 +72,7 @@ public class LruCacheTests
     [Fact]
     public void TryGetValue_Promotes_Entry_So_It_Is_Not_Evicted()
     {
-        var cache = new LruCache<string, int>(3);
+        using var cache = new LruCache<string, int>(3);
 
         cache.Add("a", 1);
         cache.Add("b", 2);
@@ -91,7 +91,7 @@ public class LruCacheTests
     [Fact]
     public void Add_Existing_Key_Promotes_Entry()
     {
-        var cache = new LruCache<string, int>(3);
+        using var cache = new LruCache<string, int>(3);
 
         cache.Add("a", 1);
         cache.Add("b", 2);
@@ -111,7 +111,7 @@ public class LruCacheTests
     [Fact]
     public void Multiple_Evictions_Reuse_Slots_Correctly()
     {
-        var cache = new LruCache<int, string>(2);
+        using var cache = new LruCache<int, string>(2);
 
         cache.Add(1, "one");
         cache.Add(2, "two");
@@ -132,7 +132,7 @@ public class LruCacheTests
     [Fact]
     public void Capacity_One_Always_Holds_Last_Added()
     {
-        var cache = new LruCache<string, int>(1);
+        using var cache = new LruCache<string, int>(1);
 
         cache.Add("a", 1);
         cache.Add("b", 2);
@@ -146,7 +146,7 @@ public class LruCacheTests
     [Fact]
     public void Works_With_Integer_Keys()
     {
-        var cache = new LruCache<int, string>(3);
+        using var cache = new LruCache<int, string>(3);
 
         cache.Add(100, "hundred");
         cache.Add(200, "two hundred");
@@ -161,7 +161,7 @@ public class LruCacheTests
     [Fact]
     public void Eviction_Order_Follows_Access_Pattern()
     {
-        var cache = new LruCache<string, int>(3);
+        using var cache = new LruCache<string, int>(3);
 
         cache.Add("a", 1);
         cache.Add("b", 2);

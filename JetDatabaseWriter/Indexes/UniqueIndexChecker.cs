@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
@@ -96,9 +97,24 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         int[] numericTargetScales)
     {
         bool legacyNumeric = writer._format == Enums.DatabaseFormat.Jet4Mdb;
-        byte[][] perColumn = new byte[descriptor.KeyColumns.Count][];
+        int keyCount = descriptor.KeyColumns.Count;
+
+        // Single-column fast path: avoid the per-column array + copy.
+        if (keyCount == 1)
+        {
+            (ColumnInfo col, int snapIdx, bool ascending) = descriptor.KeyColumns[0];
+            object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
+            object? value = cell is null or DBNull ? null : cell;
+            return col.Type == T_NUMERIC
+                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, (byte)numericTargetScales[0], legacyNumeric)
+                : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
+        }
+
+        // Multi-column: encode into per-column spans then concatenate.
+        Span<int> lengths = stackalloc int[keyCount];
+        byte[][] perColumn = new byte[keyCount][];
         int totalLen = 0;
-        for (int k = 0; k < descriptor.KeyColumns.Count; k++)
+        for (int k = 0; k < keyCount; k++)
         {
             (ColumnInfo col, int snapIdx, bool ascending) = descriptor.KeyColumns[k];
             object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
@@ -106,15 +122,16 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             perColumn[k] = col.Type == T_NUMERIC
                 ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, (byte)numericTargetScales[k], legacyNumeric)
                 : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
+            lengths[k] = perColumn[k].Length;
             totalLen += perColumn[k].Length;
         }
 
         byte[] composite = new byte[totalLen];
         int offset = 0;
-        for (int k = 0; k < perColumn.Length; k++)
+        for (int k = 0; k < keyCount; k++)
         {
-            Buffer.BlockCopy(perColumn[k], 0, composite, offset, perColumn[k].Length);
-            offset += perColumn[k].Length;
+            perColumn[k].AsSpan().CopyTo(composite.AsSpan(offset));
+            offset += lengths[k];
         }
 
         return composite;
@@ -141,8 +158,165 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             return;
         }
 
-        using DataTable snapshot = await writer.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
-        CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingRows, replaceAtSnapshotIndex: null);
+        // Fast path: read only the key columns directly from data pages via
+        // TryReadColumnValuesTypedAsync. Falls back to the full-table
+        // snapshot only when a key column uses T_NUMERIC (which requires
+        // canonical-scale resolution not available in the fast decoder).
+        bool needsSnapshot = false;
+        foreach (UniqueIndexDescriptor desc in descriptors)
+        {
+            foreach ((ColumnInfo col, _, _) in desc.KeyColumns)
+            {
+                if (col.Type == T_NUMERIC)
+                {
+                    needsSnapshot = true;
+                    break;
+                }
+            }
+
+            if (needsSnapshot)
+            {
+                break;
+            }
+        }
+
+        if (needsSnapshot)
+        {
+            using DataTable snapshot = await writer.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+            CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingRows, replaceAtSnapshotIndex: null);
+            return;
+        }
+
+        // Gather existing key-column values directly from data pages.
+        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        await CheckUniqueIndexesFastPathAsync(tableName, descriptors, tableDef, locations, pendingRows, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Fast-path uniqueness check: reads only the key columns from existing
+    /// rows (no DataTable materialization) and validates the pending batch.
+    /// </summary>
+    private async ValueTask CheckUniqueIndexesFastPathAsync(
+        string tableName,
+        List<UniqueIndexDescriptor> descriptors,
+        TableDef tableDef,
+        List<RowLocation> locations,
+        List<object[]> pendingRows,
+        CancellationToken cancellationToken)
+    {
+        // Build ordered column indices for each descriptor.
+        var descriptorOrdinals = new int[descriptors.Count][];
+        for (int d = 0; d < descriptors.Count; d++)
+        {
+            descriptorOrdinals[d] = new int[descriptors[d].KeyColumns.Count];
+            for (int k = 0; k < descriptors[d].KeyColumns.Count; k++)
+            {
+                descriptorOrdinals[d][k] = descriptors[d].KeyColumns[k].SnapIdx;
+            }
+        }
+
+        // Collect unique set of all key column ordinals to read.
+        var allOrdinals = new HashSet<int>();
+        foreach (int[] ords in descriptorOrdinals)
+        {
+            foreach (int ord in ords)
+            {
+                allOrdinals.Add(ord);
+            }
+        }
+
+        int[] columnOrdinalsArray = [.. allOrdinals];
+
+        // Per-descriptor seen sets.
+        var seenSets = new HashSet<byte[]>[descriptors.Count];
+        for (int d = 0; d < descriptors.Count; d++)
+        {
+            seenSets[d] = new HashSet<byte[]>(ByteArrayEqualityComparer.Instance);
+        }
+
+        // Read existing rows (key columns only).
+        foreach (RowLocation loc in locations)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            object?[]? values = await writer.TryReadColumnValuesTypedAsync(loc, tableDef, columnOrdinalsArray, cancellationToken).ConfigureAwait(false);
+            if (values == null)
+            {
+                continue;
+            }
+
+            for (int d = 0; d < descriptors.Count; d++)
+            {
+                UniqueIndexDescriptor descriptor = descriptors[d];
+                int[] numericTargetScales = BuildNumericScales(descriptor);
+
+                // Map from the columnOrdinalsArray position back to the full row object[].
+                object[] fullRow = BuildRowFromPartialValues(descriptor, values, columnOrdinalsArray);
+                byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, fullRow, numericTargetScales);
+                _ = seenSets[d].Add(key);
+            }
+        }
+
+        // Check pending rows.
+        for (int p = 0; p < pendingRows.Count; p++)
+        {
+            for (int d = 0; d < descriptors.Count; d++)
+            {
+                UniqueIndexDescriptor descriptor = descriptors[d];
+                int[] numericTargetScales = BuildNumericScales(descriptor);
+                byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, pendingRows[p], numericTargetScales);
+
+                if (!seenSets[d].Add(key))
+                {
+                    throw new InvalidOperationException(
+                        $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. " +
+                        "The conflict was detected before any row was written; the table is unchanged.");
+                }
+            }
+        }
+    }
+
+    private int[] BuildNumericScales(UniqueIndexDescriptor descriptor)
+    {
+        int[] scales = new int[descriptor.KeyColumns.Count];
+        for (int k = 0; k < descriptor.KeyColumns.Count; k++)
+        {
+            ColumnInfo kCol = descriptor.KeyColumns[k].Col;
+            scales[k] = kCol.Type == T_NUMERIC ? kCol.NumericScale : -1;
+        }
+
+        return scales;
+    }
+
+    private object[] BuildRowFromPartialValues(UniqueIndexDescriptor descriptor, object?[] partialValues, int[] columnOrdinalsArray)
+    {
+        // Build a row array sized to cover all key column snap indices.
+        int maxIdx = 0;
+        foreach ((_, int snapIdx, _) in descriptor.KeyColumns)
+        {
+            if (snapIdx > maxIdx)
+            {
+                maxIdx = snapIdx;
+            }
+        }
+
+        var row = new object[maxIdx + 1];
+        for (int i = 0; i < row.Length; i++)
+        {
+            row[i] = DBNull.Value;
+        }
+
+        // Map: columnOrdinalsArray[i] → partialValues[i]
+        for (int i = 0; i < columnOrdinalsArray.Length; i++)
+        {
+            int ord = columnOrdinalsArray[i];
+            if (ord < row.Length)
+            {
+                row[ord] = partialValues[i] ?? DBNull.Value;
+            }
+        }
+
+        return row;
     }
 
     /// <summary>

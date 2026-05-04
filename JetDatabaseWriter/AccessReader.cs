@@ -69,6 +69,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private readonly AsyncLazyInitializer<Dictionary<long, long[]>> _ownedDataPageIndex;
     private readonly LockFileCoordinator _lockFile;
     private readonly bool _strictParsing;
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync, invoked via LockFileCoordinator.DisposeAfterAsync.")]
     private readonly LruCache<long, byte[]>? _pageCache;
     private readonly ValueDecoding.LongValueDecoder _longValueDecoder;
 
@@ -78,6 +79,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     // after a page is evicted from _pageCache simply age out of this LRU on
     // their own — correctness doesn't depend on the two caches being kept in
     // lock-step.
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync, invoked via LockFileCoordinator.DisposeAfterAsync.")]
     private readonly LruCache<long, RowBound[]>? _rowBoundsCache;
 
     /// <summary>
@@ -2031,7 +2033,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private async ValueTask DisposeReaderResourcesAsync()
     {
         _pageCache?.Clear();
+        _pageCache?.Dispose();
         _rowBoundsCache?.Clear();
+        _rowBoundsCache?.Dispose();
         _ownedDataPageIndex.Dispose();
         InvalidateCatalogCache();
         await base.DisposeAsync().ConfigureAwait(false);
