@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal.Models;
+namespace JetDatabaseWriter.Indexes.Models;
 
 /// <summary>
 /// Represents a single index entry: key bytes, data page, and data row.

@@ -2,6 +2,8 @@ namespace JetDatabaseWriter.Tests.Internal;
 
 using System;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Models;

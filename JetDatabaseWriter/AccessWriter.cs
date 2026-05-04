@@ -15,6 +15,9 @@ using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Helpers;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Internal;
@@ -26,9 +29,9 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Transactions;
 using static JetDatabaseWriter.Constants.ColumnTypes;
-using KeyColumnInfo = JetDatabaseWriter.Internal.IndexLayout.KeyColumnInfo;
-using RealIdxEntry = JetDatabaseWriter.Internal.IndexLayout.RealIdxEntry;
-using UniqueIndexDescriptor = JetDatabaseWriter.Internal.IndexLayout.UniqueIndexDescriptor;
+using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
+using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
+using UniqueIndexDescriptor = JetDatabaseWriter.Indexes.IndexLayout.UniqueIndexDescriptor;
 
 #pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers

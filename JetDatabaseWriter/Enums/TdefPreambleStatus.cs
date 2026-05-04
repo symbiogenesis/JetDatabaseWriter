@@ -1,6 +1,6 @@
 namespace JetDatabaseWriter.Enums;
 
-using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Indexes;
 
 /// <summary>
 /// Outcome of <see cref="IndexMaintainer.ReadTdefPreambleAsync"/>'s parse.

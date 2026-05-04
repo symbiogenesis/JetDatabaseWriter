@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Buffers.Binary;
@@ -7,13 +7,13 @@ using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes.Helpers;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Internal.Builders;
-using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Internal.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
-using KeyColumnInfo = JetDatabaseWriter.Internal.IndexLayout.KeyColumnInfo;
-using RealIdxEntry = JetDatabaseWriter.Internal.IndexLayout.RealIdxEntry;
+using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
+using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
 
 #pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202

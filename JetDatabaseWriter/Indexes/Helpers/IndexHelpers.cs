@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal.Helpers;
+namespace JetDatabaseWriter.Indexes.Helpers;
 
 using System;
 using System.Buffers.Binary;
@@ -6,8 +6,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Internal;
-using JetDatabaseWriter.Internal.Builders;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;

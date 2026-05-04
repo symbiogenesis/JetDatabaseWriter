@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Models;

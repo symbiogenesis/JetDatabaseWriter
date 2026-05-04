@@ -1,6 +1,8 @@
 namespace JetDatabaseWriter.Tests.Internal;
 
 using System;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Internal;
 using Xunit;
 

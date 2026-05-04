@@ -408,30 +408,32 @@ Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then 
 
 > **Completed:** Namespaces changed from `JetDatabaseWriter.Internal.Relationships` → `JetDatabaseWriter.Relationships`, `JetDatabaseWriter.Internal` (LinkedTableManager) → `JetDatabaseWriter.Relationships`, `JetDatabaseWriter.Internal` (ComplexColumnManager) → `JetDatabaseWriter.ComplexColumns`, and `JetDatabaseWriter.Internal.Models` (AttachmentWrapper) → `JetDatabaseWriter.ComplexColumns.Models`. All `using` statements updated in library and test projects. `Internal/Relationships/` directory deleted.
 
-### Phase E — Indexes (consolidate all index concerns)
+### Phase E — Indexes (consolidate all index concerns) ✅
 
-| # | Action | From | To |
-|--:|--------|------|-----|
-| 27 | Move | `Internal/IndexKeyEncoder.cs` | `Indexes/IndexKeyEncoder.cs` |
-| 28 | Move | `Internal/IndexBTreeSeeker.cs` | `Indexes/IndexBTreeSeeker.cs` |
-| 29 | Move | `Internal/IndexLeafIncremental.cs` | `Indexes/IndexLeafIncremental.cs` |
-| 30 | Move | `Internal/IndexMaintainer.cs` | `Indexes/IndexMaintainer.cs` |
-| 31 | Move | `Internal/IndexLayout.cs` | `Indexes/IndexLayout.cs` |
-| 32 | Move | `Internal/IndexCatalogReader.cs` | `Indexes/IndexCatalogReader.cs` |
-| 33 | Move | `Internal/Builders/IndexBTreeBuilder.cs` | `Indexes/IndexBTreeBuilder.cs` |
-| 34 | Move | `Internal/Builders/IndexLeafPageBuilder.cs` | `Indexes/IndexLeafPageBuilder.cs` |
-| 35 | Move | `Internal/Helpers/IndexHelpers.cs` | `Indexes/Helpers/IndexHelpers.cs` |
-| 36 | Move | `Internal/GeneralTextIndexEncoder.cs` | `Indexes/Collation/GeneralTextIndexEncoder.cs` |
-| 37 | Move | `Internal/GeneralLegacyTextIndexEncoder.cs` | `Indexes/Collation/GeneralLegacyTextIndexEncoder.cs` |
-| 38 | Move | `Internal/General97TextIndexEncoder.cs` | `Indexes/Collation/General97TextIndexEncoder.cs` |
-| 39 | Move | `Internal/Models/IndexEntry.cs` | `Indexes/Models/IndexEntry.cs` |
-| 40 | Move | `Internal/Models/ResolvedIndex.cs` | `Indexes/Models/ResolvedIndex.cs` |
-| 41 | Move | `Internal/Models/DescentStep.cs` | `Indexes/Models/DescentStep.cs` |
-| 42 | Move | `Internal/Models/ChildSeekIndex.cs` | `Indexes/Models/ChildSeekIndex.cs` |
-| 43 | Move | `Internal/Models/ParentSeekIndex.cs` | `Indexes/Models/ParentSeekIndex.cs` |
-| 44 | Move | `Internal/Models/DecodedIntermediateEntry.cs` | `Indexes/Models/DecodedIntermediateEntry.cs` |
-| 45 | Move | `Internal/Models/IntermediateOp.cs` | `Indexes/Models/IntermediateOp.cs` |
-| 46 | Move | `Internal/Models/SplitPages.cs` | `Indexes/Models/SplitPages.cs` |
+| # | Action | From | To | Status |
+|--:|--------|------|-----|--------|
+| 27 | Move | `Internal/IndexKeyEncoder.cs` | `Indexes/IndexKeyEncoder.cs` | ✅ |
+| 28 | Move | `Internal/IndexBTreeSeeker.cs` | `Indexes/IndexBTreeSeeker.cs` | ✅ |
+| 29 | Move | `Internal/IndexLeafIncremental.cs` | `Indexes/IndexLeafIncremental.cs` | ✅ |
+| 30 | Move | `Internal/IndexMaintainer.cs` | `Indexes/IndexMaintainer.cs` | ✅ |
+| 31 | Move | `Internal/IndexLayout.cs` | `Indexes/IndexLayout.cs` | ✅ |
+| 32 | Move | `Internal/IndexCatalogReader.cs` | `Indexes/IndexCatalogReader.cs` | ✅ |
+| 33 | Move | `Internal/Builders/IndexBTreeBuilder.cs` | `Indexes/IndexBTreeBuilder.cs` | ✅ |
+| 34 | Move | `Internal/Builders/IndexLeafPageBuilder.cs` | `Indexes/IndexLeafPageBuilder.cs` | ✅ |
+| 35 | Move | `Internal/Helpers/IndexHelpers.cs` | `Indexes/Helpers/IndexHelpers.cs` | ✅ |
+| 36 | Move | `Internal/GeneralTextIndexEncoder.cs` | `Indexes/Collation/GeneralTextIndexEncoder.cs` | ✅ |
+| 37 | Move | `Internal/GeneralLegacyTextIndexEncoder.cs` | `Indexes/Collation/GeneralLegacyTextIndexEncoder.cs` | ✅ |
+| 38 | Move | `Internal/General97TextIndexEncoder.cs` | `Indexes/Collation/General97TextIndexEncoder.cs` | ✅ |
+| 39 | Move | `Internal/Models/IndexEntry.cs` | `Indexes/Models/IndexEntry.cs` | ✅ |
+| 40 | Move | `Internal/Models/ResolvedIndex.cs` | `Indexes/Models/ResolvedIndex.cs` | ✅ |
+| 41 | Move | `Internal/Models/DescentStep.cs` | `Indexes/Models/DescentStep.cs` | ✅ |
+| 42 | Move | `Internal/Models/ChildSeekIndex.cs` | `Indexes/Models/ChildSeekIndex.cs` | ✅ |
+| 43 | Move | `Internal/Models/ParentSeekIndex.cs` | `Indexes/Models/ParentSeekIndex.cs` | ✅ |
+| 44 | Move | `Internal/Models/DecodedIntermediateEntry.cs` | `Indexes/Models/DecodedIntermediateEntry.cs` | ✅ |
+| 45 | Move | `Internal/Models/IntermediateOp.cs` | `Indexes/Models/IntermediateOp.cs` | ✅ |
+| 46 | Move | `Internal/Models/SplitPages.cs` | `Indexes/Models/SplitPages.cs` | ✅ |
+
+> **Completed:** Namespaces changed from `JetDatabaseWriter.Internal` → `JetDatabaseWriter.Indexes`, `JetDatabaseWriter.Internal.Builders` (index builders) → `JetDatabaseWriter.Indexes`, `JetDatabaseWriter.Internal.Helpers` (IndexHelpers) → `JetDatabaseWriter.Indexes.Helpers`, `JetDatabaseWriter.Internal` (collation encoders) → `JetDatabaseWriter.Indexes.Collation`, and `JetDatabaseWriter.Internal.Models` (index models) → `JetDatabaseWriter.Indexes.Models`. All `using` statements updated in library, test, benchmark, and probe projects. Using aliases for `IndexLayout` nested types updated in `AccessWriter` and `IndexMaintainer`.
 
 ### Phase F — Schema (DDL, column type info, TDef building)
 

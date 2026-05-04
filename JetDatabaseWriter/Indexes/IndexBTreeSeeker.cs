@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Buffers.Binary;
@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Internal.Builders;
 
 /// <summary>
 /// Read-only B-tree seeker over JET index pages emitted by

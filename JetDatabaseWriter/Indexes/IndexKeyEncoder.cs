@@ -1,9 +1,11 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Numerics;
+using JetDatabaseWriter.Indexes.Collation;
+using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Internal.Helpers;
 using static JetDatabaseWriter.Constants.ColumnTypes;

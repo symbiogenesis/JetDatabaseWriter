@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Internal;
 
 using System;
 using System.Linq;
+using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Internal;
 using Xunit;
 

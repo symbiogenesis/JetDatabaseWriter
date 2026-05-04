@@ -1,11 +1,11 @@
-namespace JetDatabaseWriter.Internal.Builders;
+namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Internal.Models;
 
 /// <summary>
 /// Builds JET index leaf pages (page type <c>0x04</c>). Encodes the
