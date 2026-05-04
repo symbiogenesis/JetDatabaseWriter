@@ -815,6 +815,19 @@ public abstract class AccessBase : IAccessBase
             yield break;
         }
 
+        // Clamp numRows to the maximum that can physically fit in the page's
+        // row-offset table region (each entry is 2 bytes, starting at RowsStart).
+        int maxPossibleRows = (page.Length - _dataPage.RowsStart) / 2;
+        if (numRows > maxPossibleRows)
+        {
+            numRows = maxPossibleRows;
+        }
+
+        if (numRows <= 0)
+        {
+            yield break;
+        }
+
         var rawOffsets = new int[numRows];
         for (int r = 0; r < numRows; r++)
         {
@@ -869,6 +882,19 @@ public abstract class AccessBase : IAccessBase
         if (numRows == 0)
         {
             return Array.Empty<RowBound>();
+        }
+
+        // Clamp numRows to the maximum that can physically fit in the page's
+        // row-offset table region (each entry is 2 bytes, starting at RowsStart).
+        int maxPossibleRows = (page.Length - _dataPage.RowsStart) / 2;
+        if (numRows > maxPossibleRows)
+        {
+            numRows = maxPossibleRows;
+        }
+
+        if (numRows <= 0)
+        {
+            return [];
         }
 
         var rawOffsets = new int[numRows];
