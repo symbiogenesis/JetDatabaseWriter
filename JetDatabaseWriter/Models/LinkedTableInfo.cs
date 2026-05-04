@@ -17,6 +17,6 @@ public sealed record LinkedTableInfo
     /// <summary>Gets or sets the ODBC connection string (for ODBC-linked tables).</summary>
     public string? ConnectionString { get; set; }
 
-    /// <summary>Gets or sets a value indicating whether this is an ODBC-linked table (type 6) vs Access-linked (type 4).</summary>
+    /// <summary>Gets or sets a value indicating whether this is an ODBC-linked table (type 4) vs Access-linked (type 6).</summary>
     public bool IsOdbc { get; set; }
 }

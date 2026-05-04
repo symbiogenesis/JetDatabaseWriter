@@ -216,11 +216,11 @@ internal static class Constants
         /// </summary>
         public const int TablesParentId = 0x0F00_0001;
 
-        /// <summary>MSysObjects.Type value for a linked Jet/Access table (mdbtools <c>MDB_TABLE_LINK</c>).</summary>
-        public const int LinkedTableType = 4;
+        /// <summary>MSysObjects.Type value for a linked ODBC table (Jackcess <c>TYPE_LINKED_ODBC_TABLE</c>).</summary>
+        public const int LinkedOdbcType = 4;
 
-        /// <summary>MSysObjects.Type value for a linked ODBC table (mdbtools <c>MDB_TABLE_LINK_ODBC</c>).</summary>
-        public const int LinkedOdbcType = 6;
+        /// <summary>MSysObjects.Type value for a linked Jet/Access table (Jackcess <c>TYPE_LINKED_TABLE</c>).</summary>
+        public const int LinkedTableType = 6;
 
         /// <summary>
         /// Bitmask applied to <c>MSysObjects.Flags</c> to detect system tables;
