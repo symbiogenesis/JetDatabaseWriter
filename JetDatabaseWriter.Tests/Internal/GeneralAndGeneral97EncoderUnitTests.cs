@@ -4,7 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using JetDatabaseWriter.Indexes.Collation;
-using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention

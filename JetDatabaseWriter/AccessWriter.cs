@@ -21,15 +21,15 @@ using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
-using JetDatabaseWriter.Internal;
-using JetDatabaseWriter.Internal.Helpers;
-using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
+using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
 using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
@@ -4311,9 +4311,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private void EncodeNumericValue(decimal value, Span<byte> dest)
     {
         Span<byte> mantissa = dest.Slice(4, 12);
-        DecimalNumeric.Decompose(value, mantissa, out bool negative, out int scale);
+        NumericEncoder.Decompose(value, mantissa, out bool negative, out int scale);
 
-        dest[0] = DecimalNumeric.ComputePrecision(mantissa);
+        dest[0] = NumericEncoder.ComputePrecision(mantissa);
         dest[1] = (byte)scale;
         dest[2] = negative ? (byte)1 : (byte)0;
         dest[3] = 0;

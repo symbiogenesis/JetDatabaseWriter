@@ -7,7 +7,6 @@ using System.Runtime.InteropServices;
 using System.Text;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
-using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;

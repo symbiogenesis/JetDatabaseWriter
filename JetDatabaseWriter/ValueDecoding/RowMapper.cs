@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Collections.Generic;
@@ -8,7 +8,6 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 

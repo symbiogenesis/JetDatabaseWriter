@@ -155,8 +155,8 @@ Encapsulates access to an external system. `LockFileCoordinator` and `JetByteRan
 |-----------|-------------|
 | **Common Closure Principle (CCP)** | Classes that change together belong in the same package. Index key encoding + index B-tree building + index leaf building all change when index format changes → they belong together in `Indexes/` |
 | **Common Reuse Principle (CRP)** | Classes used together belong together. `CatalogEntry`, `CatalogRow`, `TableDef` are always consumed together → they belong in `Catalog/Models/` |
-| **Acyclic Dependencies Principle (ADP)** | No circular dependencies between packages. The layered approach guarantees this: `Infrastructure/` → `Pages/` → `Encoding/` → `Indexes/` → `Catalog/` never cycle back |
-| **Stable Dependencies Principle (SDP)** | Depend in the direction of stability. `Infrastructure/` and `Pages/` are stable (rarely change); `Encoding/` and `Schema/` are volatile (change with format support) |
+| **Acyclic Dependencies Principle (ADP)** | No circular dependencies between packages. The layered approach guarantees this: `Infrastructure/` → `Pages/` → `ValueEncoding/`/`ValueDecoding/` → `Indexes/` → `Catalog/` never cycle back |
+| **Stable Dependencies Principle (SDP)** | Depend in the direction of stability. `Infrastructure/` and `Pages/` are stable (rarely change); `ValueEncoding/`, `ValueDecoding/`, and `Schema/` are volatile (change with format support) |
 
 ### Organizational standards
 
@@ -230,7 +230,7 @@ JetDatabaseWriter/
 │       ├── CatalogRow.cs
 │       └── TableDef.cs
 │
-├── Encoding/                              (write-path: typed values → bytes)
+├── ValueEncoding/                         (write-path: typed values → bytes; named to avoid shadowing System.Text.Encoding; symmetric with ValueDecoding/)
 │   ├── RowEncoder.cs                      (SerializeRow, EncodeFixed/Variable/Text/Binary)
 │   ├── LongValueEncoder.cs               (LVAL chains, OLE wrapping)
 │   ├── NumericEncoder.cs                  (from DecimalNumeric)
@@ -239,7 +239,7 @@ JetDatabaseWriter/
 │       ├── LvalChainResult.cs
 │       └── PreEncodedLongValue.cs         (promoted from nested type)
 │
-├── Decoding/                              (read-path: bytes → typed values)
+├── ValueDecoding/                         (read-path: bytes → typed values)
 │   ├── RowDecoder.cs                      (from AccessReader row-decode logic)
 │   ├── RowMapper.cs                       (moved from Internal/ — column dispatch)
 │   ├── LongValueDecoder.cs               (LVAL chain reading)
@@ -344,9 +344,9 @@ JetDatabaseWriter/
 | 6 | **Models co-located with their domain** — not in a single bag | CRP, CCP |
 | 7 | **`internal` keyword on classes, not folder** — visibility via access modifier | Namespace-Folder Correspondence standard |
 | 8 | **Depend in direction of stability** — volatile packages depend on stable ones | SDP, ADP |
-| 9 | **Encoding/ and Decoding/ never depend on each other** — shared types go in Schema/ or root | ADP, Symmetric Codec |
+| 9 | **ValueEncoding/ and ValueDecoding/ never depend on each other** — shared types go in Schema/ or root | ADP, Symmetric Codec |
 | 10 | **ISP on the public interface** — split DML from DDL surface | ISP (ADO.NET precedent) |
-| 11 | **Avoid shadowing BCL names** — use `Collation/` not `TextEncoding/` | .NET FDG §3.3 |
+| 11 | **Avoid shadowing BCL names** — use `ValueEncoding/`/`ValueDecoding/` not `Encoding/`/`Decoding/`, `Collation/` not `TextEncoding/` | .NET FDG §3.3 |
 
 ---
 
@@ -463,31 +463,33 @@ Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then 
 
 > **Completed:** Namespaces changed from `JetDatabaseWriter.Internal.Models` → `JetDatabaseWriter.Catalog.Models`. All `using` statements updated in library, test, benchmark, and probe projects. Fully-qualified reference in `IndexWriterTests.cs` updated. All 3078 tests pass.
 
-### Phase H — Decoding & Pages (read-path plumbing)
+### Phase H — ValueDecoding & Pages (read-path plumbing) ✅
 
-| # | Action | From | To |
-|--:|--------|------|-----|
-| 61 | Move | `Internal/TypedValueParser.cs` | `Decoding/TypedValueParser.cs` |
-| 62 | Move | `Internal/Builders/DirectRowDecoderBuilder.cs` | `Decoding/DirectRowDecoderBuilder.cs` |
-| 63 | Move | `Internal/RowMapper.cs` | `Decoding/RowMapper.cs` |
-| 64 | Move | `Internal/DataPageLayout.cs` | `Pages/DataPageLayout.cs` |
-| 65 | Move | `Internal/Models/PageInsertTarget.cs` | `Pages/Models/PageInsertTarget.cs` |
-| 66 | Move | `Internal/Models/RowLocation.cs` | `Pages/Models/RowLocation.cs` |
-| 67 | Move | `Internal/Models/LvalChainResult.cs` | `Encoding/Models/LvalChainResult.cs` |
-| 68 | Rename | `Internal/Helpers/DecimalNumeric.cs` | `Encoding/NumericEncoder.cs` |
+| # | Action | From | To | Status |
+|--:|--------|------|-----|--------|
+| 61 | Move | `Internal/TypedValueParser.cs` | `ValueDecoding/TypedValueParser.cs` | ✅ |
+| 62 | Move | `Internal/Builders/DirectRowDecoderBuilder.cs` | `ValueDecoding/DirectRowDecoderBuilder.cs` | ✅ |
+| 63 | Move | `Internal/RowMapper.cs` | `ValueDecoding/RowMapper.cs` | ✅ |
+| 64 | Move | `Internal/DataPageLayout.cs` | `Pages/DataPageLayout.cs` | ✅ |
+| 65 | Move | `Internal/Models/PageInsertTarget.cs` | `Pages/Models/PageInsertTarget.cs` | ✅ |
+| 66 | Move | `Internal/Models/RowLocation.cs` | `Pages/Models/RowLocation.cs` | ✅ |
+| 67 | Move | `Internal/Models/LvalChainResult.cs` | `ValueEncoding/Models/LvalChainResult.cs` | ✅ |
+| 68 | Rename | `Internal/Helpers/DecimalNumeric.cs` | `ValueEncoding/NumericEncoder.cs` | ✅ |
+
+> **Completed:** Namespaces changed from `JetDatabaseWriter.Internal` (TypedValueParser, RowMapper, DataPageLayout) → `JetDatabaseWriter.ValueDecoding` and `JetDatabaseWriter.Pages`, `JetDatabaseWriter.Internal.Builders` (DirectRowDecoderBuilder) → `JetDatabaseWriter.ValueDecoding`, `JetDatabaseWriter.Internal.Models` (PageInsertTarget, RowLocation) → `JetDatabaseWriter.Pages.Models`, `JetDatabaseWriter.Internal.Models` (LvalChainResult) → `JetDatabaseWriter.ValueEncoding.Models`, and `JetDatabaseWriter.Internal.Helpers` (DecimalNumeric) → `JetDatabaseWriter.ValueEncoding` (class renamed to `NumericEncoder`). The `Encoding/` folder name was changed to `ValueEncoding/` to avoid shadowing `System.Text.Encoding`; the `Decoding/` folder was similarly renamed to `ValueDecoding/` for symmetry. All `using` statements updated in library, test, benchmark, and probe projects. `Internal/Builders/`, `Internal/Helpers/`, and `Internal/Models/` directories deleted; `Internal/` now contains only `IndexCodeTables/` (embedded resources). All 3078 tests pass.
 
 ### Phase I — Code extractions (substantive refactoring)
 
 | # | Action | Source | Target |
 |--:|--------|--------|--------|
 | 69 | **Extract** | `AccessWriter` → constraint methods | `Schema/ConstraintRegistry.cs` |
-| 70 | **Extract** | `AccessWriter` → LVAL encode methods | `Encoding/LongValueEncoder.cs` |
+| 70 | **Extract** | `AccessWriter` → LVAL encode methods | `ValueEncoding/LongValueEncoder.cs` |
 | 71 | **Extract** | `AccessWriter` → transaction lifecycle | `Transactions/TransactionLifecycle.cs` |
 | 72 | **Extract** | `AccessWriter` → unique-index checks | `Indexes/UniqueIndexChecker.cs` |
 | 73 | **Extract** | `AccessWriter` → catalog helpers | `Catalog/CatalogWriter.cs` |
-| 74 | **Extract** | `AccessWriter` → row encode + page insert | `Encoding/RowEncoder.cs` + `Pages/DataPageInserter.cs` |
-| 75 | **Extract** | `AccessReader` → row decode logic | `Decoding/RowDecoder.cs` |
-| 76 | **Extract** | `AccessReader` → LVAL read logic | `Decoding/LongValueDecoder.cs` |
+| 74 | **Extract** | `AccessWriter` → row encode + page insert | `ValueEncoding/RowEncoder.cs` + `Pages/DataPageInserter.cs` |
+| 75 | **Extract** | `AccessReader` → row decode logic | `ValueDecoding/RowDecoder.cs` |
+| 76 | **Extract** | `AccessReader` → LVAL read logic | `ValueDecoding/LongValueDecoder.cs` |
 | 77 | **Extract** | `AccessBase` → catalog read helpers | `Catalog/CatalogReader.cs` |
 
 ### Phase J — Promote nested types
@@ -495,7 +497,7 @@ Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then 
 | # | Action | Source | Target |
 |--:|--------|--------|--------|
 | 78 | **Promote** | Nested `AccessWriter.ColumnConstraint` | `Schema/Models/ColumnConstraint.cs` |
-| 79 | **Promote** | Nested `AccessWriter.PreEncodedLongValue` | `Encoding/Models/PreEncodedLongValue.cs` |
+| 79 | **Promote** | Nested `AccessWriter.PreEncodedLongValue` | `ValueEncoding/Models/PreEncodedLongValue.cs` |
 | 80 | **Promote** | Nested `EncryptionManager.PageDecryptionKeys` | `Encryption/Models/PageDecryptionKeys.cs` |
 
 ### Phase K — Interface segregation & cleanup
@@ -517,17 +519,17 @@ The proposed structure must be acyclic. Expected dependency flow:
 Infrastructure/        → (nothing — leaf)
 Pages/                 → Infrastructure/
 Encryption/            → Pages/
-Decoding/              → Pages/, Schema/
-Encoding/              → Schema/                        [rule: never depends on Decoding/]
-Indexes/               → Pages/, Encoding/ (key encoding), Schema/
-Catalog/               → Pages/, Decoding/, Schema/
+ValueDecoding/         → Pages/, Schema/
+ValueEncoding/         → Schema/                        [rule: never depends on ValueDecoding/]
+Indexes/               → Pages/, ValueEncoding/ (key encoding), Schema/
+Catalog/               → Pages/, ValueDecoding/, Schema/
 Transactions/          → Pages/
 Relationships/         → Catalog/, Indexes/
 ComplexColumns/        → Catalog/, Pages/
 CompoundFile/          → (nothing — leaf)
 AccessBase (root)      → Pages/, Encryption/, Infrastructure/
-AccessReader (root)    → Decoding/, Catalog/, Indexes/, Pages/
-AccessWriter (root)    → Encoding/, Catalog/, Indexes/, Transactions/, Schema/, Relationships/, ComplexColumns/
+AccessReader (root)    → ValueDecoding/, Catalog/, Indexes/, Pages/
+AccessWriter (root)    → ValueEncoding/, Catalog/, Indexes/, Transactions/, Schema/, Relationships/, ComplexColumns/
 ```
 
 No cycles exist. Each domain folder depends only on peers at the same or lower layer.

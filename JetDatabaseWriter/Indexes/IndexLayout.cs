@@ -4,7 +4,6 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
