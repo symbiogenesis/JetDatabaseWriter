@@ -8,6 +8,7 @@ using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;

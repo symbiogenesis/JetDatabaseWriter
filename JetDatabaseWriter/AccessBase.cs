@@ -8,6 +8,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;

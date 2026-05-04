@@ -539,7 +539,7 @@ public sealed class IndexWriterTests
 
     private static async ValueTask<long> GetTDefPageNumberAsync(AccessReader reader, string tableName)
     {
-        JetDatabaseWriter.Internal.Models.CatalogEntry? entry = await reader.GetCatalogEntryAsync(
+        JetDatabaseWriter.Catalog.Models.CatalogEntry? entry = await reader.GetCatalogEntryAsync(
             tableName, TestContext.Current.CancellationToken);
         if (entry is null)
         {
