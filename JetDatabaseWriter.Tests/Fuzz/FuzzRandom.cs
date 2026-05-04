@@ -13,13 +13,13 @@ internal sealed class FuzzRandom : Random
     private readonly Random? _fallback;
     private int _pos;
 
-    public FuzzRandom(byte[] bytes)
+    private FuzzRandom(byte[] bytes)
     {
         _bytes = bytes;
         _pos = 0;
     }
 
-    public FuzzRandom(Random fallback)
+    private FuzzRandom(Random fallback)
     {
         _fallback = fallback;
     }
