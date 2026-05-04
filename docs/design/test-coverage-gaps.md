@@ -65,7 +65,10 @@ out cases that fixture sweep does **not** specifically isolate.
   Jackcess fixture set; needs a synthetic fixture.
 - [ ] **`[J]` `[S]`** Extended Date/Time (`SHORT_DATE_TIME` extended; 42-byte
   blocks separated by `0x09`, asc/desc trailer flip). Jackcess test:
-  `testExtDateIndex`.
+  `testExtDateIndex`. Index presence/metadata and row streaming are
+  validated by
+  [ExtendedDateIndexTests.cs](../../JetDatabaseWriter.Tests/Core/ExtendedDateIndexTests.cs);
+  byte-level key encoding assertions are still missing.
 
 ### 1.3 B-tree structural
 
@@ -74,19 +77,23 @@ Structural-invariant sweep across the Jackcess fixture corpus is in
 asserts row-count == leaf-entry-count for `compIndexTest*` (Jackcess
 `testComplexIndex`), unsigned byte-order monotonicity of every leaf chain
 (Jackcess `testByteOrder`), and that every leaf entry's row trailer points
-at a data-page within the file. Leaf-walker bugs that would silently
-degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
+at a data-page within the file. Doubly-linked list consistency
+(`prev(next(page)) == page`) is verified by
+[IndexLeafChainConsistencyTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexLeafChainConsistencyTests.cs).
+`child_tail` pointer validity on intermediate pages is checked by
+[IndexChildTailPointerTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexChildTailPointerTests.cs).
+Leaf-walker bugs that would silently degrade the §1.1 / §1.2 fixture
+comparisons are caught up-front.
 
-- [ ] **`[J]`** Index page splits where the **child_tail** pointer is
-  populated (Jackcess `IndexPageCache.validate` walks this; we don't read it).
 - [ ] **`[J]` `[L]`** Round-trip an index after **multi-level intermediate
   splits** caused by deletes — `IndexSurgicalCascadingIntermediateCollapseTests`
   covers collapse, but not the rebalance/borrow path Jackcess exercises in
   `testCursors`/`testIndexCreation`.
 - [ ] **`[M]` `[S]`** Compare our `next_page`/`prev_page` chain against
   mdbtools' `mdb-index` dump for at least one fixture — provides an
-  external sanity check. (The internal sweep validates ordering, but not
-  the chain itself against an independent implementation.)
+  external sanity check. (`IndexLeafChainConsistencyTests` validates
+  internal bidirectional `prev(next(page)) == page` consistency, but not
+  against an independent implementation's dump.)
 - [ ] **`[J]` `[M]`** **`bigIndexTest*` fixtures surface zero scannable
   B-trees / zero leaf entries / zero "applicable" single-column non-text
   indexes across all four format variants (V2000, V2003, V2007, V2010)** in
@@ -109,8 +116,11 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
   covered by `IndexFlagCombinationsTests`). Requires adding `IgnoreNulls` /
   `IsRequired` properties to `IndexDefinition`.
 - [ ] **`[J]` `[S]`** **Foreign-key surrogate** indexes (the auto-created
-  ones backing relationships) — round-trip + listing semantics; we filter
-  them out today.
+  ones backing relationships) — writer round-trip / clone semantics. Reader
+  listing semantics are covered by `IndexMetadataTests` and
+  [ForeignKeySurrogateIndexTests.cs](../../JetDatabaseWriter.Tests/Core/ForeignKeySurrogateIndexTests.cs)
+  (`ListIndexesAsync` now returns FK entries); the remaining gap is emitting
+  or preserving Access-authored surrogate indexes on write.
 
 ---
 
@@ -118,11 +128,14 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ### 2.1 Long-value (LVAL) chains
 
-- [ ] **`[J]`** Type 1 (inline), Type 2 (single-page), Type 3 (multi-page
-  chained) Memo/OLE values across V1997 → V2010 — Jackcess `LongValueTest`
-  covers all three; we have round-trip but no per-type assertion.
-- [ ] **`[J]` `[M]`** Compressed (UCS-2 → ASCII) Memo prefixes longer than 1
-  inline page — mdbtools regressions historically hit truncation here.
+Per-type form coverage (inline 0x80, single-page 0x40, chained 0x00) for
+both Memo and OLE round-trips through the writer is in
+[LvalFormAssertionTests.cs](../../JetDatabaseWriter.Tests/Core/LvalFormAssertionTests.cs).
+Compressed (Latin-1) Memo LVAL chains are covered by
+[CompressedMemoLvalTests.cs](../../JetDatabaseWriter.Tests/Core/CompressedMemoLvalTests.cs).
+Reader-side Memo from Access-authored overflow fixtures is in
+[OverflowMemoReadTests.cs](../../JetDatabaseWriter.Tests/Core/OverflowMemoReadTests.cs).
+
 - [ ] **`[J]` `[S]`** Reader-side coverage of an Access-authored fixture
   containing a Memo with embedded `0x00` bytes. The writer round-trip path
   is closed by `AccessWriterTests.InsertRow_MemoWithEmbeddedNulls_RoundTrips`,
@@ -132,14 +145,25 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ### 2.2 Complex columns (Multi-Value, Attachment, Versioned text)
 
+Version-history column presence/metadata and flat-table readability are
+verified by
+[VersionHistoryComplexColumnTests.cs](../../JetDatabaseWriter.Tests/Core/VersionHistoryComplexColumnTests.cs).
+Note: the reader currently reports VH columns as `Kind = Unknown` (the
+`MSysComplexTypeVH_*` discriminator is not yet recognized).
+
+- [ ] **`[J]`** Fix the complex-column Kind discriminator so version-history
+  columns report `ComplexColumnKind.VersionHistory` instead of `Unknown`.
 - [ ] **`[J]`** Versioned-text column with > 100 historical versions to
   exercise the LVAL chain inside the per-row complex sub-table.
 
 ### 2.3 Calculated columns
 
-- [ ] **`[J]`** Reading a calculated column whose expression uses the
-  Access `Switch`/`IIf` builtins; verify cached result bytes match
-  expectations on disk (we treat them as opaque today).
+- [ ] **`[J]`** Access-authored calculated columns whose expressions use the
+  `Switch`/`IIf` builtins, with byte-level validation of the cached result
+  payload. General calculated-column fixture coverage now exists in
+  `CalculatedColumnFixtureTests` (metadata, expression text, result type,
+  and row decode), but we still treat the cached value bytes as opaque and
+  do not yet assert builtin-specific on-disk results.
 
 ---
 
@@ -156,8 +180,10 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ## 4. Linked tables & relationships
 
-- [ ] **`[J]`** Linked table to a CSV / text file (the `MSysObjects.Type`
-  variant we don't currently surface).
+- [ ] **`[J]`** Linked table to a CSV / text file (the remaining
+  `MSysObjects.Type` variant not covered by `LinkedTableTests` /
+  `LinkedTableTypeTests`; Access-linked and ODBC-linked entries are already
+  exercised).
 
 ---
 
