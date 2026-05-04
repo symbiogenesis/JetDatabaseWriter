@@ -12,6 +12,7 @@ namespace JetDatabaseWriter.FormatProbe;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -19,14 +20,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
-using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.Indexes;
-using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Pages;
-using JetDatabaseWriter.Pages.Models;
-using JetDatabaseWriter.Schema;
-using JetDatabaseWriter.Schema.Models;
 
 internal static class LongRowBisect
 {
@@ -50,7 +45,7 @@ internal static class LongRowBisect
 
         foreach (var t in tasks)
         {
-            sb.AppendLine($"## {Path.GetFileName(t.Path)} (separator: {Convert.ToHexString(t.Sep)})");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"## {Path.GetFileName(t.Path)} (separator: {Convert.ToHexString(t.Sep)})");
             sb.AppendLine();
             await BisectAsync(t.Path, t.Sep, (object[])t.Codes, (object[])t.ExtCodes, sb);
             sb.AppendLine();
@@ -62,32 +57,26 @@ internal static class LongRowBisect
         return 0;
     }
 
+    private static readonly MethodInfo LoadCodesMethod = typeof(AccessReader).Assembly
+        .GetType("JetDatabaseWriter.Internal.GeneralLegacyTextIndexEncoder")!
+        .GetMethod("LoadCodes", BindingFlags.NonPublic | BindingFlags.Static)!;
+
     private static (object[] Codes, object[] Ext) LoadHandlers(string typeName)
     {
-        // Force lazy init on the encoder class via Encode("a", true), then grab the static field arrays.
-        var asm = typeof(AccessReader).Assembly;
-        var t = asm.GetType($"JetDatabaseWriter.Internal.{typeName}")!;
-        t.GetMethod("Encode", BindingFlags.Public | BindingFlags.Static)!
-            .Invoke(null, new object?[] { "a", true });
+        var suffix = typeName == "GeneralTextIndexEncoder" ? "gen" : "genleg";
 
-        // The lazy holders are private static. Use the GeneralLegacy LoadCodes path directly.
-        var glType = asm.GetType("JetDatabaseWriter.Internal.GeneralLegacyTextIndexEncoder")!;
-        var loadCodes = glType.GetMethod("LoadCodes", BindingFlags.NonPublic | BindingFlags.Static)!;
-
-        (string main, string ext) resources = typeName == "GeneralTextIndexEncoder"
-            ? ("JetDatabaseWriter.IndexCodeTables.index_codes_gen.txt.gz",
-               "JetDatabaseWriter.IndexCodeTables.index_codes_ext_gen.txt.gz")
-            : ("JetDatabaseWriter.IndexCodeTables.index_codes_genleg.txt.gz",
-               "JetDatabaseWriter.IndexCodeTables.index_codes_ext_genleg.txt.gz");
-
-        var codes = (object[])loadCodes.Invoke(null, new object[] { resources.main, (char)0x0000, (char)0x00FF })!;
-        var ext = (object[])loadCodes.Invoke(null, new object[] { resources.ext, (char)0x0100, (char)0xFFFF })!;
+        var codes = (object[])LoadCodesMethod.Invoke(null, [$"JetDatabaseWriter.IndexCodeTables.index_codes_{suffix}.txt.gz", (char)0x0000, (char)0x00FF])!;
+        var ext = (object[])LoadCodesMethod.Invoke(null, [$"JetDatabaseWriter.IndexCodeTables.index_codes_ext_{suffix}.txt.gz", (char)0x0100, (char)0xFFFF])!;
         return (codes, ext);
     }
 
     private static async Task BisectAsync(string path, byte[] sep, object[] codes, object[] extCodes, StringBuilder sb)
     {
-        if (!File.Exists(path)) { sb.AppendLine($"_(missing)_"); return; }
+        if (!File.Exists(path))
+        {
+            sb.AppendLine(CultureInfo.InvariantCulture, $"_(missing)_");
+            return;
+        }
 
         await using AccessReader reader = await AccessReader.OpenAsync(
             path, new AccessReaderOptions { UseLockFile = false }, CancellationToken.None);
@@ -110,16 +99,25 @@ internal static class LongRowBisect
         for (int depth = 0; depth < 32; depth++)
         {
             byte[] page = await reader.GetRawPageBytesAsync(current, CancellationToken.None);
-            if (page[0] == Constants.IndexLeafPage.PageTypeLeaf) break;
+            if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                break;
+            }
+
             var iEntries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, reader.PageSize);
             current = iEntries[0].ChildPage;
         }
+
         var allKeys = new List<byte[]>();
         while (current != 0)
         {
             byte[] page = await reader.GetRawPageBytesAsync(current, CancellationToken.None);
             var entries = IndexLeafIncremental.DecodeEntries(layout, page, reader.PageSize);
-            foreach (var e in entries) allKeys.Add(e.Key);
+            foreach (var e in entries)
+            {
+                allKeys.Add(e.Key);
+            }
+
             (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
             current = next;
         }
@@ -128,24 +126,30 @@ internal static class LongRowBisect
         var longRows = new List<(int Idx, string Val)>();
         for (int i = 0; i < rowValues.Count; i++)
         {
-            if (rowValues[i] is { Length: > 127 } v) longRows.Add((i, v));
+            if (rowValues[i] is { Length: > 127 } v)
+            {
+                longRows.Add((i, v));
+            }
         }
 
-        sb.AppendLine($"Long rows: {longRows.Count}; long leaves: {allKeys.Count(k => k.Length > 50)}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Long rows: {longRows.Count}; long leaves: {allKeys.Count(k => k.Length > 50)}");
         sb.AppendLine();
 
         foreach (var (rowIdx, val) in longRows)
         {
-            sb.AppendLine($"### row[{rowIdx}] len={val.Length}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"### row[{rowIdx}] len={val.Length}");
+
             // Show some specific source chars to diagnose chunk-boundary rule.
             for (int probe = 175; probe <= 185 && probe < val.Length; probe++)
             {
                 char c = val[probe];
-                sb.AppendLine($"  val[{probe}] = U+{(int)c:X4} ('{(char.IsControl(c) ? '?' : c)}')");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  val[{probe}] = U+{(int)c:X4} ('{(char.IsControl(c) ? '?' : c)}')");
             }
+
             // Encode various prefixes inline-only and search for a leaf containing the result
             // followed by the separator.
             var candidates = new List<(int K, byte[] Bytes)>();
+
             // Try all source positions K from 100 to 200 — covers expected K1.
             for (int k = 100; k <= 200 && k <= val.Length; k++)
             {
@@ -160,10 +164,18 @@ internal static class LongRowBisect
             byte[]? leafBytes = null;
             foreach (byte[] k in allKeys)
             {
-                if (k.Length < 200) continue;
+                if (k.Length < 200)
+                {
+                    continue;
+                }
+
                 // skip 1-byte flag
                 int sepAt = IndexOf(k, sep, 1);
-                if (sepAt < 0) continue;
+                if (sepAt < 0)
+                {
+                    continue;
+                }
+
                 var chunk1 = k.AsSpan(1, sepAt - 1).ToArray();
                 foreach (var (cand, candBytes) in candidates)
                 {
@@ -175,22 +187,27 @@ internal static class LongRowBisect
                         break;
                     }
                 }
-                if (matchedLeaf >= 0) break;
+
+                if (matchedLeaf >= 0)
+                {
+                    break;
+                }
             }
 
             if (matchedLeaf < 0 || leafBytes is null)
             {
                 // Maybe descending: also try complemented forms
-                sb.AppendLine($"  no chunk-1 match found in {allKeys.Count} leaves (asc={asc}). Skipping.");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  no chunk-1 match found in {allKeys.Count} leaves (asc={asc}). Skipping.");
                 sb.AppendLine();
                 continue;
             }
 
-            sb.AppendLine($"  chunk #1: K1={matchedK} (val[0..{matchedK}))  leafIdx={matchedLeaf} leafLen={leafBytes.Length}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"  chunk #1: K1={matchedK} (val[0..{matchedK}))  leafIdx={matchedLeaf} leafLen={leafBytes.Length}");
 
             // Now find chunk #2: bytes from after separator up to the END_TEXT (0x01).
             int sepIdx = IndexOf(leafBytes, sep, 1);
             int chunk2Start = sepIdx + sep.Length;
+
             // chunk #2 ends at next 0x01 (END_TEXT) — but need to be careful because
             // 0x01 can appear inside extras. The structure is:
             //   chunk1 | sep | chunk2 | END_TEXT (0x01) | extras | (END_TEXT END_TEXT) | (crazy/unprint) | END_EXTRA_TEXT
@@ -198,7 +215,7 @@ internal static class LongRowBisect
             // which inline encoding of val[K2_start..K2_end] is a prefix of leafBytes from chunk2Start.
             // The K2_start is hypothesised to be K1 + 1 (drop one char) or K1 + 2 (drop two chars).
             // K2_end is the largest k such that the inline encoding fits within the budget.
-            sb.AppendLine($"  chunk #2 region starts at byte offset {chunk2Start}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"  chunk #2 region starts at byte offset {chunk2Start}");
 
             // Try a range of (K2_start, K2_end) pairs.
             int? bestK2Start = null, bestK2End = null;
@@ -208,8 +225,16 @@ internal static class LongRowBisect
                 for (int k2e = k2s + 50; k2e <= val.Length && k2e <= matchedK + 600; k2e++)
                 {
                     byte[] inline2 = EncodeInlineOnly(val.AsSpan(k2s, k2e - k2s), codes, extCodes);
-                    if (inline2.Length == 0) continue;
-                    if (chunk2Start + inline2.Length > leafBytes.Length) continue;
+                    if (inline2.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    if (chunk2Start + inline2.Length > leafBytes.Length)
+                    {
+                        continue;
+                    }
+
                     if (leafBytes.AsSpan(chunk2Start, inline2.Length).SequenceEqual(inline2))
                     {
                         // Track longest match
@@ -225,43 +250,41 @@ internal static class LongRowBisect
 
             if (bestK2Start.HasValue)
             {
-                sb.AppendLine($"  chunk #2: K2_start={bestK2Start} K2_end={bestK2End}  (drops {bestK2Start - matchedK} chars between chunks)");
-                sb.AppendLine($"  chunk #2 byte-length: {bestChunk2!.Length}");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  chunk #2: K2_start={bestK2Start} K2_end={bestK2End}  (drops {bestK2Start - matchedK} chars between chunks)");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  chunk #2 byte-length: {bestChunk2!.Length}");
             }
             else
             {
-                sb.AppendLine($"  chunk #2: no match found");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  chunk #2: no match found");
+
                 // Show first 60 bytes after the separator for diagnosis.
                 int n = Math.Min(60, leafBytes.Length - chunk2Start);
-                sb.AppendLine($"  bytes after separator (first {n}): {Convert.ToHexString(leafBytes.AsSpan(chunk2Start, n).ToArray())}");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  bytes after separator (first {n}): {Convert.ToHexString(leafBytes.AsSpan(chunk2Start, n).ToArray())}");
+
                 // Also show what inline-encoding val[181..255] would yield.
                 if (val.Length > 255)
                 {
                     var trial = EncodeInlineOnly(val.AsSpan(181, 74), codes, extCodes);
-                    sb.AppendLine($"  inline-only(val[181..255]) ({trial.Length} B): {Convert.ToHexString(trial)}");
+                    sb.AppendLine(CultureInfo.InvariantCulture, $"  inline-only(val[181..255]) ({trial.Length} B): {Convert.ToHexString(trial)}");
                 }
             }
 
             // Show the full structure
-            sb.AppendLine($"  total leaf bytes: {leafBytes.Length}, header(1) + chunk1({sepIdx - 1}) + sep(4) + chunk2({(bestChunk2?.Length ?? 0)}) + tail({leafBytes.Length - chunk2Start - (bestChunk2?.Length ?? 0)})");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"  total leaf bytes: {leafBytes.Length}, header(1) + chunk1({sepIdx - 1}) + sep(4) + chunk2({bestChunk2?.Length ?? 0}) + tail({leafBytes.Length - chunk2Start - (bestChunk2?.Length ?? 0)})");
             if (bestChunk2 is not null)
             {
                 int tailStart = chunk2Start + bestChunk2.Length;
-                sb.AppendLine($"  tail hex: {Convert.ToHexString(leafBytes.AsSpan(tailStart).ToArray())}");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  tail hex: {Convert.ToHexString(leafBytes.AsSpan(tailStart).ToArray())}");
             }
+
             sb.AppendLine();
         }
     }
 
     private static int IndexOf(byte[] hay, byte[] needle, int from)
     {
-        for (int i = from; i + needle.Length <= hay.Length; i++)
-        {
-            bool ok = true;
-            for (int j = 0; j < needle.Length; j++) { if (hay[i + j] != needle[j]) { ok = false; break; } }
-            if (ok) return i;
-        }
-        return -1;
+        int pos = hay.AsSpan(from).IndexOf(needle);
+        return pos >= 0 ? pos + from : -1;
     }
 
     /// <summary>
@@ -277,11 +300,16 @@ internal static class LongRowBisect
         {
             object handler = c <= 0x00FF ? codes[c] : extCodes[c - 0x0100];
             var t = handler.GetType();
+
             // Call GetInlineBytes(c)
             var m = t.GetMethod("GetInlineBytes")!;
-            byte[]? inline = (byte[]?)m.Invoke(handler, new object[] { c });
-            if (inline is not null) bout.AddRange(inline);
+            byte[]? inline = (byte[]?)m.Invoke(handler, [c]);
+            if (inline is not null)
+            {
+                bout.AddRange(inline);
+            }
         }
+
         return [.. bout];
     }
 }
