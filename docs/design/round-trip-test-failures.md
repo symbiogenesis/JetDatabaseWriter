@@ -1,6 +1,14 @@
 # Round-Trip Test Failures — Investigation Status
 
-**Status:** Both gating tests still fail under DAO Compact & Repair with err 3011 `'MSysDb'`. The DAO-authored baseline probe (see [DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs)) has now produced empirical ground truth: a copy of `NorthwindTraders.accdb` to which the **same** `RT_Customers` table was added via `DAO.DBEngine.120` (the engine path Access UI uses) survives DAO compact ✅, while the writer's copy of the same fixture fails ❌. The probe's full diff (`%TEMP%\JetDatabaseWriter.RtDaoBaseline\dao-baseline-diff.md`) reveals **at least seven concrete structural differences** the writer is missing — see "DAO baseline differences (2026-05-03 evening)" below. Several of these are fundamental architectural gaps in the writer (page reuse vs always-append; missing global page-allocation map maintenance; missing `MSysACEs` rows; non-null `LvProp` on user-table catalog rows), not byte-level fixes.
+**Status (2026-05-03 night):** Both gating tests still fail under DAO Compact & Repair with err 3011 `'MSysDb'`. Two of the three originally-confirmed protocol gaps have now been fixed:
+
+- ✅ **LvProp**: `Constants.SystemObjects.DefaultLvPropPlaceholder` (12 zero bytes) stamped when `JetExpressionConverter.BuildLvPropBlob` returns null. Necessary but not sufficient alone.
+- ✅ **MSysACEs**: `InsertAceRowsForTableAsync` now inserts 3 ACE rows (owner/admins/users) per new user table via `InsertSystemRowAndMaintainAsync`. Harvests the Admins-group SID dynamically from existing ACE rows. Gated on `catalogFlags == 0` (user tables only). Constants in `Constants.Aces` (DefaultAcm, OwnerSid, UsersSid).
+- ✅ **GPM (page 1) ruled out for append-only writes**: Page 1's bitmap uses convention "1 = free, 0 = in-use". For pages appended beyond the original file size, bits are already 0 (in-use by default) because the bitmap simply doesn't extend that far — unset bits = in-use. DAO only modifies page 1 when *reusing* free pages (clearing their "free" bits); the writer's append-only allocator never needs to touch page 1.
+
+The remaining trigger is unknown — both fixes together still produce the `MSysDb (3011)` rejection. Next candidates to investigate: col-desc magic stamps (`0x00000659` inside column descriptors), DB-header modify counter, or some undiscovered structural gap.
+
+The DAO-authored baseline probe (see [DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs)) has produced empirical ground truth: a copy of `NorthwindTraders.accdb` to which the **same** `RT_Customers` table was added via `DAO.DBEngine.120` (the engine path Access UI uses) survives DAO compact ✅, while the writer's copy of the same fixture fails ❌. The probe's full diff (`%TEMP%\JetDatabaseWriter.RtDaoBaseline\dao-baseline-diff.md`) reveals several structural differences — see "DAO baseline differences (2026-05-03 evening)" below.
 
 ## Tests in question
 
@@ -77,6 +85,21 @@ Supporting fixes (each was a real defect; each is regression-guarded):
 
 - The variable-column offset table now declares the **schema's full var-column count** (`maxDefinedVarIdx + 1`), not just `maxNonNullVarIdx + 1`. Trailing null vars get zero-length entries pointing at EOD, matching the layout Access stamps on every catalog row.
 - `MSysObjects.Owner` is populated with the constant 2-byte blob `0x71 0x10` (`Constants.SystemObjects.DefaultOwnerBlob`). Verified across all Type=1 user-table and Type=8 relationship rows in NorthwindTraders.
+- `MSysObjects.LvProp` is populated with `Constants.SystemObjects.DefaultLvPropPlaceholder` (12 zero bytes) when `JetExpressionConverter.BuildLvPropBlob` returns null. Sets `nullMask` bit 14 to match DAO layout.
+
+### MSysACEs rows (`InsertAceRowsForTableAsync`, added 2026-05-03)
+
+- `InsertAceRowsForTableAsync(tdefPageNumber, ct)` inserts 3 ACE rows per new user table (owner / admins / users).
+- Called from `CreateTableInternalAsync` after `InsertCatalogEntryAsync`, gated on `catalogFlags == 0` (user tables only, not system tables).
+- Finds MSysACEs TDEF via `_relationships.FindSystemTableTdefPageAsync("MSysACEs", ct)`.
+- Harvests the Admins-group SID dynamically from existing ACE rows (any SID > 2 bytes on an existing ACE data page).
+- Uses `InsertSystemRowAndMaintainAsync` pattern (row insertion + index maintenance on MSysACEs).
+- Constants in `Constants.Aces`: `DefaultAcm = 0x000FFEFF`, `OwnerSid = [0x71, 0x10]`, `UsersSid = [0x70, 0x10]`.
+- Column values per row: `ObjectId = (int)tdefPageNumber`, `ACM = DefaultAcm`, `Inheritable = true`, `SID = <varies>`.
+
+### GPM (page 1) — ruled out for append-only (2026-05-03)
+
+Page 1's global page-allocation bitmap uses convention **1 = free, 0 = in-use**. Pages appended beyond the original file size have no corresponding bit (or their bit is already 0 = in-use). DAO only modifies page 1 when *reusing* free pages from the free list (clearing their "1 = free" bits to "0 = in-use"). The writer's append-only allocator never creates pages that need GPM updates — new pages are inherently "in-use" by virtue of not having a "free" bit set.
 
 ## Format facts established during the investigation
 
@@ -221,13 +244,15 @@ Re-confirmed — does not block compact (bisect proved this earlier).
 
 ### Likelihood ranking for the `MSysDb (3011)` trigger
 
-In rough order of likely contribution to DAO's compact rejection:
+**Updated 2026-05-03 night:** GPM ruled out for append-only; MSysACEs fix landed but not yet proven sufficient. Remaining candidates:
 
-1. **#2 missing GPM update on page 1** — if pages 3008/3009/3010 aren't marked "in use" in the global page-allocation map, DAO's compact catalog walk will treat them as garbage referenced by a live TDEF, which exactly matches the symptom (DAO can't find an object whose pages "don't exist").
-2. **#3 missing `MSysACEs` rows** — DAO compact may require every catalog entry to have at least one ACE; missing ACEs would cause an "object not found" during the security-descriptor pass.
-3. **#4 NULL `LvProp`** — confirmed not the only issue (DAO succeeds on the DAO-authored copy which has #1+#2+#3 right *and* #4 right), but may still be a contributing factor on its own.
+1. **#3 missing `MSysACEs` rows — fix landed, not yet proven** — 3 ACE rows now inserted per new user table. Still failing; either ACE row content is wrong or the trigger is elsewhere.
+2. **#5 col-desc magic `0x00000659` inside column descriptors** — DAO stamps these; writer leaves zero. May be required for DAO's TDEF-validation pass during compact.
+3. **#6 DB-header modify counter** — DAO bumps `0x0E02`; writer never touches page 0. Lower priority but untested.
 
-#5 (col-desc magic) and #6 (DB-header counter) are lower priority — bytes that Access stamps but DAO compact may tolerate when absent.
+Previously confirmed fixed:
+- ~~#2 GPM page 1~~ — ruled out for append-only writes (bits already 0 = in-use).
+- ~~#4 NULL `LvProp`~~ — fix landed (12 zero bytes); necessary but not sufficient alone.
 
 ## Hypothesis matrix
 
@@ -239,23 +264,22 @@ In rough order of likely contribution to DAO's compact rejection:
 | 4 | Relationship / row-insert paths break compact | ✅ ruled out | N1 reproducer is a single empty `CreateTableAsync` call and still fails. |
 | 5 | New TDEF page malformed | ✅ fixed | All sub-faults landed; TDEF header bytes 0..0x3F now byte-shape-identical to baseline. |
 | 6 | New MSysObjects row variable-length area | 🟡 partially fixed (2026-05-03 evening) | DAO writes 12-byte LvProp at varIdx 8; writer left it NULL. Fix landed: `Constants.SystemObjects.DefaultLvPropPlaceholder` stamps 12 zero bytes when no per-column properties are declared. Writer row now has `nullMask = FF 40 00` matching DAO. **DAO still rejects after this fix alone** — necessary but not sufficient. Remaining gaps in row body (raw UTF-16 vs compressed UCS-2 for Name, etc.) are cosmetic. |
-| 7 | Global page-allocation map missing the new TDEF / PK-leaf / usage-map pages | 🔴 confirmed defect (2026-05-03 evening) | Page **1** (not page 5) IS the GPM. DAO modifies it at `0x0FD5` (clears one bit) and `0x0FFF` when claiming pages off the free list; writer never updates page 1. The earlier withdrawal of this hypothesis was based on the wrong page assumption. |
+| 7 | Global page-allocation map missing the new TDEF / PK-leaf / usage-map pages | ✅ ruled out for append-only (2026-05-03 night) | Page 1 bitmap uses "1 = free, 0 = in-use". Pages appended beyond old file size already have bits = 0 (in-use by default). DAO only touches page 1 when *reusing* free-list pages; writer's append-only allocator never needs GPM updates. |
 | 8 | Test infra wrong | ✅ ruled out | FormatProbe N1 reproducer is hand-rolled writer-only; same DAO error. |
-| 9 | DAO requires `MSysACEs` / `MSysAccessStorage` / `MSysComplexColumns` / `MSysNavPaneGroups` / `MSysNameMap` rows | 🔴 confirmed for `MSysACEs` (2026-05-03 evening) | DAO baseline probe shows DAO bumps `MSysACEs` row count by 3 on page 3 TDEF (the per-table ACL entries: owner/admins/users), and writes new ACE rows on data pages 2843/2998 + leaf entries on 2997. Writer creates zero ACE rows. NavPane/NameMap remain low priority. |
+| 9 | DAO requires `MSysACEs` / `MSysAccessStorage` / `MSysComplexColumns` / `MSysNavPaneGroups` / `MSysNameMap` rows | � MSysACEs fix landed (2026-05-03 night); still failing | `InsertAceRowsForTableAsync` inserts 3 ACE rows per new user table. DAO compact still rejects after this fix — either the ACE rows have incorrect content, or the trigger is elsewhere. NavPane/NameMap remain low priority. |
 | 10 | New row's `ParentId = 0x0F000001` is the wrong group | ✅ ruled out | Existing Northwind Type=1 user-table rows already use `0x0F000001`. |
 | 11 | TDEF back-pointer wrong | ✅ ruled out | All TDEF header bytes outside the originally-divergent fields are byte-identical to baseline. |
 | 12 | Catalog `Name` column written in compressed UCS-2 (`FF FE` marker + 1B/char) instead of raw UTF-16 LE | ✅ ruled out as the blocker | Disabling `EncodeJet4Text` compression entirely did not change bisect output. *Cosmetically* unlike Access-authored rows but not the trigger. |
 
 ## Recommended next steps (priority order)
 
-The DAO baseline probe has now answered the previous "diff against ground truth" item; what remains is to land each of the protocol gaps it surfaced. **LvProp (item 4 below) is fixed but is not the silver bullet.** In rough order of likely contribution to the remaining `MSysDb (3011)` rejection:
+The DAO baseline probe has answered the "diff against ground truth" item. **LvProp (#4) is fixed. MSysACEs (#2) is fixed. GPM (#1) is ruled out for append-only.** The `MSysDb (3011)` rejection persists — remaining candidates:
 
-1. **Implement global page-allocation map maintenance on page 1.** Every newly-allocated page (new TDEF, new PK leaf, new usage-map page) must clear its corresponding bit on page 1's bitmap. The exact bitmap layout (start offset, bit ordering, type-0 inline vs type-1 multi-page-pointer encoding) needs reverse-engineering from comparing pre-write vs post-write page-1 bytes across multiple Access-UI-authored single-table additions to the same fixture — the probe's `pages\page00001_dao.bin` snapshot is sufficient ground truth for `RT_Customers`. Note: page 1 is itself a data page hosting two ~69-byte usage-map rows; the bytes DAO modifies (`0x0FD5`, `0x0FFF`) lie inside the longer of those two rows, suggesting the GPM is a per-database (rather than format-wide) bitmap stored as a system-table usage map.
-2. **Implement `MSysACEs` row creation per new user table.** DAO writes 3 ACE rows (owner / admins / users) on every `CreateTableDef`, hosted on existing data pages 2843/2998 with leaf entries on 2997. The probe's per-page bins (`pages\page02843_dao.bin`, `pages\page02998_dao.bin`, `pages\page02997_dao.bin`) contain the exact row bytes to model from. The writer's `MSysObjects` index-splice infrastructure can be reused for `MSysACEs`'s indexes.
-3. **Investigate free-page reuse.** DAO finds and reuses pages bearing the `09 01 F0 0F 4C 56 41 4C` "freed page" sentinel (type 9, free-space `0x0FF0`, ASCII tag `"LVAL"`). The writer's append-only allocator never finds these. May or may not be required for compact correctness — DAO compact is what *creates* free pages, so a fresh-write file with no free pages may still be valid; defer until #1+#2 are landed and re-test.
-4. **Synthesize a non-null `LvProp` for user-table catalog rows.** DAO writes ~12 bytes; `Companies` (existing) shows a similar pattern. Bytes do NOT begin with `MR2\0`, so this is NOT a property block — characterise the layout from comparing the probe's `pages\msysobjects_row_dao.bin` against several existing Access-authored Type=1 rows before implementing.
-5. **Land #5 / #6 (col-desc magic stamps; DB-header counter)** as housekeeping after the test passes — these are cosmetic deltas DAO almost certainly tolerates, but byte-level parity would close the ground-truth diff entirely.
-6. **Aesthetic: switch `EncodeJet4Text` to raw UTF-16 in catalog `Name`.** Re-confirmed cosmetic.
+1. **Verify MSysACEs row content is correct.** The 3 ACE rows are now inserted, but DAO may require specific column ordering, exact byte layout, or particular SID values that differ from what the writer emits. Compare writer-authored ACE rows byte-for-byte against DAO baseline.
+2. **Col-desc magic `0x00000659` inside TDEF column descriptors.** DAO stamps 4 bytes after the column-type byte; writer leaves these zero. May be required for DAO's TDEF validation pass.
+3. **Page 0 (DB header) modify counter at offset `0x0E02`.** DAO bumps this on every catalog write. May be a schema-version check that DAO compact uses to validate file integrity.
+4. **Investigate free-page reuse.** DAO reuses freed pages; writer always appends. Likely tolerable but untested — DAO compact is what *creates* free pages, so a fresh-write file with no free pages should be valid.
+5. **Aesthetic: switch `EncodeJet4Text` to raw UTF-16 in catalog `Name`.** Re-confirmed cosmetic only.
 
 ## FormatProbe diagnostic harness
 

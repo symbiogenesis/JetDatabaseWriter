@@ -543,6 +543,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         byte[]? lvProp = JetExpressionConverter.BuildLvPropBlob(columns, _format);
         await InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
+
+        // DAO Compact & Repair requires every user table to have ACE
+        // (Access Control Entry) rows in MSysACEs. Without them DAO's
+        // security-descriptor pass aborts with err 3011 "MSysDb".
+        if (catalogFlags == 0)
+        {
+            await InsertAceRowsForTableAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
+        }
+
         RegisterConstraints(tableName, columns);
         InvalidateCatalogCache();
         return tdefPageNumber;
@@ -3323,6 +3332,86 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         _ = await TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Inserts 3 ACE (Access Control Entry) rows into <c>MSysACEs</c> for a
+    /// newly-created user table. DAO Compact &amp; Repair's security-descriptor
+    /// pass requires every user table to have owner / admins / users entries;
+    /// without them DAO aborts with err 3011 "could not find 'MSysDb'".
+    /// </summary>
+    private async ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
+    {
+        long acesTdefPage = await _relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        if (acesTdefPage <= 0)
+        {
+            return;
+        }
+
+        TableDef acesDef = await ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+
+        // Harvest the Admins group SID from an existing ACE row (the long
+        // ~102-byte blob that is the same on every row in the database).
+        byte[]? adminsSid = await HarvestAdminsSidAsync(acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
+
+        byte[][] sids = adminsSid != null
+            ? [Constants.Aces.OwnerSid, adminsSid, Constants.Aces.UsersSid]
+            : [Constants.Aces.OwnerSid, Constants.Aces.UsersSid];
+
+        foreach (byte[] sid in sids)
+        {
+            object[] row = acesDef.CreateNullValueRow();
+            acesDef.SetValueByName(row, "ObjectId", (int)tdefPageNumber);
+            acesDef.SetValueByName(row, "ACM", Constants.Aces.DefaultAcm);
+            acesDef.SetValueByName(row, "Inheritable", true);
+            acesDef.SetValueByName(row, "SID", sid);
+            await InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, row, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Reads an existing ACE row from <c>MSysACEs</c> and extracts the
+    /// Admins-group SID (the long ~102-byte blob). All ACE rows in a database
+    /// share the same Admins SID; we harvest it from any row whose SID is
+    /// longer than the 2-byte owner/users sentinels.
+    /// </summary>
+    private async ValueTask<byte[]?> HarvestAdminsSidAsync(long acesTdefPage, TableDef acesDef, CancellationToken cancellationToken)
+    {
+        ColumnInfo? sidCol = acesDef.FindColumn("SID");
+        if (sidCol == null)
+        {
+            return null;
+        }
+
+        long total = _stream.Length / _pgSz;
+        for (long pageNumber = 3; pageNumber < total; pageNumber++)
+        {
+            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != acesTdefPage)
+                {
+                    continue;
+                }
+
+                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
+                {
+                    string hex = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, sidCol);
+
+                    // Longer than 4 hex chars means > 2 bytes (not owner/users short SIDs).
+                    if (hex.Length > 4)
+                    {
+                        return ParseHexBytes(hex);
+                    }
+                }
+            }
+            finally
+            {
+                ReturnPage(page);
+            }
+        }
+
+        return null;
+    }
+
     private async ValueTask RewriteTableAsync(
         string tableName,
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
@@ -5134,6 +5223,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         long parsed;
         return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed) ? parsed : 0L;
+    }
+
+    private static byte[] ParseHexBytes(string hex)
+    {
+#if NET5_0_OR_GREATER
+        return Convert.FromHexString(hex);
+#else
+        byte[] bytes = new byte[hex.Length / 2];
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            bytes[i] = byte.Parse(hex.AsSpan(i * 2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        }
+
+        return bytes;
+#endif
     }
 
     internal async ValueTask<List<RowLocation>> GetLiveRowLocationsAsync(long tdefPage, CancellationToken cancellationToken)
