@@ -276,7 +276,14 @@ public abstract class AccessBase : IAccessBase
     /// characters), so 1- and 2-character strings are still written as
     /// plain UCS-2 to avoid the 2-byte marker overhead.
     /// </remarks>
-    internal static byte[] EncodeJet4Text(string value)
+    internal static byte[] EncodeJet4Text(string value) => EncodeJet4Text(value, int.MaxValue);
+
+    /// <summary>
+    /// Encodes a string into Jet4 text format, truncating to at most
+    /// <paramref name="maxBytes"/> output bytes. Avoids a secondary
+    /// <c>Array.Resize</c> when the caller has a column-size limit.
+    /// </summary>
+    internal static byte[] EncodeJet4Text(string value, int maxBytes)
     {
         if (string.IsNullOrEmpty(value))
         {
@@ -299,18 +306,28 @@ public abstract class AccessBase : IAccessBase
 
         if (!compressible)
         {
-            return Encoding.Unicode.GetBytes(value);
+            int charCount = Math.Min(value.Length, maxBytes / 2);
+            byte[] result = new byte[charCount * 2];
+            Encoding.Unicode.GetBytes(value.AsSpan(0, charCount), result);
+            return result;
         }
 
-        byte[] result = new byte[value.Length + 2];
-        result[0] = 0xFF;
-        result[1] = 0xFE;
-        for (int i = 0; i < value.Length; i++)
+        int compressedLen = Math.Min(value.Length + 2, maxBytes);
+        int charsToEncode = compressedLen - 2;
+        if (charsToEncode <= 0)
         {
-            result[i + 2] = (byte)value[i];
+            return [];
         }
 
-        return result;
+        byte[] compressed = new byte[charsToEncode + 2];
+        compressed[0] = 0xFF;
+        compressed[1] = 0xFE;
+        for (int i = 0; i < charsToEncode; i++)
+        {
+            compressed[i + 2] = (byte)value[i];
+        }
+
+        return compressed;
     }
 
     /// <summary>

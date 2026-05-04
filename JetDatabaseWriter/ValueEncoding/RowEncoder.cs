@@ -324,17 +324,11 @@ internal sealed class RowEncoder(AccessWriter writer)
             return null;
         }
 
-        byte[] bytes = writer._format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(value) : writer.AnsiEncoding.GetBytes(value);
+        int limit = maxSize > 0 ? maxSize : int.MaxValue;
+        byte[] bytes = writer._format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(value, limit) : writer.AnsiEncoding.GetBytes(value);
         if (maxSize > 0 && bytes.Length > maxSize)
         {
-            bool isCompressedJet4 = writer._format != DatabaseFormat.Jet3Mdb && bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE;
-            int allowed = writer._format != DatabaseFormat.Jet3Mdb && !isCompressedJet4 ? maxSize & ~1 : maxSize;
-            if (allowed <= 0)
-            {
-                return [];
-            }
-
-            Array.Resize(ref bytes, allowed);
+            Array.Resize(ref bytes, maxSize);
         }
 
         return bytes;

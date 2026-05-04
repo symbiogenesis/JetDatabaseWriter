@@ -472,8 +472,8 @@ static async Task<List<(long Id, string Name, int Type, long Flags, long TdefPag
     return result;
 }
 
-static string SafeGet(List<string> row, int i) =>
-    i >= 0 && i < row.Count ? row[i] ?? string.Empty : string.Empty;
+static string SafeGet(string[] row, int idx) =>
+    (idx >= 0 && idx < row.Length) ? row[idx] : string.Empty;
 
 static long ParseLong(string s) =>
     long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out long v) ? v : 0;

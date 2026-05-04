@@ -839,7 +839,7 @@ internal static class DaoBaselineProbe
         var list = new List<CatalogEntry>();
         await foreach (var row in r.EnumerateMSysObjectsRowsAsync(msys, default))
         {
-            string Get(int i) => i >= 0 && i < row.Count ? row[i] ?? string.Empty : string.Empty;
+            string Get(int i) => i >= 0 && i < row.Length ? row[i] ?? string.Empty : string.Empty;
             long id = long.TryParse(Get(idxId), NumberStyles.Integer, CultureInfo.InvariantCulture, out long v1) ? v1 : 0;
             long parent = long.TryParse(Get(idxParent), NumberStyles.Integer, CultureInfo.InvariantCulture, out long v2) ? v2 : 0;
             int type = int.TryParse(Get(idxType), NumberStyles.Integer, CultureInfo.InvariantCulture, out int v3) ? v3 : 0;
