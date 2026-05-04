@@ -1,6 +1,6 @@
 ﻿# Round-Trip Test Failures — Investigation Status
 
-**Status (2026-05-03):** Both gating tests still fail under DAO Compact & Repair. The failure was **isolated to MSysObjects index leaf pages** via binary page-level bisection. A **prefix compression cap fix** has been applied (`BuildLeafPage` now preserves the original page's `pref_len`), bringing the writer's leaf pages to near-byte-identical match with DAO-authored pages. Despite this, DAO still rejects the writer's output — the error message has shifted on page 8 from `MSysDb (3011)` to `The search key was not found in any record`, suggesting the fix is in the right direction but not yet complete.
+**Status (2026-05-04):** The N1 reproducer (single `CreateTableAsync`) now **passes DAO Compact & Repair** after the entry-start bitmask sentinel fix. The bisect probe confirms N0 (open/close) and N1 (one table) both pass. N2 (two tables) still fails with `Object invalid or no longer set` — the second `CreateTableAsync` call's splice is the remaining failure point. The two gating tests (which create 2 tables + relationship + rows) still fail.
 
 **Fixes landed (all necessary but collectively not yet sufficient):**
 
@@ -11,6 +11,7 @@
 - ✅ **Real-idx flags byte**: `0x80` bit set at `Constants.TableDefinition.Jet4.RealIdx.FlagsOffset` for FK backing indexes.
 - ✅ **DB-header modify counter at `0x0E02`**: Manually patched from `0x00` to `0x04` — **RULED OUT** (still fails).
 - ✅ **Prefix compression cap** (2026-05-03): `BuildLeafPage` now accepts optional `maxPrefixLength` parameter. `TrySpliceCatalogIndexEntryAsync` and `TryAppendToTailLeafAsync` read the existing page's `pref_len` before decoding and pass it to `BuildLeafPage`, preventing the writer from increasing prefix compression beyond what was on disk. Result: page 8 `pref_len` stays 0 (was being recomputed to 1), page 2790 `pref_len` stays 1 (was being recomputed to 4). Free-space values now match the DAO baseline.
+- ✅ **Entry-start bitmask sentinel** (2026-05-04): `BuildLeafPage` now writes a sentinel bit at the position one past the last entry in the entry-start bitmask. Access/DAO always writes this sentinel (verified on every leaf page in NorthwindTraders.accdb) and validates it during Compact & Repair. The N1 reproducer (single `CreateTableAsync`) now **passes DAO compact** with this fix. Five test helper `CountLeafEntries` methods updated to subtract 1 from the bitmask popcount to account for the sentinel.
 
 **Root cause isolated via binary page-level bisection (2026-05-03):**
 
@@ -18,14 +19,14 @@ A binary patch experiment on the N1 reproducer (single empty `RT_Customers` tabl
 - Reverting ALL shared-range modified pages (2, 3, 8, 2790, 2994, 2998) to original while keeping 6 appended pages (3008–3013) → DAO compact **PASSES**.
 - Testing each changed page individually (keep ONE modified, revert rest to original):
 
-| Page | What it is | Keep-one result (pre-pref_len fix) | Keep-one result (post-pref_len fix) |
-|---|---|---|---|
-| 2 | MSysObjects TDEF | ✅ PASS | ✅ PASS |
-| 3 | MSysACEs TDEF | ✅ PASS | ✅ PASS |
-| 8 | MSysObjects PK (`Id`) index leaf | 🔴 `MSysDb (3011)` | 🔴 `The search key was not found in any record` |
-| 2790 | MSysObjects `ParentIdName` composite index leaf | 🔴 `MSysDb (3011)` | 🔴 `MSysDb (3011)` |
-| 2994 | MSysObjects data page (new catalog row) | ✅ PASS | 🔴 `Object invalid or no longer set` (test creates 2 tables + rel) |
-| 2998 | MSysACEs data page | ✅ PASS | ✅ PASS |
+| Page | What it is | Keep-one result (pre-pref_len fix) | Keep-one result (post-pref_len fix) | Post-sentinel fix |
+|---|---|---|---|---|
+| 2 | MSysObjects TDEF | ✅ PASS | ✅ PASS | ✅ PASS |
+| 3 | MSysACEs TDEF | ✅ PASS | ✅ PASS | ✅ PASS |
+| 8 | MSysObjects PK (`Id`) index leaf | 🔴 `MSysDb (3011)` | 🔴 `The search key was not found in any record` | ✅ PASS (N1) |
+| 2790 | MSysObjects `ParentIdName` composite index leaf | 🔴 `MSysDb (3011)` | 🔴 `MSysDb (3011)` | ✅ PASS (N1) |
+| 2994 | MSysObjects data page (new catalog row) | ✅ PASS | 🔴 `Object invalid or no longer set` (test creates 2 tables + rel) | ✅ PASS (N1) |
+| 2998 | MSysACEs data page | ✅ PASS | ✅ PASS | ✅ PASS |
 
 **Post-pref_len-fix observations:**
 - Page 8's error changed from `MSysDb (3011)` to `The search key was not found in any record` — the bitmask/entry layout is closer to correct but still not right.
@@ -70,8 +71,8 @@ Pages added              : new TDEF, new PK leaf, new usage-map page (+3 to +6 d
 |---|---|:---:|---|
 | 2 | MSysObjects TDEF | ✅ PASS | Correct (`row_count` +1, per-real-idx entry counts +1) |
 | 3 | MSysACEs TDEF | ✅ PASS | Correct (`row_count` +3, ACE rows inserted with `FInheritable` column name fix) |
-| 8 | MSysObjects PK (`Id`) leaf | 🔴 **FAIL** | Post-pref_len fix: error changed from `MSysDb (3011)` to `search key not found`. 18 byte diffs vs baseline (expected: new entry). `pref_len=0` now matches baseline. `free_space=1456` matches DAO baseline. |
-| 2790 | MSysObjects `ParentIdName` composite leaf | 🔴 **FAIL** | Post-pref_len fix: still `MSysDb (3011)`. Only **1 byte** diff vs DAO baseline (bitmask bit at `0x01DD`). `pref_len=1` matches baseline. `free_space=10` matches DAO baseline. ~1479 byte diffs vs baseline (expected: entries shift after sorted insertion). |
+| 8 | MSysObjects PK (`Id`) leaf | 🔴 **FAIL** | Post-pref_len fix: error changed from `MSysDb (3011)` to `search key not found`. 18 byte diffs vs baseline (expected: new entry). `pref_len=0` now matches baseline. `free_space=1456` matches DAO baseline. **Post-sentinel fix: ✅ PASS (N1).** |
+| 2790 | MSysObjects `ParentIdName` composite leaf | 🔴 **FAIL** | Post-pref_len fix: still `MSysDb (3011)`. Only **1 byte** diff vs DAO baseline (bitmask bit at `0x01DD`). `pref_len=1` matches baseline. `free_space=10` matches DAO baseline. ~1479 byte diffs vs baseline (expected: entries shift after sorted insertion). **Post-sentinel fix: ✅ PASS (N1).** |
 | 2994 | MSysObjects data page hosting the new row | 🔴 **FAIL** | `Object invalid or no longer set` when tested with full 2-table+rel test. N1 (single table) bisection was ✅ PASS. |
 | 2998 | MSysACEs data page | ✅ PASS | ACE rows correctly inserted |
 | New TDEF page (3008) | RT_Customers TDEF | ✅ (appended pages all pass) | Header + magic stamps + usage-map pointers all correct |
@@ -98,7 +99,7 @@ All in `AccessWriter.cs` / `Constants.cs` unless noted; Jet4/ACE only where appl
 
 ### MSysObjects index splice
 
-`InsertCatalogEntryAsync` calls `IndexMaintainer.TrySpliceCatalogIndexEntryAsync`, which walks every real-idx slot of MSysObjects, descends to the rightmost leaf, encodes the new composite key, and splices it in via `IndexLeafPageBuilder.BuildLeafPage`. **Binary page-level bisection has identified the spliced leaf pages (8 and 2790) as the root cause of the DAO rejection.** A prefix compression cap fix (see below) brought the pages to near-byte-identical match with DAO-authored pages, but DAO still rejects them — the error message has shifted on page 8, suggesting the fix is in the right direction.
+`InsertCatalogEntryAsync` calls `IndexMaintainer.TrySpliceCatalogIndexEntryAsync`, which walks every real-idx slot of MSysObjects, descends to the rightmost leaf, encodes the new composite key, and splices it in via `IndexLeafPageBuilder.BuildLeafPage`. **Binary page-level bisection identified the spliced leaf pages (8 and 2790) as the root cause of the DAO rejection.** A prefix compression cap fix plus a bitmask sentinel fix (see below) have resolved the N1 (single-table) case — DAO now accepts the writer's output for a single `CreateTableAsync` call. The N2 (two-table) case still fails, likely due to the second splice operating on pages already modified by the first.
 
 Supporting fixes (each was a real defect; each is regression-guarded):
 
@@ -284,20 +285,22 @@ Re-confirmed — does not block compact (bisect proved this earlier).
 
 ### Likelihood ranking for the `MSysDb (3011)` trigger
 
-**Updated 2026-05-03 (evening):** The prefix compression cap fix has brought the writer's leaf pages to near-byte-identical match with DAO-authored pages. Page 8's error shifted from `MSysDb (3011)` to `The search key was not found in any record`, suggesting the splice is structurally closer to correct. Page 2790 has only **1 byte** difference vs DAO (a bitmask bit for the different entry position). Despite this, DAO still rejects both pages. The remaining divergence is subtle — likely in entry encoding or bitmask layout rather than gross structural errors.
+**Updated 2026-05-04:** The sentinel bit fix resolved the N1 (single-table) reproducer — DAO now accepts the writer's output when creating a single table. The bisect probe confirms N0 and N1 pass, N2 (two tables) fails with `Object invalid or no longer set`. The remaining failure is in the N2+ code path where the second `CreateTableAsync` call splices into pages already modified by the first call.
 
-The root cause is in `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` / `IndexLeafPageBuilder.BuildLeafPage`. Remaining sub-causes after pref_len fix:
+The root cause of the N1 failure was two missing pieces in `IndexLeafPageBuilder.BuildLeafPage`:
 
-1. **Entry-start bitmask layout** — the bitmask encodes entry boundaries relative to `FirstEntryOffset`. When entries shift position due to prefix stripping, the bitmask bits must correspond exactly to where entries land. A single misplaced bit can cause DAO to misparse entry boundaries ("search key not found").
-2. **Entry encoding** — sort key bytes or row pointer format may diverge from DAO's encoding. The writer uses compressed UCS-2 for `Name` in the catalog row; DAO uses raw UTF-16. The sort-key encoding should be identical (both go through `GeneralLegacyTextIndexEncoder`), but the resulting key bytes may differ if the encoder handles the `FF FE` prefix differently.
-3. **Free space / padding** — the splice may leave trailing garbage or stale bytes from the pre-splice page layout.
-4. **Bitmask bit for the final entry** — page 2790 differs by 1 bit at `0x01DD` (Writer=`0x00`, DAO=`0x40`). This bit marks the start of the last entry on the page. If the writer computes entry positions differently than DAO (even by 1 byte), the bitmask will be wrong.
+1. **Prefix compression growing beyond original** — fixed by the `maxPrefixLength` cap parameter.
+2. **Missing entry-start bitmask sentinel** — Access/DAO writes a one-past-the-end bit in the bitmask; the writer was omitting it. Fixed by writing the sentinel after the last entry.
+
+Remaining sub-cause for N2+ failure:
+
+1. **Second splice on already-spliced pages** — the second `CreateTableAsync` call's `TrySpliceCatalogIndexEntryAsync` reads pages that were written by the first call (with the sentinel). The sentinel is correctly excluded from `DecodeEntries` (it uses `payloadEnd` from `free_space`), but there may be other interactions — e.g. the `maxPrefixLength` cap reading the original page's `pref_len` is now reading the first splice's value rather than the baseline's value, which may or may not be the intended behaviour.
 
 ## Hypothesis matrix
 
 | # | Hypothesis | Status | Evidence |
 |---|---|:---:|---|
-| 1 | Splice key encoding wrong (text NFC, ParentId byte order, etc.) | 🟡 re-opened | Binary bisection proves spliced leaf pages are the trigger. Key encoding previously verified by re-decoding through `IndexKeyEncoder`, but DAO may validate byte layout more strictly. Page 8 error shifted to "search key not found" after pref_len fix — may indicate a key/bitmask alignment issue rather than encoding. |
+| 1 | Splice key encoding wrong (text NFC, ParentId byte order, etc.) | ✅ ruled out (N1) | N1 passes DAO compact — key encoding is correct for single-table case. |
 | 2 | Per-real-idx skip-block stale (`num_idx_rows` not bumped with `row_count`) | ✅ fixed | `UpdateRowCountAsync` mirrors row-count delta into `num_idx_rows`. Guarded. |
 | 3 | Real-idx `flags` byte at wrong offset / missing `0x80` UNKNOWN bit | ✅ fixed | Now uses `IndexLayout.FlagsOffsetWithinPhys` and `Constants.TableDefinition` flag constants. Guarded. |
 | 4 | Relationship / row-insert paths break compact | ✅ ruled out | N1 reproducer is a single empty `CreateTableAsync` call and still fails. |
@@ -311,18 +314,19 @@ The root cause is in `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` / `IndexL
 | 12 | Catalog `Name` compression (UCS-2 vs UTF-16) | ✅ ruled out | Cosmetic only; bisect proved. |
 | 13 | Col-desc magic `0x00000659` inside TDEF column/index descriptors | ✅ fixed & ruled out | Stamps landed in all three TDEF paths. TDEF pages individually pass binary bisection. |
 | 14 | DB-header modify counter at `0x0E02` | ✅ ruled out | Manual patch still fails. |
-| **15** | **MSysObjects index leaf splice (pages 8 and 2790)** | 🔴 **ACTIVE** | **Binary page-level bisection: pages 8 and 2790 each individually trigger DAO rejection.** Pref_len cap fix narrowed the gap (error shifted on page 8, page 2790 has only 1 bitmask-byte diff vs DAO), but pages still rejected. |
-| **16** | **Prefix compression (`pref_len`) growing beyond original** | ✅ **fixed** | `BuildLeafPage` was recomputing `pref_len` from scratch, increasing it beyond the original page's value (page 8: 0→1, page 2790: 1→4). This shifted entry positions and made the bitmask inconsistent. Fix: cap `pref_len` at the original page's value. Values now match baseline/DAO. **Necessary but not sufficient** — pages still fail after this fix. |
+| **15** | **MSysObjects index leaf splice (pages 8 and 2790)** | ✅ **FIXED (N1)** / 🔴 **N2+ still fails** | **Binary page-level bisection: pages 8 and 2790 each individually triggered DAO rejection.** Pref_len cap + sentinel fix resolved N1 (single table). N2 (two tables) still fails — second splice on already-modified pages. |
+| **16** | **Prefix compression (`pref_len`) growing beyond original** | ✅ **fixed** | `BuildLeafPage` was recomputing `pref_len` from scratch, increasing it beyond the original page's value (page 8: 0→1, page 2790: 1→4). This shifted entry positions and made the bitmask inconsistent. Fix: cap `pref_len` at the original page's value. Values now match baseline/DAO. **Necessary but not sufficient** — pages still failed after this fix alone. |
+| **17** | **Missing entry-start bitmask sentinel** | ✅ **fixed** | Access/DAO writes a one-past-the-end bit in the entry-start bitmask at the position immediately after the last entry. The writer was omitting this sentinel. Fix: `BuildLeafPage` now writes the sentinel after the entry loop. Verified on every leaf page in NorthwindTraders.accdb. **Combined with #16, this resolved the N1 reproducer** — DAO now accepts the writer's single-table output. |
 ## Recommended next steps (priority order)
 
-**The pref_len cap fix has brought spliced leaf pages to near-byte-identical match with DAO-authored pages**, but DAO still rejects them. The error on page 8 shifted from `MSysDb (3011)` to `The search key was not found in any record`, suggesting the fix is in the right direction. Page 2790 has only **1 byte** difference vs DAO. Next steps focus on the remaining sub-byte-level divergences:
+**The N1 reproducer (single `CreateTableAsync`) now passes DAO Compact & Repair** after the pref_len cap + sentinel bit fixes. The bisect probe confirms N0 and N1 pass. N2 (two tables) still fails with `Object invalid or no longer set`. Next steps focus on the N2+ failure:
 
-1. **~~Byte-level diff of pages 8 and 2790~~** ✅ Done. Post-pref_len-fix: page 8 has 18 byte diffs vs baseline (expected: new entry inserted); page 2790 has 1 byte diff vs DAO at `0x01DD` (bitmask bit — Writer=`0x00`, DAO=`0x40`).
-2. **~~Inspect `pref_len` / prefix compression~~** ✅ Done. Pref_len cap fix landed. Values now match baseline/DAO.
-3. **Fix the entry-start bitmask for page 2790** — the 1-byte diff at `0x01DD` is a bitmask bit (`0x40`) that marks the start of the last entry. The writer computes entry start positions differently than DAO for entries that sort into the middle of an existing page. Investigate how `BuildLeafPage` sets bitmask bits relative to `FirstEntryOffset` and whether the entry byte offsets are computed correctly.
-4. **Fix page 8's "search key not found" error** — 18 byte diffs vs baseline is expected (new entry inserted), but DAO cannot find the key. Compare the writer's sort-key encoding for the new MSysObjects row against the DAO baseline's key bytes. Check whether `GeneralLegacyTextIndexEncoder` handles `RT_Customers` identically to DAO's sort key.
-5. **Investigate page 2994** (data page) — fails with `Object invalid or no longer set` in the full 2-table+rel test but passes in N1 single-table bisection. May be a secondary failure caused by corrupted index pages.
-6. **Check for trailing garbage / stale bytes** — the splice may not zero out bytes beyond the last entry in the free-space area, or may leave stale content from the pre-splice page layout.
+1. **~~Byte-level diff of pages 8 and 2790~~** ✅ Done.
+2. **~~Inspect `pref_len` / prefix compression~~** ✅ Done. Pref_len cap fix landed.
+3. **~~Fix the entry-start bitmask sentinel~~** ✅ Done. Sentinel bit fix landed. N1 now passes.
+4. **Investigate N2 failure** — the second `CreateTableAsync` call's splice is the remaining failure point. Run the DAO baseline probe with N2 step to produce a page-level diff. The second splice operates on pages already modified by the first call; check whether `DecodeEntries` correctly handles the first splice's output (sentinel, prefix, entry ordering).
+5. **Check whether `maxPrefixLength` cap interacts correctly with sequential splices** — the second splice reads `pref_len` from the first splice's output (which was capped at the original baseline value). This should be correct (cap at whatever the page currently has), but verify.
+6. **Investigate page 2994** (data page) — fails with `Object invalid or no longer set` in the full 2-table+rel test. May be a cascading failure from corrupted index pages, or may indicate a separate data-page issue when two catalog rows share the same page.
 
 ## FormatProbe diagnostic harness
 
