@@ -4898,6 +4898,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
             if (value is DBNull)
             {
+                // Complex columns (T_ATTACHMENT / T_COMPLEX) store a 4-byte
+                // ConceptualTableID in the fixed area. The ID is initially
+                // null and patched in-place later by PatchParentComplexSlotAsync
+                // when the first attachment or multi-value item is added.
+                // The fixed area must always reserve space for these slots so
+                // the in-place patch doesn't land outside the row bounds.
+                if (column.IsFixed && (column.Type == T_ATTACHMENT || column.Type == T_COMPLEX))
+                {
+                    fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + JetTypeInfo.GetFixedSize(column.Type));
+                }
+
                 continue;
             }
 
