@@ -637,7 +637,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         // existing rows so AddAttachmentAsync / AddMultiValueItemAsync stay
         // a single-call surface.
         string flatTableName = await ResolveFlatTableNameAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
-        await _writer.ApplyConstraintsForComplexAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
+        await _writer.Constraints.ApplyAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
 
         await _writer.InsertRowDataAsync(flatTdefPage, flatDef, flatValues, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
