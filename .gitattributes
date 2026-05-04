@@ -1,0 +1,23 @@
+# Normalize line endings to LF in the repository, check out as CRLF on Windows
+* text=auto eol=crlf
+
+# Ensure these are always treated as text
+*.cs text diff=csharp
+*.csproj text
+*.slnx text
+*.props text
+*.targets text
+*.json text
+*.md text
+*.xml text
+*.yml text
+*.yaml text
+*.editorconfig text
+
+# Binary files — never normalize
+*.mdb binary
+*.accdb binary
+*.gz binary
+*.png binary
+*.dll binary
+*.exe binary
