@@ -430,3 +430,6 @@ FodyWeavers.xsd
 
 # Format probe appendix docs (auto-generated)
 docs/design/format-probe*.md
+
+# Infer# configuration
+.infersharpconfig
