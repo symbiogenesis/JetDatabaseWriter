@@ -15,6 +15,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Builders;
+using JetDatabaseWriter.Internal.Collections;
 using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Internal.Relationships;
@@ -4883,50 +4884,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
     }
 
-    private sealed class ByteArrayEqualityComparer : IEqualityComparer<byte[]>
-    {
-        public static readonly ByteArrayEqualityComparer Instance = new();
-
-        public bool Equals(byte[]? x, byte[]? y)
-        {
-            if (ReferenceEquals(x, y))
-            {
-                return true;
-            }
-
-            if (x is null || y is null || x.Length != y.Length)
-            {
-                return false;
-            }
-
-            for (int i = 0; i < x.Length; i++)
-            {
-                if (x[i] != y[i])
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        public int GetHashCode(byte[] obj)
-        {
-            // FNV-1a 32-bit. Keys are typically short (< 64 bytes); this is
-            // not a hot path so a SIMD/unsafe variant would be over-spec.
-            unchecked
-            {
-                int hash = (int)2166136261u;
-                for (int i = 0; i < obj.Length; i++)
-                {
-                    hash = (hash ^ obj[i]) * 16777619;
-                }
-
-                return hash;
-            }
-        }
-    }
-
     internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
     {
         byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
@@ -4941,13 +4898,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Wu16(page, offsetPos, raw | 0x8000);
         await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         ReturnPage(page);
-    }
-
-    private sealed class PageInsertTarget
-    {
-        public long PageNumber { get; set; }
-
-        public byte[] Page { get; set; } = [];
     }
 
     private sealed class ColumnConstraint
