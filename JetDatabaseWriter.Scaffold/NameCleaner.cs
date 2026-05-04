@@ -8,18 +8,18 @@ using System;
 internal static class NameCleaner
 {
     /// <summary>Converts a table name to PascalCase class name.</summary>
-    public static string ToClassName(string tableName)
+    internal static string ToClassName(string tableName)
     {
         return SanitizeToPascalCase(tableName);
     }
 
     /// <summary>Converts a column name to PascalCase property name.</summary>
-    public static string ToPropertyName(string columnName)
+    internal static string ToPropertyName(string columnName)
     {
         return SanitizeToPascalCase(columnName);
     }
 
-    private static string SanitizeToPascalCase(string raw)
+    internal static string SanitizeToPascalCase(string raw)
     {
         // Reserve index 0 for a possible '_' prefix when the first char is a digit.
         Span<char> buffer = raw.Length < 128

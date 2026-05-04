@@ -251,4 +251,128 @@ public class EntityEmitterTests
         Assert.Contains("decimal E", result, StringComparison.Ordinal);
         Assert.Contains("byte F", result, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Emit_NonNullable_Object_Gets_Default_Bang_With_Nullable_Enabled()
+    {
+        var columns = new List<ColumnMetadata>
+        {
+            new() { Name = "Data", ClrType = typeof(object), IsNullable = false, TypeName = "OLE Object", Size = ColumnSize.Lval },
+        };
+
+        string result = EntityEmitter.Emit("Item", columns, "NS", useRecords: false, nullable: true);
+
+        Assert.Contains("default!", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Emit_UnknownClrType_Falls_Back_To_TypeName()
+    {
+        var columns = new List<ColumnMetadata>
+        {
+            new() { Name = "When", ClrType = typeof(DateOnly), IsNullable = false, TypeName = "Date", Size = ColumnSize.FromBytes(4) },
+        };
+
+        string result = EntityEmitter.Emit("Item", columns, "NS", useRecords: false, nullable: false);
+
+        Assert.Contains("DateOnly When", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Emit_DateTimeOffset_Type()
+    {
+        var columns = new List<ColumnMetadata>
+        {
+            new() { Name = "Stamp", ClrType = typeof(DateTimeOffset), IsNullable = false, TypeName = "Date/Time", Size = ColumnSize.FromBytes(8) },
+        };
+
+        string result = EntityEmitter.Emit("Item", columns, "NS", useRecords: false, nullable: false);
+
+        Assert.Contains("DateTimeOffset Stamp", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Emit_TimeSpan_Type()
+    {
+        var columns = new List<ColumnMetadata>
+        {
+            new() { Name = "Duration", ClrType = typeof(TimeSpan), IsNullable = false, TypeName = "Date/Time", Size = ColumnSize.FromBytes(8) },
+        };
+
+        string result = EntityEmitter.Emit("Item", columns, "NS", useRecords: false, nullable: false);
+
+        Assert.Contains("TimeSpan Duration", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Emit_Nullable_ValueType_With_Nullable_Enabled()
+    {
+        var columns = new List<ColumnMetadata>
+        {
+            new() { Name = "Score", ClrType = typeof(int), IsNullable = true, TypeName = "Long Integer", Size = ColumnSize.FromBytes(4) },
+        };
+
+        string result = EntityEmitter.Emit("Item", columns, "NS", useRecords: false, nullable: true);
+
+        Assert.Contains("int? Score", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Emit_Record_Has_Sealed_Modifier()
+    {
+        string result = EntityEmitter.Emit("Customer", SimpleColumns, "MyApp.Models", useRecords: true, nullable: false);
+
+        Assert.Contains("public sealed record Customer", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Emit_Deduplicates_Three_Or_More_Identical_Names()
+    {
+        var columns = new List<ColumnMetadata>
+        {
+            new() { Name = "Val", ClrType = typeof(int), IsNullable = false, TypeName = "Long Integer", Size = ColumnSize.FromBytes(4) },
+            new() { Name = "Val", ClrType = typeof(int), IsNullable = false, TypeName = "Long Integer", Size = ColumnSize.FromBytes(4) },
+            new() { Name = "Val", ClrType = typeof(int), IsNullable = false, TypeName = "Long Integer", Size = ColumnSize.FromBytes(4) },
+        };
+
+        string result = EntityEmitter.Emit("Item", columns, "NS", useRecords: false, nullable: false);
+
+        Assert.Contains("int Val ", result, StringComparison.Ordinal);
+        Assert.Contains("int Val2", result, StringComparison.Ordinal);
+        Assert.Contains("int Val3", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Emit_BlankLine_Between_Properties()
+    {
+        string result = EntityEmitter.Emit("Customer", SimpleColumns, "MyApp.Models", useRecords: false, nullable: false);
+
+        // There should be a blank line between properties (after first property's closing, before next summary)
+        Assert.Contains("}\r\n\r\n    /// <summary>", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Emit_No_BlankLine_Before_First_Property()
+    {
+        string result = EntityEmitter.Emit("Customer", SimpleColumns, "MyApp.Models", useRecords: false, nullable: false);
+
+        // After the opening brace, no blank line before first summary
+        Assert.Contains("{\r\n    /// <summary>", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Emit_PreWrapped_Nullable_Type_Handled()
+    {
+        // Simulates ClrType already being Nullable<int> in metadata
+        var columns = new List<ColumnMetadata>
+        {
+            new() { Name = "Num", ClrType = typeof(int?), IsNullable = true, TypeName = "Long Integer", Size = ColumnSize.FromBytes(4) },
+        };
+
+        string result = EntityEmitter.Emit("Item", columns, "NS", useRecords: false, nullable: false);
+
+        // Should produce int? (not int??)
+        Assert.Contains("int?", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("int??", result, StringComparison.Ordinal);
+    }
 }
