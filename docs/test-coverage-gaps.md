@@ -102,11 +102,10 @@ Compressed (Latin-1) Memo LVAL chains are covered by
 [CompressedMemoLvalTests.cs](../../JetDatabaseWriter.Tests/Core/CompressedMemoLvalTests.cs).
 Reader-side Memo from Access-authored overflow fixtures is in
 [OverflowMemoReadTests.cs](../../JetDatabaseWriter.Tests/Core/OverflowMemoReadTests.cs).
+Reader-side Memo with embedded `0x00` bytes from a DAO-authored database
+is covered by
+[DaoValidationTests.DaoAuthoredMemo_WithEmbeddedNuls_ReaderReturnsExactContent](../../JetDatabaseWriter.Tests/Core/DaoValidationTests.cs).
 
-- [ ] **`[J]` `[S]`** Reader-side coverage of an Access-authored fixture
-  containing a Memo with embedded `0x00` bytes. The writer round-trip path
-  is closed by `AccessWriterTests.InsertRow_MemoWithEmbeddedNulls_RoundTrips`,
-  but no Access-authored fixture exercises the read path yet.
 - [ ] **`[J]`** OLE long values whose header reports a **mismatched length**
   vs the actual chain — Jackcess has a "lvalLength" sanity test.
 
@@ -156,23 +155,22 @@ The reader now correctly reports VH columns as `Kind = VersionHistory`
 Tests in this section use `DAO.DBEngine.120` via
 `AccessRoundTripEnvironment` and auto-skip when Access is not installed.
 Existing infrastructure in `AccessRoundTripTests` (`RoundTripSession`,
-`CaptureSnapshotAsync`, `AssertTdefMagicStampsAsync`, etc.) should be
-reused for new DAO scenarios rather than reinventing the setup/teardown
-boilerplate.
+`CaptureSnapshotAsync`, `AssertTdefMagicStampsAsync`, etc.) and the
+newer `DaoValidationTests` (single-table DAO scripts via
+`AccessRoundTripEnvironment.RunDaoScript`) should be reused for new DAO
+scenarios rather than reinventing the setup/teardown boilerplate.
 
 - [ ] **`[S]`** **Compact & Repair acceptance** — unblock the two existing
   gated tests (`SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`,
   `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`) by resolving
   the MSysDb / page-allocation-map blockers documented in
   [round-trip-test-failures.md](round-trip-test-failures.md).
-- [ ] **`[S]`** **DAO OpenRecordset row-count** — after writing N rows with
-  `AccessWriter`, open the database via DAO, execute
-  `SELECT COUNT(*) FROM <table>`, and assert the count matches. Catches
-  TDEF row-count drift and page-corruption that silently survives our own
-  reader round-trip.
-- [ ] **`[S]`** **DAO index traversal** — open a writer-produced table via
-  DAO `Seek` / `FindFirst` on the primary key. Catches index pages that
-  parse cleanly in our reader but are rejected by the canonical engine.
+- [ ] **`[S]`** **DAO OpenRecordset row-count** — test implemented in
+  `DaoValidationTests.DaoOpenRecordset_RowCount_MatchesWriterOutput`
+  but gated behind the same TDEF compatibility fix as Compact & Repair.
+- [ ] **`[S]`** **DAO index traversal** — test implemented in
+  `DaoValidationTests.DaoIndexTraversal_Seek_LocatesRowByPrimaryKey`
+  but gated behind the same TDEF compatibility fix.
 - [ ] **`[M]`** **DAO Memo/OLE fidelity** — write Memo values containing
   embedded NULs, non-Latin-1 (CJK), and OLE binary payloads; verify DAO
   `Recordset.Fields("col").Value` returns the identical bytes. Catches
@@ -182,10 +180,9 @@ boilerplate.
   insert that violates the FK. Assert DAO raises error 3201 (cannot add
   record — referential integrity violated). Confirms the relationship
   metadata is fully understood by Access.
-- [ ] **`[M]`** **DAO AutoNumber continuation** — write rows with
-  auto-increment IDs, reopen with DAO, insert a new row, and verify the
-  next AutoNumber value is one past our last inserted ID (no gap, no
-  collision). Catches seed/counter byte-layout bugs.
+- [ ] **`[M]`** **DAO AutoNumber continuation** — test implemented in
+  `DaoValidationTests.DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert`
+  but gated behind the same TDEF compatibility fix.
 - [ ] **`[L]`** **DAO CompactDatabase on encrypted output** — write a
   password-protected ACCDB (AES), run Compact & Repair with the password
   supplied via DAO, and verify the compacted file reopens. Validates the
