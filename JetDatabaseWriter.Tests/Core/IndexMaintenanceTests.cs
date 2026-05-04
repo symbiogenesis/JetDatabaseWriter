@@ -580,7 +580,8 @@ public sealed class IndexMaintenanceTests
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset, DatabaseFormat format)
     {
         // §4.2: one implicit first entry, plus one bit per subsequent entry
-        // in the bitmask.
+        // in the bitmask. The bitmask also contains a sentinel bit at the
+        // position one past the last entry, so subtract 1 from the popcount.
         int bitmaskOffset = BitmaskOffset(format);
         int firstEntryOffset = FirstEntryOffset(format);
         int count = 1;
@@ -596,7 +597,7 @@ public sealed class IndexMaintenanceTests
             }
         }
 
-        return count;
+        return count < 1 ? 0 : count - 1;
     }
 
     private static int FindMaxLeafEntryCount(byte[] fileBytes, DatabaseFormat format)

@@ -406,6 +406,7 @@ public sealed class IndexWriterAdvancedTests
 
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
     {
+        // Subtract 1 for the sentinel bit at the position one past the last entry.
         int count = 1;
         for (int i = Constants.IndexLeafPage.Jet4.BitmaskOffset; i < Constants.IndexLeafPage.Jet4.FirstEntryOffset; i++)
         {
@@ -419,7 +420,7 @@ public sealed class IndexWriterAdvancedTests
             }
         }
 
-        return count;
+        return count < 1 ? 0 : count - 1;
     }
 
     private static int FindMaxLeafEntryCount(byte[] fileBytes)

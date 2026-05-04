@@ -71,8 +71,11 @@ public sealed class IndexLeafPageBuilderTests
         Assert.Equal(0x56, page[rp + 2]);
         Assert.Equal(9, page[rp + 3]);
 
-        // Bitmask still zero (first entry is implicit).
-        for (int i = layout.BitmaskOffset; i < layout.FirstEntryOffset; i++)
+        // Bitmask: no entry-start bits (first entry is implicit), but the
+        // sentinel bit at position 9 (one past the single 9-byte entry) is set.
+        Assert.Equal(0, page[layout.BitmaskOffset + 0]);
+        Assert.Equal(0b0000_0010, page[layout.BitmaskOffset + 1]); // sentinel at bit 9
+        for (int i = layout.BitmaskOffset + 2; i < layout.FirstEntryOffset; i++)
         {
             Assert.Equal(0, page[i]);
         }
@@ -107,9 +110,10 @@ public sealed class IndexLeafPageBuilderTests
         Assert.Equal(0b0000_0010, page[layout.BitmaskOffset + 1]);
         Assert.Equal(0b0000_0100, page[layout.BitmaskOffset + 2]);
 
-        // Other bitmask bytes remain zero.
+        // Other bitmask bytes remain zero (except byte 3 carries the sentinel
+        // at bit 27 — one past the last entry at 3 × 9 = 27 bytes).
         Assert.Equal(0, page[layout.BitmaskOffset + 0]);
-        Assert.Equal(0, page[layout.BitmaskOffset + 3]);
+        Assert.Equal(0b0000_1000, page[layout.BitmaskOffset + 3]); // sentinel at bit 27
     }
 
     [Theory]
