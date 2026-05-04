@@ -306,8 +306,9 @@ internal static class IndexHelpers
             // PKs are implicitly unique (signalled by index_type=0x01, not the
             // flag bit per §3.1). User-set IsUnique on a PK is silently subsumed.
             bool isUnique = def.IsPrimaryKey || def.IsUnique;
+            bool isRequired = def.IsPrimaryKey || def.IsRequired;
 
-            result.Add(new ResolvedIndex(def.Name, colNums, ascending, def.IsPrimaryKey, isUnique));
+            result.Add(new ResolvedIndex(def.Name, colNums, ascending, def.IsPrimaryKey, isUnique, def.IgnoreNulls, isRequired));
         }
 
         return result;

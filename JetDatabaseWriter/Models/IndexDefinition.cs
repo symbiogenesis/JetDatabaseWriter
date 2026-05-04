@@ -127,4 +127,21 @@ public sealed record IndexDefinition
     /// has been performed by hand (see design doc §8).
     /// </remarks>
     public IReadOnlyList<string> DescendingColumns { get; init; } = [];
+
+    /// <summary>
+    /// Gets a value indicating whether the index should skip rows whose key
+    /// columns are all null. When <see langword="true"/>, the writer emits
+    /// the real-idx <c>flags</c> bit <c>0x02</c>
+    /// (<see cref="Constants.TableDefinition.IgnoreNullsIndexFlag"/>).
+    /// </summary>
+    public bool IgnoreNulls { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the indexed columns are required to be
+    /// non-null. When <see langword="true"/>, the writer emits the real-idx
+    /// <c>flags</c> bit <c>0x08</c>
+    /// (<see cref="Constants.TableDefinition.RequiredIndexFlag"/>). Primary
+    /// keys implicitly set this flag.
+    /// </summary>
+    public bool IsRequired { get; init; }
 }

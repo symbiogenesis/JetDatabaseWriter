@@ -63,12 +63,6 @@ out cases that fixture sweep does **not** specifically isolate.
 
 - [ ] **`[J]` `[S]`** OLE long-value index keys — not present in the current
   Jackcess fixture set; needs a synthetic fixture.
-- [ ] **`[J]` `[S]`** Extended Date/Time (`SHORT_DATE_TIME` extended; 42-byte
-  blocks separated by `0x09`, asc/desc trailer flip). Jackcess test:
-  `testExtDateIndex`. Index presence/metadata and row streaming are
-  validated by
-  [ExtendedDateIndexTests.cs](../../JetDatabaseWriter.Tests/Core/ExtendedDateIndexTests.cs);
-  byte-level key encoding assertions are still missing.
 
 ### 1.3 B-tree structural
 
@@ -111,10 +105,6 @@ comparisons are caught up-front.
 
 ### 1.4 Index flags & metadata
 
-- [ ] **`[J]` `[S]`** Writer round-trip of `IGNORE_NULLS_INDEX_FLAG` (`0x02`)
-  and `REQUIRED_INDEX_FLAG` (`0x08`) combinations (reader exposure is
-  covered by `IndexFlagCombinationsTests`). Requires adding `IgnoreNulls` /
-  `IsRequired` properties to `IndexDefinition`.
 - [ ] **`[J]` `[S]`** **Foreign-key surrogate** indexes (the auto-created
   ones backing relationships) — writer round-trip / clone semantics. Reader
   listing semantics are covered by `IndexMetadataTests` and
@@ -148,11 +138,8 @@ Reader-side Memo from Access-authored overflow fixtures is in
 Version-history column presence/metadata and flat-table readability are
 verified by
 [VersionHistoryComplexColumnTests.cs](../../JetDatabaseWriter.Tests/Core/VersionHistoryComplexColumnTests.cs).
-Note: the reader currently reports VH columns as `Kind = Unknown` (the
-`MSysComplexTypeVH_*` discriminator is not yet recognized).
-
-- [ ] **`[J]`** Fix the complex-column Kind discriminator so version-history
-  columns report `ComplexColumnKind.VersionHistory` instead of `Unknown`.
+The reader now correctly reports VH columns as `Kind = VersionHistory`
+(the `MSysComplexTypeVH_*` prefix is recognized by `ClassifyComplexKind`).
 - [ ] **`[J]`** Versioned-text column with > 100 historical versions to
   exercise the LVAL chain inside the per-row complex sub-table.
 
