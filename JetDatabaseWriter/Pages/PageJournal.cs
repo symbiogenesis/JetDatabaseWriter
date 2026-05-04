@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal.Transactions;
+namespace JetDatabaseWriter.Pages;
 
 using System;
 using System.Collections.Generic;

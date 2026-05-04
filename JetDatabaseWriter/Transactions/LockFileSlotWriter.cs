@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Transactions;
 
 using System;
 using System.IO;

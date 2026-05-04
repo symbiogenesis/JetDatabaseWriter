@@ -5,7 +5,7 @@ using System.Buffers.Binary;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.CompoundFile;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention.

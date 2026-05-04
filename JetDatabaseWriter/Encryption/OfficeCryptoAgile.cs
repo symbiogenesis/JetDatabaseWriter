@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Encryption;
 
 using System;
 using System.Buffers.Binary;

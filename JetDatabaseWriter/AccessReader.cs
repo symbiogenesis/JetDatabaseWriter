@@ -13,6 +13,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
@@ -21,6 +22,7 @@ using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Transactions;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
 #pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API

@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Encryption;
 
 using System;
 using System.Buffers.Binary;
@@ -7,6 +7,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
