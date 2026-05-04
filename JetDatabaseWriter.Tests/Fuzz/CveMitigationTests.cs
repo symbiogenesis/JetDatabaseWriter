@@ -675,6 +675,115 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         Assert.IsNotType<StackOverflowException>(ex);
     }
 
+    // ─── CVE-2019 batch analog: LVAL chained MEMO length overflow ─────
+
+    /// <summary>
+    /// Corrupts a MEMO header to indicate a chained LVAL path (bitmask 0x00)
+    /// with a declared memoLen of 16 MB (0xFFFFFF). The reader pre-allocates
+    /// <c>new byte[memoLen]</c> in <c>ReadLvalChainAsync</c>, so the maximum
+    /// allocation is bounded at 16 MB by the 3-byte field. This test confirms
+    /// that a 16 MB LVAL declaration does not cause OOM or unhandled exceptions,
+    /// exercising the LVAL allocation path that the inline-MEMO test does not cover.
+    /// </summary>
+    [Fact]
+    public async Task ReadTable_CorruptLvalMemoLen_16MB_DoesNotOom()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] original = await db.GetFileAsync(path, ct);
+        byte[] corrupted = (byte[])original.Clone();
+
+        const int pageSize = 4096;
+        bool found = false;
+
+        for (int p = 3; p < corrupted.Length / pageSize && !found; p++)
+        {
+            int pageStart = p * pageSize;
+            if (corrupted[pageStart] != 0x01)
+            {
+                continue;
+            }
+
+            int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
+            if (nr == 0 || nr > 200)
+            {
+                continue;
+            }
+
+            int firstRowRaw = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 14, 2));
+            if ((firstRowRaw & 0xC000) != 0)
+            {
+                continue;
+            }
+
+            int rowStart = pageStart + (firstRowRaw & 0x1FFF);
+            if (rowStart + 12 >= pageStart + pageSize)
+            {
+                continue;
+            }
+
+            // Fabricate a chained LVAL MEMO header:
+            //   bytes 0..2: memoLen = 0xFFFFFF (16 MB)
+            //   byte  3:    bitmask 0x00 → chained LVAL path
+            //   bytes 4..7: page_row pointer → page 3, row 0 (arbitrary valid page)
+            int memoHeaderPos = rowStart + 4;
+            if (memoHeaderPos + 8 < pageStart + pageSize)
+            {
+                corrupted[memoHeaderPos] = 0xFF;     // memoLen low byte
+                corrupted[memoHeaderPos + 1] = 0xFF; // memoLen mid byte
+                corrupted[memoHeaderPos + 2] = 0xFF; // memoLen high byte
+                corrupted[memoHeaderPos + 3] = 0x00; // bitmask: chained LVAL
+
+                // Point to page 3, row 0 — likely invalid or a data page,
+                // but the reader will handle the lookup gracefully.
+                BinaryPrimitives.WriteUInt32LittleEndian(
+                    corrupted.AsSpan(memoHeaderPos + 4, 4),
+                    (uint)(3 << 8));
+                found = true;
+            }
+        }
+
+        if (!found)
+        {
+            return;
+        }
+
+        await using var stream = new MemoryStream(corrupted, writable: false);
+        Exception? ex = await Record.ExceptionAsync(async () =>
+        {
+            await using AccessReader reader = await AccessReader.OpenAsync(
+                stream,
+                new AccessReaderOptions { UseLockFile = false },
+                leaveOpen: true,
+                ct);
+
+            var tables = await reader.ListTablesAsync(ct);
+            foreach (string table in tables)
+            {
+                int count = 0;
+                await foreach (object[] _ in reader.Rows(table, cancellationToken: ct))
+                {
+                    count++;
+                    if (count > 100)
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
+        // 16 MB is a bounded allocation; the CLR should handle it without OOM.
+        // The chain walk will fail (pointing at an invalid LVAL row) and the
+        // reader will surface a placeholder or skip, but must not crash.
+        Assert.IsNotType<OutOfMemoryException>(ex);
+        Assert.IsNotType<StackOverflowException>(ex);
+    }
+
     // ─── CVE-2019 batch analog: all rows marked as deleted ─────────────
 
     /// <summary>
