@@ -95,8 +95,8 @@ internal static class AgileEncryptionFixtureBuilder
             IntermediateKey = RandomBytes(Constants.AgileEncryption.KeyBytes),
         };
 
-        byte[] encryptionInfo = BuildEncryptionInfo(p, password);
         byte[] encryptedPackage = BuildEncryptedPackage(p, innerAccdb);
+        byte[] encryptionInfo = BuildEncryptionInfo(p, password, encryptedPackage);
 
         return BuildCompoundFile(encryptionInfo, encryptedPackage);
     }
@@ -105,20 +105,24 @@ internal static class AgileEncryptionFixtureBuilder
     // EncryptionInfo (version 4.4 + Agile XML)
     // ═══════════════════════════════════════════════════════════════════
 
-    private static byte[] BuildEncryptionInfo(Parameters p, string password)
+    private static byte[] BuildEncryptionInfo(Parameters p, string password, byte[] encryptedPackage)
     {
         byte[] verifierEncInput = EncryptVerifierHashInput(p, password);
         byte[] verifierEncValue = EncryptVerifierHashValue(p, password);
         byte[] keyEncValue = EncryptIntermediateKey(p, password);
 
-        // Data integrity (MS-OFFCRYPTO §2.3.4.14): a random HMAC key is
-        // encrypted with the intermediate key + salt-derived IV; the HMAC
-        // value over the encrypted package is similarly stored. We emit a
-        // zero-valued placeholder for the HMAC value because its content
-        // is not enforced by readers at open-time (only verified during
-        // integrity check, which is optional for read-only access).
-        byte[] hmacKeyEnc = EncryptHmacField(p, RandomBytes(Constants.AgileEncryption.HashBytes), BlockKeyHmacKey);
-        byte[] hmacValueEnc = EncryptHmacField(p, new byte[Constants.AgileEncryption.HashBytes], BlockKeyHmacValue);
+        // Data integrity (MS-OFFCRYPTO §2.3.4.14): generate a random HMAC
+        // key, compute HMAC-SHA512 over the EncryptedPackage, and encrypt
+        // both the key and the computed value with the intermediate key.
+        byte[] hmacKey = RandomBytes(Constants.AgileEncryption.HashBytes);
+        byte[] hmacValue;
+        using (var hmac = new System.Security.Cryptography.HMACSHA512(hmacKey))
+        {
+            hmacValue = hmac.ComputeHash(encryptedPackage);
+        }
+
+        byte[] hmacKeyEnc = EncryptHmacField(p, hmacKey, BlockKeyHmacKey);
+        byte[] hmacValueEnc = EncryptHmacField(p, hmacValue, BlockKeyHmacValue);
 
         string xml = BuildAgileXml(p, verifierEncInput, verifierEncValue, keyEncValue, hmacKeyEnc, hmacValueEnc);
 

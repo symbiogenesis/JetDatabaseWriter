@@ -291,70 +291,41 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // 6. HMAC / DATA INTEGRITY — tampered ciphertext is not detected
+    // 6. HMAC / DATA INTEGRITY — tampered ciphertext is detected
     // ═══════════════════════════════════════════════════════════════════
     //
     // The Agile spec (MS-OFFCRYPTO §2.3.4.14) mandates computing an
     // HMAC-SHA512 over the EncryptedPackage and storing the result in
-    // the <dataIntegrity> element. A compliant reader should reject a
-    // tampered EncryptedPackage when the HMAC does not match.
-    //
-    // Currently, this library does NOT verify the dataIntegrity HMAC
-    // (the ParseDescriptor does not even extract the element's attributes).
-    // These tests document the current behaviour: a single-bit flip in
-    // the encrypted ciphertext either silently corrupts the decrypted
-    // output or produces a decryption error — but does NOT raise an
-    // HMAC integrity failure. If HMAC verification is added in the
-    // future, these tests should be updated to expect the new error.
+    // the <dataIntegrity> element. The reader verifies this HMAC after
+    // password verification but before decryption, so any ciphertext
+    // tampering is caught early.
 
     /// <summary>
     /// Tampers with a single byte in the <c>EncryptedPackage</c> stream
     /// (past the 8-byte size prefix, inside the first AES-CBC segment).
-    /// Because the dataIntegrity HMAC is not verified, this does NOT
-    /// throw an integrity-check error — it either corrupts the plaintext
-    /// or causes a downstream parse failure. Demonstrates that HMAC
-    /// verification is not yet enforced.
+    /// The dataIntegrity HMAC verification detects the modification and
+    /// throws <see cref="InvalidDataException"/> with an integrity message.
     /// </summary>
     [Fact]
-    public async Task Agile_TamperedEncryptedPackage_DoesNotThrowHmacError()
+    public async Task Agile_TamperedEncryptedPackage_ThrowsIntegrityError()
     {
         byte[] data = await BuildAgileEncryptedFixtureAsync();
 
-        // Locate the EncryptedPackage stream by finding the CFB directory
-        // entry. For our fixture builder, the EncryptedPackage starts after
-        // the EncryptionInfo sectors. We flip a byte deep inside the
-        // ciphertext (offset 16 past the 8-byte size prefix) to avoid
-        // corrupting the size header.
+        // Flip a byte deep inside the ciphertext (offset 16 past the
+        // 8-byte size prefix) to avoid corrupting the size header.
         int tamperOffset = FindEncryptedPackageDataOffset(data) + 16;
         data[tamperOffset] ^= 0xFF;
 
         await using var ms = new MemoryStream(data, writable: false);
 
-        // The open should still succeed (password verifier is intact).
-        // The tampered ciphertext will decrypt to garbage, causing a
-        // downstream JET format error — but NOT an HMAC integrity error.
-        Exception? ex = await Record.ExceptionAsync(async () =>
-        {
-            await using var reader = await AccessReader.OpenAsync(
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await AccessReader.OpenAsync(
                 ms,
                 CorrectPasswordOptions(),
                 leaveOpen: true,
-                TestContext.Current.CancellationToken);
+                TestContext.Current.CancellationToken));
 
-            // Attempt to read the catalog — this will likely fail because
-            // the decrypted page data is corrupted.
-            await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        });
-
-        // The key assertion: whatever error occurs, it is NOT an HMAC
-        // integrity failure (because HMAC verification is not implemented).
-        // If HMAC verification is added later, this test should be updated
-        // to expect an InvalidDataException with "integrity" in the message.
-        if (ex != null)
-        {
-            Assert.DoesNotContain("integrity", ex.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("HMAC", ex.Message, StringComparison.OrdinalIgnoreCase);
-        }
+        Assert.Contains("integrity", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

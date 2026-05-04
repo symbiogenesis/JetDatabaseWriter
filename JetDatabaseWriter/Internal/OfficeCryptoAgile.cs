@@ -81,6 +81,7 @@ internal static class OfficeCryptoAgile
         try
         {
             byte[] intermediateKey = ResolvePassword(descriptor, passwordUtf16);
+            VerifyDataIntegrity(descriptor, intermediateKey, encryptedPackage);
             return DecryptPackage(descriptor, intermediateKey, encryptedPackage);
         }
         finally
@@ -115,7 +116,7 @@ internal static class OfficeCryptoAgile
             // iteration is 100k SHA-512s, so we share the iterated state
             // by computing it inline rather than reusing DeriveKey thrice.
             (byte[] verifierInputKey, byte[] verifierHashKey, byte[] keyValueKey,
-             byte[] hmacKeyKey, byte[] hmacValueKey) = DeriveAllPasswordKeys(passwordUtf16, passwordSalt);
+             _, _) = DeriveAllPasswordKeys(passwordUtf16, passwordSalt);
 
             // Encrypt the verifier triple. Agile uses the password salt as
             // the IV directly (block-size = salt-size = 16) for these fields.
@@ -143,16 +144,27 @@ internal static class OfficeCryptoAgile
                 NormalizeIv(passwordSalt, Constants.AgileEncryption.BlockSize),
                 encrypt: true);
 
-            // dataIntegrity placeholder: random HMAC key wrapped with the
-            // intermediate key + spec-derived IV; placeholder zero HMAC value.
+            // Encrypt the package first so we can compute the real HMAC over it.
+            byte[] encryptedPackage = EncryptPackage(intermediateKey, keyDataSalt, innerPackage);
+
+            // dataIntegrity (MS-OFFCRYPTO §2.3.4.14): generate a random HMAC
+            // key, compute HMAC-SHA512 over the EncryptedPackage, and encrypt
+            // both the key and the value with the intermediate key.
+            byte[] hmacKey = RandomBytes(Constants.AgileEncryption.HashBytes);
+            byte[] hmacValue;
+            using (var hmac = new HMACSHA512(hmacKey))
+            {
+                hmacValue = hmac.ComputeHash(encryptedPackage);
+            }
+
             byte[] hmacKeyCipher = AesCbcRaw(
-                PadToBlock(RandomBytes(Constants.AgileEncryption.HashBytes)),
+                PadToBlock(hmacKey),
                 intermediateKey,
                 HmacIv(keyDataSalt, BlockKeyHmacKey),
                 encrypt: true);
 
             byte[] hmacValueCipher = AesCbcRaw(
-                PadToBlock(new byte[Constants.AgileEncryption.HashBytes]),
+                PadToBlock(hmacValue),
                 intermediateKey,
                 HmacIv(keyDataSalt, BlockKeyHmacValue),
                 encrypt: true);
@@ -177,7 +189,6 @@ internal static class OfficeCryptoAgile
             encryptionInfo[4] = 0x40;
             Buffer.BlockCopy(xmlBytes, 0, encryptionInfo, 8, xmlBytes.Length);
 
-            byte[] encryptedPackage = EncryptPackage(intermediateKey, keyDataSalt, innerPackage);
             return (encryptionInfo, encryptedPackage);
         }
         finally
@@ -226,6 +237,11 @@ internal static class OfficeCryptoAgile
                 d.KeyDataCipherChaining = reader.GetAttribute("cipherChaining") ?? string.Empty;
                 d.KeyDataHashAlgorithm = reader.GetAttribute("hashAlgorithm") ?? string.Empty;
                 d.KeyDataSalt = ReadBase64Attr(reader, "saltValue");
+            }
+            else if (local == "dataIntegrity")
+            {
+                d.EncryptedHmacKey = ReadBase64Attr(reader, "encryptedHmacKey");
+                d.EncryptedHmacValue = ReadBase64Attr(reader, "encryptedHmacValue");
             }
             else if (local == "keyEncryptor")
             {
@@ -313,6 +329,41 @@ internal static class OfficeCryptoAgile
         // 2. Recover the intermediate key.
         byte[] intermediate = AesCbcDecrypt(d.EncryptedKeyValue, keyValueKey, d.PasswordSalt);
         return Truncate(intermediate, d.KeyDataKeyBits / 8);
+    }
+
+    /// <summary>
+    /// MS-OFFCRYPTO §2.3.4.14 — verifies the <c>dataIntegrity</c> HMAC over
+    /// the EncryptedPackage. Throws <see cref="InvalidDataException"/> on
+    /// mismatch. Silently skips verification when the descriptor has no
+    /// HMAC fields (e.g. files created before HMAC support was added).
+    /// </summary>
+    private static void VerifyDataIntegrity(AgileDescriptor d, byte[] intermediateKey, byte[] encryptedPackage)
+    {
+        if (d.EncryptedHmacKey.Length == 0 || d.EncryptedHmacValue.Length == 0)
+        {
+            return;
+        }
+
+        byte[] hmacKeyIv = HmacIv(d.KeyDataSalt, BlockKeyHmacKey);
+        byte[] hmacValueIv = HmacIv(d.KeyDataSalt, BlockKeyHmacValue);
+
+        byte[] hmacKeyRaw = AesCbcRaw(d.EncryptedHmacKey, intermediateKey, hmacKeyIv, encrypt: false);
+        byte[] hmacKey = Truncate(hmacKeyRaw, d.KeyDataHashSize);
+
+        byte[] hmacValueRaw = AesCbcRaw(d.EncryptedHmacValue, intermediateKey, hmacValueIv, encrypt: false);
+        byte[] storedHmac = Truncate(hmacValueRaw, d.KeyDataHashSize);
+
+        byte[] computedHmac;
+        using (var hmac = new HMACSHA512(hmacKey))
+        {
+            computedHmac = hmac.ComputeHash(encryptedPackage);
+        }
+
+        if (!CryptographicEquals(computedHmac, storedHmac, d.KeyDataHashSize))
+        {
+            throw new InvalidDataException(
+                "Package integrity check failed: the EncryptedPackage HMAC does not match the stored dataIntegrity value.");
+        }
     }
 
     private static byte[] DeriveKey(byte[] passwordUtf16, byte[] salt, byte[] blockKey, int spinCount, int keyByteCount)
@@ -739,5 +790,9 @@ internal static class OfficeCryptoAgile
         public byte[] EncryptedVerifierHashValue { get; set; } = [];
 
         public byte[] EncryptedKeyValue { get; set; } = [];
+
+        public byte[] EncryptedHmacKey { get; set; } = [];
+
+        public byte[] EncryptedHmacValue { get; set; } = [];
     }
 }
