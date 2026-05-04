@@ -368,16 +368,18 @@ Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then 
 
 > **Completed:** Namespace changed from `JetDatabaseWriter.Core` → `JetDatabaseWriter` and `JetDatabaseWriter.Core.Interfaces` → `JetDatabaseWriter.Interfaces`. All `using` statements and `cref` references updated solution-wide. `Core/` directory deleted.
 
-### Phase B — Infrastructure (generic utilities)
+### Phase B — Infrastructure (generic utilities) ✅
 
-| # | Action | From | To |
-|--:|--------|------|-----|
-| 8 | Move | `Internal/Collections/LruCache.cs` | `Infrastructure/LruCache.cs` |
-| 9 | Move | `Internal/Collections/ByteArrayEqualityComparer.cs` | `Infrastructure/ByteArrayEqualityComparer.cs` |
-| 10 | Move | `Internal/Helpers/AsyncLazyInitializer.cs` | `Infrastructure/AsyncLazyInitializer.cs` |
-| 11 | Move | `Internal/Helpers/AsyncReentrantOperationGate.cs` | `Infrastructure/AsyncReentrantOperationGate.cs` |
-| 12 | Move | `Internal/Helpers/Guard.cs` | `Infrastructure/Guard.cs` |
-| 13 | Move | `Internal/Helpers/NonClosingStreamWrapper.cs` | `Infrastructure/NonClosingStreamWrapper.cs` |
+| # | Action | From | To | Status |
+|--:|--------|------|-----|--------|
+| 8 | Move | `Internal/Collections/LruCache.cs` | `Infrastructure/LruCache.cs` | ✅ |
+| 9 | Move | `Internal/Collections/ByteArrayEqualityComparer.cs` | `Infrastructure/ByteArrayEqualityComparer.cs` | ✅ |
+| 10 | Move | `Internal/Helpers/AsyncLazyInitializer.cs` | `Infrastructure/AsyncLazyInitializer.cs` | ✅ |
+| 11 | Move | `Internal/Helpers/AsyncReentrantOperationGate.cs` | `Infrastructure/AsyncReentrantOperationGate.cs` | ✅ |
+| 12 | Move | `Internal/Helpers/Guard.cs` | `Infrastructure/Guard.cs` | ✅ |
+| 13 | Move | `Internal/Helpers/NonClosingStreamWrapper.cs` | `Infrastructure/NonClosingStreamWrapper.cs` | ✅ |
+
+> **Completed:** Namespace changed from `JetDatabaseWriter.Internal.Collections` and `JetDatabaseWriter.Internal.Helpers` → `JetDatabaseWriter.Infrastructure`. All `using` statements updated solution-wide. Files that still reference `IndexHelpers`, `DecimalNumeric`, or `CalculatedColumnUtil` (which remain in `Internal/Helpers/`) retain their `using JetDatabaseWriter.Internal.Helpers;` import. `Internal/Collections/` directory deleted.
 
 ### Phase C — CompoundFile, Encryption, Transactions (self-contained subsystems)
 

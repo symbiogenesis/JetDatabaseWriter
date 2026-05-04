@@ -5,8 +5,8 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Internal.Builders;
-using JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>
 /// Read-only B-tree seeker over JET index pages emitted by

@@ -8,7 +8,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Infrastructure;
 using HdrOff = JetDatabaseWriter.Constants.CompoundFile.HeaderOffsets;
 
 /// <summary>

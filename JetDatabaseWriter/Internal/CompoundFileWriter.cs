@@ -4,7 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Text;
-using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.Infrastructure;
 using CfbConstants = JetDatabaseWriter.Constants.CompoundFile;
 
 /// <summary>

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Internal.Helpers;
 
 using System;
 using System.Buffers.Binary;
+using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Constants;
 
 /// <summary>

@@ -6,8 +6,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
-using JetDatabaseWriter.Internal.Helpers;
 
 /// <summary>
 /// Encodes / decodes the Access 2007+ Attachment <c>FileData</c> wrapper per

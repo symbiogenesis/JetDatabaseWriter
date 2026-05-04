@@ -4,8 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Internal.Builders;
-using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Models;
 
 /// <summary>
