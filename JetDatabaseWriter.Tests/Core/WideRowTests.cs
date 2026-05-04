@@ -187,7 +187,6 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     /// read as if only 8 columns existed, dropping the value).
     /// </summary>
     /// <param name="columnCount">Total number of nullable int columns to declare.</param>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [InlineData(8)]
     [InlineData(9)]

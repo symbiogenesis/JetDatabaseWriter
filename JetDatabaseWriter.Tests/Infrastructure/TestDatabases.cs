@@ -302,7 +302,6 @@ internal static class TestDatabases
     /// Returns a skip reason string when the file is missing, or null when it exists.
     /// Use with <c>Skip = SkipIfMissing(path)</c> on [Fact].
     /// </summary>
-    /// <returns></returns>
     public static string? SkipIfMissing(string path) =>
         File.Exists(path) ? null : $"Test database not found: {path}";
 

@@ -29,7 +29,6 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// The <c>queryTestV2010.accdb</c> fixture contains multiple queries.
     /// <c>MSysQueries</c> must have rows.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task ReadMSysQueries_ReturnsNonEmptyRowSet()
     {
@@ -50,7 +49,6 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// with <c>Attribute == 4</c> (PARAMETER_ATTRIBUTE) whose <c>Name1</c>
     /// column contains the parameter name.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task ParameterisedQuery_HasParameterAttributeRows()
     {
@@ -85,7 +83,6 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// contains Select, Delete, Append, Update, MakeTable, Crosstab, Union,
     /// Passthrough, and DataDefinition queries — at least 9 type rows.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task AllQueries_HaveTypeAttributeRows()
     {

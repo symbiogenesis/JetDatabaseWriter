@@ -26,7 +26,6 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
     /// <summary>
     /// The extDateTest fixture lists at least one user table on open.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task ExtDateTestV2019_ListTables_ReturnsNonEmpty()
     {
@@ -45,7 +44,6 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
     /// At least one column in the fixture is reported with the
     /// <c>Date/Time Extended</c> type name (the type added in Access 2019).
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task ExtDateTestV2019_AtLeastOneColumn_IsTypedAsDateTimeExtended()
     {
@@ -75,7 +73,6 @@ public sealed class ExtendedDateTests(DatabaseCache db) : IClassFixture<Database
     /// Every table in the fixture can be streamed to completion without
     /// throwing — i.e. the extended date type does not crash the row decoder.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task ExtDateTestV2019_StreamsAllRows_WithoutThrowing()
     {

@@ -23,7 +23,6 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
     /// <summary>
     /// The fixture has exactly one user table (<c>Table1</c>).
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task OldDatesV2007_ListTables_ReturnsSingleTable()
     {
@@ -41,7 +40,6 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
     /// <c>Table1</c> has an <c>ID</c> column and a <c>DateField</c> column
     /// typed as <c>Date/Time</c>.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task Table1_HasDateTimeColumn()
     {
@@ -61,7 +59,6 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
     /// <see cref="DateTime"/> before 1600 — confirming the reader handles
     /// pre-Gregorian dates without corruption.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task Table1_AllDates_AreBeforeYear1600()
     {
@@ -87,7 +84,6 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
     /// The fixture contains a date from 1392, proving the reader can decode
     /// dates more than 500 years before the OLE Automation epoch (1899-12-30).
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task Table1_ContainsDateFrom1392()
     {

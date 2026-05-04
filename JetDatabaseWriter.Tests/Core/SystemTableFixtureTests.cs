@@ -21,7 +21,6 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// <c>MSysAccessStorage</c> is present in <c>complexDataTestV2007.accdb</c>
     /// and has a non-empty schema.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task MSysAccessStorage_HasExpectedColumns()
     {
@@ -44,7 +43,6 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// <c>MSysAccessStorage</c> rows can be read into a <see cref="DataTable"/>
     /// without throwing, and the fixture contains at least one row.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task MSysAccessStorage_ReadsNonEmptyRowSet()
     {
@@ -63,7 +61,6 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// <c>MSysNavPaneGroups</c> is present in the fixture and has a
     /// non-empty schema with the expected columns.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task MSysNavPaneGroups_HasExpectedColumns()
     {
@@ -84,7 +81,6 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// <summary>
     /// <c>MSysNavPaneGroups</c> rows can be read without throwing.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
     public async Task MSysNavPaneGroups_ReadsNonEmptyRowSet()
     {

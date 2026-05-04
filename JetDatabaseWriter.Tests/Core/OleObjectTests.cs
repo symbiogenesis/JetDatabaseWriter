@@ -28,7 +28,6 @@ public sealed class OleObjectTests(DatabaseCache db) : IClassFixture<DatabaseCac
     /// At least one column in <c>testOleV2007</c> is reported as the
     /// <c>OLE Object</c> type with CLR type <c>byte[]</c>.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task TestOleV2007_HasOleColumn_TypedAsByteArray()
     {
@@ -60,7 +59,6 @@ public sealed class OleObjectTests(DatabaseCache db) : IClassFixture<DatabaseCac
     /// <c>byte[]</c> with at least one byte. Asserts the LVAL chain reader
     /// does not silently truncate to empty for known fixture content.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task TestOleV2007_OleValues_DecodeToNonEmptyByteArrays()
     {
@@ -110,7 +108,6 @@ public sealed class OleObjectTests(DatabaseCache db) : IClassFixture<DatabaseCac
     /// typed reader should unwrap those OLE values to real image bytes instead
     /// of returning the original wrapped OLE blob.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task TestOleV2007_ImageOleValues_DecodeToRecognizedImageBytes()
     {
@@ -164,7 +161,6 @@ public sealed class OleObjectTests(DatabaseCache db) : IClassFixture<DatabaseCac
     /// Package-wrapped non-image payloads should also be unwrapped to the
     /// embedded file bytes rather than returned with the outer OLE header.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task TestOleV2007_PackageWrappedTextOleValues_UnwrapToRawBytes()
     {
@@ -245,7 +241,6 @@ public sealed class OleObjectTests(DatabaseCache db) : IClassFixture<DatabaseCac
     /// reads back byte-identical via <see cref="AccessReader"/>. Mirrors the
     /// Jackcess <c>testWriteAndReadInDb</c> path of <c>OleBlobTest</c>.
     /// </summary>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Fact]
     public async Task InsertRow_OleBytes_RoundTripsByteIdentical()
     {

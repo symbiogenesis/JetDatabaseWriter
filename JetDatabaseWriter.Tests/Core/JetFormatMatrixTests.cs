@@ -32,7 +32,6 @@ public sealed class JetFormatMatrixTests(DatabaseCache db) : IClassFixture<Datab
     /// without throwing, and each enumerated row matches the column-metadata count.
     /// </summary>
     /// <param name="path">Path to the fixture under test.</param>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.Jackcess), MemberType = typeof(TestDatabases))]
     public async Task EveryFixture_EveryTable_StreamsToCompletion(string path)
@@ -67,7 +66,6 @@ public sealed class JetFormatMatrixTests(DatabaseCache db) : IClassFixture<Datab
     /// <see cref="EveryFixture_EveryTable_StreamsToCompletion"/>.
     /// </summary>
     /// <param name="path">Path to the fixture under test.</param>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.Jackcess), MemberType = typeof(TestDatabases))]
     public async Task EveryFixture_EveryTable_ReadDataTable_ReturnsConsistentSchema(string path)
@@ -97,7 +95,6 @@ public sealed class JetFormatMatrixTests(DatabaseCache db) : IClassFixture<Datab
     /// <c>TableCount</c> matches <see cref="AccessReader.ListTablesAsync"/>.
     /// </summary>
     /// <param name="path">Path to the fixture under test.</param>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.JackcessAll), MemberType = typeof(TestDatabases))]
     public async Task EveryFixture_Statistics_TableCountMatchesListTables(string path)
@@ -118,7 +115,6 @@ public sealed class JetFormatMatrixTests(DatabaseCache db) : IClassFixture<Datab
     /// the bulk path and the single-table path.
     /// </summary>
     /// <param name="path">Path to the fixture under test.</param>
-    /// <returns>A task that completes when the assertion has run.</returns>
     [Theory]
     [MemberData(nameof(TestDatabases.Jackcess), MemberType = typeof(TestDatabases))]
     public async Task EveryFixture_ReadAllTables_KeyedByEveryListedTable(string path)
