@@ -1,12 +1,10 @@
-namespace JetDatabaseWriter.Internal.Builders;
+namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Internal;
-using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;

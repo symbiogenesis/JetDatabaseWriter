@@ -7,10 +7,11 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using JetDatabaseWriter;
+using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Internal;
-using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 
 string repoRoot = FindRepoRoot();
 string fixtures = Path.Combine(repoRoot, "JetDatabaseWriter.Tests", "Databases");

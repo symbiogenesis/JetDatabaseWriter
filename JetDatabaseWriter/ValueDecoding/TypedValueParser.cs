@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Globalization;

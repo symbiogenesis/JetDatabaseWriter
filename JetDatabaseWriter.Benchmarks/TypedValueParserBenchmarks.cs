@@ -2,7 +2,8 @@ namespace JetDatabaseWriter.Benchmarks;
 
 using System;
 using BenchmarkDotNet.Attributes;
-using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.ValueDecoding;
 
 [MemoryDiagnoser]
 public class TypedValueParserBenchmarks

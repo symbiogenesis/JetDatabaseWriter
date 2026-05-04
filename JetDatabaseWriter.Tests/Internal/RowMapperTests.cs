@@ -3,9 +3,10 @@ namespace JetDatabaseWriter.Tests.Internal;
 using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Internal;
-using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper

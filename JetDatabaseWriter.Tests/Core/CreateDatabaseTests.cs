@@ -7,8 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using Xunit;
 
 /// <summary>

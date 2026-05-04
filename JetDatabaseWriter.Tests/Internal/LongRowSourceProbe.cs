@@ -9,10 +9,10 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Indexes.Models;
-using JetDatabaseWriter.Internal;
-using JetDatabaseWriter.Internal.Builders;
-using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 #pragma warning disable CA1707

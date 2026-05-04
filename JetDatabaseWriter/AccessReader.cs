@@ -21,14 +21,13 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
-using JetDatabaseWriter.Internal;
-using JetDatabaseWriter.Internal.Builders;
-using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
+using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
 #pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API
@@ -3209,7 +3208,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <summary>
     /// Internal accessor for <see cref="AccessBase.TryParseRowLayout"/>
-    /// callable from <see cref="JetDatabaseWriter.Internal.RowMapper{T}"/>'s
+    /// callable from <see cref="JetDatabaseWriter.ValueDecoding.RowMapper{T}"/>'s
     /// compiled direct-decoder delegate.
     /// </summary>
     internal bool TryParseRowLayoutForDirectDecode(byte[] page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)

@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal.Models;
+namespace JetDatabaseWriter.Pages.Models;
 
 internal sealed class PageInsertTarget
 {

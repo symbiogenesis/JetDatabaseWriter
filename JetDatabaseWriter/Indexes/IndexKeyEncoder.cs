@@ -7,7 +7,7 @@ using System.Numerics;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Internal.Helpers;
+using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
 /// <summary>
@@ -383,7 +383,7 @@ internal static class IndexKeyEncoder
         // plus a trailing zero byte that forces BigInteger to interpret the
         // value as positive (sign is tracked separately in `negative`).
         byte[] leMantissa = new byte[13];
-        DecimalNumeric.Decompose(d, leMantissa.AsSpan(0, 12), out bool negative, out int scale);
+        NumericEncoder.Decompose(d, leMantissa.AsSpan(0, 12), out bool negative, out int scale);
 
         Guard.InRange(targetScale, 0, 28, nameof(targetScale));
 

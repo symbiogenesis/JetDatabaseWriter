@@ -2,9 +2,10 @@ namespace JetDatabaseWriter.Benchmarks;
 
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Internal;
-using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
 
 [MemoryDiagnoser]
 public class RowMapperBenchmarks

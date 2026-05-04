@@ -19,11 +19,12 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
-using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
-using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 

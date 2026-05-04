@@ -8,9 +8,9 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
-using JetDatabaseWriter.Internal.Builders;
-using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention.

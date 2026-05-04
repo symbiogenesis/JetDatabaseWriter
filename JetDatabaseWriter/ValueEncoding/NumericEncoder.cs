@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal.Helpers;
+namespace JetDatabaseWriter.ValueEncoding;
 
 using System;
 using System.Buffers.Binary;
@@ -10,7 +10,7 @@ using System.Buffers.Binary;
 /// from the same 96-bit unsigned mantissa + sign + scale extracted from
 /// <see cref="decimal.GetBits(decimal)"/>.
 /// </summary>
-internal static class DecimalNumeric
+internal static class NumericEncoder
 {
     /// <summary>
     /// Decomposes <paramref name="value"/> into sign, scale (0..28), and the

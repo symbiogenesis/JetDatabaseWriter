@@ -3,7 +3,8 @@ namespace JetDatabaseWriter.Tests.Internal;
 using System;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
-using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention.

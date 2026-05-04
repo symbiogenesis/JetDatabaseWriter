@@ -1,8 +1,9 @@
 namespace JetDatabaseWriter.Tests.Core;
 
 using System;
-using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 #pragma warning disable CA1707 // Test names use underscores by convention.
