@@ -1,10 +1,10 @@
-namespace JetDatabaseWriter.Internal.Builders;
+namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Internal.Models;
 
 /// <summary>
 /// Builds a complete JET index B-tree from a sorted list of leaf

@@ -20,6 +20,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Models;
 using JetDatabaseWriter.Models;

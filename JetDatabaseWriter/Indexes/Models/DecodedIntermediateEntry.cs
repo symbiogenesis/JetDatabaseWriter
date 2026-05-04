@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal.Models;
+namespace JetDatabaseWriter.Indexes.Models;
 
 /// <summary>
 /// One canonical entry on a JET intermediate (<c>page_type = 0x03</c>)

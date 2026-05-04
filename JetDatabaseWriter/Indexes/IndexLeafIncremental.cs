@@ -1,10 +1,10 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using JetDatabaseWriter.Internal.Builders;
-using JetDatabaseWriter.Internal.Models;
+using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Internal;
 
 /// <summary>
 /// Single-leaf fast-path helper: in-place incremental insert and delete
