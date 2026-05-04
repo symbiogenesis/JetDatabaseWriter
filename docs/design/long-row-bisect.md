@@ -1,5 +1,14 @@
 # Long-row chunk-boundary bisection
 
+> **Status: Superseded.**
+> This file contains raw bisection probe output that was used during early
+> investigation. Its V2000/V2003/V2007 observations are factually correct,
+> but the V2010 interpretation (treating `07 09 07 06` as a chunk separator)
+> is now known to be **incorrect** — those bytes are the normal inline encoding
+> of CR+LF, and V2010 does not use a 2-chunk split at all. See
+> [long-row-index-encoding-resolution.md](long-row-index-encoding-resolution.md)
+> for the current understanding.
+
 ## testIndexCodesV2000.mdb (separator: 08070804)
 
 Long rows: 3; long leaves: 3

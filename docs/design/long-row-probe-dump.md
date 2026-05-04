@@ -1,5 +1,11 @@
 # Long-row index leaf-entry dump
 
+> **Status: Active reference** for the V2010 suffix investigation.
+> V2000/V2003/V2007 entries are validated by fixture tests and included here
+> only for completeness. The V2010 entries (leaf[2–4] asc, leaf[8–10] desc)
+> are the ground truth being matched. Can be regenerated from the test
+> databases at any time; will be retired once V2010 is fully closed.
+
 Tables: `Table11` (asc) and `Table11_desc` (desc) — single Memo column `data`.
 
 ## testIndexCodesV2000.mdb

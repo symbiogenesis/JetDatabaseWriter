@@ -27,20 +27,11 @@ public sealed class GeneralEncoderFixtureTests
         TestDatabases.TestIndexCodesV2010,
     };
 
-    // The 2-chunk long-row encoder (separator <c>07 09 07 06</c>) handles
-    // the V2010 Table11 / Table11_desc fixtures byte-exact for the
-    // "no-international-chars-in-chunk" rows. Rows whose chunk #2 contains
-    // international chars (rows 2 and 3 of Table11 / Table11_desc) hit
-    // Access's ~510-byte total-entry truncation cap; we emit the
-    // un-truncated form, which is sortable, complete, and round-trip-stable
-    // but not byte-identical to Access. See
-    // <c>docs/design/long-row-index-encoding-resolution.md</c> §"V2010
-    // truncation cap (open)" for the open-question status of that cap rule.
-    private static readonly HashSet<string> LongRowStressTables = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Table11",
-        "Table11_desc",
-    };
+    // The 2-chunk long-row encoder (separator <c>07 09 07 06</c>) plus the
+    // V2010 hard 510-byte entry-length cap together produce byte-exact
+    // matches against Access-authored Table11 / Table11_desc fixtures.
+    // Empty skip set: every long-row leaf validates byte-for-byte.
+    private static readonly HashSet<string> LongRowStressTables = new(StringComparer.OrdinalIgnoreCase);
 
     [Theory]
     [MemberData(nameof(Fixtures))]

@@ -44,5 +44,6 @@ internal static class GeneralTextIndexEncoder
             ascending,
             Codes.Value,
             ExtCodes.Value,
-            GeneralLegacyTextIndexEncoder.LongRowSeparatorGeneral);
+            GeneralLegacyTextIndexEncoder.LongRowSeparatorGeneral,
+            GeneralLegacyTextIndexEncoder.MaxEntryLengthGeneralV2010);
 }
