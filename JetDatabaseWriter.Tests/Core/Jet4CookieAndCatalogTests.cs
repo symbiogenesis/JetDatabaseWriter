@@ -314,7 +314,7 @@ public sealed class Jet4CookieAndCatalogTests(DatabaseCache db) : IClassFixture<
                 Assert.Equal(Constants.Aces.DefaultAcm, acm);
 
                 // Inheritable should be true.
-                Assert.True(Convert.ToBoolean(row["Inheritable"], CultureInfo.InvariantCulture));
+                Assert.True(Convert.ToBoolean(row["FInheritable"], CultureInfo.InvariantCulture));
 
                 // SID should be non-null.
                 object sidVal = row["SID"];

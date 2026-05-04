@@ -3361,7 +3361,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             object[] row = acesDef.CreateNullValueRow();
             acesDef.SetValueByName(row, "ObjectId", (int)tdefPageNumber);
             acesDef.SetValueByName(row, "ACM", Constants.Aces.DefaultAcm);
-            acesDef.SetValueByName(row, "Inheritable", true);
+            acesDef.SetValueByName(row, "FInheritable", true);
             acesDef.SetValueByName(row, "SID", sid);
             await InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, row, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
