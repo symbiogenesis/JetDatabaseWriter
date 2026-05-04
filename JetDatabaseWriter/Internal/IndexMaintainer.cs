@@ -825,6 +825,8 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             return false;
         }
 
+        int originalTailPrefLen = BinaryPrimitives.ReadUInt16LittleEndian(tailLeaf.AsSpan(layout.PrefLenOffset, 2));
+
         List<IndexEntry> existingTail = IndexLeafIncremental.DecodeEntries(layout, tailLeaf, writer._pgSz);
 
         // Every new key must sort strictly after the current tail max.
@@ -865,7 +867,8 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 prevPage: tailPrev,
                 nextPage: 0,
                 tailPage: 0,
-                enablePrefixCompression: true);
+                enablePrefixCompression: true,
+                maxPrefixLength: originalTailPrefLen);
         }
         catch (ArgumentOutOfRangeException)
         {
@@ -2705,6 +2708,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             long leafPrev = IndexLeafIncremental.ReadPrevPage(layout, leaf);
             long leafNext = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
             long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
+            int originalPrefLen = BinaryPrimitives.ReadUInt16LittleEndian(leaf.AsSpan(layout.PrefLenOffset, 2));
 
             List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, leaf, writer._pgSz);
 
@@ -2734,7 +2738,8 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                     prevPage: leafPrev,
                     nextPage: leafNext,
                     tailPage: leafTail,
-                    enablePrefixCompression: true);
+                    enablePrefixCompression: true,
+                    maxPrefixLength: originalPrefLen);
             }
             catch (ArgumentOutOfRangeException ex)
             {

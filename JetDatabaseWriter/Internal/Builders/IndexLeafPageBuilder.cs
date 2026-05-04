@@ -169,7 +169,8 @@ internal static class IndexLeafPageBuilder
         long prevPage,
         long nextPage,
         long tailPage,
-        bool enablePrefixCompression)
+        bool enablePrefixCompression,
+        int? maxPrefixLength = null)
     {
         if (pageSize <= layout.FirstEntryOffset)
         {
@@ -194,7 +195,16 @@ internal static class IndexLeafPageBuilder
         // shares with the first entry. Stripped from every entry beyond the
         // first; the first entry is always written whole because it supplies
         // the canonical prefix bytes.
+        // When splicing into an existing leaf page, the caller passes
+        // maxPrefixLength (the page's original pref_len) so we never
+        // increase the prefix beyond what was already on disk — DAO
+        // rejects pages whose pref_len grows beyond its original value.
         int prefLen = enablePrefixCompression ? ComputeSharedPrefixLength(entries) : 0;
+        if (maxPrefixLength.HasValue && prefLen > maxPrefixLength.Value)
+        {
+            prefLen = maxPrefixLength.Value;
+        }
+
         Wu16(page, layout.PrefLenOffset, prefLen);
 
         // Bytes 22..(layout.BitmaskOffset-1) are reserved; left zeroed.
