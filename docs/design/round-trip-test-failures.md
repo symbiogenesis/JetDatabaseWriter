@@ -1,6 +1,6 @@
 ﻿# Round-Trip Test Failures — Investigation Status
 
-**Status (2026-05-04):** The N1 reproducer (single `CreateTableAsync`) now **passes DAO Compact & Repair** after the entry-start bitmask sentinel fix. The bisect probe confirms N0 (open/close) and N1 (one table) both pass. N2 (two tables) still fails with `Object invalid or no longer set` — the second `CreateTableAsync` call's splice is the remaining failure point. The two gating tests (which create 2 tables + relationship + rows) still fail.
+**Status (2026-05-04):** The N1 reproducer (single `CreateTableAsync`) now **passes DAO Compact & Repair** after the entry-start bitmask sentinel fix. The bisect probe confirms N0 (open/close) and N1 (one table) both pass. N2 (two tables) still fails with `Object invalid or no longer set` — the second `CreateTableAsync` call's splice overflows the ParentIdName leaf (page 2790) and triggers an N-way split; the split pages are built **without the `maxPrefixLength` cap**, allowing `pref_len` to grow from 1→4 on the rewritten page 2790 and 16 on the new page 3019. This is the suspected root cause. The two gating tests (which create 2 tables + relationship + rows) still fail.
 
 **Fixes landed (all necessary but collectively not yet sufficient):**
 
@@ -285,16 +285,16 @@ Re-confirmed — does not block compact (bisect proved this earlier).
 
 ### Likelihood ranking for the `MSysDb (3011)` trigger
 
-**Updated 2026-05-04:** The sentinel bit fix resolved the N1 (single-table) reproducer — DAO now accepts the writer's output when creating a single table. The bisect probe confirms N0 and N1 pass, N2 (two tables) fails with `Object invalid or no longer set`. The remaining failure is in the N2+ code path where the second `CreateTableAsync` call splices into pages already modified by the first call.
+**Updated 2026-05-04:** The sentinel bit fix resolved the N1 (single-table) reproducer — DAO now accepts the writer's output when creating a single table. The bisect probe confirms N0 and N1 pass, N2 (two tables) fails with `Object invalid or no longer set`. The remaining failure is in the N2+ code path where the second `CreateTableAsync` call's splice overflows the ParentIdName leaf and splits without the `maxPrefixLength` cap.
 
 The root cause of the N1 failure was two missing pieces in `IndexLeafPageBuilder.BuildLeafPage`:
 
 1. **Prefix compression growing beyond original** — fixed by the `maxPrefixLength` cap parameter.
 2. **Missing entry-start bitmask sentinel** — Access/DAO writes a one-past-the-end bit in the bitmask; the writer was omitting it. Fixed by writing the sentinel after the last entry.
 
-Remaining sub-cause for N2+ failure:
+Root cause of N2+ failure:
 
-1. **Second splice on already-spliced pages** — the second `CreateTableAsync` call's `TrySpliceCatalogIndexEntryAsync` reads pages that were written by the first call (with the sentinel). The sentinel is correctly excluded from `DecodeEntries` (it uses `payloadEnd` from `free_space`), but there may be other interactions — e.g. the `maxPrefixLength` cap reading the original page's `pref_len` is now reading the first splice's value rather than the baseline's value, which may or may not be the intended behaviour.
+1. **Split path lacks `maxPrefixLength` cap** — `TryBuildSplitLeafPages` calls `BuildLeafPage` without `maxPrefixLength`, so split-product pages get unrestricted prefix compression (pref_len: 1→4 on rewritten page 2790, 16 on new page 3019). Fix: pass `maxPrefixLength: originalPrefLen` to every `BuildLeafPage` call in the split path.
 
 ## Hypothesis matrix
 
@@ -314,7 +314,7 @@ Remaining sub-cause for N2+ failure:
 | 12 | Catalog `Name` compression (UCS-2 vs UTF-16) | ✅ ruled out | Cosmetic only; bisect proved. |
 | 13 | Col-desc magic `0x00000659` inside TDEF column/index descriptors | ✅ fixed & ruled out | Stamps landed in all three TDEF paths. TDEF pages individually pass binary bisection. |
 | 14 | DB-header modify counter at `0x0E02` | ✅ ruled out | Manual patch still fails. |
-| **15** | **MSysObjects index leaf splice (pages 8 and 2790)** | ✅ **FIXED (N1)** / 🔴 **N2+ still fails** | **Binary page-level bisection: pages 8 and 2790 each individually triggered DAO rejection.** Pref_len cap + sentinel fix resolved N1 (single table). N2 (two tables) still fails — second splice on already-modified pages. |
+| **15** | **MSysObjects index leaf splice (pages 8 and 2790)** | ✅ **FIXED (N1)** / 🔴 **N2+ split path lacks pref cap** | **Binary page-level bisection: pages 8 and 2790 each individually triggered DAO rejection.** Pref_len cap + sentinel fix resolved N1 (single table). N2 (two tables) fails because `TryBuildSplitLeafPages` doesn't pass `maxPrefixLength` — split pages get pref=4/16 instead of ≤1. |
 | **16** | **Prefix compression (`pref_len`) growing beyond original** | ✅ **fixed** | `BuildLeafPage` was recomputing `pref_len` from scratch, increasing it beyond the original page's value (page 8: 0→1, page 2790: 1→4). This shifted entry positions and made the bitmask inconsistent. Fix: cap `pref_len` at the original page's value. Values now match baseline/DAO. **Necessary but not sufficient** — pages still failed after this fix alone. |
 | **17** | **Missing entry-start bitmask sentinel** | ✅ **fixed** | Access/DAO writes a one-past-the-end bit in the entry-start bitmask at the position immediately after the last entry. The writer was omitting this sentinel. Fix: `BuildLeafPage` now writes the sentinel after the entry loop. Verified on every leaf page in NorthwindTraders.accdb. **Combined with #16, this resolved the N1 reproducer** — DAO now accepts the writer's single-table output. |
 ## Recommended next steps (priority order)
@@ -324,9 +324,70 @@ Remaining sub-cause for N2+ failure:
 1. **~~Byte-level diff of pages 8 and 2790~~** ✅ Done.
 2. **~~Inspect `pref_len` / prefix compression~~** ✅ Done. Pref_len cap fix landed.
 3. **~~Fix the entry-start bitmask sentinel~~** ✅ Done. Sentinel bit fix landed. N1 now passes.
-4. **Investigate N2 failure** — the second `CreateTableAsync` call's splice is the remaining failure point. Run the DAO baseline probe with N2 step to produce a page-level diff. The second splice operates on pages already modified by the first call; check whether `DecodeEntries` correctly handles the first splice's output (sentinel, prefix, entry ordering).
-5. **Check whether `maxPrefixLength` cap interacts correctly with sequential splices** — the second splice reads `pref_len` from the first splice's output (which was capped at the original baseline value). This should be correct (cap at whatever the page currently has), but verify.
+4. **~~Investigate N2 failure~~** ✅ Done (2026-05-04). Root cause identified — see §"N2 failure analysis" below.
+5. **Fix `TryBuildSplitLeafPages` to pass `maxPrefixLength` cap** — the split path in `TrySpliceCatalogIndexEntryAsync` calls `IndexLeafPageBuilder.BuildLeafPage` without `maxPrefixLength`, allowing `pref_len` to grow beyond the original page's value. The non-split rewrite correctly passes `maxPrefixLength: originalPrefLen` — the split path must do the same for page[0] (which reuses the original page number). New split pages (page[1..N-1]) should also cap at the original `pref_len` to match DAO's convention of never exceeding the root-authored prefix.
 6. **Investigate page 2994** (data page) — fails with `Object invalid or no longer set` in the full 2-table+rel test. May be a cascading failure from corrupted index pages, or may indicate a separate data-page issue when two catalog rows share the same page.
+
+## N2 failure analysis (2026-05-04)
+
+**Root cause:** `TryBuildSplitLeafPages` (called from the overflow path of `TrySpliceCatalogIndexEntryAsync`) does not pass `maxPrefixLength` to `BuildLeafPage`. When the second `CreateTableAsync` overflows page 2790, the resulting split pages get unrestricted prefix compression — `pref_len` grows from 1 (original/capped) to 4 on the rewritten page 2790 and 16 on the new page 3019. DAO rejects pages whose `pref_len` exceeds the value established by the original B-tree author.
+
+### Sequence of events
+
+For the N2 scenario (`CreateTableAsync("RT_Customers")` then `CreateTableAsync("RT_Orders")`):
+
+**First CreateTableAsync (RT_Customers):**
+- ri=0 (ParentIdName, intermediate root p.7 → tail leaf chain): Descends to page 2790 (orig free=34, pref=1). Splices RT_Customers entry (~24 bytes). Rewritten with `maxPrefixLength: 1`. Result: free=10, pref=1. **No split.** Page 7 unmodified.
+- ri=1 (Id PK, single leaf p.8): Splices entry (~9 bytes). Rewritten with `maxPrefixLength: 0`. Result: free=1456, pref=0. **No split.**
+
+**Second CreateTableAsync (RT_Orders):**
+- ri=0 (ParentIdName): Descends to page 2790 (now free=10, pref=1). Splices RT_Orders entry (~24 bytes) → **overflow** (free=10 < entry_size≈24). Triggers `TryGreedySplitLeafInN` → 2-page split:
+  - Page 2790 (reused): free=493, **pref=4** ← BUG (should be capped at 1)
+  - Page 3019 (new): free=3489, **pref=16** ← BUG (should be capped at 1)
+  - Intermediate page 7 updated (free: 3506→3449) with new child pointer for page 3019. ✅ Correct.
+  - Page 2996 (next leaf) prev pointer patched from 2790→3019. ✅ Correct.
+  - Sibling chain: ...→ 2790 → 3019 → 2996 → (end). ✅ Correct.
+- ri=1 (Id PK): Splices entry. Result: free=1447, pref=0. **No split.**
+
+### Why DAO rejects the split pages
+
+The prefix compression cap hypothesis (hypothesis #16) was confirmed for the non-split case in the N1 fix — DAO rejects pages whose `pref_len` exceeds the value it originally authored. The same principle applies after a split: DAO expects the split products to respect the tree's original prefix convention. The writer's split path in `TryBuildSplitLeafPages` omits the `maxPrefixLength` parameter, allowing `BuildLeafPage` to recompute prefix compression from scratch:
+
+```csharp
+// BUG: no maxPrefixLength parameter → pref_len can grow
+pageBytesAll[p] = IndexLeafPageBuilder.BuildLeafPage(
+    layout,
+    writer._pgSz,
+    tdefPage,
+    splitPages[p],
+    prevPage: thisPrev,
+    nextPage: thisNext,
+    tailPage: 0,
+    enablePrefixCompression: true);
+```
+
+The non-split rewrite correctly caps prefix:
+```csharp
+// CORRECT: caps pref_len at original
+rewritten = IndexLeafPageBuilder.BuildLeafPage(
+    ...
+    enablePrefixCompression: true,
+    maxPrefixLength: originalPrefLen);
+```
+
+### Observed page state (N2 bisect output)
+
+| Page | Type | N1 state | N2 state | Expected |
+|---:|:---:|---|---|---|
+| 7 | intermediate | Unmodified (free=3506) | Modified (free=3449) — new child for 3019 | ✅ |
+| 8 | PK leaf | free=1456, pref=0 | free=1447, pref=0 | ✅ |
+| 2790 | ParentIdName leaf | free=10, pref=1 | free=493, **pref=4** | Should be pref≤1 |
+| 2996 | ParentIdName tail | prev=2790 | prev=3019 | ✅ |
+| 3019 | ParentIdName split | (doesn't exist) | free=3489, **pref=16** | Should be pref≤1 |
+
+### Fix
+
+Pass `maxPrefixLength: originalPrefLen` to every `BuildLeafPage` call inside `TryBuildSplitLeafPages` (both in `TrySpliceCatalogIndexEntryAsync` and in `TrySurgicalCrossLeafMaintainAsync` / `TrySurgicalMultiLevelMaintainAsync`). The `originalPrefLen` is already captured before the split decision point.
 
 ## FormatProbe diagnostic harness
 
