@@ -10,6 +10,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
@@ -20,9 +21,9 @@ using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Builders;
 using JetDatabaseWriter.Internal.Helpers;
 using JetDatabaseWriter.Internal.Models;
-using JetDatabaseWriter.Internal.Relationships;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Transactions;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 using KeyColumnInfo = JetDatabaseWriter.Internal.IndexLayout.KeyColumnInfo;
@@ -99,7 +100,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// AccessWriter keeps thin compatibility forwarders for existing callers.</summary>
     private readonly TDefPageBuilder _tdefPageBuilder;
 
-    /// <summary>Gets the complex-column subsystem so sibling managers (e.g. <see cref="Internal.Relationships.RelationshipManager"/>)
+    /// <summary>Gets the complex-column subsystem so sibling managers (e.g. <see cref="Relationships.RelationshipManager"/>)
     /// can delegate cascade-on-delete to the complex children.</summary>
     internal ComplexColumnManager ComplexColumns => _complexColumns;
 

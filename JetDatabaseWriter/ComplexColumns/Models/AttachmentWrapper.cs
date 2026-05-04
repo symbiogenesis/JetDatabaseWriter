@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal.Models;
+namespace JetDatabaseWriter.ComplexColumns.Models;
 
 using System;
 using System.Buffers.Binary;
