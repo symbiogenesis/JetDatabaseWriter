@@ -70,47 +70,40 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     private readonly bool _outerEncryptedLeaveOpen;
     private readonly bool _isAgileEncryptedRewrap;
 
-    /// <summary>
-    /// Per-table client-side constraint registry. Populated by <see cref="CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, CancellationToken)"/>
-    /// and the schema-evolution helpers. Keyed by table name (case-insensitive). The list is
-    /// kept positionally aligned with the table's columns and is consulted at insert time to
-    /// apply default values, auto-increment, required-field, and validation rule semantics.
-    /// </summary>
-    private readonly ConstraintRegistry _constraintRegistry;
-
-    /// <summary>Owns the foreign-key / relationship subsystem. The bulk of
-    /// FK code (catalog rows, per-TDEF logical-index entries, runtime
-    /// referential-integrity enforcement) lives there; <see cref="AccessWriter"/>
-    /// keeps only thin public-API forwarders.</summary>
-    private readonly RelationshipManager _relationships;
-
-    /// <summary>Gets the relationship subsystem for sibling managers (e.g. <see cref="ComplexColumnManager"/>)
-    /// that need to delegate FK / system-table lookups.</summary>
-    internal RelationshipManager Relationships => _relationships;
-
     /// <summary>The single instance owning index B-tree maintenance: bulk rebuild,
     /// incremental fast paths, and the catalog-index single-leaf splice. AccessWriter
     /// keeps only thin instance forwarders.</summary>
     private readonly IndexMaintainer _indexMaintainer;
 
-    /// <summary>Owns the Attachment / MultiValue (complex column) subsystem:
-    /// system-table scaffolding, per-table allocation of ComplexID /
-    /// ConceptualTableID, hidden flat-child-table emission, the row-level
-    /// Add* APIs, and cascade / drop / rename plumbing for the artifacts.
-    /// AccessWriter keeps only thin public-API forwarders.</summary>
-    private readonly ComplexColumnManager _complexColumns;
-
     /// <summary>Owns TDEF emission and empty-database bootstrap builders.
     /// AccessWriter keeps thin compatibility forwarders for existing callers.</summary>
     private readonly TDefPageBuilder _tdefPageBuilder;
 
-    /// <summary>Gets the complex-column subsystem so sibling managers (e.g. <see cref="Relationships.RelationshipManager"/>)
-    /// can delegate cascade-on-delete to the complex children.</summary>
-    internal ComplexColumnManager ComplexColumns => _complexColumns;
+    /// <summary>Gets the foreign-key / relationship subsystem. The bulk of
+    /// FK code (catalog rows, per-TDEF logical-index entries, runtime
+    /// referential-integrity enforcement) lives there; <see cref="AccessWriter"/>
+    /// keeps only thin public-API forwarders. Exposed for sibling managers
+    /// (e.g. <see cref="ComplexColumnManager"/>) that need to delegate FK /
+    /// system-table lookups.</summary>
+    internal RelationshipManager Relationships { get; }
 
-    /// <summary>Gets the constraint registry so sibling managers (e.g. <see cref="ComplexColumns.ComplexColumnManager"/>)
-    /// can apply constraints directly without a pass-through forwarder.</summary>
-    internal ConstraintRegistry Constraints => _constraintRegistry;
+    /// <summary>Gets the Attachment / MultiValue (complex column) subsystem:
+    /// system-table scaffolding, per-table allocation of ComplexID /
+    /// ConceptualTableID, hidden flat-child-table emission, the row-level
+    /// Add* APIs, and cascade / drop / rename plumbing for the artifacts.
+    /// <see cref="AccessWriter"/> keeps only thin public-API forwarders.
+    /// Exposed for sibling managers (e.g. <see cref="Relationships.RelationshipManager"/>)
+    /// that can delegate cascade-on-delete to the complex children.</summary>
+    internal ComplexColumnManager ComplexColumns { get; }
+
+    /// <summary>Gets the per-table client-side constraint registry. Populated by
+    /// <see cref="CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, CancellationToken)"/>
+    /// and the schema-evolution helpers. Keyed by table name (case-insensitive). The list is
+    /// kept positionally aligned with the table's columns and is consulted at insert time to
+    /// apply default values, auto-increment, required-field, and validation rule semantics.
+    /// Exposed for sibling managers (e.g. <see cref="ComplexColumns.ComplexColumnManager"/>)
+    /// that apply constraints directly without a pass-through forwarder.</summary>
+    internal ConstraintRegistry Constraints { get; }
 
     // Active explicit transaction. Writer disposal rolls back any in-flight
     // transaction through JetTransaction.DisposeAsync before clearing the
@@ -135,11 +128,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         _outerEncryptedStream = outerEncryptedStream;
         _outerEncryptedLeaveOpen = outerEncryptedLeaveOpen;
         _isAgileEncryptedRewrap = isAgileEncryptedRewrap;
-        _relationships = new RelationshipManager(this);
+        Relationships = new RelationshipManager(this);
         _indexMaintainer = new IndexMaintainer(this);
-        _complexColumns = new ComplexColumnManager(this);
+        ComplexColumns = new ComplexColumnManager(this);
         _tdefPageBuilder = new TDefPageBuilder(this);
-        _constraintRegistry = new ConstraintRegistry(
+        Constraints = new ConstraintRegistry(
             async (tableName, ct) => await ReadTableSnapshotAsync(tableName, ct).ConfigureAwait(false));
 
         // Real CFB-wrapped encrypted ACCDBs (Agile / Office Crypto API) can
@@ -310,7 +303,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         try
         {
             AccessWriter writer = await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
-            await writer._complexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+            await writer.ComplexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
             return writer;
         }
         catch
@@ -370,7 +363,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         stream.Position = 0;
 
         AccessWriter writer = await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
-        await writer._complexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+        await writer.ComplexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
         return writer;
     }
 
@@ -436,7 +429,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // is on disk. The round-trip preservation path on RewriteTableAsync supplies a
         // non-zero ComplexId from the original TDEF and is left untouched here.
         IReadOnlyList<ComplexColumnManager.ComplexColumnAllocation>? complexAllocs =
-            await _complexColumns.PrepareComplexColumnAllocationsAsync(columns, cancellationToken).ConfigureAwait(false);
+            await ComplexColumns.PrepareComplexColumnAllocationsAsync(columns, cancellationToken).ConfigureAwait(false);
         if (complexAllocs is { Count: > 0 })
         {
             // Rewrite the column list with the allocated ComplexIds embedded so the parent
@@ -458,7 +451,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // catalog cache reflects the parent before flat-table inserts.
         if (complexAllocs is { Count: > 0 })
         {
-            await _complexColumns.EmitComplexColumnArtifactsAsync(tableName, columns, complexAllocs, cancellationToken).ConfigureAwait(false);
+            await ComplexColumns.EmitComplexColumnArtifactsAsync(tableName, columns, complexAllocs, cancellationToken).ConfigureAwait(false);
         }
 
         _ = tdefPageNumber;
@@ -589,7 +582,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             await InsertAceRowsForTableAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
         }
 
-        _constraintRegistry.Register(tableName, columns);
+        Constraints.Register(tableName, columns);
         InvalidateCatalogCache();
         return tdefPageNumber;
     }
@@ -824,7 +817,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        IReadOnlyList<RelationshipManager.FkRelationship> rels = await _relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<RelationshipManager.FkRelationship> rels = await Relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         RelationshipManager.FkContext? fkCtx = rels.Count > 0 ? new RelationshipManager.FkContext(rels) : null;
 
         await InsertRowCoreAsync(tableName, entry.TDefPage, tableDef, values, fkCtx, cancellationToken).ConfigureAwait(false);
@@ -843,7 +836,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        IReadOnlyList<RelationshipManager.FkRelationship> rels = await _relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<RelationshipManager.FkRelationship> rels = await Relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         RelationshipManager.FkContext? fkCtx = rels.Count > 0 ? new RelationshipManager.FkContext(rels) : null;
 
         // Track every row written so far + every auto-counter advance so we can
@@ -866,7 +859,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 cancellationToken.ThrowIfCancellationRequested();
                 Guard.NotNull(row, nameof(rows));
                 List<(ColumnConstraint Constraint, long? PreviousValue)>? rowCp =
-                    await _constraintRegistry.ApplyAsync(tableName, tableDef, row, cancellationToken).ConfigureAwait(false);
+                    await Constraints.ApplyAsync(tableName, tableDef, row, cancellationToken).ConfigureAwait(false);
                 if (rowCp != null)
                 {
                     (batchAutoCheckpoints ??= []).AddRange(rowCp);
@@ -884,7 +877,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 if (fkCtx != null)
                 {
-                    await _relationships.EnforceFkOnInsertAsync(tableName, tableDef, row, fkCtx, cancellationToken).ConfigureAwait(false);
+                    await Relationships.EnforceFkOnInsertAsync(tableName, tableDef, row, fkCtx, cancellationToken).ConfigureAwait(false);
                 }
 
                 RowLocation loc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -939,7 +932,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
         object[] mappedRow = RowMapper<T>.ToRow(tableDef, item);
 
-        IReadOnlyList<RelationshipManager.FkRelationship> relsT = await _relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<RelationshipManager.FkRelationship> relsT = await Relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         RelationshipManager.FkContext? fkCtxT = relsT.Count > 0 ? new RelationshipManager.FkContext(relsT) : null;
 
         await InsertRowCoreAsync(tableName, entry.TDefPage, tableDef, mappedRow, fkCtxT, cancellationToken).ConfigureAwait(false);
@@ -960,7 +953,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        IReadOnlyList<RelationshipManager.FkRelationship> rels = await _relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<RelationshipManager.FkRelationship> rels = await Relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         RelationshipManager.FkContext? fkCtx = rels.Count > 0 ? new RelationshipManager.FkContext(rels) : null;
 
         var batchLocations = new List<RowLocation>();
@@ -979,7 +972,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 Guard.NotNull(item, nameof(items));
                 object[] mappedRow = RowMapper<T>.ToRow(tableDef, item);
                 List<(ColumnConstraint Constraint, long? PreviousValue)>? rowCp =
-                    await _constraintRegistry.ApplyAsync(tableName, tableDef, mappedRow, cancellationToken).ConfigureAwait(false);
+                    await Constraints.ApplyAsync(tableName, tableDef, mappedRow, cancellationToken).ConfigureAwait(false);
                 if (rowCp != null)
                 {
                     (batchAutoCheckpoints ??= []).AddRange(rowCp);
@@ -997,7 +990,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
                 if (fkCtx != null)
                 {
-                    await _relationships.EnforceFkOnInsertAsync(tableName, tableDef, mappedRow, fkCtx, cancellationToken).ConfigureAwait(false);
+                    await Relationships.EnforceFkOnInsertAsync(tableName, tableDef, mappedRow, fkCtx, cancellationToken).ConfigureAwait(false);
                 }
 
                 RowLocation loc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, mappedRow, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -1080,7 +1073,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         // FK enforcement: build the list of new-row payloads up front so we
         // can validate FK constraints (FK-side parent presence, PK-side
         // cascade-or-reject) before mutating any disk page.
-        IReadOnlyList<RelationshipManager.FkRelationship> rels = await _relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<RelationshipManager.FkRelationship> rels = await Relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         RelationshipManager.FkContext? fkCtx = rels.Count > 0 ? new RelationshipManager.FkContext(rels) : null;
 
         var pendingNewRows = new List<(int Index, object[] NewRow)>();
@@ -1109,7 +1102,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             // whose foreign side is THIS table.
             foreach ((_, object[] newRow) in pendingNewRows)
             {
-                await _relationships.EnforceFkOnInsertAsync(tableName, tableDef, newRow, fkCtx, cancellationToken).ConfigureAwait(false);
+                await Relationships.EnforceFkOnInsertAsync(tableName, tableDef, newRow, fkCtx, cancellationToken).ConfigureAwait(false);
             }
 
             // PK-side: if any of the updated columns belongs to a PK referenced
@@ -1154,7 +1147,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                     changes.Add((oldKey, oldFullRow, newRow));
                 }
 
-                await _relationships.EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, changes, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
+                await Relationships.EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, changes, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -1238,7 +1231,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
             }
         }
 
-        IReadOnlyList<RelationshipManager.FkRelationship> rels = await _relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<RelationshipManager.FkRelationship> rels = await Relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         if (rels.Count > 0 && matchingIndices.Count > 0)
         {
             var fkCtx = new RelationshipManager.FkContext(rels);
@@ -1253,7 +1246,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 deletedParentRows.Add(snapshot.Rows[rowIdx].ItemArray);
             }
 
-            await _relationships.EnforceFkOnPrimaryDeleteAsync(
+            await Relationships.EnforceFkOnPrimaryDeleteAsync(
                 tableName,
                 tableDef,
                 deletedParentRows,
@@ -1273,7 +1266,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 parentLocs.Add(locations[i]);
             }
 
-            await _complexColumns.CascadeDeleteComplexChildrenAsync(tableDef, parentLocs, cancellationToken).ConfigureAwait(false);
+            await ComplexColumns.CascadeDeleteComplexChildrenAsync(tableDef, parentLocs, cancellationToken).ConfigureAwait(false);
         }
 
         int deleted = 0;
@@ -1404,15 +1397,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
     /// <inheritdoc/>
     public ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken = default)
-        => _relationships.CreateRelationshipAsync(relationship, cancellationToken);
+        => Relationships.CreateRelationshipAsync(relationship, cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask DropRelationshipAsync(string relationshipName, CancellationToken cancellationToken = default)
-        => _relationships.DropRelationshipAsync(relationshipName, cancellationToken);
+        => Relationships.DropRelationshipAsync(relationshipName, cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken = default)
-        => _relationships.RenameRelationshipAsync(oldName, newName, cancellationToken);
+        => Relationships.RenameRelationshipAsync(oldName, newName, cancellationToken);
 
     // ════════════════════════════════════════════════════════════════
     // Encryption mutation: change password / encrypt / decrypt
@@ -1987,13 +1980,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         CancellationToken cancellationToken)
     {
         List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints =
-            await _constraintRegistry.ApplyAsync(tableName, tableDef, values, cancellationToken).ConfigureAwait(false);
+            await Constraints.ApplyAsync(tableName, tableDef, values, cancellationToken).ConfigureAwait(false);
 
         if (fkCtx != null)
         {
             try
             {
-                await _relationships.EnforceFkOnInsertAsync(tableName, tableDef, values, fkCtx, cancellationToken).ConfigureAwait(false);
+                await Relationships.EnforceFkOnInsertAsync(tableName, tableDef, values, fkCtx, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
@@ -2678,7 +2671,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     /// </summary>
     private async ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
     {
-        long acesTdefPage = await _relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        long acesTdefPage = await Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         if (acesTdefPage <= 0)
         {
             return;
@@ -2762,7 +2755,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         // Carry forward any client-side constraints registered for the original schema so
         // Add/Drop/Rename do not silently strip NotNull / Default / AutoIncrement / validation rules.
-        _constraintRegistry.TryGet(tableName, out List<ColumnConstraint>? existingConstraints);
+        Constraints.TryGet(tableName, out List<ColumnConstraint>? existingConstraints);
 
         // Hydrate persisted-property fields from MSysObjects.LvProp so that
         // DefaultValueExpression / ValidationRuleExpression / ValidationText / Description
@@ -2900,12 +2893,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         foreach ((string colName, int complexId) in droppedComplex)
         {
-            await _complexColumns.DropSingleComplexChildAsync(colName, complexId, cancellationToken).ConfigureAwait(false);
+            await ComplexColumns.DropSingleComplexChildAsync(colName, complexId, cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((string oldColName, string newColName, int complexId) in renamedComplex)
         {
-            await _complexColumns.RenameComplexColumnArtifactsAsync(oldColName, newColName, complexId, cancellationToken).ConfigureAwait(false);
+            await ComplexColumns.RenameComplexColumnArtifactsAsync(oldColName, newColName, complexId, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -2938,7 +2931,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         }
 
         await InsertCatalogEntryAsync(newName, tdefPage.Value, lvProp, cancellationToken).ConfigureAwait(false);
-        _constraintRegistry.Rename(oldName, newName);
+        Constraints.Rename(oldName, newName);
         InvalidateCatalogCache();
     }
 
@@ -3139,7 +3132,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         Guard.NotNull(parentRowKey, nameof(parentRowKey));
         Guard.NotNull(attachment, nameof(attachment));
         return RunAutoCommitAsync(
-            _ => _complexColumns.AddComplexItemCoreAsync(tableName, columnName, parentRowKey, attachment, expectAttachment: true, cancellationToken),
+            _ => ComplexColumns.AddComplexItemCoreAsync(tableName, columnName, parentRowKey, attachment, expectAttachment: true, cancellationToken),
             cancellationToken);
     }
 
@@ -3153,7 +3146,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
     {
         Guard.NotNull(parentRowKey, nameof(parentRowKey));
         return RunAutoCommitAsync(
-            _ => _complexColumns.AddComplexItemCoreAsync(tableName, columnName, parentRowKey, value, expectAttachment: false, cancellationToken),
+            _ => ComplexColumns.AddComplexItemCoreAsync(tableName, columnName, parentRowKey, value, expectAttachment: false, cancellationToken),
             cancellationToken);
     }
 
@@ -3210,11 +3203,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
         {
             foreach (long parentTdefPage in droppedTdefPages)
             {
-                await _complexColumns.DropComplexChildrenForTableAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
+                await ComplexColumns.DropComplexChildrenForTableAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
             }
         }
 
-        _constraintRegistry.Unregister(tableName);
+        Constraints.Unregister(tableName);
         InvalidateCatalogCache();
     }
 
@@ -3331,7 +3324,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
                 return false;
             }
 
-            int realIdxDescStart = _relationships.LocateRealIdxDescStart(page, numCols, numRealIdx);
+            int realIdxDescStart = Relationships.LocateRealIdxDescStart(page, numCols, numRealIdx);
             if (realIdxDescStart < 0)
             {
                 return false;
@@ -4384,7 +4377,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter
 
         int realIdxDescStart = namePos;
         var anchors = _indexLayout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
-        List<string> logIdxNames = _relationships.ReadLogicalIdxNames(tdefBuffer, anchors.LogIdxNamesStart, numIdx);
+        List<string> logIdxNames = Relationships.ReadLogicalIdxNames(tdefBuffer, anchors.LogIdxNamesStart, numIdx);
 
         // Decode the index catalog (with per-real-idx names so the
         // unique-violation error message can quote the originating
