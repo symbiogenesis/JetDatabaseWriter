@@ -490,6 +490,10 @@ internal static class OfficeCryptoAgile
 
     private static byte[] AesCbcRaw(byte[] data, byte[] key, byte[] iv, bool encrypt)
     {
+        Guard.NotNull(data, nameof(data));
+        Guard.NotNull(key, nameof(key));
+        Guard.NotNull(iv, nameof(iv));
+
         using var aes = Aes.Create();
         aes.Mode = CipherMode.CBC;
         aes.Padding = PaddingMode.None;
