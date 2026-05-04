@@ -21,7 +21,7 @@ Phases below are ordered by **biggest line reduction first**. Line numbers refer
 | 11 | LVAL encoding                   |   200 | 10,245 |
 | 12 | Stray nested utilities          |   150 | 10,395 |
 
-After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly **~2,100 lines** of pure orchestration: the constructor, public `OpenAsync`/`CreateDatabaseAsync` factories, the public CRUD/schema entry points, and `DisposeAsync`. (Current state after Phases 1–6: **~4,350 lines**.)
+After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly **~2,100 lines** of pure orchestration: the constructor, public `OpenAsync`/`CreateDatabaseAsync` factories, the public CRUD/schema entry points, and `DisposeAsync`. (Current state after Phases 1–6 and 12: **~4,310 lines**.)
 
 > **No partial classes.** The maintainer dislikes splitting `AccessWriter` across multiple `partial` files — it hides the true size and complexity of the type and makes navigation worse. Every extraction below must land in a **properly-named type** under `Internal/`, with `AccessWriter` holding a private field of that type and forwarding through thin instance methods. Anything that genuinely cannot be lifted off `AccessWriter` (because it touches too much private state) must stay in `AccessWriter.cs` rather than be moved into a partial.
 >
@@ -146,8 +146,12 @@ Extracted to [JetDatabaseWriter/Internal/EncryptionManager.cs](../../JetDatabase
 - [ ] Move nested `PreEncodedLongValue` (L5717).
 - [ ] **Suggested home:** `Internal/LongValueEncoder.cs` (new file). `LvalChainResult` in `Internal/Models/` is a tiny result record, not a behavioral class — not a suitable home.
 
-## Phase 12 — Trivially-misplaced nested utilities (~150 lines)
+## Phase 12 — Trivially-misplaced nested utilities (~150 lines) ✅ DONE
 
-- [ ] `ByteArrayEqualityComparer` (L12448) → `Internal/Collections/ByteArrayEqualityComparer.cs` (existing folder, already has `LruCache.cs` — collection-utility primitives).
-- [ ] `PageInsertTarget` (L12510) → `Internal/Models/PageInsertTarget.cs` (existing folder, already has `RowLocation`, `CatalogRow`, `IndexEntry`, etc.).
-- [ ] ~~`CatalogRow` (L12508) → `Internal/Models/CatalogRow.cs`~~ Already done in Phase 1.
+Extracted `ByteArrayEqualityComparer` to [JetDatabaseWriter/Internal/Collections/ByteArrayEqualityComparer.cs](../../JetDatabaseWriter/Internal/Collections/ByteArrayEqualityComparer.cs) and `PageInsertTarget` to [JetDatabaseWriter/Internal/Models/PageInsertTarget.cs](../../JetDatabaseWriter/Internal/Models/PageInsertTarget.cs). `AccessWriter` now references both as normal top-level internal types; no behavior changes or forwarding layer were needed.
+
+`AccessWriter.cs` shrank from **4,353 → 4,312 lines** (–41).
+
+- [x] `ByteArrayEqualityComparer` → `Internal/Collections/ByteArrayEqualityComparer.cs`.
+- [x] `PageInsertTarget` → `Internal/Models/PageInsertTarget.cs`.
+- [x] ~~`CatalogRow` → `Internal/Models/CatalogRow.cs`~~ Already done in Phase 1.
