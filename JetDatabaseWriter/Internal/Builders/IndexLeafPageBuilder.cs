@@ -263,6 +263,20 @@ internal static class IndexLeafPageBuilder
             payloadCursor += entryLen;
         }
 
+        // §4.2 sentinel: Access/DAO writes a "one-past-the-end" bit in the
+        // entry-start bitmask at the first byte of free space (the position
+        // immediately after the last entry). DAO validates this sentinel
+        // during Compact & Repair and rejects pages that omit it.
+        if (entries.Count > 0)
+        {
+            int sentinelBitIndex = payloadCursor - layout.FirstEntryOffset;
+            int sentinelByteOff = layout.BitmaskOffset + (sentinelBitIndex / 8);
+            if (sentinelByteOff < layout.FirstEntryOffset)
+            {
+                page[sentinelByteOff] |= (byte)(1 << (sentinelBitIndex % 8));
+            }
+        }
+
         // free_space is the count of unused bytes between the last written byte
         // and the page end. Write at offset 2 as u16.
         int freeSpace = payloadLimit - payloadCursor;

@@ -303,6 +303,7 @@ public sealed class IncrementalIndexMaintenanceTests
 
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset, DatabaseFormat format)
     {
+        // Subtract 1 for the sentinel bit at the position one past the last entry.
         int count = 1;
         for (int i = BitmaskOffset(format); i < FirstEntryOffset(format); i++)
         {
@@ -316,7 +317,7 @@ public sealed class IncrementalIndexMaintenanceTests
             }
         }
 
-        return count;
+        return count < 1 ? 0 : count - 1;
     }
 
     private static int CountLeafPages(byte[] fileBytes, DatabaseFormat format)
