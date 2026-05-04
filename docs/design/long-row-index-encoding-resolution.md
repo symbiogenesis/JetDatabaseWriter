@@ -168,83 +168,163 @@ fundamentally different long-row strategy:
 
 ### Evidence: V2010 does NOT use the 2-chunk split
 
-When the V2000-style 2-chunk encoder is applied to V2010 data:
-- Row[2]: `firstDiff = 50` (diverges early)
-- Row[3]: `firstDiff = 50`
-- Row[4]: `firstDiff = 50`
+When the V2000-style 2-chunk encoder is applied to V2010 data, it diverges
+early because the 2-chunk path caps at 127 characters before the split.
+The continuous 255-char encoder matches all three rows to byte 508.
 
-When the continuous 255-char encoder is applied to V2010 data:
-- Row[2]: `firstDiff = 508` (matches all but last 2 bytes)
-- Row[3]: `firstDiff = 508` (with correct char count — see below)
-- Row[4]: `firstDiff = 508` (with correct char count — see below)
+### Leaf-to-row mapping (ascending index)
 
-The continuous path is unambiguously correct for the first 508 bytes.
+The ascending leaf entries are sorted by key value, NOT by row order.
+Correct mapping (established by best-match search across all leaf keys):
 
-### The character-count question
+| Data row | Leaf index | Match length | Special chars in encoded range (0–254) |
+|---------:|-----------:|:-------------|----------------------------------------|
+| row[2]   | leaf[2]    | 508 bytes    | `-` (Unprintable) at pos 0, `Á` (International) at pos 12 |
+| row[3]   | leaf[4]    | 508 bytes    | `-` (Unprintable) at pos 3, `í` (International) at pos 25 |
+| row[4]   | leaf[3]    | 508 bytes    | `-` (Unprintable) at pos 86, `-` (Unprintable) at pos 102 |
 
-Row[2] matches with exactly 255 characters. But rows 3 and 4 appear to
-require a **different character count** to match at position 508. The
-expected entries for rows 3 and 4 are byte-shifted relative to row 2 at
-early positions, consistent with Access encoding one more (or fewer)
-character.
+**Important**: an earlier analysis used `ascKeys[rowIdx]` directly (i.e.
+row[3]→leaf[3], row[4]→leaf[4]), which gave `firstDiff = 50` for rows 3
+and 4. This was a **mapping error**, not an encoding error. With the
+correct mapping, all three rows match to byte 508.
 
-The working theory is that V2010 uses an **inline byte budget** rather than
-a fixed character count:
-- Access encodes characters one at a time.
-- It stops when the inline byte count reaches a threshold (~507 bytes of
-  inline payload, leaving room for the flag byte and 2-byte suffix to fill
-  510 total).
-- Different characters have different inline widths (SIMPLE = 2 bytes,
-  International = 2 bytes, Significant = 2 bytes, etc.), so the character
-  count varies per input.
+### Character count is fixed at 255
 
-For row[2], 255 characters happen to produce exactly the right inline byte
-count. For rows 3 and 4 (which have different special characters at
-different positions), the optimal character count differs.
+The earlier "inline byte budget" / variable character count theory is
+**disproven**. All three rows use a fixed 255-character cap:
+
+| Row | Unprintable chars (0 inline) | International chars (2 inline) | Total inline bytes | flag + inline |
+|----:|:----------------------------:|:------------------------------:|-------------------:|--------------:|
+| 2   | 1                            | 1                              | 508                | 509           |
+| 3   | 1                            | 1                              | 508                | 509           |
+| 4   | 2                            | 0                              | 506                | 507           |
+
+All three rows encode exactly 255 source characters (indices 0–254).
+Unprintable characters produce 0 inline bytes, so the inline byte count
+varies, but the character count is constant. The encoder does NOT use a
+byte budget — it always encodes 255 chars, builds the full entry, and
+hard-truncates to 510 bytes.
+
+### Full (untruncated) entry structure
+
+Encoding 255 chars with `maxEntryLength = 0` (no truncation) reveals the
+full entry that would be produced before the 510-byte cap is applied:
+
+| Row | Full entry length | Truncated bytes | Tail contents |
+|----:|------------------:|----------------:|:--------------|
+| 2   | 530               | 20              | END_TEXT + 11× extras(02) + extras(0E) + 01 01 + 80 07 06 82 + 00 |
+| 3   | 543               | 33              | END_TEXT + 24× extras(02) + extras(0E) + 01 01 + 80 13 06 82 + 00 |
+| 4   | 520               | 10              | END_TEXT + 01 01 01 + 81 5F 06 82 + 81 9B 06 82 + 00 |
+
+Row 2 has 1 International char (Á at pos 12 → extra byte `0E`) and
+1 Unprintable char (- at pos 0 → unprint offset `8007`, midfix `06`,
+value `82`). Row 3 has 1 International (í at pos 25 → extra `0E`) and
+1 Unprintable (- at pos 3 → offset `8013`). Row 4 has 2 Unprintables
+(- at pos 86 → offset `815F`, - at pos 102 → offset `819B`), no
+International chars.
 
 ### The 2-byte suffix
 
-Observed suffix values:
+Observed suffix values (with corrected leaf-to-row mapping):
 
 | row | ascending | descending |
 |----:|:---------:|:----------:|
-| 2   | `43 EC`   | `37 DD`    |
-| 3   | `1D AC`   | `C1 A1`    |
-| 4   | `A2 2D`   | `9A 4E`    |
+| 2   | `43 EC`   | (TBD)      |
+| 3   | `A2 2D`   | (TBD)      |
+| 4   | `1D AC`   | (TBD)      |
+
+**Note:** the ascending suffix values above differ from an earlier version
+of this document which had the wrong leaf mapping (rows 3 and 4 were
+swapped). The descending values need re-verification with the corrected
+mapping.
 
 Properties established:
 
 1. **NOT the bitwise complement** of the ascending suffix in descending
-   entries: `~43EC = BC13 ≠ 37DD`. The suffix is computed independently
-   per direction, meaning it is NOT part of the normal descending
-   one's-complement pass.
+   entries. The suffix is computed independently per direction, meaning
+   it is NOT part of the normal descending one's-complement pass.
 
-2. **NOT a CRC-16 or checksum** of the "omitted" tail bytes (the bytes
-   that would appear at positions 510+ of the uncapped encoding). Tested:
-   CRC-16 (IBM, MODBUS, CCITT-FALSE, X25, KERMIT, XMODEM), Fletcher-16,
-   Adler-16, sum-16, XOR-16, FNV-1a, djb2, sdbm, MD5 first/last 2 bytes,
-   SHA-256 first/last 2 bytes. None match.
+2. **Varies per row.** The suffix differs between rows with different
+   special-character compositions, even when the inline bytes are nearly
+   identical. This means it encodes something about the extras/unprintable
+   section that got truncated.
 
 3. **NOT a function of omitted byte count.** Omitted counts are 20, 33, 10
-   for rows 2/3/4 — no relationship to `43EC`, `1DAC`, `A22D`.
+   for rows 2/3/4 — no relationship to the suffix values.
 
-4. **Varies with both input text and direction.** Suggests it encodes
-   something about the truncated portion that aids sort-order comparison.
+4. **NOT inline bytes of the next unencoded character** ("continuation
+   prefix" hypothesis). Tested: char[255] for each row produces inline
+   bytes that do not match the suffix. E.g., row[2] char[255]=' ' → inline
+   `07 02`, but suffix is `43 EC`.
 
-### Most likely suffix candidates (untested)
+### Exhaustive suffix hypothesis testing
 
-1. **First 2 bytes of encoding the next unencoded character** — the
-   "continuation prefix". If Access emits characters until the budget is
-   full, the next character's first 2 inline bytes would be a natural
-   sort-preserving tiebreaker. This would also explain why it varies per
-   direction (ascending vs descending encoding of the same char differ
-   after the complement pass).
+The following algorithms and input formulations were tested systematically.
+**None produced a match** for all three rows:
 
-2. **A Windows NLS / ICU sort-key fragment** — Access/ACE may delegate to
-   the OS collation engine for the suffix rather than using its own tables.
+#### Algorithms tested
 
-3. **A proprietary hash of the remaining source text** — designed to
-   preserve sort order (not a standard hash family).
+| Family | Algorithms |
+|--------|------------|
+| CRC-16 | CCITT/Kermit (poly 0x1021, reflected, init 0), CCITT-FALSE (poly 0x1021, unreflected, init 0xFFFF), XMODEM (poly 0x1021, unreflected, init 0), ARC (poly 0x8005, reflected, init 0), MODBUS (poly 0x8005, reflected, init 0xFFFF) |
+| Non-CRC hash | Fletcher-16, FNV-1a (32→16 XOR-fold), DJB2 (32→16 XOR-fold), XOR-rotate-fold, additive sum mod 65536, Pearson-16 |
+| Brute-force CRC | All 65536 polynomials × 4 modes (reflected/unreflected × init 0/0xFFFF) = 262144 CRC variants |
+| Other | Adler-16 (mod 251), MurmurHash3-32 (seeds 0–255, 16-bit fold) |
+
+#### Input formulations tested
+
+All of the above algorithms were tested against every combination of these
+input ranges:
+
+| Input | Description |
+|-------|-------------|
+| `full[508..]` | Truncated tail (bytes 508 to end of untruncated entry) |
+| `full[509..]` | From END_TEXT byte onwards |
+| `full[510..]` | Only the bytes past the 510-byte boundary |
+| `full[508..^1]` | Tail minus final END_EXTRA_TEXT |
+| `full` | Complete untruncated entry |
+| `full[1..]` | Untruncated entry minus flag byte |
+| `full[..508]` | Just the retained portion (flag + inline) |
+| `full[1..508]` | Just the inline bytes (no flag) |
+| `text[255..] UTF-16LE` | Remaining source text as UTF-16LE bytes |
+| `text full UTF-16LE` | Full source text as UTF-16LE bytes |
+| `text[255..] ASCII` | Remaining source text as ASCII bytes |
+
+Total combinations tested: ~3.4 million per row. Zero matches.
+
+#### Other hypotheses disproven
+
+- **Windows NLS sort key fragment.** `CompareInfo.GetSortKey` (InvariantCulture
+  and en-US, with and without IgnoreCase) produces sort keys of ~276–957 bytes
+  with completely different byte values from the Access encoding. No bytes at
+  any offset match the expected suffix.
+
+- **Pure inline continuation.** Encoding more than 255 chars (up to the full
+  901-char source text) through the V2010 path produces the same inline bytes
+  at positions [508..509] as encoding 255 chars. The truncation always cuts at
+  the same point regardless of how many chars are encoded beyond the budget.
+
+- **Google AI "CRC-16 of truncated data" claim.** An AI-generated answer
+  confidently stated the suffix is a "CRC-16 variant" of the truncated tail.
+  This was empirically disproven (see above). The AI subsequently admitted
+  there is no public documentation confirming this.
+
+### Remaining suffix candidates
+
+1. **A proprietary hash/checksum with a non-standard polynomial or mixing
+   function** — something that doesn't match any known CRC, Fletcher, or
+   general-purpose hash family.
+
+2. **A function of the raw on-disk compressed text bytes** — Memo fields may
+   use LZSS compression; the suffix could derive from the compressed page
+   data rather than the decoded string.
+
+3. **A function of internal ACE state** — page number, row number, or other
+   metadata mixed into the suffix computation.
+
+4. **Recoverable only via disassembly of `acecore.dll`** — the ACE engine's
+   binary may contain the suffix algorithm in its index-building code path.
+   No public reverse-engineering of this specific code path is known.
 
 ### Algorithm (current implementation)
 
@@ -328,16 +408,32 @@ needed, then hard-truncates to 510 bytes.
 
 ### Open
 
-- V2010 2-byte suffix derivation algorithm.
-- V2010 inline byte-budget character count (currently using fixed 255;
-  only row[2] matches at byte 508 with this count — rows 3/4 need a
-  variable count driven by inline byte budget).
+- V2010 2-byte suffix derivation algorithm (see exhaustive testing above).
 - V2010 binary long-key suffix (may be the same mechanism).
 - V1997 "General 97" long-row format.
 
 ---
 
-## Appendix: superseded documents
+## Appendix A: fixture row details
+
+The three long rows in the V2010 `Table11` fixture are 901, 901, and 903
+characters respectively. All contain `\r\n` at source positions 179–180.
+The "General" code tables map `-` (U+002D) as Unprintable (0 inline bytes,
+unprint value `82`), `Á` (U+00C1) as International (inline `0E02`, extra
+`0E`), and `í` (U+00ED) as International (inline `0E32`, extra `0E`).
+
+Character `í` and character `i` share the same inline bytes (`0E32`).
+Similarly, `Á` and `A`/`a` share inline bytes (`0E02`). International
+characters are distinguished from their Simple counterparts only by their
+extras stream contributions.
+
+The ascending leaf page starts at page 112 (13 leaf entries total,
+including short rows and the null entry). Descending leaf page starts at
+page 119.
+
+---
+
+## Appendix B: superseded documents
 
 - **`long-row-bisect.md`** — Raw output from an early chunk-boundary
   bisection probe. Its V2000/V2003/V2007 data remains accurate but its
@@ -345,3 +441,7 @@ needed, then hard-truncates to 510 bytes.
   **incorrect** — those bytes are just CR+LF encoding, and V2010 does not
   use a 2-chunk split. The file is retained as historical evidence but
   should not be used as a reference for V2010 behaviour.
+
+- **`long-row-probe-dump.md`** — Full hex leaf entries for all fixture rows.
+  Active reference material. Contains the expected V2010 entry bytes used
+  for debugging.

@@ -41,11 +41,11 @@ in [GeneralAndGeneral97EncoderUnitTests.cs](../../JetDatabaseWriter.Tests/Intern
   ([GeneralLegacyTextIndexEncoder.EncodeTwoChunks](../../JetDatabaseWriter/Internal/GeneralLegacyTextIndexEncoder.cs)).
   V2010 (General sort order) `Table11` / `Table11_desc` are still skipped
   in [GeneralEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralEncoderFixtureTests.cs):
-  the encoder emits a sortable, complete long-row entry but does not yet
-  apply Access's ~510-byte total-entry truncation cap (rows whose chunk #2
-  contains international chars hit the cap and Access truncates mid-output;
-  rule unverified). Binary single-column long keys in V2010 `binIdxTest`
-  and Memo-keyed indexes via [IndexCodesAggregateDiagnosticTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexCodesAggregateDiagnosticTests.cs)
+  the encoder matches the first 508 of 510 bytes but the final 2-byte
+  suffix algorithm is unknown (exhaustive testing of ~3.4 M hash/CRC/input
+  combinations found no match — see resolution doc for details). Binary
+  single-column long keys in V2010 `binIdxTest` and Memo-keyed indexes via
+  [IndexCodesAggregateDiagnosticTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexCodesAggregateDiagnosticTests.cs)
   also still run un-asserted for the same reason. See
   [long-row-index-encoding-investigation.md](long-row-index-encoding-investigation.md)
   and [long-row-index-encoding-resolution.md](long-row-index-encoding-resolution.md).
