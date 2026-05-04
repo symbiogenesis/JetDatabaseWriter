@@ -2,10 +2,6 @@ namespace JetDatabaseWriter.Enums;
 
 using JetDatabaseWriter.Internal;
 
-#pragma warning disable CA1822 // Mark members as static
-#pragma warning disable SA1202
-#pragma warning disable SA1204
-
 /// <summary>
 /// Outcome of <see cref="IndexMaintainer.ReadTdefPreambleAsync"/>'s parse.
 /// </summary>
