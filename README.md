@@ -34,6 +34,20 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 
 ---
 
+## Correctness
+
+This library incorporates and significantly exceeds the test coverage of [Jackcess](https://jackcess.sourceforge.io/), [mdbtools](https://github.com/mdbtools/mdbtools), and [OpenMcdf](https://github.com/ironfede/openmcdf). Every test case from those projects is represented here, alongside extensive additional coverage for corner cases, corruption resilience, and format variants they do not exercise.
+
+Beyond functional tests, the codebase is validated by:
+
+- **Strict compiler settings** — nullable reference types, warnings-as-errors, `WarningLevel 9999`, `AnalysisLevel latest-all`, and arithmetic overflow checking enabled globally
+- **Static analysis** — Roslyn .NET analyzers, Roslynator, StyleCop, and `dotnet format` enforced in CI
+- **Reproducible builds** — deterministic compilation via [DotNet.ReproducibleBuilds](https://github.com/dotnet/reproducible-builds); identical source always produces identical binaries
+- **Fuzz testing** — random byte mutations and truncation matrices at every page boundary
+- **Memory safety analysis** — control-flow and resource-leak detection via [InferSharp](https://github.com/microsoft/infersharp)
+
+---
+
 ## Installation
 
 ```bash
