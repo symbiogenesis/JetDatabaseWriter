@@ -164,6 +164,7 @@ internal static class Constants
     public static class SystemTableNames
     {
         public const string Objects = "MSysObjects";
+        public const string Aces = "MSysACEs";
         public const string Indexes = "MSysIndexes";
         public const string IndexColumns = "MSysIndexColumns";
         public const string Relationships = "MSysRelationships";
@@ -260,6 +261,29 @@ internal static class Constants
         /// docs/design/round-trip-test-failures.md.
         /// </summary>
         public static readonly byte[] DefaultLvPropPlaceholder = new byte[12];
+    }
+
+    /// <summary>
+    /// Constants for the <c>MSysACEs</c> (Access Control Entries) system table.
+    /// DAO Compact &amp; Repair requires every user table to have at least 3
+    /// ACE rows (owner, admins group, users group) with a standard
+    /// permission mask. Without them, DAO aborts with err 3011 "could not
+    /// find the object 'MSysDb'".
+    /// </summary>
+    public static class Aces
+    {
+        /// <summary>
+        /// Standard ACM (Access Control Mask) DAO stamps on every new user
+        /// table's ACE rows: <c>0x000FFEFF</c> (all permissions except the
+        /// reserved bit at 0x0100).
+        /// </summary>
+        public const int DefaultAcm = 0x000FFEFF;
+
+        /// <summary>2-byte SID representing the database Owner principal.</summary>
+        public static readonly byte[] OwnerSid = [0x71, 0x10];
+
+        /// <summary>2-byte SID representing the Users group.</summary>
+        public static readonly byte[] UsersSid = [0x70, 0x10];
     }
 
     /// <summary>
