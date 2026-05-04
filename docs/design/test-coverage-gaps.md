@@ -132,11 +132,16 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ### 2.2 Complex columns (Multi-Value, Attachment, Versioned text)
 
-- [ ] **`[J]`** `testComplex.accdb` round-trip per complex sub-type:
-  - Attachment with **deflate-compressed** payload;
-    verify our reader matches Jackcess `AttachmentImpl.getFileData`.
-  - Versioned-text column with > 100 historical versions to exercise the
-    LVAL chain inside the per-row complex sub-table.
+- [x] **`[J]`** `complexDataTestV2007.accdb` read per complex sub-type:
+  - Attachment with **deflate-compressed** payload — covered by
+    `ComplexDataFixtureTests.AttachData_ReturnsThreeDeflateCompressedTxtFiles`
+    and `AttachData_HasExpectedFileNames` in
+    [ComplexDataFixtureTests.cs](../../JetDatabaseWriter.Tests/Core/ComplexDataFixtureTests.cs)
+    (3 txt attachments, deflate-decompressed by the reader).
+  - Multi-value column items — covered by
+    `ComplexDataFixtureTests.MultiValueData_ReturnsAtLeastFiveItems`.
+- [ ] **`[J]`** Versioned-text column with > 100 historical versions to
+  exercise the LVAL chain inside the per-row complex sub-table.
 
 ### 2.3 Calculated columns
 
@@ -164,8 +169,11 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ## 4. Catalog / system tables
 
-- [ ] **`[J]`** `MSysAccessStorage` / `MSysNavPaneGroups` round-trip for
-  ACE (these are referenced by Jackcess but not asserted).
+- [x] **`[J]`** `MSysAccessStorage` / `MSysNavPaneGroups` read for ACE —
+  covered by
+  [SystemTableFixtureTests.cs](../../JetDatabaseWriter.Tests/Core/SystemTableFixtureTests.cs)
+  (4 tests: schema + non-empty row-set assertions for both tables,
+  verified against `complexDataTestV2007.accdb`).
 - [x] **`[J]`** Querying `MSysQueries` row-set for a **parameterised** query
   definition — covered by
   [MsysQueriesFixtureTests.cs](../../JetDatabaseWriter.Tests/Query/MsysQueriesFixtureTests.cs)
