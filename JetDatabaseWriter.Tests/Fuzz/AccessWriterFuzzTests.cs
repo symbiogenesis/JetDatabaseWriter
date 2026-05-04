@@ -20,6 +20,8 @@ using Xunit;
 /// </summary>
 public class AccessWriterFuzzTests(ITestOutputHelper output)
 {
+    private static readonly DatabaseFormat[] Formats = Enum.GetValues<DatabaseFormat>();
+
     [Trait("Category", "Fuzz")]
     [Fact]
     public async Task FuzzAccessWriter()
@@ -30,7 +32,6 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
             byte[]? fuzzedBytes = null;
             try
             {
-                // Read fuzzed input for logging and saving on crash
                 fuzzedBytes = new byte[stream.Length];
                 await stream.ReadExactlyAsync(fuzzedBytes);
                 stream.Position = 0;
@@ -42,19 +43,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
                 output.WriteLine($"[Fuzzing] Caught exception during fuzzing iteration: {ex.GetType().Name}\n{ex}");
                 if (fuzzedBytes != null)
                 {
-                    try
-                    {
-                        string crashDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "Fuzz", "Crashes");
-                        Directory.CreateDirectory(crashDir);
-                        string fileName = $"crash_{DateTime.UtcNow:yyyyMMdd_HHmmssfff}.bin";
-                        string filePath = Path.Combine(crashDir, fileName);
-                        File.WriteAllBytes(filePath, fuzzedBytes);
-                        output.WriteLine($"[Fuzzing] Saved crashing input to: {filePath}");
-                    }
-                    catch (Exception saveEx)
-                    {
-                        output.WriteLine($"[Fuzzing] Failed to save crashing input: {saveEx}");
-                    }
+                    SaveCrashInput(output, fuzzedBytes);
                 }
             }
 
@@ -62,14 +51,30 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         });
     }
 
+    private static void SaveCrashInput(ITestOutputHelper output, byte[] fuzzedBytes)
+    {
+        try
+        {
+            string crashDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "Fuzz", "Crashes");
+            Directory.CreateDirectory(crashDir);
+            string fileName = $"crash_{DateTime.UtcNow:yyyyMMdd_HHmmssfff}.bin";
+            string filePath = Path.Combine(crashDir, fileName);
+            File.WriteAllBytes(filePath, fuzzedBytes);
+            output.WriteLine($"[Fuzzing] Saved crashing input to: {filePath}");
+        }
+        catch (Exception saveEx)
+        {
+            output.WriteLine($"[Fuzzing] Failed to save crashing input: {saveEx}");
+        }
+    }
+
     private static async Task FuzzIterationAsync(ITestOutputHelper output, byte[]? fuzzedBytes)
     {
-        // Use fuzzedBytes to drive randomization if available, else fallback to Random
         await using var ms = new MemoryStream();
         FuzzRandom random = FuzzRandom.Create(fuzzedBytes);
 
         var options = RandomOptions(random);
-        var format = RandomFormat(random);
+        var format = Formats[random.Next(Formats.Length)];
 
         output.WriteLine($"Creating database with format: {format}, options: {{ UseLockFile={options.UseLockFile}, UseTransactionalWrites={options.UseTransactionalWrites} }}");
         await using var writer = await AccessWriter.CreateDatabaseAsync(ms, format, options, leaveOpen: true, TestContext.Current.CancellationToken);
@@ -85,12 +90,15 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
             await FuzzTransactionAsync(writer, output, random);
         }
 
-        // Try to read back the database with AccessReader for round-trip fuzzing
+        await VerifyRoundTripAsync(ms, output);
+    }
+
+    private static async Task VerifyRoundTripAsync(MemoryStream ms, ITestOutputHelper output)
+    {
         try
         {
             ms.Position = 0;
-            var readerOptions = new AccessReaderOptions();
-            await using var reader = await AccessReader.OpenAsync(ms, readerOptions);
+            await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions());
             var tableNames = await reader.ListTablesAsync();
             output.WriteLine($"[RoundTrip] Opened written DB with AccessReader. Tables: [{string.Join(", ", tableNames)}]");
             foreach (var tableName in tableNames)
@@ -99,8 +107,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
                 int count = 0;
                 await foreach (object[] dataRow in reader.Rows(tableName))
                 {
-                    count++;
-                    if (count > 10)
+                    if (++count > 10)
                     {
                         break;
                     }
@@ -115,9 +122,9 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         }
     }
 
-    private static async Task FuzzTableAsync(AccessWriter writer, ITestOutputHelper output, Random random, int tableIndex)
+    private static async Task FuzzTableAsync(AccessWriter writer, ITestOutputHelper output, FuzzRandom random, int tableIndex)
     {
-        string tableName = $"FuzzTable_{tableIndex}_{RandomString(random, 4)}";
+        string tableName = $"FuzzTable_{tableIndex}_{random.RandomString(4)}";
         int colCount = random.Next(1, 6);
         var columns = CreateRandomColumns(random, colCount);
 
@@ -132,20 +139,20 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
             await writer.InsertRowAsync(tableName, row, TestContext.Current.CancellationToken);
         }
 
-        if (rowCount > 0 && random.NextDouble() < 0.5)
+        if (random.NextDouble() < 0.5)
         {
             await TryUpdateAndDeleteAsync(writer, output, random, tableName, columns);
         }
     }
 
-    private static async Task TryUpdateAndDeleteAsync(AccessWriter writer, ITestOutputHelper output, Random random, string tableName, ColumnDefinition[] columns)
+    private static async Task TryUpdateAndDeleteAsync(AccessWriter writer, ITestOutputHelper output, FuzzRandom random, string tableName, ColumnDefinition[] columns)
     {
         string predicateColumn = columns[0].Name;
-        object? predicateValue = RandomValue(random, columns[0].ClrType);
-        var updatedValues = new Dictionary<string, object>();
+        object? predicateValue = random.RandomValue(columns[0].ClrType);
+        var updatedValues = new Dictionary<string, object>(columns.Length);
         foreach (var col in columns)
         {
-            updatedValues[col.Name] = RandomValue(random, col.ClrType) ?? DBNull.Value;
+            updatedValues[col.Name] = random.RandomValue(col.ClrType) ?? DBNull.Value;
         }
 
         try
@@ -169,11 +176,11 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         }
     }
 
-    private static async Task FuzzTransactionAsync(AccessWriter writer, ITestOutputHelper output, Random random)
+    private static async Task FuzzTransactionAsync(AccessWriter writer, ITestOutputHelper output, FuzzRandom random)
     {
         output.WriteLine("Starting transaction block");
         await using var tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
-        string txTable = $"TxTable_{RandomString(random, 4)}";
+        string txTable = $"TxTable_{random.RandomString(4)}";
         var txColumns = new[] { new ColumnDefinition("TxCol", typeof(int)) };
         await writer.CreateTableAsync(txTable, txColumns, TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(txTable, [random.Next()], TestContext.Current.CancellationToken);
@@ -191,101 +198,42 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
 
     // --- Helper methods for randomization and construction ---
 
-    private static Random CreateRandom(string seed) =>
-        new(seed.GetHashCode(StringComparison.Ordinal));
-
-    private static AccessWriterOptions RandomOptions(Random random) =>
+    private static AccessWriterOptions RandomOptions(FuzzRandom random) =>
         new()
         {
-            Password = random.NextDouble() < 0.2 ? RandomString(random, random.Next(4, 16)).ToCharArray() : ReadOnlyMemory<char>.Empty,
+            Password = random.NextDouble() < 0.2 ? random.RandomString(random.Next(4, 16)).ToCharArray() : ReadOnlyMemory<char>.Empty,
             UseLockFile = random.NextDouble() < 0.5,
             WriteFullCatalogSchema = random.NextDouble() < 0.5,
             RespectExistingLockFile = random.NextDouble() < 0.5,
-            LockFileUserName = random.NextDouble() < 0.2 ? RandomString(random, random.Next(4, 16)) : null,
-            LockFileMachineName = random.NextDouble() < 0.2 ? RandomString(random, random.Next(4, 16)) : null,
+            LockFileUserName = random.NextDouble() < 0.2 ? random.RandomString(random.Next(4, 16)) : null,
+            LockFileMachineName = random.NextDouble() < 0.2 ? random.RandomString(random.Next(4, 16)) : null,
             UseByteRangeLocks = random.NextDouble() < 0.5,
             LockTimeoutMilliseconds = random.Next(100, 10000),
             MaxTransactionPageBudget = random.Next(1, 32768),
             UseTransactionalWrites = random.NextDouble() < 0.5,
         };
 
-    private static DatabaseFormat RandomFormat(Random random)
-    {
-        var formats = Enum.GetValues<DatabaseFormat>();
-        var formatObj = formats.GetValue(random.Next(formats.Length));
-        return formatObj is DatabaseFormat df ? df : DatabaseFormat.Jet3Mdb;
-    }
-
-    private static ColumnDefinition[] CreateRandomColumns(Random random, int count)
+    private static ColumnDefinition[] CreateRandomColumns(FuzzRandom random, int count)
     {
         var columns = new ColumnDefinition[count];
         for (int i = 0; i < count; i++)
         {
-            string colName = $"Col_{i}_{RandomString(random, 3)}";
-            var type = RandomType(random);
-            columns[i] = new ColumnDefinition(colName, type);
+            columns[i] = new ColumnDefinition(
+                $"Col_{i}_{random.RandomString(3)}",
+                random.RandomType());
         }
 
         return columns;
     }
 
-    private static object[] CreateRandomRow(Random random, ColumnDefinition[] columns)
+    private static object[] CreateRandomRow(FuzzRandom random, ColumnDefinition[] columns)
     {
         var row = new object[columns.Length];
         for (int i = 0; i < columns.Length; i++)
         {
-            row[i] = RandomValue(random, columns[i].ClrType) ?? DBNull.Value;
+            row[i] = random.RandomValue(columns[i].ClrType) ?? DBNull.Value;
         }
 
         return row;
-    }
-
-    private static string RandomString(Random random, int length)
-    {
-        const string chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        var str = new char[length];
-        for (int i = 0; i < length; i++)
-        {
-            str[i] = chars[random.Next(chars.Length)];
-        }
-
-        return new string(str);
-    }
-
-    private static Type RandomType(Random random)
-    {
-        Type[] types =
-        [
-            typeof(int), typeof(long), typeof(short), typeof(byte), typeof(bool),
-            typeof(string), typeof(DateTime), typeof(double), typeof(float), typeof(byte[])
-        ];
-
-        return types[random.Next(types.Length)];
-    }
-
-    private static object? RandomValue(Random random, Type type)
-    {
-        return type switch
-        {
-            var t when t == typeof(int) => random.Next(),
-            var t when t == typeof(long) => (long)random.Next() << 32 | (long)random.Next(),
-            var t when t == typeof(short) => (short)random.Next(short.MinValue, short.MaxValue),
-            var t when t == typeof(byte) => (byte)random.Next(byte.MinValue, byte.MaxValue),
-            var t when t == typeof(bool) => random.NextDouble() < 0.5,
-            var t when t == typeof(string) => RandomString(random, random.Next(0, 20)),
-            var t when t == typeof(DateTime) => DateTime.UtcNow.AddDays(random.Next(-10000, 10000)),
-            var t when t == typeof(double) => random.NextDouble() * random.Next(),
-            var t when t == typeof(float) => (float)(random.NextDouble() * random.Next()),
-            var t when t == typeof(byte[]) => RandomBytes(random),
-            _ => null,
-        };
-    }
-
-    private static byte[] RandomBytes(Random random)
-    {
-        var len = random.Next(0, 32);
-        var arr = new byte[len];
-        random.NextBytes(arr);
-        return arr;
     }
 }
