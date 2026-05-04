@@ -140,11 +140,8 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
     LVAL chain inside the per-row complex sub-table.
 - [ ] **`[J]`** Cascading delete across complex columns where the parent
   table has **two** complex columns referencing different sub-tables. We
-  cover the single-complex case in `ComplexColumnsCascadeDeleteTests`.
-  A test (`DeleteRowsAsync_OnParentWithTwoComplexColumns_RemovesBothFlatChildTableRows`)
-  exists but is `Skip`-ped: it revealed a product bug in
-  `PatchParentComplexSlotAsync` that miscalculates the slot offset when
-  two complex columns share a row.
+  cover both the single-complex case and the two-complex case in
+  `ComplexColumnsCascadeDeleteTests`.
 
 ### 2.3 Calculated columns
 
