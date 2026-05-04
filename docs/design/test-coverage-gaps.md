@@ -132,24 +132,11 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ### 2.2 Complex columns (Multi-Value, Attachment, Versioned text)
 
-- [x] **`[J]`** `complexDataTestV2007.accdb` read per complex sub-type:
-  - Attachment with **deflate-compressed** payload — covered by
-    `ComplexDataFixtureTests.AttachData_ReturnsThreeDeflateCompressedTxtFiles`
-    and `AttachData_HasExpectedFileNames` in
-    [ComplexDataFixtureTests.cs](../../JetDatabaseWriter.Tests/Core/ComplexDataFixtureTests.cs)
-    (3 txt attachments, deflate-decompressed by the reader).
-  - Multi-value column items — covered by
-    `ComplexDataFixtureTests.MultiValueData_ReturnsAtLeastFiveItems`.
 - [ ] **`[J]`** Versioned-text column with > 100 historical versions to
   exercise the LVAL chain inside the per-row complex sub-table.
 
 ### 2.3 Calculated columns
 
-- [x] **`[J]`** Calculated-column expressions that reference **another
-  calculated column** (forward and backward dependency order) — covered by
-  `CalculatedColumnFixtureTests.LastFirstLen_ReferencesAnotherCalculatedColumn`
-  and 5 other metadata/read tests in
-  [CalculatedColumnFixtureTests.cs](../../JetDatabaseWriter.Tests/Core/CalculatedColumnFixtureTests.cs).
 - [ ] **`[J]`** Reading a calculated column whose expression uses the
   Access `Switch`/`IIf` builtins; verify cached result bytes match
   expectations on disk (we treat them as opaque today).
@@ -167,47 +154,14 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ---
 
-## 4. Catalog / system tables
-
-- [x] **`[J]`** `MSysAccessStorage` / `MSysNavPaneGroups` read for ACE —
-  covered by
-  [SystemTableFixtureTests.cs](../../JetDatabaseWriter.Tests/Core/SystemTableFixtureTests.cs)
-  (4 tests: schema + non-empty row-set assertions for both tables,
-  verified against `complexDataTestV2007.accdb`).
-- [x] **`[J]`** Querying `MSysQueries` row-set for a **parameterised** query
-  definition — covered by
-  [MsysQueriesFixtureTests.cs](../../JetDatabaseWriter.Tests/Query/MsysQueriesFixtureTests.cs)
-  (3 tests: non-empty row-set, parameter attribute rows with `User Name`,
-  and type-attribute rows for all 9 query kinds).
-
----
-
-## 5. Page / row layout corner cases
-
-- [x] **`[J]`** Row spanning a **page boundary via overflow pointer** —
-  covered by
-  [OverflowRowFixtureTests.cs](../../JetDatabaseWriter.Tests/Core/OverflowRowFixtureTests.cs)
-  (4 tests: table listing, all 7 overflow rows read in V2010, valid data
-  assertions, and Theory over V2007/V2010 ACE formats). Note: V2000/V2003
-  fixtures throw `JetLimitationException` due to deleted-column schema
-  gaps unrelated to overflow handling.
-
----
-
-## 6. Linked tables & relationships
+## 4. Linked tables & relationships
 
 - [ ] **`[J]`** Linked table to a CSV / text file (the `MSysObjects.Type`
   variant we don't currently surface).
 
 ---
 
-## 7. Fuzz / robustness
-
-(No open items.)
-
----
-
-## 8. Conformance / cross-tool
+## 5. Conformance / cross-tool
 
 - [ ] **`[M]`** Run `mdb-export` over each of our written outputs in CI and
   diff against the source CSV. We do an in-process round-trip; an external
@@ -224,5 +178,3 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 - Items in **§3** require new fixture authoring (Office tooling) and are
   larger.
-- Items in **§7** can be largely automated by extending the existing
-  `Fuzz/` projects with deterministic seeds.
