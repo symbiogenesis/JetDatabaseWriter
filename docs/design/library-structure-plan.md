@@ -496,20 +496,26 @@ Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then 
 
 ### Phase J — Promote nested types
 
-| # | Action | Source | Target |
-|--:|--------|--------|--------|
+| # | Action | Source | Target | Status |
+|--:|--------|--------|--------|--------|
 | 76 | **Promote** | Nested `AccessWriter.ColumnConstraint` | `Schema/Models/ColumnConstraint.cs` | ✅ |
-| 77 | **Promote** | Nested `AccessWriter.PreEncodedLongValue` | `ValueEncoding/Models/PreEncodedLongValue.cs` |
-| 78 | **Promote** | Nested `EncryptionManager.PageDecryptionKeys` | `Encryption/Models/PageDecryptionKeys.cs` |
+| 77 | **Promote** | Nested `AccessWriter.PreEncodedLongValue` | `ValueEncoding/Models/PreEncodedLongValue.cs` | ✅ |
+| 78 | **Promote** | Nested `EncryptionManager.PageDecryptionKeys` | `Encryption/Models/PageDecryptionKeys.cs` | ✅ |
 
-### Phase K — Interface segregation & cleanup
+> **Completed:** `PreEncodedLongValue` was already promoted during Phase I (step 70). `PageDecryptionKeys` extracted from nested class in `EncryptionManager` to `Encryption/Models/PageDecryptionKeys.cs` with namespace `JetDatabaseWriter.Encryption.Models`. All references updated in `AccessBase.cs`, `EncryptionConverter.cs`, and `EncryptionManager.cs`. CA1819 suppressions added for intentional mutable byte[] key-holder properties. All 3081 tests pass.
 
-| # | Action | Target |
-|--:|--------|--------|
-| 79 | **Split** `IAccessWriter` into `IAccessWriter` (DML) + `IAccessSchema` (DDL); `AccessWriter` implements both |
-| 80 | Update all `namespace` declarations to match new folder paths |
-| 81 | Delete empty `Core/` folder |
-| 82 | Delete empty `Internal/` folder |
+### Phase K — Interface segregation & cleanup ✅
+
+| # | Action | Target | Status |
+|--:|--------|--------|--------|
+| 79 | **Split** `IAccessWriter` into `IAccessWriter` (DML) + `IAccessSchema` (DDL); `AccessWriter` implements both | ✅ |
+| 80 | Update all `namespace` declarations to match new folder paths | ✅ (completed across Phases A–H) |
+| 81 | Delete empty `Core/` folder | ✅ (completed in Phase A) |
+| 82 | Delete empty `Internal/` folder (after moving IndexCodeTables subdir and all references to it somewhere appropriate. Maybe under `Indexes/`.) | ✅ |
+
+> **Step 79 completed:** Created `IAccessSchema` (DDL interface) in `Interfaces/IAccessSchema.cs` with all schema-management methods (CreateTable, DropTable, AddColumn, DropColumn, RenameColumn, CreateLinkedTable, CreateLinkedOdbcTable, CreateRelationship, DropRelationship, RenameRelationship). `IAccessWriter` now extends `IAccessSchema` (inheriting DDL) and declares only DML methods (InsertRow, InsertRows, UpdateRows, DeleteRows, AddAttachment, AddMultiValueItem). Both interfaces have comprehensive XML documentation explaining the DDL/DML split, thread-safety, and the interface hierarchy (`IAccessBase → IAccessSchema → IAccessWriter`). All `cref` references in library and test projects updated. All 3081 tests pass.
+>
+> **Step 82 completed:** Moved `Internal/IndexCodeTables/` (6 gzipped resource files) to `Indexes/CodeTables/`. Updated `Include` paths in `.csproj` (logical names unchanged — C# code referencing `JetDatabaseWriter.IndexCodeTables.*` required no changes). Updated path references in `THIRD-PARTY-NOTICES.md` and `docs/design/index-and-relationship-format-notes.md`. Deleted the now-empty `Internal/` directory. All 3081 tests pass.
 
 ---
 

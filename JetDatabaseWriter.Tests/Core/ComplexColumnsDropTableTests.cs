@@ -15,7 +15,7 @@ using Xunit;
 #pragma warning disable CA1707 // Test names use underscores by convention
 
 /// <summary>
-/// When <see cref="IAccessWriter.DropTableAsync"/> drops a parent table
+/// When <see cref="IAccessSchema.DropTableAsync"/> drops a parent table
 /// that has Attachment / MultiValue columns, the hidden flat child tables
 /// and the corresponding <c>MSysComplexColumns</c> rows must be removed
 /// too. See <c>docs/design/complex-columns-format-notes.md</c> §4.3.

@@ -46,7 +46,7 @@ using UniqueIndexDescriptor = JetDatabaseWriter.Indexes.IndexLayout.UniqueIndexD
 /// Pure-managed writer for Microsoft Access JET databases (.mdb / .accdb).
 /// Supports creating tables, inserting, updating, and deleting rows.
 /// </summary>
-public sealed class AccessWriter : AccessBase, IAccessWriter
+public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 {
     internal const int MaxInlineMemoBytes = 1024;
     internal const int MaxInlineOleBytes = 256;

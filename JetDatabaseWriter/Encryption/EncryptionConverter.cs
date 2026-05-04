@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
+using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
@@ -175,7 +176,7 @@ internal static class EncryptionConverter
         DatabaseFormat fmt = isLegacyAesCfb ? DatabaseFormat.AceAccdb : DetectFormat(header);
         int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
-        using var pageKeys = new EncryptionManager.PageDecryptionKeys
+        using var pageKeys = new PageDecryptionKeys
         {
             Jet3XorMask = EncryptionManager.GetJet3PageMask(fmt, header),
         };
@@ -239,7 +240,7 @@ internal static class EncryptionConverter
         // Microsoft Access.
         result[0x62] = 0x03;
 
-        using var keys = new EncryptionManager.PageDecryptionKeys { Rc4DbKey = dbKey };
+        using var keys = new PageDecryptionKeys { Rc4DbKey = dbKey };
         EncryptAllPages(result, pageSize, keys);
         return result;
     }
@@ -271,7 +272,7 @@ internal static class EncryptionConverter
         CompoundFileReader.CfbSignature.CopyTo(result);
 
         byte[] aesKey = DeriveAesPageKey(password);
-        using var keys = new EncryptionManager.PageDecryptionKeys { AesPageKey = aesKey };
+        using var keys = new PageDecryptionKeys { AesPageKey = aesKey };
         EncryptAllPages(result, pageSize, keys);
         return result;
     }
@@ -291,7 +292,7 @@ internal static class EncryptionConverter
         ]);
     }
 
-    private static void EncryptAllPages(byte[] db, int pageSize, EncryptionManager.PageDecryptionKeys keys)
+    private static void EncryptAllPages(byte[] db, int pageSize, PageDecryptionKeys keys)
     {
         if (!EncryptionManager.HasPageEncryption(keys))
         {

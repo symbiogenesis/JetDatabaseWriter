@@ -17,9 +17,9 @@ using Xunit;
 
 /// <summary>
 /// Round-trip tests — schema evolution
-/// (<see cref="IAccessWriter.AddColumnAsync"/> /
-/// <see cref="IAccessWriter.DropColumnAsync"/> /
-/// <see cref="IAccessWriter.RenameColumnAsync"/>) on parent tables that
+/// (<see cref="IAccessSchema.AddColumnAsync"/> /
+/// <see cref="IAccessSchema.DropColumnAsync"/> /
+/// <see cref="IAccessSchema.RenameColumnAsync"/>) on parent tables that
 /// already contain Attachment / MultiValue columns. See
 /// <c>docs/design/complex-columns-format-notes.md</c> §4.2.
 /// </summary>
