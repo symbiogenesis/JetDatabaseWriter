@@ -207,6 +207,14 @@ format), pure inline continuation (same bytes regardless of char count beyond
 | V2010 binary long keys | ⬜ skipped |
 | V1997 "General 97" long rows | ⬜ not investigated |
 
+### Diagnostic probe
+
+`LongRowSourceProbe.DumpV2010SuffixAnalysis` in
+`JetDatabaseWriter.Tests/Internal/LongRowSourceProbe.cs` is a skipped
+`[Fact]` that dumps char-by-char inline analysis around the 508-byte
+truncation point and exercises candidate suffix algorithms. Un-skip it
+locally to regenerate diagnostics when investigating the 2-byte suffix.
+
 ---
 
 ## Appendix A: fixture row details

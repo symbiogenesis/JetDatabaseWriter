@@ -106,11 +106,11 @@ public class RowsAsyncLinqTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task RowsAsStrings_WithoutFilter_CountMatchesStreamRowsAsStrings(string path)
+    public async Task RowsAsStrings_WithoutFilter_CountMatchesRows(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        int expected = await reader.RowsAsStrings(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
+        int expected = await reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
         int actual = await reader.RowsAsStrings(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
@@ -145,17 +145,15 @@ public class RowsAsyncLinqTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task RowsAsStrings_AllCells_AreStringOrNull(string path)
+    public async Task RowsAsStrings_CellCount_MatchesColumnMetadata(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        int colCount = (await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken)).Count;
 
         await foreach (string[] row in reader.RowsAsStrings(table, cancellationToken: TestContext.Current.CancellationToken).Take(20).WithCancellation(TestContext.Current.CancellationToken))
         {
-            foreach (string cell in row)
-            {
-                Assert.True(cell == null || cell is string);
-            }
+            Assert.Equal(colCount, row.Length);
         }
     }
 
