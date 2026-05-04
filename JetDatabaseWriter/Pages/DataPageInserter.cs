@@ -53,47 +53,13 @@ internal sealed class DataPageInserter(AccessWriter writer)
             ReturnPage(cached);
         }
 
-        long total = writer._stream.Length / writer._pgSz;
-        PageInsertTarget? candidate = null;
-
-        for (long pageNumber = 3; pageNumber < total; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            if (Ri32(page, writer._dataPage.TDefOff) != tdefPage)
-            {
-                ReturnPage(page);
-                continue;
-            }
-
-            if (CanInsertRow(page, rowLength))
-            {
-                if (candidate != null)
-                {
-                    ReturnPage(candidate.Page);
-                }
-
-                candidate = new PageInsertTarget { PageNumber = pageNumber, Page = page };
-            }
-            else
-            {
-                ReturnPage(page);
-            }
-        }
-
-        if (candidate != null)
-        {
-            writer.SetCachedInsertPageNumber(tdefPage, candidate.PageNumber);
-            return candidate;
-        }
-
+        // When the cached page is full, append a new data page directly
+        // instead of scanning every page in the file. The previous O(N)
+        // scan read + decrypted every page to find one with free space,
+        // which dominated insert time for large databases. Appending is
+        // O(1) and the marginal file-size cost is negligible — Access
+        // itself uses usage-map bitmaps for the same purpose, but we don't
+        // yet maintain writable usage maps for existing tables.
         long newPageNumber = await writer.AppendPageAsync(CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
         writer.SetCachedInsertPageNumber(tdefPage, newPageNumber);
         return new PageInsertTarget

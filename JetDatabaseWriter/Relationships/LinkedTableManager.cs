@@ -104,7 +104,7 @@ internal static class LinkedTableManager
 
         var result = new List<LinkedTableInfo>();
 
-        await foreach (List<string> row in reader.EnumerateMSysObjectsRowsAsync(msys, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in reader.EnumerateMSysObjectsRowsAsync(msys, cancellationToken).ConfigureAwait(false))
         {
             string typeStr = SafeGet(row, idxType);
             if (!int.TryParse(typeStr, out int objType))
@@ -269,6 +269,6 @@ internal static class LinkedTableManager
         return path;
     }
 
-    private static string SafeGet(List<string> row, int idx) =>
-        (idx >= 0 && idx < row.Count) ? row[idx] : string.Empty;
+    private static string SafeGet(string[] row, int idx) =>
+        (idx >= 0 && idx < row.Length) ? row[idx] : string.Empty;
 }

@@ -300,9 +300,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-                await foreach (List<string> row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
+                await foreach (string[] row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
                 {
-                    _ = dt.Rows.Add(row.ToArray());
+                    _ = dt.Rows.Add(row);
                     if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
                     {
                         var result = dt;
@@ -775,9 +775,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            await foreach (List<string> row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
             {
-                yield return row.ToArray();
+                yield return row;
                 rowCount++;
             }
 
@@ -1321,7 +1321,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Dictionary<long, string> objectNamesById = await BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
 
         var result = new List<ComplexColumnInfo>(byComplexId.Count);
-        await foreach (List<string> row in EnumerateRowsForTdefAsync(msysTdef, msys, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in EnumerateRowsForTdefAsync(msysTdef, msys, cancellationToken).ConfigureAwait(false))
         {
             if (!int.TryParse(SafeGet(row, idxComplexId), out int complexId))
             {
@@ -1374,7 +1374,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return map;
         }
 
-        await foreach (List<string> row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
         {
             if (long.TryParse(SafeGet(row, idxId), out long id))
             {
@@ -1883,9 +1883,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-                await foreach (List<string> row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
+                await foreach (string[] row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
                 {
-                    _ = dt.Rows.Add(row.ToArray());
+                    _ = dt.Rows.Add(row);
                     if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
                     {
                         var result = dt;
@@ -2038,8 +2038,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
 #pragma warning disable SA1204 // Helper kept beside its sole caller (DisposeAsync) for readability.
-    private static string SafeGet(List<string> row, int idx) =>
-        (idx >= 0 && idx < row.Count) ? row[idx] : string.Empty;
+    private static string SafeGet(string[] row, int idx) =>
+        (idx >= 0 && idx < row.Length) ? row[idx] : string.Empty;
 #pragma warning restore SA1204
 
     /// <summary>
@@ -2658,7 +2658,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            await foreach (List<string> row in EnumerateRowsAsync(pageNumber, page, msys, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in EnumerateRowsAsync(pageNumber, page, msys, cancellationToken).ConfigureAwait(false))
             {
                 allRows++;
                 string typeStr = SafeGet(row, idxType);
@@ -2834,7 +2834,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="page">The data page to enumerate rows from.</param>
     /// <param name="td">The table definition containing column information.</param>
     /// <param name="cancellationToken">A cancellation token to observe while waiting for rows.</param>
-    private async IAsyncEnumerable<List<string>> EnumerateRowsAsync(long pageNumber, byte[] page, TableDef td, [EnumeratorCancellation] CancellationToken cancellationToken)
+    private async IAsyncEnumerable<string[]> EnumerateRowsAsync(long pageNumber, byte[] page, TableDef td, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
         {
@@ -2845,7 +2845,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            List<string>? values = await CrackRowAsync(page, rb.RowStart, rb.RowSize, td, cancellationToken).ConfigureAwait(false);
+            string[]? values = await CrackRowAsync(page, rb.RowStart, rb.RowSize, td, cancellationToken).ConfigureAwait(false);
             if (values != null)
             {
                 yield return values;
@@ -2853,7 +2853,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    private async ValueTask<List<string>?> CrackRowAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
+    private async ValueTask<string[]?> CrackRowAsync(byte[] page, int rowStart, int rowSize, TableDef td, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -2882,7 +2882,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        var result = new List<string>(td.Columns.Count);
+        var result = new string[td.Columns.Count];
 
         for (int i = 0; i < td.Columns.Count; i++)
         {
@@ -2894,25 +2894,25 @@ public sealed class AccessReader : AccessBase, IAccessReader
             switch (slice.Kind)
             {
                 case ColumnSliceKind.Bool:
-                    result.Add(slice.BoolValue ? "True" : "False");
+                    result[i] = slice.BoolValue ? "True" : "False";
                     break;
 
                 case ColumnSliceKind.Null:
                 case ColumnSliceKind.Empty:
-                    result.Add(string.Empty);
+                    result[i] = string.Empty;
                     break;
 
                 case ColumnSliceKind.Fixed:
-                    result.Add(JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true));
+                    result[i] = JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true);
                     break;
 
                 case ColumnSliceKind.Var:
                     string value = await ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false);
-                    result.Add(value);
+                    result[i] = value;
                     break;
 
                 default:
-                    result.Add(string.Empty);
+                    result[i] = string.Empty;
                     break;
             }
         }
@@ -3392,7 +3392,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Yields rows from every data page whose owning TDEF page equals <paramref name="tdefPage"/>.
     /// Centralises the common scan-all-pages-and-decode-rows pattern used by catalog/system-table readers.
     /// </summary>
-    private async IAsyncEnumerable<List<string>> EnumerateRowsForTdefAsync(
+    private async IAsyncEnumerable<string[]> EnumerateRowsForTdefAsync(
         long tdefPage,
         TableDef td,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -3404,7 +3404,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            await foreach (List<string> row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
             }
@@ -3416,7 +3416,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         ReadTableDefAsync(2, cancellationToken);
 
     /// <summary>Enumerates every row of MSysObjects. Exposed for <see cref="LinkedTableManager"/>.</summary>
-    internal IAsyncEnumerable<List<string>> EnumerateMSysObjectsRowsAsync(TableDef msys, CancellationToken cancellationToken) =>
+    internal IAsyncEnumerable<string[]> EnumerateMSysObjectsRowsAsync(TableDef msys, CancellationToken cancellationToken) =>
         EnumerateRowsForTdefAsync(2, msys, cancellationToken);
 
     /// <summary>
@@ -3467,7 +3467,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        await foreach (List<string> row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
         {
             if (!long.TryParse(SafeGet(row, idxId), out long id))
             {
@@ -3541,7 +3541,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             long targetTdefPage = resolved is { } resolvedValue ? resolvedValue.Entry.TDefPage : 0;
 
-            await foreach (List<string> row in EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
             {
                 if (idxConceptualTable >= 0 &&
                     !ConceptualTableMatches(SafeGet(row, idxConceptualTable), targetTdefPage, tableName))
@@ -3601,7 +3601,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return 0;
         }
 
-        await foreach (List<string> row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
         {
             string nameStr = SafeGet(row, idxName);
             if (!nameMatches(nameStr))
@@ -3693,7 +3693,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             CatalogEntry entry = tables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
             long targetTdefPage = entry?.TDefPage ?? 0;
 
-            await foreach (List<string> row in EnumerateRowsForTdefAsync(msysTdef, td, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in EnumerateRowsForTdefAsync(msysTdef, td, cancellationToken).ConfigureAwait(false))
             {
                 string colName = SafeGet(row, idxCol);
                 if (!string.Equals(colName, columnName, StringComparison.OrdinalIgnoreCase))

@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -98,7 +99,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
             return LvalChainResult.Failure("no chunks read");
         }
 
-        byte[] buffer = new byte[maxLen];
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(maxLen);
         int totalLen = 0;
         uint currentDp = firstLvalDp;
         var seen = new HashSet<uint>();
@@ -130,6 +131,15 @@ internal sealed class LongValueDecoder(AccessReader reader)
                     totalLen += wantData;
                 }
             }
+
+            if (totalLen == 0)
+            {
+                return LvalChainResult.Failure("no chunks read");
+            }
+
+            var result = new byte[totalLen];
+            Buffer.BlockCopy(buffer, 0, result, 0, totalLen);
+            return LvalChainResult.Success(result);
         }
         catch (IOException ex)
         {
@@ -139,20 +149,10 @@ internal sealed class LongValueDecoder(AccessReader reader)
         {
             return LvalChainResult.Failure(ex.Message);
         }
-
-        if (totalLen == 0)
+        finally
         {
-            return LvalChainResult.Failure("no chunks read");
+            ArrayPool<byte>.Shared.Return(buffer);
         }
-
-        if (totalLen == maxLen)
-        {
-            return LvalChainResult.Success(buffer);
-        }
-
-        var trimmed = new byte[totalLen];
-        Buffer.BlockCopy(buffer, 0, trimmed, 0, totalLen);
-        return LvalChainResult.Success(trimmed);
     }
 
     internal async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
