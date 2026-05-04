@@ -17,6 +17,12 @@ project (`[J]` Jackcess, `[M]` mdbtools, `[O]` OpenMcdf) and the rough
 difficulty (`S`/`M`/`L`). When a gap is closed, remove it from this file —
 the test source is the canonical record of what's covered.
 
+All tests should be **self-contained** — exercisable with `dotnet test`
+alone. No Java runtime or mdbtools install should be required. DAO
+(COM-based Access engine) is acceptable for validation on Windows hosts
+where Microsoft Access is installed; such tests auto-skip via
+`AccessRoundTripEnvironment.IsAvailable` when the runtime is absent.
+
 ---
 
 ## 1. Index encoding & B-tree
@@ -68,11 +74,6 @@ comparisons are caught up-front.
   splits** caused by deletes — `IndexSurgicalCascadingIntermediateCollapseTests`
   covers collapse, but not the rebalance/borrow path Jackcess exercises in
   `testCursors`/`testIndexCreation`.
-- [ ] **`[M]` `[S]`** Compare our `next_page`/`prev_page` chain against
-  mdbtools' `mdb-index` dump for at least one fixture — provides an
-  external sanity check. (`IndexLeafChainConsistencyTests` validates
-  internal bidirectional `prev(next(page)) == page` consistency, but not
-  against an independent implementation's dump.)
 - [ ] **`[J]` `[M]`** **`bigIndexTest*` fixtures surface zero scannable
   B-trees / zero leaf entries / zero "applicable" single-column non-text
   indexes across all four format variants (V2000, V2003, V2007, V2010)** in
@@ -150,16 +151,48 @@ The reader now correctly reports VH columns as `Kind = VersionHistory`
 
 ---
 
-## 5. Conformance / cross-tool
+## 5. DAO round-trip validation
 
-- [ ] **`[M]`** Run `mdb-export` over each of our written outputs in CI and
-  diff against the source CSV. We do an in-process round-trip; an external
-  tool diff catches encoder bugs that round-trip silently.
-- [ ] **`[J]`** Open every database under `JetDatabaseWriter.Tests/Databases/Jackcess/`
-  with both Jackcess (via a small Java sidecar in CI) **and** our reader,
-  diff the resulting `DataTable`s. Currently we trust Jackcess's
-  fixtures by construction; an explicit diff would catch encoding drift on
-  re-write.
+Tests in this section use `DAO.DBEngine.120` via
+`AccessRoundTripEnvironment` and auto-skip when Access is not installed.
+Existing infrastructure in `AccessRoundTripTests` (`RoundTripSession`,
+`CaptureSnapshotAsync`, `AssertTdefMagicStampsAsync`, etc.) should be
+reused for new DAO scenarios rather than reinventing the setup/teardown
+boilerplate.
+
+- [ ] **`[S]`** **Compact & Repair acceptance** — unblock the two existing
+  gated tests (`SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`,
+  `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`) by resolving
+  the MSysDb / page-allocation-map blockers documented in
+  [round-trip-test-failures.md](round-trip-test-failures.md).
+- [ ] **`[S]`** **DAO OpenRecordset row-count** — after writing N rows with
+  `AccessWriter`, open the database via DAO, execute
+  `SELECT COUNT(*) FROM <table>`, and assert the count matches. Catches
+  TDEF row-count drift and page-corruption that silently survives our own
+  reader round-trip.
+- [ ] **`[S]`** **DAO index traversal** — open a writer-produced table via
+  DAO `Seek` / `FindFirst` on the primary key. Catches index pages that
+  parse cleanly in our reader but are rejected by the canonical engine.
+- [ ] **`[M]`** **DAO Memo/OLE fidelity** — write Memo values containing
+  embedded NULs, non-Latin-1 (CJK), and OLE binary payloads; verify DAO
+  `Recordset.Fields("col").Value` returns the identical bytes. Catches
+  LVAL-chain encoding bugs that survive our own reader.
+- [ ] **`[M]`** **DAO relationship enforcement** — write a parent/child pair
+  with `EnforceReferentialIntegrity = true`, then use DAO to attempt an
+  insert that violates the FK. Assert DAO raises error 3201 (cannot add
+  record — referential integrity violated). Confirms the relationship
+  metadata is fully understood by Access.
+- [ ] **`[M]`** **DAO AutoNumber continuation** — write rows with
+  auto-increment IDs, reopen with DAO, insert a new row, and verify the
+  next AutoNumber value is one past our last inserted ID (no gap, no
+  collision). Catches seed/counter byte-layout bugs.
+- [ ] **`[L]`** **DAO CompactDatabase on encrypted output** — write a
+  password-protected ACCDB (AES), run Compact & Repair with the password
+  supplied via DAO, and verify the compacted file reopens. Validates the
+  encryption header is well-formed enough for Access's own engine.
+- [ ] **`[L]`** **DAO multi-table stress** — create 10+ tables with indexes,
+  relationships, and 1000+ rows each; Compact & Repair the result. Stress
+  test for page allocation and usage-map consistency at scale.
 
 ---
 
@@ -167,3 +200,6 @@ The reader now correctly reports VH columns as `Kind = VersionHistory`
 
 - Items in **§3** require new fixture authoring (Office tooling) and are
   larger.
+- Items in **§5** (DAO) can only run on Windows + Access hosts but provide
+  the highest-confidence signal that our output is correct — the canonical
+  engine is the final arbiter.
