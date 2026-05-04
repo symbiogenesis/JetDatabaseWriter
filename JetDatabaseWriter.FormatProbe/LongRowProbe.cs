@@ -11,19 +11,20 @@ namespace JetDatabaseWriter.FormatProbe;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
-using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
 
 internal static class LongRowProbe
 {
@@ -45,7 +46,7 @@ internal static class LongRowProbe
 
         foreach (string path in fixtures)
         {
-            sb.AppendLine($"## {Path.GetFileName(path)}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"## {Path.GetFileName(path)}");
             sb.AppendLine();
             await DumpAsync(path, sb, CancellationToken.None);
             sb.AppendLine();
@@ -61,7 +62,7 @@ internal static class LongRowProbe
     {
         if (!File.Exists(path))
         {
-            sb.AppendLine($"_(missing: {path})_");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"_(missing: {path})_");
             return;
         }
 
@@ -79,7 +80,7 @@ internal static class LongRowProbe
                 continue;
             }
 
-            sb.AppendLine($"### {tableName}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"### {tableName}");
             sb.AppendLine();
 
             DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
@@ -99,9 +100,9 @@ internal static class LongRowProbe
                 }
 
                 bool asc = idx.Columns[0].IsAscending;
-                sb.AppendLine($"- index `{idx.Name}` ascending={asc} firstDp={idx.FirstDp}");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"- index `{idx.Name}` ascending={asc} firstDp={idx.FirstDp}");
                 List<byte[]> keys = await CollectLeavesAsync(reader, layout, pageSize, idx.FirstDp, ct);
-                sb.AppendLine($"- leaf entries: {keys.Count}");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"- leaf entries: {keys.Count}");
                 sb.AppendLine();
 
                 // Sort source values the same way the leaves are sorted (unsigned bytes).
@@ -112,7 +113,7 @@ internal static class LongRowProbe
                 {
                     string? v = rowValues[i];
                     string display = v is null ? "<null>" : Truncate(v, 60);
-                    sb.AppendLine($"  row[{i}] len={v?.Length ?? -1}  {display}");
+                    sb.AppendLine(CultureInfo.InvariantCulture, $"  row[{i}] len={v?.Length ?? -1}  {display}");
                 }
 
                 sb.AppendLine();
@@ -120,7 +121,7 @@ internal static class LongRowProbe
                 for (int i = 0; i < keys.Count; i++)
                 {
                     byte[] k = keys[i];
-                    sb.AppendLine($"  leaf[{i}] len={k.Length}  {Convert.ToHexString(k)}");
+                    sb.AppendLine(CultureInfo.InvariantCulture, $"  leaf[{i}] len={k.Length}  {Convert.ToHexString(k)}");
                 }
 
                 sb.AppendLine();
@@ -140,7 +141,11 @@ internal static class LongRowProbe
         {
             byte[] page = await reader.GetRawPageBytesAsync(current, ct);
             byte pageType = page[0];
-            if (pageType == Constants.IndexLeafPage.PageTypeLeaf) break;
+            if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                break;
+            }
+
             var entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
             current = entries[0].ChildPage;
         }
@@ -151,7 +156,11 @@ internal static class LongRowProbe
         {
             byte[] page = await reader.GetRawPageBytesAsync(current, ct);
             var entries = IndexLeafIncremental.DecodeEntries(layout, page, pageSize);
-            foreach (var e in entries) result.Add(e.Key);
+            foreach (var e in entries)
+            {
+                result.Add(e.Key);
+            }
+
             (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
             current = next;
         }

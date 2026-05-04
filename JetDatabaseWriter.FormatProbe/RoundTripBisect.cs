@@ -21,7 +21,7 @@ internal static class RoundTripBisect
     {
         if (!File.Exists(baselinePath))
         {
-            Console.Error.WriteLine($"[bisect] baseline not found: {baselinePath}");
+            await Console.Error.WriteLineAsync($"[bisect] baseline not found: {baselinePath}");
             return 1;
         }
 
@@ -32,7 +32,8 @@ internal static class RoundTripBisect
             ("N0_OpenClose",        async w => { await Task.CompletedTask; }),
             ("N1_CreateOneTable",   async w =>
             {
-                await w.CreateTableAsync("RT_Customers",
+                await w.CreateTableAsync(
+                    "RT_Customers",
                     [
                         new("CustomerID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
                         new("Name", typeof(string), maxLength: 100) { IsNullable = false },
@@ -40,12 +41,14 @@ internal static class RoundTripBisect
             }),
             ("N2_CreateTwoTables",  async w =>
             {
-                await w.CreateTableAsync("RT_Customers",
+                await w.CreateTableAsync(
+                    "RT_Customers",
                     [
                         new("CustomerID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
                         new("Name", typeof(string), maxLength: 100) { IsNullable = false },
                     ]);
-                await w.CreateTableAsync("RT_Orders",
+                await w.CreateTableAsync(
+                    "RT_Orders",
                     [
                         new("OrderID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
                         new("CustomerID", typeof(int)) { IsNullable = false },
@@ -54,12 +57,14 @@ internal static class RoundTripBisect
             }),
             ("N3_TwoTables_Relationship", async w =>
             {
-                await w.CreateTableAsync("RT_Customers",
+                await w.CreateTableAsync(
+                    "RT_Customers",
                     [
                         new("CustomerID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
                         new("Name", typeof(string), maxLength: 100) { IsNullable = false },
                     ]);
-                await w.CreateTableAsync("RT_Orders",
+                await w.CreateTableAsync(
+                    "RT_Orders",
                     [
                         new("OrderID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
                         new("CustomerID", typeof(int)) { IsNullable = false },
@@ -78,12 +83,14 @@ internal static class RoundTripBisect
             }),
             ("N4_TwoTables_Rel_Rows", async w =>
             {
-                await w.CreateTableAsync("RT_Customers",
+                await w.CreateTableAsync(
+                    "RT_Customers",
                     [
                         new("CustomerID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
                         new("Name", typeof(string), maxLength: 100) { IsNullable = false },
                     ]);
-                await w.CreateTableAsync("RT_Orders",
+                await w.CreateTableAsync(
+                    "RT_Orders",
                     [
                         new("OrderID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
                         new("CustomerID", typeof(int)) { IsNullable = false },
@@ -102,7 +109,7 @@ internal static class RoundTripBisect
                 await w.InsertRowsAsync("RT_Customers", new[]
                 {
                     new object[] { DBNull.Value, "Acme" },
-                    new object[] { DBNull.Value, "Beta" },
+                    [DBNull.Value, "Beta"],
                 });
                 await w.InsertRowsAsync("RT_Orders", new[]
                 {
@@ -142,7 +149,11 @@ internal static class RoundTripBisect
             if (code != 0)
             {
                 string firstLine = (err ?? string.Empty).Replace("\r\n", " ", StringComparison.Ordinal).Replace('\n', ' ');
-                if (firstLine.Length > 250) firstLine = firstLine.Substring(0, 250) + "…";
+                if (firstLine.Length > 250)
+                {
+                    firstLine = string.Concat(firstLine.AsSpan(0, 250), "…");
+                }
+
                 Console.WriteLine($"           stderr: {firstLine}");
             }
         }
@@ -153,7 +164,10 @@ internal static class RoundTripBisect
     private static (int Code, string StdErr) RunDaoCompact(string src, string dst)
     {
         const string Host = @"C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe";
-        if (File.Exists(dst)) File.Delete(dst);
+        if (File.Exists(dst))
+        {
+            File.Delete(dst);
+        }
 
         string srcLit = src.Replace("'", "''", StringComparison.Ordinal);
         string dstLit = dst.Replace("'", "''", StringComparison.Ordinal);
