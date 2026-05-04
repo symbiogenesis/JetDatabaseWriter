@@ -28,6 +28,12 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 
 ---
 
+## Security
+
+> **✅ All 36 known relevant CVEs have been fully addressed.** Every identified attack surface — CFB/OLE compound file parsing, JET/ACE MDB/ACCDB format, and Office Agile Encryption — is mitigated in code and covered by regression tests. Zero unmitigated gaps remain. See [docs/cve-vulnerability-analysis.md](docs/cve-vulnerability-analysis.md) for the full threat model and test inventory.
+
+---
+
 ## Installation
 
 ```bash
