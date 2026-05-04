@@ -1,0 +1,121 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "test: all",
+      "type": "process",
+      "command": "dotnet",
+      "args": ["test", "--project", "JetDatabaseWriter.Tests"],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "test: by class",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "test",
+        "--project",
+        "JetDatabaseWriter.Tests",
+        "--filter-class",
+        "${input:testClass}"
+      ],
+      "group": "test",
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "test: by method",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "test",
+        "--project",
+        "JetDatabaseWriter.Tests",
+        "--filter-method",
+        "${input:testMethod}"
+      ],
+      "group": "test",
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "test: by namespace",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "test",
+        "--project",
+        "JetDatabaseWriter.Tests",
+        "--filter-namespace",
+        "${input:testNamespace}"
+      ],
+      "group": "test",
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "test: stop on first failure",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "test",
+        "--project",
+        "JetDatabaseWriter.Tests",
+        "--stop-on-fail",
+        "on"
+      ],
+      "group": "test",
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "test: list tests",
+      "type": "process",
+      "command": "dotnet",
+      "args": ["test", "--project", "JetDatabaseWriter.Tests", "--list-tests"],
+      "group": "test",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "testClass",
+      "type": "promptString",
+      "description": "Fully-qualified test class name (e.g. JetDatabaseWriter.Tests.Core.AccessReaderCatalogTests)"
+    },
+    {
+      "id": "testMethod",
+      "type": "promptString",
+      "description": "Fully-qualified test method name (e.g. JetDatabaseWriter.Tests.Core.AccessReaderCatalogTests.ListTables_WhenDatabaseHasTables_ReturnsNonEmptyList)"
+    },
+    {
+      "id": "testNamespace",
+      "type": "promptString",
+      "description": "Test namespace (e.g. JetDatabaseWriter.Tests.Internal)"
+    }
+  ]
+}
