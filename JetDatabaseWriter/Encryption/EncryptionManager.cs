@@ -653,7 +653,8 @@ internal static class EncryptionManager
 
         if (keys.Rc4DbKey is uint dbKey)
         {
-            byte[] rc4Key = DeriveRc4PageKey(dbKey, (uint)pageNumber);
+            Span<byte> rc4Key = stackalloc byte[4];
+            DeriveRc4PageKey(dbKey, (uint)pageNumber, rc4Key);
             Rc4Transform(buf, offset, pageSize, rc4Key);
         }
 
@@ -696,7 +697,8 @@ internal static class EncryptionManager
         if (keys.Rc4DbKey is uint dbKey)
         {
             // RC4 is symmetric: same operation encrypts and decrypts.
-            byte[] rc4Key = DeriveRc4PageKey(dbKey, (uint)pageNumber);
+            Span<byte> rc4Key = stackalloc byte[4];
+            DeriveRc4PageKey(dbKey, (uint)pageNumber, rc4Key);
             Rc4Transform(buf, offset, pageSize, rc4Key);
         }
 
@@ -730,7 +732,7 @@ internal static class EncryptionManager
     /// <summary>
     /// Derives the RC4 key for a specific page: MD5(dbKey LE + pageNumber LE)[0..4].
     /// </summary>
-    private static byte[] DeriveRc4PageKey(uint dbKey, uint pageNumber)
+    private static void DeriveRc4PageKey(uint dbKey, uint pageNumber, Span<byte> destination)
     {
         Span<byte> input = stackalloc byte[8];
         BinaryPrimitives.WriteUInt32LittleEndian(input.Slice(0, 4), dbKey);
@@ -744,14 +746,12 @@ internal static class EncryptionManager
             }
         }
 
-        byte[] key = new byte[4];
-        hash.Slice(0, 4).CopyTo(key);
-        return key;
+        hash.Slice(0, 4).CopyTo(destination);
     }
 #pragma warning restore CA5351
 
     /// <summary>In-place RC4 transform (encrypt and decrypt are the same operation).</summary>
-    private static void Rc4Transform(byte[] data, int offset, int length, byte[] key)
+    private static void Rc4Transform(byte[] data, int offset, int length, ReadOnlySpan<byte> key)
     {
         Span<byte> s = stackalloc byte[256];
         for (int i = 0; i < 256; i++)

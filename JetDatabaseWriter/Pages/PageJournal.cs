@@ -25,7 +25,7 @@ using JetDatabaseWriter.Exceptions;
 /// </remarks>
 internal sealed class PageJournal
 {
-    private readonly Dictionary<long, byte[]> _pages = [];
+    private readonly SortedDictionary<long, byte[]> _pages = [];
     private readonly int _pageSize;
     private readonly int _maxPages;
     private long _appendedCount;
@@ -134,13 +134,5 @@ internal sealed class PageJournal
     /// order. The enumeration is stable so the commit replay extends the file
     /// monotonically rather than seeking back and forth.
     /// </summary>
-    public IEnumerable<KeyValuePair<long, byte[]>> EnumerateInOrder()
-    {
-        var keys = new List<long>(_pages.Keys);
-        keys.Sort();
-        foreach (long key in keys)
-        {
-            yield return new KeyValuePair<long, byte[]>(key, _pages[key]);
-        }
-    }
+    public IEnumerable<KeyValuePair<long, byte[]>> EnumerateInOrder() => _pages;
 }
