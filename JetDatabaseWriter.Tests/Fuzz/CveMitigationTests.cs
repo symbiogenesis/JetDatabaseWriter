@@ -392,6 +392,107 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         Assert.IsNotType<StackOverflowException>(ex);
     }
 
+    // ─── CVE-2020-1400 analog: integer underflow in var-col offsets ────
+
+    /// <summary>
+    /// Corrupts the variable-column offset table within rows to produce
+    /// <c>varEnd &lt; varOff</c>, causing <c>dataLen = varEnd - varOff</c> to
+    /// underflow to a negative value. Without the <c>dataLen &lt; 0</c> guard in
+    /// <c>ResolveColumnSlice</c>, this would produce a huge positive length
+    /// (in native code) or a negative <c>Span</c> length (in managed code).
+    /// <see href="https://www.zerodayinitiative.com/advisories/ZDI-20-924/"/>
+    /// identifies this class of bug (integer underflow before memory write) as
+    /// the root cause of CVE-2020-1400.
+    /// </summary>
+    [Fact]
+    public async Task ReadTable_CorruptVarColOffsets_IntegerUnderflow_DoesNotCrash()
+    {
+        string path = TestDatabases.NorthwindTraders;
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] original = await db.GetFileAsync(path, ct);
+        byte[] corrupted = (byte[])original.Clone();
+
+        const int pageSize = 4096;
+        int pageCount = corrupted.Length / pageSize;
+
+        // Corrupt the var-column offset table within rows: write descending
+        // offset values so that varEnd < varOff for every variable column,
+        // triggering the dataLen < 0 underflow path.
+        for (int p = 1; p < pageCount; p++)
+        {
+            int pageStart = p * pageSize;
+            if (corrupted[pageStart] != 0x01)
+            {
+                continue;
+            }
+
+            int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
+            if (nr == 0 || nr > 200)
+            {
+                continue;
+            }
+
+            for (int r = 0; r < nr; r++)
+            {
+                int rawOffset = BinaryPrimitives.ReadUInt16LittleEndian(
+                    corrupted.AsSpan(pageStart + 14 + (r * 2), 2));
+                if ((rawOffset & 0xC000) != 0)
+                {
+                    continue;
+                }
+
+                int rowStart = pageStart + (rawOffset & 0x1FFF);
+                if (rowStart + 20 >= pageStart + pageSize)
+                {
+                    continue;
+                }
+
+                // Jet4/ACE row layout: numCols(2), fixed data, then at the end:
+                // [eod(2)][var-offset-table(varLen * 2)][varLen(2)][null-mask].
+                // We corrupt bytes near the end of the row to break the var-offset
+                // ordering. Write 0xFF to the last 8 bytes before the end to corrupt
+                // var-col offset entries into descending values.
+                int rowEnd = rowStart + 20; // conservative end estimate
+                for (int i = rowEnd - 8; i < rowEnd && i < pageStart + pageSize; i++)
+                {
+                    corrupted[i] = 0xFF;
+                }
+            }
+        }
+
+        await using var stream = new MemoryStream(corrupted, writable: false);
+        Exception? ex = await Record.ExceptionAsync(async () =>
+        {
+            await using AccessReader reader = await AccessReader.OpenAsync(
+                stream,
+                new AccessReaderOptions { UseLockFile = false },
+                leaveOpen: true,
+                ct);
+
+            var tables = await reader.ListTablesAsync(ct);
+            foreach (string table in tables)
+            {
+                int count = 0;
+                await foreach (object[] _ in reader.Rows(table, cancellationToken: ct))
+                {
+                    count++;
+                    if (count > 50)
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
+        Assert.IsNotType<OutOfMemoryException>(ex);
+        Assert.IsNotType<StackOverflowException>(ex);
+    }
+
     // ─── Helper ─────────────────────────────────────────────────────────
 
     private static int FindFirstDataPage(byte[] fileBytes, int pageSize)
