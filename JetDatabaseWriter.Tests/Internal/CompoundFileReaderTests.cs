@@ -186,12 +186,12 @@ public sealed class CompoundFileReaderTests
     }
 
     // §7 coverage gap: corrupting the NumFatSectors field (offset 0x2C)
-    // to an absurdly large value MUST surface as a documented exception,
-    // not an out-of-memory crash or infinite loop. Mirrors the OpenMcdf
-    // robustness philosophy of rejecting internally-inconsistent headers.
+    // to an absurdly large value MUST NOT cause an out-of-memory crash
+    // or infinite loop. The reader clamps NumFatSectors to the physical
+    // sector count derivable from the stream length.
     [Theory]
     [MemberData(nameof(HeaderFixtureFiles))]
-    public async Task ReadStreams_CorruptNumFatSectors_Throws(string fileName)
+    public async Task ReadStreams_CorruptNumFatSectors_DoesNotOom(string fileName)
     {
         byte[] data = await File.ReadAllBytesAsync(FixturePath(fileName), TestContext.Current.CancellationToken);
 
@@ -203,8 +203,12 @@ public sealed class CompoundFileReaderTests
         data[0x2F] = 0xFF;
 
         await using var ms = new MemoryStream(data);
-        await Assert.ThrowsAnyAsync<Exception>(
+
+        // The clamping means this may succeed (with a possibly truncated
+        // FAT) or throw a parse error — but never OOM.
+        Exception? ex = await Record.ExceptionAsync(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
+        Assert.IsNotType<OutOfMemoryException>(ex);
     }
 
     // ── DIFAT extension sector coverage ───────────────────────────────
@@ -245,11 +249,8 @@ public sealed class CompoundFileReaderTests
     /// <summary>
     /// Same synthetic layout as <see cref="ReadStreams_SyntheticDifatExtension_RecoversStream"/>
     /// but with the DIFAT extension sector's chain-link patched to loop back
-    /// to itself and <c>NumDifatSectors</c> inflated. The reader's
-    /// <c>difatSectorsRead &lt; hdr.NumDifatSectors</c> guard prevents an
-    /// infinite loop, but the duplicated FAT-sector IDs produce a corrupt
-    /// FAT that causes a documented exception when walking the directory
-    /// chain.
+    /// to itself. The reader's DIFAT cycle-detection visited-set
+    /// catches the duplicate immediately and throws <see cref="InvalidDataException"/>.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
@@ -267,14 +268,118 @@ public sealed class CompoundFileReaderTests
 
         await using var ms = new MemoryStream(file);
 
-        // The loop is bounded, so this must complete promptly — either
-        // returning a (possibly corrupt) result or throwing.
+        // Cycle detection throws InvalidDataException immediately on
+        // the second visit to sector 3.
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(
+            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
+        Assert.Contains("cycle", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ── DIFAT overflow / DoS mitigation tests ─────────────────────────
+    //
+    // These tests verify hardening against the DIFAT overflow attack
+    // described in the Mimecast disclosure (March 2019) which weaponised
+    // crafted CFB headers to exploit parsers via CVE-2017-11882-adjacent
+    // techniques. A malicious file can set NumFatSectors / NumDifatSectors
+    // to values far beyond the stream's physical size, causing either:
+    //   (a) OOM from the List<uint> pre-allocation, or
+    //   (b) CPU/IO denial of service from unbounded DIFAT chain walks.
+    //
+    // Ref: https://www.mimecast.com/blog/2019/03/the-return-of-the-equation-editor-exploit--difat-overflow/
+
+    /// <summary>
+    /// A crafted header with <c>NumFatSectors = 0x7FFF_FFFF</c> would
+    /// previously cause a ~8 GB list pre-allocation
+    /// (OOM). The reader now clamps to the physical sector count
+    /// derivable from the stream length.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task ReadStreams_DifatOverflow_HugeNumFatSectors_DoesNotOom()
+    {
+        byte[] file = BuildSyntheticDifatFile();
+
+        // Set NumFatSectors to int.MaxValue — far beyond the 5-sector
+        // test file — to trigger the OOM path pre-mitigation.
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(0x2C), 0x7FFFFFFFu);
+
+        await using var ms = new MemoryStream(file);
+
+        // Must complete without OutOfMemoryException. The clamped FAT
+        // may be corrupt, so any non-OOM exception is acceptable.
+        Exception? ex = await Record.ExceptionAsync(
+            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
+        Assert.IsNotType<OutOfMemoryException>(ex);
+    }
+
+    /// <summary>
+    /// A crafted header with <c>NumDifatSectors = 0x3FFF_FFFF</c> and
+    /// a self-looping DIFAT sector would previously spin for ~1 billion
+    /// I/O rounds (CPU/IO DoS). The reader now clamps the walk to the
+    /// stream's physical sector count and detects cycles.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task ReadStreams_DifatOverflow_HugeNumDifatSectors_DoesNotSpin()
+    {
+        byte[] file = BuildSyntheticDifatFile();
+
+        // Inflate NumDifatSectors to ~1 billion and loop the DIFAT
+        // chain back to itself.
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(0x48), 0x3FFFFFFFu);
+        int difatOff = 512 + (3 * 512);
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difatOff + 508), 3);
+
+        await using var ms = new MemoryStream(file);
+
+        // Cycle detection catches the self-loop on the second visit.
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(
+            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
+        Assert.Contains("cycle", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Validates that the DIFAT sector-count clamp is based on the
+    /// stream's physical size. A tiny file cannot declare thousands of
+    /// DIFAT sectors without the reader silently clamping the walk.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task ReadStreams_DifatOverflow_NumDifatSectorsClampedToStreamLength()
+    {
+        byte[] file = BuildSyntheticDifatFile();
+
+        // The file is 3072 bytes (header + 5 × 512). That is only
+        // 5 physical sectors, so NumDifatSectors = 1000 is absurd
+        // and must be clamped without spinning.
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(0x48), 1000);
+
+        await using var ms = new MemoryStream(file);
+
+        // Should complete promptly — the clamped walk reads at most
+        // 5 DIFAT sectors regardless of the declared 1000.
         Exception? ex = await Record.ExceptionAsync(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
 
-        // We don't care whether it throws or returns — only that it
-        // finishes (no hang) and doesn't crash the process.
-        _ = ex;
+        // Not an OOM or timeout; any parse error is fine.
+        Assert.IsNotType<OutOfMemoryException>(ex);
+    }
+
+    /// <summary>
+    /// End-to-end: a well-formed DIFAT extension file still round-trips
+    /// correctly after all hardening changes.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task ReadStreams_DifatOverflow_LegitDifatExtension_StillWorks()
+    {
+        byte[] file = BuildSyntheticDifatFile();
+
+        await using var ms = new MemoryStream(file);
+        var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
+
+        Assert.True(streams.ContainsKey("TestStream"));
+        Assert.Equal(10, streams["TestStream"].Length);
     }
 
     /// <summary>

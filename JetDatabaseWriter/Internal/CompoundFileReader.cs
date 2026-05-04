@@ -118,10 +118,23 @@ internal static class CompoundFileReader
         byte[] scratch,
         CancellationToken cancellationToken)
     {
+        // ── Mitigate CVE-2017-11882-adjacent DIFAT overflow attacks ──
+        // A crafted CFB can set NumFatSectors / NumDifatSectors to
+        // enormous values, causing unbounded I/O or OOM via the List
+        // pre-allocation. Clamp both to the physical sector count the
+        // stream can actually contain.
+        // See: https://www.mimecast.com/blog/2019/03/the-return-of-the-equation-editor-exploit--difat-overflow/
+        long maxPhysicalSectors = stream.Length > 0
+            ? (stream.Length - 1) / hdr.SectorSize
+            : 0;
+
+        uint safeFatSectors = (uint)Math.Min(hdr.NumFatSectors, maxPhysicalSectors);
+        uint safeDifatSectors = (uint)Math.Min(hdr.NumDifatSectors, maxPhysicalSectors);
+
         // ── Collect FAT sector ids: first from the header DIFAT, then
         // from any DIFAT extension sectors. ─────────────────────────
-        var fatSectorIds = new List<uint>((int)hdr.NumFatSectors);
-        int headerDifatCount = Math.Min(109, (int)hdr.NumFatSectors);
+        var fatSectorIds = new List<uint>((int)safeFatSectors);
+        int headerDifatCount = Math.Min(109, (int)safeFatSectors);
         for (int i = 0; i < headerDifatCount; i++)
         {
             uint entry = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x4C + (i * 4)));
@@ -134,13 +147,19 @@ internal static class CompoundFileReader
         uint difatSector = hdr.FirstDifatSector;
         int difatSectorsRead = 0;
         int entriesPerDifatSector = (hdr.SectorSize / 4) - 1;
-        while (difatSector != Constants.CompoundFile.EndOfChain && difatSector != Constants.CompoundFile.FreeSect && difatSectorsRead < hdr.NumDifatSectors)
+        var visitedDifat = new HashSet<uint>();
+        while (difatSector != Constants.CompoundFile.EndOfChain && difatSector != Constants.CompoundFile.FreeSect && difatSectorsRead < safeDifatSectors)
         {
+            if (!visitedDifat.Add(difatSector))
+            {
+                throw new InvalidDataException($"CFB DIFAT chain contains a cycle at sector {difatSector}.");
+            }
+
             await ReadSectorIntoAsync(stream, difatSector, scratch, hdr.SectorSize, cancellationToken).ConfigureAwait(false);
             for (int i = 0; i < entriesPerDifatSector; i++)
             {
                 uint entry = BinaryPrimitives.ReadUInt32LittleEndian(scratch.AsSpan(i * 4));
-                if (entry < Constants.CompoundFile.FatSectMin && fatSectorIds.Count < (int)hdr.NumFatSectors)
+                if (entry < Constants.CompoundFile.FatSectMin && fatSectorIds.Count < (int)safeFatSectors)
                 {
                     fatSectorIds.Add(entry);
                 }
