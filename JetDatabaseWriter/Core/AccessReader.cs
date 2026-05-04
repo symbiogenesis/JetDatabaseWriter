@@ -1701,15 +1701,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        if (td.HasDeletedColumns && rawNumCols > td.Columns.Count)
-        {
-            throw new JetLimitationException(
-                $"Row has {rawNumCols} columns but current schema has {td.Columns.Count} with deleted-column gaps. " +
-                "This row predates schema changes and data may be misaligned. " +
-                "Solution: Compact & Repair the database in Microsoft Access to rebuild all rows.");
-        }
+        // Stale rows from before a column deletion carry a higher rawNumCols
+        // than the current schema. The surviving columns' absolute offsets
+        // (ColNum, FixedOff, VarIdx) are stable across deletions, so
+        // ResolveColumnSlice can decode them correctly. Force var-area parsing
+        // because we don't know whether a deleted column was variable-length.
+        bool effectiveHasVarCols = hasVarCols || (td.HasDeletedColumns && rawNumCols > td.Columns.Count);
 
-        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarCols, out RowLayout layout))
+        if (!TryParseRowLayout(page, rowStart, rowSize, effectiveHasVarCols, out RowLayout layout))
         {
             return null;
         }
@@ -1749,15 +1748,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        if (td.HasDeletedColumns && rawNumCols > td.Columns.Count)
-        {
-            throw new JetLimitationException(
-                $"Row has {rawNumCols} columns but current schema has {td.Columns.Count} with deleted-column gaps. " +
-                "This row predates schema changes and data may be misaligned. " +
-                "Solution: Compact & Repair the database in Microsoft Access to rebuild all rows.");
-        }
+        // Stale rows: force var-area parsing when deleted-column gaps exist.
+        bool effectiveHasVarCols = hasVarCols || (td.HasDeletedColumns && rawNumCols > td.Columns.Count);
 
-        if (!TryParseRowLayout(page, rowStart, rowSize, hasVarCols, out RowLayout layout))
+        if (!TryParseRowLayout(page, rowStart, rowSize, effectiveHasVarCols, out RowLayout layout))
         {
             return null;
         }
@@ -2843,27 +2837,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return null;
         }
 
-        if (td.HasDeletedColumns && rawNumCols > td.Columns.Count)
-        {
-            throw new JetLimitationException(
-                $"Row has {rawNumCols} columns but current schema has {td.Columns.Count} with deleted-column gaps. " +
-                "This row predates schema changes and data may be misaligned. " +
-                "Solution: Compact & Repair the database in Microsoft Access to rebuild all rows.");
-        }
-
         // Tables with zero variable-length columns omit the var-length
         // metadata entirely (no varLen byte, no jump bytes, no var-offset
         // table, no EOD marker). Detect that and let the layout parser skip
-        // the var-area read.
-        bool hasVarCols = false;
-        for (int ci = 0; ci < td.Columns.Count; ci++)
-        {
-            if (!td.Columns[ci].IsFixed)
-            {
-                hasVarCols = true;
-                break;
-            }
-        }
+        // the var-area read. When deleted-column gaps exist, force var-area
+        // parsing because we don't know if a deleted column was var-length.
+        bool hasVarCols = td.HasVarColumns || (td.HasDeletedColumns && rawNumCols > td.Columns.Count);
 
         if (!TryParseRowLayout(page, rowStart, rowSize, hasVarCols, out RowLayout layout))
         {
@@ -3153,15 +3132,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return false;
         }
 
-        if (td.HasDeletedColumns && rawNumCols > td.Columns.Count)
-        {
-            throw new JetLimitationException(
-                $"Row has {rawNumCols} columns but current schema has {td.Columns.Count} with deleted-column gaps. " +
-                "This row predates schema changes and data may be misaligned. " +
-                "Solution: Compact & Repair the database in Microsoft Access to rebuild all rows.");
-        }
+        // Stale rows: force var-area parsing when deleted-column gaps exist.
+        bool effectiveHasVarCols = td.HasVarColumns || (td.HasDeletedColumns && rawNumCols > td.Columns.Count);
 
-        if (!TryParseRowLayout(page, rowStart, rowSize, td.HasVarColumns, out RowLayout layout))
+        if (!TryParseRowLayout(page, rowStart, rowSize, effectiveHasVarCols, out RowLayout layout))
         {
             return false;
         }
