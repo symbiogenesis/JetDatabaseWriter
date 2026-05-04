@@ -1,13 +1,11 @@
 namespace JetDatabaseWriter.Scaffold;
 
 using System;
-using System.Collections.Generic;
 using System.CommandLine;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Core;
-using JetDatabaseWriter.Models;
 
 /// <summary>
 /// CLI tool that reads the schema of every user table in a JET database
@@ -88,8 +86,6 @@ internal static class Program
             bool nullable = parseResult.GetValue(nullableOption);
             string? password = parseResult.GetValue(passwordOption);
 
-            Directory.CreateDirectory(outputDir);
-
             var options = new AccessReaderOptions
             {
                 UseLockFile = false,
@@ -107,45 +103,9 @@ internal static class Program
 
             await using var reader = await AccessReader.OpenAsync(dbFile.FullName, options, cancellationToken);
 
-            List<string> tables = await reader.ListTablesAsync(cancellationToken);
-            if (tables.Count == 0)
-            {
-                Console.WriteLine("No user tables found in the database.");
-                return 0;
-            }
-
-            Console.WriteLine($"Found {tables.Count} table(s). Generating models into: {outputDir}");
-
-            int generated = 0;
-            foreach (string table in tables)
-            {
-                List<ColumnMetadata> columns;
-                try
-                {
-                    columns = await reader.GetColumnMetadataAsync(table, cancellationToken);
-                }
-                catch (InvalidOperationException ex)
-                {
-                    await Console.Error.WriteLineAsync($"  Warning: skipping table '{table}': {ex.Message}");
-                    continue;
-                }
-                catch (IOException ex)
-                {
-                    await Console.Error.WriteLineAsync($"  Warning: skipping table '{table}': {ex.Message}");
-                    continue;
-                }
-
-                string className = NameCleaner.ToClassName(table);
-                string source = EntityEmitter.Emit(className, columns, ns, useRecords, nullable);
-                string filePath = Path.Combine(outputDir, $"{className}.cs");
-
-                await File.WriteAllTextAsync(filePath, source, cancellationToken);
-                Console.WriteLine($"  {table} -> {className}.cs ({columns.Count} columns)");
-                generated++;
-            }
-
-            Console.WriteLine($"Done. {generated} model(s) generated.");
-            return 0;
+            var runner = new ScaffoldRunner(reader, Console.Out, Console.Error);
+            int generated = await runner.RunAsync(outputDir, ns, useRecords, nullable, cancellationToken);
+            return generated >= 0 ? 0 : 1;
         });
 
         ParseResult parseResult = rootCommand.Parse(args);

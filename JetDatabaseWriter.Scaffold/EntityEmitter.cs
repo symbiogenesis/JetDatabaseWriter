@@ -159,6 +159,12 @@ internal static class EntityEmitter
 
     private static string MapClrType(Type clrType, bool isNullable, bool nullableEnabled)
     {
+        // If the CLR type is already Nullable<T>, GetFriendlyTypeName handles the "?" suffix.
+        if (Nullable.GetUnderlyingType(clrType) is not null)
+        {
+            return GetFriendlyTypeName(clrType);
+        }
+
         string baseName = GetFriendlyTypeName(clrType);
 
         return isNullable && (nullableEnabled || clrType.IsValueType)
