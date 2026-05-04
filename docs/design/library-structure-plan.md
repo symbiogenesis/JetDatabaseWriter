@@ -381,19 +381,21 @@ Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then 
 
 > **Completed:** Namespace changed from `JetDatabaseWriter.Internal.Collections` and `JetDatabaseWriter.Internal.Helpers` → `JetDatabaseWriter.Infrastructure`. All `using` statements updated solution-wide. Files that still reference `IndexHelpers`, `DecimalNumeric`, or `CalculatedColumnUtil` (which remain in `Internal/Helpers/`) retain their `using JetDatabaseWriter.Internal.Helpers;` import. `Internal/Collections/` directory deleted.
 
-### Phase C — CompoundFile, Encryption, Transactions (self-contained subsystems)
+### Phase C — CompoundFile, Encryption, Transactions (self-contained subsystems) ✅
 
-| # | Action | From | To |
-|--:|--------|------|-----|
-| 14 | Move | `Internal/CompoundFileReader.cs` | `CompoundFile/CompoundFileReader.cs` |
-| 15 | Move | `Internal/CompoundFileWriter.cs` | `CompoundFile/CompoundFileWriter.cs` |
-| 16 | Move | `Internal/EncryptionManager.cs` | `Encryption/EncryptionManager.cs` |
-| 17 | Move | `Internal/EncryptionConverter.cs` | `Encryption/EncryptionConverter.cs` |
-| 18 | Move | `Internal/OfficeCryptoAgile.cs` | `Encryption/OfficeCryptoAgile.cs` |
-| 19 | Move | `Internal/LockFileCoordinator.cs` | `Transactions/LockFileCoordinator.cs` |
-| 20 | Move | `Internal/LockFileSlotWriter.cs` | `Transactions/LockFileSlotWriter.cs` |
-| 21 | Move | `Internal/JetByteRangeLock.cs` | `Transactions/JetByteRangeLock.cs` |
-| 22 | Move | `Internal/Transactions/PageJournal.cs` | `Pages/PageJournal.cs` |
+| # | Action | From | To | Status |
+|--:|--------|------|-----|--------|
+| 14 | Move | `Internal/CompoundFileReader.cs` | `CompoundFile/CompoundFileReader.cs` | ✅ |
+| 15 | Move | `Internal/CompoundFileWriter.cs` | `CompoundFile/CompoundFileWriter.cs` | ✅ |
+| 16 | Move | `Internal/EncryptionManager.cs` | `Encryption/EncryptionManager.cs` | ✅ |
+| 17 | Move | `Internal/EncryptionConverter.cs` | `Encryption/EncryptionConverter.cs` | ✅ |
+| 18 | Move | `Internal/OfficeCryptoAgile.cs` | `Encryption/OfficeCryptoAgile.cs` | ✅ |
+| 19 | Move | `Internal/LockFileCoordinator.cs` | `Transactions/LockFileCoordinator.cs` | ✅ |
+| 20 | Move | `Internal/LockFileSlotWriter.cs` | `Transactions/LockFileSlotWriter.cs` | ✅ |
+| 21 | Move | `Internal/JetByteRangeLock.cs` | `Transactions/JetByteRangeLock.cs` | ✅ |
+| 22 | Move | `Internal/Transactions/PageJournal.cs` | `Pages/PageJournal.cs` | ✅ |
+
+> **Completed:** Namespaces changed from `JetDatabaseWriter.Internal` → `JetDatabaseWriter.CompoundFile`, `JetDatabaseWriter.Encryption`, `JetDatabaseWriter.Transactions`; and `JetDatabaseWriter.Internal.Transactions` → `JetDatabaseWriter.Pages`. All `using` statements updated in library, test, and benchmark projects. `Internal/Transactions/` directory deleted.
 
 ### Phase D — Relationships & complex columns
 

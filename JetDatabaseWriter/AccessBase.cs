@@ -8,12 +8,14 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Internal.Models;
-using JetDatabaseWriter.Internal.Transactions;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Transactions;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
 #pragma warning disable SA1401 // Field should be private — fields are private protected (assembly-only)

@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.CompoundFile;
 
 using System;
 using System.Buffers.Binary;

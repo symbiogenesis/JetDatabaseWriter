@@ -4,7 +4,7 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Internal;
+using JetDatabaseWriter.Transactions;
 using Xunit;
 
 /// <summary>

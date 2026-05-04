@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.Encryption;
 
 using System;
 using System.Buffers.Binary;
@@ -8,8 +8,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Transactions;
 
 /// <summary>
 /// Centralizes all JET / ACE / ACCDB encryption logic — header detection,

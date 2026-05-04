@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
+using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Internal;
 using JetDatabaseWriter.Tests.Core;
 

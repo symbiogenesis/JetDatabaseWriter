@@ -4,7 +4,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
-using JetDatabaseWriter.Internal.Transactions;
+using JetDatabaseWriter.Pages;
 
 /// <summary>
 /// Represents an explicit, in-memory write transaction against a single
