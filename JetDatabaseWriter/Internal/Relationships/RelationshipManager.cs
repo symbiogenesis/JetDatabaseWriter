@@ -404,10 +404,11 @@ internal sealed class RelationshipManager(AccessWriter writer)
         {
             int phys = newRealIdxDescStart + oldRealIdxPhysLen;
 
-            // bytes 0..3   unknown(4) — Jackcess emits a per-tdef cookie; zero
-            //              also round-trips through this library's reader and
-            //              through Microsoft Access (probe shows the cookie is
-            //              not interpreted by either parser).
+            // bytes 0..3   Jet4/ACE format magic cookie (0x00000659). DAO's
+            //              TDEF validation checks this during CompactDatabase;
+            //              leaving it zero causes err 3011 "MSysDb".
+            AccessBase.Wi32(newTd, phys, Constants.TableDefinition.Jet4FormatMagic);
+
             // bytes 4..33  col_map: 10 × {col_num(2), col_order(1)}
             for (int slot = 0; slot < 10; slot++)
             {
@@ -428,7 +429,11 @@ internal sealed class RelationshipManager(AccessWriter writer)
             // bytes 38..41 first_dp = preAllocatedLeafPage
             AccessBase.Wi32(newTd, phys + 38, checked((int)preAllocatedLeafPage));
 
-            // bytes 42 flags = 0; bytes 43..51 unknown = 0
+            // bytes 42..45 unknown(4) = 0
+            // byte  46     flags: 0x80 (unknown-flag bit always set per Jackcess)
+            // bytes 47..51 unknown(5) = 0
+            newTd[phys + Constants.TableDefinition.Jet4.RealIdx.FlagsOffset] =
+                Constants.TableDefinition.UnknownIndexFlag;
         }
 
         // Logical-idx entries (existing).
@@ -437,10 +442,11 @@ internal sealed class RelationshipManager(AccessWriter writer)
         Buffer.BlockCopy(td, logIdxStart, newTd, newLogIdxStart, oldLogIdxLen);
 
         // Append the new FK logical-idx entry.
-        // bytes 0..3   unknown(4) — Jackcess emits a per-tdef cookie; zero is
-        //              consistent with this library's existing emit.
+        // bytes 0..3   Jet4/ACE format magic cookie (0x00000659). DAO checks
+        //              this during CompactDatabase.
         // bytes 24..27 trailing(4) = 0
         int newLogEntry = newLogIdxStart + oldLogIdxLen;
+        AccessBase.Wi32(newTd, newLogEntry, Constants.TableDefinition.Jet4FormatMagic);
         AccessBase.Wi32(newTd, newLogEntry + 4, numIdx);                  // index_num (next sequential)
         AccessBase.Wi32(newTd, newLogEntry + 8, realIdxNumThisSide);      // index_num2
         newTd[newLogEntry + 12] = 0x01;                        // rel_tbl_type — empirical: 0x01 on FK entries (appendix §"Companies")
