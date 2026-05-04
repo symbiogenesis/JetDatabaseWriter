@@ -261,6 +261,16 @@ internal static class TestDatabases
         new[] { ComplexDataTestV2007, ComplexDataTestV2010 }
             .Where(IsReadable));
 
+    /// <summary>Gets the Jackcess testPromotion fixtures (V2000–V2010).</summary>
+    public static TheoryData<string> Promotion => ToTheoryData(
+        new[] { TestPromotionV2000, TestPromotionV2003, TestPromotionV2007, TestPromotionV2010 }
+            .Where(IsReadable));
+
+    /// <summary>Gets the Jackcess delColTest fixtures (V1997–V2010).</summary>
+    public static TheoryData<string> DelCol => ToTheoryData(
+        new[] { DelColTestV1997, DelColTestV2000, DelColTestV2003, DelColTestV2007, DelColTestV2010 }
+            .Where(IsReadable));
+
     /// <summary>
     /// Gets every Jackcess fixture that exists on disk and can be opened by the reader.
     /// Use for broad-coverage round-trip tests; expect this to skip

@@ -30,6 +30,7 @@ public sealed class IndexFlagCombinationsTests
         TestDatabases.TestIndexPropertiesV2000,
         TestDatabases.TestIndexPropertiesV2003,
         TestDatabases.TestIndexPropertiesV2007,
+        TestDatabases.TestIndexPropertiesV2010,
     };
 
     [Theory]
