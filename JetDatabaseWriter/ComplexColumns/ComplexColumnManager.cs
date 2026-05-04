@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Internal;
+namespace JetDatabaseWriter.ComplexColumns;
 
 using System;
 using System.Collections.Generic;
@@ -8,6 +8,7 @@ using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Internal.Models;

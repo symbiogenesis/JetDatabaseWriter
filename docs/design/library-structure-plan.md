@@ -397,14 +397,16 @@ Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then 
 
 > **Completed:** Namespaces changed from `JetDatabaseWriter.Internal` → `JetDatabaseWriter.CompoundFile`, `JetDatabaseWriter.Encryption`, `JetDatabaseWriter.Transactions`; and `JetDatabaseWriter.Internal.Transactions` → `JetDatabaseWriter.Pages`. All `using` statements updated in library, test, and benchmark projects. `Internal/Transactions/` directory deleted.
 
-### Phase D — Relationships & complex columns
+### Phase D — Relationships & complex columns ✅
 
-| # | Action | From | To |
-|--:|--------|------|-----|
-| 23 | Move | `Internal/Relationships/RelationshipManager.cs` | `Relationships/RelationshipManager.cs` |
-| 24 | Move | `Internal/LinkedTableManager.cs` | `Relationships/LinkedTableManager.cs` |
-| 25 | Move | `Internal/ComplexColumnManager.cs` | `ComplexColumns/ComplexColumnManager.cs` |
-| 26 | Move | `Internal/Models/AttachmentWrapper.cs` | `ComplexColumns/Models/AttachmentWrapper.cs` |
+| # | Action | From | To | Status |
+|--:|--------|------|-----|--------|
+| 23 | Move | `Internal/Relationships/RelationshipManager.cs` | `Relationships/RelationshipManager.cs` | ✅ |
+| 24 | Move | `Internal/LinkedTableManager.cs` | `Relationships/LinkedTableManager.cs` | ✅ |
+| 25 | Move | `Internal/ComplexColumnManager.cs` | `ComplexColumns/ComplexColumnManager.cs` | ✅ |
+| 26 | Move | `Internal/Models/AttachmentWrapper.cs` | `ComplexColumns/Models/AttachmentWrapper.cs` | ✅ |
+
+> **Completed:** Namespaces changed from `JetDatabaseWriter.Internal.Relationships` → `JetDatabaseWriter.Relationships`, `JetDatabaseWriter.Internal` (LinkedTableManager) → `JetDatabaseWriter.Relationships`, `JetDatabaseWriter.Internal` (ComplexColumnManager) → `JetDatabaseWriter.ComplexColumns`, and `JetDatabaseWriter.Internal.Models` (AttachmentWrapper) → `JetDatabaseWriter.ComplexColumns.Models`. All `using` statements updated in library and test projects. `Internal/Relationships/` directory deleted.
 
 ### Phase E — Indexes (consolidate all index concerns)
 
