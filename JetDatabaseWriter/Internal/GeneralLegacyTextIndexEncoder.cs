@@ -48,6 +48,16 @@ internal static class GeneralLegacyTextIndexEncoder
     private const int UnprintableCountStart = 7;
     private const int UnprintableCountMultiplier = 4;
     private const int UnprintableOffsetFlags = 0x8000;
+
+    // V2010 (ACE / 4 KiB pages) hard cap on the encoded leaf-entry length.
+    // Empirically every Access-authored Table11 / Table11_desc long-row
+    // entry in testIndexCodesV2010.accdb is exactly 510 bytes; the encoder
+    // truncates the unflipped form mid-stream at this byte boundary,
+    // dropping END_TEXT, extras, END_EXTRA_TEXT, and the unflipped
+    // descending sentinel as needed. The exact derivation of 510 is
+    // unconfirmed; likely page_size/8 - 2 for 4 KiB pages.
+    // See docs/design/long-row-index-encoding-resolution.md.
+    internal const int MaxEntryLengthGeneralV2010 = 510;
     private const byte UnprintableMidfix = 0x06;
     private const byte CrazyCodeStart = 0x80;
     private const byte CrazyCode1 = 0x02;
@@ -104,31 +114,44 @@ internal static class GeneralLegacyTextIndexEncoder
     /// <param name="longRowSeparator">
     /// 4-byte separator emitted between chunks when the input is split across
     /// two chunks (only used when <paramref name="text"/> exceeds
-    /// <see cref="MaxTextIndexCharLength"/> AND contains an embedded line-break).
-    /// Defaults to the General-Legacy separator <c>08 07 08 04</c>; the
-    /// General sort order uses <c>07 09 07 06</c>.
+    /// <see cref="MaxTextIndexCharLength"/> and contains an embedded line-break).
+    /// </param>
+    /// <param name="maxEntryLength">
+    /// Optional hard cap on the encoded entry length (0 = no cap). When set,
+    /// the encoder truncates the produced bytes at this boundary; used by the
+    /// V2010 long-row path with <see cref="MaxEntryLengthGeneralV2010"/>.
     /// </param>
     internal static byte[] EncodeWithTables(
         string? text,
         bool ascending,
         CharHandler[] codes,
         CharHandler[] extCodes,
-        byte[]? longRowSeparator = null)
+        byte[]? longRowSeparator = null,
+        int maxEntryLength = 0)
     {
         if (text is null)
         {
             return [ascending ? FlagAscendingNull : FlagDescendingNull];
         }
 
-        // Long-row 2-chunk path: when the input is too long to fit the
-        // single-chunk indexed-prefix cap AND contains an embedded line break
-        // (CR or LF), Access splits the entry into two inline chunks
-        // separated by a 4-byte sentinel, with a single trailing extras /
-        // unprintable / crazy block whose char offsets address into the
-        // concatenated chunk character stream. See
-        // docs/design/long-row-index-encoding-investigation.md and the
-        // upstream Jackcess "TODO long rows not handled completely" comment
-        // in IndexCodesTest.findRow that this path closes.
+        if (maxEntryLength > 0)
+        {
+            // V2010 / ACE: continuous encoding of up to 255 characters with
+            // no chunk split. The FinishEntry truncation at maxEntryLength
+            // handles the byte cap.
+            ReadOnlySpan<char> v2010Chars = text.AsSpan(0, Math.Min(text.Length, 255));
+
+            var v2010Bout = new List<byte>(v2010Chars.Length + 4)
+            {
+                ascending ? FlagAscendingNonNull : FlagDescendingNonNull,
+            };
+            int v2010PayloadStart = v2010Bout.Count;
+            var v2010State = new ChunkEmitState(v2010Chars.Length);
+            EmitChunkInline(v2010Chars, codes, extCodes, v2010Bout, v2010State);
+            FinishEntry(v2010Bout, v2010PayloadStart, v2010State, ascending, maxEntryLength);
+            return [.. v2010Bout];
+        }
+
         if (text.Length > MaxTextIndexCharLength)
         {
             int splitAt = FindFirstLineBreak(text);
@@ -149,19 +172,12 @@ internal static class GeneralLegacyTextIndexEncoder
                     ascending,
                     codes,
                     extCodes,
-                    longRowSeparator ?? LongRowSeparatorGeneralLegacy);
+                    longRowSeparator ?? LongRowSeparatorGeneralLegacy,
+                    0);
             }
-
-            // No embedded line break: fall through to the single-chunk path,
-            // which truncates at MaxTextIndexCharLength. This matches the
-            // pre-2-chunk behaviour and Jackcess's standing TODO for the
-            // "no-newline long input" sub-case (no Access-authored fixture
-            // currently exists to validate that branch byte-exactly).
         }
 
-        // Truncate to the indexed-prefix length and strip trailing spaces
-        // (Jackcess GeneralLegacyIndexCodes.toIndexCharSequence).
-        var chars = text.AsSpan(0, Math.Min(text.Length, MaxTextIndexCharLength)).TrimEnd(' ');
+        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, MaxTextIndexCharLength)).TrimEnd(' ');
 
         var bout = new List<byte>(chars.Length + 4)
         {
@@ -175,19 +191,10 @@ internal static class GeneralLegacyTextIndexEncoder
         var state = new ChunkEmitState(chars.Length);
         EmitChunkInline(chars, codes, extCodes, bout, state);
 
-        FinishEntry(bout, payloadStart, state, ascending);
+        FinishEntry(bout, payloadStart, state, ascending, maxEntryLength);
         return [.. bout];
     }
 
-    /// <summary>
-    /// Two-chunk variant: encodes <c>text[0..splitAt)</c> as chunk #1, emits
-    /// the 4-byte <paramref name="separator"/>, then encodes
-    /// <c>text[resumeAt..min(resumeAt+MaxTextIndexCharLength, text.Length))</c>
-    /// as chunk #2. The extras / unprintable / crazy streams are unified
-    /// across both chunks (char offsets address into the concatenated chunk
-    /// character stream — exactly as observed in the Access-authored
-    /// fixtures).
-    /// </summary>
     private static byte[] EncodeTwoChunks(
         string text,
         int splitAt,
@@ -195,21 +202,20 @@ internal static class GeneralLegacyTextIndexEncoder
         bool ascending,
         CharHandler[] codes,
         CharHandler[] extCodes,
-        byte[] separator)
+        byte[] separator,
+        int maxEntryLength)
     {
         var chunk1 = text.AsSpan(0, splitAt);
 
-        // Chunk #2 is bounded by the original source-position cap
-        // <c>TEXT_FIELD_MAX_LENGTH</c> (255 chars from the start of the
-        // input — note this is a SOURCE position, not a chunk-2 length cap),
-        // by the input length, and by the same trailing-space trim the
-        // single-chunk path applies. Empirically: for the V2000–V2007
-        // long-row fixtures, splitAt=179 and resumeAt=181 produce a 74-char
-        // chunk #2 (255 − 181), which is exactly what Access writes.
-        int chunk2Cap = Math.Min(text.Length, 255);
+        int chunk2Cap = maxEntryLength > 0
+            ? Math.Min(text.Length, 256)
+            : Math.Min(text.Length, 255);
         int chunk2Take = chunk2Cap - resumeAt;
+
         var chunk2 = chunk2Take > 0
-            ? text.AsSpan(resumeAt, chunk2Take).TrimEnd(' ')
+            ? (maxEntryLength > 0
+                ? text.AsSpan(resumeAt, chunk2Take)
+                : text.AsSpan(resumeAt, chunk2Take).TrimEnd(' '))
             : ReadOnlySpan<char>.Empty;
 
         var bout = new List<byte>(chunk1.Length + chunk2.Length + separator.Length + 8)
@@ -223,15 +229,10 @@ internal static class GeneralLegacyTextIndexEncoder
         bout.AddRange(separator);
         EmitChunkInline(chunk2, codes, extCodes, bout, state);
 
-        FinishEntry(bout, payloadStart, state, ascending);
+        FinishEntry(bout, payloadStart, state, ascending, maxEntryLength);
         return [.. bout];
     }
 
-    /// <summary>
-    /// Returns the index of the first CR (U+000D) or LF (U+000A) in
-    /// <paramref name="text"/>, or -1 if none. Used by the 2-chunk long-row
-    /// path to decide where to split the input.
-    /// </summary>
     private static int FindFirstLineBreak(string text)
     {
         for (int i = 0; i < text.Length; i++)
@@ -250,10 +251,7 @@ internal static class GeneralLegacyTextIndexEncoder
     /// Runs the per-codepoint state machine over <paramref name="chars"/>
     /// and appends inline bytes to <paramref name="bout"/>, while
     /// accumulating extras / unprintable / crazy state in
-    /// <paramref name="state"/>. Char offsets used by the extras stream are
-    /// continuous across calls to this method, so multiple invocations
-    /// (one per chunk in the long-row path) correctly produce a unified
-    /// trailing block.
+    /// <paramref name="state"/>.
     /// </summary>
     private static void EmitChunkInline(
         ReadOnlySpan<char> chars,
@@ -307,8 +305,20 @@ internal static class GeneralLegacyTextIndexEncoder
     /// crazy block, and END_EXTRA_TEXT terminator (with the descending
     /// one's-complement pass) to <paramref name="bout"/>. Shared between the
     /// single-chunk and two-chunk paths.
+    /// <para>
+    /// When <paramref name="maxEntryLength"/> is greater than zero and the
+    /// fully-built entry exceeds that byte cap (V2010 / ACE long rows), the
+    /// buffer is hard-truncated mid-stream after the descending complement
+    /// pass and any trailing unflipped sentinel is dropped. This matches the
+    /// observed Microsoft Access behaviour for ACE long-row index leaves.
+    /// </para>
     /// </summary>
-    private static void FinishEntry(List<byte> bout, int payloadStart, ChunkEmitState state, bool ascending)
+    private static void FinishEntry(
+        List<byte> bout,
+        int payloadStart,
+        ChunkEmitState state,
+        bool ascending,
+        int maxEntryLength)
     {
         bout.Add(EndText);
 
@@ -355,6 +365,16 @@ internal static class GeneralLegacyTextIndexEncoder
         }
 
         bout.Add(EndExtraText);
+
+        // V2010 / ACE long-row hard byte cap: if the fully-built entry
+        // exceeds the cap, truncate. The descending complement pass (above)
+        // has already been applied to bytes [payloadStart..) so the kept
+        // bytes already match the on-disk image. Any END_EXTRA_TEXT,
+        // descending sentinel, or extras bytes past the cap are dropped.
+        if (maxEntryLength > 0 && bout.Count > maxEntryLength)
+        {
+            bout.RemoveRange(maxEntryLength, bout.Count - maxEntryLength);
+        }
     }
 
     private sealed class ChunkEmitState(int initialCapacity)
@@ -701,5 +721,17 @@ internal static class GeneralLegacyTextIndexEncoder
         public int NumChars { get; set; }
 
         public int UnprintablePrefixLen { get; set; }
+
+        public ExtraCodesStream Clone()
+        {
+            var clone = new ExtraCodesStream(Bytes.Count)
+            {
+                NumChars = NumChars,
+                UnprintablePrefixLen = UnprintablePrefixLen,
+            };
+
+            clone.Bytes.AddRange(Bytes);
+            return clone;
+        }
     }
 }
