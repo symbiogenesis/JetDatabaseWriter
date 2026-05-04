@@ -21,7 +21,7 @@ Phases below are ordered by **biggest line reduction first**. Line numbers refer
 | 11 | LVAL encoding                   |   200 | 10,245 |
 | 12 | Stray nested utilities          |   150 | 10,395 |
 
-After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly **~2,100 lines** of pure orchestration: the constructor, public `OpenAsync`/`CreateDatabaseAsync` factories, the public CRUD/schema entry points, and `DisposeAsync`. (Current state after Phases 1–3: **~5,850 lines**.)
+After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly **~2,100 lines** of pure orchestration: the constructor, public `OpenAsync`/`CreateDatabaseAsync` factories, the public CRUD/schema entry points, and `DisposeAsync`. (Current state after Phases 1–5: **~4,580 lines**.)
 
 > **No partial classes.** The maintainer dislikes splitting `AccessWriter` across multiple `partial` files — it hides the true size and complexity of the type and makes navigation worse. Every extraction below must land in a **properly-named type** under `Internal/`, with `AccessWriter` holding a private field of that type and forwarding through thin instance methods. Anything that genuinely cannot be lifted off `AccessWriter` (because it touches too much private state) must stay in `AccessWriter.cs` rather than be moved into a partial.
 >
@@ -79,13 +79,15 @@ Extracted to [JetDatabaseWriter/Internal/ComplexColumnManager.cs](../../JetDatab
   - `TryGetCachedInsertPageNumber`, `SetCachedInsertPageNumber`
 - [ ] **Suggested split:** `Internal/RowEncoder.cs` (Serialize/Encode*) + `Internal/DataPageInserter.cs` (FindInsertTargetAsync, CanInsertRow, etc.).
 
-## Phase 5 — TDEF / empty-database builders (~510 lines)
+## Phase 5 — TDEF / empty-database builders (~510 lines) ✅ DONE
 
-- [ ] Extract methods at lines **5527–5666** and **6402–6625**:
-  - `BuildTableDefinition`, `GetDeclaredSize`, `BuildTDefPage` (×2)
-- [ ] Extract methods at lines **8215–8398**:
-  - `BuildEmptyDatabase`, `BuildMSysObjectsTDef`
-- [ ] **Suggested home:** `Internal/Builders/TDefPageBuilder.cs` (alongside `IndexBTreeBuilder`, `IndexLeafPageBuilder`, `ColumnPropertyBlockBuilder`).
+Extracted to [JetDatabaseWriter/Internal/Builders/TDefPageBuilder.cs](../../JetDatabaseWriter/Internal/Builders/TDefPageBuilder.cs). `AccessWriter` now holds a private `_tdefPageBuilder` field and keeps thin forwarders for `BuildTDefPage`, `BuildTDefPageWithIndexOffsets`, `BuildTDefPagesWithIndexOffsets`, and the static compatibility shims `BuildTableDefinition` / `BuildEmptyDatabase`. The moved builder also owns the `MSysObjects` bootstrap layout helpers and the logical-to-physical TDEF page splitting/offset translation used during table creation.
+
+`AccessWriter.cs` shrank from **5,347 → 4,577 lines** (–770).
+
+- [x] Extracted methods: `BuildTableDefinition`, `GetDeclaredSize`, `BuildTDefPage`, `BuildTDefPageWithIndexOffsets`, `BuildTDefPagesWithIndexOffsets`, `BuildEmptyDatabase`, `BuildMSysObjectsTDef`.
+- [x] Moved helper routines with the builder: `SplitLogicalTDefIntoPages`, `LogicalToPhysicalTDefOffset`, `BuildSlimCatalogColumns`, `BuildFullCatalogColumns`.
+- [x] **Home:** `Internal/Builders/TDefPageBuilder.cs`, alongside `IndexBTreeBuilder`, `IndexLeafPageBuilder`, `ColumnPropertyBlockBuilder` ✓.
 
 ## Phase 6 — Encryption / re-encryption operations (~400 lines)
 
