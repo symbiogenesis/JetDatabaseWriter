@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.ValueEncoding;
 
 using System;
+using System.Buffers;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -135,11 +136,18 @@ internal sealed class LongValueEncoder(AccessWriter writer)
         if (data.Length <= singleRowMax)
         {
             byte[] page = BuildSingleLvalPageBuffer(data);
-            long pageNumber = await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
-            header[3] = 0x40;
-            uint lvalDp = unchecked((uint)((pageNumber << 8) | 0));
-            AccessBase.Wi32(header, 4, (int)lvalDp);
-            return header;
+            try
+            {
+                long pageNumber = await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+                header[3] = 0x40;
+                uint lvalDp = unchecked((uint)((pageNumber << 8) | 0));
+                AccessBase.Wi32(header, 4, (int)lvalDp);
+                return header;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(page);
+            }
         }
 
         // Chunk size for chained rows. Allocating in reverse means each newly
@@ -153,8 +161,15 @@ internal sealed class LongValueEncoder(AccessWriter writer)
             int chunkStart = i * chainRowMax;
             int chunkLen = Math.Min(chainRowMax, data.Length - chunkStart);
             byte[] page = BuildChainLvalPageBuffer(data, chunkStart, chunkLen, nextDp);
-            long pageNumber = await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
-            nextDp = unchecked((uint)((pageNumber << 8) | 0));
+            try
+            {
+                long pageNumber = await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+                nextDp = unchecked((uint)((pageNumber << 8) | 0));
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(page);
+            }
         }
 
         header[3] = 0x00;
@@ -171,7 +186,8 @@ internal sealed class LongValueEncoder(AccessWriter writer)
         DataPageLayout dataPage = writer._dataPage;
         int pgSz = writer._pgSz;
 
-        byte[] page = new byte[pgSz];
+        byte[] page = ArrayPool<byte>.Shared.Rent(pgSz);
+        Array.Clear(page, 0, pgSz);
         page[0] = 0x01; // page_type = data page
         page[1] = 0x01;
         AccessBase.Wi32(page, dataPage.TDefOff, 0);
@@ -196,7 +212,8 @@ internal sealed class LongValueEncoder(AccessWriter writer)
         DataPageLayout dataPage = writer._dataPage;
         int pgSz = writer._pgSz;
 
-        byte[] page = new byte[pgSz];
+        byte[] page = ArrayPool<byte>.Shared.Rent(pgSz);
+        Array.Clear(page, 0, pgSz);
         page[0] = 0x01;
         page[1] = 0x01;
         AccessBase.Wi32(page, dataPage.TDefOff, 0);
