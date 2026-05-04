@@ -30,6 +30,7 @@ public sealed class IndexKeyEncoderTests
     private const byte T_TEXT = 0x0A;
     private const byte T_GUID = 0x0F;
     private const byte T_NUMERIC = 0x10;
+    private const byte T_DATETIMEEXT = 0x14;
 
     [Fact]
     public void Null_Ascending_EmitsSingleZeroFlagByte()
@@ -1172,5 +1173,119 @@ public sealed class IndexKeyEncoderTests
         }
 
         return a.Length.CompareTo(b.Length);
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // T_DATETIMEEXT (0x14) — general-binary-entry wrapping of 42 bytes
+    // ──────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void DateTimeExt_Ascending_ProducesCorrectSegmentStructure()
+    {
+        // 42-byte payload → ceil(42/8) = 6 segments → 1 flag + 6×9 = 55 bytes.
+        byte[] payload = new byte[42];
+        for (int i = 0; i < 42; i++)
+        {
+            payload[i] = (byte)(i + 1);
+        }
+
+        byte[] encoded = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payload, ascending: true);
+
+        Assert.Equal(55, encoded.Length);
+        Assert.Equal(0x7F, encoded[0]); // flag: ascending non-null
+
+        // Segments 0–4 (intermediate): 8 data bytes + 0x09 length marker.
+        for (int seg = 0; seg < 5; seg++)
+        {
+            int segStart = 1 + (seg * 9);
+            for (int b = 0; b < 8; b++)
+            {
+                Assert.Equal(payload[(seg * 8) + b], encoded[segStart + b]);
+            }
+
+            Assert.Equal(0x09, encoded[segStart + 8]); // intermediate length marker
+        }
+
+        // Segment 5 (final): 2 valid bytes + 6 zero-pad bytes + length 0x02.
+        int finalStart = 1 + (5 * 9);
+        Assert.Equal(payload[40], encoded[finalStart]);
+        Assert.Equal(payload[41], encoded[finalStart + 1]);
+        for (int b = 2; b < 8; b++)
+        {
+            Assert.Equal(0x00, encoded[finalStart + b]); // zero-padded
+        }
+
+        Assert.Equal(0x02, encoded[finalStart + 8]); // final segment valid-byte count
+    }
+
+    [Fact]
+    public void DateTimeExt_Descending_FlipsDataAndFinalLength()
+    {
+        byte[] payload = new byte[42];
+        for (int i = 0; i < 42; i++)
+        {
+            payload[i] = (byte)(i + 1);
+        }
+
+        byte[] asc = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payload, ascending: true);
+        byte[] desc = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payload, ascending: false);
+
+        Assert.Equal(55, desc.Length);
+        Assert.Equal(0x80, desc[0]); // flag: descending non-null
+
+        // Intermediate segments: data bytes flipped, length marker 0x09 unflipped.
+        for (int seg = 0; seg < 5; seg++)
+        {
+            int segStart = 1 + (seg * 9);
+            for (int b = 0; b < 8; b++)
+            {
+                Assert.Equal(unchecked((byte)~asc[segStart + b]), desc[segStart + b]);
+            }
+
+            Assert.Equal(0x09, desc[segStart + 8]); // intermediate marker NOT flipped
+        }
+
+        // Final segment: data + pad flipped, final length flipped.
+        int finalStart = 1 + (5 * 9);
+        for (int b = 0; b < 8; b++)
+        {
+            Assert.Equal(unchecked((byte)~asc[finalStart + b]), desc[finalStart + b]);
+        }
+
+        Assert.Equal(unchecked((byte)~(byte)0x02), desc[finalStart + 8]); // final length flipped
+    }
+
+    [Fact]
+    public void DateTimeExt_Null_EmitsSingleFlagByte()
+    {
+        byte[] enc = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, null, ascending: true);
+        Assert.Equal(new byte[] { 0x00 }, enc);
+    }
+
+    [Fact]
+    public void DateTimeExt_WrongLength_Throws()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, new byte[10], ascending: true));
+    }
+
+    [Fact]
+    public void DateTimeExt_Ordering_IsLexicographic()
+    {
+        // Two payloads that differ only in the first byte: payload A < payload B.
+        byte[] payloadA = new byte[42];
+        byte[] payloadB = new byte[42];
+        payloadA[0] = 0x10;
+        payloadB[0] = 0x20;
+
+        byte[] encA = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payloadA, ascending: true);
+        byte[] encB = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payloadB, ascending: true);
+
+        Assert.True(CompareLex(encA, encB) < 0, "Ascending lexicographic order violated.");
+
+        byte[] descA = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payloadA, ascending: false);
+        byte[] descB = IndexKeyEncoder.EncodeEntry(T_DATETIMEEXT, payloadB, ascending: false);
+
+        Assert.True(CompareLex(descA, descB) > 0, "Descending lexicographic order violated.");
     }
 }

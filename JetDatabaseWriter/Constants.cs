@@ -181,6 +181,9 @@ internal static class Constants
     {
         public const string Prefix = "MSysComplexType_";
 
+        /// <summary>Prefix for version-history template tables (<c>MSysComplexTypeVH_</c>).</summary>
+        public const string VersionHistoryPrefix = "MSysComplexTypeVH_";
+
         public const string Attachment = Prefix + "Attachment";
         public const string UnsignedByte = Prefix + "UnsignedByte";
         public const string Short = Prefix + "Short";

@@ -1150,9 +1150,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return ComplexColumnKind.Attachment;
         }
 
-        // Memo + datetime "version" template — Access surfaces this via "Append Only" memos.
-        // No probe-confirmed template name yet; classify by primitive-template prefix below
-        // when present, otherwise fall through to MultiValue / Unknown.
+        // Version-history template tables use the "MSysComplexTypeVH_" prefix
+        // (no underscore between "Type" and "VH"). Access surfaces these via
+        // "Append Only" memo columns.
+        if (complexTypeName.StartsWith(Constants.ComplexTypeNames.VersionHistoryPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return ComplexColumnKind.VersionHistory;
+        }
+
         if (complexTypeName.StartsWith(Constants.ComplexTypeNames.Prefix, StringComparison.OrdinalIgnoreCase))
         {
             return ComplexColumnKind.MultiValue;
