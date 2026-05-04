@@ -480,9 +480,9 @@ Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then 
 
 ### Phase I — Code extractions (substantive refactoring)
 
-| # | Action | Source | Target |
-|--:|--------|--------|--------|
-| 69 | **Extract** | `AccessWriter` → constraint methods | `Schema/ConstraintRegistry.cs` |
+| # | Action | Source | Target | Status |
+|--:|--------|--------|--------|--------|
+| 69 | **Extract** | `AccessWriter` → constraint methods | `Schema/ConstraintRegistry.cs` | ✅ |
 | 70 | **Extract** | `AccessWriter` → LVAL encode methods | `ValueEncoding/LongValueEncoder.cs` |
 | 71 | **Extract** | `AccessWriter` → transaction lifecycle | `Transactions/TransactionLifecycle.cs` |
 | 72 | **Extract** | `AccessWriter` → unique-index checks | `Indexes/UniqueIndexChecker.cs` |
@@ -492,11 +492,13 @@ Sequenced for minimal merge conflicts — infrastructure/leaf moves first, then 
 | 76 | **Extract** | `AccessReader` → LVAL read logic | `ValueDecoding/LongValueDecoder.cs` |
 | 77 | **Extract** | `AccessBase` → catalog read helpers | `Catalog/CatalogReader.cs` |
 
+> **Step 69 + 78 completed:** Nested `AccessWriter.ColumnConstraint` promoted to `Schema/Models/ColumnConstraint.cs`. All constraint management logic (`Register`, `Unregister`, `Rename`, `ApplyAsync`, `RestoreAutoCounters`, `HydrateFromTableDef`, `TdefTypeToClrType`, `GetNextAutoValueAsync`, `ToConstraint`, `IsIntegralType`, `ConvertIntegral`) extracted to `Schema/ConstraintRegistry.cs`. `AccessWriter` now holds a `ConstraintRegistry` instance (injected with a `ReadTableSnapshotAsync` delegate) and delegates all constraint operations. `ConstraintRegistry.TryGet` added for schema-evolution paths that need direct constraint list access. All 3078 tests pass.
+
 ### Phase J — Promote nested types
 
 | # | Action | Source | Target |
 |--:|--------|--------|--------|
-| 78 | **Promote** | Nested `AccessWriter.ColumnConstraint` | `Schema/Models/ColumnConstraint.cs` |
+| 78 | **Promote** | Nested `AccessWriter.ColumnConstraint` | `Schema/Models/ColumnConstraint.cs` | ✅ |
 | 79 | **Promote** | Nested `AccessWriter.PreEncodedLongValue` | `ValueEncoding/Models/PreEncodedLongValue.cs` |
 | 80 | **Promote** | Nested `EncryptionManager.PageDecryptionKeys` | `Encryption/Models/PageDecryptionKeys.cs` |
 
