@@ -73,8 +73,6 @@ public sealed class TypePromotionFixtureTests(DatabaseCache db) : IClassFixture<
             totalRows += dt.Rows.Count;
         }
 
-        // Some promotion fixtures have empty tables (schema-only after
-        // mutation); assert only that the read path completes without error.
-        Assert.True(totalRows >= 0);
+        Assert.NotEmpty(tables);
     }
 }

@@ -124,17 +124,15 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task StreamRowsAsStrings_AllCells_AreNullOrString(string path)
+    public async Task StreamRowsAsStrings_CellCount_MatchesColumnMetadata(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        int colCount = (await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken)).Count;
 
         await foreach (string[] row in reader.RowsAsStrings(table, cancellationToken: TestContext.Current.CancellationToken).Take(50))
         {
-            foreach (string cell in row)
-            {
-                Assert.True(cell == null || cell is string);
-            }
+            Assert.Equal(colCount, row.Length);
         }
     }
 

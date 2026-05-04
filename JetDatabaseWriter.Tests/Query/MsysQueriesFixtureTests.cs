@@ -45,7 +45,7 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
     /// <summary>
     /// The <c>UpdateQuery</c> in the fixture declares
     /// <c>PARAMETERS User Name Text;</c>. There must be at least one row
-    /// with <c>Attribute == 4</c> (PARAMETER_ATTRIBUTE) whose <c>Name1</c>
+    /// with <c>Attribute == 2</c> (PARAMETER_ATTRIBUTE) whose <c>Name1</c>
     /// column contains the parameter name.
     /// </summary>
     [Fact]
