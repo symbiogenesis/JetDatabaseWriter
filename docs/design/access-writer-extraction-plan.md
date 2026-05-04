@@ -21,7 +21,7 @@ Phases below are ordered by **biggest line reduction first**. Line numbers refer
 | 11 | LVAL encoding                   |   200 | 10,245 |
 | 12 | Stray nested utilities          |   150 | 10,395 |
 
-After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly **~2,100 lines** of pure orchestration: the constructor, public `OpenAsync`/`CreateDatabaseAsync` factories, the public CRUD/schema entry points, and `DisposeAsync`. (Current state after Phases 1–3: **5,347 lines**.)
+After all phases, `AccessWriter.cs` would shrink from ~12,500 lines to roughly **~2,100 lines** of pure orchestration: the constructor, public `OpenAsync`/`CreateDatabaseAsync` factories, the public CRUD/schema entry points, and `DisposeAsync`. (Current state after Phases 1–3: **~5,850 lines**.)
 
 > **No partial classes.** The maintainer dislikes splitting `AccessWriter` across multiple `partial` files — it hides the true size and complexity of the type and makes navigation worse. Every extraction below must land in a **properly-named type** under `Internal/`, with `AccessWriter` holding a private field of that type and forwarding through thin instance methods. Anything that genuinely cannot be lifted off `AccessWriter` (because it touches too much private state) must stay in `AccessWriter.cs` rather than be moved into a partial.
 >
@@ -93,7 +93,7 @@ Extracted to [JetDatabaseWriter/Internal/ComplexColumnManager.cs](../../JetDatab
   - `DetectEncryptionFormatAsync` (×2), `ChangePasswordAsync` (×2)
   - `EncryptAsync` (×2), `DecryptAsync` (×2)
   - `ReencryptFileAsync`, `ReplaceFileAtomicAsync`, `ReencryptStreamAsync`, `ReencryptCoreAsync`
-- [ ] **Suggested home:** `Internal/AccessFileEncryption.cs`, with thin static wrappers remaining on `AccessWriter`.
+- [ ] **Home:** `Internal/EncryptionManager.cs` (existing, 605 lines). Already described as centralizing "all JET/ACE/ACCDB encryption logic — header detection, password verification, key derivation, and per-page decryption." File-level encrypt/decrypt/re-encrypt/password-change is the write-side counterpart. No new file needed.
 
 ## Phase 7 — Transaction lifecycle (~300 lines)
 
@@ -102,7 +102,7 @@ Extracted to [JetDatabaseWriter/Internal/ComplexColumnManager.cs](../../JetDatab
   - `CommitTransactionAsync`, `BumpCommitLockByteAsync`, `FlushDurableAsync`
   - `RollbackTransactionAsync`
   - `DisposeActiveTransactionAsync`, `RewrapAndCloseOuterEncryptedStreamAsync`, `RewrapAgileOnDisposeAsync`, `DisposeStateLockAsync`
-- [ ] **Suggested home:** `Internal/Transactions/TransactionLifecycle.cs` (or similar) — but because these methods need access to `_activeTransaction`, `_outerEncryptedStream`, `_stateLock`, etc., much of this may have to remain in `AccessWriter.cs`. Do **not** use a partial-class file.
+- [ ] **Suggested home:** `Internal/Transactions/TransactionLifecycle.cs` (new file) — but because these methods need access to `_activeTransaction`, `_outerEncryptedStream`, `_stateLock`, etc., much of this may have to remain in `AccessWriter.cs`. Do **not** use a partial-class file. No existing file is a clean fit (`PageJournal` is a buffer data-structure, not a lifecycle manager).
 
 ## Phase 8 — Unique-index pre-insert/update checks (~290 lines)
 
@@ -110,7 +110,7 @@ Extracted to [JetDatabaseWriter/Internal/ComplexColumnManager.cs](../../JetDatab
   - `LoadUniqueIndexDescriptorsAsync`, `EncodeCompositeKeyForUniqueCheck`
   - `CheckUniqueIndexesPreInsertAsync`, `CheckUniqueIndexesPreUpdateAsync`, `CheckUniqueIndexesCore`
   - `MarkRowDeletedAsync`
-- [ ] **Suggested home:** `Internal/UniqueIndexChecker.cs` (mirror of read-side `IndexCatalogReader`).
+- [ ] **Suggested home:** `Internal/UniqueIndexChecker.cs` (new file). The state-free `EncodeCompositeKeyForUniqueCheck` could alternatively land in `Internal/Helpers/IndexHelpers.cs` (861 lines, already holds FK composite-key encoding), but the async check methods need I/O through the writer so they require their own type.
 
 ## Phase 9 — Catalog/system-row reading helpers (~270 lines)
 
@@ -121,8 +121,8 @@ Extracted to [JetDatabaseWriter/Internal/ComplexColumnManager.cs](../../JetDatab
   - `ReadTableSnapshotAsync`, `ReadIndexMetadataSnapshotAsync`, `ReadLvPropBlockAsync`
   - `GetUserTablesAsync`, `GetRequiredCatalogEntryAsync`, `ReadRequiredTableDefAsync`
   - `InsertCatalogEntryAsync`, `RewriteTableAsync`, `RenameTableInCatalogAsync`
-- [ ] Move `CatalogRow` (L12508) into a model file.
-- [ ] **Suggested home:** `Internal/CatalogAccess.cs` (writer-side counterpart to `IndexCatalogReader`).
+- [ ] ~~Move `CatalogRow` (L12508) into a model file.~~ Already done (Phase 1 promoted it to `Internal/Models/CatalogRow.cs`).
+- [ ] **Suggested home:** `Internal/CatalogAccess.cs` (new file). `IndexCatalogReader` is specifically index-section decoding, not general system-row reading, so no existing file is a clean fit.
 
 ## Phase 10 — Constraint registry (~245 lines)
 
@@ -131,7 +131,7 @@ Extracted to [JetDatabaseWriter/Internal/ComplexColumnManager.cs](../../JetDatab
   - `RegisterConstraints`, `UnregisterConstraints`, `RenameConstraintsTable`
   - `HydrateConstraintsFromTableDef`, `TdefTypeToClrType`, `RestoreAutoCounters`
 - [ ] Promote nested `ColumnConstraint` (L12517) to a top-level internal type.
-- [ ] **Suggested home:** `Internal/ColumnConstraint.cs` + a `ConstraintRegistry` static helper.
+- [ ] **Suggested home:** `Internal/ColumnConstraint.cs` + a `ConstraintRegistry` static helper (new files). No existing file is a clean fit.
 
 ## Phase 11 — Long-value (LVAL) encoding (~200 lines)
 
@@ -141,10 +141,10 @@ Extracted to [JetDatabaseWriter/Internal/ComplexColumnManager.cs](../../JetDatab
   - `BuildSingleLvalPageBuffer`, `BuildChainLvalPageBuffer`
 - [ ] Extract `EncodeOleValue` (L5391).
 - [ ] Move nested `PreEncodedLongValue` (L5717).
-- [ ] **Suggested home:** `Internal/LongValueEncoder.cs`.
+- [ ] **Suggested home:** `Internal/LongValueEncoder.cs` (new file). `LvalChainResult` in `Internal/Models/` is a tiny result record, not a behavioral class — not a suitable home.
 
 ## Phase 12 — Trivially-misplaced nested utilities (~150 lines)
 
-- [ ] `ByteArrayEqualityComparer` (L12448) → `Internal/ByteArrayEqualityComparer.cs`.
-- [ ] `PageInsertTarget` (L12510) → `Internal/Models/PageInsertTarget.cs`.
-- [ ] `CatalogRow` (L12508) → `Internal/Models/CatalogRow.cs` (also referenced by Phase 9).
+- [ ] `ByteArrayEqualityComparer` (L12448) → `Internal/Collections/ByteArrayEqualityComparer.cs` (existing folder, already has `LruCache.cs` — collection-utility primitives).
+- [ ] `PageInsertTarget` (L12510) → `Internal/Models/PageInsertTarget.cs` (existing folder, already has `RowLocation`, `CatalogRow`, `IndexEntry`, etc.).
+- [ ] ~~`CatalogRow` (L12508) → `Internal/Models/CatalogRow.cs`~~ Already done in Phase 1.
