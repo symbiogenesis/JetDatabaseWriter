@@ -51,7 +51,7 @@ Because `bitmask = 0x07`, the column is treated as a fixed-length 4-byte column 
 
 There is **no** `ParentTable` / `ParentColumn` column in `MSysComplexColumns`. The parent reference is implicit: it is recovered by scanning every user TDEF for a complex column whose `misc`+`misc_ext` 4-byte slot equals `ComplexID`. The reader (`AccessReader.BuildComplexColumnDataAsync`) already does this scan.
 
-`MSysComplexColumns` is now created by [`AccessWriter.CreateMSysComplexColumnsAsync`](../../JetDatabaseWriter/Core/AccessWriter.cs) on every fresh ACCDB built via `CreateDatabaseAsync` (Phase C1, 2026-04-25). The catalog row carries `Flags = 0x80000000` so the table is excluded from `ListTablesAsync`. ACE only — Jet3/Jet4 `.mdb` scaffolds skip the system table because complex columns are an Access 2007+ feature.
+`MSysComplexColumns` is now created by [`AccessWriter.CreateMSysComplexColumnsAsync`](../../JetDatabaseWriter/AccessWriter.cs) on every fresh ACCDB built via `CreateDatabaseAsync` (Phase C1, 2026-04-25). The catalog row carries `Flags = 0x80000000` so the table is excluded from `ListTablesAsync`. ACE only — Jet3/Jet4 `.mdb` scaffolds skip the system table because complex columns are an Access 2007+ feature.
 
 ### 2.3 The hidden "flat" child table
 
@@ -299,5 +299,5 @@ Same as the index doc, with one addition specific to attachments:
 - [Jackcess `AttachmentColumnInfoImpl.java`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/complex/AttachmentColumnInfoImpl.java) — wrapper-header encoder/decoder, COMPRESSED_FORMATS skip-list
 - [Jackcess `ComplexColumnInfoImpl.java`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/complex/ComplexColumnInfoImpl.java) — flat-table protocol (PK + FK columns, `diffFlatColumns`)
 - [Jackcess `ComplexDataType.java`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/complex/ComplexDataType.java) — type-discriminator integer values
-- This repo: `JetDatabaseWriter/Core/AccessReader.cs` `BuildComplexColumnDataAsync`, `DecodeAttachmentFileData`, `DecompressAttachmentData`
+- This repo: `JetDatabaseWriter/AccessReader.cs` `BuildComplexColumnDataAsync`, `DecodeAttachmentFileData`, `DecompressAttachmentData`
 - Companion design doc: [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md)

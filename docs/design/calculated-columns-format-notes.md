@@ -114,22 +114,22 @@ Jackcess sources to translate:
 
 Required code changes here:
 
-- `Internal/Builders/ColumnDescriptorBuilder` (or wherever the 25-byte
+- `Schema/TDefPageBuilder` (or wherever the 25-byte
   descriptor is emitted) — write the `0xC0` extra-flags byte and adjust
   `col_len` (`CALC_FIXED_FIELD_LEN` for fixed, `original + 23` for variable).
-- `Internal/Builders/TableDefinitionBuilder` (`BuildTableDefinition`,
+- `Schema/TDefPageBuilder` (`BuildTableDefinition`,
   `BuildTDefPageWithIndexOffsets`) — treat all calc columns as variable-length
   for slot allocation; ensure variable-column count, NULL bitmap, and offset
   table line up.
-- `Internal/JetExpressionConverter.ApplyColumn` — when `IsCalculated`, emit
+- `Schema/JetExpressionConverter.ApplyColumn` — when `IsCalculated`, emit
   the `Expression` (Memo) and `ResultType` (Byte) LvProp entries on the
   column.
-- `Internal/Helpers/FixedSize` (or the equivalent fixed-payload sizer) — return
+- `Schema/JetTypeInfo` (or the equivalent fixed-payload sizer) — return
   `CALC_FIXED_FIELD_LEN` for any calc column regardless of its `JetType`.
-- `Internal/TypedValueParser.TryEncodeFixedValue` /
+- `ValueEncoding/RowEncoder.TryEncodeFixedValue` /
   `EncodeVariableValue` — wrap the encoded bytes through
   `CalculatedColumnUtil.Wrap` before they reach the row payload.
-- Reader: `RowMapper.ReadFixed` / `ReadVarAsync` (or whichever methods materialise
+- Reader: `ValueDecoding/RowMapper.ReadFixed` / `ReadVarAsync` (or whichever methods materialise
   per-column bytes) — call `CalculatedColumnUtil.Unwrap` for calc columns
   before handing the bytes to `TypedValueParser`.
 - `AccessWriter.CreateTableAsync` — drop the Phase 1B guard once the above is

@@ -38,7 +38,7 @@ in [GeneralAndGeneral97EncoderUnitTests.cs](../../JetDatabaseWriter.Tests/Intern
   partially covered: V2000 / V2003 / V2007 long-row leaves now validate
   byte-exact in [GeneralLegacyEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralLegacyEncoderFixtureTests.cs)
   via the 2-chunk encoder
-  ([GeneralLegacyTextIndexEncoder.EncodeTwoChunks](../../JetDatabaseWriter/Internal/GeneralLegacyTextIndexEncoder.cs)).
+  ([GeneralLegacyTextIndexEncoder.EncodeTwoChunks](../../JetDatabaseWriter/Indexes/Collation/GeneralLegacyTextIndexEncoder.cs)).
   V2010 (General sort order) `Table11` / `Table11_desc` are still skipped
   in [GeneralEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralEncoderFixtureTests.cs):
   the encoder matches the first 508 of 510 bytes but the final 2-byte
