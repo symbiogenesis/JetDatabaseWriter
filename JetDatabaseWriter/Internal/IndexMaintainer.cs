@@ -2643,20 +2643,30 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 return false;
             }
 
-            // Descend by binary-searching child summaries: at each
-            // intermediate, pick the first entry whose canonical key is
-            // >= the new composite key, and follow that child. When every
-            // summary on the page is < composite, follow tail_page (or the
-            // last child as fallback). This lands on the leaf that should
-            // hold the new entry's sorted insertion point. The captured
-            // path is unused (catalog splice doesn't rewrite ancestors).
-            var unusedPath = new List<DescentStep>();
+            // Descend by binary-searching child summaries. First try
+            // without tail overshoot so we capture a clean path for
+            // ancestor updates (needed when the leaf splits). Fall back
+            // to allowTailOvershoot when the key overshoots every summary
+            // on an intermediate — in that case the chain walk below still
+            // finds the correct leaf and we accept that ancestor updates
+            // won't be possible (but a split can still chain-append).
+            var descentPath = new List<DescentStep>();
+            bool hasCleanPath = true;
             long targetLeafPage = await DescendCapturingAsync(
-                layout, firstDp, composite, unusedPath, cancellationToken, allowTailOvershoot: true).ConfigureAwait(false);
+                layout, firstDp, composite, descentPath, cancellationToken, allowTailOvershoot: false).ConfigureAwait(false);
             if (targetLeafPage <= 0)
             {
-                LastIncrementalBail = $"S5 ri={ri} descent failed firstDp={firstDp}";
-                return false;
+                // Overshoot — retry with tail following. Path will be
+                // incomplete but the chain walk handles placement.
+                descentPath.Clear();
+                hasCleanPath = false;
+                targetLeafPage = await DescendCapturingAsync(
+                    layout, firstDp, composite, descentPath, cancellationToken, allowTailOvershoot: true).ConfigureAwait(false);
+                if (targetLeafPage <= 0)
+                {
+                    LastIncrementalBail = $"S5 ri={ri} descent failed firstDp={firstDp}";
+                    return false;
+                }
             }
 
             byte[] leaf = await ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
@@ -2741,12 +2751,78 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                     enablePrefixCompression: true,
                     maxPrefixLength: originalPrefLen);
             }
-            catch (ArgumentOutOfRangeException ex)
+            catch (ArgumentOutOfRangeException)
             {
-                // Leaf overflow → would require a leaf split + parent
-                // separator promotion. Out of scope for Phase C1.
-                LastIncrementalBail = $"S12 ri={ri} overflow {ex.Message}";
-                return false;
+                // Leaf overflow → N-way split.
+                SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, writer._pgSz, spliced);
+                if (splitPages is null)
+                {
+                    LastIncrementalBail = $"S12 ri={ri} split failed";
+                    return false;
+                }
+
+                int splitCount = splitPages.Count;
+                long firstFreshPage = writer._stream.Length / writer._pgSz;
+                long[] pageNumbers = AllocateSplitPageNumbers(targetLeafPage, splitCount, firstFreshPage);
+
+                byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext);
+                if (pageBytesAll is null)
+                {
+                    LastIncrementalBail = $"S12b ri={ri} split build failed";
+                    return false;
+                }
+
+                // Compute ancestor writes if we have a clean descent path.
+                List<(long PageNum, byte[] Bytes)>? ancestorWrites = null;
+                if (hasCleanPath && descentPath.Count > 0)
+                {
+                    IndexEntry leftLast = splitPages.GetLastEntry(0);
+                    var leftSummary = new DecodedIntermediateEntry(leftLast, ChildPage: pageNumbers[0]);
+                    var rightSummaries = new DecodedIntermediateEntry[splitCount - 1];
+                    for (int p = 1; p < splitCount; p++)
+                    {
+                        IndexEntry last = splitPages.GetLastEntry(p);
+                        rightSummaries[p - 1] = new DecodedIntermediateEntry(last, ChildPage: pageNumbers[p]);
+                    }
+
+                    ancestorWrites = PrepareAncestorSplitWrites(layout, tdefPage, descentPath, leftSummary, rightSummaries);
+                    if (ancestorWrites is null)
+                    {
+                        LastIncrementalBail = $"S12c ri={ri} ancestor overflow";
+                        return false;
+                    }
+                }
+
+                // Commit: append new pages, patch next-leaf's prev pointer,
+                // rewrite original leaf, then ancestors.
+                for (int p = 1; p < splitCount; p++)
+                {
+                    long appended = await writer.AppendPageAsync(pageBytesAll[p], cancellationToken).ConfigureAwait(false);
+                    if (appended != pageNumbers[p])
+                    {
+                        LastIncrementalBail = $"S12d ri={ri} append mismatch expected={pageNumbers[p]} got={appended}";
+                        return false;
+                    }
+                }
+
+                if (leafNext > 0)
+                {
+                    byte[] nextLeafBuf = await ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
+                    BinaryPrimitives.WriteInt32LittleEndian(nextLeafBuf.AsSpan(layout.PrevPageOffset, 4), checked((int)pageNumbers[splitCount - 1]));
+                    await writer.WritePageAsync(leafNext, nextLeafBuf, cancellationToken).ConfigureAwait(false);
+                }
+
+                await writer.WritePageAsync(targetLeafPage, pageBytesAll[0], cancellationToken).ConfigureAwait(false);
+
+                if (ancestorWrites is not null)
+                {
+                    foreach ((long pn, byte[] bytes) in ancestorWrites)
+                    {
+                        await writer.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+
+                continue;
             }
 
             await writer.WritePageAsync(targetLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
