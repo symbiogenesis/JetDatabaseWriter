@@ -49,22 +49,7 @@ in [GeneralAndGeneral97EncoderUnitTests.cs](../../JetDatabaseWriter.Tests/Intern
   also still run un-asserted for the same reason. See
   [long-row-index-encoding.md](long-row-index-encoding.md).
 
-### 1.2 Numeric / temporal / binary keys
-
-Broad fixture-driven coverage for single-column non-text indexes
-(`Byte` / `Short` / `Long` / `Single` / `Double` / `Money` / `DateTime` /
-`Boolean` / `GUID` / `Binary`) is in
-[NonTextSingleColumnIndexFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/NonTextSingleColumnIndexFixtureTests.cs),
-running across the Jackcess `indexTest`, `bigIndexTest`, `binIdxTest`, and
-`fixedNumericTest` corpora (V2000–V2010). Each row's value is round-tripped
-through `IndexKeyEncoder.EncodeEntry` and compared positionally against the
-on-disk leaf entries (sorted unsigned). The remaining sub-items below call
-out cases that fixture sweep does **not** specifically isolate.
-
-- [ ] **`[J]` `[S]`** OLE long-value index keys — not present in the current
-  Jackcess fixture set; needs a synthetic fixture.
-
-### 1.3 B-tree structural
+### 1.2 B-tree structural
 
 Structural-invariant sweep across the Jackcess fixture corpus is in
 [IndexBTreeStructuralFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexBTreeStructuralFixtureTests.cs):
@@ -102,15 +87,6 @@ comparisons are caught up-front.
   `first_dp` on Table1). Worth re-checking after the 2026-05-03 Jet3
   `ColMapOffset` fix — the V1997 reader bug that fix closed had the same
   symptom, but for Jet4/ACE fixtures so the root cause must differ.
-
-### 1.4 Index flags & metadata
-
-- [ ] **`[J]` `[S]`** **Foreign-key surrogate** indexes (the auto-created
-  ones backing relationships) — writer round-trip / clone semantics. Reader
-  listing semantics are covered by `IndexMetadataTests` and
-  [ForeignKeySurrogateIndexTests.cs](../../JetDatabaseWriter.Tests/Core/ForeignKeySurrogateIndexTests.cs)
-  (`ListIndexesAsync` now returns FK entries); the remaining gap is emitting
-  or preserving Access-authored surrogate indexes on write.
 
 ---
 
