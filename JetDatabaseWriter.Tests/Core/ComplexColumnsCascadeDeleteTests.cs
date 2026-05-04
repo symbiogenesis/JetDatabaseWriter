@@ -323,4 +323,82 @@ public sealed class ComplexColumnsCascadeDeleteTests
         var single = Assert.Single(attachments);
         Assert.Equal("bob.txt", single.FileName);
     }
+
+    [Fact]
+    public async Task DeleteRowsAsync_OnParentWithTwoComplexColumns_RemovesBothFlatChildTableRows()
+    {
+        // §2.2 gap: parent table has TWO complex columns (Attachment + MultiValue)
+        // referencing different flat sub-tables. Deleting a parent must cascade
+        // into both flat child tables.
+        var ms = new MemoryStream();
+
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            DatabaseFormat.AceAccdb,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "Items",
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Photos", typeof(byte[])) { IsAttachment = true },
+                    new ColumnDefinition("Tags", typeof(object))
+                    {
+                        IsMultiValue = true,
+                        MultiValueElementType = typeof(int),
+                    },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowsAsync(
+                "Items",
+                [
+                    [1, DBNull.Value, DBNull.Value],
+                    [2, DBNull.Value, DBNull.Value],
+                ],
+                TestContext.Current.CancellationToken);
+
+            var k1 = new Dictionary<string, object> { ["Id"] = 1 };
+            var k2 = new Dictionary<string, object> { ["Id"] = 2 };
+
+            // Row 1: attachment + multi-value items (both doomed).
+            await writer.AddAttachmentAsync(
+                "Items",
+                "Photos",
+                k1,
+                new AttachmentInput("doomed.jpg", Encoding.UTF8.GetBytes("d")),
+                TestContext.Current.CancellationToken);
+            await writer.AddMultiValueItemAsync("Items", "Tags", k1, 100, TestContext.Current.CancellationToken);
+            await writer.AddMultiValueItemAsync("Items", "Tags", k1, 200, TestContext.Current.CancellationToken);
+
+            // Row 2: attachment + multi-value items (survivors).
+            await writer.AddAttachmentAsync(
+                "Items",
+                "Photos",
+                k2,
+                new AttachmentInput("survivor.jpg", Encoding.UTF8.GetBytes("s")),
+                TestContext.Current.CancellationToken);
+            await writer.AddMultiValueItemAsync("Items", "Tags", k2, 300, TestContext.Current.CancellationToken);
+
+            int deleted = await writer.DeleteRowsAsync("Items", "Id", 1, TestContext.Current.CancellationToken);
+            Assert.Equal(1, deleted);
+        }
+
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(
+            ms,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // Attachment flat table: only row 2's attachment survives.
+        var attachments = await reader.GetAttachmentsAsync("Items", "Photos", TestContext.Current.CancellationToken);
+        var singleAttachment = Assert.Single(attachments);
+        Assert.Equal("survivor.jpg", singleAttachment.FileName);
+
+        // MultiValue flat table: only row 2's item survives.
+        var mvItems = await reader.GetMultiValueItemsAsync("Items", "Tags", TestContext.Current.CancellationToken);
+        var singleMv = Assert.Single(mvItems);
+        Assert.Equal(300, Convert.ToInt32(singleMv.Value, System.Globalization.CultureInfo.InvariantCulture));
+    }
 }
