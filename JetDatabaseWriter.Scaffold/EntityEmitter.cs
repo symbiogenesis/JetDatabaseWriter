@@ -4,7 +4,6 @@ using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Security;
 using JetDatabaseWriter.Models;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -209,7 +208,7 @@ internal static class EntityEmitter
                         TriviaList()))),
                 XmlElement(
                     XmlElementStartTag(XmlName("summary")),
-                    SingletonList<XmlNodeSyntax>(XmlText(SecurityElement.Escape(text))),
+                    SingletonList<XmlNodeSyntax>(XmlText(text)),
                     XmlElementEndTag(XmlName("summary"))),
                 XmlText().WithTextTokens(TokenList(
                     XmlTextNewLine(TriviaList(), "\n", "\n", TriviaList()))),
