@@ -1,13 +1,13 @@
 # Design notes: MSysObjects catalog index maintenance for round-trip-safe writes
 
-**Status:** Phase C0 + C1 shipped. `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` is wired into `AccessWriter.InsertCatalogEntryAsync` and the splice has been verified structurally correct (entries decode correctly through the writer's own reader). However, **binary page-level bisection (2026-05-03) has identified the two spliced MSysObjects leaf pages (PK `Id` on page 8, composite `ParentIdName` on page 2790) as the root cause of the DAO err 3011 rejection**. Each page individually triggers the failure when it alone carries writer modifications; all other modified pages (TDEF, data, MSysACEs) pass individually. The byte-level divergence from a DAO-authored splice has not yet been identified. See [`round-trip-test-failures.md`](round-trip-test-failures.md) for the full investigation and hypothesis matrix.
+**Status:** Phase C0 + C1 shipped. A **prefix compression cap fix (2026-05-03)** has brought the spliced leaf pages to near-byte-identical match with DAO-authored pages (`pref_len` and `free_space` now match baseline/DAO). However, DAO still rejects both pages — the error on page 8 shifted from `MSysDb (3011)` to `The search key was not found in any record` (closer to correct), and page 2790 has only **1 byte** difference vs DAO (a bitmask bit at `0x01DD`). The remaining divergence is likely in the entry-start bitmask layout or sort-key encoding. See [`round-trip-test-failures.md`](round-trip-test-failures.md) for the full investigation and hypothesis matrix.
 
 **Driver:** Two pinned round-trip tests in [JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs):
 
 - `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`
 - `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`
 
-Both currently fail with DAO error `Could not find the object 'MSysDb'`. Binary page-level bisection has isolated the cause to the splice itself (the two MSysObjects leaf pages), not the TDEF or data pages.
+Both currently fail with DAO errors. Post-pref_len-fix: page 8 triggers `The search key was not found in any record`; page 2790 triggers `MSysDb (3011)`. Binary page-level bisection has isolated the cause to the splice itself (the two MSysObjects leaf pages), not the TDEF or data pages.
 
 **Validation requirement:** any PR landing this work MUST round-trip through Microsoft Access on Windows (open, compact-and-repair, re-open) — see §7. The two failing tests above are the gating signal.
 
@@ -47,18 +47,22 @@ Empirically: routing MSysObjects through this path causes **every** AccessRoundT
 
 The targeted Phase C1 splice path (`IndexMaintainer.TrySpliceCatalogIndexEntryAsync`) descends MSysObjects's real-idx tree, decodes the tail leaf, splices the new entry, and writes it back. Both real-idx slots (ri=0 `ParentIdName`, ri=1 `Id` PK) report success with no bail-out.
 
-A raw-byte decode of the spliced `Id` PK leaf (page 8, orig 239 entries pref=0 → spliced 241 entries pref=1) and the spliced `ParentIdName` composite leaf (page 2790, orig 114 entries pref=1 → spliced 116 entries pref=4) against the original `NorthwindTraders.accdb` confirms:
+A raw-byte decode of the spliced `Id` PK leaf (page 8, orig 239 entries pref=0 → spliced 241 entries pref=0 post-fix) and the spliced `ParentIdName` composite leaf (page 2790, orig 114 entries pref=1 → spliced 116 entries pref=1 post-fix) against the original `NorthwindTraders.accdb` confirms:
 
 - All original entries on both pages decode losslessly after the splice (canonical-key reconstruction with the new shared prefix matches the orig canonical keys byte-for-byte).
 - The two new entries on each page sort correctly relative to their neighbours under big-endian byte comparison.
 - The page-shared prefix is recomputed to the longest common prefix of the new entry set; the entry-start bitmask matches the actual variable-length entry stride; the parent intermediate page (p.7) is byte-identical to the original.
 
-**However, binary page-level bisection (2026-05-03) has proven that pages 8 and 2790 each individually trigger DAO err 3011.** The entries decode correctly through the writer's own reader, but DAO's validation is stricter. The byte-level divergence from a DAO-authored splice has not yet been identified. Possible sub-causes include:
+**Binary page-level bisection (2026-05-03) proved that pages 8 and 2790 each individually trigger DAO rejection.** A prefix compression cap fix (same day) brought the pages much closer:
 
-- Leaf page header field accounting (free_space, tail_entry_offset, pref_len, Jet4 unknown field at offset 8)
-- Entry encoding differences (sort key bytes, row pointer format, entry-start bitmask bits)
-- Page-shared prefix compression divergence
-- Trailing garbage bytes or incorrect free-space accounting
+- **Page 8:** `pref_len=0` matches baseline, `free_space=1456` matches DAO, 18 byte diffs vs baseline (expected: new entry). Error shifted to `The search key was not found in any record`.
+- **Page 2790:** `pref_len=1` matches baseline, `free_space=10` matches DAO, only **1 byte** diff vs DAO at `0x01DD` (bitmask bit — Writer=`0x00`, DAO=`0x40`). Still triggers `MSysDb (3011)`.
+
+Remaining likely sub-causes:
+
+- Entry-start bitmask bit placement (the 1-byte diff on page 2790 is a bitmask bit marking an entry start)
+- Sort-key encoding divergence on page 8 (DAO cannot find the key despite the entry being present)
+- Trailing garbage or stale bytes in the free-space area
 
 The full-rebuild `InsertSystemRowAndMaintainAsync` path was rejected for a separate reason — it re-encodes every existing row, dropping content the writer cannot losslessly emit (the special "Databases" properties row's LvProp blob). That rejection still holds, which is why MSysObjects must use the splice path even though MSysRelationships / MSysComplexColumns can use the rebuild.
 
@@ -117,7 +121,7 @@ We never touch entries we did not insert. The "Databases" row (and any other row
 | Phase | Scope | Status |
 |---|---|---|
 | **C0** | Per-format leaf-page header offsets across `Constants.IndexLeafPage`, `IndexLeafPageBuilder.LeafPageLayout`, `IndexBTreeBuilder`, `IndexLeafIncremental`, `IndexBTreeSeeker`, `AccessWriter.MaintainIndexesAsync`. | **Shipped 2026-05-02.** |
-| **C1** | `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` wired into `AccessWriter.InsertCatalogEntryAsync`; tail-leaf append for monotonic Id inserts. | **Shipped.** Splice verified byte-correct against both MSysObjects real-idx slots; the gating tests still fail for an unrelated reason (see top of doc). |
+| **C1** | `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` wired into `AccessWriter.InsertCatalogEntryAsync`; tail-leaf append for monotonic Id inserts. | **Shipped.** Splice verified byte-correct against both MSysObjects real-idx slots. Prefix compression cap fix landed (2026-05-03). Gating tests still fail due to remaining bitmask/encoding issues (see top of doc). |
 | **C2** | Re-route `InsertSystemRowAndMaintainAsync` (used by MSysRelationships / MSysComplexColumns) through the same splicer; remove dependency on `MaintainIndexesAsync`'s full-rebuild path for system tables. | Open — non-gating. |
 | **C3** | General mid-tree leaf split + intermediate-page rebalancing for system tables. | Open — non-gating. |
 | **C4** | Harden `TryMaintainIndexesIncrementalAsync`'s slot decoder so it no longer silently returns `true` on `slots.Count == 0` for tables known to have indexes. | Open — internal-only. |
