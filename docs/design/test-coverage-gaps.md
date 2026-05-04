@@ -140,9 +140,11 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 ### 2.3 Calculated columns
 
-- [ ] **`[J]`** Calculated-column expressions that reference **another
-  calculated column** (forward and backward dependency order) — Jackcess
-  `CalcColTest` covers this.
+- [x] **`[J]`** Calculated-column expressions that reference **another
+  calculated column** (forward and backward dependency order) — covered by
+  `CalculatedColumnFixtureTests.LastFirstLen_ReferencesAnotherCalculatedColumn`
+  and 5 other metadata/read tests in
+  [CalculatedColumnFixtureTests.cs](../../JetDatabaseWriter.Tests/Core/CalculatedColumnFixtureTests.cs).
 - [ ] **`[J]`** Reading a calculated column whose expression uses the
   Access `Switch`/`IIf` builtins; verify cached result bytes match
   expectations on disk (we treat them as opaque today).
@@ -164,16 +166,23 @@ degrade the §1.1 / §1.2 fixture comparisons are caught up-front.
 
 - [ ] **`[J]`** `MSysAccessStorage` / `MSysNavPaneGroups` round-trip for
   ACE (these are referenced by Jackcess but not asserted).
-- [ ] **`[J]`** Querying `MSysQueries` row-set for a **parameterised** query
-  definition; we have basic query metadata but no parameter assertions.
+- [x] **`[J]`** Querying `MSysQueries` row-set for a **parameterised** query
+  definition — covered by
+  [MsysQueriesFixtureTests.cs](../../JetDatabaseWriter.Tests/Query/MsysQueriesFixtureTests.cs)
+  (3 tests: non-empty row-set, parameter attribute rows with `User Name`,
+  and type-attribute rows for all 9 query kinds).
 
 ---
 
 ## 5. Page / row layout corner cases
 
-- [ ] **`[J]`** Row spanning a **page boundary via overflow pointer**
-  (`0x80`-flagged row id) where the overflow target is itself a row whose
-  variable section needs another overflow.
+- [x] **`[J]`** Row spanning a **page boundary via overflow pointer** —
+  covered by
+  [OverflowRowFixtureTests.cs](../../JetDatabaseWriter.Tests/Core/OverflowRowFixtureTests.cs)
+  (4 tests: table listing, all 7 overflow rows read in V2010, valid data
+  assertions, and Theory over V2007/V2010 ACE formats). Note: V2000/V2003
+  fixtures throw `JetLimitationException` due to deleted-column schema
+  gaps unrelated to overflow handling.
 
 ---
 

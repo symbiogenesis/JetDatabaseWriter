@@ -167,11 +167,9 @@ public sealed class CompositeTextIndexFixtureTests
 
         if (indexesValidated == 0)
         {
-            // The Jackcess compIndex fixtures historically use mixed-type
-            // composites (text + numeric) rather than text-only composites,
-            // so an all-text filter may legitimately match zero indexes in
-            // some fixtures. Surface this as Skip rather than fail so the
-            // test stays informative without flagging a false positive.
+            // The Jackcess compIndex fixtures use mixed-type composites
+            // (text + numeric), not text-only composites. This skip is
+            // expected until a text-only composite fixture is available.
             Assert.Skip($"No multi-column text-only indexes in '{fixturePath}'.");
         }
 

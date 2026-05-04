@@ -36,7 +36,9 @@ public sealed class IndexBTreeStructuralFixtureTests
     public static TheoryData<string> CompIndexFixtures => new()
     {
         TestDatabases.CompIndexTestV2000,
-        TestDatabases.CompIndexTestV2003,
+
+        // V2003 excluded: ListIndexesAsync returns FirstDp=0 for all
+        // indexes in this fixture (test-coverage-gaps.md §1.3).
         TestDatabases.CompIndexTestV2007,
         TestDatabases.CompIndexTestV2010,
     };
@@ -53,13 +55,15 @@ public sealed class IndexBTreeStructuralFixtureTests
                 TestDatabases.IndexTestV2007,
                 TestDatabases.IndexTestV2010,
                 TestDatabases.CompIndexTestV2000,
-                TestDatabases.CompIndexTestV2003,
+
+                // CompIndexTestV2003 excluded: ListIndexesAsync returns
+                // FirstDp=0 for all indexes (test-coverage-gaps.md §1.3).
                 TestDatabases.CompIndexTestV2007,
                 TestDatabases.CompIndexTestV2010,
-                TestDatabases.BigIndexTestV2000,
-                TestDatabases.BigIndexTestV2003,
-                TestDatabases.BigIndexTestV2007,
-                TestDatabases.BigIndexTestV2010,
+
+                // BigIndexTest V2000–V2010 excluded: ListIndexesAsync
+                // returns FirstDp=0 for all indexes in these fixtures
+                // (test-coverage-gaps.md §1.3).
                 TestDatabases.TestIndexCodesV2000,
                 TestDatabases.TestIndexCodesV2003,
                 TestDatabases.TestIndexCodesV2007,
@@ -105,7 +109,7 @@ public sealed class IndexBTreeStructuralFixtureTests
         IndexMetadata? primary = indexes.FirstOrDefault(i => !i.IsForeignKey && i.FirstDp > 0);
         if (primary is null)
         {
-            Assert.Skip($"No non-FK index with first_dp on Table1 of '{fixturePath}'.");
+            Assert.Fail($"No non-FK index with first_dp on Table1 of '{fixturePath}'.");
         }
 
         int leafEntryCount = await CountLeafEntriesAsync(reader, layout, pageSize, primary.FirstDp, ct);
@@ -195,7 +199,7 @@ public sealed class IndexBTreeStructuralFixtureTests
 
         if (btreesChecked == 0 || totalEntries == 0)
         {
-            Assert.Skip($"No scannable B-trees in '{fixturePath}'.");
+            Assert.Fail($"No scannable B-trees in '{fixturePath}'.");
         }
     }
 
@@ -271,7 +275,7 @@ public sealed class IndexBTreeStructuralFixtureTests
 
         if (totalEntries == 0)
         {
-            Assert.Skip($"No leaf entries scanned in '{fixturePath}'.");
+            Assert.Fail($"No leaf entries scanned in '{fixturePath}'.");
         }
 
         Assert.Empty(seenInvalidPages);
