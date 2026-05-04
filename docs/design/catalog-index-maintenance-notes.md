@@ -1,13 +1,13 @@
 # Design notes: MSysObjects catalog index maintenance for round-trip-safe writes
 
-**Status:** Phase C0 + C1 shipped. `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` is wired into `AccessWriter.InsertCatalogEntryAsync` and the splice has been verified byte-correct on both MSysObjects real-idx slots (PK `Id` and composite `ParentIdName`). The two gating round-trip tests below still fail under DAO compact, but **not** because of the splice — the remaining failure is in the new-table TDEF page (zero `ump_page` / `free_ump_page` pointers). See [`round-trip-test-failures.md`](round-trip-test-failures.md) for the current root-cause analysis.
+**Status:** Phase C0 + C1 shipped. `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` is wired into `AccessWriter.InsertCatalogEntryAsync` and the splice has been verified structurally correct (entries decode correctly through the writer's own reader). However, **binary page-level bisection (2026-05-03) has identified the two spliced MSysObjects leaf pages (PK `Id` on page 8, composite `ParentIdName` on page 2790) as the root cause of the DAO err 3011 rejection**. Each page individually triggers the failure when it alone carries writer modifications; all other modified pages (TDEF, data, MSysACEs) pass individually. The byte-level divergence from a DAO-authored splice has not yet been identified. See [`round-trip-test-failures.md`](round-trip-test-failures.md) for the full investigation and hypothesis matrix.
 
 **Driver:** Two pinned round-trip tests in [JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs):
 
 - `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`
 - `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`
 
-Both currently fail with DAO error `Could not find the object 'MSysDb'`. The original diagnosis pinned this on the catalog index not being maintained; the splice work below addressed that, and the surface error now stems from a separate writer defect tracked in the failures doc.
+Both currently fail with DAO error `Could not find the object 'MSysDb'`. Binary page-level bisection has isolated the cause to the splice itself (the two MSysObjects leaf pages), not the TDEF or data pages.
 
 **Validation requirement:** any PR landing this work MUST round-trip through Microsoft Access on Windows (open, compact-and-repair, re-open) — see §7. The two failing tests above are the gating signal.
 
@@ -53,7 +53,12 @@ A raw-byte decode of the spliced `Id` PK leaf (page 8, orig 239 entries pref=0 �
 - The two new entries on each page sort correctly relative to their neighbours under big-endian byte comparison.
 - The page-shared prefix is recomputed to the longest common prefix of the new entry set; the entry-start bitmask matches the actual variable-length entry stride; the parent intermediate page (p.7) is byte-identical to the original.
 
-**The leaf-page on-disk layout is not the bug.** Disabling the splice surfaces a *different* DAO error (`Object invalid or no longer set`), confirming the splice is necessary for the row to be findable; the splice is not what trips the `'MSysDb'` walk. The remaining failure has been localised to the new-table TDEF page (zero `ump_page` / `free_ump_page` pointers) — see [`round-trip-test-failures.md`](round-trip-test-failures.md).
+**However, binary page-level bisection (2026-05-03) has proven that pages 8 and 2790 each individually trigger DAO err 3011.** The entries decode correctly through the writer's own reader, but DAO's validation is stricter. The byte-level divergence from a DAO-authored splice has not yet been identified. Possible sub-causes include:
+
+- Leaf page header field accounting (free_space, tail_entry_offset, pref_len, Jet4 unknown field at offset 8)
+- Entry encoding differences (sort key bytes, row pointer format, entry-start bitmask bits)
+- Page-shared prefix compression divergence
+- Trailing garbage bytes or incorrect free-space accounting
 
 The full-rebuild `InsertSystemRowAndMaintainAsync` path was rejected for a separate reason — it re-encodes every existing row, dropping content the writer cannot losslessly emit (the special "Databases" properties row's LvProp blob). That rejection still holds, which is why MSysObjects must use the splice path even though MSysRelationships / MSysComplexColumns can use the rebuild.
 
@@ -117,7 +122,7 @@ We never touch entries we did not insert. The "Databases" row (and any other row
 | **C3** | General mid-tree leaf split + intermediate-page rebalancing for system tables. | Open — non-gating. |
 | **C4** | Harden `TryMaintainIndexesIncrementalAsync`'s slot decoder so it no longer silently returns `true` on `slots.Count == 0` for tables known to have indexes. | Open — internal-only. |
 
-**C0 + C1 have shipped.** C2/C3/C4 reduce technical debt but are not gating. The remaining gating-test failure is tracked in [`round-trip-test-failures.md`](round-trip-test-failures.md) (new-table TDEF `ump_page` zero).
+**C0 + C1 have shipped.** C2/C3/C4 reduce technical debt but are not gating. The remaining gating-test failure is tracked in [`round-trip-test-failures.md`](round-trip-test-failures.md) — root cause isolated to the splice output on MSysObjects leaf pages (hypothesis #15).
 
 ## 6. Verification
 
@@ -126,7 +131,7 @@ The shipped splice is exercised by:
 - `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` is hit on every `AccessWriter.CreateTableAsync` call against a real-idx-bearing catalog table; any user-table create going through the existing test suite covers it.
 - The `DIAG_RT_DAO_BASELINE` probe (FormatProbe `DaoBaselineProbe`) re-decodes the spliced leaves and compares them against a DAO-authored copy of the same operation, asserting every original key still decodes losslessly and the new key sorts correctly.
 
-The two gating round-trip tests (§1) **do not yet pass**, but they fail on the new-table TDEF defect described in [`round-trip-test-failures.md`](round-trip-test-failures.md), not on the splice.
+The two gating round-trip tests (§1) **do not yet pass** — they fail because the spliced leaf pages are rejected by DAO (see [`round-trip-test-failures.md`](round-trip-test-failures.md) hypothesis #15). The byte-level divergence from a DAO-authored splice is the active investigation.
 
 ## 7. Validation protocol
 
