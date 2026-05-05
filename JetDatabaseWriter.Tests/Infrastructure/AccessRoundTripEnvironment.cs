@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
 /// Probes for a Microsoft Access install (MSACCESS.EXE plus a bitness-matched
@@ -19,11 +20,13 @@ using System.Runtime.InteropServices;
 /// file never appears for the test to validate.
 /// </para>
 /// <para>
-/// The DAO COM class is bitness-sensitive: 32-bit Office installs (the common
-/// click-to-run default) only register a 32-bit DAO, so a 64-bit .NET test
-/// process can't activate it in-proc. To stay portable we shell out to the
-/// matching <c>powershell.exe</c> bitness and run a small script that
-/// constructs the COM object and calls <c>CompactDatabase(src, dst)</c>.
+/// The DAO COM class is bitness-sensitive: it is registered as x86, x64, or
+/// ARM64 depending on the Office install. A .NET test process can't activate
+/// it in-proc when the bitness doesn't match. To stay portable we shell out
+/// to a <c>powershell.exe</c> host whose bitness matches the DAO registration
+/// (resolved by <see cref="DaoPowerShellHostResolver"/>) and run a small
+/// script that constructs the COM object and calls
+/// <c>CompactDatabase(src, dst)</c>.
 /// </para>
 /// <para>
 /// All probes are no-ops on non-Windows platforms; <see cref="SkipReason"/>
@@ -184,95 +187,8 @@ internal static class AccessRoundTripEnvironment
             return new ProbeResult(null, null, "MSACCESS.EXE not found in any standard install location.");
         }
 
-        // Prefer the PowerShell host that matches the Office install bitness,
-        // then fall back to the other host. The install path is only a hint:
-        // click-to-run and partial Office installs can leave DAO registered for
-        // the opposite host, so availability must be verified by actually
-        // instantiating DAO.DBEngine.120.
-        bool office32 = msaccess.Contains("Program Files (x86)", StringComparison.OrdinalIgnoreCase);
-        const string SysWow64 = @"C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe";
-        const string Sys32 = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
-        string[] preferredHosts = office32
-            ? [SysWow64, Sys32]
-            : [Sys32, SysWow64];
-
-        string? firstFailure = null;
-        foreach (string host in preferredHosts.Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            if (!File.Exists(host))
-            {
-                continue;
-            }
-
-            if (TryProbeDaoHost(host, out string? failure))
-            {
-                return new ProbeResult(msaccess, host, null);
-            }
-
-            firstFailure ??= failure;
-        }
-
-        if (!File.Exists(Sys32) && !File.Exists(SysWow64))
-        {
-            return new ProbeResult(msaccess, null, "Windows PowerShell host not found at the expected location.");
-        }
-
-        return new ProbeResult(
-            msaccess,
-            null,
-            firstFailure ?? "DAO.DBEngine.120 could not be activated from a compatible Windows PowerShell host.");
-    }
-
-    private static bool TryProbeDaoHost(string powershellPath, out string? failure)
-    {
-        const string ProbeScript = "$ErrorActionPreference = 'Stop'; $engine = New-Object -ComObject DAO.DBEngine.120; try { exit 0 } finally { if ($null -ne $engine) { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null }; [GC]::Collect(); [GC]::WaitForPendingFinalizers() }";
-
-        var psi = new ProcessStartInfo(powershellPath)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-ExecutionPolicy");
-        psi.ArgumentList.Add("Bypass");
-        psi.ArgumentList.Add("-Command");
-        psi.ArgumentList.Add(ProbeScript);
-
-        try
-        {
-            using var process = Process.Start(psi);
-            if (process is null)
-            {
-                failure = $"Failed to start PowerShell host '{powershellPath}'.";
-                return false;
-            }
-
-            string stdout = process.StandardOutput.ReadToEnd();
-            string stderr = process.StandardError.ReadToEnd();
-            if (!process.WaitForExit(10000))
-            {
-                TryKill(process);
-                failure = $"Timed out while probing DAO with '{powershellPath}'.";
-                return false;
-            }
-
-            if (process.ExitCode == 0)
-            {
-                failure = null;
-                return true;
-            }
-
-            string detail = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
-            failure = $"DAO.DBEngine.120 activation failed via '{powershellPath}': {detail.Trim()}";
-            return false;
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            failure = $"DAO probe launch failed via '{powershellPath}': {ex.Message}";
-            return false;
-        }
+        DaoPowerShellHostResolver.DaoPowerShellHostProbeResult hostProbe = DaoPowerShellHostResolver.Probe(msaccess);
+        return new ProbeResult(msaccess, hostProbe.HostPath, hostProbe.FailureReason);
     }
 
     private static void TryKill(Process p)
