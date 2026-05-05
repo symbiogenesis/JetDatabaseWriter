@@ -249,6 +249,41 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
             await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbAgile, NoLockOptions(), TestContext.Current.CancellationToken));
     }
 
+    // ───── CreateDatabaseAsync ignores password ────────────────────────
+
+    /// <summary>
+    /// <c>AccessWriter.CreateDatabaseAsync</c> always produces an
+    /// unencrypted file even when the options carry a password — the intended
+    /// workflow is create-then-encrypt via <c>AccessWriter.EncryptAsync</c>.
+    /// </summary>
+    [Fact]
+    public async Task CreateDatabaseAsync_WithPasswordOption_ProducesUnencryptedFile()
+    {
+        var ms = new MemoryStream();
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions("ignoredpassword") { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [new ColumnDefinition("Id", typeof(int))],
+                TestContext.Current.CancellationToken);
+        }
+
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(
+            ms,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("T", tables);
+    }
+
     // ───── Stream overload sanity check ──────────────────────────────
 
     [Fact]
