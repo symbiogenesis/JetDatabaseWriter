@@ -8,8 +8,6 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Property-based and structural assertions for
 /// <see cref="GeneralTextIndexEncoder"/> and

@@ -10,8 +10,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Round-trip tests for the cross-leaf surgical (cross-leaf surgical multi-level mutation)
 /// path in <c>AccessWriter.TrySurgicalCrossLeafMaintainAsync</c>. The in-place leaf rewrite /

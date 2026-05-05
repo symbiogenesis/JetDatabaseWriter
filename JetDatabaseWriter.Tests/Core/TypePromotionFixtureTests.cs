@@ -7,8 +7,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Fixture-based tests for type-promoted columns using the Jackcess
 /// <c>testPromotionV*.mdb/.accdb</c> fixtures. These databases exercise

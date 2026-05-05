@@ -9,8 +9,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Tests for per-flat-table PK / FK indexes. The attachment flat-table
 /// layout is verified against

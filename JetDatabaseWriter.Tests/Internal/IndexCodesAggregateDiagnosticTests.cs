@@ -18,8 +18,6 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Sibling of <see cref="GeneralLegacyEncoderFixtureTests"/> that <em>does
 /// not</em> bail on the first encoder/leaf mismatch. Instead it sweeps every

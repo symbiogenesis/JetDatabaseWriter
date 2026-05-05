@@ -11,8 +11,6 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Round-trip tests for primary-key emission.
 /// <para>

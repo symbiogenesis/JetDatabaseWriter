@@ -8,8 +8,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Round-trip tests for Memo values that use the Jet4 UCS-2 → ASCII
 /// compression path. When a Memo string contains only Latin-1 characters,

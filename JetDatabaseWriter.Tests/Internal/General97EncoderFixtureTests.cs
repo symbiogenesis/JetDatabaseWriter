@@ -8,8 +8,6 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Fixture-driven validation of <see cref="General97TextIndexEncoder"/>.
 /// Mirrors <see cref="GeneralLegacyEncoderFixtureTests"/> but targets the

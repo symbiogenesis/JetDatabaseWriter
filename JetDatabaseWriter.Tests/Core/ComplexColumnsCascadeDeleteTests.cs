@@ -10,8 +10,6 @@ using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Cascade-on-delete for complex (Attachment / MultiValue) columns. When a
 /// parent row is removed via <see cref="IAccessWriter.DeleteRowsAsync"/>

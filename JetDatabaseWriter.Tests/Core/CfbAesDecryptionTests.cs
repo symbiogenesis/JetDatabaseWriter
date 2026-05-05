@@ -15,7 +15,6 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
 #pragma warning disable CA5358 // ECB mode is intentional for deterministic test fixture encryption
 
 /// <summary>

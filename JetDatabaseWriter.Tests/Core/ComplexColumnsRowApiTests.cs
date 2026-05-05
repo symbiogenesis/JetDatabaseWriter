@@ -13,8 +13,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Round-trip tests for the row-level complex-column APIs:
 /// <see cref="IAccessWriter.AddAttachmentAsync"/>,

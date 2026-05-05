@@ -5,8 +5,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Read tests for the ACE-only system tables <c>MSysAccessStorage</c> and
 /// <c>MSysNavPaneGroups</c>. These tables are present in every

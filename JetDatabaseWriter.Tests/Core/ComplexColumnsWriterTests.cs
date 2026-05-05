@@ -10,8 +10,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Tests for the complex-columns writer surface
 /// (see <c>docs/design/complex-columns-format-notes.md</c>).

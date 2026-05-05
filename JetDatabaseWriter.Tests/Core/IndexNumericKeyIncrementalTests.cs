@@ -10,8 +10,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Tests for T_NUMERIC incremental — drop the <c>T_NUMERIC</c> bail from the
 /// incremental B-tree fast paths. The fast paths now use the column's DECLARED

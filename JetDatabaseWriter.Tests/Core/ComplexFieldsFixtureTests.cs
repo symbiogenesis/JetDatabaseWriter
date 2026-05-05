@@ -9,8 +9,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Tests targeting <c>ComplexFields.accdb</c> — an ACCDB fixture created by
 /// Access 16 COM automation. It contains:

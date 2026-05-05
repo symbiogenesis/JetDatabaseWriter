@@ -9,7 +9,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
 
 /// <summary>

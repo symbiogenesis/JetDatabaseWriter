@@ -13,8 +13,6 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Tests for the tail-page append optimisation and the matching key-type
 /// restriction:

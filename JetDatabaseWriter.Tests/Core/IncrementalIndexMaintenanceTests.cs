@@ -9,8 +9,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Round-trip tests for the single-leaf incremental incremental B-tree maintenance
 /// fast path. The fast path is engaged on insert/update/delete when the

@@ -8,8 +8,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Per-type assertions for the three LVAL storage forms:
 /// <list type="bullet">

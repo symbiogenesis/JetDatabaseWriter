@@ -11,8 +11,6 @@ using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Round-trip tests for multi-column / unique / descending
 /// <see cref="IndexDefinition"/> emission:

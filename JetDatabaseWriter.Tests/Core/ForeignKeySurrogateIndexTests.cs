@@ -8,8 +8,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Validates that foreign-key surrogate indexes (the auto-created indexes
 /// that back relationship constraints) are surfaced correctly by

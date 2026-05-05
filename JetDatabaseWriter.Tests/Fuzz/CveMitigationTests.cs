@@ -7,8 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
-
-#pragma warning disable CA1707 // Test names use underscores by convention.
 #pragma warning disable SA1312 // Variable '_' is a discard.
 
 /// <summary>
