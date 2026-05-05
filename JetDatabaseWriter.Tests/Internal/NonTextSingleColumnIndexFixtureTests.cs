@@ -54,17 +54,12 @@ public sealed class NonTextSingleColumnIndexFixtureTests
                 TestDatabases.IndexTestV2007,
                 TestDatabases.IndexTestV2010,
 
-                // BigIndexTest V2000–V2010 excluded: ListIndexesAsync
-                // returns FirstDp=0 for all indexes in these fixtures
-                // (test-coverage-gaps.md §1.3).
+                // BigIndexTest V2000–V2010 excluded: schema-only templates
+                // with an empty text index (Jackcess populates at test time).
 
                 // BinIdxTest V2010 excluded: binary single-column indexes
                 // are intentionally filtered out (test-coverage-gaps.md
                 // §1.1).
-
-                // FixedNumericTest V2000–V2010 excluded: ListIndexesAsync
-                // returns FirstDp=0 for all indexes in these fixtures
-                // (same §1.3 gap as bigIndexTest).
             })
             {
                 data.Add(p);

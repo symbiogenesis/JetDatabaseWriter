@@ -32,15 +32,17 @@ using Xunit;
 /// </summary>
 public sealed class IndexBTreeStructuralFixtureTests
 {
-    public static TheoryData<string> CompIndexFixtures => new()
-    {
+    public static TheoryData<string> CompIndexFixtures =>
+    [
         TestDatabases.CompIndexTestV2000,
 
-        // V2003 excluded: ListIndexesAsync returns FirstDp=0 for all
-        // indexes in this fixture (test-coverage-gaps.md §1.3).
+        // V2003 excluded: the on-disk MSysObjects catalog for this fixture
+        // contains only system tables (every Type=1 entry has the system
+        // bit set in Flags) — there is no user Table1 to scan. Not a
+        // reader bug; verified via catalog dump on 2026-05-04.
         TestDatabases.CompIndexTestV2007,
         TestDatabases.CompIndexTestV2010,
-    };
+    ];
 
     public static TheoryData<string> AllJackcessFixtures
     {
@@ -55,14 +57,16 @@ public sealed class IndexBTreeStructuralFixtureTests
                 TestDatabases.IndexTestV2010,
                 TestDatabases.CompIndexTestV2000,
 
-                // CompIndexTestV2003 excluded: ListIndexesAsync returns
-                // FirstDp=0 for all indexes (test-coverage-gaps.md §1.3).
+                // CompIndexTestV2003 excluded: on-disk MSysObjects has no
+                // user (Type=1) tables, only system tables. Verified via
+                // catalog dump on 2026-05-04 — not a catalog reader bug.
                 TestDatabases.CompIndexTestV2007,
                 TestDatabases.CompIndexTestV2010,
 
-                // BigIndexTest V2000–V2010 excluded: ListIndexesAsync
-                // returns FirstDp=0 for all indexes in these fixtures
-                // (test-coverage-gaps.md §1.3).
+                // BigIndexTest V2000–V2010 excluded: these are schema-only
+                // templates (Jackcess populates them at test time); the
+                // on-disk index B-tree root page exists (FirstDp > 0) but
+                // contains zero leaf entries.
                 TestDatabases.TestIndexCodesV2000,
                 TestDatabases.TestIndexCodesV2003,
                 TestDatabases.TestIndexCodesV2007,
@@ -76,6 +80,14 @@ public sealed class IndexBTreeStructuralFixtureTests
             return data;
         }
     }
+
+    public static TheoryData<string> BigIndexFixtures =>
+    [
+        TestDatabases.BigIndexTestV2000,
+        TestDatabases.BigIndexTestV2003,
+        TestDatabases.BigIndexTestV2007,
+        TestDatabases.BigIndexTestV2010,
+    ];
 
     /// <summary>
     /// Mirrors Jackcess <c>IndexTest.testComplexIndex</c>:
@@ -275,6 +287,108 @@ public sealed class IndexBTreeStructuralFixtureTests
         }
 
         Assert.Empty(seenInvalidPages);
+    }
+
+    /// <summary>
+    /// Mirrors Jackcess <c>BigIndexTest.testBigIndex</c>: the on-disk
+    /// <c>bigIndexTest*</c> fixtures are schema-only templates (Table1
+    /// with two text columns and a non-unique index on <c>col1</c>; root
+    /// page exists but holds zero leaf entries). Jackcess populates them
+    /// at runtime to force a multi-level B-tree, then asserts the index
+    /// stays consistent. We do the same: copy the fixture to a temp path,
+    /// use <see cref="AccessWriter"/> to insert enough rows to split the
+    /// root into an intermediate, then run the row-count == leaf-entry-count
+    /// and monotonic-byte-order invariants against the populated copy via
+    /// <see cref="AccessReader"/>. This is a writer→reader round-trip on
+    /// a multi-level B-tree, not a pure read of canonical Jackcess output.
+    /// </summary>
+    /// <param name="fixturePath">Absolute path to a <c>bigIndexTest*</c> fixture.</param>
+    [Theory]
+    [MemberData(nameof(BigIndexFixtures))]
+    public async Task BigIndex_PopulatedAtRuntime_RowCount_EqualsLeafEntryCount(string fixturePath)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        const int rowCount = 2000;
+
+        string temp = Path.Combine(
+            Path.GetTempPath(),
+            $"bigIndexTest_{Guid.NewGuid():N}{Path.GetExtension(fixturePath)}");
+        File.Copy(fixturePath, temp);
+        File.SetAttributes(temp, FileAttributes.Normal);
+
+        try
+        {
+            await using (AccessWriter writer = await AccessWriter.OpenAsync(
+                temp,
+                new AccessWriterOptions { UseLockFile = false },
+                ct))
+            {
+                _ = await writer.InsertRowsAsync("Table1", EnumerateRows(rowCount), ct);
+            }
+
+            static IEnumerable<object[]> EnumerateRows(int count)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    // Vary key length to exercise different leaf-entry sizes;
+                    // include 'i' to keep keys distinct.
+                    string col1 = string.Create(
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        $"key{i:D6}_{new string('x', i % 17)}");
+                    string col2 = string.Create(
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        $"data{i}");
+                    yield return [col1, col2];
+                }
+            }
+
+            await using AccessReader reader = await AccessReader.OpenAsync(
+                temp,
+                new AccessReaderOptions { UseLockFile = false },
+                ct);
+
+            IndexLeafPageBuilder.LeafPageLayout layout =
+                IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+            int pageSize = reader.PageSize;
+
+            DataTable dt = await reader.ReadDataTableAsync("Table1", cancellationToken: ct);
+            Assert.Equal(rowCount, dt.Rows.Count);
+
+            IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Table1", ct);
+            IndexMetadata index = indexes.Single(i => !i.IsForeignKey && i.FirstDp > 0);
+
+            // Walk down through any intermediate levels and confirm the tree
+            // actually has at least one — otherwise this test isn't covering
+            // what its name claims.
+            byte[] rootPage = await reader.GetRawPageBytesAsync(index.FirstDp, ct);
+            Assert.True(
+                rootPage[0] == Constants.IndexLeafPage.PageTypeIntermediate,
+                $"Expected root page 0x{index.FirstDp:X} to be intermediate (0x03) for a populated big-index B-tree; got 0x{rootPage[0]:X2}.");
+
+            List<IndexEntry> leafEntries = await CollectAllLeafEntriesAsync(
+                reader, layout, pageSize, index.FirstDp, ct);
+
+            Assert.Equal(rowCount, leafEntries.Count);
+
+            // Monotonic unsigned-byte order across the full leaf chain.
+            for (int i = 1; i < leafEntries.Count; i++)
+            {
+                int cmp = CompareBytesUnsigned(leafEntries[i - 1].Key, leafEntries[i].Key);
+                Assert.True(
+                    cmp <= 0,
+                    $"Out-of-order leaf entries at position {i} in populated '{Path.GetFileName(fixturePath)}'.");
+            }
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temp);
+            }
+            catch (IOException)
+            {
+            }
+        }
     }
 
     private static async Task<int> CountLeafEntriesAsync(

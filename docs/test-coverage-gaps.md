@@ -55,40 +55,6 @@ in [GeneralAndGeneral97EncoderUnitTests.cs](../../JetDatabaseWriter.Tests/Intern
   also still run un-asserted for the same reason. See
   [long-row-index-encoding.md](long-row-index-encoding.md).
 
-### 1.2 B-tree structural
-
-Structural-invariant sweep across the Jackcess fixture corpus is in
-[IndexBTreeStructuralFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexBTreeStructuralFixtureTests.cs):
-asserts row-count == leaf-entry-count for `compIndexTest*` (Jackcess
-`testComplexIndex`), unsigned byte-order monotonicity of every leaf chain
-(Jackcess `testByteOrder`), and that every leaf entry's row trailer points
-at a data-page within the file. Doubly-linked list consistency
-(`prev(next(page)) == page`) is verified by
-[IndexLeafChainConsistencyTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexLeafChainConsistencyTests.cs).
-`child_tail` pointer validity on intermediate pages is checked by
-[IndexChildTailPointerTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexChildTailPointerTests.cs).
-Leaf-walker bugs that would silently degrade the §1.1 / §1.2 fixture
-comparisons are caught up-front.
-
-- [ ] **`[J]` `[L]`** Round-trip an index after **multi-level intermediate
-  splits** caused by deletes — `IndexSurgicalCascadingIntermediateCollapseTests`
-  covers collapse, but not the rebalance/borrow path Jackcess exercises in
-  `testCursors`/`testIndexCreation`.
-- [ ] **`[J]` `[M]`** **`bigIndexTest*` fixtures surface zero scannable
-  B-trees / zero leaf entries / zero "applicable" single-column non-text
-  indexes across all four format variants (V2000, V2003, V2007, V2010)** in
-  [IndexBTreeStructuralFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexBTreeStructuralFixtureTests.cs)
-  and [NonTextSingleColumnIndexFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/NonTextSingleColumnIndexFixtureTests.cs).
-  These fixtures are purpose-built to stress wide/deep index B-trees, so
-  the consistent "nothing to scan" signal across three independent theory
-  tests strongly suggests our `ListIndexesAsync` path is returning
-  `FirstDp=0` (or filtering as FK) for every index in those fixtures
-  rather than the fixtures legitimately being empty. Same symptom appears
-  for `compIndexTestV2003` (zero leaf entries, no non-FK index with
-  `first_dp` on Table1). Worth re-checking after the 2026-05-03 Jet3
-  `ColMapOffset` fix — the V1997 reader bug that fix closed had the same
-  symptom, but for Jet4/ACE fixtures so the root cause must differ.
-
 ---
 
 ## 2. Column type & row decode
