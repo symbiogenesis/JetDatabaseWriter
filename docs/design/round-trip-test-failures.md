@@ -79,7 +79,7 @@ Pages added              : new TDEF, new PK leaf, new usage-map page (+3 to +6 d
 | New PK leaf (3009) | RT_Customers PK leaf (page_type=0x04, parent=3008) | ✅ | Empty leaf, well-formed |
 | New usage-map page (3010) | RT_Customers used/free pages (page_type=0x01) | ✅ | Byte-identical to baseline |
 
-Page 5 of NorthwindTraders is `page_type=0x02` (a TDEF page), NOT a global page-allocation map. There is no evidence Jet/ACE has a centralised GPM separate from per-table usage maps; an earlier note in this document claiming page 5 was the GPM was **incorrect** and has been removed.
+Page 5 of NorthwindTraders is `page_type=0x02` (a TDEF page), NOT a global page-allocation map. An earlier note claiming page 5 was the GPM was incorrect. **Page 1 is the actual global page-allocation map** (see §"DAO baseline differences §2" below), but it is irrelevant for append-only writes — appended pages are inherently "in-use" without a GPM update.
 
 ## Fixes already landed (do not regress)
 
@@ -140,7 +140,11 @@ Manually patching file offset `0x0E02` from `0x00` to `0x04` (matching DAO's bum
 
 ### GPM (page 1) — ruled out for append-only (2026-05-03)
 
-Page 1's global page-allocation bitmap uses convention **1 = free, 0 = in-use**. Pages appended beyond the original file size have no corresponding bit (or their bit is already 0 = in-use). DAO only modifies page 1 when *reusing* free pages from the free list (clearing their "1 = free" bits to "0 = in-use"). The writer's append-only allocator never creates pages that need GPM updates — new pages are inherently "in-use" by virtue of not having a "free" bit set.
+Page 1 **is** the global page-allocation bitmap (confirmed by DAO baseline diff — see §"DAO baseline differences §2" below). Its convention is **1 = free, 0 = in-use**. Pages appended beyond the original file size have no corresponding bit (or their bit is already 0 = in-use). DAO only modifies page 1 when *reusing* free pages from the free list (clearing their "1 = free" bits to "0 = in-use"). The writer's append-only allocator never creates pages that need GPM updates — new pages are inherently "in-use" by virtue of not having a "free" bit set.
+
+### Entry-start bitmask sentinel (2026-05-04)
+
+`BuildLeafPage` now writes a sentinel bit at the position one past the last entry in the entry-start bitmask. Access/DAO always writes this sentinel (verified on every leaf page in NorthwindTraders.accdb) and validates it during Compact & Repair. Without the sentinel, DAO rejects the page even when all entry data is correct. Five test helper `CountLeafEntries` methods updated to subtract 1 from the bitmask popcount to account for the sentinel. **Combined with the prefix compression cap (#16), this resolved the N1 reproducer.**
 
 ## Format facts established during the investigation
 
@@ -202,22 +206,20 @@ EOD/var-table/null-mask/var-length all parse cleanly; structurally indistinguish
 1. `Name` is written as compressed UCS-2 (`FF FE` marker + 1B/char) instead of raw UTF-16. Already ruled out as the blocker (hypothesis #12; re-confirmed today).
 2. `LvProp` (varIdx 8) and `LvExtra` (varIdx 10) are NULL.
 
-### `LvProp` NULL — verdict deferred (script bug)
+### `LvProp` NULL — resolved (fix landed 2026-05-03)
 
-A sweep across every Type=1 row in `NorthwindTraders.accdb` was attempted via `dump-type1.ps1` to determine whether DAO tolerates a NULL `LvProp` on user-table catalog rows. The sweep reported ~14 system rows (`MSysObjects`, `MSysACEs`, `MSysQueries`, `MSysRelationships`, `MSysComplexColumns`, all `MSysComplexType_*`, `MSysAccessStorage`, `MSysNameMap`, `MSysNavPane*`, `MSysResources`, plus user table `f_086A23…_Data`) with `LvProp = NULL`. **This was a script bug**: PowerShell's `[int]((14)/8)` rounds the float 1.75 → 2 (banker's rounding), so the script was reading `nullMask[2]` instead of `nullMask[1]` for column 14's null bit. The actual nullmask bit for `LvProp` was therefore not checked. The sweep needs to be redone with `[int][math]::Floor((14)/8)` (or `14 -shr 3`) before this hypothesis can be conclusively closed.
+> **Superseded:** The DAO baseline comparison (§"DAO baseline differences §4" below) conclusively showed DAO writes `LvProp` non-null on every user-table catalog row. Fix landed: `Constants.SystemObjects.DefaultLvPropPlaceholder` (12 zero bytes) is stamped when `JetExpressionConverter.BuildLvPropBlob` returns null. Necessary but not sufficient — DAO compact still rejected after this fix alone.
 
-Independent observation — `Companies` (Access-authored Type=1 row at id=50) has `entry[8] = 52`, `entry[9] = 64`: a 12-byte `LvProp` payload that does NOT begin with the `MR2\0` property-block magic (bytes are `40 00 34 00 34 00 34 00 34 00 34 00`, which look like jump-table offsets, not a property block). So Access's `LvProp` semantics on user-table catalog rows are not necessarily "emit a property block" — they appear to be more opaque than `JetExpressionConverter.BuildLvPropBlob` assumes. This warrants its own investigation before any synthetic LvProp blob is added.
+Note: An earlier `dump-type1.ps1` sweep had a script bug (PowerShell banker's rounding on the null-mask byte index) which produced incorrect results. The DAO baseline probe supersedes that sweep.
 
-- All 49 rows use `ParentId = 0x0F000001` (re-confirms hypothesis #10).
+### ~~Where the defect must live~~ (superseded 2026-05-04)
 
-### Where the defect must live
+> **Superseded:** The actual root cause was the index leaf pages (8, 2790) — specifically missing prefix compression cap and entry-start bitmask sentinel. All four candidates below were cleared by the N1 bisection + sentinel fix. This section is preserved for historical context only.
 
-Given (a) the catalog row body is well-formed and (b) the MSysObjects TDEF and both spliced index leaves are byte-clean, the failure must originate in one of the three pages **added** by the writer (which are NOT visible in the shared-range diff), in the new row's variable-length payload (LvProp/LvExtra; not yet conclusively cleared), or in some structure that references those new pages without proper accounting:
-
-1. **New TDEF page body (3008)** has only been verified "byte-shape-identical to baseline" at the header level. The column descriptors, real-idx descriptors, and trailing index/usage-map block beyond offset 0x3F have not been diffed against an Access-UI-created RT_-prefix table on the same file.
-2. **New per-table usage-map page (3010)** is byte-identical to a baseline usage-map *in isolation* — but the bitmap contents (which bits are set) have not been diffed. An empty bitmap may be inconsistent with the TDEF claiming the table owns a PK leaf page (3009).
-3. **New PK leaf (3009)** is well-formed in isolation, but its parent-page back-pointer chain (`prev`/`next` on the leaf, parent linkage in the TDEF) has not been independently verified end-to-end.
-4. **`LvProp` on the new row** — re-verify with a corrected null-mask check; if Access actually requires a non-null payload here for user-table rows, this is still in play.
+1. ~~**New TDEF page body (3008)**~~ — verified correct; appended pages all pass individually.
+2. ~~**New per-table usage-map page (3010)**~~ — byte-identical to baseline.
+3. ~~**New PK leaf (3009)**~~ — well-formed; passes individually.
+4. ~~**`LvProp` on the new row**~~ — fix landed (12-byte placeholder); necessary but not the trigger.
 
 ## DAO baseline differences (2026-05-03 evening)
 
@@ -326,7 +328,7 @@ Root cause of N2+ failure:
 3. **~~Fix the entry-start bitmask sentinel~~** ✅ Done. Sentinel bit fix landed. N1 now passes.
 4. **~~Investigate N2 failure~~** ✅ Done (2026-05-04). Root cause identified — see §"N2 failure analysis" below.
 5. **Fix `TryBuildSplitLeafPages` to pass `maxPrefixLength` cap** — the split path in `TrySpliceCatalogIndexEntryAsync` calls `IndexLeafPageBuilder.BuildLeafPage` without `maxPrefixLength`, allowing `pref_len` to grow beyond the original page's value. The non-split rewrite correctly passes `maxPrefixLength: originalPrefLen` — the split path must do the same for page[0] (which reuses the original page number). New split pages (page[1..N-1]) should also cap at the original `pref_len` to match DAO's convention of never exceeding the root-authored prefix.
-6. **Investigate page 2994** (data page) — fails with `Object invalid or no longer set` in the full 2-table+rel test. May be a cascading failure from corrupted index pages, or may indicate a separate data-page issue when two catalog rows share the same page.
+6. **Investigate page 2994** (data page) — fails with `Object invalid or no longer set` in the full 2-table+rel test. Almost certainly a cascading failure from the corrupted split-product index pages (2790, 3019) rather than a standalone data-page defect — the N1 bisection proved page 2994 passes when index pages are correct. Expected to resolve once step 5 lands.
 
 ## N2 failure analysis (2026-05-04)
 

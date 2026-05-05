@@ -17,17 +17,25 @@ corpus (Apache 2.0). The widely-mirrored upstream comment is:
 
 | Format | Strategy | Max entry | Char cap | Status |
 |--------|----------|----------:|:--------:|:------:|
-| V2000 / V2003 / V2007 (Jet 4, "General Legacy") | 2-chunk split at first line break | 291 B | 255 across both chunks | ✅ byte-exact |
-| V2010 (ACE, "General") | Continuous encode, 510-byte hard cap, 2-byte suffix | 510 B | 255 (fixed) | 🟡 508/510 bytes correct |
+| V2000 / V2003 / V2007 ("General Legacy" sort order) | 2-chunk split at first line break | 291 B | 255 across both chunks | ✅ byte-exact |
+| V2010 (ACE, "General" sort order) | Continuous encode, 510-byte hard cap, 2-byte suffix | 510 B | 255 (fixed) | 🟡 first 508 bytes correct; suffix unknown |
+
+> **Engine note**: V2000/V2003 are Jet 4 (`.mdb`); V2007 is ACE (`.accdb`)
+> but still defaults to the "General Legacy" sort order. All four use the
+> same state machine — only the per-codepoint code tables differ.
 
 ---
 
 ## V2000 / V2003 / V2007: 2-chunk algorithm ✅
 
-### CR/LF is NOT a synthetic separator
+### The CR/LF bytes are normal inline encoding, not a synthetic separator
 
 What was previously documented as a "4-byte separator" is actually the
-normal inline encoding of the embedded CR/LF in the source text:
+normal inline encoding of the embedded CR/LF in the source text. The
+implementation splits the input at the first line break and re-emits the
+CR+LF bytes between chunks (see `LongRowSeparatorGeneralLegacy` constant),
+but those bytes are identical to what the codepoint table produces for
+U+000D U+000A — there is no special framing:
 
 | Char | General Legacy | General |
 |------|:-:|:-:|
@@ -75,15 +83,26 @@ leaf entries. Implementation: `GeneralLegacyTextIndexEncoder.EncodeTwoChunks()`.
 
 V2010 uses a fundamentally different strategy — no chunk split, no
 trailing-space trim, different code tables ("General" vs "General Legacy").
+Despite `LongRowSeparatorGeneral` being defined in source, V2010 always
+takes the `maxEntryLength > 0` early-return path and never reaches
+`EncodeTwoChunks`.
 
-### Algorithm
+### Algorithm (observed Access behaviour)
 
 1. Encode up to **255 characters continuously** (CR/LF encode as normal
    inline bytes `07 09 07 06`, no special handling).
 2. Build the full entry: flag + inline + END_TEXT + extras + END_EXTRA_TEXT.
 3. Apply descending complement if needed.
 4. Hard-truncate at **510 bytes**.
-5. Replace bytes [508..509] with a **2-byte suffix** (algorithm unknown).
+5. Access replaces bytes [508..509] with a **2-byte suffix** (algorithm
+   unknown — our encoder does NOT produce this suffix).
+
+### Our encoder's behaviour
+
+The encoder truncates to 510 bytes at step 4 and stops. The final 2 bytes
+are whatever inline/extras data happened to land at that offset — they do
+NOT match the Access-authored on-disk suffix. `GeneralEncoderFixtureTests`
+skips `Table11` / `Table11_desc` entirely because of this mismatch.
 
 ```
 encode_long_row_v2010(val, ascending, codes, ext_codes):
@@ -97,7 +116,8 @@ encode_long_row_v2010(val, ascending, codes, ext_codes):
 
 ### Leaf-to-row mapping
 
-Ascending leaf entries are sorted by key value, NOT by row order:
+Ascending leaf entries are sorted by key value, NOT by row order.
+The correct data-row → leaf-index mapping is:
 
 | Data row | Leaf index | Special chars (positions 0–254) |
 |---------:|-----------:|:--------------------------------|
@@ -105,9 +125,8 @@ Ascending leaf entries are sorted by key value, NOT by row order:
 | row[3]   | leaf[4]    | `-` (Unprintable) @3, `í` (International) @25 |
 | row[4]   | leaf[3]    | `-` (Unprintable) @86, `-` (Unprintable) @102 |
 
-An earlier analysis used `ascKeys[rowIdx]` directly (row[3]→leaf[3]),
-which showed `firstDiff=50`. This was a mapping error, not an encoding
-error. With the correct mapping, all three rows match to byte 508.
+With this mapping, all three rows match the Access-authored entry through
+byte 507 (i.e. the first 508 bytes are identical).
 
 ### Character count is fixed at 255
 
@@ -203,7 +222,7 @@ format), pure inline continuation (same bytes regardless of char count beyond
 | Scope | State |
 |-------|-------|
 | General Legacy (V2000/V2003/V2007) Table11/Table11_desc | ✅ byte-exact, `GeneralLegacyEncoderFixtureTests.cs` |
-| General (V2010) Table11/Table11_desc | 🟡 508/510 bytes, suffix unknown, `GeneralEncoderFixtureTests.cs` |
+| General (V2010) Table11/Table11_desc | 🟡 first 508/510 bytes correct, 2-byte suffix unknown; `GeneralEncoderFixtureTests.cs` **skips** these tables |
 | V2010 binary long keys | ⬜ skipped |
 | V1997 "General 97" long rows | ⬜ not investigated |
 
