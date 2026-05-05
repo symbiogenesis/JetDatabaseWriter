@@ -90,8 +90,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="options">Options for configuring the AccessReader.</param>
     /// <param name="stream">An open, seekable stream for the database file.</param>
     /// <param name="hdr">Header bytes read from page 0.</param>
-    private AccessReader(string path, AccessReaderOptions options, Stream stream, byte[] hdr)
-        : base(stream, hdr, path)
+    /// <param name="leaveOpen">Whether the caller retains ownership of the stream. If false, the stream is disposed when the reader is disposed.</param>
+    private AccessReader(string path, AccessReaderOptions options, Stream stream, byte[] hdr, bool leaveOpen = false)
+        : base(stream, hdr, path, leaveOpen)
     {
         Guard.NotNull(options, nameof(options));
 
@@ -183,7 +184,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         options ??= new AccessReaderOptions();
+
+        // CA2000: OpenAsync(stream, leaveOpen:false) intentionally takes ownership and disposes on all paths.
+#pragma warning disable CA2000
         FileStream fs = CreateStream(path, options);
+#pragma warning restore CA2000
         return await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
     }
 
@@ -213,11 +218,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         cancellationToken.ThrowIfCancellationRequested();
 
         options ??= new AccessReaderOptions();
-        Stream wrapped = leaveOpen ? new NonClosingStreamWrapper(stream) : stream;
         try
         {
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
-            byte[] header = await ReadHeaderAsync(wrapped, cancellationToken).ConfigureAwait(false);
+            byte[] header = await ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
 
             // Office Crypto API ("Agile") encryption: the file is a real OLE
             // compound document with EncryptionInfo + EncryptedPackage streams.
@@ -225,41 +229,29 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // package decryption; on success we re-enter on the inner ACCDB
             // bytes.
             byte[]? decryptedAgile = await EncryptionManager
-                .TryDecryptAgileCompoundFileAsync(wrapped, header, options.Password, cancellationToken)
+                .TryDecryptAgileCompoundFileAsync(stream, header, options.Password, cancellationToken)
                 .ConfigureAwait(false);
             if (decryptedAgile != null)
             {
-                // Always release the source-wrapper now: when leaveOpen is
-                // true wrapped is a NonClosingStreamWrapper that does not
-                // close the user stream, otherwise it is the user stream we
-                // own per the leaveOpen=false contract.
-                await wrapped.DisposeAsync().ConfigureAwait(false);
+                // We no longer need the source stream: dispose it unless the
+                // caller retains ownership via leaveOpen.
+                if (!leaveOpen)
+                {
+                    await stream.DisposeAsync().ConfigureAwait(false);
+                }
 
-                MemoryStream? inner = null;
-                try
-                {
-                    inner = new MemoryStream(decryptedAgile, writable: false);
-                    byte[] innerHeader = await ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
-                    var reader = new AccessReader(string.Empty, options, inner, innerHeader);
-                    inner = null;
-                    return reader;
-                }
-                finally
-                {
-                    if (inner != null)
-                    {
-                        await inner.DisposeAsync().ConfigureAwait(false);
-                    }
-                }
+                var inner = new MemoryStream(decryptedAgile, writable: false);
+                byte[] innerHeader = await ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
+                return new AccessReader(string.Empty, options, inner, innerHeader);
             }
 
-            return new AccessReader(path, options, wrapped, header);
+            return new AccessReader(path, options, stream, header, leaveOpen);
         }
         catch
         {
             if (!leaveOpen)
             {
-                await wrapped.DisposeAsync().ConfigureAwait(false);
+                await stream.DisposeAsync().ConfigureAwait(false);
             }
 
             throw;
