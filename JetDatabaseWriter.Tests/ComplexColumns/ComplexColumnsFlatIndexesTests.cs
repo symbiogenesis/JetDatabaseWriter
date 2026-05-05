@@ -64,7 +64,7 @@ public sealed class ComplexColumnsFlatIndexesTests
     [Fact]
     public async Task MultiValue_FlatTable_EmitsTwoIndexes()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
@@ -104,7 +104,7 @@ public sealed class ComplexColumnsFlatIndexesTests
         // AddAttachmentAsync path must hydrate the constraint from the
         // FLAG_AUTO_LONG bit and seed the next value from existing rows so
         // multiple attachments per parent get distinct scalar PKs.
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(

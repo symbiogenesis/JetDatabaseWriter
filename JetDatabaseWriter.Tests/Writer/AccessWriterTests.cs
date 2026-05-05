@@ -512,7 +512,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     public async Task CreateTable_Over127VarColumns_RoundTrips()
     {
         const int VarColCount = 130;
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         var columns = new List<ColumnDefinition>(VarColCount + 1)
         {

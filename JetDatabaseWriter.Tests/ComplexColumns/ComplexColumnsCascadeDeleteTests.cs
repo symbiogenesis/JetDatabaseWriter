@@ -22,7 +22,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
     [Fact]
     public async Task DeleteRowsAsync_OnParentWithAttachments_RemovesFlatChildRows()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
@@ -91,7 +91,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
     [Fact]
     public async Task DeleteRowsAsync_OnParentWithMultiValueItems_RemovesFlatChildRows()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
@@ -154,7 +154,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
         // Parent has a complex column but never received an attachment, so its
         // ConceptualTableID slot is null. Delete must succeed without touching
         // (or even inspecting beyond the null bit) the flat table.
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
@@ -216,7 +216,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
         // Cascade-delete a Customer; the Document(s) for that customer cascade-
         // delete via the FK cascade, and their attachment rows in turn cascade-
         // delete via the complex-column cascade.
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         // Bootstrap from an Access-authored fixture so MSysRelationships exists.
         byte[] fixture = await File.ReadAllBytesAsync(
@@ -227,7 +227,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
         // Easiest path: just open the fixture and build our schema next to whatever
         // is already there. The fixture's own Documents table has a different
         // schema, so use distinct names.
-        var fixtureMs = new MemoryStream();
+        await using var fixtureMs = new MemoryStream();
         await fixtureMs.WriteAsync(fixture, TestContext.Current.CancellationToken);
         fixtureMs.Position = 0;
 
@@ -327,7 +327,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
         // §2.2 gap: parent table has TWO complex columns (Attachment + MultiValue)
         // referencing different flat sub-tables. Deleting a parent must cascade
         // into both flat child tables.
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,

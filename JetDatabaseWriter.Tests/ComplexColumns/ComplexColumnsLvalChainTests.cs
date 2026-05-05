@@ -56,7 +56,7 @@ public sealed class ComplexColumnsLvalChainTests
 
     private static async Task RoundTripAttachmentAsync(string fileName, byte[] payload)
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,

@@ -37,7 +37,7 @@ public sealed class CreateDatabaseTests
     [Fact]
     public async Task CreateDatabaseAsync_Stream_Jet4Mdb_ReturnsNonNullWriter()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet4Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
@@ -47,7 +47,7 @@ public sealed class CreateDatabaseTests
     [Fact]
     public async Task CreateDatabaseAsync_Stream_AceAccdb_ReturnsNonNullWriter()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
@@ -62,7 +62,7 @@ public sealed class CreateDatabaseTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_Stream_EmptyDatabase_ListTablesReturnsEmpty(DatabaseFormat format)
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
@@ -84,7 +84,7 @@ public sealed class CreateDatabaseTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_Stream_CreateTable_TableIsReadable(DatabaseFormat format)
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         string tableName = "People";
         var columns = new List<ColumnDefinition>
         {
@@ -117,7 +117,7 @@ public sealed class CreateDatabaseTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_Stream_InsertAndReadBack_DataSurvives(DatabaseFormat format)
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         string tableName = "Items";
         var columns = new List<ColumnDefinition>
         {
@@ -147,7 +147,7 @@ public sealed class CreateDatabaseTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_Stream_MultipleTables_AllVisible(DatabaseFormat format)
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
@@ -251,7 +251,7 @@ public sealed class CreateDatabaseTests
     [Fact]
     public async Task CreateDatabaseAsync_Stream_Jet3Mdb_ReturnsNonNullWriter()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using var writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet3Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
@@ -286,7 +286,7 @@ public sealed class CreateDatabaseTests
     {
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
             AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet4Mdb, cancellationToken: cts.Token).AsTask());
@@ -300,7 +300,7 @@ public sealed class CreateDatabaseTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_VariousColumnTypes_SurviveRoundTrip(DatabaseFormat format)
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         string tableName = "TypeTest";
         var columns = new List<ColumnDefinition>
         {
@@ -336,7 +336,7 @@ public sealed class CreateDatabaseTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_DropTable_RemovesTable(DatabaseFormat format)
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
@@ -361,7 +361,7 @@ public sealed class CreateDatabaseTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_FullCatalogSchema_DefaultEmits17ColumnMSysObjects(DatabaseFormat format)
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
@@ -382,7 +382,7 @@ public sealed class CreateDatabaseTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_FullCatalogSchema_OptedOutEmitsLegacy9ColumnMSysObjects(DatabaseFormat format)
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         var opts = new AccessWriterOptions { UseLockFile = false, WriteFullCatalogSchema = false };
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, opts, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
@@ -404,7 +404,7 @@ public sealed class CreateDatabaseTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CreateDatabaseAsync_FullCatalogSchema_CreateTable_RoundTripsAcrossOpenClose(DatabaseFormat format)
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         var defs = new[] { new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Name", typeof(string), 50) };
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))

@@ -197,82 +197,82 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
     {
         // Use a fresh in-memory ACE database so we don't pollute one of
         // the cached fixtures with a wide schema.
-        var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+        await using var ms = new MemoryStream();
+        await using var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
             new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false },
             leaveOpen: true,
-            cancellationToken: TestContext.Current.CancellationToken))
+            cancellationToken: TestContext.Current.CancellationToken);
+        string tableName = $"NM{columnCount}_{Guid.NewGuid():N}".Substring(0, 18);
+
+        var columns = new List<ColumnDefinition>(columnCount);
+        for (int i = 0; i < columnCount; i++)
         {
-            string tableName = $"NM{columnCount}_{Guid.NewGuid():N}".Substring(0, 18);
+            columns.Add(new ColumnDefinition($"C{i:D2}", typeof(int)));
+        }
 
-            var columns = new List<ColumnDefinition>(columnCount);
-            for (int i = 0; i < columnCount; i++)
+        await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+
+        // Row A: every column populated. Verifies the writer doesn't
+        // accidentally null out any column when the mask happens to
+        // be all-ones.
+        object[] allSet = Enumerable.Range(0, columnCount).Select(i => (object)(i + 1)).ToArray();
+
+        // Row B: alternating null / value pattern. With column count
+        // 8 / 16 / 24 / 32 this exactly fills mask byte boundaries;
+        // 9 / 17 / 25 / 33 forces one extra byte of mask with a
+        // single bit set, the off-by-one historic bug.
+        object[] alternating = new object[columnCount];
+        for (int i = 0; i < columnCount; i++)
+        {
+            alternating[i] = i % 2 == 0 ? i + 100 : DBNull.Value;
+        }
+
+        // Row C: every column null. Verifies the writer doesn't
+        // truncate trailing-null columns past the mask byte width.
+        object[] allNull = Enumerable.Range(0, columnCount).Select(_ => (object)DBNull.Value).ToArray();
+
+        await writer.InsertRowAsync(tableName, allSet, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(tableName, alternating, TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(tableName, allNull, TestContext.Current.CancellationToken);
+
+        await using var reader = await AccessReader.OpenAsync(
+            ms,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+
+        Assert.Equal(3, dt.Rows.Count);
+
+        // Row A: every column matches its seed value, no DBNull leaked.
+        for (int i = 0; i < columnCount; i++)
+        {
+            object cell = dt.Rows[0][$"C{i:D2}"];
+            Assert.IsNotType<DBNull>(cell);
+            Assert.Equal(i + 1, Convert.ToInt32(cell, System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        // Row B: alternating — even columns hold (i+100), odd are null.
+        for (int i = 0; i < columnCount; i++)
+        {
+            object cell = dt.Rows[1][$"C{i:D2}"];
+            if (i % 2 == 0)
             {
-                columns.Add(new ColumnDefinition($"C{i:D2}", typeof(int)));
-            }
-
-            await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
-
-            // Row A: every column populated. Verifies the writer doesn't
-            // accidentally null out any column when the mask happens to
-            // be all-ones.
-            object[] allSet = Enumerable.Range(0, columnCount).Select(i => (object)(i + 1)).ToArray();
-
-            // Row B: alternating null / value pattern. With column count
-            // 8 / 16 / 24 / 32 this exactly fills mask byte boundaries;
-            // 9 / 17 / 25 / 33 forces one extra byte of mask with a
-            // single bit set, the off-by-one historic bug.
-            object[] alternating = Enumerable.Range(0, columnCount)
-                .Select(i => (object)(i % 2 == 0 ? (i + 100) : (object)DBNull.Value))
-                .ToArray();
-
-            // Row C: every column null. Verifies the writer doesn't
-            // truncate trailing-null columns past the mask byte width.
-            object[] allNull = Enumerable.Range(0, columnCount).Select(_ => (object)DBNull.Value).ToArray();
-
-            await writer.InsertRowAsync(tableName, allSet, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, alternating, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync(tableName, allNull, TestContext.Current.CancellationToken);
-
-            await using var reader = await AccessReader.OpenAsync(
-                ms,
-                new AccessReaderOptions { UseLockFile = false },
-                leaveOpen: true,
-                TestContext.Current.CancellationToken);
-            DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
-
-            Assert.Equal(3, dt.Rows.Count);
-
-            // Row A: every column matches its seed value, no DBNull leaked.
-            for (int i = 0; i < columnCount; i++)
-            {
-                object cell = dt.Rows[0][$"C{i:D2}"];
                 Assert.IsNotType<DBNull>(cell);
-                Assert.Equal(i + 1, Convert.ToInt32(cell, System.Globalization.CultureInfo.InvariantCulture));
+                Assert.Equal(i + 100, Convert.ToInt32(cell, System.Globalization.CultureInfo.InvariantCulture));
             }
-
-            // Row B: alternating — even columns hold (i+100), odd are null.
-            for (int i = 0; i < columnCount; i++)
+            else
             {
-                object cell = dt.Rows[1][$"C{i:D2}"];
-                if (i % 2 == 0)
-                {
-                    Assert.IsNotType<DBNull>(cell);
-                    Assert.Equal(i + 100, Convert.ToInt32(cell, System.Globalization.CultureInfo.InvariantCulture));
-                }
-                else
-                {
-                    Assert.IsType<DBNull>(cell);
-                }
+                Assert.IsType<DBNull>(cell);
             }
+        }
 
-            // Row C: every column is DBNull.
-            for (int i = 0; i < columnCount; i++)
-            {
-                Assert.IsType<DBNull>(dt.Rows[2][$"C{i:D2}"]);
-            }
+        // Row C: every column is DBNull.
+        for (int i = 0; i < columnCount; i++)
+        {
+            Assert.IsType<DBNull>(dt.Rows[2][$"C{i:D2}"]);
         }
     }
 

@@ -30,7 +30,7 @@ public sealed class JetTransactionTests
     [Fact]
     public async Task BeginTransaction_ReturnsActiveTransaction()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
@@ -47,7 +47,7 @@ public sealed class JetTransactionTests
     [Fact]
     public async Task BeginTransaction_TwiceWithoutCommit_Throws()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
@@ -64,7 +64,7 @@ public sealed class JetTransactionTests
     [Fact]
     public async Task Commit_PersistsBufferedInserts()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
@@ -92,7 +92,7 @@ public sealed class JetTransactionTests
     [Fact]
     public async Task Rollback_DiscardsBufferedInserts()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
@@ -118,7 +118,7 @@ public sealed class JetTransactionTests
     [Fact]
     public async Task Dispose_WithoutCommit_RollsBackImplicitly()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
@@ -155,7 +155,7 @@ public sealed class JetTransactionTests
         // performed by the same writer (via the journal-shadow read path),
         // otherwise a multi-row insert that allocates a new data page would
         // immediately fail to find that page on the next AppendRow call.
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
@@ -184,7 +184,7 @@ public sealed class JetTransactionTests
     [Fact]
     public async Task Commit_AfterRollback_Throws()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
@@ -201,7 +201,7 @@ public sealed class JetTransactionTests
     [Fact]
     public async Task JournalBudgetExceeded_ThrowsJetLimitationException()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         var writerOptions = new AccessWriterOptions
         {
             UseLockFile = false,
@@ -231,7 +231,7 @@ public sealed class JetTransactionTests
         // The JET commit-lock byte at page-0 offset 0x14 must increment on
         // every committed transaction so cooperating openers can detect a
         // catalog/data version change without re-reading the entire file.
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
@@ -262,7 +262,7 @@ public sealed class JetTransactionTests
     {
         // With UseTransactionalWrites=true, an exception thrown mid-call must
         // leave the database in its pre-call state.
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         var writerOptions = new AccessWriterOptions
         {
             UseLockFile = false,
@@ -319,7 +319,7 @@ public sealed class JetTransactionTests
         // count here — just that the option is honoured (no implicit
         // transaction is opened, so PageCacheSize/MaxTransactionPageBudget
         // do not affect the call's success).
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,

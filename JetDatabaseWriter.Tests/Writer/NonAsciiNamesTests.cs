@@ -30,7 +30,7 @@ public sealed class NonAsciiNamesTests
         const string TableName = "Umsätze";
         const string ColumnName = "Beträge";
 
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
@@ -76,7 +76,7 @@ public sealed class NonAsciiNamesTests
         const string TableName = "Café";
         const string ColumnName = "Crêpe";
 
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
@@ -122,7 +122,7 @@ public sealed class NonAsciiNamesTests
         const string TableName = "顧客";
         const string ColumnName = "氏名";
 
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
@@ -165,7 +165,7 @@ public sealed class NonAsciiNamesTests
         // exit-zero smoke checks in mdbtools' test_script.sh.
         const string TableName = "Umsätze";
 
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,

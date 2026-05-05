@@ -65,7 +65,7 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public async Task AddAttachmentAsync_RoundTrips_ViaGetAttachmentsAsync()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
@@ -109,7 +109,7 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public async Task AddAttachmentAsync_TwoFilesSameRow_ShareConceptualTableId()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
@@ -148,7 +148,7 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public async Task AddAttachmentAsync_TwoParentRows_GetDistinctConceptualTableIds()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
@@ -184,7 +184,7 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public async Task AddAttachmentAsync_NoMatchingRow_Throws()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
@@ -211,7 +211,7 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public async Task AddAttachmentAsync_OnMultiValueColumn_Throws()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
@@ -244,7 +244,7 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public async Task AddMultiValueItemAsync_RoundTrips_ViaGetMultiValueItems()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
@@ -287,7 +287,7 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public async Task AddMultiValueItemAsync_OnAttachmentColumn_Throws()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
@@ -321,7 +321,7 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public async Task AddAttachmentAsync_ZeroBytePayload_RoundTrips()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
@@ -377,7 +377,7 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public async Task AddMultiValueItemAsync_TextWithMixedLengths_RoundTrips()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
