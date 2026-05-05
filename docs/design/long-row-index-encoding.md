@@ -144,13 +144,15 @@ count is constant. The encoder does NOT use a byte budget.
 
 ### The 2-byte suffix
 
-Observed values (ascending mapping corrected; descending need re-verification):
+Observed values (verified empirically by `LongRowSourceProbe.DumpV2010CrcFullSweep`,
+which locates the descending leaf for each ascending row by the
+`desc[1..507] == ~asc[1..507]` complement relation):
 
-| Row | Ascending | Descending |
-|----:|:---------:|:----------:|
-| 2   | `43 EC` | `37 DD` |
-| 3   | `A2 2D` | `9A 4E` (verify) |
-| 4   | `1D AC` | `C1 A1` (verify) |
+| Row | Ascending | Descending | Asc leaf | Desc leaf |
+|----:|:---------:|:----------:|:--------:|:---------:|
+| 2   | `43 EC` | `9A 4E` | 2 | 10 |
+| 3   | `A2 2D` | `37 DD` | 4 |  8 |
+| 4   | `1D AC` | `C1 A1` | 3 |  9 |
 
 Properties:
 - **Not complements**: `~43EC = BC13 ≠ 37DD`. The suffix is computed
@@ -162,15 +164,26 @@ Properties:
 
 ### Exhaustive suffix testing — no match found
 
-~3.4 million algorithm × input combinations tested per row. Zero matches.
+Two separate brute-force sweeps have been run. Both found **zero matches**
+across all six (row × direction) constraints:
 
-**Algorithms**: CRC-16 (CCITT, CCITT-FALSE, XMODEM, ARC, MODBUS), all 262144
-brute-force CRC polynomials (65536 × 4 modes), Fletcher-16, FNV-1a-16, DJB2-16,
-XOR-fold, sum-mod-65536, Pearson-16, Adler-16, MurmurHash3 (seeds 0–255).
+**Sweep #1 (legacy, ~3.4M combos)**: CRC-16 (CCITT, CCITT-FALSE, XMODEM, ARC,
+MODBUS), all 262144 brute-force CRC polynomials with `init ∈ {0, 0xFFFF}` and
+coupled reflection (4 modes), Fletcher-16, FNV-1a-16, DJB2-16, XOR-fold,
+sum-mod-65536, Pearson-16, Adler-16, MurmurHash3 (seeds 0–255).
+
+**Sweep #2 (`LongRowSourceProbe.DumpV2010CrcFullSweep`)**: Full CRC-16
+parameter space — 65536 polynomials × `init ∈ {0, 0xFFFF}` × `xorOut ∈ {0, 0xFFFF}`
+× `refIn ∈ {true, false}` × `refOut ∈ {true, false}` = **16 independent modes**
+(the prior sweep coupled `refIn`/`refOut` and missed 12 of these). 14,680,064
+combos per constraint, 0 hits across all 6 constraints simultaneously.
+False-positive probability per surviving (poly, mode, inputIdx) tuple ≈ 2^-96.
 
 **Inputs**: truncated tail `[508..]`, `[509..]`, `[510..]`, `[508..^1]`,
 full untruncated entry, entry minus flag, retained portion `[..508]`, inline
-only `[1..508]`, remaining source text (UTF-16LE and ASCII), full source text.
+only `[1..508]`, remaining source text (UTF-16LE and ASCII), full source text,
+self-checking variant (`full[..510]` with bytes `[508..509]` zeroed), the
+uppercase variants of the source text, and the extras / unprint sub-streams.
 
 **Other hypotheses disproven**: Windows NLS sort key (completely different
 format), pure inline continuation (same bytes regardless of char count beyond
@@ -228,11 +241,13 @@ format), pure inline continuation (same bytes regardless of char count beyond
 
 ### Diagnostic probe
 
-`LongRowSourceProbe.DumpV2010SuffixAnalysis` in
-`JetDatabaseWriter.Tests/Internal/LongRowSourceProbe.cs` is a skipped
-`[Fact]` that dumps char-by-char inline analysis around the 508-byte
-truncation point and exercises candidate suffix algorithms. Un-skip it
+`LongRowSourceProbe.DumpV2010SuffixAnalysis` and
+`LongRowSourceProbe.DumpV2010CrcFullSweep` in
+`JetDatabaseWriter.Tests/Internal/LongRowSourceProbe.cs` are skipped
+`[Fact]`s that dump char-by-char inline analysis around the 508-byte
+truncation point and exercise the candidate suffix algorithms. Un-skip them
 locally to regenerate diagnostics when investigating the 2-byte suffix.
+The full CRC-16 sweep takes ~3 minutes per run.
 
 ---
 
