@@ -12,13 +12,16 @@ using Xunit;
 /// <summary>
 /// End-to-end tests for schema evolution operations: AddColumnAsync,
 /// DropColumnAsync, RenameColumnAsync, and related validation.
+/// Tests run against both Jet3 and ACE formats via <c>[Theory]</c> parameters.
 /// </summary>
 public sealed class SchemaEvolutionTests
 {
-    [Fact]
-    public async Task AddColumnAsync_AppendsColumn_ExistingRowsBecomeNull()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task AddColumnAsync_AppendsColumn_ExistingRowsBecomeNull(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         const string table = "Contacts";
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -57,10 +60,12 @@ public sealed class SchemaEvolutionTests
         Assert.Equal(99, dt.Rows[2]["Score"]);
     }
 
-    [Fact]
-    public async Task DropColumnAsync_RemovesColumn_AndPreservesOtherData()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task DropColumnAsync_RemovesColumn_AndPreservesOtherData(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         const string table = "Contacts";
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -91,10 +96,12 @@ public sealed class SchemaEvolutionTests
         Assert.Equal("Bob", dt.Rows[1]["Name"]);
     }
 
-    [Fact]
-    public async Task RenameColumnAsync_RenamesColumn_AndPreservesAllData()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task RenameColumnAsync_RenamesColumn_AndPreservesAllData(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         const string table = "Contacts";
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -124,10 +131,12 @@ public sealed class SchemaEvolutionTests
         Assert.Equal(88, dt.Rows[1]["Rating"]);
     }
 
-    [Fact]
-    public async Task DropColumnAsync_LastColumn_Throws()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task DropColumnAsync_LastColumn_Throws(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         const string table = "Solo";
 
         await using var writer = await OpenWriterAsync(stream);
@@ -140,10 +149,12 @@ public sealed class SchemaEvolutionTests
             await writer.DropColumnAsync(table, "Only", TestContext.Current.CancellationToken));
     }
 
-    [Fact]
-    public async Task AddColumnAsync_DuplicateName_Throws()
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task AddColumnAsync_DuplicateName_Throws(DatabaseFormat format)
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(format);
         const string table = "Dup";
 
         await using var writer = await OpenWriterAsync(stream);
@@ -159,7 +170,7 @@ public sealed class SchemaEvolutionTests
     [Fact]
     public async Task FreshlyCreatedTable_HasNoUserDefinedIndexEntries()
     {
-        await using var stream = await CreateFreshAccdbStreamAsync();
+        await using var stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
         string tableName = $"NoIdx_{Guid.NewGuid():N}"[..18];
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -208,12 +219,12 @@ public sealed class SchemaEvolutionTests
         return false;
     }
 
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
+    private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
-            DatabaseFormat.AceAccdb,
+            format,
             new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken))

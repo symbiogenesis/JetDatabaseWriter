@@ -374,6 +374,31 @@ public sealed class LockFileTests : IDisposable
         Assert.True(options.RespectExistingLockFile);
     }
 
+    // ── Reader + Writer contention ────────────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
+    public async Task Writer_RespectExistingLockFile_SucceedsWhenReaderHoldsLockFile(string path)
+    {
+        // A reader holding a lockfile should NOT block a writer that also uses
+        // lock files — the lock file is cooperative, not exclusive.
+        string temp = CopyToTemp(path);
+
+        await using var reader = await AccessReader.OpenAsync(
+            temp,
+            new AccessReaderOptions { UseLockFile = true },
+            TestContext.Current.CancellationToken);
+
+        // Writer with RespectExistingLockFile=true should still open because
+        // the lockfile is shared (both append a slot).
+        await using var writer = await AccessWriter.OpenAsync(
+            temp,
+            new AccessWriterOptions { UseLockFile = true, RespectExistingLockFile = true },
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(writer);
+    }
+
     // ── Options default ───────────────────────────────────────────────
 
     [Fact]
