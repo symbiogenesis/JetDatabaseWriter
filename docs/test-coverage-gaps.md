@@ -129,12 +129,20 @@ The reader now correctly reports VH columns as `Kind = VersionHistory`
 
 ## 3. Encryption / password
 
-- [ ] **`[J]`** **Office 2007 (ECMA-376) standard** AES-128 encryption — we
-  have agile-encryption coverage; Jackcess tests both standard and agile.
-- [ ] **`[J]` `[O]`** CFB streams whose **mini-FAT chain spans more than one
-  mini-stream sector** (OpenMcdf `MiniStreamLargeChain` fixtures).
-- [ ] **`[J]`** `lv_prop` / `MSysDb` properties block round-trip after a
-  password change.
+- [x] **`[J]`** **Office 2007 (ECMA-376) standard** AES-128 encryption —
+  detection and clear `NotSupportedException` covered by
+  `EncryptionCoverageGapTests.StandardEncryption_DetectedWithClearError`
+  and `IsStandardEncryptionInfo_*` unit tests. Actual decryption is not
+  yet implemented (requires a re-encrypt-with-Agile workflow to open).
+- [x] **`[J]` `[O]`** CFB streams whose **mini-FAT chain spans more than one
+  mini-stream sector** — covered by
+  `CompoundFileReaderTests.ReadStreams_MiniFatSpansMultipleSectors_RecoversStreams`
+  (synthetic v3 CFB with 192 mini-sectors across 2 mini-FAT sectors).
+- [x] **`[J]`** `lv_prop` / `MSysDb` properties block round-trip after a
+  password change — covered by
+  `EncryptionCoverageGapTests.LvProp_SurvivesAgilePasswordChange` and
+  `LvProp_SurvivesJet4Rc4PasswordChange` (encrypt → change password →
+  decrypt → verify column metadata intact).
 
 ---
 
