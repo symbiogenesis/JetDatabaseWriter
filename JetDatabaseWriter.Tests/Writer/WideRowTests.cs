@@ -214,24 +214,26 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
 
         await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
 
-        // Row A: every column populated. Verifies the writer doesn't
-        // accidentally null out any column when the mask happens to
-        // be all-ones.
-        object[] allSet = Enumerable.Range(0, columnCount).Select(i => (object)(i + 1)).ToArray();
-
-        // Row B: alternating null / value pattern. With column count
-        // 8 / 16 / 24 / 32 this exactly fills mask byte boundaries;
-        // 9 / 17 / 25 / 33 forces one extra byte of mask with a
-        // single bit set, the off-by-one historic bug.
+        object[] allSet = new object[columnCount];
         object[] alternating = new object[columnCount];
+        object[] allNull = new object[columnCount];
         for (int i = 0; i < columnCount; i++)
         {
-            alternating[i] = i % 2 == 0 ? i + 100 : DBNull.Value;
-        }
+            // Row A: every column populated. Verifies the writer doesn't
+            // accidentally null out any column when the mask happens to
+            // be all-ones.
+            allSet[i] = i + 1;
 
-        // Row C: every column null. Verifies the writer doesn't
-        // truncate trailing-null columns past the mask byte width.
-        object[] allNull = Enumerable.Range(0, columnCount).Select(_ => (object)DBNull.Value).ToArray();
+            // Row B: alternating null / value pattern. With column count
+            // 8 / 16 / 24 / 32 this exactly fills mask byte boundaries;
+            // 9 / 17 / 25 / 33 forces one extra byte of mask with a
+            // single bit set, the off-by-one historic bug.
+            alternating[i] = i % 2 == 0 ? i + 100 : DBNull.Value;
+
+            // Row C: every column null. Verifies the writer doesn't
+            // truncate trailing-null columns past the mask byte width.
+            allNull[i] = DBNull.Value;
+        }
 
         await writer.InsertRowAsync(tableName, allSet, TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(tableName, alternating, TestContext.Current.CancellationToken);
