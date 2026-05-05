@@ -1,15 +1,34 @@
 ﻿# Round-Trip Test Failures — Investigation Status
 
-**Status (2026-05-04):** All catalog index issues are **RESOLVED**. Three fixes landed: prefix compression cap (2026-05-03), entry-start bitmask sentinel (2026-05-04), and split-path `maxPrefixLength` cap in `TryBuildSplitLeafPages` (2026-05-04). DAO Compact & Repair now **succeeds** for both N1 (single table) and N2+ (multiple tables + relationships) — the `MSysDb (3011)` and `Object invalid or no longer set` errors are gone. However, DAO **drops rows** from writer-created user tables during compact (row count = 0 post-compact). This is the same issue tracked by `DaoValidationTests` ("Unrecognized database format" when DAO opens writer-created TDEFs). The remaining blocker is a per-table TDEF page layout incompatibility — the catalog is correct.
+## Current status (2026-05-04)
+
+**Catalog index maintenance: RESOLVED.** Three index fixes (prefix compression cap, entry-start bitmask sentinel, split-path `maxPrefixLength` cap) plus catalog row fixes (LvProp, MSysACEs, magic stamps, compressed-unicode encoding) make DAO Compact & Repair succeed for both N1 and N2+ cases. The `MSysDb (3011)` and `Object invalid or no longer set` errors are gone.
+
+**Remaining blocker: user-table TDEF page layout.** DAO **drops rows** from writer-created user tables during compact (row count = 0 post-compact) because it cannot parse the writer's user-table TDEFs ("Unrecognized database format"). This is a per-table `page_type=0x02` structural incompatibility — the catalog layer is correct. Next investigation should do a byte-level diff of writer-emitted vs DAO-emitted user-table TDEFs.
+
+**Test suite: 3193 passing, 0 failing, 7 skipped.**
+
+### Reader-side fixes (2026-05-04)
+
+- **`ColumnInfo.Flags` bit 0x02 (Jackcess `UNKNOWN_FF_FLAG_MASK`)** is now ALWAYS set by the writer for DAO compatibility. `IsNullable` moved to bit `0x08`. `AccessReader`, `AccessWriter`, and `ConstraintRegistry.HydrateFromTableDef` all read `IsNullable = (col.Flags & 0x08) == 0`.
+- **`cascade_ups` / `cascade_dels`** in `AccessReader.ListIndexesAsync`: now masks `& 0x01` instead of `!= 0`. DAO stamps placeholder `0x04` (`CASCADE_SET_DEFAULT_FLAG`) on every non-FK index. See `index-and-relationship-format-notes.md` §3.2.
+
+### Compressed unicode ExtraFlags fix (2026-05-04)
+
+`EncodeJet4Text` now respects per-column `COMPRESSED_UNICODE_EXT_FLAG_MASK` (bit 0x01 of `ExtraFlags`). Columns without the flag (e.g. DAO-authored MSysObjects columns) emit plain UCS-2 LE. This is correct and necessary for catalog row compatibility, but **did not resolve** the DAO OpenRecordset failure — disconfirming the "catalog text-encoding" hypothesis.
+
+Files changed: `AccessBase.cs`, `RowEncoder.cs`, `LongValueEncoder.cs`, `ColumnInfo.cs`, `Constants.cs`. Tests: `CompressedUnicodeFlagTests.cs` (21 tests).
+
+---
 
 **Fixes landed (all necessary, collectively sufficient for catalog correctness):**
 
 - ✅ **LvProp**: `Constants.SystemObjects.DefaultLvPropPlaceholder` (12 zero bytes) stamped when `JetExpressionConverter.BuildLvPropBlob` returns null.
 - ✅ **MSysACEs**: `InsertAceRowsForTableAsync` inserts 3 ACE rows (owner/admins/users) per new user table. Harvests the Admins-group SID dynamically. Gated on `catalogFlags == 0` (user tables only). Column name corrected from `"Inheritable"` to `"FInheritable"` (the TDEF column name for the boolean ACE field).
-- ✅ **GPM (page 1) ruled out for append-only writes**: Page 1's bitmap uses convention "1 = free, 0 = in-use". Pages appended beyond original file size already have bits = 0 (in-use by default).
-- ✅ **TDEF magic stamps (`0x00000659`)**: Stamped in column descriptors (bytes 1–4), real-idx physical descriptors (first 4 bytes), and logical-idx entry descriptors (first 4 bytes) across `BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, and `RelationshipManager.EmitFkLogicalIdxAsync`.
+- ⛔ **GPM (page 1) ruled out for append-only writes**: Page 1's bitmap uses convention "1 = free, 0 = in-use". Pages appended beyond original file size already have bits = 0 (in-use by default).
+- ✅ **TDEF magic stamps (`0x00000659` / `0x00000783`)**: Column descriptors (bytes 1–4) and logical-idx entry descriptors (first 4 bytes) stamped with `0x00000659` (format-wide magic). Real-idx physical descriptors (first 4 bytes) stamped with `0x00000783` (`Jet4RealIdxLeadingMagic` — a distinct constant, NOT the format-wide magic). Applied across `BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, and `RelationshipManager.EmitFkLogicalIdxAsync`.
 - ✅ **Real-idx flags byte**: `0x80` bit set at `Constants.TableDefinition.Jet4.RealIdx.FlagsOffset` for FK backing indexes.
-- ✅ **DB-header modify counter at `0x0E02`**: Manually patched from `0x00` to `0x04` — **RULED OUT** (still fails).
+- ⛔ **DB-header modify counter at `0x0E02`**: Manually patched from `0x00` to `0x04` — **RULED OUT** (still fails).
 - ✅ **Prefix compression cap** (2026-05-03): `BuildLeafPage` now accepts optional `maxPrefixLength` parameter. `TrySpliceCatalogIndexEntryAsync` and `TryAppendToTailLeafAsync` read the existing page's `pref_len` before decoding and pass it to `BuildLeafPage`, preventing the writer from increasing prefix compression beyond what was on disk. Result: page 8 `pref_len` stays 0 (was being recomputed to 1), page 2790 `pref_len` stays 1 (was being recomputed to 4). Free-space values now match the DAO baseline.
 - ✅ **Entry-start bitmask sentinel** (2026-05-04): `BuildLeafPage` now writes a sentinel bit at the position one past the last entry in the entry-start bitmask. Access/DAO always writes this sentinel (verified on every leaf page in NorthwindTraders.accdb) and validates it during Compact & Repair. The N1 reproducer (single `CreateTableAsync`) now **passes DAO compact** with this fix. Five test helper `CountLeafEntries` methods updated to subtract 1 from the bitmask popcount to account for the sentinel.
 - ✅ **Split-path `maxPrefixLength` cap** (2026-05-04): `TryBuildSplitLeafPages` now accepts `int maxPrefixLength` and forwards it to every `BuildLeafPage` call. All three call sites (`TrySpliceCatalogIndexEntryAsync`, `TrySurgicalCrossLeafMaintainAsync`, and the incremental splice path) read the original leaf's `pref_len` and pass it through. This prevents split-product pages from getting unrestricted prefix compression (N2 reproducer: page 2790 pref was growing 1→4, page 3019 was getting pref=16). **Combined with #16 and #17, this resolved the N2+ reproducer** — DAO Compact now succeeds for multiple `CreateTableAsync` calls.
@@ -130,7 +149,7 @@ Supporting fixes (each was a real defect; each is regression-guarded):
 ### TDEF magic stamps (`0x00000659`, added 2026-05-03)
 
 - Column descriptors: bytes 1–4 after the column-type byte stamped with `0x00000659` via `Wi32(page, o + 1, 0x00000659)`.
-- Real-idx physical descriptors: first 4 bytes stamped with `0x00000659`.
+- Real-idx physical descriptors: first 4 bytes stamped with `0x00000783` (`Jet4RealIdxLeadingMagic` — distinct from the format-wide `0x00000659`; see `Constants.TableDefinition.Jet4RealIdxLeadingMagic` and `Jet4CookieAndCatalogTests`).
 - Logical-idx entry descriptors: first 4 bytes (at `logEntry - LogicalEntryFieldsOffset`) stamped with `0x00000659`.
 - Applied in three code paths: `BuildTDefPagesWithIndexOffsets` (user tables), `BuildMSysObjectsTDef` (MSysObjects cols), `RelationshipManager.EmitFkLogicalIdxAsync` (FK backing indexes).
 - **Binary page bisection confirmed**: TDEF pages (2, 3) pass individually — magic stamps are correct and not the trigger.
@@ -276,7 +295,7 @@ The earlier confusion about whether the 12-byte payload was at varIdx 8 (LvProp)
 
 ### 5. Format magic `0x00000659` stamped inside column descriptors — fix landed, ruled out as trigger
 
-Inside DAO's TDEF column descriptors, the 4 bytes immediately after the column-type byte are `59 06 00 00` (`= 0x00000659`, the same format magic the writer already stamps in the TDEF header at offset `0x0C`). **Fix landed:** writer now stamps these in all three TDEF-building paths (`BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, `RelationshipManager.EmitFkLogicalIdxAsync`). Also stamps real-idx physical and logical-idx entry descriptors. **Binary page bisection confirmed TDEF pages (2, 3) individually PASS** — magic stamps are correct and not the trigger.
+Inside DAO's TDEF column descriptors, the 4 bytes immediately after the column-type byte are `59 06 00 00` (`= 0x00000659`, the same format magic the writer already stamps in the TDEF header at offset `0x0C`). **Fix landed:** writer now stamps these in all three TDEF-building paths (`BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, `RelationshipManager.EmitFkLogicalIdxAsync`). Also stamps logical-idx entry descriptors with `0x00000659` and real-idx physical descriptors with `0x00000783` (a distinct constant — see `Jet4RealIdxLeadingMagic`). **Binary page bisection confirmed TDEF pages (2, 3) individually PASS** — magic stamps are correct and not the trigger.
 
 ### 6. Page 0 (DB header) — modify counter — RULED OUT
 

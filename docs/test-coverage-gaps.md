@@ -83,23 +83,27 @@ scenarios rather than reinventing the setup/teardown boilerplate.
 - [ ] **`[S]`** **Compact & Repair acceptance** — the two existing tests
   (`SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`,
   `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`) now run on
-  Access-equipped hosts (via `SkipUnless`) and fail visibly. The N1
-  (single-table) case passes DAO C&R after the entry-start bitmask
-  sentinel fix, but N2 (two tables + relationship) still fails — the
-  second `CreateTableAsync` splice overflows the `ParentIdName` leaf
-  without `maxPrefixLength` cap. See
+  Access-equipped hosts (via `SkipUnless`) and fail visibly. DAO Compact
+  itself **succeeds** (catalog index fixes resolved `MSysDb 3011`), but DAO
+  **drops rows** from writer-created user tables (row count = 0 post-compact)
+  because it cannot open the writer's user-table TDEFs (“Unrecognized
+  database format”). Blocked on a per-table TDEF structural incompatibility;
+  the catalog layer is correct. See
   [round-trip-test-failures.md](round-trip-test-failures.md).
 - [ ] **`[S]`** **DAO OpenRecordset row-count** — test implemented in
   `DaoValidationTests.DaoOpenRecordset_RowCount_MatchesWriterOutput`;
-  now runs (and fails with "Unrecognized database format") on
-  Access-equipped hosts rather than being unconditionally skipped.
-  Blocked on TDEF page-layout compatibility.
+  skipped with a doc pointer. DAO can `OpenDatabase` the writer’s file
+  (catalog is fine) but `OpenRecordset` rejects the writer-created
+  user-table TDEF with “Unrecognized database format”. Disconfirmed
+  hypothesis: catalog text-encoding (MSysObjects.Name compression) was
+  fixed (`EncodeJet4Text` now respects `COMPRESSED_UNICODE_EXT_FLAG_MASK`)
+  but did not resolve this. Blocked on TDEF page-layout compatibility.
 - [ ] **`[S]`** **DAO index traversal** — test implemented in
   `DaoValidationTests.DaoIndexTraversal_Seek_LocatesRowByPrimaryKey`;
-  same status as row-count (runs, fails, blocked on TDEF).
+  same status as row-count (skipped, blocked on TDEF).
 - [ ] **`[S]`** **DAO AutoNumber continuation** — test implemented in
   `DaoValidationTests.DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert`;
-  same status as row-count (runs, fails, blocked on TDEF).
+  same status as row-count (skipped, blocked on TDEF).
 - [ ] **`[M]`** **DAO Memo/OLE fidelity** — write Memo values containing
   embedded NULs, non-Latin-1 (CJK), and OLE binary payloads; verify DAO
   `Recordset.Fields("col").Value` returns the identical bytes. Catches

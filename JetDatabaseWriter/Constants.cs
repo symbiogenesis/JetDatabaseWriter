@@ -104,6 +104,17 @@ internal static class Constants
     }
 
     /// <summary>
+    /// Bitmask in the column descriptor's <c>extra flags</c> byte
+    /// (descriptor-relative offset 16 in the 25-byte ACE descriptor) that
+    /// enables Jet4/ACE compressed-unicode text encoding (<c>0xFF 0xFE</c>
+    /// marker + 1 byte per Latin-1 character). Jackcess
+    /// <c>ColumnImpl.COMPRESSED_UNICODE_EXT_FLAG_MASK</c> = <c>0x01</c>.
+    /// When this bit is clear the column stores plain UCS-2 LE and the
+    /// writer must NOT emit the compressed form.
+    /// </summary>
+    public const byte CompressedUnicodeExtFlagMask = 0x01;
+
+    /// <summary>
     /// On-disk constants for Access 2010+ calculated (expression) columns —
     /// translated from Jackcess <c>CalculatedColumnUtil</c> and <c>ColumnImpl</c>.
     /// Calculated columns are an ACCDB-only feature; Jet3 / Jet4 .mdb files

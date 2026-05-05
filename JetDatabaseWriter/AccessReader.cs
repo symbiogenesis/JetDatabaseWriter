@@ -1281,8 +1281,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 IsRequired = (flags & 0x08) != 0,
                 IsForeignKey = relIdxNum != -1,
                 RelatedTablePage = relIdxNum != -1 ? relTblPage : 0,
-                CascadeUpdates = cascadeUps != 0,
-                CascadeDeletes = cascadeDels != 0,
+
+                // Per Jackcess IndexImpl: only bit 0x01 (CASCADE_DELETES_FLAG /
+                // CASCADE_UPDATES_FLAG) signals "cascade enabled". DAO/Access stamps
+                // a non-zero default (0x04 = CASCADE_SET_DEFAULT_FLAG) into these
+                // bytes for every index — including PK and standalone indexes — so
+                // a bare `!= 0` check would surface false positives. Mask to bit 0x01.
+                CascadeUpdates = (cascadeUps & 0x01) != 0,
+                CascadeDeletes = (cascadeDels & 0x01) != 0,
                 Columns = keyColumns,
                 FirstDp = firstDp,
             });

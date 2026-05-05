@@ -268,9 +268,12 @@ internal sealed class ConstraintRegistry(Func<string, CancellationToken, ValueTa
         foreach (ColumnInfo col in tableDef.Columns)
         {
             // Complex columns (T_ATTACHMENT / T_COMPLEX) carry a magic Flags = 0x07
-            // marker rather than real flag bits; do not interpret 0x02 / 0x04 here.
+            // marker rather than real flag bits; do not interpret 0x02 / 0x04 / 0x08 here.
+            // Bit 0x02 is now always set by the writer for DAO compatibility (Jackcess
+            // UNKNOWN_FF_FLAG_MASK), so it can no longer carry IsNullable. Bit 0x08 is
+            // the writer-private NOT NULL marker (see TDefPageBuilder.BuildTableDefinition).
             bool isComplex = col.Type == T_ATTACHMENT || col.Type == T_COMPLEX;
-            bool isNullable = isComplex || (col.Flags & 0x02) != 0;
+            bool isNullable = isComplex || (col.Flags & 0x08) == 0;
             bool isAutoIncrement = !isComplex && (col.Flags & 0x04) != 0;
 
             ColumnConstraint c = new()

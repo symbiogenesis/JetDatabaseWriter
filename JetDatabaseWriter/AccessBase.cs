@@ -276,21 +276,29 @@ public abstract class AccessBase : IAccessBase
     /// characters), so 1- and 2-character strings are still written as
     /// plain UCS-2 to avoid the 2-byte marker overhead.
     /// </remarks>
-    internal static byte[] EncodeJet4Text(string value) => EncodeJet4Text(value, int.MaxValue);
+    internal static byte[] EncodeJet4Text(string value, bool compress = true) => EncodeJet4Text(value, int.MaxValue, compress);
 
     /// <summary>
     /// Encodes a string into Jet4 text format, truncating to at most
     /// <paramref name="maxBytes"/> output bytes. Avoids a secondary
     /// <c>Array.Resize</c> when the caller has a column-size limit.
     /// </summary>
-    internal static byte[] EncodeJet4Text(string value, int maxBytes)
+    /// <param name="value">The string to encode.</param>
+    /// <param name="maxBytes">Maximum output byte count.</param>
+    /// <param name="compress">When <see langword="true"/> (the default) and
+    /// all characters fit in Latin-1, emits the compressed form
+    /// (<c>0xFF 0xFE</c> marker + 1 byte/char). When <see langword="false"/>
+    /// always emits plain UCS-2 LE. Callers should pass <see langword="false"/>
+    /// for columns whose <c>ExtraFlags</c> byte does not have the
+    /// <see cref="Constants.CompressedUnicodeExtFlagMask"/> bit set.</param>
+    internal static byte[] EncodeJet4Text(string value, int maxBytes, bool compress = true)
     {
         if (string.IsNullOrEmpty(value))
         {
             return [];
         }
 
-        bool compressible = value.Length >= 3;
+        bool compressible = compress && value.Length >= 3;
         if (compressible)
         {
             for (int i = 0; i < value.Length; i++)
