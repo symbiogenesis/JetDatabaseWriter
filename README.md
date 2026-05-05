@@ -5,8 +5,25 @@
 [![Targets](https://img.shields.io/badge/targets-net10.0%20%7C%20netstandard2.1-blue)](#nuget-target-compatibility)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Pure-managed .NET library for reading and writing Microsoft Access JET databases — no OleDB, ODBC, or ACE/Jet driver installation required.
+Fully managed .NET library for reading and writing Microsoft Access (JET/ACE) databases — no OleDB, ODBC, or ACE/Jet driver installation required.
 
+Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.accdb` files from .NET without relying on native Access drivers or a local Access installation.
+
+## Contents
+
+- [Installation](#installation)
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Reading Data](#reading-data)
+- [Writing Data](#writing-data)
+- [Encryption Support](#encryption-support)
+- [Limitations](#limitations)
+
+## At a Glance
+
+- Best fit for .NET applications and tools that need direct file-level access to Access databases.
+- Not a fit if you need a SQL engine, an ODBC driver, or full Access application features like forms, reports, macros, or VBA.
+- Current writer caveat: databases created with `CreateTableAsync` are readable in Access, but Microsoft Access Compact & Repair still rejects the catalog index pages written for those new tables. See [Limitations](#limitations).
 
 ## Features
 
@@ -28,15 +45,15 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 
 ---
 
-## Security
+### Security
 
-> **✅ All 36 known relevant CVEs have been fully addressed.** Every identified attack surface — CFB/OLE compound file parsing, JET/ACE MDB/ACCDB format, and Office Agile Encryption — is mitigated in code and covered by regression tests. Zero unmitigated gaps remain. See [docs/cve-vulnerability-analysis.md](docs/cve-vulnerability-analysis.md) for the full threat model and test inventory.
+> **✅ All 36 known relevant CVEs have been addressed.** Every identified attack surface — CFB/OLE compound file parsing, JET/ACE MDB/ACCDB format, and Office Agile Encryption — is mitigated in code and covered by regression tests. See [docs/cve-vulnerability-analysis.md](docs/cve-vulnerability-analysis.md) for the full threat model and test inventory.
 
 ---
 
-## Correctness
+### Correctness
 
-This library incorporates and significantly exceeds the test coverage of [Jackcess](https://jackcess.sourceforge.io/), [mdbtools](https://github.com/mdbtools/mdbtools), and [OpenMcdf](https://github.com/ironfede/openmcdf). Every test case from those projects is represented here, alongside extensive additional coverage for corner cases, corruption resilience, and format variants they do not exercise.
+The test suite draws from and extends the coverage of [Jackcess](https://jackcess.sourceforge.io/), [mdbtools](https://github.com/mdbtools/mdbtools), and [OpenMcdf](https://github.com/ironfede/openmcdf), with additional coverage for corner cases, corruption resilience, and format variants.
 
 Beyond functional tests, the codebase is validated by:
 
@@ -48,7 +65,9 @@ Beyond functional tests, the codebase is validated by:
 
 ---
 
-## Installation
+## Quick Start
+
+### Installation
 
 ```bash
 dotnet add package JetDatabaseWriter
@@ -58,20 +77,7 @@ dotnet add package JetDatabaseWriter
 Install-Package JetDatabaseWriter
 ```
 
-### NuGet target compatibility
-
-`JetDatabaseWriter` multi-targets **`netstandard2.1`** and **`net10.0`**. The `net10.0` asset is selected automatically on .NET 10+ consumers; the `netstandard2.1` asset covers everything else:
-
-| Consumer | Minimum version |
-|----------|----------------|
-| .NET | 5+ |
-| .NET Core | 3.0+ |
-| Mono | 6.4+ |
-| Unity | 2021.2+ |
-
----
-
-## Quick Start
+### Usage
 
 ```csharp
 using JetDatabaseWriter;
@@ -93,8 +99,6 @@ List<Order> orders = await reader.ReadTableAsync<Order>("Orders", maxRows: 100);
 foreach (Order o in orders)
     Console.WriteLine($"#{o.OrderID}  {o.OrderDate:yyyy-MM-dd}  {o.Freight:C}");
 ```
-
-`OpenAsync(...)` + `await using` is the recommended pattern.
 
 ---
 
@@ -692,7 +696,7 @@ The items below are either **not yet implemented** or are important behavioral c
 
 ## How It Works
 
-Based on the [mdbtools format specification](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md). The library parses JET pages directly:
+The library parses JET pages directly, based on the [mdbtools format specification](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md):
 
 1. **Page 0** — header: Jet3/Jet4 detection, code page, encryption flag
 2. **Page 2** — `MSysObjects` catalog: table names → TDEF page numbers
@@ -704,7 +708,7 @@ Based on the [mdbtools format specification](https://github.com/mdbtools/mdbtool
 
 ## Contributing
 
-Issues and pull requests welcome at [github.com/diegoripera/JetDatabaseWriter](https://github.com/diegoripera/JetDatabaseWriter).
+Issues and pull requests are welcome. Please open an issue to discuss larger changes before submitting a PR.
 
 ## License
 
