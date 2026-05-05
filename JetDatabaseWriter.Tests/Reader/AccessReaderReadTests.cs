@@ -89,11 +89,13 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task ReadTable_ForAllTables_ReturnsNonNullDataTables(string path)
     {
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        var ct = TestContext.Current.CancellationToken;
 
-        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
+        var reader = await db.GetReaderAsync(path, ct);
+
+        foreach (var table in await reader.ListTablesAsync(ct))
         {
-            DataTable dt = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken))!;
+            var dt = await reader.ReadDataTableAsync(table, cancellationToken: ct);
             Assert.NotNull(dt);
         }
     }
