@@ -180,10 +180,13 @@ public sealed class NonAsciiNamesTests
                 ],
                 TestContext.Current.CancellationToken);
 
+            var rows = new List<object[]>(5);
             for (int i = 1; i <= 5; i++)
             {
-                await writer.InsertRowAsync(TableName, [i, i * 10], TestContext.Current.CancellationToken);
+                rows.Add([i, i * 10]);
             }
+
+            await writer.InsertRowsAsync(TableName, rows, TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;

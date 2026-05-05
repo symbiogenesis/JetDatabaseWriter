@@ -1601,10 +1601,13 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
+            var rows = new List<object[]>(10);
             for (int i = 1; i <= 10; i++)
             {
-                await writer.InsertRowAsync(tableName, [i, $"Row{i}"], TestContext.Current.CancellationToken);
+                rows.Add([i, $"Row{i}"]);
             }
+
+            await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
         }
 
         await using (var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))

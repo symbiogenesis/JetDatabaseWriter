@@ -123,13 +123,13 @@ public sealed class AccessReaderFuzzRobustnessTests
                     ],
                     TestContext.Current.CancellationToken);
 
+                var rows = new List<object[]>(5);
                 for (int i = 0; i < 5; i++)
                 {
-                    await writer.InsertRowAsync(
-                        "T",
-                        [i, $"row-{i}"],
-                        TestContext.Current.CancellationToken);
+                    rows.Add([i, $"row-{i}"]);
                 }
+
+                await writer.InsertRowsAsync("T", rows, TestContext.Current.CancellationToken);
             }
 
             golden = seed.ToArray();

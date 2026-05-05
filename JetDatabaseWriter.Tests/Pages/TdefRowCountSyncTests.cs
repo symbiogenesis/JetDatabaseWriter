@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Pages;
 
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -74,10 +75,13 @@ public sealed class TdefRowCountSyncTests
                 [new IndexDefinition("IX_Id", "Id")],
                 ct);
 
+            var rows = new List<object[]>(7);
             for (int i = 1; i <= 7; i++)
             {
-                await writer.InsertRowAsync("T", [i], ct);
+                rows.Add([i]);
             }
+
+            await writer.InsertRowsAsync("T", rows, ct);
         }
 
         AssertAllTdefsHaveSyncedCounters(ms.ToArray(), format);
