@@ -373,6 +373,41 @@ public sealed class HyperlinkTests
             TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task PlainMemoWithoutHyperlinkFlag_RoundTripsHashesAsString()
+    {
+        // A plain MEMO column without the HYPERLINK_FLAG_MASK (0x80) bit
+        // must continue to round-trip '#'-laden strings verbatim — we must not
+        // false-positive on memo content that merely contains '#' characters.
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        string tableName = $"Hyper_{Guid.NewGuid():N}"[..18];
+
+        const string hyperlinkText = "Click me#https://example.com/page#anchor#";
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                tableName,
+                [
+                    new("Id", typeof(int)),
+                    new("Link", typeof(string)), // no maxLength → MEMO, no IsHyperlink
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(tableName, [1, hyperlinkText], TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable dt = (await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Equal(1, dt.Rows.Count);
+
+        Assert.Equal(hyperlinkText, dt.Rows[0]["Link"]);
+
+        var meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        Assert.Equal(typeof(string), meta[1].ClrType);
+        Assert.False(meta[1].IsHyperlink);
+    }
+
     private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)
     {
         stream.Position = 0;
