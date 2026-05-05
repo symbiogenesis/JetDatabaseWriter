@@ -165,8 +165,8 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
 
         // At least one table must have a non-string column to prove typing
         bool anyTypedColumn = all.Values
-            .SelectMany(dt => dt.Columns.Cast<DataColumn>())
-            .Any(col => col.DataType != typeof(string));
+            .Any(dt => dt.Columns.Cast<DataColumn>()
+                .Any(col => col.DataType != typeof(string)));
 
         Assert.True(anyTypedColumn);
     }
