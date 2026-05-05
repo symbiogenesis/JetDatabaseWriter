@@ -163,18 +163,13 @@ public sealed class IndexCodesAggregateTests
         // can't silently neutralise this.
         Assert.NotEmpty(report);
 
-        // Ignore mismatches on Memo-keyed indexes: Jackcess upstream has a
-        // standing TODO ("long rows not handled completely yet … seems to
-        // truncate entry at 508 bytes") for long-value index keys, and our
-        // text encoder mirrors that limitation. Tracked in
-        // <c>docs/design/test-coverage-gaps.md</c> §1.1 (canonical home for
-        // the upstream long-row TODO cross-references).
-        int totalMismatched = report
-            .Where(r => !string.Equals(r.ColumnTypeName, "Memo", StringComparison.OrdinalIgnoreCase))
-            .Sum(r => r.Mismatched);
-        int totalCountMismatch = report
-            .Where(r => !string.Equals(r.ColumnTypeName, "Memo", StringComparison.OrdinalIgnoreCase))
-            .Count(r => r.OnDiskCount != r.EncodedCount);
+        // Memo-keyed indexes (long rows) are now byte-exact under General
+        // Legacy thanks to the 2-chunk long-row encoder. See
+        // <c>docs/design/long-row-index-encoding.md</c> ("Status" table).
+        // The V2010 "General" sort-order long-row suffix is still unsolved
+        // but this test only runs against V2000/V2003/V2007 fixtures.
+        int totalMismatched = report.Sum(r => r.Mismatched);
+        int totalCountMismatch = report.Count(r => r.OnDiskCount != r.EncodedCount);
 
         // Single aggregate assertion with the full report inline so the
         // failure message itself is the diagnostic.
