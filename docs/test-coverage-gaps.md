@@ -106,16 +106,6 @@ Reader-side Memo with embedded `0x00` bytes from a DAO-authored database
 is covered by
 [DaoValidationTests.DaoAuthoredMemo_WithEmbeddedNuls_ReaderReturnsExactContent](../../JetDatabaseWriter.Tests/Core/DaoValidationTests.cs).
 
-### 2.2 Complex columns (Multi-Value, Attachment, Versioned text)
-
-Version-history column presence/metadata and flat-table readability are
-verified by
-[VersionHistoryComplexColumnTests.cs](../../JetDatabaseWriter.Tests/Core/VersionHistoryComplexColumnTests.cs).
-The reader now correctly reports VH columns as `Kind = VersionHistory`
-(the `MSysComplexTypeVH_*` prefix is recognized by `ClassifyComplexKind`).
-- [ ] **`[J]`** Versioned-text column with > 100 historical versions to
-  exercise the LVAL chain inside the per-row complex sub-table.
-
 ### 2.3 Calculated columns
 
 - [ ] **`[J]`** Access-authored calculated columns whose expressions use the
@@ -127,28 +117,7 @@ The reader now correctly reports VH columns as `Kind = VersionHistory`
 
 ---
 
-## 3. Encryption / password
-
-- [x] **`[J]`** **Office 2007 (ECMA-376) standard** AES-128 encryption —
-  **fully implemented** (read + write). MS-OFFCRYPTO §2.3.6 Standard
-  encryption: SHA-1 PBKDF (50 000 iterations), AES-128-CBC with zero IV.
-  Covered by `StandardEncryptionTests` (38 tests: happy path open/read/
-  write, wrong password, malformed EncryptionInfo, encrypt/decrypt
-  round-trip, encryption mutation API) and updated assertions in
-  `EncryptionCoverageGapTests` and `EncryptionMutationTests`.
-- [x] **`[J]` `[O]`** CFB streams whose **mini-FAT chain spans more than one
-  mini-stream sector** — covered by
-  `CompoundFileReaderTests.ReadStreams_MiniFatSpansMultipleSectors_RecoversStreams`
-  (synthetic v3 CFB with 192 mini-sectors across 2 mini-FAT sectors).
-- [x] **`[J]`** `lv_prop` / `MSysDb` properties block round-trip after a
-  password change — covered by
-  `EncryptionCoverageGapTests.LvProp_SurvivesAgilePasswordChange` and
-  `LvProp_SurvivesJet4Rc4PasswordChange` (encrypt → change password →
-  decrypt → verify column metadata intact).
-
----
-
-## 4. DAO round-trip validation
+## 3. DAO round-trip validation
 
 Tests in this section use `DAO.DBEngine.120` via
 `AccessRoundTripEnvironment` and auto-skip when Access is not installed.
@@ -199,8 +168,6 @@ scenarios rather than reinventing the setup/teardown boilerplate.
 
 ## Notes on prioritisation
 
-- Items in **§3** require new fixture authoring (Office tooling) and are
-  larger.
-- Items in **§4** (DAO) can only run on Windows + Access hosts but provide
+- Items in **§3** (DAO) can only run on Windows + Access hosts but provide
   the highest-confidence signal that our output is correct — the canonical
   engine is the final arbiter.
