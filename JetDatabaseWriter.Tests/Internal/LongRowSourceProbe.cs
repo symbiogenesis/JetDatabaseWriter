@@ -198,6 +198,283 @@ public sealed class LongRowSourceProbe
         Assert.Fail(sb.ToString());
     }
 
+    /// <summary>
+    /// Expanded CRC-16 brute-force sweep for the V2010 long-row 2-byte suffix.
+    /// <para>
+    /// The earlier sweep (documented as "~3.4M combos") used a coupled
+    /// <c>reflected</c> flag and only tested <c>init ∈ {0, 0xFFFF}</c> with
+    /// <c>xor-out = 0</c> — that's 4 modes per polynomial. Real-world CRC-16
+    /// variants have <c>refIn</c>, <c>refOut</c>, <c>init</c>, and <c>xorOut</c>
+    /// as <em>independent</em> parameters; the prior probe missed 12/16 of
+    /// the standard mode space.
+    /// </para>
+    /// <para>
+    /// This method sweeps the full 65536 × 2 × 2 × 2 × 2 = ~1M parameter
+    /// space against the candidate input list. Both ascending and descending
+    /// constraints are loaded (6 (input, expected) pairs total per input
+    /// candidate) and a single-pass filter requires every match to satisfy
+    /// all 6 constraints simultaneously — false-positive rate ≈ 2^-96.
+    /// </para>
+    /// </summary>
+    [Fact(Skip = "Diagnostic probe — long-running brute-force sweep (×3 minutes); un-skip locally to investigate. Last run: 0/14,680,064 combos hit; see docs/design/long-row-index-encoding.md.")]
+    public async Task DumpV2010CrcFullSweep()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var reader = await AccessReader.OpenAsync(TestDatabases.TestIndexCodesV2010, cancellationToken: ct);
+        DataTable dt = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
+        var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+
+        List<IndexEntry> ascKeys = await CollectAllLeafKeysAsync(reader, layout, reader.PageSize, firstPage: 112, ct);
+        List<IndexEntry> descKeys = await CollectAllLeafKeysAsync(reader, layout, reader.PageSize, firstPage: 119, ct);
+
+        GeneralLegacyTextIndexEncoder.CharHandler[] codes = GetGeneralCodes();
+        GeneralLegacyTextIndexEncoder.CharHandler[] extCodes = GetGeneralExtCodes();
+
+        // Data row → (asc leaf index, desc leaf index). Mapping per the
+        // resolution doc; descending mapping for rows 3/4 was marked
+        // "(verify)" — this probe re-derives both directions empirically.
+        int[][] rowToLeaf = [[2, 2, -1], [3, 4, -1], [4, 3, -1]];
+
+        // Build constraint set: (input bytes, expected suffix) per row × direction.
+        var constraints = new List<(string Label, byte[][] Inputs, ushort Expected)>();
+        var cp1252 = System.Text.Encoding.GetEncoding(1252);
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("--- Constraint set ---");
+
+        foreach (int[] pair in rowToLeaf)
+        {
+            int ri = pair[0];
+            int ascLi = pair[1];
+            string v = (string)dt.Rows[ri]["data"];
+
+            byte[] expectedAsc = ascKeys[ascLi].Key;
+            ushort suffixAsc = (ushort)((expectedAsc[508] << 8) | expectedAsc[509]);
+
+            byte[] fullAsc = GeneralLegacyTextIndexEncoder.EncodeWithTables(
+                v[..Math.Min(255, v.Length)], true, codes, extCodes, maxEntryLength: 0);
+
+            byte[][] inputsAsc = BuildInputCandidates(fullAsc, v, cp1252);
+            constraints.Add(($"row[{ri}].asc", inputsAsc, suffixAsc));
+            sb.AppendLine($"row[{ri}] asc leaf[{ascLi}] expected=0x{suffixAsc:X4} fullLen={fullAsc.Length}");
+
+            // Find descending leaf empirically: bytes [1..507] = ~ascending[1..507].
+            int descLi = -1;
+            unchecked
+            {
+                for (int li = 0; li < descKeys.Count; li++)
+                {
+                    byte[] dk = descKeys[li].Key;
+                    if (dk.Length != 510 || dk[0] != 0x80)
+                    {
+                        continue;
+                    }
+
+                    bool match = true;
+                    for (int b = 1; b < 508; b++)
+                    {
+                        if (dk[b] != (byte)~expectedAsc[b])
+                        {
+                            match = false;
+                            break;
+                        }
+                    }
+
+                    if (match)
+                    {
+                        descLi = li;
+                        break;
+                    }
+                }
+            }
+
+            if (descLi < 0)
+            {
+                sb.AppendLine($"row[{ri}] desc: NOT FOUND in descKeys");
+                continue;
+            }
+
+            byte[] expectedDesc = descKeys[descLi].Key;
+            ushort suffixDesc = (ushort)((expectedDesc[508] << 8) | expectedDesc[509]);
+
+            byte[] fullDesc = GeneralLegacyTextIndexEncoder.EncodeWithTables(
+                v[..Math.Min(255, v.Length)], false, codes, extCodes, maxEntryLength: 0);
+            byte[][] inputsDesc = BuildInputCandidates(fullDesc, v, cp1252);
+            constraints.Add(($"row[{ri}].desc", inputsDesc, suffixDesc));
+            sb.AppendLine($"row[{ri}] desc leaf[{descLi}] expected=0x{suffixDesc:X4} fullLen={fullDesc.Length}");
+        }
+
+        int candidateCount = constraints[0].Inputs.Length;
+        sb.AppendLine($"\nSweep: {candidateCount} input candidates × 65536 polys × 16 modes = {candidateCount * 65536 * 16:N0} combos per constraint");
+        sb.AppendLine("Filter: a (poly,mode,inputIdx) survives only if it satisfies ALL constraints simultaneously.");
+
+        // Sweep. Strategy: for each (poly, mode, inputIdx), compute CRC against
+        // the FIRST constraint. Only if it matches do we verify the remaining
+        // constraints. With 6 constraints and 16-bit suffix, false-positive
+        // probability per (poly,mode,inputIdx) tuple ≈ 2^-96.
+        var hits = new List<string>();
+        var (firstLabel, firstInputs, firstExpected) = constraints[0];
+
+        for (int inputIdx = 0; inputIdx < candidateCount; inputIdx++)
+        {
+            byte[] firstInput = firstInputs[inputIdx];
+            if (firstInput.Length == 0)
+            {
+                continue;
+            }
+
+            for (int poly = 0; poly <= 0xFFFF; poly++)
+            {
+                ushort polyU = (ushort)poly;
+                ushort polyR = ReflectU16(polyU);
+                for (int mode = 0; mode < 16; mode++)
+                {
+                    bool refIn = (mode & 1) != 0;
+                    bool refOut = (mode & 2) != 0;
+                    ushort init = (mode & 4) != 0 ? (ushort)0xFFFF : (ushort)0;
+                    ushort xorOut = (mode & 8) != 0 ? (ushort)0xFFFF : (ushort)0;
+
+                    ushort got = CrcFull(firstInput, polyU, polyR, init, xorOut, refIn, refOut);
+                    if (got != firstExpected)
+                    {
+                        continue;
+                    }
+
+                    // Promising: verify on remaining constraints with same input index.
+                    bool allMatch = true;
+                    for (int ci = 1; ci < constraints.Count; ci++)
+                    {
+                        var (cLabel, cInputs, cExpected) = constraints[ci];
+                        ushort cGot = CrcFull(cInputs[inputIdx], polyU, polyR, init, xorOut, refIn, refOut);
+                        if (cGot != cExpected)
+                        {
+                            allMatch = false;
+                            break;
+                        }
+                    }
+
+                    if (allMatch)
+                    {
+                        string h = $"HIT poly=0x{polyU:X4} init=0x{init:X4} xorOut=0x{xorOut:X4} refIn={refIn} refOut={refOut} inputIdx={inputIdx}";
+                        hits.Add(h);
+                        sb.AppendLine(h);
+                    }
+                }
+            }
+        }
+
+        sb.AppendLine($"\nTotal hits: {hits.Count}");
+        Assert.Fail(sb.ToString());
+    }
+
+    private static byte[][] BuildInputCandidates(byte[] full, string text, System.Text.Encoding cp1252)
+    {
+        // Mirror the candidate inputs from DumpV2010SuffixAnalysis, plus a
+        // few additional variants (full[0..508], full[1..508], with-suffix-zeroed).
+        string remaining = text.Length > 255 ? text[255..] : string.Empty;
+        string upper = text.ToUpperInvariant();
+        string remainUpper = upper.Length > 255 ? upper[255..] : string.Empty;
+
+        // Locate END_TEXT and split extras / unprint.
+        int endTextPos = -1;
+        for (int i = 508; i < full.Length; i++)
+        {
+            if (full[i] == 0x01)
+            {
+                endTextPos = i;
+                break;
+            }
+        }
+
+        byte[] extras = endTextPos >= 0 && endTextPos + 1 < full.Length
+            ? full[(endTextPos + 1)..^1]
+            : [];
+        byte[] unprint = [];
+        if (extras.Length > 3)
+        {
+            for (int i = 0; i < extras.Length - 2; i++)
+            {
+                if (extras[i] == 0x01 && extras[i + 1] == 0x01)
+                {
+                    unprint = extras[(i + 2)..];
+                    extras = extras[..i];
+                    break;
+                }
+            }
+        }
+
+        // "Self-checking" variant: kept portion with suffix bytes zeroed.
+        byte[] selfCheck = full.Length >= 510 ? full[..510] : (byte[])full.Clone();
+        if (selfCheck.Length >= 510)
+        {
+            selfCheck[508] = 0;
+            selfCheck[509] = 0;
+        }
+
+        return
+        [
+            full.Length > 508 ? full[508..] : [],
+            full.Length > 510 ? full[510..] : [],
+            full.Length > 509 ? full[508..^1] : [],
+            cp1252.GetBytes(remaining),
+            System.Text.Encoding.Unicode.GetBytes(remaining),
+            System.Text.Encoding.Unicode.GetBytes(text),
+            cp1252.GetBytes(remainUpper),
+            cp1252.GetBytes(upper),
+            extras,
+            unprint,
+            [.. extras, .. unprint],
+            full.Length >= 508 ? full[..508] : full,
+            full.Length >= 508 ? full[1..508] : full,
+            selfCheck,
+        ];
+    }
+
+    /// <summary>
+    /// Full-parameter CRC-16 with independent <paramref name="refIn"/> /
+    /// <paramref name="refOut"/> / <paramref name="init"/> / <paramref name="xorOut"/>.
+    /// </summary>
+    private static ushort CrcFull(byte[] data, ushort poly, ushort polyReflected, ushort init, ushort xorOut, bool refIn, bool refOut)
+    {
+        unchecked
+        {
+            ushort crc = init;
+            if (refIn)
+            {
+                foreach (byte b in data)
+                {
+                    crc ^= b;
+                    for (int i = 0; i < 8; i++)
+                    {
+                        crc = (crc & 1) != 0
+                            ? (ushort)((crc >> 1) ^ polyReflected)
+                            : (ushort)(crc >> 1);
+                    }
+                }
+            }
+            else
+            {
+                foreach (byte b in data)
+                {
+                    crc ^= (ushort)(b << 8);
+                    for (int i = 0; i < 8; i++)
+                    {
+                        crc = (crc & 0x8000) != 0
+                            ? (ushort)((crc << 1) ^ poly)
+                            : (ushort)(crc << 1);
+                    }
+                }
+            }
+
+            if (refIn != refOut)
+            {
+                crc = ReflectU16(crc);
+            }
+
+            return (ushort)(crc ^ xorOut);
+        }
+    }
+
     private static string ModeStr(int mode)
     {
         return mode switch
