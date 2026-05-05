@@ -44,4 +44,13 @@ public enum AccessEncryptionFormat
     /// ACCDB).
     /// </summary>
     AccdbAgile = 4,
+
+    /// <summary>
+    /// Office 2007 (ECMA-376) "Standard" encryption used by Access 2007
+    /// (<c>.accdb</c>). The file is a real OLE Compound File containing
+    /// <c>EncryptionInfo</c> (binary descriptor: SHA-1 PBKDF, AES-128-CBC)
+    /// and <c>EncryptedPackage</c> (AES-128-CBC with zero IV of the inner
+    /// ACCDB).
+    /// </summary>
+    AccdbStandard = 5,
 }

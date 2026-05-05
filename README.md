@@ -19,7 +19,7 @@ Pure-managed .NET library for reading and writing Microsoft Access JET databases
 | ✅ **POCO + LINQ streaming** | `Rows<T>("...").Where(...).Take(...).ToListAsync(ct)` over `IAsyncEnumerable<T>` |
 | ✅ **Async-first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
 | ✅ **Stream-based I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
-| ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Agile (Office Crypto) — all read/write |
+| ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Standard (Office 2007) / Agile (Office 2010+) — all read/write |
 | ✅ **Schema features** | Indexes, primary & foreign keys with referential integrity (cascade update/delete), linked tables (Access + ODBC catalog entries) |
 | ✅ **Complex columns** | Read/write attachments and multi-value columns (ACCDB) |
 | ✅ **Concurrency** | `.ldb` / `.laccdb` lockfile + page-level byte-range locks matching the JET/ACE protocol |
@@ -653,7 +653,7 @@ catch (ObjectDisposedException) { /* reader already disposed */ }
 
 All password-protected formats produced by Microsoft Access from Access 97 through Microsoft 365 are fully **read- and write-supported**. Supply the password via [`AccessReaderOptions.Password`](JetDatabaseWriter/AccessReaderOptions.cs) or [`AccessWriterOptions.Password`](JetDatabaseWriter/AccessWriterOptions.cs); the format is auto-detected from the file header.
 
-- **In-place mutation.** All formats (Jet3 XOR, Jet4 RC4, ACCDB legacy `;pwd=`, AES-128 CFB-wrapped, and Office Crypto API "Agile") are writable in place — modified pages are re-encrypted on flush, and Agile containers are re-emitted on `DisposeAsync`.
+- **In-place mutation.** All formats (Jet3 XOR, Jet4 RC4, ACCDB legacy `;pwd=`, AES-128 CFB-wrapped, Standard (Office 2007), and Office Crypto API "Agile") are writable in place — modified pages are re-encrypted on flush, and CFB-wrapped containers are re-emitted on `DisposeAsync`.
 - **Encryption mutation APIs.** `AccessWriter.EncryptAsync(path, password, AccessEncryptionFormat, …)`, `AccessWriter.DecryptAsync(path, password, …)`, and `AccessWriter.ChangePasswordAsync(path, oldPassword, newPassword, …)` add, remove, or rotate encryption (and switch formats) on an existing file. Use `AccessWriter.DetectEncryptionFormatAsync(path)` to discover the current format.
 
 | Format | Versions | Detection | Key derivation | Page / payload cipher |
@@ -662,6 +662,7 @@ All password-protected formats produced by Microsoft Access from Access 97 throu
 | Jet4 RC4 | Access 2000–2003 (`.mdb`) | header byte `0x62` value `0x02` / `0x03` | password XOR-verified at `0x42`; `dbKey` at `0x3E` | per-page RC4 with `MD5(dbKey ‖ pageNumber)` |
 | ACCDB legacy password | Access 2007+ (`.accdb`, `;pwd=...`) | header byte `0x62` value `0x07` | password XOR-verified at `0x42` | none (password only) |
 | ACCDB AES-128 (CFB-wrapped) | Access 2007+ (`.accdb`) | CFB magic `D0 CF 11 E0` + Jet4-style header password | SHA-256(password) → 16 bytes | per-page AES-128-ECB |
+| ACCDB Standard (Office 2007) | Access 2007 (`.accdb`) | CFB compound document with `EncryptionInfo` version (3,2) or (4,2), AlgID `0x6601` | MS-OFFCRYPTO §2.3.6 PBKDF: SHA-1 + 50 000 iterations + 16-byte salt | AES-128-CBC with zero IV over whole `EncryptedPackage` stream |
 | ACCDB Agile (Office Crypto API) | Access 2010 SP1+, Microsoft 365 (`.accdb`) | CFB compound document with `EncryptionInfo` (version 4.4, flag `0x40`) and `EncryptedPackage` streams | ECMA-376 §2.3.4.11 PBKDF: SHA-512 + `spinCount` iterations + spec block keys (`0xfea7d2763b4b9e79`, `0xd7aa0f6d3061344e`, `0x146e0be7abacd0d6`) | AES-256-CBC over 4096-byte segments with per-segment IV `SHA-512(keyDataSalt ‖ uint32_le(segmentIndex))[:16]` |
 
 ---

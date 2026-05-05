@@ -6,6 +6,7 @@ using System.Data;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -150,6 +151,30 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         await AssertOpenableAsync(path, password: null, originalTables);
     }
 
+    // ───── ACCDB Standard (Office 2007) ──────────────────────────────
+
+    [Fact]
+    public async Task EncryptDecrypt_AccdbStandard_RoundTripsThroughChangePassword()
+    {
+        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        List<string> originalTables = await ListTablesAsync(path, password: null);
+
+        await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbStandard, NoLockOptions(), TestContext.Current.CancellationToken);
+
+        // The cheap header-based detector sees any CFB as AccdbAgile.
+        Assert.Equal(AccessEncryptionFormat.AccdbAgile, await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
+
+        await AssertOpenableAsync(path, FirstPassword, originalTables);
+
+        await AccessWriter.ChangePasswordAsync(path, FirstPassword, SecondPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+        await AssertWrongPasswordAsync(path, FirstPassword);
+        await AssertOpenableAsync(path, SecondPassword, originalTables);
+
+        await AccessWriter.DecryptAsync(path, SecondPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
+        await AssertOpenableAsync(path, password: null, originalTables);
+    }
+
     // ───── Cross-format re-encryption ────────────────────────────────
 
     [Fact]
@@ -245,7 +270,86 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         Assert.NotEmpty(tables);
     }
 
+    // ───── LvProp / column metadata preservation ───────────────────
+
+    /// <summary>
+    /// Verifies that MSysObjects.LvProp (column property metadata) survives
+    /// Encrypt → ChangePassword → Decrypt operations. The concern is that
+    /// re-encryption might corrupt internal metadata blocks containing
+    /// column-level property information (expression definitions, format
+    /// strings, etc.).
+    /// </summary>
+    [Fact]
+    public async Task EncryptDecrypt_AccdbAgile_PreservesColumnMetadata()
+    {
+        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+
+        var originalMeta = await GetAllColumnMetadataAsync(path, password: null);
+        Assert.NotEmpty(originalMeta);
+
+        await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbAgile, NoLockOptions(), TestContext.Current.CancellationToken);
+        await AccessWriter.ChangePasswordAsync(path, FirstPassword, SecondPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+        await AccessWriter.DecryptAsync(path, SecondPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+
+        var afterMeta = await GetAllColumnMetadataAsync(path, password: null);
+        AssertColumnMetadataEqual(originalMeta, afterMeta);
+    }
+
+    [Fact]
+    public async Task EncryptDecrypt_Jet4Rc4_PreservesColumnMetadata()
+    {
+        string path = await CloneAsync(TestDatabases.AdventureWorks, ".mdb");
+
+        var originalMeta = await GetAllColumnMetadataAsync(path, password: null);
+        Assert.NotEmpty(originalMeta);
+
+        await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.Jet4Rc4, NoLockOptions(), TestContext.Current.CancellationToken);
+        await AccessWriter.ChangePasswordAsync(path, FirstPassword, SecondPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+        await AccessWriter.DecryptAsync(path, SecondPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+
+        var afterMeta = await GetAllColumnMetadataAsync(path, password: null);
+        AssertColumnMetadataEqual(originalMeta, afterMeta);
+    }
+
     // ───── Helpers ───────────────────────────────────────────────────
+
+    private static void AssertColumnMetadataEqual(
+        Dictionary<string, List<ColumnMetadata>> expected,
+        Dictionary<string, List<ColumnMetadata>> actual)
+    {
+        Assert.Equal(expected.Count, actual.Count);
+        foreach (var (table, columns) in expected)
+        {
+            Assert.True(actual.ContainsKey(table), $"Table '{table}' missing after password change.");
+            var afterCols = actual[table];
+            Assert.Equal(columns.Count, afterCols.Count);
+            for (int i = 0; i < columns.Count; i++)
+            {
+                Assert.Equal(columns[i].Name, afterCols[i].Name);
+                Assert.Equal(columns[i].ClrType, afterCols[i].ClrType);
+            }
+        }
+    }
+
+    private static async Task<Dictionary<string, List<ColumnMetadata>>> GetAllColumnMetadataAsync(string path, string? password)
+    {
+        var options = new AccessReaderOptions
+        {
+            UseLockFile = false,
+            Password = password.AsMemory(),
+        };
+        await using var reader = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+
+        var result = new Dictionary<string, List<ColumnMetadata>>(StringComparer.Ordinal);
+        foreach (string table in tables)
+        {
+            List<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            result[table] = cols;
+        }
+
+        return result;
+    }
 
     private static AccessWriterOptions NoLockOptions() => new() { UseLockFile = false };
 

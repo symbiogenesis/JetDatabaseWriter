@@ -455,10 +455,10 @@ internal static class EncryptionManager
 
     /// <summary>
     /// If <paramref name="header"/> has CFB magic and the contained streams
-    /// describe an Office Crypto API ("Agile") encrypted package, returns the
-    /// decrypted inner ACCDB bytes. Returns <c>null</c> when the file is not
-    /// an Agile-encrypted CFB document.
-    /// Throws <see cref="UnauthorizedAccessException"/> when an Agile package
+    /// describe an Office Crypto API ("Agile" or "Standard") encrypted package,
+    /// returns the decrypted inner ACCDB bytes. Returns <c>null</c> when the
+    /// file is not an encrypted CFB document.
+    /// Throws <see cref="UnauthorizedAccessException"/> when an encrypted package
     /// is detected but no password was supplied.
     /// </summary>
     public static async ValueTask<byte[]?> TryDecryptAgileCompoundFileAsync(
@@ -467,9 +467,25 @@ internal static class EncryptionManager
         ReadOnlyMemory<char> password,
         CancellationToken cancellationToken)
     {
+        (byte[]? plaintext, _) = await TryDecryptCompoundFileWithFormatAsync(stream, header, password, cancellationToken)
+            .ConfigureAwait(false);
+        return plaintext;
+    }
+
+    /// <summary>
+    /// Same as <see cref="TryDecryptAgileCompoundFileAsync"/> but also returns
+    /// the detected <see cref="AccessEncryptionFormat"/> so callers can
+    /// distinguish Standard from Agile encryption.
+    /// </summary>
+    internal static async ValueTask<(byte[]? Plaintext, AccessEncryptionFormat Format)> TryDecryptCompoundFileWithFormatAsync(
+        Stream stream,
+        byte[] header,
+        ReadOnlyMemory<char> password,
+        CancellationToken cancellationToken)
+    {
         if (!CompoundFileReader.HasCompoundFileMagic(header))
         {
-            return null;
+            return (null, AccessEncryptionFormat.None);
         }
 
         Dictionary<string, byte[]>? streams = null;
@@ -490,20 +506,26 @@ internal static class EncryptionManager
             !streams.TryGetValue("EncryptionInfo", out byte[]? encryptionInfo) ||
             !streams.TryGetValue("EncryptedPackage", out byte[]? encryptedPackage))
         {
-            return null;
+            return (null, AccessEncryptionFormat.None);
         }
 
         if (OfficeCryptoAgile.IsStandardEncryptionInfo(encryptionInfo))
         {
-            throw new NotSupportedException(
-                "This .accdb file uses Office 2007 (ECMA-376) Standard encryption (AES-128). " +
-                "Only Agile encryption (Office 2010+) is currently supported. " +
-                "Re-encrypt the file using Access 2010 or later, or remove the password and re-apply it with a modern version of Access.");
+            if (password.IsEmpty)
+            {
+                throw new UnauthorizedAccessException(
+                    "This .accdb file is encrypted with Office 2007 Standard encryption (AES-128). " +
+                    "Provide the database password via AccessReaderOptions.Password to open it, " +
+                    "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
+            }
+
+            return (OfficeCryptoStandard.Decrypt(encryptionInfo, encryptedPackage, password.Span),
+                    AccessEncryptionFormat.AccdbStandard);
         }
 
         if (!OfficeCryptoAgile.IsAgileEncryptionInfo(encryptionInfo))
         {
-            return null;
+            return (null, AccessEncryptionFormat.None);
         }
 
         if (password.IsEmpty)
@@ -514,7 +536,8 @@ internal static class EncryptionManager
                 "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
         }
 
-        return OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, password.Span);
+        return (OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, password.Span),
+                AccessEncryptionFormat.AccdbAgile);
     }
 
     private static async ValueTask ReencryptFileAsync(

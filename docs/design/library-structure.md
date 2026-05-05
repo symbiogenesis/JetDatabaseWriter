@@ -141,6 +141,7 @@ JetDatabaseWriter/
 │   ├── EncryptionManager.cs               (key derivation, page encrypt/decrypt dispatch)
 │   ├── EncryptionConverter.cs             (format conversion — add/remove/change encryption)
 │   ├── OfficeCryptoAgile.cs               (ECMA-376 Agile encryption — AES-256-CBC, SHA-512)
+│   ├── OfficeCryptoStandard.cs            (MS-OFFCRYPTO §2.3.6 Standard — AES-128-CBC, SHA-1)
 │   └── Models/
 │       └── PageDecryptionKeys.cs
 │

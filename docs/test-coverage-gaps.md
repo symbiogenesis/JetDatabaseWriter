@@ -130,10 +130,12 @@ The reader now correctly reports VH columns as `Kind = VersionHistory`
 ## 3. Encryption / password
 
 - [x] **`[J]`** **Office 2007 (ECMA-376) standard** AES-128 encryption —
-  detection and clear `NotSupportedException` covered by
-  `EncryptionCoverageGapTests.StandardEncryption_DetectedWithClearError`
-  and `IsStandardEncryptionInfo_*` unit tests. Actual decryption is not
-  yet implemented (requires a re-encrypt-with-Agile workflow to open).
+  **fully implemented** (read + write). MS-OFFCRYPTO §2.3.6 Standard
+  encryption: SHA-1 PBKDF (50 000 iterations), AES-128-CBC with zero IV.
+  Covered by `StandardEncryptionTests` (38 tests: happy path open/read/
+  write, wrong password, malformed EncryptionInfo, encrypt/decrypt
+  round-trip, encryption mutation API) and updated assertions in
+  `EncryptionCoverageGapTests` and `EncryptionMutationTests`.
 - [x] **`[J]` `[O]`** CFB streams whose **mini-FAT chain spans more than one
   mini-stream sector** — covered by
   `CompoundFileReaderTests.ReadStreams_MiniFatSpansMultipleSectors_RecoversStreams`
