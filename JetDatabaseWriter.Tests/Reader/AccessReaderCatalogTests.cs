@@ -277,17 +277,20 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task GetColumnMetadata_TypeName_IsNeverRawHex(string path)
     {
+        var ct = TestContext.Current.CancellationToken;
+
         // No column should surface a raw hex TypeName like "0x11" / "0x12";
         // the reader must always resolve a friendly name (incl. for complex columns).
-        var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        var reader = await db.GetReaderAsync(path, ct);
 
-        foreach (string table in await reader.ListTablesAsync(TestContext.Current.CancellationToken))
+        foreach (var table in await reader.ListTablesAsync(ct))
         {
-            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
-            Assert.All(meta, col =>
-                Assert.False(
-                    col.TypeName.StartsWith("0x", StringComparison.Ordinal),
-                    $"Column '{col.Name}' in table '{table}' has raw hex TypeName '{col.TypeName}'"));
+            List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, ct);
+            var bad = meta.FirstOrDefault(col => col.TypeName.StartsWith("0x", StringComparison.Ordinal));
+            if (bad is not null)
+            {
+                Assert.Fail($"Column '{bad.Name}' in table '{table}' has raw hex TypeName '{bad.TypeName}'");
+            }
         }
     }
 
