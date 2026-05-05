@@ -411,7 +411,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
             // bytes 0..3   Jet4/ACE format magic cookie (0x00000659). DAO's
             //              TDEF validation checks this during CompactDatabase;
             //              leaving it zero causes err 3011 "MSysDb".
-            AccessBase.Wi32(newTd, phys, Constants.TableDefinition.Jet4FormatMagic);
+            AccessBase.Wi32(newTd, phys, Constants.TableDefinition.Jet4.FormatMagic);
 
             // bytes 4..33  col_map: 10 × {col_num(2), col_order(1)}
             for (int slot = 0; slot < 10; slot++)
@@ -450,7 +450,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
         //              this during CompactDatabase.
         // bytes 24..27 trailing(4) = 0
         int newLogEntry = newLogIdxStart + oldLogIdxLen;
-        AccessBase.Wi32(newTd, newLogEntry, Constants.TableDefinition.Jet4FormatMagic);
+        AccessBase.Wi32(newTd, newLogEntry, Constants.TableDefinition.Jet4.FormatMagic);
         AccessBase.Wi32(newTd, newLogEntry + 4, numIdx);                  // index_num (next sequential)
         AccessBase.Wi32(newTd, newLogEntry + 8, realIdxNumThisSide);      // index_num2
         newTd[newLogEntry + 12] = 0x01;                        // rel_tbl_type — empirical: 0x01 on FK entries (appendix §"Companies")
