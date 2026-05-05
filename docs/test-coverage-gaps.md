@@ -30,35 +30,35 @@ where Microsoft Access is installed; such tests auto-skip via
 ### 1.1 Text / sort-order encoders
 
 Byte-exact fixture validation across all five formats ships in
-[GeneralLegacyEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralLegacyEncoderFixtureTests.cs)
+[GeneralLegacyEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collation/GeneralLegacyEncoderFixtureTests.cs)
 (V2000 / V2003 / V2007),
-[GeneralEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralEncoderFixtureTests.cs)
+[GeneralEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collation/GeneralEncoderFixtureTests.cs)
 (V2010), and
-[General97EncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/General97EncoderFixtureTests.cs)
+[General97EncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collation/General97EncoderFixtureTests.cs)
 (V1997), all driven through
-[TextIndexEncoderFixtureHarness.cs](../../JetDatabaseWriter.Tests/Internal/TextIndexEncoderFixtureHarness.cs).
+[TextIndexEncoderFixtureHarness.cs](../../JetDatabaseWriter.Tests/Infrastructure/TextIndexEncoderFixtureHarness.cs).
 Property/structural assertions for the General + General 97 encoders are
-in [GeneralAndGeneral97EncoderUnitTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralAndGeneral97EncoderUnitTests.cs).
+in [GeneralEncoderSharedTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collation/GeneralEncoderSharedTests.cs).
 
 - [ ] **V2010 long-row stress tables (`Table11`, `Table11_desc`)** are
   partially covered: V2000 / V2003 / V2007 long-row leaves now validate
-  byte-exact in [GeneralLegacyEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralLegacyEncoderFixtureTests.cs)
+  byte-exact in [GeneralLegacyEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collation/GeneralLegacyEncoderFixtureTests.cs)
   via the 2-chunk encoder
   ([GeneralLegacyTextIndexEncoder.EncodeTwoChunks](../../JetDatabaseWriter/Indexes/Collation/GeneralLegacyTextIndexEncoder.cs)).
   V2010 (General sort order) `Table11` / `Table11_desc` are still skipped
-  in [GeneralEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralEncoderFixtureTests.cs):
+  in [GeneralEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collation/GeneralEncoderFixtureTests.cs):
   the encoder matches the first 508 of 510 bytes but the final 2-byte
   suffix algorithm is unknown (exhaustive testing of ~3.4 M hash/CRC/input
   combinations found no match — see resolution doc for details). The
   partial result is now locked in by
-  [GeneralEncoderLongRowPrefixTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralEncoderLongRowPrefixTests.cs),
+  [GeneralEncoderLongRowPrefixTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collation/GeneralEncoderLongRowPrefixTests.cs),
   which asserts byte-exact match on bytes `[0..507]` for every 510-byte
   long-row leaf in those two tables (and full byte-exact match for the
   short / null entries that share the same indexes); regressions in the
   encoder body or in the suffix algorithm (when discovered) will trip it.
   Binary single-column long keys in V2010 `binIdxTest` and Memo-keyed
   indexes via
-  [IndexCodesAggregateDiagnosticTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexCodesAggregateDiagnosticTests.cs)
+  [IndexCodesAggregateTests.cs](../../JetDatabaseWriter.Tests/Indexes/IndexCodesAggregateTests.cs)
   also still run un-asserted for the same reason. See
   [long-row-index-encoding.md](long-row-index-encoding.md).
 

@@ -1,4 +1,4 @@
-﻿# Round-Trip Test Failures — Investigation Status
+# Round-Trip Test Failures — Investigation Status
 
 ## Current status (2026-05-04)
 
@@ -57,7 +57,7 @@ The DAO-authored baseline probe (see [DaoBaselineProbe.cs](../../JetDatabaseWrit
 
 ## Tests in question
 
-Two tests in [AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs):
+Two tests in [AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs):
 
 - `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`
 - `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`
@@ -123,8 +123,8 @@ All in `AccessWriter.cs` / `Constants.cs` unless noted; Jet4/ACE only where appl
 
 Supporting fixes (each was a real defect; each is regression-guarded):
 
-- Per-real-idx `num_idx_rows` mirrors `row_count` delta (`UpdateRowCountAsync`). Guarded by [TdefRowCountSyncTests.cs](../../JetDatabaseWriter.Tests/Core/TdefRowCountSyncTests.cs).
-- Real-idx `flags` byte at Jet4 phys+46 (was previously offset 42) with the `0x80` UNKNOWN bit always set. Guarded by [IndexFlagCombinationsTests.cs](../../JetDatabaseWriter.Tests/Core/IndexFlagCombinationsTests.cs).
+- Per-real-idx `num_idx_rows` mirrors `row_count` delta (`UpdateRowCountAsync`). Guarded by [TdefRowCountSyncTests.cs](../../JetDatabaseWriter.Tests/Pages/TdefRowCountSyncTests.cs).
+- Real-idx `flags` byte at Jet4 phys+46 (was previously offset 42) with the `0x80` UNKNOWN bit always set. Guarded by [IndexFlagCombinationsTests.cs](../../JetDatabaseWriter.Tests/Indexes/IndexFlagCombinationsTests.cs).
 - Jet4 leaf-page header offsets: `prev` @ 12, `next` @ 16, `tail` @ 20, `pref_len` @ 24, bitmask @ 0x1B, first-entry @ 0x1E0 — constants in `Constants.IndexLeafPage.{Jet3,Jet4}`. Hard-coded `AsSpan(8/12/16/20, ...)` reads in Jet4 paths are a bug; use `IndexLeafPageBuilder.LeafPageLayout`.
 - Intermediate index pages use 4-byte **big-endian** child pointers (despite other 32-bit fields on the page being LE). `IndexBTreeBuilder` writes BE; `IndexBTreeSeeker.SelectChildPage` and `IndexLeafIncremental.DecodeIntermediateChildPointer` read BE.
 - **Prefix compression cap (2026-05-03):** `BuildLeafPage` now accepts optional `maxPrefixLength` parameter. When splicing into an existing leaf, the caller reads the page's original `pref_len` and passes it to cap the recomputed prefix. This prevents the writer from increasing prefix compression beyond what was on disk — DAO rejects pages whose `pref_len` grows (entries shift position, bitmask becomes inconsistent with what DAO expects). Applied in both `TrySpliceCatalogIndexEntryAsync` and `TryAppendToTailLeafAsync`.
@@ -149,7 +149,7 @@ Supporting fixes (each was a real defect; each is regression-guarded):
 ### TDEF magic stamps (`0x00000659`, added 2026-05-03)
 
 - Column descriptors: bytes 1–4 after the column-type byte stamped with `0x00000659` via `Wi32(page, o + 1, 0x00000659)`.
-- Real-idx physical descriptors: first 4 bytes stamped with `0x00000783` (`Jet4RealIdxLeadingMagic` — distinct from the format-wide `0x00000659`; see `Constants.TableDefinition.Jet4RealIdxLeadingMagic` and `Jet4CookieAndCatalogTests`).
+- Real-idx physical descriptors: first 4 bytes stamped with `0x00000783` (`Jet4RealIdxLeadingMagic` — distinct from the format-wide `0x00000659`; see `Constants.TableDefinition.Jet4RealIdxLeadingMagic` and `Jet4FormatCookieTests`).
 - Logical-idx entry descriptors: first 4 bytes (at `logEntry - LogicalEntryFieldsOffset`) stamped with `0x00000659`.
 - Applied in three code paths: `BuildTDefPagesWithIndexOffsets` (user tables), `BuildMSysObjectsTDef` (MSysObjects cols), `RelationshipManager.EmitFkLogicalIdxAsync` (FK backing indexes).
 - **Binary page bisection confirmed**: TDEF pages (2, 3) pass individually — magic stamps are correct and not the trigger.

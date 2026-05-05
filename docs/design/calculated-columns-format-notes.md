@@ -87,8 +87,8 @@ Delivered:
 - `AccessWriter.CreateTableAsync` throws `NotSupportedException` when any
   `ColumnDefinition.IsCalculated == true` (message points at this doc and
   mentions Phase 1B).
-- Tests: `JetDatabaseWriter.Tests/Internal/CalculatedColumnUtilTests.cs`,
-  expanded `LimitationsTests`.
+- Tests: `JetDatabaseWriter.Tests/Schema/CalculatedColumnUtilTests.cs`,
+  expanded `AccessWriterLimitationsTests`.
 
 Phase 1A does **not** unwrap the persisted value when reading rows; the
 underlying typed-value parser still sees the original payload and would
