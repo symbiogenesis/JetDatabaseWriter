@@ -47,8 +47,11 @@ public sealed class IndexMetadataTests(DatabaseCache db) : IClassFixture<Databas
         foreach (IndexMetadata idx in indexes)
         {
             Assert.NotEmpty(idx.Columns);
-            Assert.All(idx.Columns, c => Assert.False(string.IsNullOrEmpty(c.Name), $"Index '{idx.Name}' has unresolved column number {c.ColumnNumber}."));
-            Assert.All(idx.Columns, c => Assert.True(c.IsAscending, $"Unexpected descending key column in '{idx.Name}'."));
+            Assert.All(idx.Columns, c =>
+            {
+                Assert.False(string.IsNullOrEmpty(c.Name), $"Index '{idx.Name}' has unresolved column number {c.ColumnNumber}.");
+                Assert.True(c.IsAscending, $"Unexpected descending key column in '{idx.Name}'.");
+            });
         }
     }
 

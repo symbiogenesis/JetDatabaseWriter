@@ -103,8 +103,11 @@ public sealed class IndexWriterTests
 
         Assert.Equal(3, indexes.Count);
         Assert.Equal(ExpectedIndexNames, indexes.Select(i => i.Name).ToArray());
-        Assert.All(indexes, i => Assert.Equal(IndexKind.Normal, i.Kind));
-        Assert.All(indexes, i => Assert.Single(i.Columns));
+        Assert.All(indexes, i =>
+        {
+            Assert.Equal(IndexKind.Normal, i.Kind);
+            Assert.Single(i.Columns);
+        });
 
         // One real-idx is emitted per logical-idx (no sharing).
         var realIdxNumbers = indexes.Select(i => i.RealIndexNumber).ToHashSet();
