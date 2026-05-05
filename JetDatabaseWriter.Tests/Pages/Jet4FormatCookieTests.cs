@@ -45,7 +45,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
         {
             int off = tdefPage * PageSize(format);
             int magic = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(off + 0x0C, 4));
-            Assert.Equal(Constants.TableDefinition.Jet4FormatMagic, magic);
+            Assert.Equal(Constants.TableDefinition.Jet4.FormatMagic, magic);
         }
     }
 
@@ -96,11 +96,11 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
 
                 // The real-idx phys descriptor's leading 4 bytes are NOT the format-wide
                 // 0x659 magic — they are a separate constant 0x783 that DAO/Access stamp
-                // on every real-idx phys block (see Constants.TableDefinition.Jet4RealIdxLeadingMagic
+                // on every real-idx phys block (see Constants.TableDefinition.Jet4.RealIdx.LeadingMagic
                 // and docs/design/format-probe-appendix-index.md). Writing 0x659 here was
                 // the previous bug; DAO refused to OpenRecordset on tables whose real-idx
                 // descriptors had a leading word other than 0x783.
-                Assert.Equal(Constants.TableDefinition.Jet4RealIdxLeadingMagic, magic);
+                Assert.Equal(Constants.TableDefinition.Jet4.RealIdx.LeadingMagic, magic);
             }
 
             foundUserTdef = true;
@@ -145,7 +145,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
             {
                 int logEntry = logStart + (i * 28);
                 int magic = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(logEntry, 4));
-                Assert.Equal(Constants.TableDefinition.Jet4FormatMagic, magic);
+                Assert.Equal(Constants.TableDefinition.Jet4.FormatMagic, magic);
             }
 
             foundLogical = true;
@@ -173,7 +173,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
                 // In Jet3, byte 1 of the column descriptor is col_num, not magic.
                 // Verify it is NOT 0x00000659.
                 int val = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(o + 1, 4));
-                Assert.NotEqual(Constants.TableDefinition.Jet4FormatMagic, val);
+                Assert.NotEqual(Constants.TableDefinition.Jet4.FormatMagic, val);
             }
         }
     }
@@ -480,7 +480,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     [Fact]
     public void Jet4FormatMagic_HasExpectedValue()
     {
-        Assert.Equal(0x00000659, Constants.TableDefinition.Jet4FormatMagic);
+        Assert.Equal(0x00000659, Constants.TableDefinition.Jet4.FormatMagic);
     }
 
     [Fact]
@@ -611,7 +611,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
         {
             int o = colStart + (c * 25);
             int magic = BinaryPrimitives.ReadInt32LittleEndian(db.AsSpan(o + 1, 4));
-            Assert.Equal(Constants.TableDefinition.Jet4FormatMagic, magic);
+            Assert.Equal(Constants.TableDefinition.Jet4.FormatMagic, magic);
         }
     }
 

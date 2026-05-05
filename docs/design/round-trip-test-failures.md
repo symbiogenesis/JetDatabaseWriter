@@ -26,7 +26,7 @@ Files changed: `AccessBase.cs`, `RowEncoder.cs`, `LongValueEncoder.cs`, `ColumnI
 - ✅ **LvProp**: `Constants.SystemObjects.DefaultLvPropPlaceholder` (12 zero bytes) stamped when `JetExpressionConverter.BuildLvPropBlob` returns null.
 - ✅ **MSysACEs**: `InsertAceRowsForTableAsync` inserts 3 ACE rows (owner/admins/users) per new user table. Harvests the Admins-group SID dynamically. Gated on `catalogFlags == 0` (user tables only). Column name corrected from `"Inheritable"` to `"FInheritable"` (the TDEF column name for the boolean ACE field).
 - ⛔ **GPM (page 1) ruled out for append-only writes**: Page 1's bitmap uses convention "1 = free, 0 = in-use". Pages appended beyond original file size already have bits = 0 (in-use by default).
-- ✅ **TDEF magic stamps (`0x00000659` / `0x00000783`)**: Column descriptors (bytes 1–4) and logical-idx entry descriptors (first 4 bytes) stamped with `0x00000659` (format-wide magic). Real-idx physical descriptors (first 4 bytes) stamped with `0x00000783` (`Jet4RealIdxLeadingMagic` — a distinct constant, NOT the format-wide magic). Applied across `BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, and `RelationshipManager.EmitFkLogicalIdxAsync`.
+- ✅ **TDEF magic stamps (`0x00000659` / `0x00000783`)**: Column descriptors (bytes 1–4) and logical-idx entry descriptors (first 4 bytes) stamped with `0x00000659` (format-wide magic). Real-idx physical descriptors (first 4 bytes) stamped with `0x00000783` (`Jet4.RealIdx.LeadingMagic` — a distinct constant, NOT the format-wide magic). Applied across `BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, and `RelationshipManager.EmitFkLogicalIdxAsync`.
 - ✅ **Real-idx flags byte**: `0x80` bit set at `Constants.TableDefinition.Jet4.RealIdx.FlagsOffset` for FK backing indexes.
 - ⛔ **DB-header modify counter at `0x0E02`**: Manually patched from `0x00` to `0x04` — **RULED OUT** (still fails).
 - ✅ **Prefix compression cap** (2026-05-03): `BuildLeafPage` now accepts optional `maxPrefixLength` parameter. `TrySpliceCatalogIndexEntryAsync` and `TryAppendToTailLeafAsync` read the existing page's `pref_len` before decoding and pass it to `BuildLeafPage`, preventing the writer from increasing prefix compression beyond what was on disk. Result: page 8 `pref_len` stays 0 (was being recomputed to 1), page 2790 `pref_len` stays 1 (was being recomputed to 4). Free-space values now match the DAO baseline.
@@ -149,7 +149,7 @@ Supporting fixes (each was a real defect; each is regression-guarded):
 ### TDEF magic stamps (`0x00000659`, added 2026-05-03)
 
 - Column descriptors: bytes 1–4 after the column-type byte stamped with `0x00000659` via `Wi32(page, o + 1, 0x00000659)`.
-- Real-idx physical descriptors: first 4 bytes stamped with `0x00000783` (`Jet4RealIdxLeadingMagic` — distinct from the format-wide `0x00000659`; see `Constants.TableDefinition.Jet4RealIdxLeadingMagic` and `Jet4FormatCookieTests`).
+- Real-idx physical descriptors: first 4 bytes stamped with `0x00000783` (`Jet4.RealIdx.LeadingMagic` — distinct from the format-wide `0x00000659`; see `Constants.TableDefinition.Jet4.RealIdx.LeadingMagic` and `Jet4FormatCookieTests`).
 - Logical-idx entry descriptors: first 4 bytes (at `logEntry - LogicalEntryFieldsOffset`) stamped with `0x00000659`.
 - Applied in three code paths: `BuildTDefPagesWithIndexOffsets` (user tables), `BuildMSysObjectsTDef` (MSysObjects cols), `RelationshipManager.EmitFkLogicalIdxAsync` (FK backing indexes).
 - **Binary page bisection confirmed**: TDEF pages (2, 3) pass individually — magic stamps are correct and not the trigger.
@@ -295,7 +295,7 @@ The earlier confusion about whether the 12-byte payload was at varIdx 8 (LvProp)
 
 ### 5. Format magic `0x00000659` stamped inside column descriptors — fix landed, ruled out as trigger
 
-Inside DAO's TDEF column descriptors, the 4 bytes immediately after the column-type byte are `59 06 00 00` (`= 0x00000659`, the same format magic the writer already stamps in the TDEF header at offset `0x0C`). **Fix landed:** writer now stamps these in all three TDEF-building paths (`BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, `RelationshipManager.EmitFkLogicalIdxAsync`). Also stamps logical-idx entry descriptors with `0x00000659` and real-idx physical descriptors with `0x00000783` (a distinct constant — see `Jet4RealIdxLeadingMagic`). **Binary page bisection confirmed TDEF pages (2, 3) individually PASS** — magic stamps are correct and not the trigger.
+Inside DAO's TDEF column descriptors, the 4 bytes immediately after the column-type byte are `59 06 00 00` (`= 0x00000659`, the same format magic the writer already stamps in the TDEF header at offset `0x0C`). **Fix landed:** writer now stamps these in all three TDEF-building paths (`BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, `RelationshipManager.EmitFkLogicalIdxAsync`). Also stamps logical-idx entry descriptors with `0x00000659` and real-idx physical descriptors with `0x00000783` (a distinct constant — see `Jet4.RealIdx.LeadingMagic`). **Binary page bisection confirmed TDEF pages (2, 3) individually PASS** — magic stamps are correct and not the trigger.
 
 ### 6. Page 0 (DB header) — modify counter — RULED OUT
 
