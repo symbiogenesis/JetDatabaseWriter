@@ -131,12 +131,13 @@ internal static class LinkedTableManager
             }
 
             bool isOdbc = objType == Constants.SystemObjects.LinkedOdbcType;
+            string connectStr = SafeGet(row, idxConnect);
             result.Add(new LinkedTableInfo
             {
                 Name = nameStr,
                 ForeignName = SafeGet(row, idxForeignName),
                 SourceDatabasePath = isOdbc ? null : SafeGet(row, idxDatabase),
-                ConnectionString = isOdbc ? SafeGet(row, idxConnect) : null,
+                ConnectionString = string.IsNullOrEmpty(connectStr) ? null : connectStr,
                 IsOdbc = isOdbc,
             });
         }
