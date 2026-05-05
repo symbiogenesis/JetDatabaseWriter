@@ -311,6 +311,54 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         AssertColumnMetadataEqual(originalMeta, afterMeta);
     }
 
+    [Fact]
+    public async Task EncryptDecrypt_AccdbLegacyPassword_PreservesColumnMetadata()
+    {
+        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+
+        var originalMeta = await GetAllColumnMetadataAsync(path, password: null);
+        Assert.NotEmpty(originalMeta);
+
+        await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbLegacyPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+        await AccessWriter.ChangePasswordAsync(path, FirstPassword, SecondPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+        await AccessWriter.DecryptAsync(path, SecondPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+
+        var afterMeta = await GetAllColumnMetadataAsync(path, password: null);
+        AssertColumnMetadataEqual(originalMeta, afterMeta);
+    }
+
+    [Fact]
+    public async Task EncryptDecrypt_AccdbAesCfbWrapped_PreservesColumnMetadata()
+    {
+        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+
+        var originalMeta = await GetAllColumnMetadataAsync(path, password: null);
+        Assert.NotEmpty(originalMeta);
+
+        await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbAesCfbWrapped, NoLockOptions(), TestContext.Current.CancellationToken);
+        await AccessWriter.ChangePasswordAsync(path, FirstPassword, SecondPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+        await AccessWriter.DecryptAsync(path, SecondPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+
+        var afterMeta = await GetAllColumnMetadataAsync(path, password: null);
+        AssertColumnMetadataEqual(originalMeta, afterMeta);
+    }
+
+    [Fact]
+    public async Task EncryptDecrypt_AccdbStandard_PreservesColumnMetadata()
+    {
+        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+
+        var originalMeta = await GetAllColumnMetadataAsync(path, password: null);
+        Assert.NotEmpty(originalMeta);
+
+        await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbStandard, NoLockOptions(), TestContext.Current.CancellationToken);
+        await AccessWriter.ChangePasswordAsync(path, FirstPassword, SecondPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+        await AccessWriter.DecryptAsync(path, SecondPassword, NoLockOptions(), TestContext.Current.CancellationToken);
+
+        var afterMeta = await GetAllColumnMetadataAsync(path, password: null);
+        AssertColumnMetadataEqual(originalMeta, afterMeta);
+    }
+
     // ───── Helpers ───────────────────────────────────────────────────
 
     private static void AssertColumnMetadataEqual(
@@ -327,6 +375,8 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
             {
                 Assert.Equal(columns[i].Name, afterCols[i].Name);
                 Assert.Equal(columns[i].ClrType, afterCols[i].ClrType);
+                Assert.Equal(columns[i].TypeName, afterCols[i].TypeName);
+                Assert.Equal(columns[i].MaxLength, afterCols[i].MaxLength);
             }
         }
     }
