@@ -106,9 +106,6 @@ Reader-side Memo with embedded `0x00` bytes from a DAO-authored database
 is covered by
 [DaoValidationTests.DaoAuthoredMemo_WithEmbeddedNuls_ReaderReturnsExactContent](../../JetDatabaseWriter.Tests/Core/DaoValidationTests.cs).
 
-- [ ] **`[J]`** OLE long values whose header reports a **mismatched length**
-  vs the actual chain — Jackcess has a "lvalLength" sanity test.
-
 ### 2.2 Complex columns (Multi-Value, Attachment, Versioned text)
 
 Version-history column presence/metadata and flat-table readability are
@@ -141,16 +138,7 @@ The reader now correctly reports VH columns as `Kind = VersionHistory`
 
 ---
 
-## 4. Linked tables & relationships
-
-- [ ] **`[J]`** Linked table to a CSV / text file (the remaining
-  `MSysObjects.Type` variant not covered by `LinkedTableTests` /
-  `LinkedTableTypeTests`; Access-linked and ODBC-linked entries are already
-  exercised).
-
----
-
-## 5. DAO round-trip validation
+## 4. DAO round-trip validation
 
 Tests in this section use `DAO.DBEngine.120` via
 `AccessRoundTripEnvironment` and auto-skip when Access is not installed.
@@ -197,6 +185,6 @@ scenarios rather than reinventing the setup/teardown boilerplate.
 
 - Items in **§3** require new fixture authoring (Office tooling) and are
   larger.
-- Items in **§5** (DAO) can only run on Windows + Access hosts but provide
+- Items in **§4** (DAO) can only run on Windows + Access hosts but provide
   the highest-confidence signal that our output is correct — the canonical
   engine is the final arbiter.
