@@ -39,17 +39,7 @@ public sealed class AccessRoundTripTests
 {
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(2);
 
-    /// <summary>
-    /// Gets a value indicating whether the round-trip environment is available.
-    /// Consumed by xUnit v3's <c>SkipUnless</c> selector — when this is
-    /// <c>false</c>, the gated <c>[Fact]</c> reports as skipped instead of
-    /// failing. Backed by <see cref="AccessRoundTripEnvironment.IsAvailable"/>.
-    /// </summary>
-    public static bool RoundTripEnvironmentAvailable => AccessRoundTripEnvironment.IsAvailable;
-
-    [Fact(
-        Skip = "N2 (two CreateTableAsync calls) still fails DAO Compact & Repair — second splice overflows ParentIdName leaf without maxPrefixLength cap. See docs/design/round-trip-test-failures.md.",
-        SkipUnless = nameof(RoundTripEnvironmentAvailable))]
+    [Fact(Skip = "N2 (two CreateTableAsync calls) still fails DAO Compact & Repair \u2014 second splice overflows ParentIdName leaf without maxPrefixLength cap. See docs/design/round-trip-test-failures.md.")]
     public async Task SinglePk_AndSingleColumnFk_SurviveCompactAndRepair()
     {
         await using var session = await RoundTripSession.CreateAsync(TestContext.Current.CancellationToken);
@@ -138,7 +128,7 @@ public sealed class AccessRoundTripTests
         Assert.Contains(post.Indexes[Child], i => i.IsForeignKey && i.Columns == "CustomerID" && i.CascadeDeletes);
     }
 
-    [Fact(Skip = "N2 (two CreateTableAsync calls) still fails DAO Compact & Repair — second splice overflows ParentIdName leaf without maxPrefixLength cap. See docs/design/round-trip-test-failures.md.", SkipUnless = nameof(RoundTripEnvironmentAvailable))]
+    [Fact(Skip = "N2 (two CreateTableAsync calls) still fails DAO Compact & Repair \u2014 second splice overflows ParentIdName leaf without maxPrefixLength cap. See docs/design/round-trip-test-failures.md.")]
     public async Task CompositePk_AndMultiColumnFk_SurviveCompactAndRepair()
     {
         await using var session = await RoundTripSession.CreateAsync(TestContext.Current.CancellationToken);

@@ -132,4 +132,80 @@ public sealed class CompressedMemoLvalTests
         Assert.Equal(memoValue.Length, actual.Length);
         Assert.Equal(memoValue, actual);
     }
+
+    /// <summary>
+    /// Verifies that ASCII-range inline text is stored in Jet4 compressed
+    /// unicode form (FF FE + 1 byte per char) and NOT in raw UCS-2.
+    /// </summary>
+    [Fact]
+    public async Task InlineText_AsciiRange_IsWrittenAsCompressedUnicode()
+    {
+        const string sentinel = "ZZUNIQUEWRITERSENTINELZZ";
+
+        var ms = new MemoryStream();
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            ms, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new("Id", typeof(int)),
+                    new("Txt", typeof(string), maxLength: 100),
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [1, sentinel], TestContext.Current.CancellationToken);
+        }
+
+        byte[] bytes = ms.ToArray();
+        byte[] ucs2 = System.Text.Encoding.Unicode.GetBytes(sentinel);
+        byte[] ascii = System.Text.Encoding.ASCII.GetBytes(sentinel);
+
+        byte[] compressed = new byte[ascii.Length + 2];
+        compressed[0] = 0xFF;
+        compressed[1] = 0xFE;
+        Buffer.BlockCopy(ascii, 0, compressed, 2, ascii.Length);
+
+        Assert.True(
+            IndexOf(bytes, compressed) >= 0,
+            "Expected the sentinel string to be stored in JET4 compressed-unicode form (FF FE + 1-byte).");
+
+        Assert.True(
+            IndexOf(bytes, ucs2) < 0,
+            "Sentinel must NOT appear in plain UCS-2 form when compression is applicable.");
+
+        // Round-trip: the reader should still see the original string.
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
+        var dt = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.NotNull(dt);
+        Assert.Equal(sentinel, dt!.Rows[0]["Txt"]);
+    }
+
+    private static int IndexOf(byte[] haystack, byte[] needle)
+    {
+        if (needle.Length == 0 || haystack.Length < needle.Length)
+        {
+            return -1;
+        }
+
+        for (int i = 0; i <= haystack.Length - needle.Length; i++)
+        {
+            bool found = true;
+            for (int j = 0; j < needle.Length; j++)
+            {
+                if (haystack[i + j] != needle[j])
+                {
+                    found = false;
+                    break;
+                }
+            }
+
+            if (found)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
 }

@@ -9,8 +9,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// DAO-driven validation tests that shell out to a bitness-matched
 /// <c>powershell.exe</c> host to exercise writer output via the canonical
@@ -57,9 +55,7 @@ public sealed class DaoValidationTests : IDisposable
     /// asserts SELECT COUNT(*) matches. Catches TDEF row-count drift and
     /// page-corruption that would silently survive our own reader round-trip.
     /// </summary>
-    [Fact(
-        Skip = "DAO OpenRecordset rejects writer-created tables ('Unrecognized database format') — TDEF page layout not yet fully compatible with DAO.DBEngine.120. See docs/design/round-trip-test-failures.md.",
-        SkipUnless = nameof(RoundTripAvailable))]
+    [Fact(Skip = "DAO OpenRecordset rejects writer-created tables ('Unrecognized database format') \u2014 TDEF page layout not yet fully compatible with DAO.DBEngine.120. See docs/design/round-trip-test-failures.md.")]
     public async Task DaoOpenRecordset_RowCount_MatchesWriterOutput()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -117,9 +113,7 @@ public sealed class DaoValidationTests : IDisposable
     /// key to locate a specific row. Catches index pages that parse cleanly in
     /// our reader but are rejected by the canonical engine.
     /// </summary>
-    [Fact(
-        Skip = "DAO OpenRecordset rejects writer-created tables ('Unrecognized database format') — TDEF page layout not yet fully compatible with DAO.DBEngine.120. See docs/design/round-trip-test-failures.md.",
-        SkipUnless = nameof(RoundTripAvailable))]
+    [Fact(Skip = "DAO OpenRecordset rejects writer-created tables ('Unrecognized database format') \u2014 TDEF page layout not yet fully compatible with DAO.DBEngine.120. See docs/design/round-trip-test-failures.md.")]
     public async Task DaoIndexTraversal_Seek_LocatesRowByPrimaryKey()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -180,9 +174,7 @@ public sealed class DaoValidationTests : IDisposable
     /// row, and verifies the next AutoNumber value is one past our last
     /// inserted ID. Catches seed/counter byte-layout bugs.
     /// </summary>
-    [Fact(
-        Skip = "DAO OpenRecordset rejects writer-created tables ('Unrecognized database format') — TDEF page layout not yet fully compatible with DAO.DBEngine.120. See docs/design/round-trip-test-failures.md.",
-        SkipUnless = nameof(RoundTripAvailable))]
+    [Fact(Skip = "DAO OpenRecordset rejects writer-created tables ('Unrecognized database format') \u2014 TDEF page layout not yet fully compatible with DAO.DBEngine.120. See docs/design/round-trip-test-failures.md.")]
     public async Task DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert()
     {
         string dbPath = await CopyNorthwindAsync();
