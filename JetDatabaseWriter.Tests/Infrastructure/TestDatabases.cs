@@ -352,7 +352,7 @@ internal static class TestDatabases
         });
 
     /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
-    internal static async ValueTask<bool> IsReadableAsync(string path)
+    internal static async ValueTask<bool> IsReadableAsync(string path, CancellationToken cancellationToken = default)
     {
         if (_readableCache.TryGetValue(path, out bool cached))
         {
@@ -367,7 +367,7 @@ internal static class TestDatabases
 
         try
         {
-            await using var r = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false });
+            await using var r = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, cancellationToken);
             _readableCache.TryAdd(path, true);
             return true;
         }

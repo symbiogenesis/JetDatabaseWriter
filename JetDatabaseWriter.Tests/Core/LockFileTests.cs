@@ -743,7 +743,7 @@ public sealed class LockFileTests : IDisposable
 
         foreach (string file in Directory.GetFiles(dbDir, $"*{extension}"))
         {
-            if (await TestDatabases.IsReadableAsync(file))
+            if (await TestDatabases.IsReadableAsync(file, TestContext.Current.CancellationToken))
             {
                 return file;
             }
