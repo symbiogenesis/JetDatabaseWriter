@@ -262,7 +262,7 @@ POCO mapping accepts either a `Hyperlink` property or a plain `string` property 
 
 ```csharp
 // All values as strings
-DataTable preview = await reader.ReadTableAsStringsAsync("Products", maxRows: 20, cancellationToken);
+DataTable preview = await reader.ReadTableAsStringsAsync("Products", maxRows: 20, cancellationToken: cancellationToken);
 
 // String row access
 string firstCell = preview.Rows[0][0].ToString();
