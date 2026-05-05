@@ -753,10 +753,13 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
 
             // Seed parent rows BEFORE creating the FK so the rows that point
             // at not-yet-inserted ids don't trip insert-time enforcement.
+            var parentRows = new List<object[]>(10);
             for (int i = 1; i <= 10; i++)
             {
-                await writer.InsertRowAsync(tbl, [i, DBNull.Value, $"node-{i}"], TestContext.Current.CancellationToken);
+                parentRows.Add([i, DBNull.Value, $"node-{i}"]);
             }
+
+            await writer.InsertRowsAsync(tbl, parentRows, TestContext.Current.CancellationToken);
 
             await writer.CreateRelationshipAsync(
                 new RelationshipDefinition("FK_Self", tbl, "Id", tbl, "ParentId")
@@ -766,10 +769,13 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 TestContext.Current.CancellationToken);
 
             // Add child rows (ParentId in 1..10).
+            var childRows = new List<object[]>(20);
             for (int i = 11; i <= 30; i++)
             {
-                await writer.InsertRowAsync(tbl, [i, ((i - 11) % 10) + 1, $"child-{i}"], TestContext.Current.CancellationToken);
+                childRows.Add([i, ((i - 11) % 10) + 1, $"child-{i}"]);
             }
+
+            await writer.InsertRowsAsync(tbl, childRows, TestContext.Current.CancellationToken);
 
             // Move the row with Id=7 to Id=999. The cascade must repoint
             // every row whose ParentId == 7 to ParentId = 999.

@@ -134,12 +134,14 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
 
         int rowCount = random.Next(1, 10);
+        var rows = new List<object[]>(rowCount);
         for (int r = 0; r < rowCount; r++)
         {
-            var row = CreateRandomRow(random, columns);
+            rows.Add(CreateRandomRow(random, columns));
             output.WriteLine($"Inserting row {r + 1}/{rowCount} into {tableName}");
-            await writer.InsertRowAsync(tableName, row, TestContext.Current.CancellationToken);
         }
+
+        await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
 
         if (random.NextDouble() < 0.5)
         {
