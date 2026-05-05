@@ -148,7 +148,8 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         SplitPages splitPages,
         long[] pageNumbers,
         long leafPrev,
-        long leafNext)
+        long leafNext,
+        int maxPrefixLength)
     {
         int splitCount = splitPages.Count;
         byte[][] pageBytesAll = new byte[splitCount][];
@@ -166,7 +167,8 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                     prevPage: thisPrev,
                     nextPage: thisNext,
                     tailPage: 0,
-                    enablePrefixCompression: true);
+                    enablePrefixCompression: true,
+                    maxPrefixLength: maxPrefixLength);
             }
         }
         catch (ArgumentOutOfRangeException)
@@ -985,6 +987,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         long leafPrev = IndexLeafIncremental.ReadPrevPage(layout, leaf);
         long leafNext = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
         long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
+        int originalPrefLen = BinaryPrimitives.ReadUInt16LittleEndian(leaf.AsSpan(layout.PrefLenOffset, 2));
 
         byte[] oldMaxKey = existingLeafEntries[existingLeafEntries.Count - 1].Key;
 
@@ -1037,7 +1040,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         long firstFreshPage = writer._stream.Length / writer._pgSz;
         long[] pageNumbers = AllocateSplitPageNumbers(targetLeafPage, splitCount, firstFreshPage);
 
-        byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext);
+        byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
         if (pageBytesAll is null)
         {
             return false;
@@ -1523,6 +1526,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             long leafPrev = IndexLeafIncremental.ReadPrevPage(layout, leaf);
             long leafNext = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
             long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
+            int originalPrefLen = BinaryPrimitives.ReadUInt16LittleEndian(leaf.AsSpan(layout.PrefLenOffset, 2));
 
             if (spliced.Count == 0)
             {
@@ -1647,7 +1651,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             long[] pageNumbers = AllocateSplitPageNumbers(group.LeafPage, splitCount, nextAllocatedPageNumber);
             nextAllocatedPageNumber += splitCount - 1;
 
-            byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext);
+            byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
             if (pageBytesAll is null)
             {
                 return false;
@@ -2767,7 +2771,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 long firstFreshPage = writer._stream.Length / writer._pgSz;
                 long[] pageNumbers = AllocateSplitPageNumbers(targetLeafPage, splitCount, firstFreshPage);
 
-                byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext);
+                byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
                 if (pageBytesAll is null)
                 {
                     LastIncrementalBail = $"S12b ri={ri} split build failed";

@@ -39,7 +39,7 @@ public sealed class AccessRoundTripTests
 {
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(2);
 
-    [Fact(Skip = "N2 (two CreateTableAsync calls) still fails DAO Compact & Repair \u2014 second splice overflows ParentIdName leaf without maxPrefixLength cap. See docs/design/round-trip-test-failures.md.")]
+    [Fact(Skip = "DAO Compact now succeeds (index pref_len fix landed) but user-table TDEF layout is not yet fully DAO-compatible — rows are dropped during compact. See DaoValidationTests.")]
     public async Task SinglePk_AndSingleColumnFk_SurviveCompactAndRepair()
     {
         await using var session = await RoundTripSession.CreateAsync(TestContext.Current.CancellationToken);
@@ -128,7 +128,7 @@ public sealed class AccessRoundTripTests
         Assert.Contains(post.Indexes[Child], i => i.IsForeignKey && i.Columns == "CustomerID" && i.CascadeDeletes);
     }
 
-    [Fact(Skip = "N2 (two CreateTableAsync calls) still fails DAO Compact & Repair \u2014 second splice overflows ParentIdName leaf without maxPrefixLength cap. See docs/design/round-trip-test-failures.md.")]
+    [Fact(Skip = "DAO Compact now succeeds (index pref_len fix landed) but user-table TDEF layout is not yet fully DAO-compatible — rows are dropped during compact. See DaoValidationTests.")]
     public async Task CompositePk_AndMultiColumnFk_SurviveCompactAndRepair()
     {
         await using var session = await RoundTripSession.CreateAsync(TestContext.Current.CancellationToken);

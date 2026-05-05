@@ -1,8 +1,10 @@
 namespace JetDatabaseWriter.Tests.Internal;
 
 using System;
+using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -267,6 +269,111 @@ public sealed class IndexLeafPageBuilderTests
         Assert.Equal(0, ReadU16(page, 20));
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public void PrefixCompressionEnabled_MaxPrefixLengthCapsComputedPrefix(DatabaseFormat format)
+    {
+        int pageSize = PageSizeOf(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        IndexEntry[] entries =
+        [
+            new(CreateSharedPrefixKey(1), 1, 0),
+            new(CreateSharedPrefixKey(2), 1, 1),
+            new(CreateSharedPrefixKey(3), 1, 2),
+        ];
+
+        byte[] uncapped = IndexLeafPageBuilder.BuildLeafPage(
+            layout,
+            pageSize,
+            parentTdefPage: 100,
+            entries,
+            prevPage: 0,
+            nextPage: 0,
+            tailPage: 0,
+            enablePrefixCompression: true);
+
+        byte[] capped = IndexLeafPageBuilder.BuildLeafPage(
+            layout,
+            pageSize,
+            parentTdefPage: 100,
+            entries,
+            prevPage: 0,
+            nextPage: 0,
+            tailPage: 0,
+            enablePrefixCompression: true,
+            maxPrefixLength: 2);
+
+        Assert.True(ReadU16(uncapped, layout.PrefLenOffset) > 2);
+        Assert.Equal(2, ReadU16(capped, layout.PrefLenOffset));
+
+        List<IndexEntry> decoded = IndexLeafIncremental.DecodeEntries(layout, capped, pageSize);
+        Assert.Equal(entries.Length, decoded.Count);
+        for (int i = 0; i < entries.Length; i++)
+        {
+            Assert.Equal(entries[i].Key, decoded[i].Key);
+            Assert.Equal(entries[i].DataPage, decoded[i].DataPage);
+            Assert.Equal(entries[i].DataRow, decoded[i].DataRow);
+        }
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public void SplitLeafPages_MaxPrefixLengthCap_PreservesKeysAcrossAllSplitPages(DatabaseFormat format)
+    {
+        int pageSize = PageSizeOf(format);
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
+        const int maxPrefixLength = 2;
+
+        var entries = new List<IndexEntry>(300);
+        for (int i = 0; i < 300; i++)
+        {
+            entries.Add(new(CreateSharedPrefixKey(i), i + 1, (byte)(i % 255)));
+        }
+
+        SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, pageSize, entries);
+        Assert.NotNull(splitPages);
+        Assert.True(splitPages!.Count >= 2);
+
+        byte[] uncappedFirstPage = IndexLeafPageBuilder.BuildLeafPage(
+            layout,
+            pageSize,
+            parentTdefPage: 100,
+            splitPages[0],
+            prevPage: 0,
+            nextPage: 0,
+            tailPage: 0,
+            enablePrefixCompression: true);
+        Assert.True(ReadU16(uncappedFirstPage, layout.PrefLenOffset) > maxPrefixLength);
+
+        var decodedAll = new List<IndexEntry>(entries.Count);
+        for (int pageIndex = 0; pageIndex < splitPages.Count; pageIndex++)
+        {
+            byte[] page = IndexLeafPageBuilder.BuildLeafPage(
+                layout,
+                pageSize,
+                parentTdefPage: 100,
+                splitPages[pageIndex],
+                prevPage: 0,
+                nextPage: 0,
+                tailPage: 0,
+                enablePrefixCompression: true,
+                maxPrefixLength: maxPrefixLength);
+
+            Assert.Equal(maxPrefixLength, ReadU16(page, layout.PrefLenOffset));
+            decodedAll.AddRange(IndexLeafIncremental.DecodeEntries(layout, page, pageSize));
+        }
+
+        Assert.Equal(entries.Count, decodedAll.Count);
+        for (int i = 0; i < entries.Count; i++)
+        {
+            Assert.Equal(entries[i].Key, decodedAll[i].Key);
+            Assert.Equal(entries[i].DataPage, decodedAll[i].DataPage);
+            Assert.Equal(entries[i].DataRow, decodedAll[i].DataRow);
+        }
+    }
+
     // ── §7 Robustness: corrupt entry-mask ─────────────────────────────
 
     [Theory]
@@ -319,6 +426,20 @@ public sealed class IndexLeafPageBuilderTests
 
     private static int PageSizeOf(DatabaseFormat fmt) =>
         fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
+
+    private static byte[] CreateSharedPrefixKey(int suffix) =>
+    [
+        0x10,
+        0x20,
+        0x30,
+        0x40,
+        0x50,
+        0x60,
+        0x70,
+        0x80,
+        unchecked((byte)(suffix >> 8)),
+        unchecked((byte)suffix),
+    ];
 
     private static int ReadU16(byte[] b, int o) => b[o] | (b[o + 1] << 8);
 
