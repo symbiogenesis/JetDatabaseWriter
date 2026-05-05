@@ -55,7 +55,7 @@ public sealed class DaoValidationTests : IDisposable
     /// asserts SELECT COUNT(*) matches. Catches TDEF row-count drift and
     /// page-corruption that would silently survive our own reader round-trip.
     /// </summary>
-    [Fact(Skip = "DAO OpenRecordset rejects writer-created user-table TDEFs ('Unrecognized database format') — remaining TDEF page layout incompatibility beyond catalog encoding. See docs/design/round-trip-test-failures.md.")]
+    [Fact(Skip = "DAO OpenRecordset still rejects writer-created user-table TDEFs ('Unrecognized database format'). The 0x08 NOT-NULL flag / ExtraFlags fix lets DAO OpenDatabase succeed, but recordset access on writer tables remains broken. See docs/design/round-trip-test-failures.md.")]
     public async Task DaoOpenRecordset_RowCount_MatchesWriterOutput()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -113,7 +113,7 @@ public sealed class DaoValidationTests : IDisposable
     /// key to locate a specific row. Catches index pages that parse cleanly in
     /// our reader but are rejected by the canonical engine.
     /// </summary>
-    [Fact(Skip = "DAO OpenRecordset rejects writer-created tables ('Unrecognized database format') \u2014 TDEF page layout not yet fully compatible with DAO.DBEngine.120. See docs/design/round-trip-test-failures.md.")]
+    [Fact(Skip = "DAO OpenRecordset still rejects writer-created tables ('Unrecognized database format'). TDEF page layout not yet fully compatible with DAO.DBEngine.120 recordset access. See docs/design/round-trip-test-failures.md.")]
     public async Task DaoIndexTraversal_Seek_LocatesRowByPrimaryKey()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -174,7 +174,7 @@ public sealed class DaoValidationTests : IDisposable
     /// row, and verifies the next AutoNumber value is one past our last
     /// inserted ID. Catches seed/counter byte-layout bugs.
     /// </summary>
-    [Fact(Skip = "DAO OpenRecordset rejects writer-created tables ('Unrecognized database format') \u2014 TDEF page layout not yet fully compatible with DAO.DBEngine.120. See docs/design/round-trip-test-failures.md.")]
+    [Fact(Skip = "DAO OpenRecordset still rejects writer-created tables ('Unrecognized database format'). TDEF page layout not yet fully compatible with DAO.DBEngine.120 recordset access. See docs/design/round-trip-test-failures.md.")]
     public async Task DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert()
     {
         string dbPath = await CopyNorthwindAsync();

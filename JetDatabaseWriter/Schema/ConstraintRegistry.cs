@@ -20,7 +20,16 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// <param name="readTableSnapshot">
 /// Delegate used to read a table snapshot for seeding auto-increment counters.
 /// </param>
-internal sealed class ConstraintRegistry(Func<string, CancellationToken, ValueTask<DataTable>> readTableSnapshot)
+/// <param name="readLvPropForTable">
+/// Delegate used to load <c>MSysObjects.LvProp</c> for a table by name when the
+/// registry needs to hydrate from the persisted column properties (e.g. the
+/// <c>Required</c> Boolean that backs <c>IsNullable</c>). May return <c>null</c>
+/// when the table has no property block. Optional — if not supplied, hydration
+/// falls back to the legacy TDEF flag bit only.
+/// </param>
+internal sealed class ConstraintRegistry(
+    Func<string, CancellationToken, ValueTask<DataTable>> readTableSnapshot,
+    Func<string, CancellationToken, ValueTask<ColumnPropertyBlock?>>? readLvPropForTable = null)
 {
     private readonly Dictionary<string, List<ColumnConstraint>> _constraints =
         new(StringComparer.OrdinalIgnoreCase);
@@ -125,7 +134,10 @@ internal sealed class ConstraintRegistry(Func<string, CancellationToken, ValueTa
             // AutoIncrement constraints declared at CreateTableAsync time still take effect
             // after the database is closed and reopened. DefaultValue and ValidationRule are
             // not persisted in the JET TDEF and remain client-side only.
-            list = HydrateFromTableDef(tableName, tableDef);
+            ColumnPropertyBlock? props = readLvPropForTable is null
+                ? null
+                : await readLvPropForTable(tableName, cancellationToken).ConfigureAwait(false);
+            list = HydrateFromTableDef(tableName, tableDef, props);
         }
 
         // The constraint list is positionally aligned with the columns at registration time.
@@ -256,24 +268,37 @@ internal sealed class ConstraintRegistry(Func<string, CancellationToken, ValueTa
     }
 
     /// <summary>
-    /// Rebuilds a per-column constraint list from the persisted TDEF column flags.
-    /// Only the bits that JET physically stores (FLAG_NULL_ALLOWED, FLAG_AUTO_LONG)
-    /// are restored — DefaultValue and ValidationRule remain client-side and are
-    /// only present when the same writer instance declared them.
+    /// Rebuilds a per-column constraint list from the persisted TDEF column flags
+    /// and (when supplied) the table's <c>MSysObjects.LvProp</c> property block.
+    /// IsNullable comes from the LvProp <c>Required</c> Boolean when present
+    /// (DAO/Access wire format), falling back to the legacy writer-private TDEF
+    /// flag bit <c>0x08</c>. <c>FLAG_AUTO_LONG (0x04)</c> is restored from the
+    /// TDEF descriptor. DefaultValue and ValidationRule remain client-side and
+    /// are only present when the same writer instance declared them.
     /// </summary>
-    private List<ColumnConstraint> HydrateFromTableDef(string tableName, TableDef tableDef)
+    private List<ColumnConstraint> HydrateFromTableDef(string tableName, TableDef tableDef, ColumnPropertyBlock? properties = null)
     {
         var list = new List<ColumnConstraint>(tableDef.Columns.Count);
-        bool anyConstraint = false;
         foreach (ColumnInfo col in tableDef.Columns)
         {
             // Complex columns (T_ATTACHMENT / T_COMPLEX) carry a magic Flags = 0x07
             // marker rather than real flag bits; do not interpret 0x02 / 0x04 / 0x08 here.
             // Bit 0x02 is now always set by the writer for DAO compatibility (Jackcess
-            // UNKNOWN_FF_FLAG_MASK), so it can no longer carry IsNullable. Bit 0x08 is
-            // the writer-private NOT NULL marker (see TDefPageBuilder.BuildTableDefinition).
+            // UNKNOWN_FF_FLAG_MASK), so it can no longer carry IsNullable. IsNullable
+            // is sourced from MSysObjects.LvProp's Required Boolean (DAO wire format),
+            // falling back to the legacy 0x08 bit only when LvProp is absent.
             bool isComplex = col.Type == T_ATTACHMENT || col.Type == T_COMPLEX;
-            bool isNullable = isComplex || (col.Flags & 0x08) == 0;
+            bool isNullable;
+            if (isComplex)
+            {
+                isNullable = true;
+            }
+            else
+            {
+                bool? required = properties?.FindTarget(col.Name)?.GetBooleanValue(Constants.ColumnPropertyNames.Required);
+                isNullable = required is bool r ? !r : (col.Flags & 0x08) == 0;
+            }
+
             bool isAutoIncrement = !isComplex && (col.Flags & 0x04) != 0;
 
             ColumnConstraint c = new()
@@ -284,14 +309,14 @@ internal sealed class ConstraintRegistry(Func<string, CancellationToken, ValueTa
                 IsAutoIncrement = isAutoIncrement,
             };
 
-            anyConstraint |= c.HasAnyConstraint;
             list.Add(c);
         }
 
-        if (anyConstraint)
-        {
-            _constraints[tableName] = list;
-        }
+        // Always cache the hydrated list ΓÇö even when no column carries a constraint ΓÇö
+        // so subsequent inserts on the same table skip both HydrateFromTableDef and the
+        // (potentially expensive) readLvPropForTable LvProp scan. Without this negative
+        // caching, every row in a multi-row InsertRowsAsync re-reads MSysObjects.LvProp.
+        _constraints[tableName] = list;
 
         return list;
     }

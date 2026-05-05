@@ -55,7 +55,7 @@ internal sealed class ColumnPropertyBlock
     public const byte DataTypeGuid = 0x0F;
 
     private const uint MagicMr2 = 0x0032524D; // "MR2\0" little-endian
-    private const uint MagicKkd = 0x0044444B; // "KKD\0" little-endian
+    private const uint MagicKkd = 0x00444B4B; // "KKD\0" little-endian
 
     /// <summary>Gets the database format the blob was parsed against.</summary>
     public DatabaseFormat Format { get; private init; }

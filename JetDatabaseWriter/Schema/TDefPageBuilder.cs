@@ -51,14 +51,11 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     flags |= 0x01;
                 }
 
-                // 0x08 is undefined in Jackcess (UNKNOWN_BIT_3) and not produced by
-                // Access/DAO; the writer uses it as a private "NOT NULL" marker so
-                // schema round-trips preserve IsNullable. Reader checks (col.Flags & 0x08).
-                if (!definition.IsNullable)
-                {
-                    flags |= 0x08;
-                }
-
+                // NOTE: nullability is NOT encoded in the TDEF flag byte. DAO/Access
+                // refuse to open a table whose flag byte carries any unknown bits
+                // (including the 0x08 NOT NULL marker an earlier writer revision used);
+                // the constraint is persisted via the Boolean `Required` property in
+                // MSysObjects.LvProp instead. See JetExpressionConverter.ApplyColumn.
                 if (definition.IsAutoIncrement)
                 {
                     flags |= 0x04;
@@ -91,6 +88,9 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 Misc = isComplex ? definition.ComplexId : 0,
                 NumericPrecision = type == T_NUMERIC ? AccessWriter.ResolveNumericPrecision(definition) : (byte)0,
                 NumericScale = type == T_NUMERIC ? AccessWriter.ResolveNumericScale(definition) : (byte)0,
+                ExtraFlags = (format != DatabaseFormat.Jet3Mdb && (type == T_TEXT || type == T_MEMO) && definition.IsCompressedUnicode)
+                    ? Constants.CompressedUnicodeExtFlagMask
+                    : (byte)0,
             };
 
             result.Columns.Add(column);
@@ -191,13 +191,16 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 //   col_desc + 11..14 (misc / sort_order, 4 bytes): collation/locale.
                 //                     0x00000409 = "General" sort order, en-US (LCID 1033).
                 //   col_desc + 16     (ExtraFlags, 1 byte): bit 0x01 =
-                //                     COMPRESSED_UNICODE_EXT_FLAG_MASK. Required so DAO
-                //                     decodes the writer's auto-compressed text values
-                //                     (`0xFF 0xFE` marker + 1 byte/char) instead of
-                //                     interpreting them as raw UCS-2 garbage.
+                //                     COMPRESSED_UNICODE_EXT_FLAG_MASK. DAO emits 0x00
+                //                     for new TEXT/MEMO columns (verified via
+                //                     DaoBaselineProbe), so this bit is opt-in via
+                //                     ColumnDefinition.IsCompressedUnicode and surfaced
+                //                     here through ColumnInfo.ExtraFlags. The reader
+                //                     decodes the FF FE compressed marker regardless of
+                //                     the bit.
                 AccessBase.Wu16(page, o + 9, 0x0001);
                 AccessBase.Wi32(page, o + writer._colDesc.MiscOff, 0x00000409);
-                page[o + writer._colDesc.FlagsOff + 1] = 0x01;
+                page[o + writer._colDesc.FlagsOff + 1] = col.ExtraFlags;
             }
 
             byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : writer.AnsiEncoding.GetBytes(col.Name);

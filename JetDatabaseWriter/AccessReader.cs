@@ -845,7 +845,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     : ResolveTypeName(col),
                 ClrType = JetTypeInfo.ResolveClrType(col),
                 MaxLength = col.Size > 0 ? col.Size : null,
-                IsNullable = (col.Flags & 0x08) == 0,
+                IsNullable = ResolveIsNullable(col, target),
                 IsFixedLength = col.IsFixed,
                 IsHyperlink = JetTypeInfo.IsHyperlinkColumn(col),
                 Ordinal = index,
@@ -861,6 +861,25 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 CalculatedResultType = calcResultType,
             };
         }).ToList();
+    }
+
+    /// <summary>
+    /// Resolves a column's <c>IsNullable</c> from the persisted <c>Required</c>
+    /// LvProp property when present, falling back to the legacy writer-private
+    /// TDEF flag bit <c>0x08</c> for back-compat with files written by older
+    /// JetDatabaseWriter revisions. DAO/Access never emit <c>0x08</c> in the
+    /// flag byte, so the fallback reads as <c>true</c> (nullable) for any file
+    /// authored outside this library.
+    /// </summary>
+    private static bool ResolveIsNullable(ColumnInfo col, ColumnPropertyTarget? target)
+    {
+        bool? required = target?.GetBooleanValue(Constants.ColumnPropertyNames.Required);
+        if (required is bool r)
+        {
+            return !r;
+        }
+
+        return (col.Flags & 0x08) == 0;
     }
 
     /// <inheritdoc/>

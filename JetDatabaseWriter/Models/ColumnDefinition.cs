@@ -38,7 +38,9 @@ public sealed record ColumnDefinition
     /// assignment have run.
     /// </summary>
     /// <remarks>
-    /// Persisted in the JET TDEF column-flag bit <c>FLAG_NULL_ALLOWED (0x02)</c>. The
+    /// Persisted as the boolean <c>Required = True</c> property in <c>MSysObjects.LvProp</c>
+    /// (the wire format DAO/Access use). The TDEF column-flag byte has no DAO-recognised
+    /// nullability bit, so LvProp is the only round-trip-safe persistence channel. The
     /// constraint is restored when the database is reopened by any <see cref="AccessWriter"/>
     /// and is surfaced to readers via <see cref="ColumnMetadata.IsNullable"/>.
     /// </remarks>
@@ -78,6 +80,26 @@ public sealed record ColumnDefinition
     /// See <c>docs/design/hyperlink-format-notes.md</c>.
     /// </summary>
     public bool IsHyperlink { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether this Jet4/ACE <c>T_TEXT</c> or <c>T_MEMO</c>
+    /// column should be authored with the <c>COMPRESSED_UNICODE_EXT_FLAG_MASK</c>
+    /// (bit <c>0x01</c> of the descriptor ExtraFlags byte at offset 16) set.
+    /// Default is <c>true</c> — matching what Microsoft Access emits when you
+    /// create a Short Text or Long Text column through the table designer
+    /// (the "Unicode Compression" property defaults to "Yes").
+    /// </summary>
+    /// <remarks>
+    /// DAO's programmatic <c>TableDef.CreateField(name, dbText)</c> path omits
+    /// the bit (verified via the <c>DIAG_RT_DAO_BASELINE</c> probe); set this
+    /// to <see langword="false"/> when you need byte-for-byte parity with
+    /// DAO-authored TDEFs. The reader/encoder treat the <c>FF FE</c>
+    /// compressed marker as the canonical signal regardless of this flag, so
+    /// toggling it is a schema-roundtrip / Access-UI-compatibility concern
+    /// only. Ignored for non-text columns and for Jet3 (which has no
+    /// ExtraFlags byte).
+    /// </remarks>
+    public bool IsCompressedUnicode { get; init; } = true;
 
     /// <summary>
     /// Gets an optional client-side validation predicate invoked for every supplied

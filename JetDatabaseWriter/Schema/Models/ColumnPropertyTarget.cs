@@ -56,4 +56,21 @@ internal sealed record ColumnPropertyTarget(
             ? Encoding.GetEncoding(1252).GetString(entry.Value)
             : Encoding.Unicode.GetString(entry.Value);
     }
+
+    /// <summary>
+    /// Returns the value of a Boolean-typed (<see cref="ColumnPropertyBlock.DataTypeBoolean"/>)
+    /// property as a <see cref="bool"/>, or <see langword="null"/> if absent or non-boolean.
+    /// On-disk representation: single byte; any non-zero value reads as <see langword="true"/>.
+    /// </summary>
+    /// <param name="propertyName">Property name (case-insensitive).</param>
+    public bool? GetBooleanValue(string propertyName)
+    {
+        ColumnPropertyEntry? entry = Find(propertyName);
+        if (entry is null || entry.DataType != ColumnPropertyBlock.DataTypeBoolean || entry.Value.Length == 0)
+        {
+            return null;
+        }
+
+        return entry.Value[0] != 0;
+    }
 }

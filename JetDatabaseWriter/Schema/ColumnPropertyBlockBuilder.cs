@@ -310,6 +310,23 @@ internal sealed class ColumnPropertyBlockBuilder
                 Value = enc.GetBytes(value),
             });
         }
+
+        /// <summary>
+        /// Adds a Boolean-typed (<c>0x01</c>) property. Stored on disk as a single
+        /// byte: <c>0xFF</c> = true, <c>0x00</c> = false. Matches the wire format
+        /// DAO/Access emit for Boolean column properties such as <c>Required</c>.
+        /// </summary>
+        public void AddBoolean(string propertyName, bool value)
+        {
+            Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
+            Entries.Add(new EntryBuilder
+            {
+                Name = propertyName,
+                DataType = ColumnPropertyBlock.DataTypeBoolean,
+                DdlFlag = 0x00,
+                Value = [value ? (byte)0xFF : (byte)0x00],
+            });
+        }
     }
 
     /// <summary>Mutable builder for a single property entry within a target.</summary>
