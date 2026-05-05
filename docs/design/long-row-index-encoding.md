@@ -274,9 +274,9 @@ Ascending leaf page: 112 (13 entries total). Descending: 119.
 
 ## Appendix B: superseded documents
 
-- **`long-row-bisect.md`** — Early chunk-boundary bisection output.
+- **[`long-row-bisect.md`](../format-probe/long-row-bisect.md)** — Early chunk-boundary bisection output.
   V2000–V2007 data is accurate; V2010 interpretation (treating
   `07 09 07 06` as a separator) is incorrect. Historical only.
 
-- **`long-row-probe-dump.md`** — Full hex leaf entries for all fixture
+- **[`format-probe-long-row-dump.md`](../format-probe/format-probe-long-row-dump.md)** — Full hex leaf entries for all fixture
   rows. Active reference for debugging.
