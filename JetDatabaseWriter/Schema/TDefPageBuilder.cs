@@ -41,15 +41,14 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             }
             else
             {
-                flags = 0;
+                // 0x02 = Jackcess UNKNOWN_FF_FLAG_MASK. DAO.DBEngine.120 always sets this
+                // bit on every non-complex column descriptor and refuses to open tables
+                // whose columns lack it ("Unrecognized database format" on the first
+                // OpenRecordset). Set unconditionally to match Access/Jackcess output.
+                flags = 0x02;
                 if (!variable)
                 {
                     flags |= 0x01;
-                }
-
-                if (definition.IsNullable)
-                {
-                    flags |= 0x02;
                 }
 
                 if (definition.IsAutoIncrement)
@@ -174,6 +173,18 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 page[o + writer._colDesc.MiscOff] = col.NumericPrecision;
                 page[o + writer._colDesc.MiscOff + 1] = col.NumericScale;
             }
+            else if (jet4 && (col.Type == T_TEXT || col.Type == T_MEMO))
+            {
+                // Jet4/ACE text columns require two extra fields that DAO populates
+                // unconditionally; without them DAO refuses to OpenRecordset on the
+                // table ("Unrecognized database format"). See docs/design/round-trip-test-failures.md.
+                //   col_desc + 9..10  (misc_flags, 2 bytes): bit 0x01 = compressed
+                //                     unicode (Access default for new TEXT/MEMO cols).
+                //   col_desc + 11..14 (misc / sort_order, 4 bytes): collation/locale.
+                //                     0x00000409 = "General" sort order, en-US (LCID 1033).
+                AccessBase.Wu16(page, o + 9, 0x0001);
+                AccessBase.Wi32(page, o + writer._colDesc.MiscOff, 0x00000409);
+            }
 
             byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : writer.AnsiEncoding.GetBytes(col.Name);
             if (namePos + nameLenSize + nameBytes.Length > page.Length)
@@ -219,7 +230,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 int phys = writer._indexLayout.RealIdxPhysOffset(realIdxPhysStart, i);
                 if (jet4)
                 {
-                    AccessBase.Wi32(page, phys, Constants.TableDefinition.Jet4FormatMagic);
+                    AccessBase.Wi32(page, phys, Constants.TableDefinition.Jet4RealIdxLeadingMagic);
                 }
 
                 for (int slot = 0; slot < IndexLayout.ColMapSlotCount; slot++)
@@ -274,6 +285,14 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 AccessBase.Wi32(page, log + IndexLayout.IndexNumFieldOffset, i);
                 AccessBase.Wi32(page, log + IndexLayout.IndexNum2FieldOffset, i);
                 AccessBase.Wi32(page, log + IndexLayout.RelIdxNumFieldOffset, -1);
+
+                // DAO-authored TDEFs always set the cascade_ups / cascade_dels bytes
+                // to 0x04 even on non-FK indexes (PK and regular). The exact semantic of
+                // 0x04 is undocumented but DAO refuses to OpenRecordset on tables whose
+                // PK index has 0x00 here ("Unrecognized database format").
+                page[log + IndexLayout.CascadeUpsFieldOffset] = 0x04;
+                page[log + IndexLayout.CascadeDelsFieldOffset] = 0x04;
+
                 page[log + IndexLayout.IndexTypeFieldOffset] = (byte)(ri.IsPrimaryKey ? IndexKind.PrimaryKey : IndexKind.Normal);
             }
 
@@ -300,6 +319,14 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 npos += nameLenSize;
                 Buffer.BlockCopy(nameBytes, 0, page, npos, nameBytes.Length);
                 npos += nameBytes.Length;
+
+                // DAO writes a 0xFFFF sentinel after each index name. Treated as a
+                // "no usage-map / no-such-page" reference; required for OpenRecordset.
+                if (jet4)
+                {
+                    AccessBase.Wu16(page, npos, 0xFFFF);
+                    npos += 2;
+                }
             }
 
             namePos = npos;

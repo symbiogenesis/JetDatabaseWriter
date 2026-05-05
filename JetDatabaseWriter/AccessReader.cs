@@ -845,7 +845,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     : ResolveTypeName(col),
                 ClrType = JetTypeInfo.ResolveClrType(col),
                 MaxLength = col.Size > 0 ? col.Size : null,
-                IsNullable = (col.Flags & 0x02) != 0,
+                IsNullable = (col.Flags & 0x08) == 0,
                 IsFixedLength = col.IsFixed,
                 IsHyperlink = JetTypeInfo.IsHyperlinkColumn(col),
                 Ordinal = index,

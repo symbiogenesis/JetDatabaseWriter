@@ -2400,7 +2400,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // marker rather than real flag bits.
         ColumnDefinition def = baseDef with
         {
-            IsNullable = (column.Flags & 0x02) != 0,
+            // See AccessReader IsNullable comment: 0x08 is the writer-private NOT NULL marker.
+            IsNullable = (column.Flags & 0x08) == 0,
             IsAutoIncrement = (column.Flags & 0x04) != 0,
             IsHyperlink = column.Type == T_MEMO && (column.Flags & 0x80) != 0,
         };

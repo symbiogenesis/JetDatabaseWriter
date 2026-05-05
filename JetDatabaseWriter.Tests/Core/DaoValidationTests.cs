@@ -55,7 +55,7 @@ public sealed class DaoValidationTests : IDisposable
     /// asserts SELECT COUNT(*) matches. Catches TDEF row-count drift and
     /// page-corruption that would silently survive our own reader round-trip.
     /// </summary>
-    [Fact(Skip = "DAO OpenRecordset rejects writer-created tables ('Unrecognized database format') \u2014 TDEF page layout not yet fully compatible with DAO.DBEngine.120. See docs/design/round-trip-test-failures.md.")]
+    [Fact]
     public async Task DaoOpenRecordset_RowCount_MatchesWriterOutput()
     {
         string dbPath = await CopyNorthwindAsync();

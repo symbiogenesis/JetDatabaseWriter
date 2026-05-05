@@ -633,14 +633,26 @@ internal static class Constants
 
         /// <summary>
         /// Jet4/ACE format-wide magic cookie stamped at the start of every
-        /// column descriptor (bytes 1..4), real-idx physical descriptor
-        /// (bytes 0..3), logical-idx entry (bytes 0..3), and in the TDEF
-        /// header at offset <c>0x0C</c>. DAO's TDEF-validation pass during
-        /// <c>CompactDatabase</c> checks this value; omitting it causes
+        /// column descriptor (bytes 1..4), logical-idx entry (bytes 0..3), and
+        /// in the TDEF header at offset <c>0x0C</c>. DAO's TDEF-validation pass
+        /// during <c>CompactDatabase</c> checks this value; omitting it causes
         /// err 3011 "could not find object 'MSysDb'". Jet3 does not use
-        /// this field.
+        /// this field. (Note: real-idx physical descriptors use a different
+        /// leading word — see <see cref="Jet4RealIdxLeadingMagic"/>.)
         /// </summary>
         public const int Jet4FormatMagic = 0x00000659;
+
+        /// <summary>
+        /// Constant 4-byte value DAO/Access stamps at the start (bytes 0..3) of
+        /// every real-idx physical descriptor in a Jet4/ACE TDEF. Empirically
+        /// observed at <c>0x00000783</c> across all real-idx descriptors in
+        /// NorthwindTraders.accdb (see <c>docs/design/format-probe-appendix-index.md</c>).
+        /// DAO refuses to <c>OpenRecordset</c> on tables whose real-idx descriptors
+        /// have a different leading word ("Unrecognized database format"), so
+        /// the writer must emit this exact value rather than the format-wide
+        /// <see cref="Jet4FormatMagic"/>.
+        /// </summary>
+        public const int Jet4RealIdxLeadingMagic = 0x00000783;
 
         /// <summary>
         /// Number of <c>col_map</c> slots in a real-idx physical descriptor
