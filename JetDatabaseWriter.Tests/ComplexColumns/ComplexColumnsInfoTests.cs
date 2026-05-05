@@ -64,8 +64,11 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
         IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("ProductCategories", TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(info);
-        Assert.All(info, c => Assert.NotEqual(0, c.ComplexId));
-        Assert.All(info, c => Assert.False(string.IsNullOrEmpty(c.ColumnName)));
-        Assert.All(info, c => Assert.NotEqual(ComplexColumnKind.Unknown, c.Kind));
+        Assert.All(info, c =>
+        {
+            Assert.NotEqual(0, c.ComplexId);
+            Assert.False(string.IsNullOrEmpty(c.ColumnName));
+            Assert.NotEqual(ComplexColumnKind.Unknown, c.Kind);
+        });
     }
 }
