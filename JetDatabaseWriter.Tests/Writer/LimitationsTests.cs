@@ -17,7 +17,7 @@ using Xunit;
 /// README, the test, and (for behavioural pins) the relevant write path
 /// must be updated together.
 /// </summary>
-public sealed class AccessWriterLimitationsTests
+public sealed class LimitationsTests
 {
     // ── Schema evolution ──────────────────────────────────────────────
 
