@@ -5,6 +5,7 @@ using System.Data;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Tests.Infrastructure;
 using SharpFuzz;
 using Xunit;
 

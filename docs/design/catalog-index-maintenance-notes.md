@@ -2,7 +2,7 @@
 
 **Status:** Phase C0 + C1 shipped. All three index fixes have landed: **prefix compression cap** (2026-05-03), **entry-start bitmask sentinel** (2026-05-04), and **split-path `maxPrefixLength` cap** (2026-05-04). DAO Compact & Repair now **succeeds** for both N1 (single table) and N2+ (multiple tables + relationships) — the `MSysDb (3011)` and `Object invalid or no longer set` catalog errors are resolved. However, DAO drops rows from writer-created user tables during compact (row count = 0 post-compact), indicating a separate TDEF page layout incompatibility. This is the same issue tracked by the `DaoValidationTests` skip ("Unrecognized database format"). See [`round-trip-test-failures.md`](round-trip-test-failures.md) for the full investigation.
 
-**Driver:** Two pinned round-trip tests in [JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/Core/AccessRoundTripTests.cs):
+**Driver:** Two pinned round-trip tests in [JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs):
 
 - `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`
 - `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`

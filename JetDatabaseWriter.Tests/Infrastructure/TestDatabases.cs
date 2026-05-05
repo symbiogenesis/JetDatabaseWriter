@@ -43,7 +43,7 @@ internal static class TestDatabases
     /// ACCDB with a "People" table containing two composite text-only indexes
     /// (IX_FullName: LastName+FirstName, IX_CityName: City+LastName+FirstName)
     /// and 30 rows. Created by DAO.DBEngine.120 to provide ground-truth for
-    /// <see cref="JetDatabaseWriter.Tests.Internal.CompositeTextIndexFixtureTests"/>.
+    /// <see cref="Indexes.Collation.CompositeTextIndexFixtureTests"/>.
     /// </summary>
     public static readonly string CompositeTextIndex =
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "CompositeTextIndex.accdb");

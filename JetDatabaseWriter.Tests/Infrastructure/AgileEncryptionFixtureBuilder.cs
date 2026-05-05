@@ -6,7 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Pages;
-using JetDatabaseWriter.Tests.Core;
+using JetDatabaseWriter.Tests.Encryption;
 using JetDatabaseWriter.ValueDecoding;
 
 #pragma warning disable CA5358 // ECMA-376 Agile encryption uses fixed cipher modes per spec.

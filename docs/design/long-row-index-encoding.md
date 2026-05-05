@@ -252,7 +252,7 @@ format), pure inline continuation (same bytes regardless of char count beyond
 
 `LongRowSourceProbe.DumpV2010SuffixAnalysis` and
 `LongRowSourceProbe.DumpV2010CrcFullSweep` in
-`JetDatabaseWriter.Tests/Internal/LongRowSourceProbe.cs` are skipped
+`JetDatabaseWriter.Tests/Infrastructure/LongRowSourceProbe.cs` are skipped
 `[Fact]`s that dump char-by-char inline analysis around the 508-byte
 truncation point and exercise the candidate suffix algorithms. Un-skip them
 locally to regenerate diagnostics when investigating the 2-byte suffix.
