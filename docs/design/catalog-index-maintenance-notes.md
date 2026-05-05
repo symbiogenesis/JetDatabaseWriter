@@ -65,7 +65,7 @@ The full-rebuild `InsertSystemRowAndMaintainAsync` path was rejected for a separ
 
 ## 3. MSysObjects index layout (NorthwindTraders.accdb, Jet4)
 
-> **Note.** Earlier drafts claimed four indexes (`Id`, `ParentIdName`, `ParentIdType`, `Name`). Empirical inspection of `NorthwindTraders.accdb`'s MSysObjects TDEF (page 2) via `JetDatabaseWriter.FormatProbe` shows **only two real-idx slots are present** in this fixture (ri=0 keyCols=[1,2] = `ParentIdName`, ri=1 keyCols=[0] = `Id` PK); see [`format-probe-appendix-index.md`](format-probe-appendix-index.md) §"`MSysObjects` — TDEF page 2". The four-index shape may apply to other Access versions / fixtures; re-probe before relying on it.
+> **Note.** Earlier drafts claimed four indexes (`Id`, `ParentIdName`, `ParentIdType`, `Name`). Empirical inspection of `NorthwindTraders.accdb`'s MSysObjects TDEF (page 2) via `JetDatabaseWriter.FormatProbe` shows **only two real-idx slots are present** in this fixture (ri=0 keyCols=[1,2] = `ParentIdName`, ri=1 keyCols=[0] = `Id` PK); see [`format-probe-appendix-index.md`](../format-probe/format-probe-appendix-index.md) §"`MSysObjects` — TDEF page 2". The four-index shape may apply to other Access versions / fixtures; re-probe before relying on it.
 
 | # | Index name (logical) | Real-idx slot | Columns (col_num order) | Root page (this fixture) |
 |---|---|---|---|---|

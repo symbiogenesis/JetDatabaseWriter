@@ -429,7 +429,7 @@ FodyWeavers.xsd
 .vscode/settings.json
 
 # Format probe appendix docs (auto-generated)
-docs/design/format-probe*.md
+docs/format-probe/format-probe*.md
 
 # Infer# configuration
 .infersharpconfig

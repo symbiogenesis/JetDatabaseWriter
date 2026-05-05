@@ -1,7 +1,7 @@
 # Design notes: Complex columns (Attachment, Multi-value) — write path
 
 **Status:** All shipped phases listed in §4.2; outstanding work tracked in the same table.
-**Empirical appendix:** [`format-probe-appendix-complex.md`](format-probe-appendix-complex.md) — annotated hex dumps of `MSysComplexColumns`, every `MSysComplexType_*` template table, an attachment-bearing parent table (`Documents`), and the hidden flat tables from `ComplexFields.accdb`. Regenerate via `dotnet run --project JetDatabaseWriter.FormatProbe`.
+**Empirical appendix:** [`format-probe-appendix-complex.md`](../format-probe/format-probe-appendix-complex.md) — annotated hex dumps of `MSysComplexColumns`, every `MSysComplexType_*` template table, an attachment-bearing parent table (`Documents`), and the hidden flat tables from `ComplexFields.accdb`. Regenerate via `dotnet run --project JetDatabaseWriter.FormatProbe`.
 **Validation requirement:** see [`index-and-relationship-format-notes.md` §8](index-and-relationship-format-notes.md#8-validation-strategy).
 
 > ⚠️ Reverse-engineered notes. mdbtools documents complex columns only superficially. The authoritative open-source reference is [Jackcess](https://github.com/jahlborn/jackcess) (Java, Apache-2.0) — specifically `com.healthmarketscience.jackcess.impl.complex.*`. Field names and offsets in this document are derived from Jackcess source and the existing reader code in this repo (`AccessReader.BuildComplexColumnDataAsync`, `DecodeAttachmentFileData`).
@@ -18,7 +18,7 @@ Access 2007 introduced three "complex column" kinds. All three are stored the sa
 | Multi-value | One row per value. Columns: a single value column whose type matches the user-declared element type. |
 | Version history | One row per historical edit. Columns: `value` (memo), `version` (datetime). Only meaningful on memo columns flagged "Append Only" in Access. |
 
-The discrimination between attachment / multi-value / version-history is **not** done by the column-type byte. It is done by the linked flat table's schema and/or the value of `MSysComplexColumns.ComplexTypeObjectID` (which points at one of the `MSysComplexType_*` template tables — see [appendix](format-probe-appendix-complex.md)).
+The discrimination between attachment / multi-value / version-history is **not** done by the column-type byte. It is done by the linked flat table's schema and/or the value of `MSysComplexColumns.ComplexTypeObjectID` (which points at one of the `MSysComplexType_*` template tables — see [appendix](../format-probe/format-probe-appendix-complex.md)).
 
 The reader implements all three kinds. Writer support has shipped through phase C10 — see §4.2.
 
@@ -39,7 +39,7 @@ Because `bitmask = 0x07`, the column is treated as a fixed-length 4-byte column 
 
 ### 2.2 `MSysComplexColumns` catalog table
 
-**Verified against `ComplexFields.accdb`** ([appendix](format-probe-appendix-complex.md#msyscomplexcolumns--tdef-page-18)). Actual schema is **5 columns** (column names and order below are probe-confirmed):
+**Verified against `ComplexFields.accdb`** ([appendix](../format-probe/format-probe-appendix-complex.md#msyscomplexcolumns--tdef-page-18)). Actual schema is **5 columns** (column names and order below are probe-confirmed):
 
 | Column (verified) | Type | Meaning |
 |---|---|---|
@@ -55,7 +55,7 @@ There is **no** `ParentTable` / `ParentColumn` column in `MSysComplexColumns`. T
 
 ### 2.3 The hidden "flat" child table
 
-**Verified naming and flag conventions** ([appendix](format-probe-appendix-complex.md)):
+**Verified naming and flag conventions** ([appendix](../format-probe/format-probe-appendix-complex.md)):
 
 - Flat-table name pattern: **`f_<32-hex-uppercase>_<userColumnName>`**, e.g. `f_A3DF50CFC033433899AF0AC1A4CF4171_Attachments`. The 32 hex characters are a GUID without dashes.
 - Flat-table `MSysObjects.Flags`: **`0x800A0000`** (probe-confirmed in both `NorthwindTraders.accdb` and `ComplexFields.accdb`).
@@ -271,7 +271,7 @@ Phase C10 lifts the C3 caveat that wrote `MSysComplexColumns.ComplexTypeObjectID
 | `MSysComplexType_Text` | `Value: TEXT(255)` | `MultiValueElementType = typeof(string)` |
 | `MSysComplexType_Attachment` | `FileData OLE`, `FileFlags LONG`, `FileName TEXT(255)`, `FileTimeStamp DATETIME`, `FileType TEXT(255)`, `FileURL MEMO` | `IsAttachment = true` |
 
-Schemas come from `format-probe-appendix-complex.md` §`MSysComplexType_*` against `ComplexFields.accdb`.
+Schemas come from [`format-probe-appendix-complex.md`](../format-probe/format-probe-appendix-complex.md) §`MSysComplexType_*` against `ComplexFields.accdb`.
 
 Helpers added on `AccessWriter`:
 
