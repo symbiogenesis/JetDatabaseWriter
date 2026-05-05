@@ -9,8 +9,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Round-trip tests for the in-place leaf rewrite (surgical in-place leaf-local mutate) and
 /// leaf split (surgical leaf split + propagate up) paths in

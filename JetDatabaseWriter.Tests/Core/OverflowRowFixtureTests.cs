@@ -5,8 +5,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Fixture-based tests for rows with overflow pointers using the Jackcess
 /// <c>overflowTestV2010.accdb</c> fixture. The fixture's <c>Table1</c> has

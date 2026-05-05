@@ -12,8 +12,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Round-trip tests for tables with wide rows (multiple max-length text
 /// columns). These exercise the row-pointer / data-page code path on

@@ -13,8 +13,6 @@ using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Round-trip tests — schema evolution
 /// (<see cref="IAccessSchema.AddColumnAsync"/> /

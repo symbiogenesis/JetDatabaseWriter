@@ -9,8 +9,6 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Unit tests for <see cref="IndexLeafPageBuilder"/>. Both Jet4 / ACE and Jet3
 /// leaf-page layouts are covered via <c>[Theory]</c> parameters; the format-specific

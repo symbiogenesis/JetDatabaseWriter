@@ -8,8 +8,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Fixture-based tests for the Jackcess <c>linkerTestV2007.accdb</c> and
 /// <c>linkeeTest.accdb</c> pair. The linker fixture is a front-end database

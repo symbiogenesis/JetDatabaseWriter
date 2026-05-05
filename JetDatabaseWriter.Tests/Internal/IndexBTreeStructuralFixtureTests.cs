@@ -16,8 +16,6 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Structural integrity sweeps for index B-trees, mirroring two Jackcess
 /// fixture-driven tests:

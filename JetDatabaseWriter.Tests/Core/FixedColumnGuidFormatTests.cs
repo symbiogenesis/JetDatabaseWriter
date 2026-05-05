@@ -6,8 +6,6 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Pins the string format produced by <see cref="JetTypeInfo.ReadFixedString"/>
 /// for <c>T_GUID</c> columns. The format is:

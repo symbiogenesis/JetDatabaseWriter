@@ -10,8 +10,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Round-trip tests for the recursive higher-level intermediate split path.
 /// The plain parent-of-leaf intermediate split only handles

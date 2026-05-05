@@ -8,8 +8,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Validates that the extended date/time column type (Access 2019+, TDEF
 /// code 0x14) surfaces in index metadata when the column is indexed.

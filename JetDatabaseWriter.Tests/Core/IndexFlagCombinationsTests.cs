@@ -10,8 +10,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Validates that <see cref="IndexMetadata.IsUnique"/>,
 /// <see cref="IndexMetadata.IgnoreNulls"/>, and

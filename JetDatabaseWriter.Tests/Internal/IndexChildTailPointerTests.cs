@@ -14,8 +14,6 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Validates that the <c>tail_page</c> (child_tail) header field on
 /// intermediate index pages is non-zero when the B-tree has depth > 1,

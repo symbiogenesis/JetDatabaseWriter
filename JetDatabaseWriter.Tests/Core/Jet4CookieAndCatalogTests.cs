@@ -16,8 +16,6 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Verifies the Jet4/ACE format-wide magic cookie <c>0x00000659</c> is
 /// correctly stamped into every required location on writer-emitted TDEFs

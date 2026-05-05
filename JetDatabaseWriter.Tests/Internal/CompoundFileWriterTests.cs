@@ -8,8 +8,6 @@ using JetDatabaseWriter;
 using JetDatabaseWriter.CompoundFile;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Round-trip tests for <see cref="CompoundFileWriter"/> verified by
 /// <see cref="CompoundFileReader"/>. Modelled on OpenMcdf's StreamTests

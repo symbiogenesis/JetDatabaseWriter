@@ -7,8 +7,6 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Unit tests for <see cref="IndexKeyEncoder"/>. The assertions verify
 /// the encoder produces the byte sequences described in

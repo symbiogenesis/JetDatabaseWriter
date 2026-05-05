@@ -11,8 +11,6 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Verifies the TDEF-page invariant that every per-real-idx
 /// <c>num_idx_rows</c> counter (4-byte LE u32 at offset

@@ -10,8 +10,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Tests for <see cref="IAccessReader.ListIndexesAsync"/> against the
 /// <c>NorthwindTraders.accdb</c> and <c>ComplexFields.accdb</c> fixtures.

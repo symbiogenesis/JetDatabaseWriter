@@ -8,8 +8,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Validates that the reader identifies version-history complex columns from
 /// the Jackcess <c>complexDataTest</c> fixtures. These fixtures contain columns

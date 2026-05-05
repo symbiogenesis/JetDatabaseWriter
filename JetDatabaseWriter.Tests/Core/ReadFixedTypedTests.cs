@@ -9,8 +9,6 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Pins the contract for <see cref="JetTypeInfo.ReadFixedTyped"/>: the typed
 /// fixed-width decode that powers the typed-row read path. Each test verifies

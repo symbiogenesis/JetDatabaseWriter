@@ -14,8 +14,6 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Validates doubly-linked list consistency of index leaf page chains.
 /// Mirrors §1.3 gap: "Compare our next_page/prev_page chain against an

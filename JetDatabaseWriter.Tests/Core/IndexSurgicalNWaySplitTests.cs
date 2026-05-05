@@ -10,8 +10,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Round-trip tests for the N-way split (N-way leaf and intermediate split) path.
 /// Before N-way split, both <c>TryGreedySplitInTwo</c> (leaf) and

@@ -9,8 +9,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Round-trip tests for the leaf-merge (leaf merge on delete underflow) path
 /// inside <c>AccessWriter.TrySurgicalCrossLeafMaintainAsync</c>. When a

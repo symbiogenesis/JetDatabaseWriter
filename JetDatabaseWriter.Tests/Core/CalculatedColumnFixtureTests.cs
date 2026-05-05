@@ -9,8 +9,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Fixture-based read tests for Access 2010+ calculated (expression) columns
 /// using <c>calcFieldTestV2010.accdb</c> (Jackcess <c>CalcFieldTest</c>).

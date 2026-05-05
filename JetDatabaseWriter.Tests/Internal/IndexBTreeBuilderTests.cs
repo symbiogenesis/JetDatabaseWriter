@@ -9,8 +9,6 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Unit tests for <see cref="IndexBTreeBuilder"/>. Verifies B-tree leaf
 /// splitting, sibling chains, and intermediate (<c>0x03</c>) page emission.

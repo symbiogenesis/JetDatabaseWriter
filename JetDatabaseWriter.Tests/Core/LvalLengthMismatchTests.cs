@@ -8,8 +8,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Validates the reader's behaviour when an OLE long value's LVAL header
 /// declares a length that does not match the actual data on disk. This

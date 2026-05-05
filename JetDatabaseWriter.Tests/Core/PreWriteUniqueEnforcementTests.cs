@@ -11,8 +11,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Round-trip tests for pre-write unique-index enforcement: the duplicate
 /// check runs BEFORE the row is encoded and written, so the row never hits

@@ -9,8 +9,6 @@ using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Round-trip tests: attachment payloads larger than the legacy
 /// 256-byte inline-OLE cap are pushed onto freshly-allocated LVAL data pages

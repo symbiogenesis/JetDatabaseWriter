@@ -11,8 +11,6 @@ using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Round-trip tests for the index B-tree maintenance hooks on
 /// <see cref="IAccessWriter.InsertRowAsync(string, object[], System.Threading.CancellationToken)"/>,

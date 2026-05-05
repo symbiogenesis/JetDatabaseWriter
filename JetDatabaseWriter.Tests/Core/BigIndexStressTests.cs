@@ -13,8 +13,6 @@ using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Mirrors of high-value Jackcess writer tests that previously had no
 /// counterpart in this suite (see <c>BigIndexTest</c>, <c>IndexTest.testConstraintViolation</c>,

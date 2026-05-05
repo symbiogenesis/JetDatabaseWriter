@@ -9,8 +9,6 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Unit tests for <see cref="IndexLeafIncremental"/> — the single-leaf incremental
 /// in-place leaf splice helper. Decode → splice → re-emit must round-trip

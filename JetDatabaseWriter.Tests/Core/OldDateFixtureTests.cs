@@ -8,8 +8,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Fixture-based read tests for the Jackcess <c>oldDatesV2007.accdb</c>
 /// fixture, which contains <c>Date/Time</c> column values from before the

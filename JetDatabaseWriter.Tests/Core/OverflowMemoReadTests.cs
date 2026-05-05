@@ -7,8 +7,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Reader-side coverage for Memo/OLE columns in Access-authored fixtures.
 /// Exercises the LVAL read path (single-page and chained) for values that

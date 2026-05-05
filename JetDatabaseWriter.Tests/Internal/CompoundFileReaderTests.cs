@@ -8,8 +8,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Tests for <see cref="CompoundFileReader"/> using fixtures borrowed from
 /// the OpenMcdf project (see <c>THIRD-PARTY-NOTICES.md</c>).

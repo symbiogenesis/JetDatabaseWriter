@@ -11,8 +11,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Tests for linked tables — tables in a front-end database that reference
 /// data stored in a separate source database:

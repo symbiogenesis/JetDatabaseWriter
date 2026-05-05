@@ -10,8 +10,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Stress / round-trip tests for the intermediate-split-on-overflow path.
 /// Uses large TEXT index keys to force a small

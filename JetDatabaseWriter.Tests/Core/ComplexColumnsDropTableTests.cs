@@ -12,8 +12,6 @@ using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// When <see cref="IAccessSchema.DropTableAsync"/> drops a parent table
 /// that has Attachment / MultiValue columns, the hidden flat child tables

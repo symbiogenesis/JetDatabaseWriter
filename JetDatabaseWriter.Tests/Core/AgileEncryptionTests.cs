@@ -13,8 +13,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Regression tests for ECMA-376 §2.3.4.10–.13 "Agile" encryption support
 /// in <see cref="AccessReader"/> and <see cref="AccessWriter"/>.

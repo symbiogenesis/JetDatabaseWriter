@@ -10,8 +10,6 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention.
-
 /// <summary>
 /// Tests for binary-key index support:
 /// <c>T_BINARY (0x09)</c> is a fully supported index key column type.

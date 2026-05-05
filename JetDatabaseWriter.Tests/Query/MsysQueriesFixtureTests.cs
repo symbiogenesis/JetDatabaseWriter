@@ -8,8 +8,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1707 // Test names use underscores by convention
-
 /// <summary>
 /// Fixture-based read tests for <c>MSysQueries</c> rows in the Jackcess
 /// <c>queryTestV2010.accdb</c> fixture. Verifies that the reader can
