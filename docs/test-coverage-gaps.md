@@ -93,19 +93,6 @@ comparisons are caught up-front.
 
 ## 2. Column type & row decode
 
-### 2.1 Long-value (LVAL) chains
-
-Per-type form coverage (inline 0x80, single-page 0x40, chained 0x00) for
-both Memo and OLE round-trips through the writer is in
-[LvalFormAssertionTests.cs](../../JetDatabaseWriter.Tests/Core/LvalFormAssertionTests.cs).
-Compressed (Latin-1) Memo LVAL chains are covered by
-[CompressedMemoLvalTests.cs](../../JetDatabaseWriter.Tests/Core/CompressedMemoLvalTests.cs).
-Reader-side Memo from Access-authored overflow fixtures is in
-[OverflowMemoReadTests.cs](../../JetDatabaseWriter.Tests/Core/OverflowMemoReadTests.cs).
-Reader-side Memo with embedded `0x00` bytes from a DAO-authored database
-is covered by
-[DaoValidationTests.DaoAuthoredMemo_WithEmbeddedNuls_ReaderReturnsExactContent](../../JetDatabaseWriter.Tests/Core/DaoValidationTests.cs).
-
 ### 2.3 Calculated columns
 
 - [ ] **`[J]`** Access-authored calculated columns whose expressions use the

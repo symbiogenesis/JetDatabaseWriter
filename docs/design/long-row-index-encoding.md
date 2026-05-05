@@ -1,5 +1,14 @@
 # Microsoft Access "long row" indexed-text key encoding
 
+> **Status (2026-05):** The General Legacy (V2000/V2003/V2007) long-row
+> encoding is **fully implemented and byte-exact** — see
+> `GeneralLegacyEncoderFixtureTests`. The V2010 "General" encoder matches
+> Access output through byte 507 but the 2-byte suffix at [508..509]
+> remains unsolved. `GeneralEncoderFixtureTests` still skips Table11 /
+> Table11_desc. The rest of this document is retained as active research
+> notes for the V2010 suffix and as historical context for the solved
+> General Legacy algorithm.
+
 Reverse-engineering notes on how Microsoft Access (Jet 4 `.mdb` and ACE
 `.accdb`) encodes single-column text-index leaf entries when the indexed
 value exceeds the canonical 127-character cap.
