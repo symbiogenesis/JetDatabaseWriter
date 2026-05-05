@@ -46,20 +46,20 @@ internal static class EncryptionConverter
         byte[] header = new byte[HeaderLength];
         await ReadExactAsync(source, header, 0, header.Length, cancellationToken).ConfigureAwait(false);
 
-        // Agile is the outermost container — when present, decrypt its
+        // Agile / Standard is the outermost container — when present, decrypt its
         // EncryptedPackage and recurse on the inner ACCDB bytes.
         if (EncryptionManager.IsCompoundFileEncrypted(header))
         {
             _ = source.Seek(0, SeekOrigin.Begin);
-            byte[]? agileInner = await EncryptionManager
-                .TryDecryptAgileCompoundFileAsync(source, header, password, cancellationToken)
+            (byte[]? cfbInner, AccessEncryptionFormat cfbFormat) = await EncryptionManager
+                .TryDecryptCompoundFileWithFormatAsync(source, header, password, cancellationToken)
                 .ConfigureAwait(false);
 
-            if (agileInner != null)
+            if (cfbInner != null)
             {
-                await using var innerStream = new MemoryStream(agileInner, writable: false);
+                await using var innerStream = new MemoryStream(cfbInner, writable: false);
                 (byte[] inner, _) = await ReadDecryptedAsync(innerStream, password: default, cancellationToken).ConfigureAwait(false);
-                return (inner, AccessEncryptionFormat.AccdbAgile);
+                return (inner, cfbFormat);
             }
 
             // Synthetic legacy AES-128 CFB-wrapped layout (CFB magic at byte 0
@@ -114,6 +114,7 @@ internal static class EncryptionConverter
             case AccessEncryptionFormat.AccdbLegacyPassword:
             case AccessEncryptionFormat.AccdbAesCfbWrapped:
             case AccessEncryptionFormat.AccdbAgile:
+            case AccessEncryptionFormat.AccdbStandard:
                 if (fmt != DatabaseFormat.AceAccdb)
                 {
                     throw new NotSupportedException(
@@ -136,6 +137,7 @@ internal static class EncryptionConverter
             AccessEncryptionFormat.AccdbLegacyPassword => BuildAccdbLegacy(plaintext, targetPassword.Span),
             AccessEncryptionFormat.AccdbAesCfbWrapped => BuildAccdbAesCfbWrapped(plaintext, pageSize, targetPassword.Span),
             AccessEncryptionFormat.AccdbAgile => BuildAccdbAgile(plaintext, targetPassword.Span),
+            AccessEncryptionFormat.AccdbStandard => BuildAccdbStandard(plaintext, targetPassword.Span),
             _ => throw new NotSupportedException($"Unhandled target encryption format: {targetFormat}."),
         };
     }
@@ -284,6 +286,21 @@ internal static class EncryptionConverter
         // OfficeCryptoAgile.Encrypt and emit the resulting CFB document.
         (byte[] encryptionInfo, byte[] encryptedPackage) =
             OfficeCryptoAgile.Encrypt(plaintext, password);
+
+        return CompoundFileWriter.Build(
+        [
+            new KeyValuePair<string, byte[]>("EncryptionInfo", encryptionInfo),
+            new KeyValuePair<string, byte[]>("EncryptedPackage", encryptedPackage),
+        ]);
+    }
+
+    private static byte[] BuildAccdbStandard(byte[] plaintext, ReadOnlySpan<char> password)
+    {
+        // Standard wraps a clean (unencrypted) inner ACCDB. The plaintext bytes
+        // we have are already in that shape — pass them through
+        // OfficeCryptoStandard.Encrypt and emit the resulting CFB document.
+        (byte[] encryptionInfo, byte[] encryptedPackage) =
+            OfficeCryptoStandard.Encrypt(plaintext, password);
 
         return CompoundFileWriter.Build(
         [
