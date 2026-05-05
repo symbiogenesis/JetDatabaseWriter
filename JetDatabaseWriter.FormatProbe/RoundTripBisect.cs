@@ -1,7 +1,7 @@
 // Bisection probe for round-trip failures. Runs a sequence of escalating
 // AccessWriter operations on copies of NorthwindTraders.accdb, then invokes
-// DAO compact on each via SysWOW64 powershell, and reports which step first
-// breaks DAO.
+// DAO compact on each via a bitness-matched PowerShell host, and reports which
+// step first breaks DAO.
 //
 // USAGE
 //   $env:DIAG_RT_BISECT = "1"
@@ -13,6 +13,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 
 internal static class RoundTripBisect
@@ -22,6 +23,13 @@ internal static class RoundTripBisect
         if (!File.Exists(baselinePath))
         {
             await Console.Error.WriteLineAsync($"[bisect] baseline not found: {baselinePath}");
+            return 1;
+        }
+
+        DaoPowerShellHostResolver.DaoPowerShellHostProbeResult hostProbe = DaoPowerShellHostResolver.Probe();
+        if (hostProbe.HostPath is null)
+        {
+            await Console.Error.WriteLineAsync($"[bisect] {hostProbe.FailureReason}");
             return 1;
         }
 
@@ -140,7 +148,7 @@ internal static class RoundTripBisect
                 continue;
             }
 
-            (int code, string err) = RunDaoCompact(srcPath, dstPath);
+            (int code, string err) = RunDaoCompact(hostProbe.HostPath, srcPath, dstPath);
             string verdict = code == 0 ? "✅ OK"
                 : err.Contains("MSysDb", StringComparison.Ordinal) ? "❌ MSysDb"
                 : err.Contains("Object invalid", StringComparison.Ordinal) ? "❌ ObjInvalid"
@@ -161,9 +169,8 @@ internal static class RoundTripBisect
         return 0;
     }
 
-    private static (int Code, string StdErr) RunDaoCompact(string src, string dst)
+    private static (int Code, string StdErr) RunDaoCompact(string powerShellPath, string src, string dst)
     {
-        const string Host = @"C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe";
         if (File.Exists(dst))
         {
             File.Delete(dst);
@@ -179,7 +186,7 @@ internal static class RoundTripBisect
         string scriptPath = Path.Combine(Path.GetDirectoryName(dst)!, "compact.ps1");
         File.WriteAllText(scriptPath, script);
 
-        var psi = new ProcessStartInfo(Host)
+        var psi = new ProcessStartInfo(powerShellPath)
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,

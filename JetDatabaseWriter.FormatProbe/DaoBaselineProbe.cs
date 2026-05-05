@@ -6,8 +6,8 @@
 // writer's N1 output.
 //
 // Rather than asking a human to do this in the Microsoft Access UI (the design
-// doc's literal recommendation), we shell to a SysWOW64 PowerShell host and
-// drive `DAO.DBEngine.120` to create the table via the TableDef API. ACE (the
+// doc's literal recommendation), we shell to a bitness-matched PowerShell host
+// and drive `DAO.DBEngine.120` to create the table via the TableDef API. ACE (the
 // engine behind both DAO and modern Access UI) emits identical on-disk bytes
 // regardless of which entry point creates the TableDef — there is no separate
 // "Access UI" file format, so this is a true substitute for the manual step.
@@ -36,12 +36,11 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 
 internal static class DaoBaselineProbe
 {
-    private const string SysWow64PowerShell = @"C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe";
-
     public static async Task<int> RunAsync(string baselinePath, string workRoot)
     {
         if (!File.Exists(baselinePath))
@@ -50,9 +49,10 @@ internal static class DaoBaselineProbe
             return 1;
         }
 
-        if (!File.Exists(SysWow64PowerShell))
+        DaoPowerShellHostResolver.DaoPowerShellHostProbeResult hostProbe = DaoPowerShellHostResolver.Probe();
+        if (hostProbe.HostPath is null)
         {
-            await Console.Error.WriteLineAsync($"[dao-baseline] SysWOW64 PowerShell not found at {SysWow64PowerShell}; cannot host DAO.DBEngine.120.");
+            await Console.Error.WriteLineAsync($"[dao-baseline] {hostProbe.FailureReason}");
             return 1;
         }
 
@@ -96,7 +96,9 @@ internal static class DaoBaselineProbe
         }
 
         // 2. DAO authoring.
-        (int daoCreateCode, string daoCreateErr) = RunDaoCreateRtCustomers(daoPath);
+        string powerShellPath = hostProbe.HostPath;
+
+        (int daoCreateCode, string daoCreateErr) = RunDaoCreateRtCustomers(powerShellPath, daoPath);
         Console.WriteLine($"[dao-baseline] DAO authoring: exit={daoCreateCode}{(daoCreateCode == 0 ? string.Empty : "  err=" + Truncate(daoCreateErr))}");
         if (daoCreateCode != 0)
         {
@@ -107,10 +109,10 @@ internal static class DaoBaselineProbe
 
         // 3. DAO compact verdicts (sanity).
         (int writerCompactCode, string writerCompactErr) = string.IsNullOrEmpty(writerErr)
-            ? RunDaoCompact(writerPath, Path.Combine(writerDir, "source.compacted.accdb"))
+            ? RunDaoCompact(powerShellPath, writerPath, Path.Combine(writerDir, "source.compacted.accdb"))
             : (-1, "skipped — writer authoring failed");
         (int daoCompactCode, string daoCompactErr) = daoCreateCode == 0
-            ? RunDaoCompact(daoPath, Path.Combine(daoDir, "source.compacted.accdb"))
+            ? RunDaoCompact(powerShellPath, daoPath, Path.Combine(daoDir, "source.compacted.accdb"))
             : (-1, "skipped — DAO authoring failed");
 
         Console.WriteLine($"[dao-baseline] DAO compact (writer copy): exit={writerCompactCode}{(writerCompactCode == 0 ? string.Empty : "  err=" + Truncate(writerCompactErr))}");
@@ -177,7 +179,7 @@ internal static class DaoBaselineProbe
 
     // ────────────────────────── DAO interop ─────────────────────────────────
 
-    private static (int Code, string StdErr) RunDaoCreateRtCustomers(string dbPath)
+    private static (int Code, string StdErr) RunDaoCreateRtCustomers(string powerShellPath, string dbPath)
     {
         // dbLong=4 (Int32), dbText=10. dbAutoIncrField=16. Required=true on all
         // not-null fields. Index "PrimaryKey" with Primary/Unique/Required and
@@ -210,10 +212,10 @@ internal static class DaoBaselineProbe
             "  exit 0",
             "} finally { [GC]::Collect(); [GC]::WaitForPendingFinalizers() }",
         });
-        return RunPwsh(script, Path.Combine(Path.GetDirectoryName(dbPath)!, "dao-create.ps1"));
+        return RunPwsh(powerShellPath, script, Path.Combine(Path.GetDirectoryName(dbPath)!, "dao-create.ps1"));
     }
 
-    private static (int Code, string StdErr) RunDaoCompact(string src, string dst)
+    private static (int Code, string StdErr) RunDaoCompact(string powerShellPath, string src, string dst)
     {
         if (File.Exists(dst))
         {
@@ -227,13 +229,13 @@ internal static class DaoBaselineProbe
             $"$src='{srcLit}'\n$dst='{dstLit}'\n" +
             "$e=New-Object -ComObject DAO.DBEngine.120\n" +
             "try { $e.CompactDatabase($src,$dst); exit 0 } finally { [GC]::Collect() }\n";
-        return RunPwsh(script, Path.Combine(Path.GetDirectoryName(dst)!, "compact.ps1"));
+        return RunPwsh(powerShellPath, script, Path.Combine(Path.GetDirectoryName(dst)!, "compact.ps1"));
     }
 
-    private static (int Code, string StdErr) RunPwsh(string script, string scriptPath)
+    private static (int Code, string StdErr) RunPwsh(string powerShellPath, string script, string scriptPath)
     {
         File.WriteAllText(scriptPath, script);
-        var psi = new ProcessStartInfo(SysWow64PowerShell)
+        var psi = new ProcessStartInfo(powerShellPath)
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,
