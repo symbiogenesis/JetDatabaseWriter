@@ -78,14 +78,19 @@ public sealed class IndexMetadataTests(DatabaseCache db) : IClassFixture<Databas
     public async Task ListIndexes_ComplexFields_DocumentsHasSystemManagedAttachmentIndex()
     {
         // The Documents table in ComplexFields.accdb has no user-defined PK,
-        // but Access creates a system-managed cascading index on the
-        // hidden Attachments complex column.
+        // but Access creates a system-managed index on the hidden Attachments
+        // complex column. DAO/Access stamps the cascade_ups / cascade_dels bytes
+        // with the placeholder value 0x04 (Jackcess CASCADE_SET_DEFAULT_FLAG) for
+        // every non-FK index — including this system index — rather than the
+        // user-facing cascade bit 0x01. Since the index has no FK linkage
+        // (relIdxNum == -1), neither IsForeignKey nor the cascade flags should be set.
         var reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Documents", TestContext.Current.CancellationToken);
 
         IndexMetadata attachmentIdx = Assert.Single(indexes);
         Assert.StartsWith("Attachments_", attachmentIdx.Name, StringComparison.OrdinalIgnoreCase);
-        Assert.True(attachmentIdx.CascadeUpdates);
-        Assert.True(attachmentIdx.CascadeDeletes);
+        Assert.False(attachmentIdx.IsForeignKey);
+        Assert.False(attachmentIdx.CascadeUpdates);
+        Assert.False(attachmentIdx.CascadeDeletes);
     }
 }

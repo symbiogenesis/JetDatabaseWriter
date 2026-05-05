@@ -93,7 +93,14 @@ public sealed class Jet4CookieAndCatalogTests(DatabaseCache db) : IClassFixture<
             {
                 int phys = namePos + (i * 52);
                 int magic = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(phys, 4));
-                Assert.Equal(Constants.TableDefinition.Jet4FormatMagic, magic);
+
+                // The real-idx phys descriptor's leading 4 bytes are NOT the format-wide
+                // 0x659 magic — they are a separate constant 0x783 that DAO/Access stamp
+                // on every real-idx phys block (see Constants.TableDefinition.Jet4RealIdxLeadingMagic
+                // and docs/design/format-probe-appendix-index.md). Writing 0x659 here was
+                // the previous bug; DAO refused to OpenRecordset on tables whose real-idx
+                // descriptors had a leading word other than 0x783.
+                Assert.Equal(Constants.TableDefinition.Jet4RealIdxLeadingMagic, magic);
             }
 
             foundUserTdef = true;

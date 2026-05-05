@@ -38,6 +38,16 @@ internal sealed class ColumnInfo
     /// </summary>
     public bool IsCalculated => (ExtraFlags & Constants.CalculatedColumn.ExtFlagMask) == Constants.CalculatedColumn.ExtFlagMask;
 
+    /// <summary>
+    /// Gets a value indicating whether this text/memo column supports
+    /// Jet4/ACE compressed-unicode encoding (<c>0xFF 0xFE</c> marker +
+    /// 1 byte per Latin-1 character). True when the low bit of
+    /// <see cref="ExtraFlags"/> is set
+    /// (Jackcess <c>COMPRESSED_UNICODE_EXT_FLAG_MASK</c>).
+    /// Always false for Jet3 columns (no ExtraFlags slot).
+    /// </summary>
+    public bool IsCompressedUnicode => (ExtraFlags & Constants.CompressedUnicodeExtFlagMask) != 0;
+
     public string Name { get; set; } = string.Empty;
 
     /// <summary>

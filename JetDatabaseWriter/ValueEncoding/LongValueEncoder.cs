@@ -90,7 +90,7 @@ internal sealed class LongValueEncoder(AccessWriter writer)
                 }
 
                 data = writer._format != DatabaseFormat.Jet3Mdb
-                    ? AccessBase.EncodeJet4Text(text)
+                    ? AccessBase.EncodeJet4Text(text, col.IsCompressedUnicode)
                     : writer.AnsiEncoding.GetBytes(text);
                 inlineCap = MaxInlineMemoBytes;
             }

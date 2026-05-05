@@ -100,8 +100,12 @@ Key deltas vs. Jet4:
 1 byte   rel_tbl_type   // type of the *other* table in this FK relationship
 4 bytes  rel_idx_num    // -1 (0xFFFFFFFF) when this is not a FK
 4 bytes  rel_tbl_page   // page number of the other table in the FK
-1 byte   cascade_ups    // FK: cascade updates flag
-1 byte   cascade_dels   // FK: cascade deletes flag
+1 byte   cascade_ups    // FK cascade-updates: only bit 0x01 (CASCADE_UPDATES_FLAG)
+                        // signals "cascade enabled". DAO/Access stamps placeholder
+                        // 0x04 (CASCADE_SET_DEFAULT_FLAG) into this byte for every
+                        // index — including PK and standalone — so a `!= 0` test
+                        // produces false positives. Mask to 0x01 (Jackcess IndexImpl).
+1 byte   cascade_dels   // FK cascade-deletes: same 0x01-mask rule as cascade_ups.
 1 byte   index_type     // 0x01 = primary key, 0x02 = foreign key, otherwise normal
 4 bytes  trailing       // probe sees zeros; HACKING.md does not document this tail
 ```
@@ -118,8 +122,8 @@ The mdbtools spec lists 20 bytes for Jet3 without enumerating the field map. The
 1 byte   rel_tbl_type
 4 bytes  rel_idx_num   // -1 (0xFFFFFFFF) when this is not a FK
 4 bytes  rel_tbl_page  // page number of the other table in the FK
-1 byte   cascade_ups
-1 byte   cascade_dels
+1 byte   cascade_ups   // same 0x01-mask rule as Jet4 (see §3.2)
+1 byte   cascade_dels  // same 0x01-mask rule as Jet4 (see §3.2)
 1 byte   index_type    // 0x01 PK, 0x02 FK, otherwise normal
 ```
 

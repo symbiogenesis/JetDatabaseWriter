@@ -51,6 +51,14 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     flags |= 0x01;
                 }
 
+                // 0x08 is undefined in Jackcess (UNKNOWN_BIT_3) and not produced by
+                // Access/DAO; the writer uses it as a private "NOT NULL" marker so
+                // schema round-trips preserve IsNullable. Reader checks (col.Flags & 0x08).
+                if (!definition.IsNullable)
+                {
+                    flags |= 0x08;
+                }
+
                 if (definition.IsAutoIncrement)
                 {
                     flags |= 0x04;
@@ -182,8 +190,14 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 //                     unicode (Access default for new TEXT/MEMO cols).
                 //   col_desc + 11..14 (misc / sort_order, 4 bytes): collation/locale.
                 //                     0x00000409 = "General" sort order, en-US (LCID 1033).
+                //   col_desc + 16     (ExtraFlags, 1 byte): bit 0x01 =
+                //                     COMPRESSED_UNICODE_EXT_FLAG_MASK. Required so DAO
+                //                     decodes the writer's auto-compressed text values
+                //                     (`0xFF 0xFE` marker + 1 byte/char) instead of
+                //                     interpreting them as raw UCS-2 garbage.
                 AccessBase.Wu16(page, o + 9, 0x0001);
                 AccessBase.Wi32(page, o + writer._colDesc.MiscOff, 0x00000409);
+                page[o + writer._colDesc.FlagsOff + 1] = 0x01;
             }
 
             byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : writer.AnsiEncoding.GetBytes(col.Name);
@@ -319,14 +333,14 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 npos += nameLenSize;
                 Buffer.BlockCopy(nameBytes, 0, page, npos, nameBytes.Length);
                 npos += nameBytes.Length;
+            }
 
-                // DAO writes a 0xFFFF sentinel after each index name. Treated as a
-                // "no usage-map / no-such-page" reference; required for OpenRecordset.
-                if (jet4)
-                {
-                    AccessBase.Wu16(page, npos, 0xFFFF);
-                    npos += 2;
-                }
+            // DAO writes a single 0xFFFF "no usage-map / no-such-page" sentinel
+            // immediately after the last index name. Required for OpenRecordset.
+            if (jet4 && numIdx > 0)
+            {
+                AccessBase.Wu16(page, npos, 0xFFFF);
+                npos += 2;
             }
 
             namePos = npos;

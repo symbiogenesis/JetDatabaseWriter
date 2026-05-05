@@ -323,7 +323,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         switch (column.Type)
         {
             case T_TEXT:
-                return EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.Size);
+                return EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.Size, column.IsCompressedUnicode);
             case T_BINARY:
                 return EncodeBinaryValue(value, column.Size);
             case T_MEMO:
@@ -332,7 +332,7 @@ internal sealed class RowEncoder(AccessWriter writer)
                     return preMemo.HeaderBytes;
                 }
 
-                return EncodeMemoValue(Convert.ToString(value, CultureInfo.InvariantCulture));
+                return EncodeMemoValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.IsCompressedUnicode);
             case T_OLE:
                 return EncodeOleValue(value);
             default:
@@ -340,7 +340,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         }
     }
 
-    private byte[]? EncodeTextValue(string? value, int maxSize)
+    private byte[]? EncodeTextValue(string? value, int maxSize, bool compress)
     {
         if (value == null)
         {
@@ -348,7 +348,7 @@ internal sealed class RowEncoder(AccessWriter writer)
         }
 
         int limit = maxSize > 0 ? maxSize : int.MaxValue;
-        byte[] bytes = writer._format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(value, limit) : writer.AnsiEncoding.GetBytes(value);
+        byte[] bytes = writer._format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(value, limit, compress) : writer.AnsiEncoding.GetBytes(value);
         if (maxSize > 0 && bytes.Length > maxSize)
         {
             Array.Resize(ref bytes, maxSize);
@@ -379,14 +379,14 @@ internal sealed class RowEncoder(AccessWriter writer)
         return bytes;
     }
 
-    private byte[]? EncodeMemoValue(string? value)
+    private byte[]? EncodeMemoValue(string? value, bool compress)
     {
         if (value == null)
         {
             return null;
         }
 
-        byte[] data = writer._format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(value) : writer.AnsiEncoding.GetBytes(value);
+        byte[] data = writer._format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(value, compress) : writer.AnsiEncoding.GetBytes(value);
         if (data.Length > AccessWriter.MaxInlineMemoBytes)
         {
             throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {AccessWriter.MaxInlineMemoBytes} bytes.");

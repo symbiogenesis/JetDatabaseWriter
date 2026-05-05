@@ -11,7 +11,7 @@
 | Column type code | `T_MEMO` (`0x0C`) |
 | Storage | inline (≤ 64 bytes) or LVAL chain — identical to a plain MEMO |
 | Flag bit | `0x80` on the column-descriptor flag byte (`_colFlagsOff`) |
-| Coexisting flag bits | `0x01 FLAG_FIXED` cleared (MEMO is variable), `0x02 FLAG_NULL_ALLOWED` per `IsNullable`, `0x04 FLAG_AUTO_LONG` not applicable, `0x40 AUTO_NUMBER_GUID` not applicable |
+| Coexisting flag bits | `0x01 FLAG_FIXED` cleared (MEMO is variable), `0x02` always set (Jackcess `UNKNOWN_FF_FLAG_MASK`), `0x08` = NOT NULL, `0x04 FLAG_AUTO_LONG` not applicable, `0x40 AUTO_NUMBER_GUID` not applicable |
 | Compressed-unicode bit | independent (`extra_flags` byte at `_colFlagsOff + 1`); honoured for the hyperlink payload exactly as for any MEMO |
 | Persisted column properties | none specific — Microsoft Access stores the Hyperlink data-format affordance via `MSysObjects.LvProp` `Format = "Hyperlink"` on some files, but the flag bit is sufficient on its own and is what `Database → Table → Design View` reads |
 
