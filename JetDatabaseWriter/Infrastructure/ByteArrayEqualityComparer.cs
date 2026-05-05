@@ -14,24 +14,21 @@ internal sealed class ByteArrayEqualityComparer : IEqualityComparer<byte[]>
             return true;
         }
 
-        if (x is null || y is null || x.Length != y.Length)
+        if (x is null || y is null)
         {
             return false;
         }
 
-        for (int i = 0; i < x.Length; i++)
-        {
-            if (x[i] != y[i])
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return x.AsSpan().SequenceEqual(y);
     }
 
     public int GetHashCode(byte[] obj)
     {
+#if NET6_0_OR_GREATER
+        HashCode hc = default;
+        hc.AddBytes(obj);
+        return hc.ToHashCode();
+#else
         unchecked
         {
             int hash = (int)2166136261u;
@@ -42,5 +39,6 @@ internal sealed class ByteArrayEqualityComparer : IEqualityComparer<byte[]>
 
             return hash;
         }
+#endif
     }
 }
