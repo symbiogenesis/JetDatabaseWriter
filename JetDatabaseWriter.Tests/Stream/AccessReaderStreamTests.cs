@@ -162,7 +162,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
 
         long before = GC.GetTotalMemory(forceFullCollection: true);
 
-        await using var reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 256 }, TestContext.Current.CancellationToken);
+        await using var reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 256, UseLockFile = false }, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         int count = 0;
 
@@ -192,7 +192,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
             return; // skip if not present or encrypted
         }
 
-        await using var reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 512 }, TestContext.Current.CancellationToken);
+        await using var reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 512, UseLockFile = false }, TestContext.Current.CancellationToken);
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
@@ -210,7 +210,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     {
         long before = GC.GetTotalMemory(forceFullCollection: true);
 
-        await using var reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 256 }, TestContext.Current.CancellationToken);
+        await using var reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 256, UseLockFile = false }, TestContext.Current.CancellationToken);
         string table = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0)?.Name
                        ?? (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         int count = 0;
@@ -235,7 +235,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     [MemberData(nameof(TestDatabases.Jackcess), MemberType = typeof(TestDatabases))]
     public async Task StreamRows_Jackcess_ReadsAllTablesWithoutException(string path)
     {
-        await using var reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 512 }, TestContext.Current.CancellationToken);
+        await using var reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 512, UseLockFile = false }, TestContext.Current.CancellationToken);
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(tables);
