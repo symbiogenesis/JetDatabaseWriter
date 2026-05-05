@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Transactions;
 
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 
 /// <summary>
@@ -41,6 +42,15 @@ internal sealed class LockFileSlotWriter : IDisposable
     /// <summary>Maximum number of openers JET / Access supports per database.</summary>
     public const int MaxSlots = 255;
 
+    /// <summary>
+    /// Process-wide registry of lock-file paths currently held by this process.
+    /// Allows <c>respectExisting</c> to distinguish between lock files owned by
+    /// our process (cooperative — append a new slot) versus lock files left by
+    /// an external process or stale from a crash.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, int> ActiveLockFiles
+        = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly string _ownerType;
     private FileStream? _stream;
     private bool _disposed;
@@ -51,6 +61,7 @@ internal sealed class LockFileSlotWriter : IDisposable
         _ownerType = ownerType;
         _stream = stream;
         SlotOffset = slotOffset;
+        ActiveLockFiles.AddOrUpdate(lockPath, 1, static (_, count) => count + 1);
     }
 
     /// <summary>
@@ -103,6 +114,7 @@ internal sealed class LockFileSlotWriter : IDisposable
     private void FinalizerCleanup()
     {
         _disposed = true;
+        DecrementActiveCount(LockFilePath);
 
         FileStream? stream = _stream;
         _stream = null;
@@ -180,7 +192,7 @@ internal sealed class LockFileSlotWriter : IDisposable
     {
         string lockPath = GetLockFilePath(databasePath);
 
-        if (respectExisting && File.Exists(lockPath))
+        if (respectExisting && File.Exists(lockPath) && !ActiveLockFiles.ContainsKey(lockPath))
         {
             throw new IOException($"Database is already in use. A lockfile exists at: {lockPath}");
         }
@@ -240,6 +252,7 @@ internal sealed class LockFileSlotWriter : IDisposable
 
         _disposed = true;
         GC.SuppressFinalize(this);
+        DecrementActiveCount(LockFilePath);
 
         FileStream? stream = _stream;
         _stream = null;
@@ -380,5 +393,14 @@ internal sealed class LockFileSlotWriter : IDisposable
         // Zero-pad the rest (already zero from the array initialiser, but be explicit
         // so an in-place rewrite of an existing slot also clears stale bytes).
         field[copyChars..].Clear();
+    }
+
+    private static void DecrementActiveCount(string lockPath)
+    {
+        // Remove the entry entirely when count reaches zero to avoid unbounded growth.
+        if (ActiveLockFiles.AddOrUpdate(lockPath, 0, static (_, count) => count - 1) <= 0)
+        {
+            ActiveLockFiles.TryRemove(lockPath, out _);
+        }
     }
 }
