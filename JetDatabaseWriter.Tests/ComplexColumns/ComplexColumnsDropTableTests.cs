@@ -23,7 +23,7 @@ public sealed class ComplexColumnsDropTableTests
     [Fact]
     public async Task DropTableAsync_OnParentWithAttachments_RemovesMSysComplexColumnsRow()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
@@ -78,7 +78,7 @@ public sealed class ComplexColumnsDropTableTests
     [Fact]
     public async Task DropTableAsync_OnParentWithComplexColumns_RemovesFlatChildTableFromCatalog()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         long? flatTdefPage = null;
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
@@ -161,7 +161,7 @@ public sealed class ComplexColumnsDropTableTests
     public async Task DropTableAsync_OnTableWithoutComplexColumns_StillSucceeds()
     {
         // Regression: the cascade must be a silent no-op for ordinary tables.
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
@@ -200,7 +200,7 @@ public sealed class ComplexColumnsDropTableTests
     {
         // Jet4 .mdb files don't have MSysComplexColumns. Drop must still succeed
         // (the helper has to tolerate the missing system table).
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
 
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,

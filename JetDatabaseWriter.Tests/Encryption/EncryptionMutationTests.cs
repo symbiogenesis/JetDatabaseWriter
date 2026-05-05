@@ -259,7 +259,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     [Fact]
     public async Task CreateDatabaseAsync_WithPasswordOption_ProducesUnencryptedFile()
     {
-        var ms = new MemoryStream();
+        await using var ms = new MemoryStream();
         await using (var writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             DatabaseFormat.AceAccdb,
@@ -290,7 +290,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     public async Task EncryptAndDecryptAsync_StreamOverload_RoundTrips()
     {
         byte[] original = await db.GetFileAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
-        var ms = new MemoryStream(original.Length);
+        await using var ms = new MemoryStream(original.Length);
         await ms.WriteAsync(original.AsMemory(), TestContext.Current.CancellationToken);
         ms.Position = 0;
 

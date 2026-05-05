@@ -35,7 +35,7 @@ public sealed class AccessReaderFuzzRobustnessTests
     [MemberData(nameof(EmptyAndTinyBuffers))]
     public async Task OpenAsync_TinyOrZeroedBuffer_ThrowsDocumentedException(byte[] data)
     {
-        var ms = new MemoryStream(data, writable: false);
+        await using var ms = new MemoryStream(data, writable: false);
 
         await Assert.ThrowsAnyAsync<Exception>(async () =>
         {
@@ -74,7 +74,7 @@ public sealed class AccessReaderFuzzRobustnessTests
         // surface that fuzz_mdb.c hits via mdb_open_buffer.
         byte[] golden;
         {
-            var seed = new MemoryStream();
+            await using var seed = new MemoryStream();
             await using (var writer = await AccessWriter.CreateDatabaseAsync(
                 seed,
                 DatabaseFormat.Jet4Mdb,
@@ -108,7 +108,7 @@ public sealed class AccessReaderFuzzRobustnessTests
         // truncated copies. Each truncation must surface as a documented exception.
         byte[] golden;
         {
-            var seed = new MemoryStream();
+            await using var seed = new MemoryStream();
             await using (var writer = await AccessWriter.CreateDatabaseAsync(
                 seed,
                 DatabaseFormat.Jet4Mdb,
@@ -156,7 +156,7 @@ public sealed class AccessReaderFuzzRobustnessTests
     /// </summary>
     private static async Task TryParseAsync(byte[] data, System.Threading.CancellationToken cancellationToken)
     {
-        var ms = new MemoryStream(data, writable: false);
+        await using var ms = new MemoryStream(data, writable: false);
         try
         {
             await using var reader = await AccessReader.OpenAsync(
