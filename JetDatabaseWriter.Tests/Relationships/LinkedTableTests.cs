@@ -504,11 +504,13 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTable_GetColumnMetadata_ReturnsSourceSchema()
     {
+        var ct = TestContext.Current.CancellationToken;
+
         // GetColumnMetadata on a linked table should return the source table's schema.
         string sourcePath = CreateTempAccdbDatabase("LinkSchSrc");
         string frontEndPath = CreateTempAccdbDatabase("LinkSchFE");
 
-        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
         {
             await writer.CreateTableAsync(
                 "Customers",
@@ -517,13 +519,13 @@ public sealed class LinkedTableTests : IDisposable
                     new("Name", typeof(string), maxLength: 100),
                     new("Balance", typeof(decimal)),
                 ],
-                TestContext.Current.CancellationToken);
+                ct);
         }
 
-        await InjectLinkedTableEntryAsync(frontEndPath, "LinkedCustomers", sourcePath, "Customers", TestContext.Current.CancellationToken);
+        await InjectLinkedTableEntryAsync(frontEndPath, "LinkedCustomers", sourcePath, "Customers", ct);
 
-        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
-        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("LinkedCustomers", TestContext.Current.CancellationToken);
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        List<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("LinkedCustomers", ct);
 
         Assert.Equal(3, meta.Count);
         Assert.Equal("CustID", meta[0].Name);
