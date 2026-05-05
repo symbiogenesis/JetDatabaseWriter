@@ -144,7 +144,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
             }
 
             Assert.Single(ids);
-            Assert.True(ids[0] >= 3, $"Expected counter to skip over reused values 1 and 2; observed Id={ids[0]}.");
+            Assert.Equal(3, ids[0]);
         }
     }
 

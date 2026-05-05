@@ -179,6 +179,65 @@ public sealed class CompressedMemoLvalTests
         Assert.Equal(sentinel, dt!.Rows[0]["Txt"]);
     }
 
+    /// <summary>
+    /// Verifies that a Latin-1 Memo stored via LVAL (exceeds inline cap) is
+    /// written in compressed unicode form on disk, not raw UCS-2.
+    /// </summary>
+    [Fact]
+    public async Task Memo_LargeLatin1_LvalPayloadIsCompressedOnDisk()
+    {
+        // 1500 Latin-1 chars → compressed = 1500 bytes (exceeds inline cap),
+        // so data lives in an LVAL page. The raw bytes should contain the
+        // FF FE compressed-unicode marker followed by single-byte characters,
+        // and must NOT contain the UCS-2 form.
+        const string sentinel = "LVALCOMPRESSED";
+        string memoValue = new string('K', 1480) + sentinel; // 1494 chars
+
+        var ms = new MemoryStream();
+        await using (var writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "LvalComp",
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Content", typeof(string)),
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync("LvalComp", [1, memoValue], TestContext.Current.CancellationToken);
+        }
+
+        byte[] bytes = ms.ToArray();
+        byte[] ucs2Sentinel = System.Text.Encoding.Unicode.GetBytes(sentinel);
+        byte[] asciiSentinel = System.Text.Encoding.ASCII.GetBytes(sentinel);
+
+        // The compressed form must appear somewhere in the LVAL page chain.
+        Assert.True(
+            IndexOf(bytes, asciiSentinel) >= 0,
+            "Expected Latin-1 LVAL content stored in 1-byte compressed form.");
+
+        // The UCS-2 expansion of the sentinel must NOT appear.
+        Assert.True(
+            IndexOf(bytes, ucs2Sentinel) < 0,
+            "LVAL payload must NOT appear in raw UCS-2 when the content is compressible.");
+
+        // Round-trip the value.
+        ms.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(
+            ms,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        DataTable dt = await reader.ReadDataTableAsync("LvalComp", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(memoValue, Assert.IsType<string>(dt.Rows[0]["Content"]));
+    }
+
     private static int IndexOf(byte[] haystack, byte[] needle)
     {
         if (needle.Length == 0 || haystack.Length < needle.Length)
