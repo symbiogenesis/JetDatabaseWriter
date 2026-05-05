@@ -155,7 +155,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRows_NorthwindTraders_DoesNotExceedReasonableMemory()
     {
         string path = TestDatabases.NorthwindTraders;
-        if (!await TestDatabases.IsReadableAsync(path))
+        if (!await TestDatabases.IsReadableAsync(path, TestContext.Current.CancellationToken))
         {
             return; // skip if not present or encrypted
         }
@@ -187,7 +187,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRows_NorthwindTraders_ReadsAllTablesWithoutException()
     {
         string path = TestDatabases.NorthwindTraders;
-        if (!await TestDatabases.IsReadableAsync(path))
+        if (!await TestDatabases.IsReadableAsync(path, TestContext.Current.CancellationToken))
         {
             return; // skip if not present or encrypted
         }

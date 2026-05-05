@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Fuzz;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
@@ -25,6 +26,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
     [Fact]
     public async Task FuzzAccessWriter()
     {
+        var ct = TestContext.Current.CancellationToken;
         Fuzzer.Run(async stream =>
         {
             output.WriteLine($"--- Fuzzing iteration started at {DateTime.UtcNow:O} ---");
@@ -35,7 +37,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
                 await stream.ReadExactlyAsync(fuzzedBytes);
                 stream.Position = 0;
 
-                await FuzzIterationAsync(output, fuzzedBytes);
+                await FuzzIterationAsync(output, fuzzedBytes, ct);
             }
             catch (Exception ex)
             {
@@ -67,7 +69,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         }
     }
 
-    private static async Task FuzzIterationAsync(ITestOutputHelper output, byte[]? fuzzedBytes)
+    private static async Task FuzzIterationAsync(ITestOutputHelper output, byte[]? fuzzedBytes, CancellationToken ct)
     {
         await using var ms = new MemoryStream();
         FuzzRandom random = FuzzRandom.Create(fuzzedBytes);
@@ -89,22 +91,22 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
             await FuzzTransactionAsync(writer, output, random);
         }
 
-        await VerifyRoundTripAsync(ms, output);
+        await VerifyRoundTripAsync(ms, output, ct);
     }
 
-    private static async Task VerifyRoundTripAsync(MemoryStream ms, ITestOutputHelper output)
+    private static async Task VerifyRoundTripAsync(MemoryStream ms, ITestOutputHelper output, CancellationToken ct)
     {
         try
         {
             ms.Position = 0;
-            await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions());
-            var tableNames = await reader.ListTablesAsync();
+            await using var reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions(), cancellationToken: ct);
+            var tableNames = await reader.ListTablesAsync(ct);
             output.WriteLine($"[RoundTrip] Opened written DB with AccessReader. Tables: [{string.Join(", ", tableNames)}]");
             foreach (var tableName in tableNames)
             {
                 output.WriteLine($"[RoundTrip] Reading table: {tableName}");
                 int count = 0;
-                await foreach (object[] dataRow in reader.Rows(tableName))
+                await foreach (object[] dataRow in reader.Rows(tableName, cancellationToken: ct))
                 {
                     if (++count > 10)
                     {
