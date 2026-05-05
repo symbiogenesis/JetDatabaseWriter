@@ -488,8 +488,20 @@ internal static class EncryptionManager
 
         if (streams == null ||
             !streams.TryGetValue("EncryptionInfo", out byte[]? encryptionInfo) ||
-            !streams.TryGetValue("EncryptedPackage", out byte[]? encryptedPackage) ||
-            !OfficeCryptoAgile.IsAgileEncryptionInfo(encryptionInfo))
+            !streams.TryGetValue("EncryptedPackage", out byte[]? encryptedPackage))
+        {
+            return null;
+        }
+
+        if (OfficeCryptoAgile.IsStandardEncryptionInfo(encryptionInfo))
+        {
+            throw new NotSupportedException(
+                "This .accdb file uses Office 2007 (ECMA-376) Standard encryption (AES-128). " +
+                "Only Agile encryption (Office 2010+) is currently supported. " +
+                "Re-encrypt the file using Access 2010 or later, or remove the password and re-apply it with a modern version of Access.");
+        }
+
+        if (!OfficeCryptoAgile.IsAgileEncryptionInfo(encryptionInfo))
         {
             return null;
         }

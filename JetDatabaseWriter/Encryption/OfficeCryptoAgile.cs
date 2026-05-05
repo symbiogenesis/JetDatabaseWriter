@@ -61,6 +61,26 @@ internal static class OfficeCryptoAgile
     }
 
     /// <summary>
+    /// Returns true when the EncryptionInfo header indicates the ECMA-376
+    /// "Standard" encryption variant (version 3.2 or 4.2, AES-128-ECB).
+    /// This format is used by Office 2007 (Access 2007) password-encrypted
+    /// .accdb files but is not yet supported by this library.
+    /// </summary>
+    public static bool IsStandardEncryptionInfo(byte[] encryptionInfo)
+    {
+        if (encryptionInfo == null || encryptionInfo.Length < 8)
+        {
+            return false;
+        }
+
+        ushort major = BinaryPrimitives.ReadUInt16LittleEndian(encryptionInfo.AsSpan(0, 2));
+        ushort minor = BinaryPrimitives.ReadUInt16LittleEndian(encryptionInfo.AsSpan(2, 2));
+
+        // Standard encryption: version (3, 2) or (4, 2) per MS-OFFCRYPTO §2.3.6.
+        return (major == 3 || major == 4) && minor == 2;
+    }
+
+    /// <summary>
     /// Decrypts an Agile-encrypted Office package. Throws
     /// <see cref="UnauthorizedAccessException"/> when the password fails
     /// verification.

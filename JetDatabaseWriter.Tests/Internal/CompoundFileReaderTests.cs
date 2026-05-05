@@ -667,6 +667,248 @@ public sealed class CompoundFileReaderTests
         }
     }
 
+    // ── Mini-FAT chain spanning multiple regular sectors ──────────────
+    //
+    // The mini-FAT holds 128 entries per v3 sector (512 / 4). When more
+    // than 128 mini-sectors are allocated, the mini-FAT chain requires
+    // more than one regular FAT sector. This exercises ReadMiniFatAsync's
+    // multi-sector chain walk — the gap described by OpenMcdf's
+    // MiniStreamLargeChain fixtures.
+
+    /// <summary>
+    /// Constructs a synthetic v3 CFB whose mini-stream holds 192 mini-sectors
+    /// (3 streams × 64 mini-sectors each = 192 × 64 = 12288 bytes), forcing
+    /// the mini-FAT to span 2 regular sectors. Verifies all three streams
+    /// read back correctly.
+    /// </summary>
+    [Fact]
+    public async Task ReadStreams_MiniFatSpansMultipleSectors_RecoversStreams()
+    {
+        byte[] file = BuildMiniFatLargeChainFile();
+
+        await using var ms = new MemoryStream(file);
+        var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
+
+        // Stream "A" = 4095 bytes (64 mini-sectors, entries 0..63)
+        Assert.True(streams.ContainsKey("A"), $"Missing 'A'; have: {string.Join(",", streams.Keys)}");
+        byte[] payloadA = streams["A"];
+        Assert.Equal(4095, payloadA.Length);
+        for (int i = 0; i < payloadA.Length; i++)
+        {
+            if (payloadA[i] != unchecked((byte)i))
+            {
+                Assert.Fail($"Stream A mismatch at offset {i}: expected {unchecked((byte)i)}, got {payloadA[i]}.");
+            }
+        }
+
+        // Stream "B" = 4095 bytes (64 mini-sectors, entries 64..127)
+        Assert.True(streams.ContainsKey("B"), $"Missing 'B'; have: {string.Join(",", streams.Keys)}");
+        byte[] payloadB = streams["B"];
+        Assert.Equal(4095, payloadB.Length);
+        for (int i = 0; i < payloadB.Length; i++)
+        {
+            if (payloadB[i] != unchecked((byte)(i + 0x40)))
+            {
+                Assert.Fail($"Stream B mismatch at offset {i}: expected {unchecked((byte)(i + 0x40))}, got {payloadB[i]}.");
+            }
+        }
+
+        // Stream "C" = 4095 bytes (64 mini-sectors, entries 128..191)
+        // NOTE: entries 128+ reside in the SECOND mini-FAT sector — this is
+        // the specific gap being exercised.
+        Assert.True(streams.ContainsKey("C"), $"Missing 'C'; have: {string.Join(",", streams.Keys)}");
+        byte[] payloadC = streams["C"];
+        Assert.Equal(4095, payloadC.Length);
+        for (int i = 0; i < payloadC.Length; i++)
+        {
+            if (payloadC[i] != unchecked((byte)(i + 0x80)))
+            {
+                Assert.Fail($"Stream C mismatch at offset {i}: expected {unchecked((byte)(i + 0x80))}, got {payloadC[i]}.");
+            }
+        }
+    }
+
+    private static byte[] BuildMiniFatLargeChainFile()
+    {
+        const int Ss = 512; // regular sector size
+        const int Ms = 64;  // mini-sector size
+        const int StreamSize = 4095; // each stream just under the 4096 cutoff
+        const int StreamCount = 3;
+
+        int miniSectorsPerStream = (StreamSize + Ms - 1) / Ms; // 64
+        int totalMiniSectorsActual = miniSectorsPerStream * StreamCount; // 192
+        int miniStreamBytes = totalMiniSectorsActual * Ms; // 12288
+
+        // Sector layout:
+        //   0:        Directory (4 entries × 128 = 512 bytes = 1 sector)
+        //   1..24:    Mini-stream data (root entry FAT chain)
+        //   25..26:   Mini-FAT (192 entries > 128 per sector → 2 sectors)
+        //   27:       FAT
+        int miniStreamSectors = miniStreamBytes / Ss; // 24
+        int miniFatSectors = 2;
+        int firstMiniFatSector = 1 + miniStreamSectors; // 25
+        int fatSector = firstMiniFatSector + miniFatSectors; // 27
+        int totalSectors = 1 + miniStreamSectors + miniFatSectors + 1; // 28
+
+        byte[] file = new byte[Ss + (totalSectors * Ss)];
+
+        // ── Header ────────────────────────────────────────────────────
+        Span<byte> h = file.AsSpan(0, Ss);
+        CompoundFileReader.CfbSignature.CopyTo(h);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x18), 0x003E);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1A), 3);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1C), 0xFFFE);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x1E), 9);
+        BinaryPrimitives.WriteUInt16LittleEndian(h.Slice(0x20), 6);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x2C), 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x30), 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x38), 4096);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x3C), (uint)firstMiniFatSector);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x40), (uint)miniFatSectors);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x44), 0xFFFFFFFE);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x48), 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C), (uint)fatSector);
+        for (int i = 1; i < 109; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(h.Slice(0x4C + (i * 4)), 0xFFFFFFFF);
+        }
+
+        // ── Sector 0: Directory ───────────────────────────────────────
+        // Red-black tree: root child = entry 2 ("B"), B.left=1("A"), B.right=3("C")
+        int dirOff = Ss;
+        WriteDirEntryFull(
+            file,
+            dirOff,
+            "Root Entry",
+            5,
+            1,
+            (uint)miniStreamBytes,
+            child: 2,
+            left: 0xFFFFFFFF,
+            right: 0xFFFFFFFF);
+        WriteDirEntryFull(
+            file,
+            dirOff + 128,
+            "A",
+            2,
+            0,
+            (uint)StreamSize,
+            child: 0xFFFFFFFF,
+            left: 0xFFFFFFFF,
+            right: 0xFFFFFFFF);
+        WriteDirEntryFull(
+            file,
+            dirOff + 256,
+            "B",
+            2,
+            (uint)miniSectorsPerStream,
+            (uint)StreamSize,
+            child: 0xFFFFFFFF,
+            left: 1,
+            right: 3);
+        WriteDirEntryFull(
+            file,
+            dirOff + 384,
+            "C",
+            2,
+            (uint)(miniSectorsPerStream * 2),
+            (uint)StreamSize,
+            child: 0xFFFFFFFF,
+            left: 0xFFFFFFFF,
+            right: 0xFFFFFFFF);
+
+        // ── Sectors 1..24: Mini-stream data ───────────────────────────
+        int miniStreamOff = Ss + Ss;
+        for (int s = 0; s < StreamCount; s++)
+        {
+            int baseOffset = s * miniSectorsPerStream * Ms;
+            for (int i = 0; i < StreamSize; i++)
+            {
+                file[miniStreamOff + baseOffset + i] = unchecked((byte)(i + (s * 0x40)));
+            }
+        }
+
+        // ── Mini-FAT (2 sectors, 192 entries) ─────────────────────────
+        int miniFatOff = Ss + ((1 + miniStreamSectors) * Ss);
+        int entriesPerSector = Ss / 4; // 128
+
+        // Initialize all entries to FreeSect.
+        for (int i = 0; i < miniFatSectors * entriesPerSector; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(miniFatOff + (i * 4)), 0xFFFFFFFF);
+        }
+
+        // Chain A: mini-sectors 0..63 (entry 63 → EndOfChain)
+        for (int i = 0; i < miniSectorsPerStream - 1; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(miniFatOff + (i * 4)), (uint)(i + 1));
+        }
+
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(miniFatOff + ((miniSectorsPerStream - 1) * 4)), 0xFFFFFFFE);
+
+        // Chain B: mini-sectors 64..127 (entry 127 → EndOfChain)
+        int bStart = miniSectorsPerStream;
+        for (int i = bStart; i < bStart + miniSectorsPerStream - 1; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(miniFatOff + (i * 4)), (uint)(i + 1));
+        }
+
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(miniFatOff + ((bStart + miniSectorsPerStream - 1) * 4)), 0xFFFFFFFE);
+
+        // Chain C: mini-sectors 128..191 (entry 191 → EndOfChain)
+        // Entries 128+ reside in the SECOND mini-FAT sector.
+        int cStart = miniSectorsPerStream * 2;
+        for (int i = cStart; i < cStart + miniSectorsPerStream - 1; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(miniFatOff + (i * 4)), (uint)(i + 1));
+        }
+
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(miniFatOff + ((cStart + miniSectorsPerStream - 1) * 4)), 0xFFFFFFFE);
+
+        // ── FAT sector ────────────────────────────────────────────────
+        int fatOff = Ss + (fatSector * Ss);
+        for (int i = 0; i < entriesPerSector; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (i * 4)), 0xFFFFFFFF);
+        }
+
+        // Sector 0: Directory → EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff), 0xFFFFFFFE);
+
+        // Sectors 1..24: Mini-stream chain (1→2→...→24→EndOfChain)
+        for (int i = 1; i < 1 + miniStreamSectors - 1; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (i * 4)), (uint)(i + 1));
+        }
+
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (miniStreamSectors * 4)), 0xFFFFFFFE);
+
+        // Mini-FAT chain: sector 25 → sector 26 → EndOfChain
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (firstMiniFatSector * 4)), (uint)(firstMiniFatSector + 1));
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + ((firstMiniFatSector + 1) * 4)), 0xFFFFFFFE);
+
+        // FAT sector itself → FatSect
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fatOff + (fatSector * 4)), 0xFFFFFFFD);
+
+        return file;
+    }
+
+    private static void WriteDirEntryFull(byte[] file, int offset, string name, byte objectType, uint startSector, uint sizeLow, uint child, uint left, uint right)
+    {
+        Span<byte> e = file.AsSpan(offset, 128);
+        e.Clear();
+        byte[] nameBytes = Encoding.Unicode.GetBytes(name);
+        nameBytes.CopyTo(e);
+        BinaryPrimitives.WriteUInt16LittleEndian(e.Slice(0x40), (ushort)(nameBytes.Length + 2));
+        e[0x42] = objectType;
+        e[0x43] = 0x01; // color = black
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x44), left);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x48), right);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x4C), child);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x74), startSector);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x78), sizeLow);
+    }
+
     private static void WriteDirEntryUnused(byte[] file, int offset)
     {
         Span<byte> e = file.AsSpan(offset, 128);
