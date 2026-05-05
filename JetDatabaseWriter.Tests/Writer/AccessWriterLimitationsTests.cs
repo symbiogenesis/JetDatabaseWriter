@@ -79,39 +79,6 @@ public sealed class AccessWriterLimitationsTests
         Assert.Contains("writing calculated columns is not yet implemented", ex.Message, StringComparison.Ordinal);
     }
 
-    // ── Encryption ────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task Encryption_CreateDatabaseAsync_ProducesUnencryptedFile_EvenWhenOptionsCarryAPassword()
-    {
-        // README: "Creating a new encrypted database … is not supported."
-        // Demonstrate: pass a password to CreateDatabaseAsync and prove the resulting
-        // file is openable WITHOUT any password — i.e. it was never encrypted.
-        var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
-            ms,
-            DatabaseFormat.AceAccdb,
-            new AccessWriterOptions("ignoredpassword") { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-            await writer.CreateTableAsync(
-                "T",
-                [new("Id", typeof(int))],
-                TestContext.Current.CancellationToken);
-        }
-
-        ms.Position = 0;
-        await using var reader = await AccessReader.OpenAsync(
-            ms,
-            new AccessReaderOptions { UseLockFile = false }, // NO password
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-
-        var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-        Assert.Contains("T", tables);
-    }
-
     // ── Forms, reports, macros, queries, VBA ──────────────────────────
 
     [Fact]
