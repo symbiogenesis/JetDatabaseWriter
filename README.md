@@ -84,13 +84,12 @@ public class Order
     public decimal Freight { get; set; }
 }
 
-using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-await using var reader = await AccessReader.OpenAsync("database.mdb", cancellationToken: cts.Token);
+await using var reader = await AccessReader.OpenAsync("database.mdb");
 
-List<string> tables = await reader.ListTablesAsync(cts.Token);
+List<string> tables = await reader.ListTablesAsync();
 Console.WriteLine($"Found {tables.Count} tables: {string.Join(", ", tables)}");
 
-List<Order> orders = await reader.ReadTableAsync<Order>("Orders", maxRows: 100, cts.Token);
+List<Order> orders = await reader.ReadTableAsync<Order>("Orders", maxRows: 100);
 foreach (Order o in orders)
     Console.WriteLine($"#{o.OrderID}  {o.OrderDate:yyyy-MM-dd}  {o.Freight:C}");
 ```
