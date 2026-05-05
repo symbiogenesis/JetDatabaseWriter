@@ -148,17 +148,26 @@ newer `DaoValidationTests` (single-table DAO scripts via
 `AccessRoundTripEnvironment.RunDaoScript`) should be reused for new DAO
 scenarios rather than reinventing the setup/teardown boilerplate.
 
-- [ ] **`[S]`** **Compact & Repair acceptance** — unblock the two existing
-  gated tests (`SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`,
-  `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`) by resolving
-  the MSysDb / page-allocation-map blockers documented in
+- [ ] **`[S]`** **Compact & Repair acceptance** — the two existing tests
+  (`SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`,
+  `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`) now run on
+  Access-equipped hosts (via `SkipUnless`) and fail visibly. The N1
+  (single-table) case passes DAO C&R after the entry-start bitmask
+  sentinel fix, but N2 (two tables + relationship) still fails — the
+  second `CreateTableAsync` splice overflows the `ParentIdName` leaf
+  without `maxPrefixLength` cap. See
   [round-trip-test-failures.md](round-trip-test-failures.md).
 - [ ] **`[S]`** **DAO OpenRecordset row-count** — test implemented in
-  `DaoValidationTests.DaoOpenRecordset_RowCount_MatchesWriterOutput`
-  but gated behind the same TDEF compatibility fix as Compact & Repair.
+  `DaoValidationTests.DaoOpenRecordset_RowCount_MatchesWriterOutput`;
+  now runs (and fails with "Unrecognized database format") on
+  Access-equipped hosts rather than being unconditionally skipped.
+  Blocked on TDEF page-layout compatibility.
 - [ ] **`[S]`** **DAO index traversal** — test implemented in
-  `DaoValidationTests.DaoIndexTraversal_Seek_LocatesRowByPrimaryKey`
-  but gated behind the same TDEF compatibility fix.
+  `DaoValidationTests.DaoIndexTraversal_Seek_LocatesRowByPrimaryKey`;
+  same status as row-count (runs, fails, blocked on TDEF).
+- [ ] **`[S]`** **DAO AutoNumber continuation** — test implemented in
+  `DaoValidationTests.DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert`;
+  same status as row-count (runs, fails, blocked on TDEF).
 - [ ] **`[M]`** **DAO Memo/OLE fidelity** — write Memo values containing
   embedded NULs, non-Latin-1 (CJK), and OLE binary payloads; verify DAO
   `Recordset.Fields("col").Value` returns the identical bytes. Catches
@@ -168,9 +177,6 @@ scenarios rather than reinventing the setup/teardown boilerplate.
   insert that violates the FK. Assert DAO raises error 3201 (cannot add
   record — referential integrity violated). Confirms the relationship
   metadata is fully understood by Access.
-- [ ] **`[M]`** **DAO AutoNumber continuation** — test implemented in
-  `DaoValidationTests.DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert`
-  but gated behind the same TDEF compatibility fix.
 - [ ] **`[L]`** **DAO CompactDatabase on encrypted output** — write a
   password-protected ACCDB (AES), run Compact & Repair with the password
   supplied via DAO, and verify the compacted file reopens. Validates the

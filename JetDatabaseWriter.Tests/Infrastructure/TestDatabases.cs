@@ -40,6 +40,15 @@ internal static class TestDatabases
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "ComplexFields.accdb");
 
     /// <summary>
+    /// ACCDB with a "People" table containing two composite text-only indexes
+    /// (IX_FullName: LastName+FirstName, IX_CityName: City+LastName+FirstName)
+    /// and 30 rows. Created by DAO.DBEngine.120 to provide ground-truth for
+    /// <see cref="JetDatabaseWriter.Tests.Internal.CompositeTextIndexFixtureTests"/>.
+    /// </summary>
+    public static readonly string CompositeTextIndex =
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "CompositeTextIndex.accdb");
+
+    /// <summary>
     /// ACCDB created by Access 16 CompactDatabase with password.
     /// Header byte 0x62 = 0x07 (bits 0/1/2 set); version = 0x03 (Access 2010 format).
     /// The reader detects this as requiring a password (ACCDB AES check fires).

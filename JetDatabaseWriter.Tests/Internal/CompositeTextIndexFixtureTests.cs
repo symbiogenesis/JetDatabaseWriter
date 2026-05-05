@@ -40,16 +40,10 @@ public sealed class CompositeTextIndexFixtureTests
 {
     private const int MaxDetailRowsPerIndex = 5;
 
-    public static TheoryData<string> Fixtures => new()
-    {
-        // V1997 Jet3 layout excluded — descent helper is hard-coded for the
-        // Jet4 layout (see GeneralLegacyEncoderFixtureTests for the same
-        // exclusion rationale).
-        TestDatabases.CompIndexTestV2000,
-        TestDatabases.CompIndexTestV2003,
-        TestDatabases.CompIndexTestV2007,
-        TestDatabases.CompIndexTestV2010,
-    };
+    public static TheoryData<string> Fixtures =>
+    [
+        TestDatabases.CompositeTextIndex,
+    ];
 
     [Theory]
     [MemberData(nameof(Fixtures))]
