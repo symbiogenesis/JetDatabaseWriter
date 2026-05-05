@@ -163,8 +163,7 @@ JetDatabaseWriter/
     ├── ByteArrayEqualityComparer.cs       (byte[] equality for dictionary keys)
     ├── AsyncLazyInitializer.cs            (thread-safe async lazy initialization)
     ├── AsyncReentrantOperationGate.cs     (reentrant async operation serializer)
-    ├── Guard.cs                           (argument validation helpers)
-    └── NonClosingStreamWrapper.cs         (stream wrapper that suppresses Dispose)
+    └── Guard.cs                           (argument validation helpers)
 ```
 
 ---

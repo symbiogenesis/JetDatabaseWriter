@@ -57,6 +57,7 @@ public abstract class AccessBase : IAccessBase
     internal readonly int _pgSz;
     internal readonly DatabaseFormat _format;
     internal readonly Stream _stream;
+    private readonly bool _leaveOpen;
     private protected readonly Encoding _ansiEncoding;
     private protected readonly int _codePage;
     private protected readonly string _path;
@@ -111,9 +112,11 @@ public abstract class AccessBase : IAccessBase
     /// <param name="stream">An open, seekable <see cref="Stream"/> for the database file.</param>
     /// <param name="hdr">Header bytes read from page 0.</param>
     /// <param name="path">Path to the database file, or empty when opened from a stream.</param>
-    private protected AccessBase(Stream stream, byte[] hdr, string path = "")
+    /// <param name="leaveOpen">When <see langword="true"/>, the caller retains ownership of <paramref name="stream"/> and it will not be disposed.</param>
+    private protected AccessBase(Stream stream, byte[] hdr, string path = "", bool leaveOpen = false)
     {
         _stream = stream;
+        _leaveOpen = leaveOpen;
         _path = path ?? string.Empty;
 
         _format = EncryptionConverter.DetectFormat(hdr);
@@ -177,7 +180,11 @@ public abstract class AccessBase : IAccessBase
         }
 
         _disposed = true;
-        await _stream.DisposeAsync().ConfigureAwait(false);
+        if (!_leaveOpen)
+        {
+            await _stream.DisposeAsync().ConfigureAwait(false);
+        }
+
         _ioGate.Dispose();
         _pageKeys.Dispose();
         GC.SuppressFinalize(this);

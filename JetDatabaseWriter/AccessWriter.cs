@@ -145,8 +145,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         AccessWriterOptions options,
         Stream? outerEncryptedStream = null,
         bool outerEncryptedLeaveOpen = false,
-        bool isAgileEncryptedRewrap = false)
-        : base(stream, header, path)
+        bool isAgileEncryptedRewrap = false,
+        bool leaveOpen = false)
+        : base(stream, header, path, leaveOpen)
     {
         _options = options;
         _lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
@@ -254,11 +255,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         cancellationToken.ThrowIfCancellationRequested();
 
         options ??= new AccessWriterOptions();
-        Stream wrapped = leaveOpen ? new NonClosingStreamWrapper(stream) : stream;
         try
         {
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
-            byte[] header = await ReadHeaderAsync(wrapped, cancellationToken).ConfigureAwait(false);
+            byte[] header = await ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
 
             // Office Crypto API ("Agile") encrypted .accdb files are real OLE
             // compound documents (CFB) wrapping an EncryptedPackage stream.
@@ -267,9 +267,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             // and the whole CFB is re-emitted on DisposeAsync.
             if (EncryptionManager.IsCompoundFileEncrypted(header))
             {
-                _ = wrapped.Seek(0, SeekOrigin.Begin);
+                _ = stream.Seek(0, SeekOrigin.Begin);
                 byte[]? decryptedAgile = await EncryptionManager
-                    .TryDecryptAgileCompoundFileAsync(wrapped, header, options.Password, cancellationToken)
+                    .TryDecryptAgileCompoundFileAsync(stream, header, options.Password, cancellationToken)
                     .ConfigureAwait(false);
 
                 if (decryptedAgile != null)
@@ -284,7 +284,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                         inner,
                         innerHeader,
                         options,
-                        outerEncryptedStream: wrapped,
+                        outerEncryptedStream: stream,
                         outerEncryptedLeaveOpen: leaveOpen,
                         isAgileEncryptedRewrap: true);
                 }
@@ -293,20 +293,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 // the synthetic legacy AES-128 layout (flat per-page AES-ECB
                 // beneath a CFB-magic header byte). The constructor sets up
                 // the page key and writes are re-encrypted on every flush.
-                _ = wrapped.Seek(0, SeekOrigin.Begin);
+                _ = stream.Seek(0, SeekOrigin.Begin);
             }
 
             return new AccessWriter(
                 path,
-                wrapped,
+                stream,
                 header,
-                options);
+                options,
+                leaveOpen: leaveOpen);
         }
         catch
         {
             if (!leaveOpen)
             {
-                await wrapped.DisposeAsync().ConfigureAwait(false);
+                await stream.DisposeAsync().ConfigureAwait(false);
             }
 
             throw;
