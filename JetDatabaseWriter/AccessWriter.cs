@@ -164,7 +164,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         _rowEncoder = new RowEncoder(this);
         _dataPageInserter = new DataPageInserter(this);
         Constraints = new ConstraintRegistry(
-            async (tableName, ct) => await ReadTableSnapshotAsync(tableName, ct).ConfigureAwait(false));
+            async (tableName, ct) => await ReadTableSnapshotAsync(tableName, ct).ConfigureAwait(false),
+            async (tableName, ct) =>
+            {
+                CatalogEntry? entry = await GetCatalogEntryAsync(tableName, ct).ConfigureAwait(false);
+                if (entry is null)
+                {
+                    return null;
+                }
+
+                return await ReadLvPropBlockAsync(entry.TDefPage, ct).ConfigureAwait(false);
+            });
 
         // Real CFB-wrapped encrypted ACCDBs (Agile / Office Crypto API) can
         // only be edited via the in-memory decrypt-then-rewrap path — caller
@@ -2215,7 +2225,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
             ColumnInfo col = tableDef.Columns[i];
-            ColumnDefinition baseDef = BuildColumnDefinitionFromInfo(col);
+            ColumnDefinition baseDef = BuildColumnDefinitionFromInfo(col, originalProperties);
             if (existingConstraints != null && i < existingConstraints.Count
                 && string.Equals(existingConstraints[i].Name, col.Name, StringComparison.OrdinalIgnoreCase))
             {
@@ -2349,7 +2359,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
     }
 
-    private ColumnDefinition BuildColumnDefinitionFromInfo(ColumnInfo column)
+    private ColumnDefinition BuildColumnDefinitionFromInfo(ColumnInfo column, ColumnPropertyBlock? properties = null)
     {
         ColumnDefinition baseDef;
         switch (column.Type)
@@ -2398,12 +2408,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // wrote into the original column descriptor. Complex columns (T_ATTACHMENT /
         // T_COMPLEX) return early above because their Flags byte is the magic 0x07
         // marker rather than real flag bits.
+        bool? requiredFromLvProp = properties?.FindTarget(column.Name)?
+            .GetBooleanValue(Constants.ColumnPropertyNames.Required);
+        bool isNullable = requiredFromLvProp is bool req
+            ? !req
+            : (column.Flags & 0x08) == 0; // legacy back-compat with older writer revisions
+
         ColumnDefinition def = baseDef with
         {
-            // See AccessReader IsNullable comment: 0x08 is the writer-private NOT NULL marker.
-            IsNullable = (column.Flags & 0x08) == 0,
+            IsNullable = isNullable,
             IsAutoIncrement = (column.Flags & 0x04) != 0,
             IsHyperlink = column.Type == T_MEMO && (column.Flags & 0x80) != 0,
+            IsCompressedUnicode = column.IsCompressedUnicode,
         };
 
         // Preserve declared precision/scale through the schema-rewrite copy so

@@ -159,6 +159,68 @@ public sealed class ColumnConstraintTests
         Assert.Equal(250, dt.Rows[1]["Score"]);
     }
 
+    /// <summary>
+    /// Regression guard for the 2026-05-05 nullability fix: the writer must NOT
+    /// stamp the legacy private 0x08 NOT-NULL bit (or any unknown bit) into the
+    /// TDEF column-flags byte. DAO refuses to open tables whose column flags
+    /// carry unknown bits with "Unrecognized database format". Nullability is
+    /// now persisted via the Boolean <c>Required</c> property in
+    /// <c>MSysObjects.LvProp</c> instead. Allowed bits: 0x01 (FIXED), 0x02
+    /// (UNKNOWN_FF — always set on non-complex cols), 0x04 (AUTO_LONG),
+    /// 0x07 (complex cols), 0x80 (HYPERLINK).
+    /// </summary>
+    [Fact]
+    public async Task NotNull_DoesNotStampPrivate0x08BitInTdefColumnFlags()
+    {
+        await using var stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "FlagGuard",
+                [
+                    new("Id", typeof(int)) { IsNullable = false },
+                    new("Name", typeof(string), maxLength: 50) { IsNullable = false },
+                    new("Optional", typeof(int)) { IsNullable = true },
+                ],
+                TestContext.Current.CancellationToken);
+        }
+
+        byte[] disk = stream.ToArray();
+        const int pageSize = 4096;
+        const byte AllowedFlagsMask = 0x01 | 0x02 | 0x04 | 0x80; // FIXED | UNKNOWN_FF | AUTO_LONG | HYPERLINK
+        bool foundTable = false;
+
+        for (int p = 1; p < disk.Length / pageSize; p++)
+        {
+            int off = p * pageSize;
+            if (disk[off] != 0x02)
+            {
+                continue;
+            }
+
+            int numCols = disk[off + 45] | (disk[off + 46] << 8);
+            if (numCols != 3)
+            {
+                continue;
+            }
+
+            int numRealIdx = disk[off + 51] | (disk[off + 52] << 8) | (disk[off + 53] << 16) | (disk[off + 54] << 24);
+            int colStart = off + 63 + (numRealIdx * 12);
+
+            for (int c = 0; c < numCols; c++)
+            {
+                int co = colStart + (c * 25);
+                byte flags = disk[co + 15]; // descriptor-relative flags offset
+                Assert.Equal(0, flags & ~AllowedFlagsMask);
+                Assert.Equal(0, flags & 0x08); // explicit guard against the removed NOT-NULL bit
+            }
+
+            foundTable = true;
+        }
+
+        Assert.True(foundTable, "Did not find the FlagGuard TDEF page in the writer-produced file.");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────
 
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)

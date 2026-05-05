@@ -69,10 +69,10 @@ internal static class JetExpressionConverter
     /// <summary>
     /// Builds a property blob from the supplied <paramref name="columns"/> by emitting
     /// a per-column <see cref="ColumnPropertyBlockBuilder.TargetBuilder"/> for every
-    /// column that declares any of the four persisted properties
-    /// (<c>DefaultValueExpression</c> / <c>DefaultValue</c>, <c>ValidationRuleExpression</c>,
-    /// <c>ValidationText</c>, <c>Description</c>). Returns <see langword="null"/> when no
-    /// column declares a persisted property.
+    /// column that declares any persisted property — <c>Required</c> (NOT NULL),
+    /// <c>DefaultValueExpression</c> / <c>DefaultValue</c>, <c>ValidationRuleExpression</c>,
+    /// <c>ValidationText</c>, or <c>Description</c>. Returns <see langword="null"/>
+    /// when no column declares a persisted property.
     /// </summary>
     /// <param name="columns">Column definitions. May be <see langword="null"/>.</param>
     /// <param name="format">Target database format (selects Jet3 codepage vs Jet4 UTF-16LE).</param>
@@ -95,7 +95,7 @@ internal static class JetExpressionConverter
     /// <summary>
     /// Adds (or updates) a column-level target on <paramref name="builder"/> using the
     /// persisted-property fields of <paramref name="col"/>. No-op when the column declares
-    /// none of the four persisted properties.
+    /// no persisted properties (and is nullable, since <c>Required</c> is otherwise emitted).
     /// </summary>
     public static void ApplyColumn(ColumnPropertyBlockBuilder builder, ColumnDefinition col, DatabaseFormat format)
     {
@@ -105,7 +105,14 @@ internal static class JetExpressionConverter
         string? defaultExpr = col.DefaultValueExpression
             ?? ToJetExpression(col.DefaultValue);
 
-        bool any = defaultExpr is not null
+        // Required = true is persisted explicitly to match how DAO/Access surface
+        // NOT NULL constraints. The TDEF column-flag byte has no DAO-recognised
+        // bit for nullability (see docs/design/round-trip-test-failures.md), so
+        // LvProp is the only round-trip-safe place to record it.
+        bool emitRequired = !col.IsNullable;
+
+        bool any = emitRequired
+            || defaultExpr is not null
             || col.ValidationRuleExpression is not null
             || col.ValidationText is not null
             || col.Description is not null;
@@ -116,6 +123,11 @@ internal static class JetExpressionConverter
         }
 
         ColumnPropertyBlockBuilder.TargetBuilder target = builder.GetOrAddTarget(col.Name);
+        if (emitRequired)
+        {
+            target.AddBoolean(Constants.ColumnPropertyNames.Required, true);
+        }
+
         if (defaultExpr is not null)
         {
             target.AddText(Constants.ColumnPropertyNames.DefaultValue, defaultExpr, format);

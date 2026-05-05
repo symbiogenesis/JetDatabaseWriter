@@ -164,6 +164,31 @@ public sealed class PersistedColumnPropertiesTests
         Assert.Equal("=Now()", parsed.FindTarget("X")!.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
     }
 
+    /// <summary>
+    /// Regression guard for the 2026-05-05 nullability fix: a non-nullable column
+    /// must emit the Boolean <c>Required</c> property in <c>MSysObjects.LvProp</c>
+    /// (the writer-private 0x08 NOT-NULL bit in the TDEF column-flags byte was
+    /// removed because DAO rejects it as "Unrecognized database format"). The
+    /// reader recovers <see cref="ColumnDefinition.IsNullable"/> from this property.
+    /// </summary>
+    [Fact]
+    public void BuildLvPropBlob_NonNullableColumn_EmitsRequiredTrue()
+    {
+        var cols = new List<ColumnDefinition>
+        {
+            new("Name", typeof(string), maxLength: 50) { IsNullable = false },
+            new("Optional", typeof(int)),
+        };
+
+        byte[] blob = JetExpressionConverter.BuildLvPropBlob(cols, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
+
+        Assert.True(parsed.FindTarget("Name")!.GetBooleanValue(Constants.ColumnPropertyNames.Required));
+
+        // Nullable columns must not emit a target / Required property at all.
+        Assert.Null(parsed.FindTarget("Optional"));
+    }
+
     // ── End-to-end: CreateTableAsync persists; AccessReader reads back ─
 
     // Sample fixture sized to fit within the 256-byte inline OLE limit (write-side
