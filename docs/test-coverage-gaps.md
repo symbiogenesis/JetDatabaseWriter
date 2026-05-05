@@ -49,8 +49,15 @@ in [GeneralAndGeneral97EncoderUnitTests.cs](../../JetDatabaseWriter.Tests/Intern
   in [GeneralEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralEncoderFixtureTests.cs):
   the encoder matches the first 508 of 510 bytes but the final 2-byte
   suffix algorithm is unknown (exhaustive testing of ~3.4 M hash/CRC/input
-  combinations found no match — see resolution doc for details). Binary
-  single-column long keys in V2010 `binIdxTest` and Memo-keyed indexes via
+  combinations found no match — see resolution doc for details). The
+  partial result is now locked in by
+  [GeneralEncoderLongRowPrefixTests.cs](../../JetDatabaseWriter.Tests/Internal/GeneralEncoderLongRowPrefixTests.cs),
+  which asserts byte-exact match on bytes `[0..507]` for every 510-byte
+  long-row leaf in those two tables (and full byte-exact match for the
+  short / null entries that share the same indexes); regressions in the
+  encoder body or in the suffix algorithm (when discovered) will trip it.
+  Binary single-column long keys in V2010 `binIdxTest` and Memo-keyed
+  indexes via
   [IndexCodesAggregateDiagnosticTests.cs](../../JetDatabaseWriter.Tests/Internal/IndexCodesAggregateDiagnosticTests.cs)
   also still run un-asserted for the same reason. See
   [long-row-index-encoding.md](long-row-index-encoding.md).
