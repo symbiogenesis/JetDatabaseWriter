@@ -111,22 +111,6 @@ scenarios rather than reinventing the setup/teardown boilerplate.
 - [ ] **`[S]`** **DAO AutoNumber continuation** — test implemented in
   `DaoValidationTests.DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert`;
   same status as row-count (skipped, blocked on TDEF).
-- [ ] **`[M]`** **DAO Memo/OLE fidelity** — write Memo values containing
-  embedded NULs, non-Latin-1 (CJK), and OLE binary payloads; verify DAO
-  `Recordset.Fields("col").Value` returns the identical bytes. Catches
-  LVAL-chain encoding bugs that survive our own reader.
-- [ ] **`[M]`** **DAO relationship enforcement** — write a parent/child pair
-  with `EnforceReferentialIntegrity = true`, then use DAO to attempt an
-  insert that violates the FK. Assert DAO raises error 3201 (cannot add
-  record — referential integrity violated). Confirms the relationship
-  metadata is fully understood by Access.
-- [ ] **`[L]`** **DAO CompactDatabase on encrypted output** — write a
-  password-protected ACCDB (AES), run Compact & Repair with the password
-  supplied via DAO, and verify the compacted file reopens. Validates the
-  encryption header is well-formed enough for Access's own engine.
-- [ ] **`[L]`** **DAO multi-table stress** — create 10+ tables with indexes,
-  relationships, and 1000+ rows each; Compact & Repair the result. Stress
-  test for page allocation and usage-map consistency at scale.
 
 ---
 
