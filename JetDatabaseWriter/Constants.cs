@@ -613,6 +613,14 @@ internal static class Constants
         public const int RowCountOffset = 16;
 
         /// <summary>
+        /// Byte offset within a TDEF page header where Access stores the
+        /// AutoNumber high-water value as a little-endian <c>uint32</c>. DAO
+        /// uses this value to choose the next AutoNumber when it inserts into
+        /// a writer-created table.
+        /// </summary>
+        public const int AutoNumberOffset = 20;
+
+        /// <summary>
         /// Size in bytes of one <c>col_map</c> slot within a real-idx physical
         /// descriptor: <c>{col_num(2), col_order(1)}</c>. Format-invariant
         /// across Jet3 and Jet4/ACE.
