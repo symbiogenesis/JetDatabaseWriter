@@ -84,6 +84,18 @@ real-idx descriptor. If the writer is currently at 46 but ground truth is 42,
 the writer's `flags=0x80` lands in the "9 bytes unknown" trailer, and offset
 42 reads as `0x00` → DAO sees no UNKNOWN flag → rejects.
 
+> **Disconfirmed (2026-05-10).** Tested via
+> [WriterRealIdxFlagsOffsetTests.cs](../../JetDatabaseWriter.Tests/Indexes/WriterRealIdxFlagsOffsetTests.cs).
+> Strategy: per Jackcess `IndexData.UNKNOWN_INDEX_FLAG = 0x80` is set
+> unconditionally on every real-idx slot, providing a byte-pattern
+> fingerprint. Surveyed every real-idx slot across every user table in
+> DAO-authored `NorthwindTraders.accdb`; offset 46 had the `0x80` bit set
+> on **all** slots, offset 42 did **not**. Writer-authored Customers
+> table (PK + name) shows the same pattern. The writer's choice (and
+> Jackcess's choice) is correct; mdbtools `HACKING.md`'s "flags at
+> offset 42" is stale or miscounted. Investigate H22's residual / H24
+> next.
+
 **H24 — `misc_ext` (text sort-order version) byte = 0.** mdbtools: "text sort
 order version num is 2nd byte". ACE 2010+ uses version 1 (General) sort.
 Writer may emit 0; DAO post-2010 may reject unknown sort version with a
