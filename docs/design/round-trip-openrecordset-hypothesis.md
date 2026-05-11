@@ -310,6 +310,131 @@ slots, logical-idx descriptor, column descriptor MiscOff). Each
 hypothesis becomes a one-line PASS/FAIL row, letting the next probe
 run rule out 5-10 hypotheses per execution.
 
+> **Implemented (2026-05-10).** §7 of `dao-baseline-diff.md`. Verdicts
+> below.
+
+### §7 accumulating-diff results (probe run 2026-05-10)
+
+Per single execution of `DIAG_RT_DAO_BASELINE=1`:
+
+| ID | Hypothesis | Verdict | Notes |
+|---|---|:---:|---|
+| H22 | col-desc byte 9 redundant col_num == byte 5 col_num | ✅ PASS | (re-confirmation of H22 fix) |
+| H25 | TDEF[0x18] autonum_flag == 0x01 | ✅ PASS | (re-confirmation of H25 fix) |
+| H26 | per-table usage-map row 0 type byte (writer == DAO) | ✅ PASS | both writer **and** DAO stamp INLINE (`0x00`); the Jackcess-derived "DAO uses REFERENCE" claim is empirically false for an empty/small table |
+| H27 | non-FK logical-idx `RelIdxNum` [13..16] == `0xFFFFFFFF` | ✅ PASS | writer already populates the sentinel correctly |
+| H28 | logical-idx bytes [24..27] putInt(0) preserved | ✅ PASS | trailer int is intact |
+| H31 | NUMERIC col-desc bytes [13..14] == 0 | ⚠️ N/A | RT_Customers has no NUMERIC column; cannot probe with current fixture |
+| H32 | non-text/numeric/complex col-desc bytes [11..14] == 0 | ✅ PASS | LONG `CustomerID` zero across [11..14] |
+| H33 | col-desc bytes [17..20] (always-0 putInt) == 0 | ✅ PASS | both columns zero across [17..20] |
+| H34 | ExtraFlags byte [16] == 0 for non-TEXT/MEMO | ✅ PASS | LONG column has byte[16] == 0 |
+| H37 | PK real-idx flags @46 has UNIQUE\|REQUIRED\|UNKNOWN | ✅ PASS | both writer and DAO emit `0x89` (`0x80 \| 0x08 \| 0x01`) |
+| H38 | real-idx [42..45] (unknown putInt) == 0 | ✅ PASS | gap is zero in both |
+| H41 | TDEF[0x1C..0x1F] `next_complex_auto_number` == 0 | ✅ PASS | both 0 |
+| H42 | logical-idx name length-prefix is byte count (even) | ✅ PASS | writer correctly writes `Encoding.Unicode.GetBytes(name).Length` |
+| H44 | TDEF `owned_pages` / `free_space_pages` non-zero | ✅ PASS | writer populates both 4-byte slots with valid usage-map row pointers |
+| H45 | usage-map row `tdef_back_pointer` (REFERENCE rows only) | ⚠️ N/A | rows are INLINE so no back-pointer slot exists (depends on H26) |
+
+**Summary: 13 ✅ PASS · 0 ❌ FAIL · 2 ⚠️ N/A.** The writer's TDEF page,
+real-idx physical descriptor, logical-idx entry, column descriptors, and
+per-table usage-map *row* match DAO byte-for-byte in every region the §7
+harness can directly compare. **The DAO `OpenRecordset '' ` failure is
+*not* in any of H22-H45.**
+
+### Where to look next (post-§7)
+
+With the entire TDEF surface ruled out, the residual failure must live
+in one of these unexamined regions:
+
+1. **PK index root leaf page (H39 + H40, Tier-C)** — the writer-emitted
+   empty leaf page that `first_dp` points at. DAO `OpenRecordset` opens
+   this page first via `IndexData.create`; if the leaf header (bytes
+   0..28) or the entry-mask trailing byte differs from a DAO-authored
+   empty leaf, the cursor builder rejects with a length-prefixed
+   page-type read returning the empty string → `''`. **Now the
+   highest-payoff next step.**
+2. **The empty user-table data page itself.** §3 of
+   `dao-baseline-diff.md` lists every page the writer added beyond the
+   baseline; one is the new data page and one is the new leaf page.
+   Hex-diff each against the DAO copy's equivalent page.
+3. **Global usage-map (page 1).** Writer may not stamp newly-allocated
+   data/leaf pages as "in-use" in the GPM bitmap for pages > 0x7FFF.
+4. **MSysObjects row `LvProp` payload.** §5 of `dao-baseline-diff.md`
+   already dumps the row body for both copies; compare the varIdx 8/10
+   payloads byte-for-byte.
+
+> **2026-05-10 update — Steps 1 + 4 executed, smoking gun in step 4.**
+>
+> **Step 1 (H39 + H40) — DISCONFIRMED.** Hex-diff of writer's PK leaf
+> (page 3009) vs DAO's PK leaf (page 3003) shows only **2 bytes
+> differ**, both at offset 4-5 (parent TDEF page pointer:
+> `0x0BC0=3008` writer vs `0x0A6F=2671` DAO — legitimately different
+> because the two files used different TDEF pages). Bytes 0..3 (page
+> type, free space, header magic) and bytes 6..4095 (all zeros) are
+> byte-identical. The empty PK leaf is byte-perfect.
+>
+> **Step 4 (H6 / LvProp) — CONFIRMED smoking gun.** §5 of
+> `dao-baseline-diff.md` (after the 2026-05-10 fix to scan
+> writer-added pages, not just shared-range diffs) reveals:
+>
+> | | Writer row | DAO row |
+> |---|---:|---:|
+> | Total length | **197 bytes** | **99 bytes** |
+> | Fixed prefix (numCols + Id + ParentId + Type + flags + DateCreate + DateUpdate + Owner placeholder + UCS-2 "RT_Customers") | bytes 0..0x37 | bytes 0..0x37 |
+> | Trailer (`0B 00 FF 40 00`) | last 5 bytes | last 5 bytes |
+> | Variable-length payload | **~140 bytes** | **~42 bytes** |
+>
+> The writer's variable-length payload contains the magic
+> `4D 52 32 00` ("**MR2\0**" = Jackcess `PropertyMaps` v2 property-bag
+> magic) followed by the literal UCS-2 strings **"Required",
+> "CustomerID", "Name"** — i.e., a full per-column property map
+> encoding `Required=true` for both `CustomerID` and `Name` (both
+> declared `IsNullable = false` in the probe authoring call).
+>
+> DAO's payload has none of this. The 42-byte DAO payload begins
+> `00 40 05 1B 0B 00 00 00 00 00 46 00 46 00 46 00 3A 00 ...`
+> ("FFF::::::::8 …") — a much smaller blob with no MR2 magic, no
+> column names, no `Required` entry.
+>
+> **Source:**
+> [JetExpressionConverter.BuildLvPropBlob](../../JetDatabaseWriter/Schema/JetExpressionConverter.cs)
+> emits a `Required=true` property map entry for every NOT-NULL
+> column. The accompanying code comment claims "The TDEF column-flag
+> byte has no DAO-recognised bit for nullability, so LvProp is the
+> only round-trip-safe place to record it." **The DAO baseline
+> empirically contradicts this** — DAO has NOT-NULL columns without
+> any `Required` LvProp entry, so DAO must encode nullability
+> elsewhere (likely a TDEF column-flag bit not yet reverse-engineered,
+> or implicitly via the index `REQUIRED` bit on the PK).
+>
+> ### Recommended H46 experiment
+>
+> **H46 — Writer-emitted `Required=true` LvProp entries cause DAO
+> `OpenRecordset` to reject the table.**
+>
+> Test plan:
+>
+> 1. Temporarily change the probe authoring step in
+>    [`DaoBaselineProbe.RunDaoCreateRtCustomers`](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs)
+>    /
+>    [`AccessWriter.CreateTableInternalAsync`](../../JetDatabaseWriter/AccessWriter.cs#L626)
+>    so that `BuildLvPropBlob` returns `null` (i.e., bypass the
+>    Required emission for this experiment).
+> 2. Re-run the probe and additionally invoke DAO
+>    `Database.OpenRecordset("RT_Customers")` against the writer
+>    output. If the recordset opens, **H46 is confirmed and the path
+>    forward is to find the DAO-recognised TDEF column-flag bit for
+>    NOT NULL** (likely `0x01` per Jackcess's `MUST_HAVE_NULL_FLAG`
+>    inverse, or carried implicitly by the PK's `REQUIRED` index flag
+>    for PK columns).
+> 3. If the recordset still fails, the LvProp blob is *not* the sole
+>    blocker; bisect the remaining ~42-byte DAO payload against the
+>    writer's smaller residual to identify the next divergence.
+>
+> Add an `OpenRecordset` smoke step to `DaoBaselineProbe`'s DAO
+> interop section so future hypothesis runs can include the
+> definitive PASS/FAIL signal.
+
 ## Disconfirmed (per `round-trip-test-failures.md` — do NOT re-test)
 
 - LvProp 12-byte payload as dangling chained-LVAL (H20, tested 2026-05-10,
