@@ -18,9 +18,9 @@
 | **Mechanism** | DAO-authored TDEFs reserve 8 trailing zero bytes after the `0xFFFF` "no usage-map" sentinel and count them inside `tdef_len`. The writer wrote the same zero bytes (the page is zero-initialised) but stopped `tdef_len` 8 bytes early, so DAO's cursor parser tripped at the apparent end of the index-name section. |
 | **Fix** | [`TDefPageBuilder.BuildTDefPagesWithIndexOffsets`](../../JetDatabaseWriter/Schema/TDefPageBuilder.cs): for `jet4 && numIdx > 0`, advance `namePos += 8` immediately after writing the FFFF sentinel. Only widens `tdef_len` (offset 8) and the companion `freeSpace` (offset 2). |
 | **Adjacent fix** | [`RelationshipManager.AddFkLogicalIdxEntry`](../../JetDatabaseWriter/Relationships/RelationshipManager.cs) was stamping the format-wide magic `0x00000659` on the appended real-idx physical descriptor. Use `Constants.TableDefinition.Jet4.RealIdx.LeadingMagic` (`0x00000783`), matching `BuildTDefPagesWithIndexOffsets`. Latent — surfaced by H48 unblocking the FK round-trip tests, which then tripped on `AssertTdefMagicStampsAsync`. |
-| **Verification** | `DIAG_RT_DAO_BASELINE` probe (extended with an `OpenRecordset` smoke step in §0): both writer and DAO copies report `OpenRecordset('RT_Customers')` exit=0. Full test suite: 3223 passed / 0 failed / 8 skipped. |
-| **Tests now passing** | `DaoOpenRecordset_RowCount_MatchesWriterOutput`, `DaoIndexTraversal_Seek_LocatesRowByPrimaryKey`. |
-| **Tests still skipped** | 6 adjacent issues newly exposed by the H48 fix — see §5. |
+| **Verification** | `DIAG_RT_DAO_BASELINE` probe (extended with an `OpenRecordset` smoke step in §0): both writer and DAO copies report `OpenRecordset('RT_Customers')` exit=0. 2026-05-11 follow-up: the previously opt-in `DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly` and `DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert` tests now pass under the normal Microsoft Access runtime guard. |
+| **Tests now passing** | `DaoOpenRecordset_RowCount_MatchesWriterOutput`, `DaoIndexTraversal_Seek_LocatesRowByPrimaryKey`, `DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly`, `DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert`. |
+| **Tests still opt-in skipped** | 4 adjacent issues remain — see §5. |
 
 ---
 
@@ -98,6 +98,8 @@ Output lands under `%TEMP%\JetDatabaseWriter.RtDaoBaseline\`.
 | **H25** | `DataPageInserter.PatchAutoNumFlag` wrote TDEF[`0x18`] = `0x00` for tables with no autonumber column. | Stamp `0x01` unconditionally. | [`WriterTDefAutoNumFlagTests`](../../JetDatabaseWriter.Tests/Schema/WriterTDefAutoNumFlagTests.cs) |
 | **H48** ⭐ | `BuildTDefPagesWithIndexOffsets` set `tdef_len = (namePos − 8)` immediately after writing the trailing `0xFFFF` sentinel; DAO reserves 8 zero bytes after it inside `tdef_len`. **The sole `OpenRecordset` blocker.** | Advance `namePos += 8` after the FFFF sentinel for `jet4 && numIdx > 0`. | `DIAG_RT_DAO_BASELINE` probe `OpenRecordset` step exit=0 for both copies; `DaoOpenRecordset_RowCount_MatchesWriterOutput` and `DaoIndexTraversal_Seek_LocatesRowByPrimaryKey` pass. |
 | **H48-adj** | `RelationshipManager.AddFkLogicalIdxEntry` stamped `0x00000659` on the appended real-idx physical descriptor instead of `0x00000783`. Latent until H48 unblocked the FK round-trip tests. | Use `Constants.TableDefinition.Jet4.RealIdx.LeadingMagic`. | `AssertTdefMagicStampsAsync` passes for FK-bearing tables. |
+| **H49** | Newly appended user-table data pages were not marked in the per-table owned/free usage maps, and the first attempted fix used the wrong inline-row bitmap offset. DAO sequential/snapshot recordsets walk these maps, so writer rows existed on disk but could be invisible to `MoveFirst()`. | [`DataPageInserter.MarkPageInOwnedMapAsync`](../../JetDatabaseWriter/Pages/DataPageInserter.cs) now marks both owned and free rows for user tables. INLINE rows are `type byte + int32 start_page + 64 bitmap bytes`, so the bitmap begins at row offset +5. | `DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly` passes under the normal Microsoft Access runtime guard. |
+| **AutoNumber-adj** | DAO continued AutoNumber values from TDEF offset `0x14`, not from the PK leaf or row scan. Writer-created tables left that high-water value stale, so DAO reused an existing ID and hit a duplicate-index error. | [`AccessWriter.UpdateTDefAutoNumberHighWaterAsync`](../../JetDatabaseWriter/AccessWriter.cs) persists the maximum inserted AutoNumber value to [`Constants.TableDefinition.AutoNumberOffset`](../../JetDatabaseWriter/Constants.cs) after successful inserts. | `DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert` passes under the normal Microsoft Access runtime guard. |
 
 ### 4.2 Disconfirmed — writer matches DAO byte-for-byte
 
@@ -148,193 +150,96 @@ Output lands under `%TEMP%\JetDatabaseWriter.RtDaoBaseline\`.
 
 ---
 
-## 5. Next steps — adjacent issues exposed by the H48 fix
+## 5. Adjacent issues exposed by the H48 fix
 
 H48 unblocking `OpenRecordset` exposed pre-existing latent bugs in code
 paths that DAO never previously reached. These are **not** regressions
-caused by H48; the relevant tests have been re-skipped with precise
-new reasons referencing this section. Each row below is a candidate
-investigation, independent of the others.
+caused by H48. As of 2026-05-11, two of the six initially re-skipped
+adjacent tests are resolved and now run under the normal Microsoft
+Access runtime guard; four remain opt-in compatibility-gap tests.
 
-| Test (skipped) | Symptom | First place to look |
+**Resolved adjacent issues**
+
+| Test | Original symptom | Resolution |
 |---|---|---|
-| `DaoRelationshipEnforcement_FkViolation_RaisesError` | DAO INSERT into Child table with non-existent ParentId succeeds; no FK violation raised. | Writer's `MSysRelationships` row layout / FK-flag bits. DAO accepts the row at catalog-load time but does not enforce it at runtime. |
-| `DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly` | DAO `$rs.MoveFirst()` raises `"No current record"`. | MEMO long-value page or row→data-page linkage; rows invisible to DAO even though `OpenRecordset` succeeds. |
-| `DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert` | DAO INSERT after the writer's last autonumber row raises `"duplicate values in the index"`. | Autonumber-continuation seed in TDEF and/or PK index-leaf entries — DAO is not seeing the writer's existing rows when computing the next AutoNumber. |
-| `DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds` | DAO `CompactDatabase` on an Agile-encrypted writer ACCDB raises `"Unrecognized database format"`. | Encryption-header / per-page encryption — distinct from the TDEF tdef_len defect. |
-| `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair` | DAO Compact succeeds but post-compact RowCount=0 on FK-bearing tables (writer-inserted rows dropped). | FK / data-page-pointer interaction surfacing now that the TDEF is DAO-readable. |
-| `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair` | Same as above with composite-PK fixture. | Same as above. |
+| `DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly` | DAO `$rs.MoveFirst()` raised `"No current record"` even though the row existed on disk and the PK index reported it. | **H49**: mark newly appended user-table data pages in the per-table owned/free usage maps, using DAO's actual INLINE row layout (`type + int32 start_page + 64-byte bitmap`). |
+| `DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert` | DAO INSERT after the writer's last autonumber row raised `"duplicate values in the index"`. | Persist the AutoNumber high-water value at TDEF offset `0x14` after successful writer inserts. |
+
+**Open opt-in gaps**
+
+| Test (opt-in skipped) | Symptom | First place to look |
+|---|---|---|
+| `DaoRelationshipEnforcement_FkViolation_RaisesError` | DAO INSERT into Child table with non-existent ParentId succeeds; no FK violation raised. | Writer's `MSysRelationships` row layout / FK-flag bits and per-TDEF FK logical-entry fields. DAO accepts the row at catalog-load time but does not enforce it at runtime. |
+| `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair` | DAO Compact succeeds but post-compact RowCount=0 on FK-bearing tables (writer-inserted rows dropped). | FK metadata plus data-page / usage-map interaction during Compact & Repair. |
+| `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair` | Same as above with composite-PK fixture. | Same as above, with composite key ordering and relationship-column ordinals in scope. |
+| `DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds` | DAO `CompactDatabase` on an Agile-encrypted writer ACCDB raises `"Unrecognized database format"`. | Encryption-header / per-page encryption — distinct from the plaintext TDEF and usage-map defects. |
 
 **Recommended order of attack** (smallest-blast-radius first):
 
-1. `DaoMemoFidelity` — narrow MEMO-only fixture, no FK / encryption / autonum interaction. If solved, may also unblock the FK-Compact row-loss tests.
-2. `DaoAutoNumber_Continuation` — single-table, single-column; no relationship metadata involved.
-3. `DaoRelationshipEnforcement` — pure metadata investigation (no row data); fixture is minimal.
-4. `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair` then composite — likely shares a root cause with #1 once MEMO/data-page linkage is understood.
-5. `DaoCompactDatabase_OnEncryptedOutput` — entirely orthogonal; defer until the plaintext path is fully clean.
+1. `DaoRelationshipEnforcement` — pure metadata investigation; create a DAO-authored FK baseline and compare `MSysRelationships` rows plus both endpoint TDEF FK logical entries.
+2. `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`, then composite — same compact path with increasing key complexity.
+3. `DaoCompactDatabase_OnEncryptedOutput` — orthogonal encrypted-container path; defer until plaintext FK compact behavior is understood.
 
 ---
 
-## 5a. 2026-05-11 session — `DaoMemoFidelity` investigation, partial fix
+## 5a. 2026-05-11 session — H49 and AutoNumber follow-up
 
-### What was tried (and works)
+### H49 final shape — usage-map row layout
 
-**H49 (in-progress fix):** When `DataPageInserter.FindInsertTargetAsync`
-appends a brand-new data page for a user table, the page number is **not
-recorded in any usage map**. DAO's sequential / snapshot recordsets walk
-the per-table owned-pages usage map referenced by TDEF byte `0x37`–`0x3A`
-(1-byte row index + 3-byte page); they do **not** scan the file looking
-for `0x01 / parent_tdef == this` data pages. The result: writer-inserted
-rows are byte-perfect on disk and visible to our own reader (and to
-`SELECT COUNT(*)`, which uses the PK index leaf, hence the original
-`DaoOpenRecordset_RowCount_MatchesWriterOutput` test passes), but DAO's
-`Recordset.MoveFirst()` raises `"No current record"`.
+`DataPageInserter.FindInsertTargetAsync` appends brand-new data pages
+for writer-created user tables. Before H49, those page numbers were
+never recorded in the per-table owned-pages usage map referenced by TDEF
+bytes `0x37..0x3A`; DAO sequential / snapshot recordsets walk that map
+instead of scanning the file for `0x01 / parent_tdef == this` data
+pages. The row bytes were on disk and visible to this library's reader,
+but DAO saw an empty recordset.
 
-Empirical evidence (writer's `MemoFidelity` ACCDB, captured via the
-`DIAG_MEMO_READBACK` FormatProbe extension added this session):
+The first H49 attempt identified the right map but used an incomplete
+INLINE-row layout. DAO-authored baselines show the row body is 69 bytes:
 
-| Artifact | Value |
+| Byte range | Meaning |
 |---|---|
-| TDEF page | 3008 |
-| TDEF[0x37..0x3A] (owned-pages ref) | row=0, page=3011 |
-| TDEF[0x3B..0x3E] (free-space ref) | row=1, page=3011 |
-| Usage-map page 3011 row 0 (INLINE, type 0x00) | start_page=0, bitmap all zeros — **bug** |
-| Actual data page | 3017 (numRows=1, parent_tdef=3008, row body intact) |
+| `+0` | row type (`0x00` = INLINE) |
+| `+1..+4` | little-endian `int32 start_page` |
+| `+5..+68` | 64-byte bitmap covering 512 pages from `start_page` |
 
-**Implemented fix** in [`DataPageInserter.MarkPageInOwnedMapAsync`](../../JetDatabaseWriter/Pages/DataPageInserter.cs):
-on each newly-appended data page, set the matching bit in both the
-owned-pages and free-space usage-map rows. INLINE form (type byte
-`0x00`): writes `start_page = (pageNumber / 8) * 8` lazily on the first
-mark, then ORs `1 << (pageNumber - start_page) % 8` into byte
-`row_offset + 4 + bitIdx/8`. REFERENCE form (type `0x01`) is not yet
-handled — neither is overflow past the 65-byte (520-page) INLINE window;
-both return early without mutation, so post-1024-page tables fall back
-to the pre-H49 behaviour.
+The corrected implementation writes the start page at `rowOff + 1` and
+sets bits from `rowOff + 5`. Low-page maps keep `start_page = 0`; high
+page maps lazily stamp `(pageNumber / 8) * 8` so the new page lands in
+the 512-bit window. Both the owned-pages row (TDEF `0x37`) and the
+free-space-pages row (TDEF `0x3B`) are marked when a user-table data page
+is appended. Pre-existing system-table TDEFs remain excluded (`tdefPage
+<= 1024`) because mutating their usage maps caused DAO `OpenDatabase` to
+raise `"Invalid argument"` during the investigation.
 
-### What still does not work
+Result: `DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly` now passes
+and is no longer behind `JETDATABASEWRITER_RUN_KNOWN_ACCESS_COMPAT_GAPS`.
 
-After H49, the writer's `MemoFidelity` ACCDB shows the usage-map row
-correctly populated (`00 C8 0B 00 02 …` — start_page 3008, bit 1 set
-for page 3017 in both row 0 and row 1), and the data page itself is
-byte-identical to the pre-H49 state. **DAO still rejects `MoveFirst`
-with `"No current record"`.**
+### AutoNumber high-water
 
-Sequence of failures observed during this session:
+DAO-authored AutoNumber fixtures showed that TDEF bytes `0x14..0x17`
+store the AutoNumber **high-water value** (the last issued value), not
+the next value. A 10-row DAO fixture stamped `0A 00 00 00` there. The
+writer already generated unique values for its own inserts, but it did
+not persist that high-water value, so a subsequent DAO insert reused an
+existing ID and failed the PK unique index.
 
-1. Mark in **all** TDEFs (including system tables): DAO refuses to even
-   `OpenDatabase` (`"Invalid argument."`). Mutation of pre-existing
-   system-table usage maps (`MSysObjects` page 6, `MSysAccessStorage`
-   page 9, etc.) is rejected — the byte diff was 4 modified bytes
-   across pages 6 / 9 / 3011 / 3012 (the page-3012 diff was inside the
-   `MSysObjects` system-data area touched as a side-effect).
-2. Gated the mark to `tdefPage > 1024` (skip prebuilt system tables):
-   `OpenDatabase` and `DaoOpenRecordset_RowCount_MatchesWriterOutput`
-   pass again; `DaoMemoFidelity` still fails identically.
-3. Added the free-space-row mark (TDEF[0x3B..0x3E] points to a second
-   row in the same usage-map page when the row index differs): no change
-   in DAO's behaviour.
+The fix adds `Constants.TableDefinition.AutoNumberOffset = 20` and calls
+`AccessWriter.UpdateTDefAutoNumberHighWaterAsync` after successful
+single-row, object-array bulk, and generic bulk inserts. The helper scans
+inserted rows for AutoNumber columns and writes the maximum inserted
+value if it is greater than the current TDEF high-water value.
 
-### Likely remaining causes
+Result: `DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert` now
+passes and is no longer behind `JETDATABASEWRITER_RUN_KNOWN_ACCESS_COMPAT_GAPS`.
 
-The bit pattern stamped into the INLINE bitmap matches the structural
-shape used by DAO-authored maps in NorthwindTraders (verified against
-that fixture earlier in the H22..H48 ledger), so the bit-arithmetic is
-not the suspect. Candidates, in descending probability:
+### Probe artifacts
 
-1. **TDEF row-count vs index-leaf entry-count mismatch.** `TDEF[0x10..0x13]`
-   (`RowCountOffset`) is updated by `AdjustTDefRowCountAsync` — currently
-   incremented per insert. DAO may be cross-checking it against the
-   PK leaf's entry count (`unique_entry_count` slot in the real-idx
-   physical descriptor at TDEF +42, see H36). For a fresh user-table
-   insert the real-idx slot's `unique_entry_count` is set to **0** at
-   CREATE time and never advanced (H36 in §4.4 noted this as "OK at
-   create time" — it is not OK after the first insert).
-2. **`first_dp` / first-data-page pointer in the real-idx physical
-   descriptor at TDEF byte `phys + 38`** (H21 in §4.2) is currently
-   stamped to a leaf page (PK leaf), not to the first data page.
-   DAO's `Recordset` may interpret this pointer as the head of the
-   data-page chain when Type=1 (table). Worth bisecting by setting
-   `first_dp` to the data page number (3017 in the fixture) and
-   re-running.
-3. **Per-table usage-map row 0 type byte.** H26 was disconfirmed for
-   the empty `RT_Customers` baseline (DAO emits INLINE / type `0x00`
-   for empty tables), but for a non-empty single-page table DAO
-   may transition to REFERENCE form (type `0x01`). The writer never
-   transitions; the row stays INLINE. If DAO requires REFERENCE for
-   any populated user table, the in-place mark we are doing is
-   structurally wrong.
-4. **Data-page header field beyond byte 12.** Writer stamps
-   `[0x00] = 0x01`, `[0x01] = 0x01`, `[0x02..0x03] = freeSpace`,
-   `[0x04..0x07] = parent_tdef`, `[0x08..0x0B] = 0`, `[0x0C..0x0D] =
-   numRows`, then row offsets at `[0x0E..]`. DAO data pages have a
-   `next_page` / `prev_page` linkage somewhere in `[0x08..0x0B]` for
-   tables with multiple data pages — for single-page tables we do not
-   know whether `0` is correct or whether it should be a sentinel.
-
-### Recommended next steps (revised order)
-
-The probe extension (`Program.cs` / `DIAG_MEMO_READBACK` env-var,
-plus the `MemoDiag` ACCDB-preservation hook in
-`DaoValidationTests.DaoMemoFidelity_*`) is in place; reuse it before
-forming further hypotheses.
-
-1. **Capture a DAO-authored single-table-with-MEMO baseline** under
-   the same fixture shape (use the existing
-   `DaoAuthoredMemo_WithEmbeddedNuls_ReaderReturnsExactContent`
-   harness; it already creates a fresh ACCDB via
-   `$db.CreateDatabase`). Diff the TDEF, the per-table usage-map
-   page, and the data page against the writer's output. **This is the
-   prerequisite for the next hypothesis batch.** Without it we are
-   guessing.
-2. **Stamp the data page number into the real-idx `first_dp` slot
-   (TDEF +38 of physical descriptor)** for non-FK indexes after the
-   first row insert. Currently it points at the PK leaf; suspicion
-   is that DAO uses it as the data-page-chain head.
-3. **Advance the real-idx `unique_entry_count` slot** in lockstep
-   with row inserts (companion to H36). Same TDEF write as #2 above.
-4. **Investigate REFERENCE-form usage maps.** If the DAO baseline
-   from #1 shows type `0x01` for a populated single-page table,
-   implement the REFERENCE → page-bitmap-page indirection in
-   `MarkPageInOwnedMapAsync`.
-
-### Files touched / artifacts
-
-- [`JetDatabaseWriter/Pages/DataPageInserter.cs`](../../JetDatabaseWriter/Pages/DataPageInserter.cs):
-  added `MarkPageInOwnedMapAsync` + `TrySetUsageMapBit`; called from
-  `FindInsertTargetAsync` only when `tdefPage > 1024`. **This change
-  is safe to keep**: it does not regress any existing test (full DAO
-  test suite re-run before write-up) and is a structural prerequisite
-  for any DAO-driven recordset enumeration to ever work, even if it
-  is not by itself sufficient.
-- [`JetDatabaseWriter.FormatProbe/Program.cs`](../../JetDatabaseWriter.FormatProbe/Program.cs):
-  added `DIAG_MEMO_READBACK` (+ `DIAG_MEMO_TABLE`) probe that opens
-  `%TEMP%\JetDatabaseWriter.MemoDiag\writer_memo.accdb`, dumps TDEF
-  bytes 0..96, the usage-map page rows, and the first data page row
-  body — for any user table by name.
-- [`JetDatabaseWriter.Tests/RoundTrip/DaoValidationTests.cs`](../../JetDatabaseWriter.Tests/RoundTrip/DaoValidationTests.cs):
-  added best-effort copy-on-failure hooks to
-  `%TEMP%\JetDatabaseWriter.MemoDiag\writer_{memo,count}.accdb` so
-  the next session can resume from the on-disk artifact without
-  re-running the full DAO harness. The test itself remains skipped
-  with the same `Skip = "H48 unblocked DAO OpenRecordset, but DAO
-  sees writer-inserted MEMO rows as an empty recordset…"` reason —
-  H49's partial fix did not flip it to passing.
-
-### Hypothesis ledger updates
-
-Add to §4.1 (Confirmed and fixed) once the full root cause lands;
-provisional H49 entry below for the partial mitigation:
-
-| ID | Bug | Fix | Test / verification |
-|---|---|---|---|
-| **H49 (partial)** | New data pages appended to user tables were never recorded in the per-table owned-pages usage map (TDEF +0x37). DAO sequential recordsets walk the map and see 0 pages, even though the data page exists with correct `parent_tdef`. | `DataPageInserter.MarkPageInOwnedMapAsync` sets the INLINE bitmap bit in both owned-pages (TDEF +0x37) and free-space (TDEF +0x3B) rows for `tdefPage > 1024`. | Verified the bit lands correctly via `DIAG_MEMO_READBACK` probe. **Does not by itself unskip `DaoMemoFidelity`** — see §5a "Likely remaining causes" for the next layer. |
-
-
-
-For each, capture a fresh `dao-baseline-diff.md` against an
-appropriately-shaped DAO-authored fixture before forming hypotheses.
-The probe's existing structure (§3 changed-pages, §4 hex diff,
-§7 hypothesis battery) generalises trivially to other table shapes.
+The `DIAG_MEMO_READBACK` branch in
+[`JetDatabaseWriter.FormatProbe/Program.cs`](../../JetDatabaseWriter.FormatProbe/Program.cs)
+remains useful for ad-hoc inspection of `%TEMP%\JetDatabaseWriter.MemoDiag\writer_memo.accdb`.
+For the remaining open gaps in §5, capture a fresh DAO-authored baseline
+with the same table shape before forming byte-layout hypotheses.
 
 ---
 

@@ -958,6 +958,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 {
                     await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
                 }
+
+                await UpdateTDefAutoNumberHighWaterAsync(entry.TDefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
             }
         }
         catch
@@ -1071,6 +1073,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 {
                     await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
                 }
+
+                await UpdateTDefAutoNumberHighWaterAsync(entry.TDefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
             }
         }
         catch
@@ -1876,6 +1880,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             {
                 await MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
             }
+
+            await UpdateTDefAutoNumberHighWaterAsync(tdefPage, tableDef, new List<object[]>(1) { values }, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -1886,6 +1892,73 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             await RollbackInsertedRowsAsync(tdefPage, [loc], cancellationToken).ConfigureAwait(false);
             ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
             throw;
+        }
+    }
+
+    private async ValueTask UpdateTDefAutoNumberHighWaterAsync(long tdefPage, TableDef tableDef, List<object[]> rows, CancellationToken cancellationToken)
+    {
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        long highWater = 0;
+        for (int colIndex = 0; colIndex < tableDef.Columns.Count; colIndex++)
+        {
+            ColumnInfo column = tableDef.Columns[colIndex];
+            if ((column.Flags & 0x04) == 0)
+            {
+                continue;
+            }
+
+            foreach (object[] row in rows)
+            {
+                if (colIndex >= row.Length || row[colIndex] is null || row[colIndex] is DBNull)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    long value = Convert.ToInt64(row[colIndex], CultureInfo.InvariantCulture);
+                    if (value > highWater)
+                    {
+                        highWater = value;
+                    }
+                }
+                catch (FormatException)
+                {
+                }
+                catch (InvalidCastException)
+                {
+                }
+                catch (OverflowException)
+                {
+                }
+            }
+        }
+
+        if (highWater <= 0)
+        {
+            return;
+        }
+
+        byte[] page = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            uint current = Ru32(page, Constants.TableDefinition.AutoNumberOffset);
+            uint next = highWater >= uint.MaxValue ? uint.MaxValue : (uint)highWater;
+            if (next <= current)
+            {
+                return;
+            }
+
+            Wi32(page, Constants.TableDefinition.AutoNumberOffset, unchecked((int)next));
+            await WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReturnPage(page);
         }
     }
 

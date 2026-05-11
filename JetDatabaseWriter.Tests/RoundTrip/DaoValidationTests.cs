@@ -163,8 +163,8 @@ public sealed class DaoValidationTests
     /// inserted ID. Catches seed/counter byte-layout bugs.
     /// </summary>
     [Fact(
-        Skip = AccessRoundTripEnvironment.RequiresKnownAccessCompatibilityGapOptInSkipReason,
-        SkipUnless = nameof(AccessRoundTripEnvironment.RunKnownAccessCompatibilityGapTests),
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert()
     {
@@ -285,8 +285,8 @@ public sealed class DaoValidationTests
     /// Closes §3 gap: "DAO Memo/OLE fidelity".
     /// </summary>
     [Fact(
-        Skip = AccessRoundTripEnvironment.RequiresKnownAccessCompatibilityGapOptInSkipReason,
-        SkipUnless = nameof(AccessRoundTripEnvironment.RunKnownAccessCompatibilityGapTests),
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly()
     {
