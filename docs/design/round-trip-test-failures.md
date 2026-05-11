@@ -1,5 +1,29 @@
 # Round-Trip Test Failures — Investigation Status
 
+## Current status (2026-05-10)
+
+**LvProp inline-marker hypothesis: DISCONFIRMED.** Tested the theory that the
+all-zero 12-byte `LvProp` placeholder was being interpreted by DAO as a
+dangling chained-LVAL pointer (`bitmask=0x00`, `lval_dp=0`) and that flipping
+the bitmask byte to `0x80` (well-formed empty inline long-value) would let
+`OpenRecordset` succeed. Applied the change, unskipped all 5 DAO tests, ran
+them: **all 5 still failed with the identical `"Unrecognized database format
+''."` error at the exact same `OpenRecordset` call site.** The
+`DIAG_RT_BISECT` probe still reports N0–N4 ✅. Reverted the constant to 12
+zero bytes; added a disconfirmation note to its XML doc so we don't re-test
+this. Defect is genuinely inside the user-table TDEF, not the catalog row's
+`LvProp` payload.
+
+**Stale test fixed (2026-05-10):**
+`AccessRoundTripTests.AssertTdefMagicStampsAsync` was asserting real-idx[0]
+magic == `0x00000659`, but the writer correctly stamps `0x00000783`
+(`Constants.TableDefinition.Jet4.RealIdx.LeadingMagic`) per the "TDEF magic
+stamps" section below. Updated the assertion to expect `0x00000783` for
+real-idx physical descriptors and `0x00000659` for the TDEF header / column
+descriptors / logical-idx entries (matching what the writer actually emits
+and what DAO requires). The two `AccessRoundTripTests` tests can now be
+re-enabled once the underlying TDEF / `OpenRecordset` issue is resolved.
+
 ## Current status (2026-05-05)
 
 **Catalog index maintenance: RESOLVED.** Three index fixes (prefix compression cap, entry-start bitmask sentinel, split-path `maxPrefixLength` cap) plus catalog row fixes (LvProp, MSysACEs, magic stamps, compressed-unicode encoding) make DAO Compact & Repair succeed for both N1 and N2+ cases. The `MSysDb (3011)` and `Object invalid or no longer set` errors are gone.
@@ -343,7 +367,8 @@ Root cause of N2+ failure (fixed 2026-05-04):
 | **16** | **Prefix compression (`pref_len`) growing beyond original** | ✅ **fixed** | `BuildLeafPage` was recomputing `pref_len` from scratch, increasing it beyond the original page's value (page 8: 0→1, page 2790: 1→4). This shifted entry positions and made the bitmask inconsistent. Fix: cap `pref_len` at the original page's value. Values now match baseline/DAO. |
 | **17** | **Missing entry-start bitmask sentinel** | ✅ **fixed** | Access/DAO writes a one-past-the-end bit in the entry-start bitmask at the position immediately after the last entry. The writer was omitting this sentinel. Fix: `BuildLeafPage` now writes the sentinel after the entry loop. Verified on every leaf page in NorthwindTraders.accdb. |
 | **18** | **Split-path `maxPrefixLength` cap missing** | ✅ **fixed** | `TryBuildSplitLeafPages` was calling `BuildLeafPage` without `maxPrefixLength`, allowing split-product pages to get unrestricted pref (N2: page 2790 pref 1→4, page 3019 pref=16). Fix: plumbed `int maxPrefixLength` through `TryBuildSplitLeafPages` and all three call sites now pass the original leaf's `pref_len`. |
-| **19** | **User-table TDEF page layout incompatibility** | � **partially fixed** | DAO `OpenDatabase` now succeeds against writer-created tables (the `0x08` private NOT-NULL bit and unconditional `ExtraFlags=0x01` on TEXT/MEMO have been removed; `Required` moved to `LvProp`). DAO `OpenRecordset` still throws `"Unrecognized database format ''."` on the same tables — there is at least one further byte-level incompatibility in the writer's TDEF that DAO validates only when materializing a recordset. Re-skipping the 5 DAO recordset/compact tests until a byte-for-byte TDEF diff identifies the remaining defect. |
+| **19** | **User-table TDEF page layout incompatibility** | 🟡 **partially fixed** | DAO `OpenDatabase` now succeeds against writer-created tables (the `0x08` private NOT-NULL bit and unconditional `ExtraFlags=0x01` on TEXT/MEMO have been removed; `Required` moved to `LvProp`). DAO `OpenRecordset` still throws `"Unrecognized database format ''."` on the same tables — there is at least one further byte-level incompatibility in the writer's TDEF that DAO validates only when materializing a recordset. Re-skipping the 5 DAO recordset/compact tests until a byte-for-byte TDEF diff identifies the remaining defect. |
+| **20** | **`LvProp` placeholder is a dangling chained-LVAL pointer** | ❌ **disconfirmed (2026-05-10)** | Hypothesis: the 12-byte all-zero `LvProp` placeholder parses as `bitmask=0x00` (chained-LVAL) with `lval_dp=0`, so `OpenRecordset`'s per-column property walk dereferences page 0 and fails with `"Unrecognized database format ''."`. **Tested:** changed byte index 3 from `0x00` to `0x80` (well-formed empty inline long-value: `memo_len=0`, `bitmask=0x80`, no payload). Unskipped all 5 DAO tests. **All 5 still failed with the identical error at the same `OpenRecordset` line.** Inline-marker bit makes no observable difference. Reverted. The defect is not in the catalog row's `LvProp` payload. |
 ## Recommended next steps (priority order)
 
 **All catalog index issues are resolved.** DAO Compact & Repair now succeeds for both N1 and N2+ scenarios. The remaining blocker is a per-table TDEF page layout incompatibility that causes DAO to drop rows from writer-created user tables during compact. Next steps focus on the TDEF issue:
@@ -354,7 +379,7 @@ Root cause of N2+ failure (fixed 2026-05-04):
 4. ~~**Investigate N2 failure**~~ ✅ Done (2026-05-04). Root cause identified and fixed.
 5. ~~**Fix `TryBuildSplitLeafPages` to pass `maxPrefixLength` cap**~~ ✅ Done (2026-05-04). Split-path cap fix landed. N2+ now passes DAO compact.
 6. ~~**Investigate page 2994**~~ ✅ Resolved — was a cascading failure from corrupted split-product index pages; now passes with the split-path fix.
-7. **Investigate user-table TDEF incompatibility** — DAO `OpenDatabase` succeeds (after the `0x08` flag / `ExtraFlags=0x01` fix landed 2026-05-05) but DAO `OpenRecordset` still rejects writer-created tables with `"Unrecognized database format ''."` Use the `DIAG_RT_DAO_BASELINE` probe to dump a fresh side-by-side TDEF hex diff of writer vs DAO `RT_Customers`; the residual defect is no longer in the column flags / ExtraFlags bytes that the previous diff highlighted. Likely candidates: var-len trailer / EOD layout, real-idx descriptor padding, logical-idx field counts, or an `ExtraFlags` bit on a non-TEXT column type that DAO requires. The 5 DAO tests in `DaoValidationTests` and `AccessRoundTripTests` are re-skipped until this is resolved.
+7. **Investigate user-table TDEF incompatibility** — DAO `OpenDatabase` succeeds (after the `0x08` flag / `ExtraFlags=0x01` fix landed 2026-05-05) but DAO `OpenRecordset` still rejects writer-created tables with `"Unrecognized database format ''."` Use the `DIAG_RT_DAO_BASELINE` probe to dump a fresh side-by-side TDEF hex diff of writer vs DAO `RT_Customers`; the residual defect is no longer in the column flags / ExtraFlags bytes that the previous diff highlighted, **and is not in the catalog row's `LvProp` payload** (disconfirmed 2026-05-10 — see hypothesis #20). Likely candidates: var-len trailer / EOD layout, real-idx 51-byte physical-descriptor padding, redundant column-number field at column-descriptor offset 9, logical-idx field counts, or an `ExtraFlags` bit on a non-TEXT column type that DAO requires. The 5 DAO tests in `DaoValidationTests` and `AccessRoundTripTests` are re-skipped until this is resolved.
 
 ## DAO `OpenRecordset` regression after column-flag fix (2026-05-05)
 
