@@ -195,9 +195,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         (_pageKeys.Rc4DbKey, _pageKeys.AesPageKey) =
             EncryptionManager.ResolveReaderPageKeys(header, _format, isLegacyAesCfb, options.Password);
 
-        using var lockGuard = _lockFileCoordinator.AcquireWithRollback();
-        _byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
-        lockGuard.Commit();
+        _lockFileCoordinator.Acquire();
+        try
+        {
+            _byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
+        }
+        catch
+        {
+            _lockFileCoordinator.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -2119,18 +2126,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             FileShare = FileShare.ReadWrite,
             ValidateOnOpen = false,
+            PageCacheSize = -1,
             Password = _options.Password,
         };
 
         AccessReader reader;
         if (!string.IsNullOrEmpty(_path) && !_isAgileEncryptedRewrap)
         {
-            reader = await AccessReader.OpenAsync(_path, options, cancellationToken).ConfigureAwait(false);
+            reader = await AccessReader.OpenUncachedAsync(_path, options, cancellationToken).ConfigureAwait(false);
         }
         else
         {
             _stream.Position = 0;
-            reader = await AccessReader.OpenAsync(_stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
+            reader = await AccessReader.OpenUncachedAsync(_stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
         }
 
         await using (reader)
@@ -2152,18 +2160,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             FileShare = FileShare.ReadWrite,
             ValidateOnOpen = false,
+            PageCacheSize = -1,
             Password = _options.Password,
         };
 
         AccessReader reader;
         if (!string.IsNullOrEmpty(_path) && !_isAgileEncryptedRewrap)
         {
-            reader = await AccessReader.OpenAsync(_path, options, cancellationToken).ConfigureAwait(false);
+            reader = await AccessReader.OpenUncachedAsync(_path, options, cancellationToken).ConfigureAwait(false);
         }
         else
         {
             _stream.Position = 0;
-            reader = await AccessReader.OpenAsync(_stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
+            reader = await AccessReader.OpenUncachedAsync(_stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
         }
 
         await using (reader)
@@ -2185,6 +2194,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             FileShare = FileShare.ReadWrite,
             ValidateOnOpen = false,
+            PageCacheSize = -1,
             UseLockFile = false,
             Password = _options.Password,
         };
@@ -2192,12 +2202,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         AccessReader reader;
         if (!string.IsNullOrEmpty(_path) && !_isAgileEncryptedRewrap)
         {
-            reader = await AccessReader.OpenAsync(_path, options, cancellationToken).ConfigureAwait(false);
+            reader = await AccessReader.OpenUncachedAsync(_path, options, cancellationToken).ConfigureAwait(false);
         }
         else
         {
             _stream.Position = 0;
-            reader = await AccessReader.OpenAsync(_stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
+            reader = await AccessReader.OpenUncachedAsync(_stream, options, leaveOpen: true, cancellationToken).ConfigureAwait(false);
         }
 
         await using (reader)

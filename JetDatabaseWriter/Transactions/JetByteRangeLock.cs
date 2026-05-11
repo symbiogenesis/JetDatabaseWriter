@@ -141,17 +141,26 @@ internal sealed class JetByteRangeLock
     /// </summary>
     /// <param name="isAccdb">True when the target database is ACE (.accdb), which uses sentinel offset <c>0xFFFFFFFC</c>; otherwise <c>0xFFFFFFFE</c> (Jet3/Jet4).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A disposable that releases the commit-lock sentinel; a no-op disposable on a disabled instance.</returns>
-    public async ValueTask<IDisposable> AcquireCommitLockAsync(bool isAccdb, CancellationToken cancellationToken = default)
+    /// <returns>The locked offset, or <see langword="null"/> when locking is disabled.</returns>
+    public async ValueTask<long?> AcquireCommitLockOffsetAsync(bool isAccdb, CancellationToken cancellationToken = default)
     {
         if (!IsEnabled)
         {
-            return NoOpDisposable.Instance;
+            return null;
         }
 
         long offset = isAccdb ? 0xFFFFFFFCL : 0xFFFFFFFEL;
         await AcquireBlockingAsync(offset, length: 1, cancellationToken).ConfigureAwait(false);
-        return new ReleaseToken(this, offset, length: 1);
+        return offset;
+    }
+
+    /// <summary>Releases a commit-lock sentinel acquired by <see cref="AcquireCommitLockOffsetAsync"/>.</summary>
+    public void ReleaseCommitLock(long? offset)
+    {
+        if (offset.HasValue && IsEnabled && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            Release(offset.Value, length: 1);
+        }
     }
 
     private static bool PlatformIsWindows() => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);

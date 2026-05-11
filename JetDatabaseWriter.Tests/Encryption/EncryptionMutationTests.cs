@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.Transactions;
 using Xunit;
 
 /// <summary>
@@ -55,6 +56,45 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         AccessEncryptionFormat fmt = await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken);
 
         Assert.Equal(AccessEncryptionFormat.None, fmt);
+    }
+
+    // ───── Lock files ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task EncryptAsync_WithLockFileEnabled_RespectsExistingLockFile()
+    {
+        var ct = TestContext.Current.CancellationToken;
+
+        string blockedPath = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string blockedLockPath = LockFileSlotWriter.GetLockFilePath(blockedPath);
+        await File.WriteAllBytesAsync(blockedLockPath, new byte[] { 1 }, ct);
+        _tempFiles.Add(blockedLockPath);
+
+        await Assert.ThrowsAsync<IOException>(async () =>
+            await AccessWriter.EncryptAsync(
+                blockedPath,
+                FirstPassword,
+                AccessEncryptionFormat.AccdbLegacyPassword,
+                cancellationToken: ct));
+
+        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(blockedPath, ct));
+
+        string allowedPath = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        string allowedLockPath = LockFileSlotWriter.GetLockFilePath(allowedPath);
+        await File.WriteAllBytesAsync(allowedLockPath, new byte[LockFileSlotWriter.SlotSize], ct);
+        _tempFiles.Add(allowedLockPath);
+
+        var options = new AccessWriterOptions
+        {
+            UseLockFile = true,
+            RespectExistingLockFile = false,
+        };
+
+        await AccessWriter.EncryptAsync(allowedPath, FirstPassword, AccessEncryptionFormat.AccdbLegacyPassword, options, ct);
+
+        Assert.Equal(AccessEncryptionFormat.AccdbLegacyPassword, await AccessWriter.DetectEncryptionFormatAsync(allowedPath, ct));
+        Assert.False(File.Exists(allowedLockPath));
+        await AssertOpenableAsync(allowedPath, FirstPassword, await ListTablesAsync(blockedPath, password: null));
     }
 
     // ───── Jet4 RC4 ──────────────────────────────────────────────────

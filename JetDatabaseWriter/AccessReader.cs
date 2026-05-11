@@ -91,7 +91,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="stream">An open, seekable stream for the database file.</param>
     /// <param name="hdr">Header bytes read from page 0.</param>
     /// <param name="leaveOpen">Whether the caller retains ownership of the stream. If false, the stream is disposed when the reader is disposed.</param>
-    private AccessReader(string path, AccessReaderOptions options, Stream stream, byte[] hdr, bool leaveOpen = false)
+    /// <param name="suppressPageCache">Whether to skip allocating the per-reader page caches regardless of options.</param>
+    private AccessReader(
+        string path,
+        AccessReaderOptions options,
+        Stream stream,
+        byte[] hdr,
+        bool leaveOpen = false,
+        bool suppressPageCache = false)
         : base(stream, hdr, path, leaveOpen)
     {
         Guard.NotNull(options, nameof(options));
@@ -108,7 +115,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         // Cache is created up front when enabled (>0); negative or zero leaves
         // it null and ReadPageCachedAsync bypasses caching entirely.
-        if (PageCacheSize > 0)
+        if (!suppressPageCache && PageCacheSize > 0)
         {
             _pageCache = new LruCache<long, byte[]>(PageCacheSize, ReturnPage);
             _rowBoundsCache = new LruCache<long, RowBound[]>(PageCacheSize);
@@ -134,13 +141,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ValidateDatabaseFormat();
         }
 
-        // Scope-guard idiom: the slot is released if the rest of construction
-        // throws — OpenAsync's catch only disposes the underlying stream and
-        // never sees this half-built reader, so without this guard a populated
-        // .ldb / .laccdb would outlive the failed open.
-        using var lockGuard = _lockFile.AcquireWithRollback();
-        _byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
-        lockGuard.Commit();
+        // Release the lock-file slot if post-acquire setup throws. OpenAsync's
+        // catch only owns the stream and never sees this half-built reader.
+        _lockFile.Acquire();
+        try
+        {
+            _byteRangeLock = JetByteRangeLock.Create(stream, options.UseByteRangeLocks, options.LockTimeoutMilliseconds);
+        }
+        catch
+        {
+            _lockFile.Dispose();
+            throw;
+        }
     }
 
     /// <summary>Gets a value indicating whether to print console logs with verbose hex dumps for debugging. Default: false.</summary>
@@ -173,7 +185,17 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="options">Optional configuration options.</param>
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessReader"/> for the specified database.</returns>
-    public static async ValueTask<AccessReader> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
+    public static ValueTask<AccessReader> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
+        => OpenAsync(path, options, suppressPageCache: false, cancellationToken);
+
+    internal static ValueTask<AccessReader> OpenUncachedAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
+        => OpenAsync(path, options, suppressPageCache: true, cancellationToken);
+
+    private static async ValueTask<AccessReader> OpenAsync(
+        string path,
+        AccessReaderOptions? options,
+        bool suppressPageCache,
+        CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(path, nameof(path));
         cancellationToken.ThrowIfCancellationRequested();
@@ -189,7 +211,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
 #pragma warning disable CA2000
         FileStream fs = CreateStream(path, options);
 #pragma warning restore CA2000
-        return await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
+        return await OpenAsync(
+            fs,
+            options,
+            leaveOpen: false,
+            suppressPageCache: suppressPageCache,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -202,7 +229,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the reader is disposed. Default is <c>false</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessReader"/> for the database.</returns>
-    public static async ValueTask<AccessReader> OpenAsync(Stream stream, AccessReaderOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
+    public static ValueTask<AccessReader> OpenAsync(Stream stream, AccessReaderOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
+        => OpenAsync(stream, options, leaveOpen, suppressPageCache: false, cancellationToken);
+
+    internal static ValueTask<AccessReader> OpenUncachedAsync(Stream stream, AccessReaderOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
+        => OpenAsync(stream, options, leaveOpen, suppressPageCache: true, cancellationToken);
+
+    private static async ValueTask<AccessReader> OpenAsync(
+        Stream stream,
+        AccessReaderOptions? options,
+        bool leaveOpen,
+        bool suppressPageCache,
+        CancellationToken cancellationToken)
     {
         Guard.NotNull(stream, nameof(stream));
         if (!stream.CanRead)
@@ -242,10 +280,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
                 var inner = new MemoryStream(decryptedAgile, writable: false);
                 byte[] innerHeader = await ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
-                return new AccessReader(string.Empty, options, inner, innerHeader);
+                return new AccessReader(string.Empty, options, inner, innerHeader, suppressPageCache: suppressPageCache);
             }
 
-            return new AccessReader(path, options, stream, header, leaveOpen);
+            return new AccessReader(path, options, stream, header, leaveOpen, suppressPageCache);
         }
         catch
         {
@@ -351,9 +389,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<DataTable> GetTablesAsDataTableAsync(CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        var dt = new DataTable("Tables");
+        DataTable? dt = null;
         try
         {
+            dt = new DataTable("Tables");
             _ = dt.Columns.Add("TableName", typeof(string));
             _ = dt.Columns.Add("RowCount", typeof(long));
             _ = dt.Columns.Add("ColumnCount", typeof(int));
@@ -364,12 +403,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 _ = dt.Rows.Add(s.Name, s.RowCount, s.ColumnCount);
             }
 
-            return dt;
+            var result = dt;
+            dt = null;
+            return result;
         }
-        catch
+        finally
         {
-            dt.Dispose();
-            throw;
+            dt?.Dispose();
         }
     }
 
