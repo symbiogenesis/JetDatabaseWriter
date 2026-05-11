@@ -122,6 +122,25 @@ sets it unconditionally to `0x01`** with the comment "this makes autonumbering
 work in access". mdbtools agrees. Lower probability (writer's tables without
 autonumber columns shouldn't need it), but cheap to test.
 
+> **Confirmed (2026-05-10), but insufficient on its own.** Tested via
+> [WriterTDefAutoNumFlagTests.cs](../../JetDatabaseWriter.Tests/Schema/WriterTDefAutoNumFlagTests.cs).
+> Ground-truth survey across all 23 user tables in DAO-authored
+> `NorthwindTraders.accdb`: every table has TDEF byte `0x18 == 0x01`,
+> including the **4 tables without any autonumber column**
+> (`Catalog_TableOfContents`, `States`, `TaxStatus`, `Titles`). The
+> writer's `DataPageInserter.PatchAutoNumFlag` was conditional — wrote
+> `0x01` only when some column carried the `0x04` autonum flag, else
+> `0x00` — and disagreed with DAO ground truth on no-autonum tables.
+> **Fix landed**: `PatchAutoNumFlag` now stamps `tdefPage[0x18] = 0x01`
+> unconditionally; the corresponding writer-side test asserts both
+> autonum and no-autonum tables get `0x01`. **DAO `OpenRecordset` still
+> fails** — re-ran all 7 gated DAO/round-trip tests with the H25 fix in
+> place; all 7 still throw `"Unrecognized database format ''."`. Tests
+> re-skipped. The fix is correct (matches DAO ground truth on every
+> NorthwindTraders user table) but is not the sole blocker. Fall back
+> to a side-by-side hex diff via Tier-3 step #16, or investigate the
+> 12-byte logical-idx descriptor / TDEF-tail / LvProp blob layouts next.
+
 ## Disconfirmed (per `round-trip-test-failures.md` — do NOT re-test)
 
 - LvProp 12-byte payload as dangling chained-LVAL (H20, tested 2026-05-10,
@@ -192,14 +211,10 @@ autonumber columns shouldn't need it), but cheap to test.
 
 ### Tier 3 — targeted experimentation
 
-16. Use the existing `DIAG_RT_DAO_BASELINE` probe to **dump the writer-vs-DAO
-    TDEF as a side-by-side hex diff** with focus on the 52-byte real-idx
-    physical descriptor block (post the column descriptors and column names;
-    offset depends on column count). This will resolve H21 and H23 in one
-    shot.
-17. Confirm H22 by hex-dumping bytes 9–10 of every column descriptor in a
-    DAO-authored TDEF.
-
-The DAO baseline probe already exists; the immediate next action is to re-run
-it post the most recent fixes and grep the diff specifically for `first_dp`
-mismatches and the redundant `col_num` field.
+16. Use the existing `DIAG_RT_DAO_BASELINE` probe to **dump the full
+    writer-vs-DAO TDEF as a side-by-side hex diff** and walk every
+    differing region. With H21–H25 disconfirmed or fixed, the residual
+    `''` failure must be in an unexamined region — most likely the
+    12-byte logical-idx descriptor, the TDEF tail (post real-idx block),
+    or the LvProp blob. Bisect by region until the first non-cosmetic
+    divergence is identified, then formulate H26+.

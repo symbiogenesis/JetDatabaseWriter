@@ -595,10 +595,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // & Repair walks every catalog row and dereferences `used_pages` to
         // enumerate the table's data pages; a zero pointer here aborts the
         // walk with "could not find object 'MSysDb'". The companion
-        // `autonum_flag` byte at TDEF offset 0x18 is also patched to 0x01
-        // when any column carries the autonumber flag — Access checks this
-        // before consulting the autonum-next counter at 0x14. See
-        // docs/design/round-trip-test-failures.md.
+        // `autonum_flag` byte at TDEF offset 0x18 is patched unconditionally
+        // to 0x01: per Jackcess and verified empirically against
+        // NorthwindTraders.accdb (every user table has byte 0x18 == 0x01,
+        // including ones without an autonumber column). See
+        // docs/design/round-trip-test-failures.md and
+        // docs/design/round-trip-openrecordset-hypothesis.md (H25).
         if (_format != DatabaseFormat.Jet3Mdb)
         {
             long usageMapPageNumber = await _dataPageInserter.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);

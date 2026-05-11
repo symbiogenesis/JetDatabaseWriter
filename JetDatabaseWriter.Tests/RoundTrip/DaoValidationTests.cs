@@ -57,7 +57,7 @@ public sealed class DaoValidationTests : IDisposable
     /// asserts SELECT COUNT(*) matches. Catches TDEF row-count drift and
     /// page-corruption that would silently survive our own reader round-trip.
     /// </summary>
-    [Fact(Skip = "DAO OpenRecordset still rejects writer-created user-table TDEFs ('Unrecognized database format ''.'). H22 (redundant col_num at column-descriptor offset 9-10) was confirmed and fixed 2026-05-10 but did not unblock OpenRecordset on its own. Investigate H23 (real-idx flags byte placement) and H24 (misc_ext text sort-order version) next. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(Skip = "DAO OpenRecordset still rejects writer-created user-table TDEFs ('Unrecognized database format ''.'). H25 (autonum_flag at TDEF byte 0x18, must be 0x01 unconditionally) was confirmed and fixed 2026-05-10 but did not unblock OpenRecordset on its own. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoOpenRecordset_RowCount_MatchesWriterOutput()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -115,7 +115,7 @@ public sealed class DaoValidationTests : IDisposable
     /// key to locate a specific row. Catches index pages that parse cleanly in
     /// our reader but are rejected by the canonical engine.
     /// </summary>
-    [Fact(Skip = "DAO OpenRecordset still rejects writer-created tables ('Unrecognized database format ''.'). H22 fix landed 2026-05-10, no effect. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(Skip = "DAO OpenRecordset still rejects writer-created tables ('Unrecognized database format ''.'). H25 (autonum_flag at TDEF byte 0x18) confirmed and fixed 2026-05-10, no effect. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoIndexTraversal_Seek_LocatesRowByPrimaryKey()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -176,7 +176,7 @@ public sealed class DaoValidationTests : IDisposable
     /// row, and verifies the next AutoNumber value is one past our last
     /// inserted ID. Catches seed/counter byte-layout bugs.
     /// </summary>
-    [Fact(Skip = "DAO OpenRecordset still rejects writer-created tables ('Unrecognized database format ''.'). H22 fix landed 2026-05-10, no effect. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(Skip = "DAO OpenRecordset still rejects writer-created tables ('Unrecognized database format ''.'). H25 (autonum_flag at TDEF byte 0x18) confirmed and fixed 2026-05-10, no effect. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -302,7 +302,7 @@ public sealed class DaoValidationTests : IDisposable
     /// Catches LVAL-chain encoding bugs that survive our own reader.
     /// Closes §3 gap: "DAO Memo/OLE fidelity".
     /// </summary>
-    [Fact(Skip = "DAO OpenRecordset still rejects writer-created tables ('Unrecognized database format ''.'). H22 fix landed 2026-05-10, no effect. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(Skip = "DAO OpenRecordset still rejects writer-created tables ('Unrecognized database format ''.'). H25 (autonum_flag at TDEF byte 0x18) confirmed and fixed 2026-05-10, no effect. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -488,7 +488,7 @@ public sealed class DaoValidationTests : IDisposable
     /// well-formed enough for Access's own engine.
     /// Closes §3 gap: "DAO CompactDatabase on encrypted output".
     /// </summary>
-    [Fact(Skip = "DAO CompactDatabase rejects writer-created tables ('Unrecognized database format ''.'). H22 fix landed 2026-05-10, no effect. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(Skip = "DAO CompactDatabase rejects writer-created tables ('Unrecognized database format ''.'). H25 (autonum_flag at TDEF byte 0x18) confirmed and fixed 2026-05-10, no effect. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds()
     {
         string dbPath = await CopyNorthwindAsync();
