@@ -96,7 +96,7 @@ scenarios rather than reinventing the setup/teardown boilerplate.
   because it cannot open the writer's user-table TDEFs (“Unrecognized
   database format”). Blocked on a per-table TDEF structural incompatibility;
   the catalog layer is correct. See
-  [round-trip-test-failures.md](round-trip-test-failures.md).
+  [round-trip-test-failures.md](/docs/design/round-trip-test-failures.md).
 - [ ] **`[S]`** **DAO OpenRecordset row-count** — test implemented in
   `DaoValidationTests.DaoOpenRecordset_RowCount_MatchesWriterOutput`;
   skipped with a doc pointer. DAO can `OpenDatabase` the writer’s file
@@ -111,6 +111,15 @@ scenarios rather than reinventing the setup/teardown boilerplate.
 - [ ] **`[S]`** **DAO AutoNumber continuation** — test implemented in
   `DaoValidationTests.DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert`;
   same status as row-count (skipped, blocked on TDEF).
+- [ ] **`[M]`** **DAO Memo/OLE fidelity** — test implemented in
+  `DaoValidationTests.DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly`;
+  same status as row-count (skipped, blocked on TDEF — `OpenRecordset`
+  rejects writer-created tables).
+- [ ] **`[L]`** **DAO CompactDatabase on encrypted output** — test
+  implemented in
+  `DaoValidationTests.DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds`;
+  skipped, blocked on TDEF — DAO's `CompactDatabase` internally hits the
+  same "Unrecognized database format" when processing writer-created tables.
 
 ---
 
