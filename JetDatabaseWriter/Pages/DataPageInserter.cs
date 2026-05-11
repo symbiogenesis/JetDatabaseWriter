@@ -61,11 +61,129 @@ internal sealed class DataPageInserter(AccessWriter writer)
         // yet maintain writable usage maps for existing tables.
         long newPageNumber = await writer.AppendPageAsync(CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
         writer.SetCachedInsertPageNumber(tdefPage, newPageNumber);
+
+        // Mark the newly-appended data page in the per-table owned-pages
+        // usage map. Without this, DAO's sequential / snapshot recordset
+        // scans (which walk the usage map rather than the PK index) see
+        // the table as empty, even though the row bytes are on disk and
+        // the data page's parent_tdef back-pointer is correct.
+        // Skip the small set of pre-existing system-table TDEFs whose
+        // usage maps are already populated and managed by DAO; modifying
+        // them surfaces "Invalid argument" from DAO.OpenDatabase.
+        if (tdefPage > 1024)
+        {
+            await MarkPageInOwnedMapAsync(tdefPage, newPageNumber, cancellationToken).ConfigureAwait(false);
+        }
+
         return new PageInsertTarget
         {
             PageNumber = newPageNumber,
             Page = await writer.ReadPageAsync(newPageNumber, cancellationToken).ConfigureAwait(false),
         };
+    }
+
+    /// <summary>
+    /// Sets the owned-pages usage-map bit for <paramref name="dataPageNumber"/> in the
+    /// per-table usage map referenced by the TDEF at offset 0x37 (1 byte row + 3 byte page).
+    /// The map row is the INLINE form (type byte 0x00): startPage at bytes 1..4 (int32 LE),
+    /// then a 64-byte bitmap covering 512 consecutive pages from startPage. On first use
+    /// the startPage remains zero for low page numbers and is otherwise initialized to
+    /// <c>(dataPageNumber / 8) * 8</c> so the bit fits in the bitmap. If the page is already
+    /// outside the existing INLINE window, the row is left untouched (REFERENCE-form maps
+    /// are not yet implemented; this is acceptable because the writer always appends pages
+    /// monotonically in a single session).
+    /// </summary>
+    internal async ValueTask MarkPageInOwnedMapAsync(long tdefPageNumber, long dataPageNumber, CancellationToken cancellationToken)
+    {
+        byte[] tdef = await writer.ReadPageAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            int ownedRow = tdef[0x37];
+            int ownedPage = tdef[0x38] | (tdef[0x39] << 8) | (tdef[0x3A] << 16);
+            int freeRow = tdef[0x3B];
+            int freePage = tdef[0x3C] | (tdef[0x3D] << 8) | (tdef[0x3E] << 16);
+            if (ownedPage == 0)
+            {
+                return;
+            }
+
+            byte[] umPage = await writer.ReadPageAsync(ownedPage, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                bool changed = TrySetUsageMapBit(umPage, ownedRow, dataPageNumber);
+                if (freePage == ownedPage && freeRow != ownedRow)
+                {
+                    changed |= TrySetUsageMapBit(umPage, freeRow, dataPageNumber);
+                }
+
+                if (!changed)
+                {
+                    return;
+                }
+
+                await writer.WritePageAsync(ownedPage, umPage, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                ReturnPage(umPage);
+            }
+
+            if (freePage != ownedPage && freePage != 0)
+            {
+                byte[] freeUmPage = await writer.ReadPageAsync(freePage, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (TrySetUsageMapBit(freeUmPage, freeRow, dataPageNumber))
+                    {
+                        await writer.WritePageAsync(freePage, freeUmPage, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    ReturnPage(freeUmPage);
+                }
+            }
+        }
+        finally
+        {
+            ReturnPage(tdef);
+        }
+    }
+
+    private bool TrySetUsageMapBit(byte[] umPage, int rowIndex, long pageNumber)
+    {
+        int rowOffPos = writer._dataPage.RowsStart + (rowIndex * 2);
+        int rowOff = Ru16(umPage, rowOffPos) & 0x1FFF;
+        if (rowOff == 0)
+        {
+            return false;
+        }
+
+        byte type = umPage[rowOff];
+        if (type != 0x00)
+        {
+            // REFERENCE-form (type 0x01) usage map: not yet implemented.
+            return false;
+        }
+
+        const int InlineBitmapOffset = 5;
+        const int InlineBitmapBits = 64 * 8;
+
+        int startPage = Ri32(umPage, rowOff + 1);
+        if (startPage == 0 && pageNumber >= InlineBitmapBits)
+        {
+            startPage = checked((int)((pageNumber / 8) * 8));
+            Wi32(umPage, rowOff + 1, startPage);
+        }
+
+        long bitIdx = pageNumber - startPage;
+        if (bitIdx < 0 || bitIdx >= InlineBitmapBits)
+        {
+            return false;
+        }
+
+        umPage[rowOff + InlineBitmapOffset + (int)(bitIdx / 8)] |= (byte)(1 << (int)(bitIdx % 8));
+        return true;
     }
 
     internal bool CanInsertRow(byte[] page, int rowLength)

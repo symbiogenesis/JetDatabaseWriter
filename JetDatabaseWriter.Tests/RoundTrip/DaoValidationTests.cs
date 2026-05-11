@@ -77,6 +77,18 @@ public sealed class DaoValidationTests
                 """;
 
         var result = session.RunDaoDatabaseScript(dbPath, script, DaoTimeout);
+
+        // Diagnostic preservation
+        try
+        {
+            string keep = Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.MemoDiag");
+            Directory.CreateDirectory(keep);
+            File.Copy(dbPath, Path.Combine(keep, "writer_count.accdb"), overwrite: true);
+        }
+        catch (IOException)
+        {
+        }
+
         Assert.True(
             result.ExitCode == 0,
             $"DAO script failed (exit={result.ExitCode}).\nstdout: {result.StdOut}\nstderr: {result.StdErr}");
@@ -150,7 +162,10 @@ public sealed class DaoValidationTests
     /// row, and verifies the next AutoNumber value is one past our last
     /// inserted ID. Catches seed/counter byte-layout bugs.
     /// </summary>
-    [Fact(Skip = "H48 unblocked DAO OpenRecordset, but DAO INSERT after the writer's last autonumber row raises 'duplicate values in the index'. The writer's autonumber-continuation seed and/or PK index leaf does not surface writer rows to DAO's uniqueness check. Separate from H48. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert()
     {
         await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
@@ -269,7 +284,10 @@ public sealed class DaoValidationTests
     /// Catches LVAL-chain encoding bugs that survive our own reader.
     /// Closes §3 gap: "DAO Memo/OLE fidelity".
     /// </summary>
-    [Fact(Skip = "H48 unblocked DAO OpenRecordset, but DAO sees writer-inserted MEMO rows as an empty recordset ($rs.MoveFirst() raises 'No current record'). MEMO long-value page or row-data-page linkage is not DAO-readable. Separate from the TDEF tdef_len defect H48 fixed. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly()
     {
         await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
@@ -323,6 +341,18 @@ public sealed class DaoValidationTests
                 """;
 
         var result = session.RunDaoDatabaseScript(dbPath, script, DaoTimeout);
+
+        // Diagnostic preservation
+        try
+        {
+            string keep = Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.MemoDiag");
+            Directory.CreateDirectory(keep);
+            File.Copy(dbPath, Path.Combine(keep, "writer_memo.accdb"), overwrite: true);
+        }
+        catch (IOException)
+        {
+        }
+
         Assert.True(
             result.ExitCode == 0,
             $"DAO Memo fidelity script failed (exit={result.ExitCode}).\nstdout: {result.StdOut}\nstderr: {result.StdErr}");
@@ -353,7 +383,10 @@ public sealed class DaoValidationTests
     /// fully understood by Access. Closes §3 gap: "DAO relationship
     /// enforcement".
     /// </summary>
-    [Fact(Skip = "H48 unblocked DAO OpenRecordset (writer-authored TDEFs now accepted), but DAO inserts into a writer-created Child table with an enforced FK relationship still succeed even when ParentId has no matching Parent row. Indicates writer's MSysRelationships entry is not DAO-recognised for runtime enforcement (separate hypothesis from H48). See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoRelationshipEnforcement_FkViolation_RaisesError()
     {
         await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
@@ -442,7 +475,10 @@ public sealed class DaoValidationTests
     /// well-formed enough for Access's own engine.
     /// Closes §3 gap: "DAO CompactDatabase on encrypted output".
     /// </summary>
-    [Fact(Skip = "H48 unblocked DAO OpenRecordset on plaintext ACCDB, but DAO CompactDatabase against an Agile-encrypted writer-authored ACCDB still raises 'Unrecognized database format'. Encryption-header / page-encryption issue, separate from the TDEF tdef_len defect H48 fixed. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds()
     {
         await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(

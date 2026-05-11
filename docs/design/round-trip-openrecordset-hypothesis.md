@@ -173,6 +173,164 @@ investigation, independent of the others.
 4. `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair` then composite — likely shares a root cause with #1 once MEMO/data-page linkage is understood.
 5. `DaoCompactDatabase_OnEncryptedOutput` — entirely orthogonal; defer until the plaintext path is fully clean.
 
+---
+
+## 5a. 2026-05-11 session — `DaoMemoFidelity` investigation, partial fix
+
+### What was tried (and works)
+
+**H49 (in-progress fix):** When `DataPageInserter.FindInsertTargetAsync`
+appends a brand-new data page for a user table, the page number is **not
+recorded in any usage map**. DAO's sequential / snapshot recordsets walk
+the per-table owned-pages usage map referenced by TDEF byte `0x37`–`0x3A`
+(1-byte row index + 3-byte page); they do **not** scan the file looking
+for `0x01 / parent_tdef == this` data pages. The result: writer-inserted
+rows are byte-perfect on disk and visible to our own reader (and to
+`SELECT COUNT(*)`, which uses the PK index leaf, hence the original
+`DaoOpenRecordset_RowCount_MatchesWriterOutput` test passes), but DAO's
+`Recordset.MoveFirst()` raises `"No current record"`.
+
+Empirical evidence (writer's `MemoFidelity` ACCDB, captured via the
+`DIAG_MEMO_READBACK` FormatProbe extension added this session):
+
+| Artifact | Value |
+|---|---|
+| TDEF page | 3008 |
+| TDEF[0x37..0x3A] (owned-pages ref) | row=0, page=3011 |
+| TDEF[0x3B..0x3E] (free-space ref) | row=1, page=3011 |
+| Usage-map page 3011 row 0 (INLINE, type 0x00) | start_page=0, bitmap all zeros — **bug** |
+| Actual data page | 3017 (numRows=1, parent_tdef=3008, row body intact) |
+
+**Implemented fix** in [`DataPageInserter.MarkPageInOwnedMapAsync`](../../JetDatabaseWriter/Pages/DataPageInserter.cs):
+on each newly-appended data page, set the matching bit in both the
+owned-pages and free-space usage-map rows. INLINE form (type byte
+`0x00`): writes `start_page = (pageNumber / 8) * 8` lazily on the first
+mark, then ORs `1 << (pageNumber - start_page) % 8` into byte
+`row_offset + 4 + bitIdx/8`. REFERENCE form (type `0x01`) is not yet
+handled — neither is overflow past the 65-byte (520-page) INLINE window;
+both return early without mutation, so post-1024-page tables fall back
+to the pre-H49 behaviour.
+
+### What still does not work
+
+After H49, the writer's `MemoFidelity` ACCDB shows the usage-map row
+correctly populated (`00 C8 0B 00 02 …` — start_page 3008, bit 1 set
+for page 3017 in both row 0 and row 1), and the data page itself is
+byte-identical to the pre-H49 state. **DAO still rejects `MoveFirst`
+with `"No current record"`.**
+
+Sequence of failures observed during this session:
+
+1. Mark in **all** TDEFs (including system tables): DAO refuses to even
+   `OpenDatabase` (`"Invalid argument."`). Mutation of pre-existing
+   system-table usage maps (`MSysObjects` page 6, `MSysAccessStorage`
+   page 9, etc.) is rejected — the byte diff was 4 modified bytes
+   across pages 6 / 9 / 3011 / 3012 (the page-3012 diff was inside the
+   `MSysObjects` system-data area touched as a side-effect).
+2. Gated the mark to `tdefPage > 1024` (skip prebuilt system tables):
+   `OpenDatabase` and `DaoOpenRecordset_RowCount_MatchesWriterOutput`
+   pass again; `DaoMemoFidelity` still fails identically.
+3. Added the free-space-row mark (TDEF[0x3B..0x3E] points to a second
+   row in the same usage-map page when the row index differs): no change
+   in DAO's behaviour.
+
+### Likely remaining causes
+
+The bit pattern stamped into the INLINE bitmap matches the structural
+shape used by DAO-authored maps in NorthwindTraders (verified against
+that fixture earlier in the H22..H48 ledger), so the bit-arithmetic is
+not the suspect. Candidates, in descending probability:
+
+1. **TDEF row-count vs index-leaf entry-count mismatch.** `TDEF[0x10..0x13]`
+   (`RowCountOffset`) is updated by `AdjustTDefRowCountAsync` — currently
+   incremented per insert. DAO may be cross-checking it against the
+   PK leaf's entry count (`unique_entry_count` slot in the real-idx
+   physical descriptor at TDEF +42, see H36). For a fresh user-table
+   insert the real-idx slot's `unique_entry_count` is set to **0** at
+   CREATE time and never advanced (H36 in §4.4 noted this as "OK at
+   create time" — it is not OK after the first insert).
+2. **`first_dp` / first-data-page pointer in the real-idx physical
+   descriptor at TDEF byte `phys + 38`** (H21 in §4.2) is currently
+   stamped to a leaf page (PK leaf), not to the first data page.
+   DAO's `Recordset` may interpret this pointer as the head of the
+   data-page chain when Type=1 (table). Worth bisecting by setting
+   `first_dp` to the data page number (3017 in the fixture) and
+   re-running.
+3. **Per-table usage-map row 0 type byte.** H26 was disconfirmed for
+   the empty `RT_Customers` baseline (DAO emits INLINE / type `0x00`
+   for empty tables), but for a non-empty single-page table DAO
+   may transition to REFERENCE form (type `0x01`). The writer never
+   transitions; the row stays INLINE. If DAO requires REFERENCE for
+   any populated user table, the in-place mark we are doing is
+   structurally wrong.
+4. **Data-page header field beyond byte 12.** Writer stamps
+   `[0x00] = 0x01`, `[0x01] = 0x01`, `[0x02..0x03] = freeSpace`,
+   `[0x04..0x07] = parent_tdef`, `[0x08..0x0B] = 0`, `[0x0C..0x0D] =
+   numRows`, then row offsets at `[0x0E..]`. DAO data pages have a
+   `next_page` / `prev_page` linkage somewhere in `[0x08..0x0B]` for
+   tables with multiple data pages — for single-page tables we do not
+   know whether `0` is correct or whether it should be a sentinel.
+
+### Recommended next steps (revised order)
+
+The probe extension (`Program.cs` / `DIAG_MEMO_READBACK` env-var,
+plus the `MemoDiag` ACCDB-preservation hook in
+`DaoValidationTests.DaoMemoFidelity_*`) is in place; reuse it before
+forming further hypotheses.
+
+1. **Capture a DAO-authored single-table-with-MEMO baseline** under
+   the same fixture shape (use the existing
+   `DaoAuthoredMemo_WithEmbeddedNuls_ReaderReturnsExactContent`
+   harness; it already creates a fresh ACCDB via
+   `$db.CreateDatabase`). Diff the TDEF, the per-table usage-map
+   page, and the data page against the writer's output. **This is the
+   prerequisite for the next hypothesis batch.** Without it we are
+   guessing.
+2. **Stamp the data page number into the real-idx `first_dp` slot
+   (TDEF +38 of physical descriptor)** for non-FK indexes after the
+   first row insert. Currently it points at the PK leaf; suspicion
+   is that DAO uses it as the data-page-chain head.
+3. **Advance the real-idx `unique_entry_count` slot** in lockstep
+   with row inserts (companion to H36). Same TDEF write as #2 above.
+4. **Investigate REFERENCE-form usage maps.** If the DAO baseline
+   from #1 shows type `0x01` for a populated single-page table,
+   implement the REFERENCE → page-bitmap-page indirection in
+   `MarkPageInOwnedMapAsync`.
+
+### Files touched / artifacts
+
+- [`JetDatabaseWriter/Pages/DataPageInserter.cs`](../../JetDatabaseWriter/Pages/DataPageInserter.cs):
+  added `MarkPageInOwnedMapAsync` + `TrySetUsageMapBit`; called from
+  `FindInsertTargetAsync` only when `tdefPage > 1024`. **This change
+  is safe to keep**: it does not regress any existing test (full DAO
+  test suite re-run before write-up) and is a structural prerequisite
+  for any DAO-driven recordset enumeration to ever work, even if it
+  is not by itself sufficient.
+- [`JetDatabaseWriter.FormatProbe/Program.cs`](../../JetDatabaseWriter.FormatProbe/Program.cs):
+  added `DIAG_MEMO_READBACK` (+ `DIAG_MEMO_TABLE`) probe that opens
+  `%TEMP%\JetDatabaseWriter.MemoDiag\writer_memo.accdb`, dumps TDEF
+  bytes 0..96, the usage-map page rows, and the first data page row
+  body — for any user table by name.
+- [`JetDatabaseWriter.Tests/RoundTrip/DaoValidationTests.cs`](../../JetDatabaseWriter.Tests/RoundTrip/DaoValidationTests.cs):
+  added best-effort copy-on-failure hooks to
+  `%TEMP%\JetDatabaseWriter.MemoDiag\writer_{memo,count}.accdb` so
+  the next session can resume from the on-disk artifact without
+  re-running the full DAO harness. The test itself remains skipped
+  with the same `Skip = "H48 unblocked DAO OpenRecordset, but DAO
+  sees writer-inserted MEMO rows as an empty recordset…"` reason —
+  H49's partial fix did not flip it to passing.
+
+### Hypothesis ledger updates
+
+Add to §4.1 (Confirmed and fixed) once the full root cause lands;
+provisional H49 entry below for the partial mitigation:
+
+| ID | Bug | Fix | Test / verification |
+|---|---|---|---|
+| **H49 (partial)** | New data pages appended to user tables were never recorded in the per-table owned-pages usage map (TDEF +0x37). DAO sequential recordsets walk the map and see 0 pages, even though the data page exists with correct `parent_tdef`. | `DataPageInserter.MarkPageInOwnedMapAsync` sets the INLINE bitmap bit in both owned-pages (TDEF +0x37) and free-space (TDEF +0x3B) rows for `tdefPage > 1024`. | Verified the bit lands correctly via `DIAG_MEMO_READBACK` probe. **Does not by itself unskip `DaoMemoFidelity`** — see §5a "Likely remaining causes" for the next layer. |
+
+
+
 For each, capture a fresh `dao-baseline-diff.md` against an
 appropriately-shaped DAO-authored fixture before forming hypotheses.
 The probe's existing structure (§3 changed-pages, §4 hex diff,
