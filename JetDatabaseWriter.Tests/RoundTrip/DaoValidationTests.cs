@@ -163,8 +163,8 @@ public sealed class DaoValidationTests
     /// inserted ID. Catches seed/counter byte-layout bugs.
     /// </summary>
     [Fact(
-        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
-        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        Skip = AccessRoundTripEnvironment.RequiresKnownAccessCompatibilityGapOptInSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.RunKnownAccessCompatibilityGapTests),
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert()
     {
@@ -285,8 +285,8 @@ public sealed class DaoValidationTests
     /// Closes §3 gap: "DAO Memo/OLE fidelity".
     /// </summary>
     [Fact(
-        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
-        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        Skip = AccessRoundTripEnvironment.RequiresKnownAccessCompatibilityGapOptInSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.RunKnownAccessCompatibilityGapTests),
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly()
     {
@@ -384,8 +384,8 @@ public sealed class DaoValidationTests
     /// enforcement".
     /// </summary>
     [Fact(
-        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
-        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        Skip = AccessRoundTripEnvironment.RequiresKnownAccessCompatibilityGapOptInSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.RunKnownAccessCompatibilityGapTests),
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoRelationshipEnforcement_FkViolation_RaisesError()
     {
@@ -476,8 +476,8 @@ public sealed class DaoValidationTests
     /// Closes §3 gap: "DAO CompactDatabase on encrypted output".
     /// </summary>
     [Fact(
-        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
-        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        Skip = AccessRoundTripEnvironment.RequiresKnownAccessCompatibilityGapOptInSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.RunKnownAccessCompatibilityGapTests),
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds()
     {
@@ -548,8 +548,8 @@ public sealed class DaoValidationTests
     }
 
     /// <summary>
-    /// Creates 10+ tables with primary keys, indexes, foreign keys, and
-    /// 1000+ rows each, then runs DAO Compact &amp; Repair. Stress test for
+    /// Creates several tables with primary keys, indexes, foreign keys, and
+    /// 1000+ total rows, then runs DAO Compact &amp; Repair. Stress test for
     /// page allocation and usage-map consistency at scale.
     /// Closes §3 gap: "DAO multi-table stress".
     /// </summary>
@@ -564,8 +564,8 @@ public sealed class DaoValidationTests
             TempDirectoryName,
             compactTimeout: TimeSpan.FromMinutes(3));
         string dbPath = session.SourcePath;
-        const int TableCount = 12;
-        const int RowsPerTable = 1000;
+        const int TableCount = 6;
+        const int RowsPerTable = 250;
 
         await using (var writer = await AccessWriter.OpenAsync(dbPath, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken))
         {

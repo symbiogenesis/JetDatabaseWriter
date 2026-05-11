@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -67,8 +68,8 @@ public sealed class LinkedTableTests : IDisposable
         // Sanity check the API shape on a database with no linked entries:
         // injection of an actual linked entry is exercised by
         // LinkedTables_ListLinkedTables_WithAsyncLinkedEntry_ReturnsSourceInfo.
-        string sourcePath = CreateTempAccdbDatabase("LinkedSrc");
-        string frontEndPath = CreateTempAccdbDatabase("LinkedFE");
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkedSrc");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedFE");
 
         // Add a table to the source database
         await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
@@ -93,8 +94,8 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTables_ListLinkedTables_WithAsyncLinkedEntry_ReturnsSourceInfo()
     {
-        string sourcePath = CreateTempAccdbDatabase("LinkedSrcAsync");
-        string frontEndPath = CreateTempAccdbDatabase("LinkedFEAsync");
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkedSrcAsync");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedFEAsync");
 
         await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
@@ -131,7 +132,7 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTables_CreateLinkedOdbcTableAsync_PersistsType6EntryWithConnectionString()
     {
-        string frontEndPath = CreateTempAccdbDatabase("LinkedOdbcFE");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcFE");
         const string connect = "ODBC;DRIVER={SQL Server};SERVER=db.example.com;DATABASE=Sales;Trusted_Connection=Yes";
 
         await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
@@ -158,7 +159,7 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTables_CreateLinkedOdbcTableAsync_AddsOdbcPrefixWhenMissing()
     {
-        string frontEndPath = CreateTempAccdbDatabase("LinkedOdbcPrefix");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcPrefix");
         const string connect = "DSN=Sales;UID=app;PWD=secret";
 
         await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
@@ -181,7 +182,7 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTables_CreateLinkedOdbcTableAsync_WhenCancelled_ThrowsOperationCanceledException()
     {
-        string frontEndPath = CreateTempAccdbDatabase("LinkedOdbcCancel");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcCancel");
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
@@ -193,7 +194,7 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTables_CreateLinkedOdbcTableAsync_DuplicateLocalTableName_Throws()
     {
-        string frontEndPath = CreateTempAccdbDatabase("LinkedOdbcDup");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcDup");
 
         await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(
@@ -208,7 +209,7 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTables_CreateLinkedTableAsync_WhenCancelled_ThrowsOperationCanceledException()
     {
-        string frontEndPath = CreateTempAccdbDatabase("LinkedCancel");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedCancel");
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
@@ -221,7 +222,7 @@ public sealed class LinkedTableTests : IDisposable
     {
         // When a linked Access table (type 4) is encountered, the reader
         // opens the referenced database and reads the foreign table.
-        string sourcePath = CreateTempAccdbDatabase("LinkSrc2");
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkSrc2");
 
         await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
@@ -262,8 +263,8 @@ public sealed class LinkedTableTests : IDisposable
     {
         // Create a source database with data, and a front-end with a linked table entry.
         // Reading the linked table from the front-end should return the source data.
-        string sourcePath = CreateTempAccdbDatabase("LinkSrc");
-        string frontEndPath = CreateTempAccdbDatabase("LinkFE");
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkSrc");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkFE");
 
         const string sourceTableName = "Products";
 
@@ -312,8 +313,8 @@ public sealed class LinkedTableTests : IDisposable
     public async Task LinkedTable_StreamLinkedTable_ReturnsSourceRows()
     {
         // Streaming through a linked table should yield source rows.
-        string sourcePath = CreateTempAccdbDatabase("LinkStrSrc");
-        string frontEndPath = CreateTempAccdbDatabase("LinkStrFE");
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkStrSrc");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkStrFE");
 
         await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
@@ -345,8 +346,8 @@ public sealed class LinkedTableTests : IDisposable
     public async Task LinkedTable_ListTables_ExcludesLinkedTables()
     {
         // ListTables should not include linked tables — they require special handling.
-        string sourcePath = CreateTempAccdbDatabase("LinkExSrc");
-        string frontEndPath = CreateTempAccdbDatabase("LinkExFE");
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkExSrc");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkExFE");
 
         await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
@@ -367,7 +368,7 @@ public sealed class LinkedTableTests : IDisposable
     {
         // Reading a linked table whose source database doesn't exist should
         // throw FileNotFoundException, not return garbage.
-        string frontEndPath = CreateTempAccdbDatabase("LinkMiss");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkMiss");
 
         await InjectLinkedTableEntryAsync(
             frontEndPath,
@@ -391,7 +392,7 @@ public sealed class LinkedTableTests : IDisposable
     public async Task LinkedTable_ReadLinkedTable_RelativeTraversalPath_IsBlockedByDefault()
     {
         // A malicious relative path that escapes the host DB directory should be blocked.
-        string frontEndPath = CreateTempAccdbDatabase("LinkTraversal");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkTraversal");
 
         await InjectLinkedTableEntryAsync(
             frontEndPath,
@@ -409,7 +410,7 @@ public sealed class LinkedTableTests : IDisposable
     public async Task LinkedTable_ReadLinkedTable_RelativeTraversalPath_CanBeAllowedByCallback()
     {
         // Trusted callers can explicitly allow an escaped relative path via callback.
-        string sourcePath = CreateTempAccdbDatabase("LinkPolicySrc");
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkPolicySrc");
 
         await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
@@ -427,7 +428,7 @@ public sealed class LinkedTableTests : IDisposable
         Directory.CreateDirectory(nestedDir);
         _tempDirectories.Add(nestedDir);
 
-        string frontEndPath = CreateTempAccdbDatabaseInDirectory("LinkPolicyFE", nestedDir);
+        string frontEndPath = await CreateTempAccdbDatabaseInDirectoryAsync("LinkPolicyFE", nestedDir);
         string relativePath = Path.Combine("..", Path.GetFileName(sourcePath));
 
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedTrusted", relativePath, "TrustedData", TestContext.Current.CancellationToken);
@@ -451,8 +452,8 @@ public sealed class LinkedTableTests : IDisposable
     public async Task LinkedTable_ReadLinkedTable_PathOutsideAllowlist_ThrowsUnauthorizedAccess()
     {
         // Allowlist should block linked sources outside trusted directories.
-        string sourcePath = CreateTempAccdbDatabase("LinkAllowSrc");
-        string frontEndPath = CreateTempAccdbDatabase("LinkAllowFE");
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkAllowSrc");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkAllowFE");
 
         await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
@@ -485,8 +486,8 @@ public sealed class LinkedTableTests : IDisposable
     public async Task LinkedTable_ListLinkedTables_ReturnsCorrectMetadata()
     {
         // Validate that the linked table metadata from the catalog is complete.
-        string sourcePath = CreateTempAccdbDatabase("LinkMetaSrc");
-        string frontEndPath = CreateTempAccdbDatabase("LinkMetaFE");
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkMetaSrc");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkMetaFE");
 
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedMeta", sourcePath, "SourceTable", TestContext.Current.CancellationToken);
 
@@ -507,8 +508,8 @@ public sealed class LinkedTableTests : IDisposable
         var ct = TestContext.Current.CancellationToken;
 
         // GetColumnMetadata on a linked table should return the source table's schema.
-        string sourcePath = CreateTempAccdbDatabase("LinkSchSrc");
-        string frontEndPath = CreateTempAccdbDatabase("LinkSchFE");
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkSchSrc");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkSchFE");
 
         await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
         {
@@ -585,19 +586,33 @@ public sealed class LinkedTableTests : IDisposable
         await writer.CreateLinkedTableAsync(linkedTableName, sourceDbPath, foreignTableName, cancellationToken);
     }
 
-    /// <summary>Creates a temporary ACCDB by copying NorthwindTraders.accdb.</summary>
-    private string CreateTempAccdbDatabase(string prefix)
+    /// <summary>Creates a temporary empty ACCDB.</summary>
+    private async ValueTask<string> CreateTempAccdbDatabaseAsync(string prefix)
     {
         string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.accdb");
-        File.Copy(TestDatabases.NorthwindTraders, temp, overwrite: true);
+        await using (await AccessWriter.CreateDatabaseAsync(
+            temp,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+        }
+
         _tempFiles.Add(temp);
         return temp;
     }
 
-    private string CreateTempAccdbDatabaseInDirectory(string prefix, string directory)
+    private async ValueTask<string> CreateTempAccdbDatabaseInDirectoryAsync(string prefix, string directory)
     {
         string temp = Path.Combine(directory, $"{prefix}_{Guid.NewGuid():N}.accdb");
-        File.Copy(TestDatabases.NorthwindTraders, temp, overwrite: true);
+        await using (await AccessWriter.CreateDatabaseAsync(
+            temp,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+        }
+
         _tempFiles.Add(temp);
         return temp;
     }
