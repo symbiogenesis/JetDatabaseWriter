@@ -452,7 +452,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
             int numRows = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(umOff + 12, 2));
             Assert.Equal(2, numRows);
 
-            // Each row is 69 bytes: 1-byte type-0 marker + 68 bitmap bytes.
+            // Each row is 69 bytes: 1-byte type-0 marker + 4-byte start page + 64 bitmap bytes.
             int row0Off = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(umOff + 14, 2));
             int row1Off = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(umOff + 16, 2));
 

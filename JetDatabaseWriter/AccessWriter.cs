@@ -2496,7 +2496,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     // Matches the DAO-observed shape for a real-index usage-map page: two leading
     // zero rows, then one 69-byte usage-map row per real index. Each usage-map row
-    // stores a page-aligned base in bytes 1..3 and a bitmap starting at byte 4.
+    // stores a page-aligned base in bytes 1..4 and a bitmap starting at byte 5.
     private async ValueTask<long> AppendIndexUsageMapPageAsync(long[] leafPageNumbers, CancellationToken cancellationToken)
     {
         byte[] page = new byte[_pgSz];
@@ -2517,12 +2517,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
 
             long leafPageNumber = leafPageNumbers[rowIndex - 2];
-            int basePageNumber = checked((int)((leafPageNumber / 8) * 8));
+            int basePageNumber = leafPageNumber < 512
+                ? 0
+                : checked((int)((leafPageNumber / 8) * 8));
             int bitIndex = checked((int)(leafPageNumber - basePageNumber));
 
             page[rowStart] = 0x00;
-            WriteUInt24(page, rowStart + 1, basePageNumber);
-            page[rowStart + 4 + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
+            Wi32(page, rowStart + 1, basePageNumber);
+            page[rowStart + 5 + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
         }
 
         Wi32(page, _dataPage.TDefOff, 0);

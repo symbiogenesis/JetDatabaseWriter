@@ -39,7 +39,10 @@ public sealed class AccessRoundTripTests
 {
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(2);
 
-    [Fact(Skip = "H48 unblocked DAO OpenRecordset on FK tables (writer's tdef_len now matches DAO), but DAO Compact still drops every writer-inserted user-table row from tables with an enforced FK relationship (post-compact RowCount=0 vs pre=N). Adjacent FK / data-page-pointer issue separate from the TDEF tdef_len defect H48 fixed. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task SinglePk_AndSingleColumnFk_SurviveCompactAndRepair()
     {
         await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
@@ -130,7 +133,10 @@ public sealed class AccessRoundTripTests
         Assert.Contains(post.Indexes[Child], i => i.IsForeignKey && i.Columns == "CustomerID" && i.CascadeDeletes);
     }
 
-    [Fact(Skip = "H48 unblocked DAO OpenRecordset on FK tables (writer's tdef_len now matches DAO), but DAO Compact still drops every writer-inserted user-table row from tables with an enforced FK relationship (post-compact RowCount=0 vs pre=N). Adjacent FK / data-page-pointer issue separate from the TDEF tdef_len defect H48 fixed. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task CompositePk_AndMultiColumnFk_SurviveCompactAndRepair()
     {
         await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(

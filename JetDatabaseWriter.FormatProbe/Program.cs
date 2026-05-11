@@ -84,6 +84,148 @@ if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_LONG_ROW
     }
 }
 
+if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_MEMO_READBACK")))
+{
+    string dbPath = Environment.GetEnvironmentVariable("DIAG_MEMO_PATH")
+        ?? Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.MemoDiag", "writer_memo.accdb");
+    Console.WriteLine($"Reading {dbPath}");
+    await using var rdr = await AccessReader.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false });
+    string tableName = Environment.GetEnvironmentVariable("DIAG_MEMO_TABLE") ?? "MemoFidelity";
+    var dt = await rdr.ReadDataTableAsync(tableName);
+    Console.WriteLine($"Reader sees RowCount={dt!.Rows.Count}");
+    foreach (System.Data.DataRow r in dt!.Rows)
+    {
+        Console.WriteLine($"  Id={r[0]}");
+        if (dt.Rows.Count > 5)
+        {
+            break;
+        }
+    }
+
+    // Dump TDEF and the first data page.
+    var catalog = await ReadCatalogAsync(rdr);
+    var entry = catalog.First(c => c.Name == tableName);
+    Console.WriteLine($"TDEF page = {entry.TdefPage}");
+    byte[] tdefPage = await rdr.ReadPageAsync(entry.TdefPage);
+    Console.WriteLine($"TDEF[0]={tdefPage[0]:X2} (0x02 expected)");
+    int tdefLen = BitConverter.ToInt32(tdefPage, 8);
+    int rowCount = BitConverter.ToInt32(tdefPage, 16);
+    int firstDataPage = BitConverter.ToInt32(tdefPage, 36); // owned-pages or first_dp ?
+    Console.WriteLine($"TDEF tdef_len={tdefLen} row_count={rowCount}");
+
+    // Hex dump the first 64 bytes of TDEF
+    var hex = new StringBuilder("TDEF[0..96] = ");
+    for (int i = 0; i < 96; i++)
+    {
+        _ = hex.Append(tdefPage[i].ToString("X2", CultureInfo.InvariantCulture));
+        _ = hex.Append(i % 16 == 15 ? "\n              " : " ");
+    }
+
+    Console.WriteLine(hex.ToString());
+    Console.WriteLine($"first 4 bytes after position 36 (data page hint): {BitConverter.ToInt32(tdefPage, 36)}");
+
+    // Decode owned-pages usage map pointer at offset 0x37 (1-byte row + 3-byte page LE).
+    int ownedRow = tdefPage[0x37];
+    int ownedPage = tdefPage[0x38] | (tdefPage[0x39] << 8) | (tdefPage[0x3A] << 16);
+    int freeRow = tdefPage[0x3B];
+    int freePage = tdefPage[0x3C] | (tdefPage[0x3D] << 8) | (tdefPage[0x3E] << 16);
+    Console.WriteLine($"owned-pages usage-map: row={ownedRow} page={ownedPage}");
+    Console.WriteLine($"free-space usage-map: row={freeRow} page={freePage}");
+
+    // Dump the usage-map page.
+    if (ownedPage > 0 && ownedPage < 100000)
+    {
+        byte[] um = await rdr.ReadPageAsync(ownedPage);
+        Console.WriteLine($"usage-map page {ownedPage}: tag={um[0]:X2}{um[1]:X2} numRows={BitConverter.ToUInt16(um, 12)}");
+        var umHex = new StringBuilder($"page[{ownedPage}][0..160] = ");
+        for (int i = 0; i < 160; i++)
+        {
+            _ = umHex.Append(um[i].ToString("X2", CultureInfo.InvariantCulture));
+            _ = umHex.Append(i % 16 == 15 ? "\n              " : " ");
+        }
+
+        Console.WriteLine(umHex.ToString());
+
+        // Read the row at index ownedRow. Row offsets are at RowsStart..
+        int rowOff = um[14 + (ownedRow * 2)] | (um[15 + (ownedRow * 2)] << 8);
+        rowOff &= 0x1FFF;
+        Console.WriteLine($"usage-map row{ownedRow} offset = {rowOff}");
+
+        // Print first 80 bytes of the row.
+        var rowHex = new StringBuilder("usage-map row body = ");
+        for (int i = rowOff; i < Math.Min(rowOff + 80, um.Length); i++)
+        {
+            _ = rowHex.Append(um[i].ToString("X2", CultureInfo.InvariantCulture));
+            _ = rowHex.Append((i - rowOff) % 16 == 15 ? "\n              " : " ");
+        }
+
+        Console.WriteLine(rowHex.ToString());
+
+        int rowOff1 = um[14 + (freeRow * 2)] | (um[15 + (freeRow * 2)] << 8);
+        rowOff1 &= 0x1FFF;
+        Console.WriteLine($"usage-map row{freeRow} (free) offset = {rowOff1}");
+        var rowHex1 = new StringBuilder("usage-map row1 body = ");
+        for (int i = rowOff1; i < Math.Min(rowOff1 + 16, um.Length); i++)
+        {
+            _ = rowHex1.Append(um[i].ToString("X2", CultureInfo.InvariantCulture));
+            _ = rowHex1.Append(' ');
+        }
+
+        Console.WriteLine(rowHex1.ToString());
+    }
+
+    long fileLen = new FileInfo(dbPath).Length;
+    int pageSize = rdr.PageSize;
+    long maxPage = fileLen / pageSize;
+    Console.WriteLine($"file pages = {maxPage}");
+    for (long p = entry.TdefPage + 1; p <= entry.TdefPage + 60 && p < maxPage; p++)
+    {
+        byte[] pg = await rdr.ReadPageAsync(p);
+        if (pg[0] == 0x01)
+        {
+            int parentTdef = BitConverter.ToInt32(pg, 4);
+            if (parentTdef == entry.TdefPage)
+            {
+                int numRows = BitConverter.ToUInt16(pg, 12);
+                int freeSpace = BitConverter.ToUInt16(pg, 2);
+                Console.WriteLine($"data page {p}: numRows={numRows} freeSpace={freeSpace} parentTdef={parentTdef}");
+                int rowOffP = pg[14] | (pg[15] << 8);
+                int rowStart = rowOffP & 0x1FFF;
+                Console.WriteLine($"  row0 raw offset word = 0x{rowOffP:X4}, start = {rowStart}");
+                var pgHex = new StringBuilder($"page[{p}][0..96] = ");
+                for (int i = 0; i < 96; i++)
+                {
+                    _ = pgHex.Append(pg[i].ToString("X2", CultureInfo.InvariantCulture));
+                    _ = pgHex.Append(i % 16 == 15 ? "\n              " : " ");
+                }
+
+                Console.WriteLine(pgHex.ToString());
+
+                // Dump the row body itself.
+                int rowEnd = pg.Length;
+                if (numRows > 1)
+                {
+                    int prevRowOff = pg[16] | (pg[17] << 8);
+                    rowEnd = prevRowOff & 0x1FFF;
+                }
+
+                int rowLen = rowEnd - rowStart;
+                Console.WriteLine($"  row0 length = {rowLen}");
+                var rowBodyHex = new StringBuilder($"page[{p}] row0 body = ");
+                for (int i = rowStart; i < rowEnd && i < rowStart + 200; i++)
+                {
+                    _ = rowBodyHex.Append(pg[i].ToString("X2", CultureInfo.InvariantCulture));
+                    _ = rowBodyHex.Append((i - rowStart) % 16 == 15 ? "\n              " : " ");
+                }
+
+                Console.WriteLine(rowBodyHex.ToString());
+            }
+        }
+    }
+
+    return 0;
+}
+
 if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_RT_DAO_BASELINE")))
 {
     string baseline = Environment.GetEnvironmentVariable("DIAG_RT_BASELINE")
