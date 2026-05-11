@@ -42,13 +42,15 @@ public sealed class AccessRoundTripTests
     [Fact(Skip = "H48 unblocked DAO OpenRecordset on FK tables (writer's tdef_len now matches DAO), but DAO Compact still drops every writer-inserted user-table row from tables with an enforced FK relationship (post-compact RowCount=0 vs pre=N). Adjacent FK / data-page-pointer issue separate from the TDEF tdef_len defect H48 fixed. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task SinglePk_AndSingleColumnFk_SurviveCompactAndRepair()
     {
-        await using var session = await RoundTripSession.CreateAsync(TestContext.Current.CancellationToken);
+        await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+            TestContext.Current.CancellationToken,
+            compactTimeout: CompactTimeout);
 
         const string Parent = "RT_Customers";
         const string Child = "RT_Orders";
         const string FkName = "RT_FK_Orders_Customers";
 
-        await using (var writer = await session.OpenWriterAsync())
+        await using (var writer = await session.OpenWriterAsync(TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 Parent,
@@ -131,13 +133,15 @@ public sealed class AccessRoundTripTests
     [Fact(Skip = "H48 unblocked DAO OpenRecordset on FK tables (writer's tdef_len now matches DAO), but DAO Compact still drops every writer-inserted user-table row from tables with an enforced FK relationship (post-compact RowCount=0 vs pre=N). Adjacent FK / data-page-pointer issue separate from the TDEF tdef_len defect H48 fixed. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task CompositePk_AndMultiColumnFk_SurviveCompactAndRepair()
     {
-        await using var session = await RoundTripSession.CreateAsync(TestContext.Current.CancellationToken);
+        await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+            TestContext.Current.CancellationToken,
+            compactTimeout: CompactTimeout);
 
         const string Parent = "RT_Orders2";
         const string Child = "RT_OrderItems2";
         const string FkName = "RT_FK_Items_Orders";
 
-        await using (var writer = await session.OpenWriterAsync())
+        await using (var writer = await session.OpenWriterAsync(TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 Parent,
@@ -398,75 +402,5 @@ public sealed class AccessRoundTripTests
         public Dictionary<string, int> RowCounts { get; } = new(StringComparer.Ordinal);
 
         public int RelationshipRowCount { get; set; }
-    }
-
-    /// <summary>
-    /// Owns a temp directory containing a copy of the Northwind fixture and
-    /// the compacted output. Cleaned up on dispose.
-    /// </summary>
-    private sealed class RoundTripSession : IAsyncDisposable
-    {
-        private RoundTripSession(string workDir, string source, string compacted)
-        {
-            WorkDir = workDir;
-            SourcePath = source;
-            CompactedPath = compacted;
-        }
-
-        public string WorkDir { get; }
-
-        public string SourcePath { get; }
-
-        public string CompactedPath { get; }
-
-        public static async Task<RoundTripSession> CreateAsync(CancellationToken ct)
-        {
-            string work = Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.Tests.RoundTrip", Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(work);
-            string source = Path.Combine(work, "source.accdb");
-            string compacted = Path.Combine(work, "compacted.accdb");
-            await using (FileStream src = File.OpenRead(TestDatabases.NorthwindTraders))
-            await using (FileStream dst = File.Create(source))
-            {
-                await src.CopyToAsync(dst, ct);
-            }
-
-            File.SetAttributes(source, File.GetAttributes(source) & ~FileAttributes.ReadOnly);
-            return new RoundTripSession(work, source, compacted);
-        }
-
-        public ValueTask<AccessWriter> OpenWriterAsync() =>
-            AccessWriter.OpenAsync(SourcePath, new AccessWriterOptions { UseLockFile = false });
-
-        public void RunDaoCompact()
-        {
-            var result = AccessRoundTripEnvironment.RunDaoCompact(SourcePath, CompactedPath, CompactTimeout);
-            if (result.ExitCode != 0 || !File.Exists(CompactedPath))
-            {
-                throw new Xunit.Sdk.XunitException(
-                    $"DAO CompactDatabase failed (exit={result.ExitCode}).\n--- stdout ---\n{result.StdOut}\n--- stderr ---\n{result.StdErr}");
-            }
-        }
-
-        public ValueTask DisposeAsync()
-        {
-            try
-            {
-                if (Directory.Exists(WorkDir))
-                {
-                    Directory.Delete(WorkDir, recursive: true);
-                }
-            }
-            catch (IOException)
-            {
-                // Best-effort cleanup; the temp folder is short-lived per run.
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // Best-effort cleanup; the temp folder is short-lived per run.
-            }
-
-            return ValueTask.CompletedTask;
-        }
     }
 }
