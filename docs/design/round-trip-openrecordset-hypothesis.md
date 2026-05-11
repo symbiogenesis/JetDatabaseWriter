@@ -10,6 +10,17 @@ sources to consult next.
 **H21 — The user-table real-idx physical descriptor's `first_dp` (root index
 page pointer) is zero or wrong.**
 
+> **Disconfirmed (2026-05-10).** Tested via
+> [WriterRealIdxFirstDpStampingTests.cs](../../JetDatabaseWriter.Tests/Indexes/WriterRealIdxFirstDpStampingTests.cs).
+> Both single-table-PK and parent+child fresh-database scenarios pass: every
+> non-FK real-idx slot's `first_dp` is > 1, in-range, and points at a page
+> with tag `0x04` (leaf). Verified at both the reader-decoded
+> (`IndexMetadata.FirstDp`) and raw on-disk-byte (`TDEF[phys + 38]`) layers.
+> The writer's `CreateTableInternalAsync` correctly patches `first_dp` after
+> appending the empty leaf page (see `AccessWriter.cs` lines 549–574). The
+> empty `''` in DAO's error message must originate from a different
+> length-prefixed read; investigate H22 / H23 / H24 next.
+
 Reasoning chain:
 
 1. **The empty `''` in `"Unrecognized database format ''"` is the strongest
