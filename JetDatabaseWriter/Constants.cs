@@ -273,6 +273,16 @@ internal static class Constants
         /// null-mask bit is set and the row's variable-offset table mirrors
         /// the layout DAO produces. See
         /// docs/design/round-trip-test-failures.md.
+        /// <para>
+        /// <b>Disconfirmed hypothesis (2026-05-10):</b> setting the inline
+        /// bitmask byte (index 3) to <c>0x80</c> -- which makes the 12 bytes
+        /// parse as a well-formed empty inline long-value rather than a
+        /// dangling chained-LVAL pointer to page 0 -- did NOT fix the
+        /// <c>OpenRecordset "Unrecognized database format ''."</c> error.
+        /// All 5 DAO recordset/compact tests still failed with the same COM
+        /// exception. The remaining defect lives elsewhere in the user-table
+        /// TDEF, not in the catalog row's <c>LvProp</c> payload.
+        /// </para>
         /// </summary>
         public static readonly byte[] DefaultLvPropPlaceholder = new byte[12];
     }
