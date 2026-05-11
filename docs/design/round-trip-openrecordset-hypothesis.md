@@ -5,10 +5,26 @@ Tracks why DAO `OpenRecordset` rejects writer-created user tables with
 `"Unrecognized database format ''."` (`OpenDatabase` succeeds; only
 recordset materialization fails).
 
-> **Working assumption** (established by H21):
-> The empty `''` in DAO's error means DAO read a length-prefixed name or
-> page-type tag and got zero bytes. The failure surfaces the moment DAO
-> builds an `IndexData` cursor for the user table.
+> **RESOLVED 2026-05-10.** Root cause confirmed: **H48 — writer's
+> `tdef_len` field undercounts the TDEF data area by 8 bytes** for any
+> Jet4/ACE table that has at least one index. DAO walks the TDEF using
+> `tdef_len` as a hard upper bound and rejects the table when its
+> internal cursor parser stops 8 bytes short of the expected end of the
+> index-name section. Fix landed in
+> [`TDefPageBuilder.BuildTDefPagesWithIndexOffsets`](../../JetDatabaseWriter/Schema/TDefPageBuilder.cs):
+> after the trailing `0xFFFF` "no usage-map" sentinel, advance `namePos`
+> by 8 bytes (the page is zero-initialised so no payload is needed) so
+> the `tdef_len` and `freeSpace` calculations include them. Verified
+> empirically via the `DIAG_RT_DAO_BASELINE` probe: writer-authored
+> `RT_Customers` now matches DAO byte-for-byte in this region and DAO
+> `OpenRecordset` returns the table successfully.
+>
+> **Adjacent fix:** `RelationshipManager.AddFkLogicalIdxEntry` was
+> stamping the format-wide magic `0x00000659` on the new real-idx
+> physical descriptor instead of the real-idx-specific `0x00000783`
+> (`Constants.TableDefinition.Jet4.RealIdx.LeadingMagic`). Corrected at
+> the same time so `AssertTdefMagicStampsAsync` round-trip checks pass
+> on FK-bearing tables.
 
 ---
 
@@ -16,96 +32,59 @@ recordset materialization fails).
 
 | | |
 |---|---|
-| **Active root-cause candidate** | **H46 — writer-emitted `Required=true` LvProp entries** |
-| **Next experiment** | Bypass `BuildLvPropBlob` and re-test DAO `OpenRecordset` (see §3) |
-| **Probe harness** | `DIAG_RT_DAO_BASELINE=1 dotnet run --project JetDatabaseWriter.FormatProbe` → `dao-baseline-diff.md` |
-| **Hypotheses tested** | H21 – H45 (25 total) — see §4 |
-| **TDEF byte regions ruled out** | All 13 testable regions match DAO byte-for-byte (§4 §7 results) |
+| **Root cause** | **H48 — writer-emitted `tdef_len` was 8 bytes short of DAO baseline** |
+| **Fix** | [`TDefPageBuilder.BuildTDefPagesWithIndexOffsets`](../../JetDatabaseWriter/Schema/TDefPageBuilder.cs): advance `namePos += 8` after the FFFF sentinel for `jet4 && numIdx > 0` |
+| **Verification** | `DIAG_RT_DAO_BASELINE` probe (extended with `OpenRecordset` smoke step) — both writer copy and DAO copy now report `OpenRecordset('RT_Customers')` exit=0 |
+| **Tests unblocked** | `DaoOpenRecordset_RowCount_MatchesWriterOutput`, `DaoIndexTraversal_Seek_LocatesRowByPrimaryKey` (previously skipped on H46/H25 reasons; now pass) |
+| **Adjacent issues newly exposed** | FK enforcement (separate hypothesis), MEMO row visibility under DAO, autonumber continuation seed, encrypted Compact, FK-table Compact row preservation — see §4.5 |
+| **Probe harness** | `DIAG_RT_DAO_BASELINE=1 dotnet run --project JetDatabaseWriter.FormatProbe` → `dao-baseline-diff.md` (now also reports `OpenRecordset` outcome in §0) |
+| **Hypotheses tested** | H21 – H48 (28 total) — see §4 |
 
 ---
 
-## 2. Smoking gun — H46 (LvProp `Required` blob)
+## 2. Smoking gun — H48 (TDEF `tdef_len` undercounts trailing region)
 
-> Empirically isolated 2026-05-10 via §5 of `dao-baseline-diff.md`
-> (after the probe was extended to scan writer-added MSysObjects pages).
+> Empirically isolated 2026-05-10 by running the H46 disconfirm test:
+> bypassing `BuildLvPropBlob` showed the catalog row's `LvProp` payload
+> is **irrelevant** to `OpenRecordset` (DAO still rejected the table
+> when our `LvProp` matched DAO's). With LvProp ruled out, the §4 TDEF
+> hex diff still showed two byte-level divergences in the writer's
+> `RT_Customers` TDEF page that §7's accumulated hypothesis battery had
+> not covered:
 
-### 2.1 What §5 showed
+### 2.1 TDEF byte-level diffs (writer vs DAO, after H46 disconfirm)
 
-| | Writer row | DAO row |
-|---|---:|---:|
-| Total `MSysObjects.RT_Customers` row length | **197 bytes** | **99 bytes** |
-| Fixed prefix (numCols + Id + ParentId + Type + flags + dates + UCS-2 `RT_Customers`) | bytes 0..0x37 (identical) | bytes 0..0x37 (identical) |
-| Trailer (`0B 00 FF 40 00`) | last 5 bytes | last 5 bytes |
-| **Variable-length payload** | **~140 bytes** | **~42 bytes** |
+| Offset | Writer | DAO | Meaning |
+|---:|---:|---:|---|
+| 0x02–0x03 | `FB 0E` (free=0x0EFB) | `F3 0E` (free=0x0EF3) | `freeSpace` = `pgSz − tdef_len − 8`; differs by 8 |
+| 0x08–0x0B | `FD 00 00 00` (`tdef_len=253`) | `05 01 00 00` (`tdef_len=261`) | TDEF data length; **differs by 8** |
+| 0x38, 0x3C | `…BC30…` | `…BBA0…` | owned/free-space-pages pointers (legitimately page-number-dependent) |
+| 0x74 | `01` | `00` | `Name` (TEXT) column descriptor `ExtraFlags` byte 16 = COMPRESSED_UNICODE (writer default true) |
+| 0xC0, 0xC3 | `…BC2/BC1…` | `…BBA/BBB…` | first-data-page pointers (page-number-dependent) |
 
-The writer's variable-length payload begins with the magic
-`4D 52 32 00` ("**MR2\0**" — Jackcess `PropertyMaps` v2 property-bag
-magic) and contains the literal UCS-2 strings **`Required`**,
-**`CustomerID`**, **`Name`** — i.e., a per-column property map with
-`Required=true` for both NOT-NULL columns.
+The 8-byte tdef_len delta corresponds to **8 trailing zero bytes
+immediately after the `0xFFFF` sentinel** that the writer was already
+emitting at the end of the index-name section. Both files have
+identical zero bytes there (the page is zero-initialised), but DAO's
+`tdef_len` field counts those 8 bytes as part of the TDEF data area
+while the writer's did not.
 
-DAO's payload contains **no MR2 magic, no column names, no `Required`
-entry**. Its 42 bytes begin
-`00 40 05 1B 0B 00 00 00 00 00 46 00 46 00 46 00 3A 00 …`
-("FFF::::::::8 …") — a much smaller, opaque blob.
+### 2.2 Bisect verdict
 
-### 2.2 Source of the divergence
+| Variant | `OpenRecordset` outcome |
+|---|---|
+| Writer baseline (no fix) | ❌ "Unrecognized database format" |
+| H46 alone (LvProp suppressed) | ❌ "Unrecognized database format" |
+| H47 alone (`IsCompressedUnicode=false` on TEXT) | ❌ "Unrecognized database format" |
+| **H48 alone (`tdef_len += 8` after FFFF sentinel)** | ✅ **OK** |
+| H47 + H48 | ✅ OK |
 
-[`JetExpressionConverter.BuildLvPropBlob`](../../JetDatabaseWriter/Schema/JetExpressionConverter.cs)
-emits a `Required=true` entry for every NOT-NULL column. Its in-source
-comment claims:
+H48 is **necessary and sufficient**. H47 (TEXT `ExtraFlags=0x00`) is
+benign — DAO accepts the COMPRESSED_UNICODE bit on writer-authored
+TEXT columns, and the writer's reader also handles both forms. H46 is
+benign — DAO accepts the writer's `Required=true` LvProp blob.
 
-> "The TDEF column-flag byte has no DAO-recognised bit for nullability,
-> so LvProp is the only round-trip-safe place to record it."
 
-**The DAO baseline empirically contradicts this comment.** DAO-authored
-`RT_Customers` has two NOT-NULL columns (`CustomerID`, `Name`) yet
-ships **no** `Required` LvProp entry. DAO must encode nullability
-elsewhere — most likely:
-
-- a TDEF column-flag bit not yet reverse-engineered, or
-- implicitly via the PK index's `REQUIRED_INDEX_FLAG` (0x08) for PK
-  columns plus a separate mechanism for non-PK NOT-NULL columns.
-
----
-
-## 3. Active hypothesis: H46
-
-**H46 — Writer-emitted `Required=true` LvProp entries cause DAO
-`OpenRecordset` to reject the table.**
-
-### 3.1 Test plan
-
-1. Bypass `BuildLvPropBlob` (force return `null`) at the call site in
-   [`AccessWriter.CreateTableInternalAsync`](../../JetDatabaseWriter/AccessWriter.cs#L626).
-2. Add an `OpenRecordset("RT_Customers")` smoke step to
-   [`DaoBaselineProbe`](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs)
-   so the probe yields a definitive PASS/FAIL signal.
-3. Re-run `DIAG_RT_DAO_BASELINE=1` and inspect the new step output.
-
-### 3.2 Decision tree
-
-| OpenRecordset outcome | Conclusion | Next step |
-|---|---|---|
-| ✅ Opens | **H46 confirmed.** LvProp is the sole blocker. | Reverse-engineer DAO's TDEF NOT-NULL encoding (likely a column-flag bit or implied by `REQUIRED_INDEX_FLAG`). Replace `BuildLvPropBlob`'s Required-emission path with the discovered TDEF mechanism. |
-| ❌ Still fails with `''` | LvProp is *one* blocker but not the only one. | Bisect the remaining ~42-byte DAO payload against the writer's smaller residual; identify the next divergence and formulate H47+. |
-
-### 3.3 Why this is the highest-payoff experiment
-
-Of the four post-§7 candidate regions originally listed (PK leaf page,
-empty data page, global usage-map page 1, LvProp), the first three were
-empirically disconfirmed:
-
-- **PK leaf page** — writer page 3009 vs DAO page 3003 differ in only
-  2 bytes, both at offset 4-5 (the parent-TDEF-page back-pointer,
-  legitimately different because the two files used different TDEF
-  pages). Bytes 0..3 and 6..4095 are byte-identical. (Disconfirms H39
-  and H40 in one stroke.)
-- **Empty user-table data page / global usage-map** — no candidate
-  divergence remains after §7 verified all owned-pages /
-  free-space-pages slots and per-table usage-map row layouts match.
-- **LvProp** — the only region with a multi-byte writer-vs-DAO
-  divergence (~98 bytes, see §2).
 
 ---
 
@@ -133,6 +112,8 @@ empirically disconfirmed:
 | **H43** | `unknown_jet4` 4-byte field after `next_pg` | Code review against `JetFormat.Jet4Format` | No such field for Jet4. |
 | **H44** | TDEF `owned_pages[0x37]` / `free_space_pages[0x3B]` non-zero | §7 | Writer populates both 4-byte slots with valid usage-map row pointers. |
 | **H45** | per-table usage-map row `tdef_back_pointer` (REFERENCE rows only) | §7 | N/A — both rows are INLINE; depends on H26. |
+| **H46** | Writer-emitted `Required=true` LvProp entries reject `OpenRecordset` | Bypassed `BuildLvPropBlob` via `DIAG_RT_NO_LVPROP=1` env-var hook; re-ran probe with new `OpenRecordset` smoke step | DAO still rejected the table after the writer's LvProp matched DAO's 12-byte placeholder shape. The catalog row's `LvProp` column is **not** consulted by `OpenRecordset`. |
+| **H47** | TEXT/MEMO `ExtraFlags` byte 16 must be `0x00` (no COMPRESSED_UNICODE) | Set `IsCompressedUnicode=false` on the probe's `Name` column; re-ran | DAO accepts both `0x00` and `0x01` here; writer matched DAO byte-for-byte at offset 0x74 but `OpenRecordset` still failed. Benign divergence. |
 
 ### 4.2 Confirmed-and-fixed (regression-tested) but **not** the sole blocker
 
@@ -143,6 +124,13 @@ empirically disconfirmed:
 |---|---|---|---|
 | **H22** | TEXT/MEMO branch overwrote redundant `col_num` at descriptor byte 9 with `0x0001` | `TDefPageBuilder` writes `col.ColNum` at byte 9 unconditionally for Jet4/ACE | [WriterColumnDescriptorRedundantColNumTests](../../JetDatabaseWriter.Tests/Schema/WriterColumnDescriptorRedundantColNumTests.cs) |
 | **H25** | `DataPageInserter.PatchAutoNumFlag` wrote TDEF[0x18] = `0x00` for tables with no autonumber column | Stamp `0x01` unconditionally | [WriterTDefAutoNumFlagTests](../../JetDatabaseWriter.Tests/Schema/WriterTDefAutoNumFlagTests.cs) |
+
+### 4.2.1 Confirmed-and-fixed — **the** sole `OpenRecordset` blocker
+
+| ID | Bug | Fix | Verification |
+|---|---|---|---|
+| **H48** | `BuildTDefPagesWithIndexOffsets` set `tdef_len = (namePos − 8)` immediately after writing the trailing `0xFFFF` "no usage-map" sentinel. DAO-authored TDEFs reserve **8 trailing zero bytes after that sentinel** and count them as part of `tdef_len`. The writer's body was therefore 8 bytes shorter than DAO's, causing DAO's `OpenRecordset` cursor builder to abort with `"Unrecognized database format ''."`. | Advance `namePos += 8` after the FFFF sentinel for `jet4 && numIdx > 0`. The page is zero-initialised so no payload write is needed; the change only widens `tdef_len` and the companion `freeSpace` field at offset 2. | `DIAG_RT_DAO_BASELINE` probe now reports `OpenRecordset('RT_Customers')` exit=0 for both writer and DAO copies. `DaoOpenRecordset_RowCount_MatchesWriterOutput` and `DaoIndexTraversal_Seek_LocatesRowByPrimaryKey` (previously skipped) now pass. |
+| **H48-adj** | `RelationshipManager.AddFkLogicalIdxEntry` stamped the format-wide magic `0x00000659` on the appended real-idx physical descriptor, instead of the real-idx-specific `0x00000783` (`Constants.TableDefinition.Jet4.RealIdx.LeadingMagic`). Latent — surfaced by H48 unblocking the FK round-trip tests, which then tripped on `AssertTdefMagicStampsAsync`. | Use `RealIdx.LeadingMagic` at the descriptor's first 4 bytes, matching `BuildTDefPagesWithIndexOffsets`. | Round-trip TDEF magic assertion now passes for FK-bearing tables. |
 
 ### 4.3 Untested / not applicable to current fixture
 
@@ -165,6 +153,22 @@ empirically disconfirmed:
 - MSysACEs rows (already inserted with correct `FInheritable` column)
 - Catalog row Name UCS-2 vs UTF-16 encoding (cosmetic only)
 - All index-leaf issues #15–18 (compact passes; only `OpenRecordset` fails)
+
+### 4.5 Adjacent issues newly exposed by the H48 fix
+
+H48 unblocking `OpenRecordset` exposed pre-existing latent bugs in code
+paths that DAO never previously reached. These are **not** regressions
+caused by H48; the relevant tests have been re-skipped with precise new
+reasons referencing this section.
+
+| Test | Symptom | Suspected next-investigation focus |
+|---|---|---|
+| `DaoRelationshipEnforcement_FkViolation_RaisesError` | DAO INSERT into Child table with non-existent ParentId succeeds (no FK violation raised) | Writer's MSysRelationships entry not DAO-recognised for runtime FK enforcement |
+| `DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly` | DAO `$rs.MoveFirst()` raises `"No current record"` | MEMO long-value page or row-data-page linkage not DAO-readable; rows invisible to DAO |
+| `DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert` | DAO INSERT after writer's last autonumber row raises `"duplicate values in the index"` | Autonumber-continuation seed and/or PK index leaf does not surface writer rows to DAO's uniqueness check |
+| `DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds` | DAO Compact on Agile-encrypted writer ACCDB raises `"Unrecognized database format"` | Encryption-header / page-encryption issue, distinct from TDEF tdef_len defect |
+| `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair` | DAO Compact succeeds but post-compact RowCount=0 (writer-inserted rows dropped) on FK-bearing tables | Adjacent FK / data-page-pointer issue surfacing once TDEF is DAO-readable |
+| `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair` | Same as above with composite-PK fixture | Same as above |
 
 ---
 
