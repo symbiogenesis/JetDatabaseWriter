@@ -168,6 +168,18 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
             AccessBase.Wu16(page, o + writer._colDesc.NumOff, col.ColNum);
             AccessBase.Wu16(page, o + writer._colDesc.VarOff, col.VarIdx);
+
+            if (jet4)
+            {
+                // Jet4/ACE column descriptor stores col_num twice: once at offset 5-6
+                // (NumOff above) and again at offset 9-10 (the "redundant col_num"
+                // field per mdbtools HACKING.md). DAO OpenRecordset reads the second
+                // copy and rejects the table with "Unrecognized database format ''."
+                // when the two disagree. Verified against DAO-authored
+                // NorthwindTraders.accdb in WriterColumnDescriptorRedundantColNumTests.
+                AccessBase.Wu16(page, o + 9, col.ColNum);
+            }
+
             page[o + writer._colDesc.FlagsOff] = col.Flags;
             AccessBase.Wu16(page, o + writer._colDesc.FixedOff, col.FixedOff);
             AccessBase.Wu16(page, o + writer._colDesc.SzOff, col.Size);
@@ -186,11 +198,12 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 // Jet4/ACE text columns require two extra fields that DAO populates
                 // unconditionally; without them DAO refuses to OpenRecordset on the
                 // table ("Unrecognized database format"). See docs/design/round-trip-test-failures.md.
-                //   col_desc + 9..10  (misc_flags, 2 bytes): bit 0x01 = compressed
-                //                     unicode (Access default for new TEXT/MEMO cols).
-                //   col_desc + 11..14 (misc / sort_order, 4 bytes): collation/locale.
-                //                     0x00000409 = "General" sort order, en-US (LCID 1033).
-                //   col_desc + 16     (ExtraFlags, 1 byte): bit 0x01 =
+                //   col_desc + 11..12 (misc / sort_order, 2 bytes): collation LCID
+                //                     low word. 0x0409 = "General" sort order,
+                //                     en-US (LCID 1033). The 4-byte write below also
+                //                     stamps misc_ext at +13..14 to zero, which DAO
+                //                     accepts for the legacy "version 0" sort order.
+                //   col_desc + 16     (ExtraFlags / misc_flags, 1 byte): bit 0x01 =
                 //                     COMPRESSED_UNICODE_EXT_FLAG_MASK. DAO emits 0x00
                 //                     for new TEXT/MEMO columns (verified via
                 //                     DaoBaselineProbe), so this bit is opt-in via
@@ -198,7 +211,6 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 //                     here through ColumnInfo.ExtraFlags. The reader
                 //                     decodes the FF FE compressed marker regardless of
                 //                     the bit.
-                AccessBase.Wu16(page, o + 9, 0x0001);
                 AccessBase.Wi32(page, o + writer._colDesc.MiscOff, 0x00000409);
                 page[o + writer._colDesc.FlagsOff + 1] = col.ExtraFlags;
             }
@@ -470,6 +482,14 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
             AccessBase.Wu16(db, o + colNumOff, col.ColNum);
             AccessBase.Wu16(db, o + colVarOff, col.VarIdx);
+
+            if (!isJet3)
+            {
+                // Jet4/ACE: redundant col_num at offset 9-10 (see TDefPageBuilder
+                // user-table path and WriterColumnDescriptorRedundantColNumTests).
+                AccessBase.Wu16(db, o + 9, col.ColNum);
+            }
+
             db[o + colFlagsOff] = col.Flags;
             AccessBase.Wu16(db, o + colFixedOff, col.FixedOff);
             AccessBase.Wu16(db, o + colSzOff, col.Size);

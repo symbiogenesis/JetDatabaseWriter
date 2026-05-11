@@ -56,6 +56,26 @@ mdbtools' Jet4 column descriptor (25 bytes) shows `col_num` appearing
 The user's "Recommended next steps" list this candidate. `OpenDatabase` may
 skip the cross-check; `OpenRecordset` reads both fields.
 
+> **Confirmed (2026-05-10), but insufficient on its own.** Tested via
+> [WriterColumnDescriptorRedundantColNumTests.cs](../../JetDatabaseWriter.Tests/Schema/WriterColumnDescriptorRedundantColNumTests.cs).
+> Ground-truth side: every column descriptor in DAO-authored
+> `NorthwindTraders.accdb` has bytes 9–10 == bytes 5–6 (== `col_num`).
+> Writer side: a fresh `Customers` table (CustomerID/FirstName/LastName/
+> BirthDate/Balance/Notes) had 4 of 6 column descriptors with mismatched
+> redundant `col_num` (mismatches: `col[2] primary=2 redundant=1;
+> col[3] primary=3 redundant=0; col[4] primary=4 redundant=0;
+> col[5] primary=5 redundant=1`) — the `0x0001` values came from the
+> writer's TEXT/MEMO branch which mis-stamped the byte intending it as
+> `misc_flags` (compressed-unicode actually lives at byte 16, not 9).
+> **Fix landed**: `TDefPageBuilder.BuildTDefPagesWithIndexOffsets` and
+> `BuildMSysObjectsTDef` now write `col.ColNum` at descriptor byte 9
+> unconditionally for the Jet4/ACE branch; the bogus
+> `Wu16(page, o + 9, 0x0001)` in the TEXT/MEMO branch was removed.
+> **DAO `OpenRecordset` still fails** — re-ran all 7 gated DAO/round-trip
+> tests with the H22 fix in place; all 7 still throw `"Unrecognized
+> database format ''."`. Tests re-skipped. The fix is correct (matches
+> ground truth) but is not the sole blocker. Investigate H23 / H24 next.
+
 **H23 — Real-idx flags byte placed at offset 46 instead of 42.** Writer notes
 say a previous bug was at offset 42 and was "fixed" by moving to 46. mdbtools
 clearly documents flags at offset 42 (4+30+4+4=42 bytes preceding it within
