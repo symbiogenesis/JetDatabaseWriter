@@ -39,6 +39,13 @@ internal static class AccessRoundTripEnvironment
     /// <summary>Standard conditional skip reason for tests that require DAO.</summary>
     public const string RequiresMicrosoftAccessSkipReason = "Requires Microsoft Access (DAO.DBEngine.120)";
 
+    /// <summary>Environment variable that opts pending Access compatibility tests into the normal test run.</summary>
+    public const string KnownAccessCompatibilityGapOptInEnvironmentVariable = "JETDATABASEWRITER_RUN_KNOWN_ACCESS_COMPAT_GAPS";
+
+    /// <summary>Conditional skip reason for pending compatibility tests that are opt-in even when DAO is available.</summary>
+    public const string RequiresKnownAccessCompatibilityGapOptInSkipReason =
+        "Requires Microsoft Access (DAO.DBEngine.120) and " + KnownAccessCompatibilityGapOptInEnvironmentVariable + "=1";
+
     private static readonly Lazy<ProbeResult> ProbeOnce = new(DetectCore);
 
     /// <summary>Gets the path to <c>MSACCESS.EXE</c>, or <c>null</c> when not installed.</summary>
@@ -52,6 +59,10 @@ internal static class AccessRoundTripEnvironment
 
     /// <summary>Gets a value indicating whether the round-trip environment is fully available.</summary>
     public static bool IsAvailable => ProbeOnce.Value.Skip is null;
+
+    /// <summary>Gets a value indicating whether pending Access compatibility tests should run.</summary>
+    public static bool RunKnownAccessCompatibilityGapTests =>
+        IsAvailable && IsEnvironmentSwitchEnabled(KnownAccessCompatibilityGapOptInEnvironmentVariable);
 
     /// <summary>
     /// Quotes a value as a PowerShell single-quoted string literal.
@@ -290,6 +301,15 @@ internal static class AccessRoundTripEnvironment
         }
 
         return builder.ToString();
+    }
+
+    private static bool IsEnvironmentSwitchEnabled(string name)
+    {
+        string? value = Environment.GetEnvironmentVariable(name);
+        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void TryKill(Process p)

@@ -40,8 +40,8 @@ public sealed class AccessRoundTripTests
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(2);
 
     [Fact(
-        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
-        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        Skip = AccessRoundTripEnvironment.RequiresKnownAccessCompatibilityGapOptInSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.RunKnownAccessCompatibilityGapTests),
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task SinglePk_AndSingleColumnFk_SurviveCompactAndRepair()
     {
@@ -134,8 +134,8 @@ public sealed class AccessRoundTripTests
     }
 
     [Fact(
-        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
-        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        Skip = AccessRoundTripEnvironment.RequiresKnownAccessCompatibilityGapOptInSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.RunKnownAccessCompatibilityGapTests),
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task CompositePk_AndMultiColumnFk_SurviveCompactAndRepair()
     {

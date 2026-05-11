@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -24,7 +25,7 @@ public sealed class LinkedTextTableTests : IDisposable
     [Fact]
     public async Task LinkedTextTable_ListLinkedTables_ReturnsEntryWithConnectString()
     {
-        string frontEndPath = CreateTempAccdbDatabase("TextLinkFE");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkFE");
         const string connect = "Text;HDR=YES;FMT=Delimited";
 
         await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
@@ -52,8 +53,8 @@ public sealed class LinkedTextTableTests : IDisposable
     [Fact]
     public async Task LinkedTextTable_ListLinkedTables_DistinguishesFromAccessLinked()
     {
-        string sourcePath = CreateTempAccdbDatabase("TextLinkSrc");
-        string frontEndPath = CreateTempAccdbDatabase("TextLinkMix");
+        string sourcePath = await CreateTempAccdbDatabaseAsync("TextLinkSrc");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkMix");
         const string textConnect = "Text;HDR=YES;FMT=FixedLength";
 
         await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
@@ -102,7 +103,7 @@ public sealed class LinkedTextTableTests : IDisposable
     [Fact]
     public async Task LinkedTextTable_ListTables_ExcludesTextLinkedEntries()
     {
-        string frontEndPath = CreateTempAccdbDatabase("TextLinkExclude");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkExclude");
 
         await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
         {
@@ -123,7 +124,7 @@ public sealed class LinkedTextTableTests : IDisposable
     [Fact]
     public async Task LinkedTextTable_CreateLinkedTextTableAsync_DuplicateLocalTableName_Throws()
     {
-        string frontEndPath = CreateTempAccdbDatabase("TextLinkDup");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkDup");
 
         await using var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(
@@ -155,10 +156,17 @@ public sealed class LinkedTextTableTests : IDisposable
         }
     }
 
-    private string CreateTempAccdbDatabase(string prefix)
+    private async ValueTask<string> CreateTempAccdbDatabaseAsync(string prefix)
     {
         string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.accdb");
-        File.Copy(TestDatabases.NorthwindTraders, temp, overwrite: true);
+        await using (await AccessWriter.CreateDatabaseAsync(
+            temp,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+        }
+
         _tempFiles.Add(temp);
         return temp;
     }
