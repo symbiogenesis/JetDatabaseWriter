@@ -556,21 +556,44 @@ internal static class EncryptionManager
             throw new FileNotFoundException($"Database file not found: {path}", path);
         }
 
-        using var lockFile = LockFileCoordinator.ForReencrypt(path, options);
-        lockFile.Acquire();
+        LockFileSlotWriter? lockSlot = AcquireReencryptLockSlot(path, options);
+        try
+        {
+            byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+            await using var sourceStream = new MemoryStream(sourceBytes, writable: false);
 
-        byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-        await using var sourceStream = new MemoryStream(sourceBytes, writable: false);
+            byte[] result = await ReencryptCoreAsync(
+                sourceStream,
+                oldPassword,
+                newPassword,
+                targetFormat,
+                requireSourceEncrypted,
+                cancellationToken).ConfigureAwait(false);
 
-        byte[] result = await ReencryptCoreAsync(
-            sourceStream,
-            oldPassword,
-            newPassword,
-            targetFormat,
-            requireSourceEncrypted,
-            cancellationToken).ConfigureAwait(false);
+            await ReplaceFileAtomicAsync(path, result, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (lockSlot != null)
+            {
+                lockSlot.Dispose();
+            }
+        }
+    }
 
-        await ReplaceFileAtomicAsync(path, result, cancellationToken).ConfigureAwait(false);
+    private static LockFileSlotWriter? AcquireReencryptLockSlot(string path, AccessWriterOptions? options)
+    {
+        if (options?.UseLockFile == false)
+        {
+            return null;
+        }
+
+        return LockFileSlotWriter.Open(
+            path,
+            nameof(AccessWriter),
+            respectExisting: options?.RespectExistingLockFile ?? true,
+            machineName: options?.LockFileMachineName,
+            userName: options?.LockFileUserName);
     }
 
     private static async ValueTask ReplaceFileAtomicAsync(string path, byte[] contents, CancellationToken cancellationToken)

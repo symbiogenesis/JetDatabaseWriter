@@ -170,8 +170,9 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
             _ = writer.IoGate.Release();
         }
 
-        using IDisposable commitLock = await writer.ByteRangeLock.AcquireCommitLockAsync(
-            isAccdb: writer.DatabaseFormat == Enums.DatabaseFormat.AceAccdb, cancellationToken).ConfigureAwait(false);
+        long? commitLockOffset = await writer.ByteRangeLock.AcquireCommitLockOffsetAsync(
+            isAccdb: writer.DatabaseFormat == Enums.DatabaseFormat.AceAccdb,
+            cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -189,6 +190,10 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
         {
             transaction.MarkRolledBack();
             throw;
+        }
+        finally
+        {
+            writer.ByteRangeLock.ReleaseCommitLock(commitLockOffset);
         }
     }
 

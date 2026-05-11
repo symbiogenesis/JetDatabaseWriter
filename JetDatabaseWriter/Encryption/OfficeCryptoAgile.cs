@@ -518,14 +518,33 @@ internal static class OfficeCryptoAgile
         Guard.NotNull(key, nameof(key));
         Guard.NotNull(iv, nameof(iv));
 
-        using var aes = Aes.Create();
-        aes.Mode = CipherMode.CBC;
-        aes.Padding = PaddingMode.None;
-        aes.Key = key;
-        aes.IV = iv;
+        Aes? aes = Aes.Create();
+#pragma warning disable CA1508 // InferSharp treats Aes.Create as unknown/null-capable.
+        if (aes is null)
+        {
+            throw new CryptographicException("AES provider creation failed.");
+        }
+#pragma warning restore CA1508
 
-        using ICryptoTransform t = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
-        return t.TransformFinalBlock(data, 0, data.Length);
+        using (aes)
+        {
+            aes.Mode = CipherMode.CBC;
+            aes.Padding = PaddingMode.None;
+            aes.Key = key;
+            aes.IV = iv;
+
+            ICryptoTransform? transform = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
+            if (transform is null)
+            {
+                throw new CryptographicException("AES transform creation failed.");
+            }
+
+            using (transform)
+            {
+                byte[]? result = transform.TransformFinalBlock(data, 0, data.Length);
+                return result ?? throw new CryptographicException("AES transform returned no data.");
+            }
+        }
     }
 
     private static byte[] NormalizeIv(byte[] salt, int blockSize)

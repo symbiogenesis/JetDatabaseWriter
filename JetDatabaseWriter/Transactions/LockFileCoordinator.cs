@@ -86,9 +86,7 @@ internal sealed class LockFileCoordinator : IDisposable
     /// <summary>
     /// Claims a slot in the sibling lock-file. No-op when <see cref="IsEnabled"/> is
     /// <c>false</c> or a slot is already held. Use together with <c>using</c> /
-    /// <c>try-finally</c> for scoped, RAII-style ownership; use
-    /// <see cref="AcquireWithRollback"/> instead inside a constructor that hands
-    /// ownership to the surrounding instance.
+    /// <c>try-finally</c> for scoped, RAII-style ownership.
     /// </summary>
     public void Acquire()
     {
@@ -103,27 +101,6 @@ internal sealed class LockFileCoordinator : IDisposable
             respectExisting: _settings.RespectExisting,
             machineName: _settings.MachineName,
             userName: _settings.UserName);
-    }
-
-    /// <summary>
-    /// Claims the slot and returns a commit-style scope guard (the C++/Rust
-    /// "scope-fail" idiom). Pattern:
-    /// <code>
-    /// using var guard = _lockFile.AcquireWithRollback();
-    /// // ... post-acquire initialisation that may throw ...
-    /// guard.Commit(); // success — slot ownership transfers to the coordinator
-    /// </code>
-    /// If <c>Commit</c> is not called before disposal, the slot is released.
-    /// Use this from a constructor whose <c>OpenAsync</c> catch only disposes
-    /// the underlying stream and never sees the half-built reader / writer —
-    /// without it, a populated <c>.ldb</c> / <c>.laccdb</c> would outlive the
-    /// failed open.
-    /// </summary>
-    /// <returns>A scope guard that releases the slot on dispose unless <see cref="RollbackGuard.Commit"/> is called.</returns>
-    public RollbackGuard AcquireWithRollback()
-    {
-        Acquire();
-        return new RollbackGuard(this);
     }
 
     /// <summary>
@@ -197,34 +174,6 @@ internal sealed class LockFileCoordinator : IDisposable
     {
         _slot?.Dispose();
         _slot = null;
-    }
-}
-
-/// <summary>
-/// Commit-style scope guard returned by <see cref="LockFileCoordinator.AcquireWithRollback"/>.
-/// Implements the well-known C++/Rust "scope-fail" idiom: releases the slot on
-/// dispose unless <see cref="Commit"/> has been called, in which case ownership
-/// stays with the coordinator. Mutable so a single guard tracks commit state
-/// across the <c>using</c>-block; do not copy.
-/// </summary>
-internal struct RollbackGuard : IDisposable
-{
-    private LockFileCoordinator? _coordinator;
-
-    internal RollbackGuard(LockFileCoordinator coordinator)
-    {
-        _coordinator = coordinator;
-    }
-
-    /// <summary>Marks the surrounding setup as successful so the slot is retained when this guard disposes.</summary>
-    public void Commit() => _coordinator = null;
-
-    /// <inheritdoc/>
-    public void Dispose()
-    {
-        LockFileCoordinator? c = _coordinator;
-        _coordinator = null;
-        c?.Dispose();
     }
 }
 
