@@ -39,7 +39,7 @@ public sealed class AccessRoundTripTests
 {
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(2);
 
-    [Fact(Skip = "DAO Compact succeeds but DAO OpenRecordset still rejects writer-created user tables ('Unrecognized database format ''.') — rows dropped during compact. H25 (autonum_flag at TDEF byte 0x18) confirmed and fixed 2026-05-10, no effect. See DaoValidationTests.")]
+    [Fact(Skip = "H48 unblocked DAO OpenRecordset on FK tables (writer's tdef_len now matches DAO), but DAO Compact still drops every writer-inserted user-table row from tables with an enforced FK relationship (post-compact RowCount=0 vs pre=N). Adjacent FK / data-page-pointer issue separate from the TDEF tdef_len defect H48 fixed. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task SinglePk_AndSingleColumnFk_SurviveCompactAndRepair()
     {
         await using var session = await RoundTripSession.CreateAsync(TestContext.Current.CancellationToken);
@@ -128,7 +128,7 @@ public sealed class AccessRoundTripTests
         Assert.Contains(post.Indexes[Child], i => i.IsForeignKey && i.Columns == "CustomerID" && i.CascadeDeletes);
     }
 
-    [Fact(Skip = "DAO Compact succeeds but DAO OpenRecordset still rejects writer-created user tables ('Unrecognized database format ''.') — rows dropped during compact. H25 (autonum_flag at TDEF byte 0x18) confirmed and fixed 2026-05-10, no effect. See DaoValidationTests.")]
+    [Fact(Skip = "H48 unblocked DAO OpenRecordset on FK tables (writer's tdef_len now matches DAO), but DAO Compact still drops every writer-inserted user-table row from tables with an enforced FK relationship (post-compact RowCount=0 vs pre=N). Adjacent FK / data-page-pointer issue separate from the TDEF tdef_len defect H48 fixed. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task CompositePk_AndMultiColumnFk_SurviveCompactAndRepair()
     {
         await using var session = await RoundTripSession.CreateAsync(TestContext.Current.CancellationToken);

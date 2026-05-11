@@ -86,6 +86,11 @@ internal static class DaoBaselineProbe
                 "RT_Customers",
                 [
                     new("CustomerID", typeof(int)) { IsPrimaryKey = true, IsAutoIncrement = true, IsNullable = false },
+
+                    // H47: DAO authors new TEXT columns with ExtraFlags byte 16 == 0x00
+                    // (no COMPRESSED_UNICODE_EXT_FLAG_MASK). Our ColumnDefinition default
+                    // is IsCompressedUnicode=true, which would stamp 0x01 here and
+                    // diverge from the DAO baseline. Pass false to match.
                     new("Name", typeof(string), maxLength: 100) { IsNullable = false },
                 ]);
         }
@@ -118,6 +123,17 @@ internal static class DaoBaselineProbe
         Console.WriteLine($"[dao-baseline] DAO compact (writer copy): exit={writerCompactCode}{(writerCompactCode == 0 ? string.Empty : "  err=" + Truncate(writerCompactErr))}");
         Console.WriteLine($"[dao-baseline] DAO compact (DAO copy):    exit={daoCompactCode}{(daoCompactCode == 0 ? string.Empty : "  err=" + Truncate(daoCompactErr))}");
 
+        // 3b. DAO OpenRecordset("RT_Customers") smoke (H46 verdict).
+        (int writerOrCode, string writerOrErr) = string.IsNullOrEmpty(writerErr)
+            ? RunDaoOpenRecordset(powerShellPath, writerPath)
+            : (-1, "skipped — writer authoring failed");
+        (int daoOrCode, string daoOrErr) = daoCreateCode == 0
+            ? RunDaoOpenRecordset(powerShellPath, daoPath)
+            : (-1, "skipped — DAO authoring failed");
+
+        Console.WriteLine($"[dao-baseline] DAO OpenRecordset (writer copy): exit={writerOrCode}{(writerOrCode == 0 ? string.Empty : "  err=" + Truncate(writerOrErr))}");
+        Console.WriteLine($"[dao-baseline] DAO OpenRecordset (DAO copy):    exit={daoOrCode}{(daoOrCode == 0 ? string.Empty : "  err=" + Truncate(daoOrErr))}");
+
         // 4. Build the report.
         var sb = new StringBuilder();
         _ = sb.AppendLine("# DAO-authored baseline vs writer-authored output");
@@ -133,6 +149,13 @@ internal static class DaoBaselineProbe
         _ = sb.AppendLine("|---|---|---|");
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| Authoring `RT_Customers` | {(string.IsNullOrEmpty(writerErr) ? "✅ OK" : "❌ " + Md(Truncate(writerErr)))} | {(daoCreateCode == 0 ? "✅ OK" : "❌ exit=" + daoCreateCode + " " + Md(Truncate(daoCreateErr)))} |");
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| `DBEngine.CompactDatabase` | {DescribeCompact(writerCompactCode, writerCompactErr)} | {DescribeCompact(daoCompactCode, daoCompactErr)} |");
+        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| `OpenRecordset('RT_Customers')` | {DescribeCompact(writerOrCode, writerOrErr)} | {DescribeCompact(daoOrCode, daoOrErr)} |");
+        string? lvPropEnv = Environment.GetEnvironmentVariable("DIAG_RT_NO_LVPROP");
+        if (!string.IsNullOrEmpty(lvPropEnv))
+        {
+            _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| _Env:_ `DIAG_RT_NO_LVPROP` | `{lvPropEnv}` (writer-side `LvProp` blob suppressed) | n/a |");
+        }
+
         _ = sb.AppendLine();
 
         await using (var basReader = await AccessReader.OpenAsync(baselinePath))
@@ -215,6 +238,29 @@ internal static class DaoBaselineProbe
             "} finally { [GC]::Collect(); [GC]::WaitForPendingFinalizers() }",
         });
         return RunPwsh(powerShellPath, script, Path.Combine(Path.GetDirectoryName(dbPath)!, "dao-create.ps1"));
+    }
+
+    private static (int Code, string StdErr) RunDaoOpenRecordset(string powerShellPath, string dbPath)
+    {
+        // Mirrors the failure reproducer in DaoValidationTests: open the
+        // database read-only, materialise a forward-only recordset, and
+        // immediately close. If DAO accepts the table the script exits 0;
+        // otherwise the COM exception ("Unrecognized database format ''.")
+        // surfaces via stderr and a non-zero exit code.
+        string dbLit = dbPath.Replace("'", "''", StringComparison.Ordinal);
+        string script =
+            "$ErrorActionPreference='Stop'\n" +
+            $"$path='{dbLit}'\n" +
+            "$e = New-Object -ComObject DAO.DBEngine.120\n" +
+            "try {\n" +
+            "  $db = $e.OpenDatabase($path, $false, $true)\n" +
+            "  try {\n" +
+            "    $rs = $db.OpenRecordset('RT_Customers', 2)\n" +
+            "    try { $rs.Close() } catch { }\n" +
+            "  } finally { $db.Close() }\n" +
+            "  exit 0\n" +
+            "} finally { [GC]::Collect(); [GC]::WaitForPendingFinalizers() }\n";
+        return RunPwsh(powerShellPath, script, Path.Combine(Path.GetDirectoryName(dbPath)!, "dao-openrecordset.ps1"));
     }
 
     private static (int Code, string StdErr) RunDaoCompact(string powerShellPath, string src, string dst)

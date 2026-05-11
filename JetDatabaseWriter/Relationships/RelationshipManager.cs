@@ -408,10 +408,16 @@ internal sealed class RelationshipManager(AccessWriter writer)
         {
             int phys = newRealIdxDescStart + oldRealIdxPhysLen;
 
-            // bytes 0..3   Jet4/ACE format magic cookie (0x00000659). DAO's
-            //              TDEF validation checks this during CompactDatabase;
-            //              leaving it zero causes err 3011 "MSysDb".
-            AccessBase.Wi32(newTd, phys, Constants.TableDefinition.Jet4.FormatMagic);
+            // bytes 0..3   Jet4/ACE real-idx physical-descriptor leading magic
+            //              (0x00000783). Distinct from the format-wide TDEF
+            //              magic (0x00000659) used in column / logical-idx
+            //              descriptors — see Constants.TableDefinition.Jet4.RealIdx.LeadingMagic
+            //              and BuildTDefPagesWithIndexOffsets. DAO validates
+            //              this during CompactDatabase / OpenRecordset on
+            //              tables with FK indexes; leaving the wrong magic
+            //              here surfaces as AssertTdefMagicStampsAsync
+            //              ("real-idx[1] magic = 0x00000659, expected 0x00000783").
+            AccessBase.Wi32(newTd, phys, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
 
             // bytes 4..33  col_map: 10 × {col_num(2), col_order(1)}
             for (int slot = 0; slot < 10; slot++)

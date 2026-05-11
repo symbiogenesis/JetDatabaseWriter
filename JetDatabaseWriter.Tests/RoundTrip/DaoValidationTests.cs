@@ -57,7 +57,7 @@ public sealed class DaoValidationTests : IDisposable
     /// asserts SELECT COUNT(*) matches. Catches TDEF row-count drift and
     /// page-corruption that would silently survive our own reader round-trip.
     /// </summary>
-    [Fact(Skip = "DAO OpenRecordset still rejects writer-created user-table TDEFs ('Unrecognized database format ''.'). H25 (autonum_flag at TDEF byte 0x18, must be 0x01 unconditionally) was confirmed and fixed 2026-05-10 but did not unblock OpenRecordset on its own. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact]
     public async Task DaoOpenRecordset_RowCount_MatchesWriterOutput()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -115,7 +115,7 @@ public sealed class DaoValidationTests : IDisposable
     /// key to locate a specific row. Catches index pages that parse cleanly in
     /// our reader but are rejected by the canonical engine.
     /// </summary>
-    [Fact(Skip = "DAO OpenRecordset still rejects writer-created tables ('Unrecognized database format ''.'). H25 (autonum_flag at TDEF byte 0x18) confirmed and fixed 2026-05-10, no effect. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact]
     public async Task DaoIndexTraversal_Seek_LocatesRowByPrimaryKey()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -176,7 +176,7 @@ public sealed class DaoValidationTests : IDisposable
     /// row, and verifies the next AutoNumber value is one past our last
     /// inserted ID. Catches seed/counter byte-layout bugs.
     /// </summary>
-    [Fact(Skip = "DAO OpenRecordset still rejects writer-created tables ('Unrecognized database format ''.'). H25 (autonum_flag at TDEF byte 0x18) confirmed and fixed 2026-05-10, no effect. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(Skip = "H48 unblocked DAO OpenRecordset, but DAO INSERT after the writer's last autonumber row raises 'duplicate values in the index'. The writer's autonumber-continuation seed and/or PK index leaf does not surface writer rows to DAO's uniqueness check. Separate from H48. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -302,7 +302,7 @@ public sealed class DaoValidationTests : IDisposable
     /// Catches LVAL-chain encoding bugs that survive our own reader.
     /// Closes §3 gap: "DAO Memo/OLE fidelity".
     /// </summary>
-    [Fact(Skip = "DAO OpenRecordset still rejects writer-created tables ('Unrecognized database format ''.'). H25 (autonum_flag at TDEF byte 0x18) confirmed and fixed 2026-05-10, no effect. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(Skip = "H48 unblocked DAO OpenRecordset, but DAO sees writer-inserted MEMO rows as an empty recordset ($rs.MoveFirst() raises 'No current record'). MEMO long-value page or row-data-page linkage is not DAO-readable. Separate from the TDEF tdef_len defect H48 fixed. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -390,7 +390,7 @@ public sealed class DaoValidationTests : IDisposable
     /// fully understood by Access. Closes §3 gap: "DAO relationship
     /// enforcement".
     /// </summary>
-    [Fact(Skip = "Requires Microsoft Access (DAO.DBEngine.120)", SkipUnless = nameof(RoundTripAvailable))]
+    [Fact(Skip = "H48 unblocked DAO OpenRecordset (writer-authored TDEFs now accepted), but DAO inserts into a writer-created Child table with an enforced FK relationship still succeed even when ParentId has no matching Parent row. Indicates writer's MSysRelationships entry is not DAO-recognised for runtime enforcement (separate hypothesis from H48). See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoRelationshipEnforcement_FkViolation_RaisesError()
     {
         string dbPath = await CopyNorthwindAsync();
@@ -488,7 +488,7 @@ public sealed class DaoValidationTests : IDisposable
     /// well-formed enough for Access's own engine.
     /// Closes §3 gap: "DAO CompactDatabase on encrypted output".
     /// </summary>
-    [Fact(Skip = "DAO CompactDatabase rejects writer-created tables ('Unrecognized database format ''.'). H25 (autonum_flag at TDEF byte 0x18) confirmed and fixed 2026-05-10, no effect. See docs/design/round-trip-openrecordset-hypothesis.md.")]
+    [Fact(Skip = "H48 unblocked DAO OpenRecordset on plaintext ACCDB, but DAO CompactDatabase against an Agile-encrypted writer-authored ACCDB still raises 'Unrecognized database format'. Encryption-header / page-encryption issue, separate from the TDEF tdef_len defect H48 fixed. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds()
     {
         string dbPath = await CopyNorthwindAsync();
