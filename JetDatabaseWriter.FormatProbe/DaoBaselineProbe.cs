@@ -160,6 +160,7 @@ internal static class DaoBaselineProbe
             EmitChangedPagesTable(sb, basPageCount, writerSnap, daoSnap);
             await EmitRtCustomersTdefDumpsAsync(sb, writerSnap, daoSnap, pagesDir);
             await EmitNewMSysObjectsRowDumpsAsync(sb, basReader, writerSnap, daoSnap, pagesDir, basPageCount, pgSz);
+            await EmitHypothesisAccumulatingDiffAsync(sb, writerSnap, daoSnap, writerPath, daoPath);
             await EmitDaoOnlyPageHexAsync(sb, basReader, writerPath, daoPath, basPageCount, pgSz, daoSnap);
         }
 
@@ -169,6 +170,7 @@ internal static class DaoBaselineProbe
         _ = sb.AppendLine("1. **Compare the new TDEF pages.** §4 dumps the writer's RT_Customers TDEF and the DAO baseline's TDEF side-by-side as hex. Any byte that differs is a candidate explanation for the DAO err 3011 `'MSysDb'` rejection.");
         _ = sb.AppendLine("2. **Compare the new MSysObjects row bytes.** §5 dumps the catalog row body for the writer's and DAO's RT_Customers entries. The `LvProp` (varIdx 8) bytes here are the empirical answer to whether DAO actually requires a non-null `LvProp` for an empty user-table catalog row, and (if so) what the payload looks like.");
         _ = sb.AppendLine("3. **Compare per-table usage-map and PK-leaf pages** by binary-diffing the per-page `.bin` files under `pages\\` (writer vs dao) for the page numbers identified in §3.");
+        _ = sb.AppendLine("4. **Read the §7 hypothesis table.** Each H26-H45 row gives a one-line PASS/FAIL verdict, letting a single probe execution rule 5-10 hypotheses in or out without a full hex walk-through.");
         _ = sb.AppendLine();
 
         string outPath = Path.Combine(workRoot, "dao-baseline-diff.md");
@@ -507,9 +509,10 @@ internal static class DaoBaselineProbe
             return;
         }
 
-        // Find the MSysObjects data page (page_type=0x01) in this snapshot that differs from baseline AND
-        // contains the catalog row. Since MSysObjects data lives in the shared range (existed before),
-        // look in PagesDifferingFromBaseline for type-0x01 pages.
+        // Find the MSysObjects data page (page_type=0x01) in this snapshot that contains
+        // the catalog row. The writer may have **appended** an entirely new MSysObjects
+        // data page (when the existing pages were full), so search both the
+        // shared-range diffs *and* the added-beyond-baseline pages.
         await using var r = await AccessReader.OpenAsync(snap.Tag == "writer"
             ? Path.Combine(Path.GetDirectoryName(pagesDir)!, "writer", "source.accdb")
             : Path.Combine(Path.GetDirectoryName(pagesDir)!, "dao",    "source.accdb"));
@@ -529,9 +532,10 @@ internal static class DaoBaselineProbe
         const int NumRowsOff = 12;
         const int RowsStartOff = 14;
 
-        foreach (long p in snap.PagesDifferingFromBaseline)
+        var candidates = snap.PagesDifferingFromBaseline.Concat(snap.PagesAddedBeyondBaseline);
+        foreach (long p in candidates)
         {
-            if (snap.PageTypes[p] != 0x01)
+            if (!snap.PageTypes.TryGetValue(p, out byte pt) || pt != 0x01)
             {
                 continue;
             }
@@ -636,6 +640,710 @@ internal static class DaoBaselineProbe
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Raw bytes: `pages/msysobjects_row_{label}.bin`");
         _ = sb.AppendLine();
         EmitSingleHex(sb, $"{label} MSysObjects row body", rowBytes, maxBytes: 512);
+    }
+
+    // ─────── §7 Accumulating hypothesis diff (H26-H45) ─────────────────────
+    //
+    // For each TDEF-byte-level hypothesis recorded in
+    // docs/design/round-trip-openrecordset-hypothesis.md §H26+, extract the
+    // relevant slice from the writer-authored RT_Customers TDEF and the
+    // DAO-authored RT_Customers TDEF and emit one PASS/FAIL row. A single
+    // probe execution rules 5-10 hypotheses in or out without a manual hex
+    // walk-through.
+
+    private sealed record HypothesisRow(string Id, string Title, string Verdict, string Writer, string Dao, string Notes);
+
+    private static async Task EmitHypothesisAccumulatingDiffAsync(
+        StringBuilder sb,
+        ReaderSnapshot? w,
+        ReaderSnapshot? d,
+        string writerPath,
+        string daoPath)
+    {
+        _ = sb.AppendLine("## §7 H26-H45 accumulating hypothesis diff");
+        _ = sb.AppendLine();
+        _ = sb.AppendLine("Each row checks one hypothesis from `docs/design/round-trip-openrecordset-hypothesis.md` against the writer-authored vs DAO-authored RT_Customers TDEF (and, where indicated, the per-table usage-map page). `✅ PASS` = writer matches DAO; `❌ FAIL` = writer differs (candidate root cause); `⚠️ N/A` = hypothesis does not apply to this fixture's column / index shape.");
+        _ = sb.AppendLine();
+
+        if (w?.RtTdefBytes is null or { Length: < 64 } || d?.RtTdefBytes is null or { Length: < 64 })
+        {
+            _ = sb.AppendLine("> Need both writer and DAO TDEF bytes (both ≥ 64 bytes) — skipped.");
+            return;
+        }
+
+        byte[] wt = w.RtTdefBytes;
+        byte[] dt = d.RtTdefBytes;
+
+        // Parse TDEF header — Jet4/ACE only.
+        // Offsets per Jackcess JetFormat.Jet12Format / writer's TDefHeaderLayout:
+        //   0x18 (24) = autonum_flag        0x1C (28) = next_complex_auto_number
+        //   0x2D (45) = num_cols (u16)      0x2F (47) = num_logical_idx (i32)
+        //   0x33 (51) = num_real_idx (i32)  0x37 (55) = owned_pages (4)
+        //   0x3B (59) = free_space_pages (4)0x3F (63) = index_def_block start (12 × num_real_idx)
+        var wHdr = ParseTDefHeader(wt);
+        var dHdr = ParseTDefHeader(dt);
+
+        var rows = new List<HypothesisRow>();
+
+        // ── H22: redundant col_num at descriptor byte 9 == col_num at byte 5
+        rows.Add(CheckRedundantColNum(wt, wHdr, dt, dHdr));
+
+        // ── H25: TDEF[0x18] autonum_flag == 0x01
+        rows.Add(new HypothesisRow(
+            "H25",
+            "TDEF[0x18] autonum_flag == 0x01",
+            wt[0x18] == 0x01 && dt[0x18] == 0x01 ? "✅ PASS" : (wt[0x18] != dt[0x18] ? "❌ FAIL" : "⚠️ INFO"),
+            $"0x{wt[0x18]:X2}",
+            $"0x{dt[0x18]:X2}",
+            wt[0x18] == dt[0x18] ? "matches DAO" : "diverges from DAO"));
+
+        // ── H27: every non-FK logical-idx descriptor's RelIdxNum (bytes [13..16]) == 0xFFFFFFFF
+        rows.Add(CheckLogIdxRelIdxNum(wt, wHdr, dt, dHdr));
+
+        // ── H28: every logical-idx descriptor's putInt(0) at bytes [24..27] preserved
+        rows.Add(CheckLogIdxTrailerInt(wt, wHdr, dt, dHdr));
+
+        // ── H31/H32/H33/H34: column-descriptor zero-fields
+        rows.Add(CheckColDescZeroFields(wt, wHdr, dt, dHdr, "H31", "NUMERIC col-desc bytes [13..14] == 0", isApplicable: (b, off) => b[off + 0 /*type*/] == 0x10, range: (13, 2)));
+        rows.Add(CheckColDescZeroFields(wt, wHdr, dt, dHdr, "H32", "non-text/numeric/complex col-desc bytes [11..14] == 0", isApplicable: (b, off) => b[off] is not 0x0A and not 0x0C and not 0x10 and not 0x12, range: (11, 4)));
+        rows.Add(CheckColDescZeroFields(wt, wHdr, dt, dHdr, "H33", "col-desc bytes [17..20] (always-0 putInt) == 0", isApplicable: (_, _) => true, range: (17, 4)));
+        rows.Add(CheckColDescZeroFields(wt, wHdr, dt, dHdr, "H34", "ExtraFlags byte [16] == 0 for non-TEXT/MEMO", isApplicable: (b, off) => b[off] is not 0x0A and not 0x0C, range: (16, 1)));
+
+        // ── H37: real-idx flags byte at offset 46 has UNIQUE|REQUIRED|UNKNOWN bits for the PK
+        rows.Add(CheckRealIdxFlags(wt, wHdr, dt, dHdr));
+
+        // ── H38: real-idx 4-byte "unknown" gap at offsets 42..45 == 0
+        rows.Add(CheckRealIdxUnknownGap(wt, wHdr, dt, dHdr));
+
+        // ── H41: TDEF[0x1C..0x1F] (next_complex_auto_number on ACCDB) == 0
+        uint wNext = BinaryPrimitives.ReadUInt32LittleEndian(wt.AsSpan(0x1C, 4));
+        uint dNext = BinaryPrimitives.ReadUInt32LittleEndian(dt.AsSpan(0x1C, 4));
+        rows.Add(new HypothesisRow(
+            "H41",
+            "TDEF[0x1C..0x1F] next_complex_auto_number == 0",
+            wNext == 0 && dNext == 0 ? "✅ PASS" : (wNext == dNext ? "⚠️ INFO" : "❌ FAIL"),
+            $"0x{wNext:X8}",
+            $"0x{dNext:X8}",
+            wNext == dNext ? "matches DAO" : "diverges from DAO"));
+
+        // ── H42: index-name length-prefix is byte count (== chars * 2) for every logical-idx name
+        rows.Add(CheckIndexNameLengthPrefix(wt, wHdr, dt, dHdr));
+
+        // ── H44: TDEF[0x37..0x3A] (owned_pages) and [0x3B..0x3E] (free_space_pages) are non-zero
+        rows.Add(CheckOwnedFreePages(wt, dt));
+
+        // ── H45: per-table usage-map row tdef_back_pointer matches host TDEF page
+        // ── H26: per-table usage-map row 0 type byte == 0x01 (MAP_TYPE_REFERENCE)
+        if (w.RtCustomers is { TdefPage: > 0 } wRt && d.RtCustomers is { TdefPage: > 0 } dRt)
+        {
+            await using var wr = await AccessReader.OpenAsync(writerPath);
+            await using var dr = await AccessReader.OpenAsync(daoPath);
+            (HypothesisRow h26, HypothesisRow h45) = await CheckUsageMapRowAsync(wr, dr, wt, dt, wRt.TdefPage, dRt.TdefPage);
+            rows.Add(h26);
+            rows.Add(h45);
+        }
+        else
+        {
+            rows.Add(new HypothesisRow("H26", "per-table usage-map row 0 type == 0x01", "⚠️ N/A", "—", "—", "RT_Customers catalog row missing"));
+            rows.Add(new HypothesisRow("H45", "per-table usage-map row tdef_back_pointer matches", "⚠️ N/A", "—", "—", "RT_Customers catalog row missing"));
+        }
+
+        _ = sb.AppendLine("| ID | Hypothesis | Verdict | Writer | DAO | Notes |");
+        _ = sb.AppendLine("|---|---|:---:|---|---|---|");
+        foreach (var r in rows)
+        {
+            _ = sb.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"| {r.Id} | {Md(r.Title)} | {r.Verdict} | {Md(r.Writer)} | {Md(r.Dao)} | {Md(r.Notes)} |");
+        }
+
+        _ = sb.AppendLine();
+        int pass = rows.Count(r => r.Verdict.Contains("PASS", StringComparison.Ordinal));
+        int fail = rows.Count(r => r.Verdict.Contains("FAIL", StringComparison.Ordinal));
+        int na = rows.Count - pass - fail;
+        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"**Summary:** {pass} ✅ PASS · {fail} ❌ FAIL · {na} ⚠️ N/A/INFO ({rows.Count} total).");
+        _ = sb.AppendLine();
+    }
+
+    private readonly record struct TDefHeader(int NumCols, int NumLogIdx, int NumRealIdx, int ColStart, int ColNamesEnd, int RealIdxPhysStart, int LogIdxStart, int LogIdxNamesStart);
+
+    private static TDefHeader ParseTDefHeader(byte[] td)
+    {
+        int numCols = BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(0x2D, 2));
+        int numLogIdx = BinaryPrimitives.ReadInt32LittleEndian(td.AsSpan(0x2F, 4));
+        int numRealIdx = BinaryPrimitives.ReadInt32LittleEndian(td.AsSpan(0x33, 4));
+        int colStart = 63 + (Math.Max(0, numRealIdx) * 12);
+        int colDescBlockEnd = colStart + (numCols * 25);
+        int colNamesEnd = SkipUcs2NamesPrefixed(td, colDescBlockEnd, numCols);
+        int realIdxPhysStart = colNamesEnd;
+        int logIdxStart = realIdxPhysStart + (numRealIdx * 52);
+        int logIdxNamesStart = logIdxStart + (numLogIdx * 28);
+        return new TDefHeader(numCols, numLogIdx, numRealIdx, colStart, colNamesEnd, realIdxPhysStart, logIdxStart, logIdxNamesStart);
+    }
+
+    private static int SkipUcs2NamesPrefixed(byte[] td, int start, int count)
+    {
+        int p = start;
+        for (int i = 0; i < count; i++)
+        {
+            if (p + 2 > td.Length)
+            {
+                return Math.Min(td.Length, p);
+            }
+
+            int len = BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(p, 2));
+            p += 2 + len;
+            if (p > td.Length)
+            {
+                return td.Length;
+            }
+        }
+
+        return p;
+    }
+
+    private static HypothesisRow CheckRedundantColNum(byte[] wt, TDefHeader wHdr, byte[] dt, TDefHeader dHdr)
+    {
+        var wMismatches = new List<int>();
+        for (int i = 0; i < wHdr.NumCols; i++)
+        {
+            int o = wHdr.ColStart + (i * 25);
+            if (o + 11 > wt.Length)
+            {
+                break;
+            }
+
+            ushort primary = BinaryPrimitives.ReadUInt16LittleEndian(wt.AsSpan(o + 5, 2));
+            ushort redundant = BinaryPrimitives.ReadUInt16LittleEndian(wt.AsSpan(o + 9, 2));
+            if (primary != redundant)
+            {
+                wMismatches.Add(i);
+            }
+        }
+
+        var dMismatches = new List<int>();
+        for (int i = 0; i < dHdr.NumCols; i++)
+        {
+            int o = dHdr.ColStart + (i * 25);
+            if (o + 11 > dt.Length)
+            {
+                break;
+            }
+
+            ushort primary = BinaryPrimitives.ReadUInt16LittleEndian(dt.AsSpan(o + 5, 2));
+            ushort redundant = BinaryPrimitives.ReadUInt16LittleEndian(dt.AsSpan(o + 9, 2));
+            if (primary != redundant)
+            {
+                dMismatches.Add(i);
+            }
+        }
+
+        string verdict = wMismatches.Count == 0 ? "✅ PASS" : "❌ FAIL";
+        return new HypothesisRow(
+            "H22",
+            "col-desc byte 9 redundant col_num == byte 5 col_num",
+            verdict,
+            wMismatches.Count == 0 ? "all match" : $"mismatches at cols [{string.Join(",", wMismatches)}]",
+            dMismatches.Count == 0 ? "all match" : $"mismatches at cols [{string.Join(",", dMismatches)}]",
+            verdict == "✅ PASS" ? "writer matches DAO ground truth" : "writer diverges; see Schema/WriterColumnDescriptorRedundantColNumTests");
+    }
+
+    private static HypothesisRow CheckLogIdxRelIdxNum(byte[] wt, TDefHeader wHdr, byte[] dt, TDefHeader dHdr)
+    {
+        var wBad = new List<(int Slot, uint Val)>();
+        for (int i = 0; i < wHdr.NumLogIdx; i++)
+        {
+            int o = wHdr.LogIdxStart + (i * 28);
+            if (o + 17 > wt.Length)
+            {
+                break;
+            }
+
+            byte relTblType = wt[o + 12];
+            if (relTblType != 0)
+            {
+                continue; // FK entry — skip
+            }
+
+            uint relIdx = BinaryPrimitives.ReadUInt32LittleEndian(wt.AsSpan(o + 13, 4));
+            if (relIdx != 0xFFFFFFFF)
+            {
+                wBad.Add((i, relIdx));
+            }
+        }
+
+        var dBad = new List<(int Slot, uint Val)>();
+        for (int i = 0; i < dHdr.NumLogIdx; i++)
+        {
+            int o = dHdr.LogIdxStart + (i * 28);
+            if (o + 17 > dt.Length)
+            {
+                break;
+            }
+
+            byte relTblType = dt[o + 12];
+            if (relTblType != 0)
+            {
+                continue;
+            }
+
+            uint relIdx = BinaryPrimitives.ReadUInt32LittleEndian(dt.AsSpan(o + 13, 4));
+            if (relIdx != 0xFFFFFFFF)
+            {
+                dBad.Add((i, relIdx));
+            }
+        }
+
+        string verdict = wBad.Count == 0 ? "✅ PASS" : "❌ FAIL";
+        return new HypothesisRow(
+            "H27",
+            "non-FK logical-idx RelIdxNum [13..16] == 0xFFFFFFFF",
+            verdict,
+            wBad.Count == 0 ? "all 0xFFFFFFFF" : string.Join(";", wBad.Select(b => $"slot{b.Slot}=0x{b.Val:X8}")),
+            dBad.Count == 0 ? "all 0xFFFFFFFF" : string.Join(";", dBad.Select(b => $"slot{b.Slot}=0x{b.Val:X8}")),
+            verdict == "✅ PASS" ? "writer matches DAO" : "writer leaves slot at 0; DAO may treat PK as malformed FK");
+    }
+
+    private static HypothesisRow CheckLogIdxTrailerInt(byte[] wt, TDefHeader wHdr, byte[] dt, TDefHeader dHdr)
+    {
+        bool wOk = true, dOk = true;
+        uint wFirst = 0, dFirst = 0;
+        for (int i = 0; i < wHdr.NumLogIdx; i++)
+        {
+            int o = wHdr.LogIdxStart + (i * 28);
+            if (o + 28 > wt.Length)
+            {
+                break;
+            }
+
+            uint v = BinaryPrimitives.ReadUInt32LittleEndian(wt.AsSpan(o + 24, 4));
+            if (i == 0)
+            {
+                wFirst = v;
+            }
+
+            if (v != 0)
+            {
+                wOk = false;
+            }
+        }
+
+        for (int i = 0; i < dHdr.NumLogIdx; i++)
+        {
+            int o = dHdr.LogIdxStart + (i * 28);
+            if (o + 28 > dt.Length)
+            {
+                break;
+            }
+
+            uint v = BinaryPrimitives.ReadUInt32LittleEndian(dt.AsSpan(o + 24, 4));
+            if (i == 0)
+            {
+                dFirst = v;
+            }
+
+            if (v != 0)
+            {
+                dOk = false;
+            }
+        }
+
+        string verdict = wOk == dOk && wOk ? "✅ PASS" : (wOk == dOk ? "⚠️ INFO" : "❌ FAIL");
+        return new HypothesisRow(
+            "H28",
+            "logical-idx bytes [24..27] putInt(0) preserved",
+            verdict,
+            wOk ? "all 0" : $"slot0=0x{wFirst:X8}",
+            dOk ? "all 0" : $"slot0=0x{dFirst:X8}",
+            verdict == "✅ PASS" ? "writer matches DAO" : "writer/DAO diverge");
+    }
+
+    private static HypothesisRow CheckColDescZeroFields(
+        byte[] wt,
+        TDefHeader wHdr,
+        byte[] dt,
+        TDefHeader dHdr,
+        string id,
+        string title,
+        Func<byte[], int, bool> isApplicable,
+        (int Off, int Len) range)
+    {
+        int wApplicable = 0, wBad = 0;
+        for (int i = 0; i < wHdr.NumCols; i++)
+        {
+            int o = wHdr.ColStart + (i * 25);
+            if (o + 25 > wt.Length || !isApplicable(wt, o))
+            {
+                continue;
+            }
+
+            wApplicable++;
+            for (int k = 0; k < range.Len; k++)
+            {
+                if (wt[o + range.Off + k] != 0)
+                {
+                    wBad++;
+                    break;
+                }
+            }
+        }
+
+        int dApplicable = 0, dBad = 0;
+        for (int i = 0; i < dHdr.NumCols; i++)
+        {
+            int o = dHdr.ColStart + (i * 25);
+            if (o + 25 > dt.Length || !isApplicable(dt, o))
+            {
+                continue;
+            }
+
+            dApplicable++;
+            for (int k = 0; k < range.Len; k++)
+            {
+                if (dt[o + range.Off + k] != 0)
+                {
+                    dBad++;
+                    break;
+                }
+            }
+        }
+
+        if (wApplicable == 0 && dApplicable == 0)
+        {
+            return new HypothesisRow(id, title, "⚠️ N/A", "0 cols apply", "0 cols apply", "no applicable column shape in this fixture");
+        }
+
+        string verdict = wBad == 0 ? "✅ PASS" : "❌ FAIL";
+        return new HypothesisRow(
+            id,
+            title,
+            verdict,
+            $"{wApplicable - wBad}/{wApplicable} zero",
+            $"{dApplicable - dBad}/{dApplicable} zero",
+            verdict == "✅ PASS" ? "writer matches DAO" : "writer leaves non-zero; potential buffer-reuse risk");
+    }
+
+    private static HypothesisRow CheckRealIdxFlags(byte[] wt, TDefHeader wHdr, byte[] dt, TDefHeader dHdr)
+    {
+        // PK = first index (RT_Customers has only one).
+        const byte UNIQUE = 0x01, IGNORE_NULLS = 0x02, REQUIRED = 0x08, UNKNOWN = 0x80;
+        const byte ExpectedMask = UNIQUE | REQUIRED | UNKNOWN;
+        if (wHdr.NumRealIdx == 0 || dHdr.NumRealIdx == 0)
+        {
+            return new HypothesisRow("H37", "PK real-idx flags @46 has UNIQUE|REQUIRED|UNKNOWN", "⚠️ N/A", "—", "—", "no real-idx slot");
+        }
+
+        int wOff = wHdr.RealIdxPhysStart + 46;
+        int dOff = dHdr.RealIdxPhysStart + 46;
+        if (wOff >= wt.Length || dOff >= dt.Length)
+        {
+            return new HypothesisRow("H37", "PK real-idx flags @46 has UNIQUE|REQUIRED|UNKNOWN", "⚠️ N/A", "—", "—", "TDEF too short");
+        }
+
+        byte wFlags = wt[wOff];
+        byte dFlags = dt[dOff];
+        bool ok = (wFlags & ExpectedMask) == ExpectedMask;
+        string verdict = ok ? "✅ PASS" : "❌ FAIL";
+        _ = IGNORE_NULLS; // suppress unused warning
+        return new HypothesisRow(
+            "H37",
+            "PK real-idx flags @46 has UNIQUE|REQUIRED|UNKNOWN",
+            verdict,
+            $"0x{wFlags:X2}",
+            $"0x{dFlags:X2}",
+            ok ? "writer carries PK bits" : "writer missing UNIQUE/REQUIRED/UNKNOWN bit");
+    }
+
+    private static HypothesisRow CheckRealIdxUnknownGap(byte[] wt, TDefHeader wHdr, byte[] dt, TDefHeader dHdr)
+    {
+        if (wHdr.NumRealIdx == 0 || dHdr.NumRealIdx == 0)
+        {
+            return new HypothesisRow("H38", "real-idx [42..45] (unknown putInt) == 0", "⚠️ N/A", "—", "—", "no real-idx slot");
+        }
+
+        int wBad = 0, dBad = 0;
+        uint wFirst = 0, dFirst = 0;
+        for (int i = 0; i < wHdr.NumRealIdx; i++)
+        {
+            int o = wHdr.RealIdxPhysStart + (i * 52) + 42;
+            if (o + 4 > wt.Length)
+            {
+                break;
+            }
+
+            uint v = BinaryPrimitives.ReadUInt32LittleEndian(wt.AsSpan(o, 4));
+            if (i == 0)
+            {
+                wFirst = v;
+            }
+
+            if (v != 0)
+            {
+                wBad++;
+            }
+        }
+
+        for (int i = 0; i < dHdr.NumRealIdx; i++)
+        {
+            int o = dHdr.RealIdxPhysStart + (i * 52) + 42;
+            if (o + 4 > dt.Length)
+            {
+                break;
+            }
+
+            uint v = BinaryPrimitives.ReadUInt32LittleEndian(dt.AsSpan(o, 4));
+            if (i == 0)
+            {
+                dFirst = v;
+            }
+
+            if (v != 0)
+            {
+                dBad++;
+            }
+        }
+
+        string verdict = wBad == 0 ? (dBad == 0 ? "✅ PASS" : "⚠️ INFO") : "❌ FAIL";
+        return new HypothesisRow(
+            "H38",
+            "real-idx [42..45] (unknown putInt) == 0",
+            verdict,
+            wBad == 0 ? "all 0" : $"slot0=0x{wFirst:X8}",
+            dBad == 0 ? "all 0" : $"slot0=0x{dFirst:X8}",
+            verdict == "✅ PASS" ? "writer matches DAO" : "writer/DAO diverge");
+    }
+
+    private static HypothesisRow CheckIndexNameLengthPrefix(byte[] wt, TDefHeader wHdr, byte[] dt, TDefHeader dHdr)
+    {
+        bool wOk = true, dOk = true;
+        int wp = wHdr.LogIdxNamesStart;
+        for (int i = 0; i < wHdr.NumLogIdx; i++)
+        {
+            if (wp + 2 > wt.Length)
+            {
+                wOk = false;
+                break;
+            }
+
+            int len = BinaryPrimitives.ReadUInt16LittleEndian(wt.AsSpan(wp, 2));
+            if ((len & 1) != 0)
+            {
+                wOk = false; // UCS-2 byte count must be even
+            }
+
+            wp += 2 + len;
+            if (wp > wt.Length)
+            {
+                wOk = false;
+            }
+        }
+
+        int dp = dHdr.LogIdxNamesStart;
+        for (int i = 0; i < dHdr.NumLogIdx; i++)
+        {
+            if (dp + 2 > dt.Length)
+            {
+                dOk = false;
+                break;
+            }
+
+            int len = BinaryPrimitives.ReadUInt16LittleEndian(dt.AsSpan(dp, 2));
+            if ((len & 1) != 0)
+            {
+                dOk = false;
+            }
+
+            dp += 2 + len;
+            if (dp > dt.Length)
+            {
+                dOk = false;
+            }
+        }
+
+        string verdict = wOk && dOk ? "✅ PASS" : (wOk != dOk ? "❌ FAIL" : "⚠️ INFO");
+        return new HypothesisRow(
+            "H42",
+            "logical-idx name length-prefix is byte count (even)",
+            verdict,
+            wOk ? "valid" : "odd / overrun",
+            dOk ? "valid" : "odd / overrun",
+            verdict == "✅ PASS" ? "writer matches DAO" : "writer wrote char count instead of byte count");
+    }
+
+    private static HypothesisRow CheckOwnedFreePages(byte[] wt, byte[] dt)
+    {
+        uint wOwned = BinaryPrimitives.ReadUInt32LittleEndian(wt.AsSpan(0x37, 4));
+        uint wFree = BinaryPrimitives.ReadUInt32LittleEndian(wt.AsSpan(0x3B, 4));
+        uint dOwned = BinaryPrimitives.ReadUInt32LittleEndian(dt.AsSpan(0x37, 4));
+        uint dFree = BinaryPrimitives.ReadUInt32LittleEndian(dt.AsSpan(0x3B, 4));
+
+        bool wOk = wOwned != 0 && wFree != 0;
+        bool dOk = dOwned != 0 && dFree != 0;
+        string verdict = wOk && dOk ? "✅ PASS" : (wOk == dOk ? "⚠️ INFO" : "❌ FAIL");
+        return new HypothesisRow(
+            "H44",
+            "TDEF owned_pages[0x37] / free_space_pages[0x3B] non-zero",
+            verdict,
+            $"owned=0x{wOwned:X8} free=0x{wFree:X8}",
+            $"owned=0x{dOwned:X8} free=0x{dFree:X8}",
+            verdict == "✅ PASS" ? "writer matches DAO" : "writer left usage-map slot zero — cursor cannot iterate data pages");
+    }
+
+    private static async Task<(HypothesisRow H26, HypothesisRow H45)> CheckUsageMapRowAsync(
+        AccessReader wr, AccessReader dr, byte[] wt, byte[] dt, long wTdefPage, long dTdefPage)
+    {
+        // owned_pages slot at TDEF[0x37..0x3A]: byte[0]=row, bytes[1..3]=24-bit page LE.
+        (int wRow, long wPage) = ReadUsageMapPointer(wt, 0x37);
+        (int dRow, long dPage) = ReadUsageMapPointer(dt, 0x37);
+
+        byte? wType = null, dType = null;
+        long? wBack = null, dBack = null;
+        try
+        {
+            byte[] wPageBytes = await wr.GetRawPageBytesAsync(wPage, default);
+            (wType, wBack) = ExtractUsageMapRow(wPageBytes, wRow);
+        }
+        catch (Exception ex) when (ex is IOException or ArgumentException or IndexOutOfRangeException)
+        {
+            // leave nulls
+        }
+
+        try
+        {
+            byte[] dPageBytes = await dr.GetRawPageBytesAsync(dPage, default);
+            (dType, dBack) = ExtractUsageMapRow(dPageBytes, dRow);
+        }
+        catch (Exception ex) when (ex is IOException or ArgumentException or IndexOutOfRangeException)
+        {
+            // leave nulls
+        }
+
+        // H26: writer's row-0 type byte matches DAO's. The original Jackcess-derived
+        // hypothesis (DAO uses MAP_TYPE_REFERENCE = 0x01) is empirically false for
+        // small/empty tables — DAO actually uses INLINE (0x00) here. The meaningful
+        // check is "writer matches DAO".
+        string h26Verdict;
+        string h26Notes;
+        if (wType is null || dType is null)
+        {
+            h26Verdict = "⚠️ N/A";
+            h26Notes = "row unreachable";
+        }
+        else if (wType == dType)
+        {
+            h26Verdict = "✅ PASS";
+            h26Notes = dType == 0x01 ? "writer matches DAO (REFERENCE)" : "writer matches DAO (INLINE; original hypothesis disconfirmed)";
+        }
+        else
+        {
+            h26Verdict = "❌ FAIL";
+            h26Notes = $"writer stamps 0x{wType:X2}, DAO stamps 0x{dType:X2}";
+        }
+
+        var h26 = new HypothesisRow(
+            "H26",
+            "per-table usage-map row 0 type byte (writer == DAO)",
+            h26Verdict,
+            wType is null ? "row unreachable" : $"page={wPage} row={wRow} type=0x{wType:X2}",
+            dType is null ? "row unreachable" : $"page={dPage} row={dRow} type=0x{dType:X2}",
+            h26Notes);
+
+        // H45: tdef_back_pointer only applies to REFERENCE rows. For INLINE rows
+        // (type 0x00) bytes [1..3] are bitmap data, not a back-pointer. Compare
+        // writer-vs-DAO structurally.
+        string h45Verdict;
+        string h45Notes;
+        if (wBack is null || dBack is null || wType is null || dType is null)
+        {
+            h45Verdict = "⚠️ N/A";
+            h45Notes = "row unreachable";
+        }
+        else if (wType != 0x01 && dType != 0x01)
+        {
+            h45Verdict = "⚠️ N/A";
+            h45Notes = "both rows are INLINE (no back-pointer slot)";
+        }
+        else if (wType != dType)
+        {
+            h45Verdict = "❌ FAIL";
+            h45Notes = "writer/DAO row types diverge (covered by H26)";
+        }
+        else
+        {
+            bool wMatch = wBack == wTdefPage;
+            bool dMatch = dBack == dTdefPage;
+            h45Verdict = wMatch == dMatch ? (wMatch ? "✅ PASS" : "⚠️ INFO") : "❌ FAIL";
+            h45Notes = h45Verdict == "✅ PASS" ? "writer back-pointer matches own TDEF" : "writer/DAO back-pointer semantics diverge";
+        }
+
+        var h45 = new HypothesisRow(
+            "H45",
+            "usage-map row tdef_back_pointer (REFERENCE rows only)",
+            h45Verdict,
+            wBack is null ? "row unreachable" : $"back=0x{wBack:X6} tdef={wTdefPage}",
+            dBack is null ? "row unreachable" : $"back=0x{dBack:X6} tdef={dTdefPage}",
+            h45Notes);
+
+        return (h26, h45);
+    }
+
+    private static (int Row, long Page) ReadUsageMapPointer(byte[] td, int off)
+    {
+        // 4 bytes: byte[0]=row, bytes[1..3]=24-bit page LE.
+        if (off + 4 > td.Length)
+        {
+            return (0, 0);
+        }
+
+        int row = td[off];
+        long page = td[off + 1] | (long)(td[off + 2] << 8) | (long)(td[off + 3] << 16);
+        return (row, page);
+    }
+
+    private static (byte? Type, long? BackPointer) ExtractUsageMapRow(byte[] page, int rowIndex)
+    {
+        // Usage-map page layout: page-type byte at 0; row offsets array at offset 14 onward
+        // (Jet4 data-page-style header). Each slot is 2 bytes; mask 0x1FFF for offset.
+        const int RowsStartOff = 14;
+        const int NumRowsOff = 12;
+        if (page.Length < RowsStartOff + 2)
+        {
+            return (null, null);
+        }
+
+        ushort numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(NumRowsOff, 2));
+        if (rowIndex >= numRows)
+        {
+            return (null, null);
+        }
+
+        int slotOff = RowsStartOff + (rowIndex * 2);
+        if (slotOff + 2 > page.Length)
+        {
+            return (null, null);
+        }
+
+        ushort slot = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(slotOff, 2));
+        if ((slot & 0xC000) != 0)
+        {
+            return (null, null);
+        }
+
+        int start = slot & 0x1FFF;
+        if (start >= page.Length)
+        {
+            return (null, null);
+        }
+
+        byte type = page[start];
+        long? back = null;
+        if (start + 4 <= page.Length)
+        {
+            // For MAP_TYPE_REFERENCE the row payload is type(1) + page(3) → bytes [start+1..start+3]
+            back = page[start + 1] | (long)(page[start + 2] << 8) | (long)(page[start + 3] << 16);
+        }
+
+        return (type, back);
     }
 
     // ─────── §6 DAO-only diffs (pages writer never touches) ────────────────
