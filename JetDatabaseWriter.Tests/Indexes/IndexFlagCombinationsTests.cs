@@ -70,7 +70,11 @@ public sealed class IndexFlagCombinationsTests
         // to exercise these flag bits, so seeing only (False,False,False) here
         // indicates a reader bug in the index-flag-byte parse path.
         string combos = string.Join(", ", observed.Select(c => $"({c.Unique},{c.IgnoreNulls},{c.Required})"));
-        string msg = $"Only {observed.Count} distinct flag combination(s) seen in '{fixturePath}': {combos}\nIndex inventory:\n{sb}";
+        string msg = $"""
+            Only {observed.Count} distinct flag combination(s) seen in '{fixturePath}': {combos}
+            Index inventory:
+            {sb}
+            """;
         Assert.True(observed.Count >= 2, msg);
     }
 

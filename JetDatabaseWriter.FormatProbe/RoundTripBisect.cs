@@ -179,10 +179,17 @@ internal static class RoundTripBisect
         string srcLit = src.Replace("'", "''", StringComparison.Ordinal);
         string dstLit = dst.Replace("'", "''", StringComparison.Ordinal);
         string script =
-            "$ErrorActionPreference='Stop'\n" +
-            $"$src='{srcLit}'\n$dst='{dstLit}'\n" +
-            "$e=New-Object -ComObject DAO.DBEngine.120\n" +
-            "try { $e.CompactDatabase($src,$dst); exit 0 } finally { [GC]::Collect() }\n";
+            """
+            $ErrorActionPreference='Stop'
+
+            $src='{srcLit}'
+            $dst='{dstLit}'
+
+            $e=New-Object -ComObject DAO.DBEngine.120
+
+            try { $e.CompactDatabase($src,$dst); exit 0 } finally { [GC]::Collect() }
+
+            """;
         string scriptPath = Path.Combine(Path.GetDirectoryName(dst)!, "compact.ps1");
         File.WriteAllText(scriptPath, script);
 

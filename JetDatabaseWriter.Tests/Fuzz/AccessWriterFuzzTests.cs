@@ -42,14 +42,20 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
             }
             catch (Exception ex)
             {
-                output.WriteLine($"[Fuzzing] Caught exception during fuzzing iteration: {ex.GetType().Name}\n{ex}");
+                output.WriteLine($"""
+                    [Fuzzing] Caught exception during fuzzing iteration: {ex.GetType().Name}
+                    {ex}
+                    """);
                 if (fuzzedBytes != null)
                 {
                     SaveCrashInput(output, fuzzedBytes);
                 }
             }
 
-            output.WriteLine($"--- Fuzzing iteration completed at {DateTime.UtcNow:O} ---\n");
+            output.WriteLine($"""
+                --- Fuzzing iteration completed at {DateTime.UtcNow:O} ---
+
+                """);
         });
     }
 
@@ -120,7 +126,10 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         }
         catch (Exception ex)
         {
-            output.WriteLine($"[RoundTrip] Exception reading written DB: {ex.GetType().Name}\n{ex}");
+            output.WriteLine($"""
+                [RoundTrip] Exception reading written DB: {ex.GetType().Name}
+                {ex}
+                """);
         }
     }
 

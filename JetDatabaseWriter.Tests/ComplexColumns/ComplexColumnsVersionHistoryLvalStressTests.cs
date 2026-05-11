@@ -148,41 +148,38 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests
         File.WriteAllLines(payloadFile, versions.Select(EscapeForLine));
         string payloadLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(payloadFile);
 
-        string[] lines =
-        [
-            $"$payloads = Get-Content -LiteralPath {payloadLiteral} -Encoding UTF8 | ForEach-Object {{ $_ -replace '\\\\n', \"`n\" }}",
-            $"$db = $engine.CreateDatabase({dbLiteral}, ';LANGID=0x0409;CP=1252;COUNTRY=0')",
-            "try {",
-            $"  $db.Execute('CREATE TABLE [{tableName}] (Id AUTOINCREMENT PRIMARY KEY, [{memoColumn}] MEMO)')",
-            "  # Enable AppendOnly on the Memo column so each update produces a",
-            "  # version-history row in the flat child table.",
-            $"  $tdf = $db.TableDefs('{tableName}')",
-            $"  $fld = $tdf.Fields('{memoColumn}')",
-            "  $fld.AppendOnly = $true",
-            "  $tdf = $null",
-            "  $fld = $null",
-            "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($db) | Out-Null",
-            "  [GC]::Collect(); [GC]::WaitForPendingFinalizers()",
-            $"  $db = $engine.OpenDatabase({dbLiteral})",
-            $"  $rs = $db.OpenRecordset('{tableName}', 2)",
-            "  $rs.AddNew()",
-            $"  $rs.Fields('{memoColumn}').Value = $payloads[0]",
-            "  $rs.Update()",
-            "  $rs.MoveLast()",
-            "  for ($i = 1; $i -lt $payloads.Count; $i++) {",
-            "    $rs.Edit()",
-            $"    $rs.Fields('{memoColumn}').Value = $payloads[$i]",
-            "    $rs.Update()",
-            "  }",
-            "  $rs.Close()",
-            "  $db.Close()",
-            "  Write-Output \"WROTE=$($payloads.Count)\"",
-            "} finally {",
-            "  if ($db -ne $null) { try { $db.Close() } catch {} }",
-            "}",
-        ];
-
-        return string.Join("\n", lines) + "\n";
+        return $$"""
+                $payloads = Get-Content -LiteralPath {{payloadLiteral}} -Encoding UTF8 | ForEach-Object { $_ -replace '\\n', "`n" }
+                $db = $engine.CreateDatabase({{dbLiteral}}, ';LANGID=0x0409;CP=1252;COUNTRY=0')
+                try {
+                    $db.Execute('CREATE TABLE [{{tableName}}] (Id AUTOINCREMENT PRIMARY KEY, [{{memoColumn}}] MEMO)')
+                    # Enable AppendOnly on the Memo column so each update produces a
+                    # version-history row in the flat child table.
+                    $tdf = $db.TableDefs('{{tableName}}')
+                    $fld = $tdf.Fields('{{memoColumn}}')
+                    $fld.AppendOnly = $true
+                    $tdf = $null
+                    $fld = $null
+                    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($db) | Out-Null
+                    [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+                    $db = $engine.OpenDatabase({{dbLiteral}})
+                    $rs = $db.OpenRecordset('{{tableName}}', 2)
+                    $rs.AddNew()
+                    $rs.Fields('{{memoColumn}}').Value = $payloads[0]
+                    $rs.Update()
+                    $rs.MoveLast()
+                    for ($i = 1; $i -lt $payloads.Count; $i++) {
+                        $rs.Edit()
+                        $rs.Fields('{{memoColumn}}').Value = $payloads[$i]
+                        $rs.Update()
+                    }
+                    $rs.Close()
+                    $db.Close()
+                    Write-Output "WROTE=$($payloads.Count)"
+                } finally {
+                    if ($db -ne $null) { try { $db.Close() } catch {} }
+                }
+                """.ReplaceLineEndings("\n") + "\n";
     }
 
     private static string EscapeForLine(string value) =>

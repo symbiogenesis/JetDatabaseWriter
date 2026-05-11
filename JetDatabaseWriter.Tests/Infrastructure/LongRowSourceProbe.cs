@@ -126,12 +126,18 @@ public sealed class LongRowSourceProbe
 
         // Approach 3: What if V2010 puts MORE inline bytes instead of END_TEXT + extras?
         // Check what inline bytes chars 255+ produce, and if they match the suffix.
-        sb.AppendLine("\n--- Char-by-char inline analysis around position 508 ---");
+        sb.AppendLine("""
+
+            --- Char-by-char inline analysis around position 508 ---
+            """);
 
         for (int r = 0; r < rowData.Count; r++)
         {
             var (ri, expSuffix, full, text) = rowData[r];
-            sb.AppendLine($"\nrow[{ri}] expected=0x{expSuffix:X4}");
+            sb.AppendLine($"""
+
+                row[{ri}] expected=0x{expSuffix:X4}
+                """);
 
             int inlinePos = 1; // flag byte at position 0
             int lastCharBefore508 = -1;
@@ -305,7 +311,10 @@ public sealed class LongRowSourceProbe
         }
 
         int candidateCount = constraints[0].Inputs.Length;
-        sb.AppendLine($"\nSweep: {candidateCount} input candidates × 65536 polys × 16 modes = {candidateCount * 65536 * 16:N0} combos per constraint");
+        sb.AppendLine($"""
+
+            Sweep: {candidateCount} input candidates × 65536 polys × 16 modes = {candidateCount * 65536 * 16:N0} combos per constraint
+            """);
         sb.AppendLine("Filter: a (poly,mode,inputIdx) survives only if it satisfies ALL constraints simultaneously.");
 
         // Sweep. Strategy: for each (poly, mode, inputIdx), compute CRC against
@@ -363,7 +372,10 @@ public sealed class LongRowSourceProbe
             }
         }
 
-        sb.AppendLine($"\nTotal hits: {hits.Count}");
+        sb.AppendLine($"""
+
+            Total hits: {hits.Count}
+            """);
         Assert.Fail(sb.ToString());
     }
 
