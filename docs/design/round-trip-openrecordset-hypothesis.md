@@ -141,6 +141,175 @@ autonumber columns shouldn't need it), but cheap to test.
 > to a side-by-side hex diff via Tier-3 step #16, or investigate the
 > 12-byte logical-idx descriptor / TDEF-tail / LvProp blob layouts next.
 
+## H26+ candidate hypotheses (drafted 2026-05-10 from Jackcess + mdbtools deep-dive)
+
+The hypotheses below were synthesized after reading the canonical writers
+in [`ColumnImpl.writeDefinition`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/ColumnImpl.java),
+[`IndexImpl.writeDefinition`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/IndexImpl.java),
+[`IndexData.writeDefinition`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/IndexData.java),
+[`TableImpl.writeTableDefinitionHeader` / `createUsageMapDefinitionBuffer`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/TableImpl.java),
+and [`JetFormat.java`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/JetFormat.java)
+(authoritative offsets for Jet4 / Jet12 / Jet14 / Jet16 / Jet17), and after
+re-reading [TDefPageBuilder.cs](../../JetDatabaseWriter/Schema/TDefPageBuilder.cs).
+Ranked by **estimated payoff** = probability(true) × ease-of-test.
+
+> All offsets below assume Jet4 / ACE (4096-byte page). Bytes are
+> 0-indexed within the page.
+
+### Tier-A — single-byte / single-int divergences, easy to test
+
+- **H26 — Per-table usage-map row 0 type byte should be `0x01` (`MAP_TYPE_REFERENCE`)**.
+  Jackcess `TableImpl.createUsageMapDefinitionBuffer` writes
+  `MAP_TYPE_REFERENCE = 0x01` for the *owned-pages* map (row 0) and
+  `MAP_TYPE_INLINE = 0x00` for the *free-space* map (row 1). The writer
+  per `round-trip-test-failures.md §"Per-table usage-map page"` stamps
+  `0x00` (inline) for **both** rows. DAO `OpenRecordset` may need an
+  external pointer here to materialize the cursor's page-iteration plan.
+  *Test:* hex-diff usage-map page bytes 0..1 against a DAO baseline.
+- **H27 — Logical-idx `relIndexNumber` for non-FK indexes must be `INVALID_INDEX_NUMBER` (`0xFFFFFFFF`), not `0`**.
+  `IndexImpl.writeDefinition` writes `putInt(INVALID_INDEX_NUMBER)` (= -1)
+  at logical-idx bytes [13..16] when the index has no related index.
+  Verify writer's `Constants.LogicalIdx.Jet4.RelIdxNumOffset` slot is
+  populated with `0xFFFFFFFF` (mdbtools confirms). If writer leaves it
+  as zero, DAO may treat the PK as a malformed FK and reject.
+- **H28 — Logical-idx `unknown` `putInt(0)` at bytes [24..27] must be present**.
+  `IndexImpl.writeDefinition` finishes with `buffer.putInt(0)` after
+  `idxType` (offset 23). Writer's `IndexLayout` exposes
+  `IndexTypeFieldOffset = 23` but no field beyond it — verify the writer
+  does not truncate the descriptor at byte 24, or DAO's logical-idx
+  iterator may misalign for any subsequent index.
+- **H29 — TDEF column-usage-map block missing for tables with no long-value columns**.
+  Jackcess writes 10 bytes per MEMO/OLE column then the `0xFFFF` end
+  marker. The writer emits only `0xFFFF` when no long-value column
+  exists. That matches Jackcess only when the descriptor block is
+  syntactically present (`numIdx > 0`); the writer's
+  `if (jet4 && numIdx > 0)` guard means a table with **zero** indexes
+  would have no terminator at all. Round-trip schema always has a PK so
+  this likely doesn't manifest, but verify before dismissing.
+- **H30 — TDEF tail / pad bytes between `namePos` and end of last continuation page**.
+  Jackcess pads remaining TDEF bytes with `0x00`; writer relies on
+  `new byte[logicalCapacity]` zero-init. Verify the *physical* page tail
+  isn't overwritten by carry-over from a previous page write into the
+  same buffer.
+
+### Tier-B — column descriptor zero-init reliance (subtle)
+
+- **H31 — NUMERIC column-descriptor bytes [13..14] not explicitly zeroed**.
+  Jackcess writes `putShort((short) 0)` after precision/scale to clear
+  bytes 13-14 ("Unknown, but always 0"). Writer only stamps `[11]=prec`
+  `[12]=scale` and relies on the buffer's zero-init. If the same logical
+  buffer is ever reused (e.g., the `splitLogicalTDefIntoPages` path or a
+  buffer pool), bytes 13-14 could carry stale data interpreted as a
+  phantom sort-order version.
+- **H32 — Non-text/non-numeric/non-complex column-descriptor bytes [11..14] not stamped**.
+  For LONG/INT/BYTE/MONEY/FLOAT/DOUBLE/DATETIME/BOOLEAN/GUID/BINARY,
+  TDefPageBuilder.cs (lines 187–211) skips the `MiscOff` write entirely
+  and relies on zero-init. Jackcess explicitly writes
+  `put((byte)0); put((byte)0); putShort((short)0)` for these. Same
+  buffer-reuse risk as H31.
+- **H33 — Column descriptor bytes [17..20] (Jackcess "always 0" `putInt`) not stamped**.
+  Jackcess unconditionally writes `putInt(0)` at offset 17 immediately
+  after the ExtraFlags byte. Writer skips this. Zero-init covers it for
+  fresh buffers; verify nothing writes to this region during the column
+  loop.
+- **H34 — ExtraFlags byte at offset 16 not stamped to `0x00` for non-TEXT/MEMO columns**.
+  Writer only sets `page[o + FlagsOff + 1] = col.ExtraFlags` inside the
+  `T_TEXT || T_MEMO` branch. For other column types the byte is left at
+  the buffer's zero. Same zero-init concern.
+- **H35 — `AUTO_NUMBER_GUID_FLAG_MASK` (`0x40`) for GUID auto-number columns**.
+  Jackcess `getColumnBitFlags` uses `0x40` (not `0x04`) for GUID
+  auto-number. Writer's `BuildTableDefinition` always sets `0x04`. Not
+  triggered by current gating tests (CustomerID/OrderID are LONG), but a
+  latent issue.
+
+### Tier-C — index physical descriptor & index leaf
+
+- **H36 — Real-idx `unique_entry_count` slot in TDEF index-def block out of sync**.
+  `IndexData.create` reads `uniqueEntryCount = tableBuffer.getInt(OFFSET_INDEX_DEF_BLOCK + idx*SIZE_INDEX_DEFINITION + 4)`.
+  Writer's `UpdateRowCountAsync` mirrors `row_count` into this slot
+  (`countOff = _tdef.BlockEnd + (i * _tdef.RealIdxEntrySz) + 4`), but
+  for **unique** indexes (PK) `unique_entry_count == row_count` only
+  when no duplicates exist. For an *empty* table with a PK, both are 0
+  and that's fine. After auto-number inserts, both should be N. Verify
+  the slot survives the post-insert `UpdateRowCountAsync` write.
+- **H37 — Real-idx `flags` byte at offset 46 missing `IGNORE_NULLS_INDEX_FLAG` (`0x02`) or `REQUIRED_INDEX_FLAG` (`0x08`) bits for the PK**.
+  Jackcess's `getIndexFlags()` returns `UNIQUE(0x01) | REQUIRED(0x08) | IGNORE_NULLS(0x02)?`
+  for a PK. Writer's `Constants.TableDefinition.Jet4.RealIdx.FlagsOffset = 46`
+  is correct (matches Jackcess), but the *value* may be missing the
+  required bit. If writer emits only `0x01` (UNIQUE) but DAO expects
+  `0x09` or `0x0B` for a PK, OpenRecordset may reject.
+- **H38 — Real-idx `unknown` 4-byte putInt at offset 42..45 not zeroed**.
+  Jackcess writes `putInt(0)` at offset 42. Writer's real-idx layout has
+  `FlagsOffset=46` so offsets 42..45 are unstamped — relies on zero-init.
+- **H39 — PK index root leaf page: header layout drift**.
+  Jackcess `IndexData.NEW_ROOT_DATA_PAGE` initializes `prev/next/tail = 0`,
+  `pref_len = 0`, `compressed_byte_count = 0` (Jet4 byte at offset 24),
+  and the `entry_mask` region. Verify writer's empty-PK leaf page header
+  bytes 0..28 byte-for-byte match a DAO-authored empty PK leaf.
+- **H40 — Index-leaf entry-mask trailing byte at the end of the page**.
+  Jackcess sets the entry-mask last byte to a sentinel; mdbtools also
+  notes a trailing byte after the entry mask. Verify writer's leaf
+  layout matches for an empty leaf.
+
+### Tier-D — header-level / file-level
+
+- **H41 — Jet12 `OFFSET_NEXT_COMPLEX_AUTO_NUMBER` (TDEF byte 28) not zeroed for ACCDB**.
+  Per `JetFormat.Jet12Format`, ACCDB tables carry a 4-byte
+  `next_complex_auto_number` at TDEF offset **28** (Jet4 `.mdb` has
+  this at -1 = absent). Writer's H25 fix stamps `0x01` at byte 24
+  (autonum_flag) and presumably leaves bytes 25..39 as zero — verify
+  bytes 28..31 are 0 (likely OK via zero-init, but worth a one-byte
+  assert).
+- **H42 — Index-name UTF-16 length-prefix byte count vs character count**.
+  Writer writes `Wu16(page, namePos, nameBytes.Length)` where
+  `nameBytes = Encoding.Unicode.GetBytes(idx.Name)` — that's a *byte*
+  count, matching Jackcess `putShort((short)(name.length()*2))`. ✓ but
+  worth re-asserting that the writer never accidentally writes a
+  *char* count.
+- **H43 — `unknown_jet4` 4-byte field after `next_pg`**.
+  Writer's `BuildTDefPagesWithIndexOffsets` writes `tdef_len` at byte 8
+  and `MAGIC_TABLE_NUMBER` at byte 12. `JetFormat.Jet4Format` confirms
+  this is correct (no field between bytes 8 and 12 for Jet4). ✓
+- **H44 — Owned/free-space usage-map page numbers at TDEF bytes 55..62**.
+  Jackcess populates `OFFSET_OWNED_PAGES = 55` and
+  `OFFSET_FREE_SPACE_PAGES = 59` with the per-table usage-map page
+  number (3-byte page + 1-byte row). If the writer leaves either as
+  zero or points to a malformed map, DAO's cursor cannot iterate data
+  pages and `OpenRecordset` would fail at materialization. **Highest
+  systemic risk** — verify both 4-byte slots point at valid usage-map
+  rows whose page-data block (bytes after the type byte) reflects the
+  newly-allocated data pages for the table.
+- **H45 — Per-table usage-map "row" inside the global-usage-map page lacks the `tdef_back_pointer` (offset 5..8 in row data)**.
+  Jackcess `TableImpl.createUsageMapDefinitionBuffer` for
+  `MAP_TYPE_REFERENCE` writes the TDEF page number at bytes [1..4] of
+  the row payload. Verify writer's usage-map row layout.
+
+### Recommended attack order
+
+1. **H44** (top) + **H26** (paired): both touch the per-table usage-map
+   row layout, where DAO must read the data-page list to materialize
+   the cursor. A single hex-diff of the per-table usage-map row vs. a
+   DAO baseline closes both at once.
+2. **H27**, **H28**, **H37**: logical-idx + real-idx flag/sentinel
+   verification. Add focused tests in
+   `JetDatabaseWriter.Tests/Schema/` modeled on
+   `WriterColumnDescriptorRedundantColNumTests`.
+3. **H31**, **H32**: assert the writer explicitly writes zero (not
+   relies on zero-init) for column-descriptor MiscOff bytes 11..14 on
+   non-text/non-numeric columns. Cheap defensive write.
+4. **H39**, **H40**: empty-leaf hex diff against a DAO-authored empty
+   PK leaf.
+
+### Quick experiment harness suggestion
+
+Extend `JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs` with an
+`accumulating diff` mode that, for the same TDEF page, side-by-side
+prints the writer-emitted bytes vs. DAO-authored bytes for the
+specific regions covered by H26-H45 (usage-map page, TDEF index-def
+slots, logical-idx descriptor, column descriptor MiscOff). Each
+hypothesis becomes a one-line PASS/FAIL row, letting the next probe
+run rule out 5-10 hypotheses per execution.
+
 ## Disconfirmed (per `round-trip-test-failures.md` — do NOT re-test)
 
 - LvProp 12-byte payload as dangling chained-LVAL (H20, tested 2026-05-10,
