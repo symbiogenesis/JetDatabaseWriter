@@ -20,8 +20,9 @@ using Xunit;
 /// sub-table.".
 /// </summary>
 [Trait("Category", "RequiresMicrosoftAccess")]
-public sealed class ComplexColumnsVersionHistoryLvalStressTests : IDisposable
+public sealed class ComplexColumnsVersionHistoryLvalStressTests
 {
+    private const string TempDirectoryName = "JetDatabaseWriter.Tests.VhLval";
     private const int VersionCount = 110;
     private const int LongVersionLength = 5000;
     private static readonly TimeSpan DaoTimeout = TimeSpan.FromMinutes(2);
@@ -31,43 +32,6 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests : IDisposable
     // short so the flat table mixes inline + chained values.
     private static readonly HashSet<int> LongVersionIndices = [25, 50, 75, 100, 109];
 
-    private readonly string _workDir;
-
-    public ComplexColumnsVersionHistoryLvalStressTests()
-    {
-        _workDir = Path.Combine(
-            Path.GetTempPath(),
-            "JetDatabaseWriter.Tests.VhLval",
-            Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_workDir);
-    }
-
-    public void Dispose()
-    {
-        try
-        {
-            if (Directory.Exists(_workDir))
-            {
-                Directory.Delete(_workDir, recursive: true);
-            }
-        }
-        catch (IOException)
-        {
-            // Best-effort cleanup.
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Best-effort cleanup.
-        }
-    }
-
-    /// <summary>
-    /// Gets a value indicating whether DAO (Microsoft Access) is available.
-    /// Tests using <c>SkipUnless</c> on this property will report as skipped
-    /// rather than failing on hosts without Access installed.
-    /// </summary>
-    public static bool RoundTripAvailable => AccessRoundTripEnvironment.IsAvailable;
-
     /// <summary>
     /// Authors an Access database via DAO containing a single AppendOnly Memo
     /// column with <see cref="VersionCount"/> historical versions, then opens
@@ -76,10 +40,14 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests : IDisposable
     /// long versions whose Memo payloads are stored as multi-page LVAL chains
     /// inside the per-row complex sub-table.
     /// </summary>
-    [Fact(Skip = "Requires Microsoft Access (DAO.DBEngine.120)", SkipUnless = nameof(RoundTripAvailable))]
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task LongVersionedTextColumn_AllVersionsReadableFromFlatTable()
     {
-        string dbPath = Path.Combine(_workDir, "vh_lval_stress.accdb");
+        await using var session = AccessRoundTripSession.CreateEmpty(TempDirectoryName);
+        string dbPath = session.CreateDatabasePath("vh_lval_stress");
         const string TableName = "VhLval";
         const string MemoColumn = "Notes";
 
@@ -89,7 +57,7 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests : IDisposable
         string[] versions = BuildVersionPayloads();
 
         string script = BuildAuthoringScript(dbPath, TableName, MemoColumn, versions);
-        var result = AccessRoundTripEnvironment.RunDaoScript(script, _workDir, DaoTimeout);
+        var result = session.RunDaoEngineScript(script, DaoTimeout);
         Assert.True(
             result.ExitCode == 0,
             $"DAO authoring script failed (exit={result.ExitCode}).\nstdout: {result.StdOut}\nstderr: {result.StdErr}");
@@ -170,7 +138,7 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests : IDisposable
         string memoColumn,
         string[] versions)
     {
-        string dbLiteral = dbPath.Replace("'", "''", StringComparison.Ordinal);
+        string dbLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(dbPath);
 
         // Stage all version payloads to a sidecar text file (one line per
         // version, with newlines escaped as \n) so we don't blow past the
@@ -178,47 +146,43 @@ public sealed class ComplexColumnsVersionHistoryLvalStressTests : IDisposable
         // char strings inline.
         string payloadFile = Path.Combine(GetSidecarDir(dbPath), "vh-payloads.txt");
         File.WriteAllLines(payloadFile, versions.Select(EscapeForLine));
-        string payloadLiteral = payloadFile.Replace("'", "''", StringComparison.Ordinal);
+        string payloadLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(payloadFile);
 
-        return $$"""
-            $ErrorActionPreference = 'Stop'
-            $payloads = Get-Content -LiteralPath '{{payloadLiteral}}' -Encoding UTF8 | ForEach-Object { $_ -replace '\\n', "`n" }
-            $engine = New-Object -ComObject DAO.DBEngine.120
-            try {
-              $db = $engine.CreateDatabase('{{dbLiteral}}', ';LANGID=0x0409;CP=1252;COUNTRY=0')
-              try {
-                $db.Execute('CREATE TABLE [{{tableName}}] (Id AUTOINCREMENT PRIMARY KEY, [{{memoColumn}}] MEMO)')
-                # Enable AppendOnly on the Memo column so each update produces a
-                # version-history row in the flat child table.
-                $tdf = $db.TableDefs('{{tableName}}')
-                $fld = $tdf.Fields('{{memoColumn}}')
-                $fld.AppendOnly = $true
-                $tdf = $null
-                $fld = $null
-                [System.Runtime.InteropServices.Marshal]::ReleaseComObject($db) | Out-Null
-                [GC]::Collect(); [GC]::WaitForPendingFinalizers()
-                $db = $engine.OpenDatabase('{{dbLiteral}}')
-                $rs = $db.OpenRecordset('{{tableName}}', 2)
-                $rs.AddNew()
-                $rs.Fields('{{memoColumn}}').Value = $payloads[0]
-                $rs.Update()
-                $rs.MoveLast()
-                for ($i = 1; $i -lt $payloads.Count; $i++) {
-                  $rs.Edit()
-                  $rs.Fields('{{memoColumn}}').Value = $payloads[$i]
-                  $rs.Update()
-                }
-                $rs.Close()
-                $db.Close()
-                Write-Output "WROTE=$($payloads.Count)"
-              } finally {
-                if ($db -ne $null) { try { $db.Close() } catch {} }
-              }
-            } finally {
-              [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null
-              [GC]::Collect(); [GC]::WaitForPendingFinalizers()
-            }
-            """;
+        string[] lines =
+        [
+            $"$payloads = Get-Content -LiteralPath {payloadLiteral} -Encoding UTF8 | ForEach-Object {{ $_ -replace '\\\\n', \"`n\" }}",
+            $"$db = $engine.CreateDatabase({dbLiteral}, ';LANGID=0x0409;CP=1252;COUNTRY=0')",
+            "try {",
+            $"  $db.Execute('CREATE TABLE [{tableName}] (Id AUTOINCREMENT PRIMARY KEY, [{memoColumn}] MEMO)')",
+            "  # Enable AppendOnly on the Memo column so each update produces a",
+            "  # version-history row in the flat child table.",
+            $"  $tdf = $db.TableDefs('{tableName}')",
+            $"  $fld = $tdf.Fields('{memoColumn}')",
+            "  $fld.AppendOnly = $true",
+            "  $tdf = $null",
+            "  $fld = $null",
+            "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($db) | Out-Null",
+            "  [GC]::Collect(); [GC]::WaitForPendingFinalizers()",
+            $"  $db = $engine.OpenDatabase({dbLiteral})",
+            $"  $rs = $db.OpenRecordset('{tableName}', 2)",
+            "  $rs.AddNew()",
+            $"  $rs.Fields('{memoColumn}').Value = $payloads[0]",
+            "  $rs.Update()",
+            "  $rs.MoveLast()",
+            "  for ($i = 1; $i -lt $payloads.Count; $i++) {",
+            "    $rs.Edit()",
+            $"    $rs.Fields('{memoColumn}').Value = $payloads[$i]",
+            "    $rs.Update()",
+            "  }",
+            "  $rs.Close()",
+            "  $db.Close()",
+            "  Write-Output \"WROTE=$($payloads.Count)\"",
+            "} finally {",
+            "  if ($db -ne $null) { try { $db.Close() } catch {} }",
+            "}",
+        ];
+
+        return string.Join("\n", lines) + "\n";
     }
 
     private static string EscapeForLine(string value) =>

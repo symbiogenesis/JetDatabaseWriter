@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
@@ -35,6 +36,9 @@ using JetDatabaseWriter.Infrastructure;
 /// </remarks>
 internal static class AccessRoundTripEnvironment
 {
+    /// <summary>Standard conditional skip reason for tests that require DAO.</summary>
+    public const string RequiresMicrosoftAccessSkipReason = "Requires Microsoft Access (DAO.DBEngine.120)";
+
     private static readonly Lazy<ProbeResult> ProbeOnce = new(DetectCore);
 
     /// <summary>Gets the path to <c>MSACCESS.EXE</c>, or <c>null</c> when not installed.</summary>
@@ -48,6 +52,87 @@ internal static class AccessRoundTripEnvironment
 
     /// <summary>Gets a value indicating whether the round-trip environment is fully available.</summary>
     public static bool IsAvailable => ProbeOnce.Value.Skip is null;
+
+    /// <summary>
+    /// Quotes a value as a PowerShell single-quoted string literal.
+    /// </summary>
+    /// <param name="value">Value to quote.</param>
+    /// <returns>PowerShell single-quoted literal.</returns>
+    public static string ToPowerShellSingleQuotedLiteral(string value) =>
+        "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+    /// <summary>
+    /// Runs a PowerShell script body with <c>$engine</c> bound to
+    /// <c>DAO.DBEngine.120</c> and released afterwards.
+    /// </summary>
+    /// <param name="engineScript">Script body that uses <c>$engine</c>.</param>
+    /// <param name="workDir">Directory for the temp .ps1 file.</param>
+    /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
+    /// <returns>Process exit code, captured stdout, captured stderr.</returns>
+    public static CompactResult RunDaoEngineScript(string engineScript, string workDir, TimeSpan timeout)
+    {
+        string script =
+            "$ErrorActionPreference = 'Stop'\n" +
+            "$engine = New-Object -ComObject DAO.DBEngine.120\n" +
+            "try {\n" +
+            IndentScript(engineScript, "  ") +
+            "} finally {\n" +
+            "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null\n" +
+            "  [GC]::Collect(); [GC]::WaitForPendingFinalizers()\n" +
+            "}\n";
+
+        return RunDaoScript(script, workDir, timeout);
+    }
+
+    /// <summary>
+    /// Opens an existing database through DAO, runs a script body with
+    /// <c>$db</c> bound to the open database, then closes it.
+    /// </summary>
+    /// <param name="databasePath">Database path to open.</param>
+    /// <param name="databaseScript">Script body that uses <c>$db</c>.</param>
+    /// <param name="workDir">Directory for the temp .ps1 file.</param>
+    /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
+    /// <returns>Process exit code, captured stdout, captured stderr.</returns>
+    public static CompactResult RunDaoDatabaseScript(string databasePath, string databaseScript, string workDir, TimeSpan timeout)
+    {
+        string script =
+            "$db = $engine.OpenDatabase(" + ToPowerShellSingleQuotedLiteral(databasePath) + ")\n" +
+            "try {\n" +
+            IndentScript(databaseScript, "  ") +
+            "} finally {\n" +
+            "  $db.Close()\n" +
+            "}\n";
+
+        return RunDaoEngineScript(script, workDir, timeout);
+    }
+
+    /// <summary>
+    /// Creates a database through DAO, runs a script body with <c>$db</c>
+    /// bound to the new database, then closes it.
+    /// </summary>
+    /// <param name="databasePath">Database path to create.</param>
+    /// <param name="attributes">DAO create-database attributes string.</param>
+    /// <param name="databaseScript">Script body that uses <c>$db</c>.</param>
+    /// <param name="workDir">Directory for the temp .ps1 file.</param>
+    /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
+    /// <returns>Process exit code, captured stdout, captured stderr.</returns>
+    public static CompactResult RunDaoCreateDatabaseScript(
+        string databasePath,
+        string attributes,
+        string databaseScript,
+        string workDir,
+        TimeSpan timeout)
+    {
+        string script =
+            "$db = $engine.CreateDatabase(" + ToPowerShellSingleQuotedLiteral(databasePath) + ", " + ToPowerShellSingleQuotedLiteral(attributes) + ")\n" +
+            "try {\n" +
+            IndentScript(databaseScript, "  ") +
+            "} finally {\n" +
+            "  $db.Close()\n" +
+            "}\n";
+
+        return RunDaoEngineScript(script, workDir, timeout);
+    }
 
     /// <summary>
     /// Runs <c>DAO.DBEngine.120.CompactDatabase(source, dest)</c> through a
@@ -189,6 +274,19 @@ internal static class AccessRoundTripEnvironment
 
         DaoPowerShellHostResolver.DaoPowerShellHostProbeResult hostProbe = DaoPowerShellHostResolver.Probe(msaccess);
         return new ProbeResult(msaccess, hostProbe.HostPath, hostProbe.FailureReason);
+    }
+
+    private static string IndentScript(string script, string indent)
+    {
+        var builder = new StringBuilder(script.Length + (indent.Length * 8));
+        using var reader = new StringReader(script);
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            builder.Append(indent).AppendLine(line);
+        }
+
+        return builder.ToString();
     }
 
     private static void TryKill(Process p)

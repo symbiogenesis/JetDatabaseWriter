@@ -22,45 +22,27 @@ using Xunit;
 /// DAO AutoNumber continuation, and §2.1: DAO-authored Memo with embedded NULs.
 /// </remarks>
 [Trait("Category", "RequiresMicrosoftAccess")]
-public sealed class DaoValidationTests : IDisposable
+public sealed class DaoValidationTests
 {
+    private const string CreateDatabaseAttributes = ";LANGID=0x0409;CP=1252;COUNTRY=0";
+    private const string TempDirectoryName = "JetDatabaseWriter.Tests.DaoValidation";
     private static readonly TimeSpan DaoTimeout = TimeSpan.FromMinutes(1);
-    private readonly string _workDir;
-
-    public DaoValidationTests()
-    {
-        _workDir = Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.Tests.DaoValidation", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_workDir);
-    }
-
-    public void Dispose()
-    {
-        try
-        {
-            if (Directory.Exists(_workDir))
-            {
-                Directory.Delete(_workDir, recursive: true);
-            }
-        }
-        catch (IOException)
-        {
-            // Best-effort cleanup.
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Best-effort cleanup.
-        }
-    }
 
     /// <summary>
     /// After writing N rows with AccessWriter, opens the database via DAO and
     /// asserts SELECT COUNT(*) matches. Catches TDEF row-count drift and
     /// page-corruption that would silently survive our own reader round-trip.
     /// </summary>
-    [Fact]
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoOpenRecordset_RowCount_MatchesWriterOutput()
     {
-        string dbPath = await CopyNorthwindAsync();
+        await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+            TestContext.Current.CancellationToken,
+            TempDirectoryName);
+        string dbPath = session.SourcePath;
         const string TableName = "DaoCount";
         const int RowCount = 50;
 
@@ -83,25 +65,16 @@ public sealed class DaoValidationTests : IDisposable
             await writer.InsertRowsAsync(TableName, rows, TestContext.Current.CancellationToken);
         }
 
-        string dbLiteral = dbPath.Replace("'", "''", StringComparison.Ordinal);
         string script =
-            "$ErrorActionPreference = 'Stop'\n" +
-            "$engine = New-Object -ComObject DAO.DBEngine.120\n" +
+            "$rs = $null\n" +
             "try {\n" +
-            $"  $db = $engine.OpenDatabase('{dbLiteral}')\n" +
-            "  try {\n" +
-            $"    $rs = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [{TableName}]', 4)\n" +
-            "    Write-Output $rs.Fields('Cnt').Value\n" +
-            "    $rs.Close()\n" +
-            "  } finally {\n" +
-            "    $db.Close()\n" +
-            "  }\n" +
+            $"  $rs = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [{TableName}]', 4)\n" +
+            "  Write-Output $rs.Fields('Cnt').Value\n" +
             "} finally {\n" +
-            "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null\n" +
-            "  [GC]::Collect(); [GC]::WaitForPendingFinalizers()\n" +
+            "  if ($rs -ne $null) { $rs.Close() }\n" +
             "}\n";
 
-        var result = AccessRoundTripEnvironment.RunDaoScript(script, _workDir, DaoTimeout);
+        var result = session.RunDaoDatabaseScript(dbPath, script, DaoTimeout);
         Assert.True(
             result.ExitCode == 0,
             $"DAO script failed (exit={result.ExitCode}).\nstdout: {result.StdOut}\nstderr: {result.StdErr}");
@@ -115,10 +88,16 @@ public sealed class DaoValidationTests : IDisposable
     /// key to locate a specific row. Catches index pages that parse cleanly in
     /// our reader but are rejected by the canonical engine.
     /// </summary>
-    [Fact]
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoIndexTraversal_Seek_LocatesRowByPrimaryKey()
     {
-        string dbPath = await CopyNorthwindAsync();
+        await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+            TestContext.Current.CancellationToken,
+            TempDirectoryName);
+        string dbPath = session.SourcePath;
         const string TableName = "DaoSeek";
         const int TargetId = 25;
 
@@ -141,28 +120,19 @@ public sealed class DaoValidationTests : IDisposable
             await writer.InsertRowsAsync(TableName, rows, TestContext.Current.CancellationToken);
         }
 
-        string dbLiteral = dbPath.Replace("'", "''", StringComparison.Ordinal);
         string script =
-            "$ErrorActionPreference = 'Stop'\n" +
-            "$engine = New-Object -ComObject DAO.DBEngine.120\n" +
+            "$rs = $null\n" +
             "try {\n" +
-            $"  $db = $engine.OpenDatabase('{dbLiteral}')\n" +
-            "  try {\n" +
-            $"    $rs = $db.OpenRecordset('{TableName}', 1)\n" +
-            "    $rs.Index = 'PrimaryKey'\n" +
-            $"    $rs.Seek('=', {TargetId})\n" +
-            "    if ($rs.NoMatch) { Write-Error 'Seek did not find the row'; exit 1 }\n" +
-            "    Write-Output $rs.Fields('Label').Value\n" +
-            "    $rs.Close()\n" +
-            "  } finally {\n" +
-            "    $db.Close()\n" +
-            "  }\n" +
+            $"  $rs = $db.OpenRecordset('{TableName}', 1)\n" +
+            "  $rs.Index = 'PrimaryKey'\n" +
+            $"  $rs.Seek('=', {TargetId})\n" +
+            "  if ($rs.NoMatch) { Write-Error 'Seek did not find the row'; exit 1 }\n" +
+            "  Write-Output $rs.Fields('Label').Value\n" +
             "} finally {\n" +
-            "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null\n" +
-            "  [GC]::Collect(); [GC]::WaitForPendingFinalizers()\n" +
+            "  if ($rs -ne $null) { $rs.Close() }\n" +
             "}\n";
 
-        var result = AccessRoundTripEnvironment.RunDaoScript(script, _workDir, DaoTimeout);
+        var result = session.RunDaoDatabaseScript(dbPath, script, DaoTimeout);
         Assert.True(
             result.ExitCode == 0,
             $"DAO Seek failed (exit={result.ExitCode}).\nstdout: {result.StdOut}\nstderr: {result.StdErr}");
@@ -179,7 +149,10 @@ public sealed class DaoValidationTests : IDisposable
     [Fact(Skip = "H48 unblocked DAO OpenRecordset, but DAO INSERT after the writer's last autonumber row raises 'duplicate values in the index'. The writer's autonumber-continuation seed and/or PK index leaf does not surface writer rows to DAO's uniqueness check. Separate from H48. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert()
     {
-        string dbPath = await CopyNorthwindAsync();
+        await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+            TestContext.Current.CancellationToken,
+            TempDirectoryName);
+        string dbPath = session.SourcePath;
         const string TableName = "DaoAutoNum";
         const int WriterRowCount = 10;
 
@@ -202,29 +175,20 @@ public sealed class DaoValidationTests : IDisposable
             await writer.InsertRowsAsync(TableName, rows, TestContext.Current.CancellationToken);
         }
 
-        string dbLiteral = dbPath.Replace("'", "''", StringComparison.Ordinal);
         string script =
-            "$ErrorActionPreference = 'Stop'\n" +
-            "$engine = New-Object -ComObject DAO.DBEngine.120\n" +
+            "$rs = $null\n" +
             "try {\n" +
-            $"  $db = $engine.OpenDatabase('{dbLiteral}')\n" +
-            "  try {\n" +
-            $"    $rs = $db.OpenRecordset('{TableName}', 1)\n" +
-            "    $rs.AddNew()\n" +
-            "    $rs.Fields('Value').Value = 'DaoInserted'\n" +
-            "    $rs.Update()\n" +
-            "    $rs.MoveLast()\n" +
-            "    Write-Output $rs.Fields('Id').Value\n" +
-            "    $rs.Close()\n" +
-            "  } finally {\n" +
-            "    $db.Close()\n" +
-            "  }\n" +
+            $"  $rs = $db.OpenRecordset('{TableName}', 1)\n" +
+            "  $rs.AddNew()\n" +
+            "  $rs.Fields('Value').Value = 'DaoInserted'\n" +
+            "  $rs.Update()\n" +
+            "  $rs.MoveLast()\n" +
+            "  Write-Output $rs.Fields('Id').Value\n" +
             "} finally {\n" +
-            "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null\n" +
-            "  [GC]::Collect(); [GC]::WaitForPendingFinalizers()\n" +
+            "  if ($rs -ne $null) { $rs.Close() }\n" +
             "}\n";
 
-        var result = AccessRoundTripEnvironment.RunDaoScript(script, _workDir, DaoTimeout);
+        var result = session.RunDaoDatabaseScript(dbPath, script, DaoTimeout);
         Assert.True(
             result.ExitCode == 0,
             $"DAO AutoNumber insert failed (exit={result.ExitCode}).\nstdout: {result.StdOut}\nstderr: {result.StdErr}");
@@ -241,10 +205,14 @@ public sealed class DaoValidationTests : IDisposable
     /// "Reader-side coverage of an Access-authored fixture containing a Memo
     /// with embedded 0x00 bytes.".
     /// </summary>
-    [Fact(Skip = "Requires Microsoft Access (DAO.DBEngine.120)", SkipUnless = nameof(RoundTripAvailable))]
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoAuthoredMemo_WithEmbeddedNuls_ReaderReturnsExactContent()
     {
-        string dbPath = Path.Combine(_workDir, "memo_nuls.accdb");
+        await using var session = AccessRoundTripSession.CreateEmpty(TempDirectoryName);
+        string dbPath = session.CreateDatabasePath("memo_nuls");
         const string TableName = "MemoNuls";
 
         // DAO will create the table and insert a memo with embedded NULs.
@@ -252,31 +220,22 @@ public sealed class DaoValidationTests : IDisposable
         // Pattern: "Hello\0World\0End" (15 chars)
         const string ExpectedValue = "Hello\0World\0End";
 
-        string dbLiteral = dbPath.Replace("'", "''", StringComparison.Ordinal);
         string script =
-            "$ErrorActionPreference = 'Stop'\n" +
-            "$engine = New-Object -ComObject DAO.DBEngine.120\n" +
+            "$rs = $null\n" +
             "try {\n" +
-            $"  $db = $engine.CreateDatabase('{dbLiteral}', ';LANGID=0x0409;CP=1252;COUNTRY=0')\n" +
-            "  try {\n" +
-            $"    $db.Execute('CREATE TABLE {TableName} (Id AUTOINCREMENT PRIMARY KEY, Content MEMO)')\n" +
-            $"    $rs = $db.OpenRecordset('{TableName}', 2)\n" +
-            "    $rs.AddNew()\n" +
-            "    $chars = @([char[]]'Hello') + @([char]0) + @([char[]]'World') + @([char]0) + @([char[]]'End')\n" +
-            "    $memo = [string]::new($chars)\n" +
-            "    $rs.Fields('Content').Value = $memo\n" +
-            "    $rs.Update()\n" +
-            "    $rs.Close()\n" +
-            "    Write-Output 'OK'\n" +
-            "  } finally {\n" +
-            "    $db.Close()\n" +
-            "  }\n" +
+            $"  $db.Execute('CREATE TABLE {TableName} (Id AUTOINCREMENT PRIMARY KEY, Content MEMO)')\n" +
+            $"  $rs = $db.OpenRecordset('{TableName}', 2)\n" +
+            "  $rs.AddNew()\n" +
+            "  $chars = @([char[]]'Hello') + @([char]0) + @([char[]]'World') + @([char]0) + @([char[]]'End')\n" +
+            "  $memo = [string]::new($chars)\n" +
+            "  $rs.Fields('Content').Value = $memo\n" +
+            "  $rs.Update()\n" +
+            "  Write-Output 'OK'\n" +
             "} finally {\n" +
-            "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null\n" +
-            "  [GC]::Collect(); [GC]::WaitForPendingFinalizers()\n" +
+            "  if ($rs -ne $null) { $rs.Close() }\n" +
             "}\n";
 
-        var result = AccessRoundTripEnvironment.RunDaoScript(script, _workDir, DaoTimeout);
+        var result = session.RunDaoCreateDatabaseScript(dbPath, CreateDatabaseAttributes, script, DaoTimeout);
         Assert.True(
             result.ExitCode == 0,
             $"DAO Memo creation failed (exit={result.ExitCode}).\nstdout: {result.StdOut}\nstderr: {result.StdErr}");
@@ -305,7 +264,10 @@ public sealed class DaoValidationTests : IDisposable
     [Fact(Skip = "H48 unblocked DAO OpenRecordset, but DAO sees writer-inserted MEMO rows as an empty recordset ($rs.MoveFirst() raises 'No current record'). MEMO long-value page or row-data-page linkage is not DAO-readable. Separate from the TDEF tdef_len defect H48 fixed. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly()
     {
-        string dbPath = await CopyNorthwindAsync();
+        await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+            TestContext.Current.CancellationToken,
+            TempDirectoryName);
+        string dbPath = session.SourcePath;
         const string TableName = "MemoFidelity";
 
         // Memo payloads: embedded NULs, CJK text, and mixed content.
@@ -334,32 +296,23 @@ public sealed class DaoValidationTests : IDisposable
         }
 
         // Read back with DAO and verify the values match.
-        string dbLiteral = dbPath.Replace("'", "''", StringComparison.Ordinal);
         string script =
-            "$ErrorActionPreference = 'Stop'\n" +
-            "$engine = New-Object -ComObject DAO.DBEngine.120\n" +
+            "$rs = $null\n" +
             "try {\n" +
-            $"  $db = $engine.OpenDatabase('{dbLiteral}')\n" +
-            "  try {\n" +
-            $"    $rs = $db.OpenRecordset('{TableName}', 4)\n" +
-            "    $rs.MoveFirst()\n" +
-            "    # Output each field on its own line, base64-encode to preserve NULs\n" +
-            "    $enc = [System.Text.Encoding]::Unicode\n" +
-            "    Write-Output ([Convert]::ToBase64String($enc.GetBytes($rs.Fields('MemoNuls').Value)))\n" +
-            "    Write-Output ([Convert]::ToBase64String($enc.GetBytes($rs.Fields('MemoCjk').Value)))\n" +
-            "    Write-Output ([Convert]::ToBase64String($enc.GetBytes($rs.Fields('MemoMixed').Value)))\n" +
-            "    $bin = $rs.Fields('BinData').Value\n" +
-            "    if ($bin -eq $null) { Write-Output '' } else { Write-Output ([Convert]::ToBase64String([byte[]]$bin)) }\n" +
-            "    $rs.Close()\n" +
-            "  } finally {\n" +
-            "    $db.Close()\n" +
-            "  }\n" +
+            $"  $rs = $db.OpenRecordset('{TableName}', 4)\n" +
+            "  $rs.MoveFirst()\n" +
+            "  # Output each field on its own line, base64-encode to preserve NULs\n" +
+            "  $enc = [System.Text.Encoding]::Unicode\n" +
+            "  Write-Output ([Convert]::ToBase64String($enc.GetBytes($rs.Fields('MemoNuls').Value)))\n" +
+            "  Write-Output ([Convert]::ToBase64String($enc.GetBytes($rs.Fields('MemoCjk').Value)))\n" +
+            "  Write-Output ([Convert]::ToBase64String($enc.GetBytes($rs.Fields('MemoMixed').Value)))\n" +
+            "  $bin = $rs.Fields('BinData').Value\n" +
+            "  if ($bin -eq $null) { Write-Output '' } else { Write-Output ([Convert]::ToBase64String([byte[]]$bin)) }\n" +
             "} finally {\n" +
-            "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null\n" +
-            "  [GC]::Collect(); [GC]::WaitForPendingFinalizers()\n" +
+            "  if ($rs -ne $null) { $rs.Close() }\n" +
             "}\n";
 
-        var result = AccessRoundTripEnvironment.RunDaoScript(script, _workDir, DaoTimeout);
+        var result = session.RunDaoDatabaseScript(dbPath, script, DaoTimeout);
         Assert.True(
             result.ExitCode == 0,
             $"DAO Memo fidelity script failed (exit={result.ExitCode}).\nstdout: {result.StdOut}\nstderr: {result.StdErr}");
@@ -393,7 +346,10 @@ public sealed class DaoValidationTests : IDisposable
     [Fact(Skip = "H48 unblocked DAO OpenRecordset (writer-authored TDEFs now accepted), but DAO inserts into a writer-created Child table with an enforced FK relationship still succeed even when ParentId has no matching Parent row. Indicates writer's MSysRelationships entry is not DAO-recognised for runtime enforcement (separate hypothesis from H48). See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoRelationshipEnforcement_FkViolation_RaisesError()
     {
-        string dbPath = await CopyNorthwindAsync();
+        await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+            TestContext.Current.CancellationToken,
+            TempDirectoryName);
+        string dbPath = session.SourcePath;
         const string Parent = "DaoFkParent";
         const string Child = "DaoFkChild";
         const string FkName = "DaoFK_Child_Parent";
@@ -433,36 +389,22 @@ public sealed class DaoValidationTests : IDisposable
             await writer.InsertRowAsync(Parent, [DBNull.Value, "ValidParent"], TestContext.Current.CancellationToken);
         }
 
-        string dbLiteral = dbPath.Replace("'", "''", StringComparison.Ordinal);
-
         // DAO script: attempt to insert a child row with a non-existent ParentId.
         // DAO should reject this with error 3201 (referential integrity violation).
         string script =
-            "$ErrorActionPreference = 'Stop'\n" +
-            "$engine = New-Object -ComObject DAO.DBEngine.120\n" +
+            "$errorCode = 0\n" +
             "try {\n" +
-            $"  $db = $engine.OpenDatabase('{dbLiteral}')\n" +
-            "  try {\n" +
-            "    $errorCode = 0\n" +
-            "    try {\n" +
-            $"      $db.Execute(\"INSERT INTO [{Child}] (ParentId, Detail) VALUES (99999, 'Orphan')\")\n" +
-            "    } catch {\n" +
-            "      $errorCode = $_.Exception.ErrorCode\n" +
-            "      if ($errorCode -eq 0) {\n" +
-            "        # Fallback: parse HRESULT or message for DAO error number.\n" +
-            "        if ($_.Exception.HResult -ne 0) { $errorCode = $_.Exception.HResult }\n" +
-            "      }\n" +
-            "    }\n" +
-            "    Write-Output $errorCode\n" +
-            "  } finally {\n" +
-            "    $db.Close()\n" +
+            $"  $db.Execute(\"INSERT INTO [{Child}] (ParentId, Detail) VALUES (99999, 'Orphan')\")\n" +
+            "} catch {\n" +
+            "  $errorCode = $_.Exception.ErrorCode\n" +
+            "  if ($errorCode -eq 0) {\n" +
+            "    # Fallback: parse HRESULT or message for DAO error number.\n" +
+            "    if ($_.Exception.HResult -ne 0) { $errorCode = $_.Exception.HResult }\n" +
             "  }\n" +
-            "} finally {\n" +
-            "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null\n" +
-            "  [GC]::Collect(); [GC]::WaitForPendingFinalizers()\n" +
-            "}\n";
+            "}\n" +
+            "Write-Output $errorCode\n";
 
-        var result = AccessRoundTripEnvironment.RunDaoScript(script, _workDir, DaoTimeout);
+        var result = session.RunDaoDatabaseScript(dbPath, script, DaoTimeout);
 
         // The script itself should succeed (exit 0) — the DAO error is
         // caught and reported as output. A non-zero exit means the script
@@ -491,7 +433,10 @@ public sealed class DaoValidationTests : IDisposable
     [Fact(Skip = "H48 unblocked DAO OpenRecordset on plaintext ACCDB, but DAO CompactDatabase against an Agile-encrypted writer-authored ACCDB still raises 'Unrecognized database format'. Encryption-header / page-encryption issue, separate from the TDEF tdef_len defect H48 fixed. See docs/design/round-trip-openrecordset-hypothesis.md.")]
     public async Task DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds()
     {
-        string dbPath = await CopyNorthwindAsync();
+        await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+            TestContext.Current.CancellationToken,
+            TempDirectoryName);
+        string dbPath = session.SourcePath;
         const string TableName = "EncCompact";
         const string Password = "Te$tP@ss!23";
 
@@ -523,23 +468,16 @@ public sealed class DaoValidationTests : IDisposable
             TestContext.Current.CancellationToken);
 
         // DAO CompactDatabase with the password.
-        string compactedPath = Path.Combine(_workDir, $"compacted_{Guid.NewGuid():N}.accdb");
-        string dbLiteral = dbPath.Replace("'", "''", StringComparison.Ordinal);
-        string compLiteral = compactedPath.Replace("'", "''", StringComparison.Ordinal);
-        string pwdLiteral = Password.Replace("'", "''", StringComparison.Ordinal);
+        string compactedPath = session.CreateDatabasePath("compacted");
+        string dbLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(dbPath);
+        string compLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(compactedPath);
+        string attributesLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral($"{CreateDatabaseAttributes};PWD={Password}");
 
         string script =
-            "$ErrorActionPreference = 'Stop'\n" +
-            "$engine = New-Object -ComObject DAO.DBEngine.120\n" +
-            "try {\n" +
-            $"  $engine.CompactDatabase('{dbLiteral}', '{compLiteral}', ';LANGID=0x0409;CP=1252;COUNTRY=0;PWD={pwdLiteral}')\n" +
-            "  Write-Output 'OK'\n" +
-            "} finally {\n" +
-            "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null\n" +
-            "  [GC]::Collect(); [GC]::WaitForPendingFinalizers()\n" +
-            "}\n";
+            $"$engine.CompactDatabase({dbLiteral}, {compLiteral}, {attributesLiteral})\n" +
+            "Write-Output 'OK'\n";
 
-        var result = AccessRoundTripEnvironment.RunDaoScript(script, _workDir, DaoTimeout);
+        var result = session.RunDaoEngineScript(script, DaoTimeout);
         Assert.True(
             result.ExitCode == 0,
             $"DAO CompactDatabase on encrypted file failed (exit={result.ExitCode}).\nstdout: {result.StdOut}\nstderr: {result.StdErr}");
@@ -565,10 +503,17 @@ public sealed class DaoValidationTests : IDisposable
     /// page allocation and usage-map consistency at scale.
     /// Closes §3 gap: "DAO multi-table stress".
     /// </summary>
-    [Fact(Skip = "Requires Microsoft Access (DAO.DBEngine.120)", SkipUnless = nameof(RoundTripAvailable))]
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoCompact_MultiTableStress_SurvivesCompactAndRepair()
     {
-        string dbPath = await CopyNorthwindAsync();
+        await using var session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+            TestContext.Current.CancellationToken,
+            TempDirectoryName,
+            compactTimeout: TimeSpan.FromMinutes(3));
+        string dbPath = session.SourcePath;
         const int TableCount = 12;
         const int RowsPerTable = 1000;
 
@@ -654,12 +599,8 @@ public sealed class DaoValidationTests : IDisposable
         }
 
         // Run DAO Compact & Repair.
-        string compactedPath = Path.Combine(_workDir, $"stress_compact_{Guid.NewGuid():N}.accdb");
-        var compactResult = AccessRoundTripEnvironment.RunDaoCompact(dbPath, compactedPath, TimeSpan.FromMinutes(3));
-        Assert.True(
-            compactResult.ExitCode == 0,
-            $"DAO CompactDatabase failed on multi-table stress db (exit={compactResult.ExitCode}).\nstdout: {compactResult.StdOut}\nstderr: {compactResult.StdErr}");
-        Assert.True(File.Exists(compactedPath), "Compacted stress output file was not created.");
+        session.RunDaoCompact();
+        string compactedPath = session.CompactedPath;
 
         // Post-compact: verify tables and row counts survived.
         await using var postReader = await AccessReader.OpenAsync(
@@ -682,22 +623,5 @@ public sealed class DaoValidationTests : IDisposable
                     $"Post-compact: {tableName} row count = {dt?.Rows.Count ?? -1}, expected {RowsPerTable}.");
             }
         }
-    }
-
-    /// <summary>
-    /// Gets a value indicating whether the round-trip environment is available.
-    /// When <c>false</c>, DAO tests report as skipped rather than failing.
-    /// </summary>
-    public static bool RoundTripAvailable => AccessRoundTripEnvironment.IsAvailable;
-
-    private async Task<string> CopyNorthwindAsync()
-    {
-        string dest = Path.Combine(_workDir, $"nw_{Guid.NewGuid():N}.accdb");
-        await using FileStream src = File.OpenRead(TestDatabases.NorthwindTraders);
-        await using FileStream dst = File.Create(dest);
-        await src.CopyToAsync(dst, TestContext.Current.CancellationToken);
-        dst.Close();
-        File.SetAttributes(dest, File.GetAttributes(dest) & ~FileAttributes.ReadOnly);
-        return dest;
     }
 }
