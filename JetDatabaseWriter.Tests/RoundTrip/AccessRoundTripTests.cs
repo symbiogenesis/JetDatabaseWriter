@@ -304,10 +304,13 @@ public sealed class AccessRoundTripTests
     }
 
     /// <summary>
-    /// Reads the TDEF page for each table and asserts that the Jet4/ACE format
-    /// magic (<c>0x00000659</c>) is stamped in the TDEF header, column
-    /// descriptors, and index descriptors. Failures here point to a writer
-    /// bug in TDEF construction rather than a DAO compact issue.
+    /// Reads the TDEF page for each table and asserts that the Jet4/ACE
+    /// format-wide magic (<c>0x00000659</c>) is stamped in the TDEF header,
+    /// every column descriptor, and every logical-idx entry, AND that the
+    /// distinct real-idx physical-descriptor magic (<c>0x00000783</c>,
+    /// <see cref="Constants.TableDefinition.Jet4.RealIdx.LeadingMagic"/>) is
+    /// stamped in every real-idx physical descriptor. Failures here point to a
+    /// writer bug in TDEF construction rather than a DAO compact issue.
     /// </summary>
     private static async Task AssertTdefMagicStampsAsync(
         string dbPath,
@@ -316,6 +319,8 @@ public sealed class AccessRoundTripTests
     {
         byte[] fileBytes = await File.ReadAllBytesAsync(dbPath, ct);
         const int PageSize = 4096;
+        const int FormatMagic = 0x00000659;
+        const int RealIdxMagic = 0x00000783;
 
         await using var reader = await AccessReader.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false }, ct);
         foreach (string tableName in tableNames)
@@ -331,8 +336,8 @@ public sealed class AccessRoundTripTests
 
             int headerMagic = BitConverter.ToInt32(fileBytes, off + 0x0C);
             Assert.True(
-                headerMagic == 0x00000659,
-                $"{tableName}: TDEF header magic at 0x0C = 0x{headerMagic:X8}, expected 0x00000659.");
+                headerMagic == FormatMagic,
+                $"{tableName}: TDEF header magic at 0x0C = 0x{headerMagic:X8}, expected 0x{FormatMagic:X8}.");
 
             int numCols = BitConverter.ToUInt16(fileBytes, off + 45);
             int numRealIdx = BitConverter.ToInt32(fileBytes, off + 51);
@@ -344,8 +349,8 @@ public sealed class AccessRoundTripTests
                 int o = colStart + (c * 25);
                 int colMagic = BitConverter.ToInt32(fileBytes, o + 1);
                 Assert.True(
-                    colMagic == 0x00000659,
-                    $"{tableName}: column[{c}] descriptor magic = 0x{colMagic:X8}, expected 0x00000659.");
+                    colMagic == FormatMagic,
+                    $"{tableName}: column[{c}] descriptor magic = 0x{colMagic:X8}, expected 0x{FormatMagic:X8}.");
             }
 
             // Walk past column names to reach real-idx physical descriptors.
@@ -361,8 +366,8 @@ public sealed class AccessRoundTripTests
                 int phys = namePos + (i * 52);
                 int idxMagic = BitConverter.ToInt32(fileBytes, phys);
                 Assert.True(
-                    idxMagic == 0x00000659,
-                    $"{tableName}: real-idx[{i}] magic = 0x{idxMagic:X8}, expected 0x00000659.");
+                    idxMagic == RealIdxMagic,
+                    $"{tableName}: real-idx[{i}] magic = 0x{idxMagic:X8}, expected 0x{RealIdxMagic:X8}.");
             }
 
             // Logical-idx entries start after real-idx physical descriptors.
@@ -372,8 +377,8 @@ public sealed class AccessRoundTripTests
                 int logEntry = logStart + (i * 28);
                 int logMagic = BitConverter.ToInt32(fileBytes, logEntry);
                 Assert.True(
-                    logMagic == 0x00000659,
-                    $"{tableName}: logical-idx[{i}] magic = 0x{logMagic:X8}, expected 0x00000659.");
+                    logMagic == FormatMagic,
+                    $"{tableName}: logical-idx[{i}] magic = 0x{logMagic:X8}, expected 0x{FormatMagic:X8}.");
             }
         }
     }
