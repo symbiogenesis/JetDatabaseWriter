@@ -101,6 +101,22 @@ order version num is 2nd byte". ACE 2010+ uses version 1 (General) sort.
 Writer may emit 0; DAO post-2010 may reject unknown sort version with a
 name-lookup error → `''`.
 
+> **Disconfirmed (2026-05-10).** Tested via
+> [WriterColumnDescriptorTextSortOrderTests.cs](../../JetDatabaseWriter.Tests/Schema/WriterColumnDescriptorTextSortOrderTests.cs).
+> Surveyed every TEXT (`0x0A`) and MEMO (`0x0C`) column descriptor across
+> every user table in DAO-authored `NorthwindTraders.accdb` (an ACE 2007+
+> fixture): bytes 11-12 (LCID) == `0x0409` and bytes 13-14
+> (`misc_ext` / sort-order version) == `0` on **all 25+ descriptors
+> sampled** — DAO uses "General Legacy" (version 0) here, **not**
+> "General" (version 1). The writer's `TDefPageBuilder.cs` TEXT/MEMO
+> branch already stamps `Wi32(page, o + MiscOff, 0x00000409)`, which
+> places `0x09 0x04 0x00 0x00` at bytes 11-14 — byte-exact match with
+> DAO. Writer-vs-DAO comparison test (writer-authored Customers TDEF vs
+> NorthwindTraders mode) passes. Hypothesis that "ACE 2010+ uses
+> version 1" is empirically false for this fixture; the DAO `''` error
+> source is elsewhere. Investigate H25 (TDEF byte `0x18` autonum_flag)
+> or fall back to a side-by-side hex diff via Tier-3 step #16.
+
 **H25 — TDEF byte `0x18` (autonum_flag) is conditional in writer; Jackcess
 sets it unconditionally to `0x01`** with the comment "this makes autonumbering
 work in access". mdbtools agrees. Lower probability (writer's tables without
