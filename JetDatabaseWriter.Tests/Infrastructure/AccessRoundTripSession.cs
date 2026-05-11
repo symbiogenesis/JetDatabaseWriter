@@ -112,7 +112,13 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
         if (result.ExitCode != 0 || !File.Exists(CompactedPath))
         {
             throw new Xunit.Sdk.XunitException(
-                $"DAO CompactDatabase failed (exit={result.ExitCode}).\n--- stdout ---\n{result.StdOut}\n--- stderr ---\n{result.StdErr}");
+                $"""
+                DAO CompactDatabase failed (exit={result.ExitCode}).
+                --- stdout ---
+                {result.StdOut}
+                --- stderr ---
+                {result.StdErr}
+                """);
         }
     }
 

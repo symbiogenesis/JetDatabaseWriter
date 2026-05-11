@@ -61,7 +61,10 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                 }
                 catch (Exception ex)
                 {
-                    output.WriteLine($"Exception accessing properties: {ex.GetType().Name}\n{ex}");
+                    output.WriteLine($"""
+                        Exception accessing properties: {ex.GetType().Name}
+                        {ex}
+                        """);
                 }
 
                 // Try reading all tables
@@ -97,7 +100,10 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                         }
                         catch (Exception ex)
                         {
-                            output.WriteLine($"Exception reading schema for {tableName}: {ex.GetType().Name}\n{ex}");
+                            output.WriteLine($"""
+                                Exception reading schema for {tableName}: {ex.GetType().Name}
+                                {ex}
+                                """);
                         }
 
                         // Try reading indexes
@@ -108,18 +114,27 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                         }
                         catch (Exception ex)
                         {
-                            output.WriteLine($"Exception reading indexes for {tableName}: {ex.GetType().Name}\n{ex}");
+                            output.WriteLine($"""
+                                Exception reading indexes for {tableName}: {ex.GetType().Name}
+                                {ex}
+                                """);
                         }
                     }
                     catch (Exception ex)
                     {
-                        output.WriteLine($"Exception reading table {tableName}: {ex.GetType().Name}\n{ex}");
+                        output.WriteLine($"""
+                            Exception reading table {tableName}: {ex.GetType().Name}
+                            {ex}
+                            """);
                     }
                 }
             }
             catch (Exception ex)
             {
-                output.WriteLine($"[Fuzzing] Caught exception during fuzzing iteration: {ex.GetType().Name}\n{ex}");
+                output.WriteLine($"""
+                    [Fuzzing] Caught exception during fuzzing iteration: {ex.GetType().Name}
+                    {ex}
+                    """);
                 if (fuzzedBytes != null)
                 {
                     try
@@ -137,7 +152,10 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
                 }
             }
 
-            output.WriteLine($"--- Fuzzing iteration completed at {DateTime.UtcNow:O} ---\n");
+            output.WriteLine($"""
+                --- Fuzzing iteration completed at {DateTime.UtcNow:O} ---
+
+                """);
         });
     }
 

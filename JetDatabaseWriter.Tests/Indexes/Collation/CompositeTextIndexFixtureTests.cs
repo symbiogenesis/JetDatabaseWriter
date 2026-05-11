@@ -130,7 +130,10 @@ public sealed class CompositeTextIndexFixtureTests
                 if (encoded.Count != onDiskKeys.Count)
                 {
                     string countLine = FormattableString.Invariant(
-                        $"  {tableName}.{index.Name}: count mismatch encoded={encoded.Count} onDisk={onDiskKeys.Count}\n");
+                        $"""
+                          {tableName}.{index.Name}: count mismatch encoded={encoded.Count} onDisk={onDiskKeys.Count}
+
+                        """);
                     failures.Append(countLine);
                 }
 
@@ -149,7 +152,10 @@ public sealed class CompositeTextIndexFixtureTests
                         string expHex = Convert.ToHexString(onDiskKeys[i]);
                         string actHex = Convert.ToHexString(encoded[i].Key);
                         string detailLine = FormattableString.Invariant(
-                            $"  {tableName}.{index.Name}[{i}] key=\"{keyPreview}\" expected={expHex} actual={actHex}\n");
+                            $"""
+                              {tableName}.{index.Name}[{i}] key="{keyPreview}" expected={expHex} actual={actHex}
+
+                            """);
                         failures.Append(detailLine);
                         detailReported++;
                     }
@@ -169,7 +175,10 @@ public sealed class CompositeTextIndexFixtureTests
 
         if (failures.Length > 0)
         {
-            Assert.Fail($"Composite text-index encoder mismatches in '{fixturePath}':\n{failures}");
+            Assert.Fail($"""
+                Composite text-index encoder mismatches in '{fixturePath}':
+                {failures}
+                """);
         }
 
         Assert.True(keysValidated > 0, $"No leaf keys validated in '{fixturePath}'.");

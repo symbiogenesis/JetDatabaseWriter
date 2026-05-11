@@ -107,7 +107,10 @@ internal static class DaoBaselineProbe
         Console.WriteLine($"[dao-baseline] DAO authoring: exit={daoCreateCode}{(daoCreateCode == 0 ? string.Empty : "  err=" + Truncate(daoCreateErr))}");
         if (daoCreateCode != 0)
         {
-            await Console.Error.WriteLineAsync($"[dao-baseline] DAO refused to add RT_Customers — cannot produce baseline. stderr below:\n{daoCreateErr}");
+            await Console.Error.WriteLineAsync($"""
+                [dao-baseline] DAO refused to add RT_Customers — cannot produce baseline. stderr below:
+                {daoCreateErr}
+                """);
 
             // Still emit a partial report so the writer side is at least dumped.
         }
@@ -249,17 +252,50 @@ internal static class DaoBaselineProbe
         // surfaces via stderr and a non-zero exit code.
         string dbLit = dbPath.Replace("'", "''", StringComparison.Ordinal);
         string script =
-            "$ErrorActionPreference='Stop'\n" +
-            $"$path='{dbLit}'\n" +
-            "$e = New-Object -ComObject DAO.DBEngine.120\n" +
-            "try {\n" +
-            "  $db = $e.OpenDatabase($path, $false, $true)\n" +
-            "  try {\n" +
-            "    $rs = $db.OpenRecordset('RT_Customers', 2)\n" +
-            "    try { $rs.Close() } catch { }\n" +
-            "  } finally { $db.Close() }\n" +
-            "  exit 0\n" +
-            "} finally { [GC]::Collect(); [GC]::WaitForPendingFinalizers() }\n";
+            """
+            $ErrorActionPreference='Stop'
+
+            """ +
+            $"""
+            $path='{dbLit}'
+
+            """ +
+            """
+            $e = New-Object -ComObject DAO.DBEngine.120
+
+            """ +
+            """
+            try {
+
+            """ +
+            """
+              $db = $e.OpenDatabase($path, $false, $true)
+
+            """ +
+            """
+              try {
+
+            """ +
+            """
+                $rs = $db.OpenRecordset('RT_Customers', 2)
+
+            """ +
+            """
+                try { $rs.Close() } catch { }
+
+            """ +
+            """
+              } finally { $db.Close() }
+
+            """ +
+            """
+              exit 0
+
+            """ +
+            """
+            } finally { [GC]::Collect(); [GC]::WaitForPendingFinalizers() }
+
+            """;
         return RunPwsh(powerShellPath, script, Path.Combine(Path.GetDirectoryName(dbPath)!, "dao-openrecordset.ps1"));
     }
 
@@ -273,10 +309,23 @@ internal static class DaoBaselineProbe
         string srcLit = src.Replace("'", "''", StringComparison.Ordinal);
         string dstLit = dst.Replace("'", "''", StringComparison.Ordinal);
         string script =
-            "$ErrorActionPreference='Stop'\n" +
-            $"$src='{srcLit}'\n$dst='{dstLit}'\n" +
-            "$e=New-Object -ComObject DAO.DBEngine.120\n" +
-            "try { $e.CompactDatabase($src,$dst); exit 0 } finally { [GC]::Collect() }\n";
+            """
+            $ErrorActionPreference='Stop'
+
+            """ +
+            $"""
+            $src='{srcLit}'
+            $dst='{dstLit}'
+
+            """ +
+            """
+            $e=New-Object -ComObject DAO.DBEngine.120
+
+            """ +
+            """
+            try { $e.CompactDatabase($src,$dst); exit 0 } finally { [GC]::Collect() }
+
+            """;
         return RunPwsh(powerShellPath, script, Path.Combine(Path.GetDirectoryName(dst)!, "compact.ps1"));
     }
 

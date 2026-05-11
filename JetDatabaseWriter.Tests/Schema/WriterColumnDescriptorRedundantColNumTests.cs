@@ -123,13 +123,14 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
             .ToArray();
 
         string detail = string.Join("; ", mismatches.Select(m => $"col[{m.Index}] primary={m.Primary} redundant={m.Redundant}"));
-        string failureMessage =
-            "H22 reproduced: writer-authored Customers TDEF has column descriptors whose redundant col_num "
-            + "(bytes 9-10) does not match the primary col_num (bytes 5-6). Per mdbtools HACKING.md the Jet4 "
-            + "column descriptor stores col_num twice. DAO OpenRecordset reads the second copy and rejects "
-            + "the table when it disagrees with the first. Mismatches: [" + detail
-            + "]. Fix: in JetDatabaseWriter/Schema/TDefPageBuilder.cs write col.ColNum at o + 9 unconditionally "
-            + "for the Jet4/ACE branch (currently only TEXT/MEMO writes a literal 0x0001 there).";
+        string failureMessage = $"""
+            H22 reproduced: writer-authored Customers TDEF has column descriptors whose redundant col_num
+            (bytes 9-10) does not match the primary col_num (bytes 5-6). Per mdbtools HACKING.md the Jet4
+            column descriptor stores col_num twice. DAO OpenRecordset reads the second copy and rejects
+            the table when it disagrees with the first. Mismatches: [{detail}].
+            Fix: in JetDatabaseWriter/Schema/TDefPageBuilder.cs write col.ColNum at o + 9 unconditionally
+            for the Jet4/ACE branch (currently only TEXT/MEMO writes a literal 0x0001 there).
+            """;
 
         Assert.True(mismatches.Length == 0, failureMessage);
     }

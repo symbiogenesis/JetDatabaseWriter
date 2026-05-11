@@ -149,7 +149,10 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                 if (columnTypeCode == 0)
                 {
                     string skipMsg = FormattableString.Invariant(
-                        $"  {tableName}.{index.Name}: skipping (no encoder route for CLR type {colMeta.ClrType.Name})\n");
+                        $"""
+                          {tableName}.{index.Name}: skipping (no encoder route for CLR type {colMeta.ClrType.Name})
+
+                        """);
                     failures.Append(skipMsg);
                     continue;
                 }
@@ -162,7 +165,10 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                 catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
                 {
                     string walkMsg = FormattableString.Invariant(
-                        $"  {tableName}.{index.Name}: leaf walk failed: {ex.Message}\n");
+                        $"""
+                          {tableName}.{index.Name}: leaf walk failed: {ex.Message}
+
+                        """);
                     failures.Append(walkMsg);
                     continue;
                 }
@@ -195,7 +201,10 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                     catch (Exception ex) when (ex is NotSupportedException or ArgumentException)
                     {
                         string encMsg = FormattableString.Invariant(
-                            $"  {tableName}.{index.Name}: encoder threw {ex.GetType().Name}: {ex.Message}\n");
+                            $"""
+                              {tableName}.{index.Name}: encoder threw {ex.GetType().Name}: {ex.Message}
+
+                            """);
                         failures.Append(encMsg);
                         encoded.Clear();
                         break;
@@ -219,7 +228,10 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                 if (encoded.Count != onDiskKeys.Count)
                 {
                     string countMsg = FormattableString.Invariant(
-                        $"  {tableName}.{index.Name} (col '{keyCol.Name}' {colMeta.TypeName} typeCode=0x{columnTypeCode:X2} asc={keyCol.IsAscending}): count mismatch encoded={encoded.Count} onDisk={onDiskKeys.Count}\n");
+                        $"""
+                          {tableName}.{index.Name} (col '{keyCol.Name}' {colMeta.TypeName} typeCode=0x{columnTypeCode:X2} asc={keyCol.IsAscending}): count mismatch encoded={encoded.Count} onDisk={onDiskKeys.Count}
+
+                        """);
                     failures.Append(countMsg);
                 }
 
@@ -239,7 +251,10 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                         string expHex = Convert.ToHexString(onDiskKeys[i]);
                         string actHex = Convert.ToHexString(encoded[i].Key);
                         string detailMsg = FormattableString.Invariant(
-                            $"  {tableName}.{index.Name} (col '{keyCol.Name}' {colMeta.TypeName} typeCode=0x{columnTypeCode:X2} asc={keyCol.IsAscending})[{i}] value=\"{preview}\" expected={expHex} actual={actHex}\n");
+                            $"""
+                              {tableName}.{index.Name} (col '{keyCol.Name}' {colMeta.TypeName} typeCode=0x{columnTypeCode:X2} asc={keyCol.IsAscending})[{i}] value="{preview}" expected={expHex} actual={actHex}
+
+                            """);
                         failures.Append(detailMsg);
                         detailReported++;
                     }
@@ -256,7 +271,10 @@ public sealed class IndexNonTextSingleColumnFixtureTests
 
         if (failures.Length > 0)
         {
-            Assert.Fail($"Non-text single-column index encoder mismatches in '{fixturePath}':\n{failures}");
+            Assert.Fail($"""
+                Non-text single-column index encoder mismatches in '{fixturePath}':
+                {failures}
+                """);
         }
 
         Assert.True(keysValidated > 0, $"No leaf keys validated in '{fixturePath}'.");

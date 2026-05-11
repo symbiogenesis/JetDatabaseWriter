@@ -207,12 +207,14 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
             .ToArray();
 
         string failureMessage =
-            $"H24 reproduced: writer-authored Customers TDEF stamps a different (LCID, sort-version) than DAO. "
-            + $"DAO baseline (mode across NorthwindTraders TEXT/MEMO columns): LCID=0x{expectedLcid:X4} version={expectedVersion}. "
-            + $"Writer mismatches: [{string.Join("; ", mismatches)}]. "
-            + $"Fix: in JetDatabaseWriter/Schema/TDefPageBuilder.cs the TEXT/MEMO branch currently writes "
-            + $"Wi32(page, o + MiscOff, 0x00000409), zeroing bytes 13-14 (sort-order version). "
-            + $"For ACE 2010+ this should be 0x00010409 (LCID 0x0409, version 1 = 'General' sort).";
+            $$"""
+            H24 reproduced: writer-authored Customers TDEF stamps a different (LCID, sort-version) than DAO.
+            DAO baseline (mode across NorthwindTraders TEXT/MEMO columns): LCID=0x{{expectedLcid:X4}} version={{expectedVersion}}.
+            Writer mismatches: [{{string.Join("; ", mismatches)}}].
+            Fix: in JetDatabaseWriter/Schema/TDefPageBuilder.cs the TEXT/MEMO branch currently writes
+            Wi32(page, o + MiscOff, 0x00000409), zeroing bytes 13-14 (sort-order version).
+            For ACE 2010+ this should be 0x00010409 (LCID 0x0409, version 1 = 'General' sort).
+            """;
 
         Assert.True(mismatches.Length == 0, failureMessage);
     }

@@ -66,13 +66,15 @@ public sealed class DaoValidationTests
         }
 
         string script =
-            "$rs = $null\n" +
-            "try {\n" +
-            $"  $rs = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [{TableName}]', 4)\n" +
-            "  Write-Output $rs.Fields('Cnt').Value\n" +
-            "} finally {\n" +
-            "  if ($rs -ne $null) { $rs.Close() }\n" +
-            "}\n";
+                $$"""
+                $rs = $null
+                try {
+                    $rs = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [{{TableName}}]', 4)
+                    Write-Output $rs.Fields('Cnt').Value
+                } finally {
+                    if ($rs -ne $null) { $rs.Close() }
+                }
+                """;
 
         var result = session.RunDaoDatabaseScript(dbPath, script, DaoTimeout);
         Assert.True(
@@ -121,16 +123,18 @@ public sealed class DaoValidationTests
         }
 
         string script =
-            "$rs = $null\n" +
-            "try {\n" +
-            $"  $rs = $db.OpenRecordset('{TableName}', 1)\n" +
-            "  $rs.Index = 'PrimaryKey'\n" +
-            $"  $rs.Seek('=', {TargetId})\n" +
-            "  if ($rs.NoMatch) { Write-Error 'Seek did not find the row'; exit 1 }\n" +
-            "  Write-Output $rs.Fields('Label').Value\n" +
-            "} finally {\n" +
-            "  if ($rs -ne $null) { $rs.Close() }\n" +
-            "}\n";
+                $$"""
+                $rs = $null
+                try {
+                    $rs = $db.OpenRecordset('{{TableName}}', 1)
+                    $rs.Index = 'PrimaryKey'
+                    $rs.Seek('=', {{TargetId}})
+                    if ($rs.NoMatch) { Write-Error 'Seek did not find the row'; exit 1 }
+                    Write-Output $rs.Fields('Label').Value
+                } finally {
+                    if ($rs -ne $null) { $rs.Close() }
+                }
+                """;
 
         var result = session.RunDaoDatabaseScript(dbPath, script, DaoTimeout);
         Assert.True(
@@ -176,17 +180,19 @@ public sealed class DaoValidationTests
         }
 
         string script =
-            "$rs = $null\n" +
-            "try {\n" +
-            $"  $rs = $db.OpenRecordset('{TableName}', 1)\n" +
-            "  $rs.AddNew()\n" +
-            "  $rs.Fields('Value').Value = 'DaoInserted'\n" +
-            "  $rs.Update()\n" +
-            "  $rs.MoveLast()\n" +
-            "  Write-Output $rs.Fields('Id').Value\n" +
-            "} finally {\n" +
-            "  if ($rs -ne $null) { $rs.Close() }\n" +
-            "}\n";
+                $$"""
+                $rs = $null
+                try {
+                    $rs = $db.OpenRecordset('{{TableName}}', 1)
+                    $rs.AddNew()
+                    $rs.Fields('Value').Value = 'DaoInserted'
+                    $rs.Update()
+                    $rs.MoveLast()
+                    Write-Output $rs.Fields('Id').Value
+                } finally {
+                    if ($rs -ne $null) { $rs.Close() }
+                }
+                """;
 
         var result = session.RunDaoDatabaseScript(dbPath, script, DaoTimeout);
         Assert.True(
@@ -221,19 +227,21 @@ public sealed class DaoValidationTests
         const string ExpectedValue = "Hello\0World\0End";
 
         string script =
-            "$rs = $null\n" +
-            "try {\n" +
-            $"  $db.Execute('CREATE TABLE {TableName} (Id AUTOINCREMENT PRIMARY KEY, Content MEMO)')\n" +
-            $"  $rs = $db.OpenRecordset('{TableName}', 2)\n" +
-            "  $rs.AddNew()\n" +
-            "  $chars = @([char[]]'Hello') + @([char]0) + @([char[]]'World') + @([char]0) + @([char[]]'End')\n" +
-            "  $memo = [string]::new($chars)\n" +
-            "  $rs.Fields('Content').Value = $memo\n" +
-            "  $rs.Update()\n" +
-            "  Write-Output 'OK'\n" +
-            "} finally {\n" +
-            "  if ($rs -ne $null) { $rs.Close() }\n" +
-            "}\n";
+                $$"""
+                $rs = $null
+                try {
+                    $db.Execute('CREATE TABLE {{TableName}} (Id AUTOINCREMENT PRIMARY KEY, Content MEMO)')
+                    $rs = $db.OpenRecordset('{{TableName}}', 2)
+                    $rs.AddNew()
+                    $chars = @([char[]]'Hello') + @([char]0) + @([char[]]'World') + @([char]0) + @([char[]]'End')
+                    $memo = [string]::new($chars)
+                    $rs.Fields('Content').Value = $memo
+                    $rs.Update()
+                    Write-Output 'OK'
+                } finally {
+                    if ($rs -ne $null) { $rs.Close() }
+                }
+                """;
 
         var result = session.RunDaoCreateDatabaseScript(dbPath, CreateDatabaseAttributes, script, DaoTimeout);
         Assert.True(
@@ -297,20 +305,22 @@ public sealed class DaoValidationTests
 
         // Read back with DAO and verify the values match.
         string script =
-            "$rs = $null\n" +
-            "try {\n" +
-            $"  $rs = $db.OpenRecordset('{TableName}', 4)\n" +
-            "  $rs.MoveFirst()\n" +
-            "  # Output each field on its own line, base64-encode to preserve NULs\n" +
-            "  $enc = [System.Text.Encoding]::Unicode\n" +
-            "  Write-Output ([Convert]::ToBase64String($enc.GetBytes($rs.Fields('MemoNuls').Value)))\n" +
-            "  Write-Output ([Convert]::ToBase64String($enc.GetBytes($rs.Fields('MemoCjk').Value)))\n" +
-            "  Write-Output ([Convert]::ToBase64String($enc.GetBytes($rs.Fields('MemoMixed').Value)))\n" +
-            "  $bin = $rs.Fields('BinData').Value\n" +
-            "  if ($bin -eq $null) { Write-Output '' } else { Write-Output ([Convert]::ToBase64String([byte[]]$bin)) }\n" +
-            "} finally {\n" +
-            "  if ($rs -ne $null) { $rs.Close() }\n" +
-            "}\n";
+                $$"""
+                $rs = $null
+                try {
+                    $rs = $db.OpenRecordset('{{TableName}}', 4)
+                    $rs.MoveFirst()
+                    # Output each field on its own line, base64-encode to preserve NULs
+                    $enc = [System.Text.Encoding]::Unicode
+                    Write-Output ([Convert]::ToBase64String($enc.GetBytes($rs.Fields('MemoNuls').Value)))
+                    Write-Output ([Convert]::ToBase64String($enc.GetBytes($rs.Fields('MemoCjk').Value)))
+                    Write-Output ([Convert]::ToBase64String($enc.GetBytes($rs.Fields('MemoMixed').Value)))
+                    $bin = $rs.Fields('BinData').Value
+                    if ($bin -eq $null) { Write-Output '' } else { Write-Output ([Convert]::ToBase64String([byte[]]$bin)) }
+                } finally {
+                    if ($rs -ne $null) { $rs.Close() }
+                }
+                """;
 
         var result = session.RunDaoDatabaseScript(dbPath, script, DaoTimeout);
         Assert.True(
@@ -392,17 +402,19 @@ public sealed class DaoValidationTests
         // DAO script: attempt to insert a child row with a non-existent ParentId.
         // DAO should reject this with error 3201 (referential integrity violation).
         string script =
-            "$errorCode = 0\n" +
-            "try {\n" +
-            $"  $db.Execute(\"INSERT INTO [{Child}] (ParentId, Detail) VALUES (99999, 'Orphan')\")\n" +
-            "} catch {\n" +
-            "  $errorCode = $_.Exception.ErrorCode\n" +
-            "  if ($errorCode -eq 0) {\n" +
-            "    # Fallback: parse HRESULT or message for DAO error number.\n" +
-            "    if ($_.Exception.HResult -ne 0) { $errorCode = $_.Exception.HResult }\n" +
-            "  }\n" +
-            "}\n" +
-            "Write-Output $errorCode\n";
+                $$"""
+                        $errorCode = 0
+                        try {
+                            $db.Execute("INSERT INTO [{{Child}}] (ParentId, Detail) VALUES (99999, 'Orphan')")
+                        } catch {
+                            $errorCode = $_.Exception.ErrorCode
+                            if ($errorCode -eq 0) {
+                                # Fallback: parse HRESULT or message for DAO error number.
+                                if ($_.Exception.HResult -ne 0) { $errorCode = $_.Exception.HResult }
+                            }
+                        }
+                        Write-Output $errorCode
+                        """;
 
         var result = session.RunDaoDatabaseScript(dbPath, script, DaoTimeout);
 
@@ -474,8 +486,10 @@ public sealed class DaoValidationTests
         string attributesLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral($"{CreateDatabaseAttributes};PWD={Password}");
 
         string script =
-            $"$engine.CompactDatabase({dbLiteral}, {compLiteral}, {attributesLiteral})\n" +
-            "Write-Output 'OK'\n";
+            $$"""
+            $engine.CompactDatabase({{dbLiteral}}, {{compLiteral}}, {{attributesLiteral}})
+            Write-Output 'OK'
+            """;
 
         var result = session.RunDaoEngineScript(script, DaoTimeout);
         Assert.True(

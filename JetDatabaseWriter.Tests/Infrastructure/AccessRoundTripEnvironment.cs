@@ -71,15 +71,16 @@ internal static class AccessRoundTripEnvironment
     /// <returns>Process exit code, captured stdout, captured stderr.</returns>
     public static CompactResult RunDaoEngineScript(string engineScript, string workDir, TimeSpan timeout)
     {
-        string script =
-            "$ErrorActionPreference = 'Stop'\n" +
-            "$engine = New-Object -ComObject DAO.DBEngine.120\n" +
-            "try {\n" +
-            IndentScript(engineScript, "  ") +
-            "} finally {\n" +
-            "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null\n" +
-            "  [GC]::Collect(); [GC]::WaitForPendingFinalizers()\n" +
-            "}\n";
+        string script = $$"""
+                $ErrorActionPreference = 'Stop'
+                $engine = New-Object -ComObject DAO.DBEngine.120
+                try {
+                {{IndentScript(engineScript, "  ")}}} finally {
+                    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null
+                    [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+                }
+
+                """;
 
         return RunDaoScript(script, workDir, timeout);
     }
@@ -95,13 +96,14 @@ internal static class AccessRoundTripEnvironment
     /// <returns>Process exit code, captured stdout, captured stderr.</returns>
     public static CompactResult RunDaoDatabaseScript(string databasePath, string databaseScript, string workDir, TimeSpan timeout)
     {
-        string script =
-            "$db = $engine.OpenDatabase(" + ToPowerShellSingleQuotedLiteral(databasePath) + ")\n" +
-            "try {\n" +
-            IndentScript(databaseScript, "  ") +
-            "} finally {\n" +
-            "  $db.Close()\n" +
-            "}\n";
+        string script = $$"""
+                $db = $engine.OpenDatabase({{ToPowerShellSingleQuotedLiteral(databasePath)}})
+                try {
+                {{IndentScript(databaseScript, "  ")}}} finally {
+                    $db.Close()
+                }
+
+                """;
 
         return RunDaoEngineScript(script, workDir, timeout);
     }
@@ -123,13 +125,14 @@ internal static class AccessRoundTripEnvironment
         string workDir,
         TimeSpan timeout)
     {
-        string script =
-            "$db = $engine.CreateDatabase(" + ToPowerShellSingleQuotedLiteral(databasePath) + ", " + ToPowerShellSingleQuotedLiteral(attributes) + ")\n" +
-            "try {\n" +
-            IndentScript(databaseScript, "  ") +
-            "} finally {\n" +
-            "  $db.Close()\n" +
-            "}\n";
+        string script = $$"""
+                $db = $engine.CreateDatabase({{ToPowerShellSingleQuotedLiteral(databasePath)}}, {{ToPowerShellSingleQuotedLiteral(attributes)}})
+                try {
+                {{IndentScript(databaseScript, "  ")}}} finally {
+                    $db.Close()
+                }
+
+                """;
 
         return RunDaoEngineScript(script, workDir, timeout);
     }
@@ -152,21 +155,21 @@ internal static class AccessRoundTripEnvironment
         }
 
         string scriptPath = Path.Combine(Path.GetDirectoryName(dest)!, $"compact-{Guid.NewGuid():N}.ps1");
-        string srcLiteral = source.Replace("'", "''", StringComparison.Ordinal);
-        string dstLiteral = dest.Replace("'", "''", StringComparison.Ordinal);
-        string script =
-            "$ErrorActionPreference = 'Stop'\n" +
-            "$src = '" + srcLiteral + "'\n" +
-            "$dst = '" + dstLiteral + "'\n" +
-            "if (Test-Path $dst) { Remove-Item -LiteralPath $dst -Force }\n" +
-            "$engine = New-Object -ComObject DAO.DBEngine.120\n" +
-            "try {\n" +
-            "  $engine.CompactDatabase($src, $dst)\n" +
-            "  exit 0\n" +
-            "} finally {\n" +
-            "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null\n" +
-            "  [GC]::Collect(); [GC]::WaitForPendingFinalizers()\n" +
-            "}\n";
+        string script = $$"""
+                $ErrorActionPreference = 'Stop'
+                $src = {{ToPowerShellSingleQuotedLiteral(source)}}
+                $dst = {{ToPowerShellSingleQuotedLiteral(dest)}}
+                if (Test-Path $dst) { Remove-Item -LiteralPath $dst -Force }
+                $engine = New-Object -ComObject DAO.DBEngine.120
+                try {
+                    $engine.CompactDatabase($src, $dst)
+                    exit 0
+                } finally {
+                    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null
+                    [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+                }
+
+                """;
         File.WriteAllText(scriptPath, script);
 
         try

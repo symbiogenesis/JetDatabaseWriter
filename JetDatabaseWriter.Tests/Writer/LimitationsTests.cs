@@ -70,7 +70,9 @@ public sealed class LimitationsTests
                     new("Computed", typeof(string), maxLength: 100)
                     {
                         IsCalculated = true,
-                        CalculationExpression = "[Id] & \" row\"",
+                        CalculationExpression = """
+                        [Id] & " row"
+                        """,
                         CalculatedResultType = 0x0A, // T_TEXT
                     },
                 ],
