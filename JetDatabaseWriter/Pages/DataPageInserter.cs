@@ -27,17 +27,16 @@ internal sealed class DataPageInserter(AccessWriter writer)
 
     internal static void PatchAutoNumFlag(byte[] tdefPage, TableDef tableDef)
     {
-        bool hasAutoNumber = false;
-        for (int i = 0; i < tableDef.Columns.Count; i++)
-        {
-            if ((tableDef.Columns[i].Flags & 0x04) != 0)
-            {
-                hasAutoNumber = true;
-                break;
-            }
-        }
-
-        tdefPage[0x18] = hasAutoNumber ? (byte)0x01 : (byte)0x00;
+        // Stamp TDEF byte 0x18 unconditionally to 0x01. Per Jackcess
+        // (`TableImpl.writeDefinition`, "this makes autonumbering work in
+        // access") and verified empirically in WriterTDefAutoNumFlagTests:
+        // every user table in the DAO-authored NorthwindTraders.accdb has
+        // byte 0x18 == 0x01, including the 4 tables (Catalog_TableOfContents,
+        // States, TaxStatus, Titles) that carry no autonumber column. The
+        // earlier conditional implementation wrote 0x00 for no-autonum tables
+        // and disagreed with DAO ground truth.
+        _ = tableDef;
+        tdefPage[0x18] = 0x01;
     }
 
     internal async ValueTask<PageInsertTarget> FindInsertTargetAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)

@@ -39,7 +39,7 @@ public sealed class AccessRoundTripTests
 {
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(2);
 
-    [Fact(Skip = "DAO Compact succeeds but DAO OpenRecordset still rejects writer-created user tables ('Unrecognized database format ''.') — rows dropped during compact. H22 fix landed 2026-05-10, no effect. See DaoValidationTests.")]
+    [Fact(Skip = "DAO Compact succeeds but DAO OpenRecordset still rejects writer-created user tables ('Unrecognized database format ''.') — rows dropped during compact. H25 (autonum_flag at TDEF byte 0x18) confirmed and fixed 2026-05-10, no effect. See DaoValidationTests.")]
     public async Task SinglePk_AndSingleColumnFk_SurviveCompactAndRepair()
     {
         await using var session = await RoundTripSession.CreateAsync(TestContext.Current.CancellationToken);
@@ -128,7 +128,7 @@ public sealed class AccessRoundTripTests
         Assert.Contains(post.Indexes[Child], i => i.IsForeignKey && i.Columns == "CustomerID" && i.CascadeDeletes);
     }
 
-    [Fact(Skip = "DAO Compact succeeds but DAO OpenRecordset still rejects writer-created user tables ('Unrecognized database format ''.') — rows dropped during compact. H22 fix landed 2026-05-10, no effect. See DaoValidationTests.")]
+    [Fact(Skip = "DAO Compact succeeds but DAO OpenRecordset still rejects writer-created user tables ('Unrecognized database format ''.') — rows dropped during compact. H25 (autonum_flag at TDEF byte 0x18) confirmed and fixed 2026-05-10, no effect. See DaoValidationTests.")]
     public async Task CompositePk_AndMultiColumnFk_SurviveCompactAndRepair()
     {
         await using var session = await RoundTripSession.CreateAsync(TestContext.Current.CancellationToken);
