@@ -6,6 +6,9 @@
     <AssemblyName>JetDatabaseWriter.FormatProbe</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
+    <RunAnalyzersDuringBuild Condition="'$(Configuration)' == 'Release'">true</RunAnalyzersDuringBuild>
+    <EnforceCodeStyleInBuild Condition="'$(Configuration)' == 'Release'">true</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile Condition="'$(Configuration)' == 'Release'">true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CA1031</NoWarn>
   </PropertyGroup>
   <ItemGroup>
