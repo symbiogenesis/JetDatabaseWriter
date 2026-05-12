@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Encryption;
 
 using System;
+using System.Buffers;
 using System.Buffers.Binary;
 using System.IO;
 using System.Security.Cryptography;
@@ -78,11 +79,7 @@ internal static class OfficeCryptoStandard
         byte[] encryptedVerifier = AesCbcZeroIv(verifier, key, encrypt: true);
 
         // Hash the verifier with SHA-1 → 20 bytes, then pad to 32 for encryption.
-        byte[] verifierHash;
-        using (var sha = SHA1.Create())
-        {
-            verifierHash = sha.ComputeHash(verifier);
-        }
+        byte[] verifierHash = OfficeCryptoPrimitives.Sha1(verifier);
 
         // Pad to 32 bytes (next multiple of AES block size above 20).
         byte[] verifierHashPadded = new byte[32];
@@ -207,24 +204,35 @@ internal static class OfficeCryptoStandard
     private static byte[] DeriveKeyCore(ReadOnlySpan<char> password, byte[] salt, int keyByteCount, int spinCount)
     {
         // Step 1: H0 = SHA1(salt || password_UTF16LE)
-        byte[] passwordBytes = Encoding.Unicode.GetBytes(password.ToArray());
+        int passwordByteCount = Encoding.Unicode.GetByteCount(password);
+        byte[]? rentedPasswordBytes = null;
+        Span<byte> passwordBytes = passwordByteCount <= 512
+            ? stackalloc byte[passwordByteCount]
+            : (rentedPasswordBytes = ArrayPool<byte>.Shared.Rent(passwordByteCount)).AsSpan(0, passwordByteCount);
+
         try
         {
-            byte[] h;
-            using (var sha = SHA1.Create())
+            _ = Encoding.Unicode.GetBytes(password, passwordBytes);
+
+            const int HashBytes = OfficeCryptoPrimitives.Sha1HashBytes;
+            byte[] h = new byte[HashBytes];
+            byte[] scratchHash = new byte[HashBytes];
+
+            try
             {
                 byte[] initial = new byte[salt.Length + passwordBytes.Length];
                 Buffer.BlockCopy(salt, 0, initial, 0, salt.Length);
-                Buffer.BlockCopy(passwordBytes, 0, initial, salt.Length, passwordBytes.Length);
-                h = sha.ComputeHash(initial);
+                passwordBytes.CopyTo(initial.AsSpan(salt.Length));
+                OfficeCryptoPrimitives.HashSha1(initial, h);
 
                 // Step 2: For i = 0 to spinCount-1: H = SHA1(LE32(i) || H)
-                byte[] iterBuf = new byte[4 + 20]; // 4-byte iterator + 20-byte hash
+                byte[] iterBuf = new byte[4 + HashBytes]; // 4-byte iterator + 20-byte hash
                 for (int i = 0; i < spinCount; i++)
                 {
                     BinaryPrimitives.WriteInt32LittleEndian(iterBuf.AsSpan(0, 4), i);
-                    Buffer.BlockCopy(h, 0, iterBuf, 4, h.Length);
-                    h = sha.ComputeHash(iterBuf);
+                    h.AsSpan().CopyTo(iterBuf.AsSpan(4));
+                    OfficeCryptoPrimitives.HashSha1(iterBuf, scratchHash);
+                    (h, scratchHash) = (scratchHash, h);
                 }
 
                 // Step 3: Hderived = SHA1(H || blockKey) where blockKey = 0x00000000
@@ -232,57 +240,59 @@ internal static class OfficeCryptoStandard
                 Buffer.BlockCopy(h, 0, finalBuf, 0, h.Length);
 
                 // blockKey bytes are already zero from allocation.
-                h = sha.ComputeHash(finalBuf);
-            }
+                OfficeCryptoPrimitives.HashSha1(finalBuf, scratchHash);
+                (h, scratchHash) = (scratchHash, h);
 
-            // Step 4: Derive key of required length.
-            // cbHash = 20 (SHA-1), cbRequiredKeyLength = keyByteCount
-            const int cbHash = 20;
-            if (keyByteCount <= cbHash)
-            {
-                // Truncate to required length.
-                byte[] key = new byte[keyByteCount];
-                Buffer.BlockCopy(h, 0, key, 0, keyByteCount);
-                return key;
-            }
-            else
-            {
+                // Step 4: Derive key of required length.
+                // cbHash = 20 (SHA-1), cbRequiredKeyLength = keyByteCount
+                if (keyByteCount <= HashBytes)
+                {
+                    // Truncate to required length.
+                    byte[] truncatedKey = new byte[keyByteCount];
+                    Buffer.BlockCopy(h, 0, truncatedKey, 0, keyByteCount);
+                    return truncatedKey;
+                }
+
                 // Extend using X1/X2 derivation (MS-OFFCRYPTO §2.3.6.2).
                 byte[] derivedBuf = new byte[64];
                 for (int i = 0; i < 64; i++)
                 {
-                    derivedBuf[i] = (byte)(i < cbHash ? (h[i] ^ 0x36) : 0x36);
+                    derivedBuf[i] = (byte)(i < HashBytes ? (h[i] ^ 0x36) : 0x36);
                 }
 
-                byte[] x1;
-                using (var sha = SHA1.Create())
-                {
-                    x1 = sha.ComputeHash(derivedBuf);
-                }
+                byte[] x1 = new byte[HashBytes];
+                OfficeCryptoPrimitives.HashSha1(derivedBuf, x1);
 
                 for (int i = 0; i < 64; i++)
                 {
-                    derivedBuf[i] = (byte)(i < cbHash ? (h[i] ^ 0x5C) : 0x5C);
+                    derivedBuf[i] = (byte)(i < HashBytes ? (h[i] ^ 0x5C) : 0x5C);
                 }
 
-                byte[] x2;
-                using (var sha = SHA1.Create())
-                {
-                    x2 = sha.ComputeHash(derivedBuf);
-                }
+                byte[] x2 = new byte[HashBytes];
+                OfficeCryptoPrimitives.HashSha1(derivedBuf, x2);
 
                 byte[] x3 = new byte[x1.Length + x2.Length];
                 Buffer.BlockCopy(x1, 0, x3, 0, x1.Length);
                 Buffer.BlockCopy(x2, 0, x3, x1.Length, x2.Length);
 
-                byte[] key = new byte[keyByteCount];
-                Buffer.BlockCopy(x3, 0, key, 0, keyByteCount);
-                return key;
+                byte[] extendedKey = new byte[keyByteCount];
+                Buffer.BlockCopy(x3, 0, extendedKey, 0, keyByteCount);
+                return extendedKey;
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(h);
+                CryptographicOperations.ZeroMemory(scratchHash);
             }
         }
         finally
         {
-            Array.Clear(passwordBytes, 0, passwordBytes.Length);
+            CryptographicOperations.ZeroMemory(passwordBytes);
+            if (rentedPasswordBytes is not null)
+            {
+                CryptographicOperations.ZeroMemory(rentedPasswordBytes);
+                ArrayPool<byte>.Shared.Return(rentedPasswordBytes);
+            }
         }
     }
 
@@ -299,15 +309,11 @@ internal static class OfficeCryptoStandard
         byte[] verifierHash = AesCbcZeroIv(d.EncryptedVerifierHash, key, encrypt: false);
 
         // Compute expected hash: SHA1(verifier).
-        byte[] expectedHash;
-        using (var sha = SHA1.Create())
-        {
-            expectedHash = sha.ComputeHash(verifier);
-        }
+        byte[] expectedHash = OfficeCryptoPrimitives.Sha1(verifier);
 
         // Compare first VerifierHashSize bytes (20 for SHA-1).
         int compareLen = Math.Min(d.VerifierHashSize, expectedHash.Length);
-        if (!CryptographicEquals(expectedHash, verifierHash, compareLen))
+        if (!OfficeCryptoPrimitives.FixedTimeEquals(expectedHash, verifierHash, compareLen))
         {
             throw new UnauthorizedAccessException(
                 "The provided password is incorrect for this database.");
@@ -483,22 +489,6 @@ internal static class OfficeCryptoStandard
     // ════════════════════════════════════════════════════════════════
     // Misc helpers
     // ════════════════════════════════════════════════════════════════
-
-    private static bool CryptographicEquals(byte[] a, byte[] b, int length)
-    {
-        if (a.Length < length || b.Length < length)
-        {
-            return false;
-        }
-
-        int diff = 0;
-        for (int i = 0; i < length; i++)
-        {
-            diff |= a[i] ^ b[i];
-        }
-
-        return diff == 0;
-    }
 
     private sealed class StandardDescriptor
     {
