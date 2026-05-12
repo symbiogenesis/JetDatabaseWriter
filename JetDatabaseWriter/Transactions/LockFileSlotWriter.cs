@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Transactions;
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
 /// Owns the JET lock-file companion (.ldb / .laccdb) for the lifetime of an open
@@ -203,7 +204,7 @@ internal sealed class LockFileSlotWriter : IDisposable
             // FileShare.ReadWrite | FileShare.Delete mirrors Access — every opener can
             // append a slot concurrently and the last closer can delete the file even
             // while we still hold a handle.
-            stream = new FileStream(
+            stream = FileStreamFactory.Open(
                 lockPath,
                 FileMode.OpenOrCreate,
                 FileAccess.ReadWrite,

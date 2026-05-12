@@ -504,7 +504,7 @@ public abstract class AccessBase : IAccessBase
     /// </summary>
     private protected static FileStream OpenDatabaseFileStream(string path, FileAccess access, FileShare share, FileOptions options)
     {
-        return new FileStream(path, FileMode.Open, access, share, 4096, options);
+        return FileStreamFactory.Open(path, FileMode.Open, access, share, options);
     }
 
     // Fixed-column decoding (ReadFixedString / ReadFixedTyped) lives in
