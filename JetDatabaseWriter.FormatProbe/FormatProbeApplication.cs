@@ -683,10 +683,29 @@ internal static class FormatProbeApplication
             }
         }
 
-        int idxHits = verdicts.Count(v => v.HasIndexes == true);
-        int idxColHits = verdicts.Count(v => v.HasIndexColumns == true);
-        int errors = verdicts.Count(v => v.Error is not null);
-        int totalCatalogRows = verdicts.Sum(v => v.CatalogRows);
+        int idxHits = 0;
+        int idxColHits = 0;
+        int errors = 0;
+        int totalCatalogRows = 0;
+        foreach (var verdict in verdicts)
+        {
+            if (verdict.HasIndexes == true)
+            {
+                idxHits++;
+            }
+
+            if (verdict.HasIndexColumns == true)
+            {
+                idxColHits++;
+            }
+
+            if (verdict.Error is not null)
+            {
+                errors++;
+            }
+
+            totalCatalogRows += verdict.CatalogRows;
+        }
 
         _ = sb.AppendLine("## Headline result");
         _ = sb.AppendLine();
