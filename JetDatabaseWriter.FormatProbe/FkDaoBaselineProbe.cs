@@ -150,6 +150,9 @@ internal static class FkDaoBaselineProbe
         Dictionary<string, int> catalogIds = await DumpCatalogRowsAsync(reader);
         await DumpAcesAsync(reader, catalogIds);
         await DumpRelationshipsAsync(reader);
+        await DumpTDefAsync(reader, "MSysObjects");
+        await DumpTDefAsync(reader, "MSysACEs");
+        await DumpTDefAsync(reader, "MSysRelationships");
         await DumpTDefAsync(reader, Parent);
         await DumpTDefAsync(reader, Child);
     }
@@ -172,7 +175,10 @@ internal static class FkDaoBaselineProbe
             if (!string.Equals(name, Parent, StringComparison.Ordinal)
                 && !string.Equals(name, Child, StringComparison.Ordinal))
             {
-                continue;
+                if (!string.Equals(name, FkName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
             }
 
             int id = ToInt32(GetValue(row, ordinals, "Id"));
@@ -263,13 +269,21 @@ internal static class FkDaoBaselineProbe
         Console.WriteLine(FormattableString.Invariant($"{tableName}: rows={rowCount}"));
 
         CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName);
-        if (entry is null)
+        long tdefPage = entry?.TDefPage ?? tableName switch
+        {
+            "MSysObjects" => 2,
+            "MSysACEs" => 4,
+            "MSysRelationships" => 5,
+            _ => 0,
+        };
+
+        if (tdefPage <= 0)
         {
             Console.WriteLine($"{tableName}: <missing>");
             return;
         }
 
-        byte[] page = await reader.ReadPageAsync(entry.TDefPage);
+        byte[] page = await reader.ReadPageAsync(tdefPage);
         int ownedRow = page[0x37];
         int ownedPage = ReadUInt24(page, 0x38);
         int freeRow = page[0x3B];
@@ -290,7 +304,16 @@ internal static class FkDaoBaselineProbe
         int logNamesStart = logStart + (numIdx * 28);
         List<string> names = ReadNames(page, logNamesStart, numIdx);
 
-        Console.WriteLine(FormattableString.Invariant($"{tableName}: tdefPage={entry.TDefPage} numIdx={numIdx} numRealIdx={numRealIdx}"));
+        Console.WriteLine(FormattableString.Invariant($"{tableName}: tdefPage={tdefPage} numIdx={numIdx} numRealIdx={numRealIdx}"));
+        Console.WriteLine(FormattableString.Invariant($"  tableUsed row={ownedRow} page={ownedPage} {await UsageMapRowSummaryAsync(reader, ownedPage, ownedRow)}"));
+        Console.WriteLine(FormattableString.Invariant($"  tableFree row={freeRow} page={freePage} {await UsageMapRowSummaryAsync(reader, freePage, freeRow)}"));
+        for (int i = 0; i < numRealIdx; i++)
+        {
+            int skip = 63 + (i * 12);
+            Console.WriteLine(FormattableString.Invariant(
+                $"  realSkip[{i}] unk0={BitConverter.ToInt32(page, skip)} rows={BitConverter.ToInt32(page, skip + 4)} unk8={BitConverter.ToInt32(page, skip + 8)}"));
+        }
+
         for (int i = 0; i < numRealIdx; i++)
         {
             int phys = realStart + (i * 52);
@@ -394,7 +417,7 @@ internal static class FkDaoBaselineProbe
     private static Dictionary<string, int> BuildOrdinals(IEnumerable<ColumnMetadata> columns)
         => columns.ToDictionary(static column => column.Name, static column => column.Ordinal, StringComparer.OrdinalIgnoreCase);
 
-    private static object? GetValue(object?[] row, IReadOnlyDictionary<string, int> ordinals, string columnName)
+    private static object? GetValue(object?[] row, Dictionary<string, int> ordinals, string columnName)
         => ordinals.TryGetValue(columnName, out int ordinal) && ordinal >= 0 && ordinal < row.Length
             ? row[ordinal]
             : DBNull.Value;

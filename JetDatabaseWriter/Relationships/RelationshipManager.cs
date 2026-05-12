@@ -152,6 +152,9 @@ internal sealed class RelationshipManager(AccessWriter writer)
             await writer.InsertSystemRowAndMaintainAsync(msysRelTdefPage, msysRelDef, Constants.SystemTableNames.Relationships, values, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
+        int relationshipObjectId = await writer.InsertRelationshipCatalogEntryAsync(relationship.Name, cancellationToken).ConfigureAwait(false);
+        await writer.InsertAceRowsForRelationshipAsync(relationshipObjectId, cancellationToken).ConfigureAwait(false);
+
         // Per-TDEF FK logical-idx entries: add index_type=0x02 logical-idx
         // entries on both PK-side and FK-side TDEFs with cross-referenced
         // rel_idx_num / rel_tbl_page so the JET engine can locate the partner

@@ -168,7 +168,7 @@ internal static class LongRowProbe
         return result;
     }
 
-    private static int FindColumnOrdinal(IReadOnlyList<ColumnMetadata> columns, string name)
+    private static int FindColumnOrdinal(List<ColumnMetadata> columns, string name)
     {
         for (int i = 0; i < columns.Count; i++)
         {

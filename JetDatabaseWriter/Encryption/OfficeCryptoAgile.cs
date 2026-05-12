@@ -21,6 +21,10 @@ using JetDatabaseWriter.Infrastructure;
 /// </summary>
 internal static class OfficeCryptoAgile
 {
+    private const int FlatEncodingKeyOffset = 0x3E;
+    private const int FlatEncryptionInfoLengthOffset = 0x299;
+    private const int FlatEncryptionInfoOffset = 0x29B;
+
     // Agile spec block-key constants (ECMA-376 §2.3.4.13 — "Password Verifier").
     private static readonly byte[] BlockKeyVerifierHashInput =
         [0xFE, 0xA7, 0xD2, 0x76, 0x3B, 0x4B, 0x9E, 0x79];
@@ -210,6 +214,119 @@ internal static class OfficeCryptoAgile
             Buffer.BlockCopy(xmlBytes, 0, encryptionInfo, 8, xmlBytes.Length);
 
             return (encryptionInfo, encryptedPackage);
+        }
+        finally
+        {
+            Array.Clear(passwordUtf16, 0, passwordUtf16.Length);
+        }
+    }
+
+    /// <summary>
+    /// Returns true when a flat ACCDB page-0 header embeds an Agile
+    /// EncryptionInfo descriptor at offset 0x299, the layout emitted by ACE /
+    /// DAO for encrypted Access databases.
+    /// </summary>
+    public static bool IsFlatAgileEncrypted(byte[] database)
+    {
+        if (!TryGetFlatEncryptionInfo(database, out byte[] encryptionInfo))
+        {
+            return false;
+        }
+
+        return IsAgileEncryptionInfo(encryptionInfo);
+    }
+
+    /// <summary>
+    /// Encrypts an ACCDB in the Access-native flat Agile layout: the
+    /// EncryptionInfo descriptor is embedded in page 0 and every data page is
+    /// AES-CBC encrypted in place.
+    /// </summary>
+    public static byte[] EncryptFlatDatabase(byte[] plaintext, ReadOnlySpan<char> password)
+    {
+        Guard.NotNull(plaintext, nameof(plaintext));
+        if (plaintext.Length < Constants.PageSizes.Jet4 || plaintext.Length % Constants.PageSizes.Jet4 != 0)
+        {
+            throw new InvalidDataException("ACCDB Agile encryption requires a whole-page Jet4/ACE database image.");
+        }
+
+        (byte[] encryptionInfo, byte[] intermediateKey, byte[] keyDataSalt) = CreateFlatEncryptionInfo(password);
+        if (FlatEncryptionInfoOffset + encryptionInfo.Length > Constants.PageSizes.Jet4)
+        {
+            throw new InvalidDataException("Agile EncryptionInfo is too large to embed in the ACCDB header page.");
+        }
+
+        byte[] result = (byte[])plaintext.Clone();
+        byte[] encodingKey = RandomBytes(4);
+        byte[] headerPage = new byte[Constants.PageSizes.Jet4];
+        Buffer.BlockCopy(result, 0, headerPage, 0, headerPage.Length);
+        EncryptionManager.TransformHeaderMask(headerPage);
+        Buffer.BlockCopy(encodingKey, 0, headerPage, FlatEncodingKeyOffset, encodingKey.Length);
+        BinaryPrimitives.WriteUInt16LittleEndian(headerPage.AsSpan(FlatEncryptionInfoLengthOffset, 2), checked((ushort)encryptionInfo.Length));
+        Buffer.BlockCopy(encryptionInfo, 0, headerPage, FlatEncryptionInfoOffset, encryptionInfo.Length);
+        EncryptionManager.TransformHeaderMask(headerPage);
+        Buffer.BlockCopy(headerPage, 0, result, 0, headerPage.Length);
+
+        for (int pageNumber = 1, offset = Constants.PageSizes.Jet4;
+             offset < result.Length;
+             pageNumber++, offset += Constants.PageSizes.Jet4)
+        {
+            byte[] plainPage = new byte[Constants.PageSizes.Jet4];
+            Buffer.BlockCopy(result, offset, plainPage, 0, plainPage.Length);
+            byte[] cipherPage = AesCbcRaw(
+                plainPage,
+                intermediateKey,
+                FlatPageIv(keyDataSalt, encodingKey, pageNumber, Constants.AgileEncryption.BlockSize),
+                encrypt: true);
+            Buffer.BlockCopy(cipherPage, 0, result, offset, cipherPage.Length);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Decrypts an Access-native flat Agile ACCDB and returns a clean plaintext
+    /// database image with the page-0 encryption metadata cleared.
+    /// </summary>
+    public static byte[] DecryptFlatDatabase(byte[] encryptedDatabase, ReadOnlySpan<char> password)
+    {
+        Guard.NotNull(encryptedDatabase, nameof(encryptedDatabase));
+        if (!TryGetFlatEncryptionInfo(encryptedDatabase, out byte[] encryptionInfo))
+        {
+            throw new InvalidDataException("ACCDB header does not contain a flat Agile EncryptionInfo descriptor.");
+        }
+
+        if (!IsAgileEncryptionInfo(encryptionInfo))
+        {
+            throw new InvalidDataException("ACCDB header EncryptionInfo is not in Agile format.");
+        }
+
+        AgileDescriptor descriptor = ParseDescriptor(encryptionInfo);
+        byte[] headerPage = GetUnmaskedHeaderPage(encryptedDatabase);
+        byte[] encodingKey = new byte[4];
+        Buffer.BlockCopy(headerPage, FlatEncodingKeyOffset, encodingKey, 0, encodingKey.Length);
+
+        byte[] passwordUtf16 = PasswordToUtf16(password);
+        try
+        {
+            byte[] intermediateKey = ResolvePassword(descriptor, passwordUtf16);
+            byte[] result = (byte[])encryptedDatabase.Clone();
+            int wholeLength = result.Length - (result.Length % Constants.PageSizes.Jet4);
+            for (int pageNumber = 1, offset = Constants.PageSizes.Jet4;
+                 offset < wholeLength;
+                 pageNumber++, offset += Constants.PageSizes.Jet4)
+            {
+                byte[] cipherPage = new byte[Constants.PageSizes.Jet4];
+                Buffer.BlockCopy(result, offset, cipherPage, 0, cipherPage.Length);
+                byte[] plainPage = AesCbcRaw(
+                    cipherPage,
+                    intermediateKey,
+                    FlatPageIv(descriptor.KeyDataSalt, encodingKey, pageNumber, descriptor.KeyDataBlockSize),
+                    encrypt: false);
+                Buffer.BlockCopy(plainPage, 0, result, offset, plainPage.Length);
+            }
+
+            ClearFlatEncryptionHeader(result, encryptionInfo.Length);
+            return result;
         }
         finally
         {
@@ -496,6 +613,28 @@ internal static class OfficeCryptoAgile
         return Truncate(hash, blockSize);
     }
 
+    private static byte[] FlatPageIv(byte[] keyDataSalt, byte[] encodingKey, int pageNumber, int blockSize)
+    {
+        byte[] blockKey = new byte[encodingKey.Length];
+        BinaryPrimitives.WriteInt32LittleEndian(blockKey, pageNumber);
+        for (int i = 0; i < encodingKey.Length; i++)
+        {
+            blockKey[i] ^= encodingKey[i];
+        }
+
+        byte[] data = new byte[keyDataSalt.Length + blockKey.Length];
+        Buffer.BlockCopy(keyDataSalt, 0, data, 0, keyDataSalt.Length);
+        Buffer.BlockCopy(blockKey, 0, data, keyDataSalt.Length, blockKey.Length);
+
+        byte[] hash;
+        using (var sha = SHA512.Create())
+        {
+            hash = sha.ComputeHash(data);
+        }
+
+        return Truncate(hash, blockSize);
+    }
+
     // ════════════════════════════════════════════════════════════════
     // AES-CBC helpers
     // ════════════════════════════════════════════════════════════════
@@ -730,6 +869,128 @@ internal static class OfficeCryptoAgile
         return result;
     }
 
+    private static (byte[] EncryptionInfo, byte[] IntermediateKey, byte[] KeyDataSalt) CreateFlatEncryptionInfo(
+        ReadOnlySpan<char> password)
+    {
+        byte[] passwordUtf16 = PasswordToUtf16(password);
+        try
+        {
+            byte[] keyDataSalt = RandomBytes(Constants.AgileEncryption.SaltSize);
+            byte[] passwordSalt = RandomBytes(Constants.AgileEncryption.SaltSize);
+            byte[] verifierHashInput = RandomBytes(Constants.AgileEncryption.SaltSize);
+            byte[] intermediateKey = RandomBytes(Constants.AgileEncryption.KeyBytes);
+
+            (byte[] verifierInputKey, byte[] verifierHashKey, byte[] keyValueKey,
+             _, _) = DeriveAllPasswordKeys(passwordUtf16, passwordSalt);
+
+            byte[] verifierInputCipher = AesCbcRaw(
+                PadToBlock(verifierHashInput),
+                verifierInputKey,
+                NormalizeIv(passwordSalt, Constants.AgileEncryption.BlockSize),
+                encrypt: true);
+
+            byte[] verifierHash;
+            using (var sha2 = SHA512.Create())
+            {
+                verifierHash = sha2.ComputeHash(verifierHashInput);
+            }
+
+            byte[] verifierHashCipher = AesCbcRaw(
+                PadToBlock(verifierHash),
+                verifierHashKey,
+                NormalizeIv(passwordSalt, Constants.AgileEncryption.BlockSize),
+                encrypt: true);
+
+            byte[] keyValueCipher = AesCbcRaw(
+                PadToBlock(intermediateKey),
+                keyValueKey,
+                NormalizeIv(passwordSalt, Constants.AgileEncryption.BlockSize),
+                encrypt: true);
+
+            string xml = BuildAgileXml(
+                keyDataSalt,
+                passwordSalt,
+                verifierInputCipher,
+                verifierHashCipher,
+                keyValueCipher,
+                hmacKeyCipher: null,
+                hmacValueCipher: null);
+
+            byte[] xmlBytes = Encoding.UTF8.GetBytes(xml);
+            byte[] encryptionInfo = new byte[8 + xmlBytes.Length];
+            encryptionInfo[0] = 0x04;
+            encryptionInfo[2] = 0x04;
+            encryptionInfo[4] = 0x40;
+            Buffer.BlockCopy(xmlBytes, 0, encryptionInfo, 8, xmlBytes.Length);
+
+            return (encryptionInfo, intermediateKey, keyDataSalt);
+        }
+        finally
+        {
+            Array.Clear(passwordUtf16, 0, passwordUtf16.Length);
+        }
+    }
+
+    private static bool TryGetFlatEncryptionInfo(byte[] database, out byte[] encryptionInfo)
+    {
+        encryptionInfo = [];
+        if (database == null || database.Length < FlatEncryptionInfoOffset + 8)
+        {
+            return false;
+        }
+
+        byte[] headerPage = GetUnmaskedHeaderPage(database);
+        bool hasEncodingKey = false;
+        for (int i = 0; i < 4; i++)
+        {
+            hasEncodingKey |= headerPage[FlatEncodingKeyOffset + i] != 0;
+        }
+
+        if (!hasEncodingKey)
+        {
+            return false;
+        }
+
+        int infoLength = BinaryPrimitives.ReadUInt16LittleEndian(headerPage.AsSpan(FlatEncryptionInfoLengthOffset, 2));
+        if (infoLength < 8 || FlatEncryptionInfoOffset + infoLength > database.Length)
+        {
+            return false;
+        }
+
+        encryptionInfo = new byte[infoLength];
+        Buffer.BlockCopy(headerPage, FlatEncryptionInfoOffset, encryptionInfo, 0, infoLength);
+        return true;
+    }
+
+    private static void ClearFlatEncryptionHeader(byte[] database, int encryptionInfoLength)
+    {
+        if (database.Length < Constants.PageSizes.Jet4)
+        {
+            return;
+        }
+
+        byte[] headerPage = GetUnmaskedHeaderPage(database);
+        Array.Clear(headerPage, FlatEncodingKeyOffset, 4);
+        Array.Clear(headerPage, 0x42, Math.Min(80, headerPage.Length - 0x42));
+
+        int clearLength = Math.Min(2 + encryptionInfoLength, headerPage.Length - FlatEncryptionInfoLengthOffset);
+        if (clearLength > 0)
+        {
+            Array.Clear(headerPage, FlatEncryptionInfoLengthOffset, clearLength);
+        }
+
+        EncryptionManager.TransformHeaderMask(headerPage);
+        Buffer.BlockCopy(headerPage, 0, database, 0, headerPage.Length);
+    }
+
+    private static byte[] GetUnmaskedHeaderPage(byte[] database)
+    {
+        byte[] headerPage = new byte[Constants.PageSizes.Jet4];
+        Buffer.BlockCopy(database, 0, headerPage, 0, Math.Min(headerPage.Length, database.Length));
+        EncryptionManager.TransformHeaderMask(headerPage);
+        return headerPage;
+    }
+
     private static byte[] HmacIv(byte[] keyDataSalt, byte[] blockKey)
     {
         byte[] data = new byte[keyDataSalt.Length + blockKey.Length];
@@ -770,11 +1031,16 @@ internal static class OfficeCryptoAgile
         byte[] verifierInputCipher,
         byte[] verifierHashCipher,
         byte[] keyValueCipher,
-        byte[] hmacKeyCipher,
-        byte[] hmacValueCipher)
+        byte[]? hmacKeyCipher,
+        byte[]? hmacValueCipher)
     {
+        string dataIntegrity = hmacKeyCipher is null || hmacValueCipher is null
+            ? string.Empty
+            : $"<dataIntegrity encryptedHmacKey=\"{Convert.ToBase64String(hmacKeyCipher)}\" " +
+              $"encryptedHmacValue=\"{Convert.ToBase64String(hmacValueCipher)}\"/>";
+
         return
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
             "<encryption xmlns=\"http://schemas.microsoft.com/office/2006/encryption\" " +
             "xmlns:p=\"http://schemas.microsoft.com/office/2006/keyEncryptor/password\" " +
             "xmlns:c=\"http://schemas.microsoft.com/office/2006/keyEncryptor/certificate\">" +
@@ -782,8 +1048,7 @@ internal static class OfficeCryptoAgile
             $"keyBits=\"{Constants.AgileEncryption.KeyBytes * 8}\" hashSize=\"{Constants.AgileEncryption.HashBytes}\" " +
             "cipherAlgorithm=\"AES\" cipherChaining=\"ChainingModeCBC\" hashAlgorithm=\"SHA512\" " +
             $"saltValue=\"{Convert.ToBase64String(keyDataSalt)}\"/>" +
-            $"<dataIntegrity encryptedHmacKey=\"{Convert.ToBase64String(hmacKeyCipher)}\" " +
-            $"encryptedHmacValue=\"{Convert.ToBase64String(hmacValueCipher)}\"/>" +
+            dataIntegrity +
             "<keyEncryptors>" +
             "<keyEncryptor uri=\"http://schemas.microsoft.com/office/2006/keyEncryptor/password\">" +
             $"<p:encryptedKey spinCount=\"{Constants.AgileEncryption.SpinCount}\" saltSize=\"{Constants.AgileEncryption.SaltSize}\" " +

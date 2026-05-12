@@ -218,6 +218,9 @@ internal static class Constants
         /// <summary>MSysObjects.Type value for a regular user table (mdbtools <c>OBJ_TABLE</c> / <c>MDB_TABLE_USER</c>).</summary>
         public const int UserTableType = 1;
 
+        /// <summary>MSysObjects.Type value DAO uses for a relationship object row.</summary>
+        public const int RelationshipType = 8;
+
         /// <summary>
         /// Well-known <c>MSysObjects.Id</c> of the <c>"Tables"</c>
         /// pseudo-object (Type = 3) that owns every user table. New
@@ -230,6 +233,9 @@ internal static class Constants
         /// Jackcess names this <c>SYS_PARENT_ID_TABLES</c>.
         /// </summary>
         public const int TablesParentId = 0x0F00_0001;
+
+        /// <summary>Well-known <c>MSysObjects.Id</c> of the relationships pseudo-object that owns Type=8 rows.</summary>
+        public const int RelationshipsParentId = 0x0F00_0003;
 
         /// <summary>MSysObjects.Type value for a linked ODBC table (Jackcess <c>TYPE_LINKED_ODBC_TABLE</c>).</summary>
         public const int LinkedOdbcType = 4;
@@ -304,6 +310,12 @@ internal static class Constants
         /// </summary>
         public const int DefaultAcm = 0x000FFEFF;
 
+        /// <summary>DAO owner-principal ACM for Type=8 relationship object ACE rows.</summary>
+        public const int RelationshipOwnerAcm = 0x000F00FE;
+
+        /// <summary>DAO group-principal ACM for Type=8 relationship object ACE rows.</summary>
+        public const int RelationshipGroupAcm = 0x000FFFFF;
+
         /// <summary>2-byte SID representing the database Owner principal.</summary>
         public static readonly byte[] OwnerSid = [0x71, 0x10];
 
@@ -357,6 +369,9 @@ internal static class Constants
 
         /// <summary>FAT entry value marking a sector that itself holds FAT data.</summary>
         public const uint FatSect = 0xFFFFFFFDu;
+
+        /// <summary>FAT entry value marking a sector that itself holds DIFAT data.</summary>
+        public const uint DifSect = 0xFFFFFFFCu;
 
         /// <summary>
         /// Lowest reserved-marker FAT entry value. Any entry &gt;= this value is

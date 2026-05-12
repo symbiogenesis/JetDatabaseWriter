@@ -905,6 +905,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// </summary>
     private static bool ResolveIsNullable(ColumnInfo col, ColumnPropertyTarget? target)
     {
+        if ((col.Flags & 0x04) != 0)
+        {
+            return false;
+        }
+
         bool? required = target?.GetBooleanValue(Constants.ColumnPropertyNames.Required);
         if (required is bool r)
         {

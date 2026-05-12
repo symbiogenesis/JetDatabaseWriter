@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Catalog;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -48,6 +49,32 @@ internal sealed class CatalogWriter(AccessWriter writer)
     }
 
     /// <summary>
+    /// Inserts the Type=8 <c>MSysObjects</c> row DAO creates for a relationship.
+    /// </summary>
+    internal async ValueTask<int> InsertRelationshipCatalogEntryAsync(string relationshipName, CancellationToken cancellationToken = default)
+    {
+        TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        int objectId = await AllocateRelationshipObjectIdAsync(msys, cancellationToken).ConfigureAwait(false);
+
+        object[] values = msys.CreateNullValueRow();
+        DateTime now = DateTime.UtcNow;
+
+        msys.SetValueByName(values, "Id", objectId);
+        msys.SetValueByName(values, "ParentId", Constants.SystemObjects.RelationshipsParentId);
+        msys.SetValueByName(values, "Name", relationshipName);
+        msys.SetValueByName(values, "Type", (short)Constants.SystemObjects.RelationshipType);
+        msys.SetValueByName(values, "DateCreate", now);
+        msys.SetValueByName(values, "DateUpdate", now);
+        msys.SetValueByName(values, "Flags", 0);
+        msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
+
+        RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
+        _ = await writer.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
+
+        return objectId;
+    }
+
+    /// <summary>
     /// Inserts 3 ACE rows into <c>MSysACEs</c> for a newly-created user table.
     /// </summary>
     internal async ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
@@ -74,6 +101,60 @@ internal sealed class CatalogWriter(AccessWriter writer)
             acesDef.SetValueByName(row, "SID", sid);
             await writer.InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, row, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Inserts DAO-shaped ACE rows for a Type=8 relationship object.
+    /// </summary>
+    internal async ValueTask InsertAceRowsForRelationshipAsync(int objectId, CancellationToken cancellationToken)
+    {
+        long acesTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        if (acesTdefPage <= 0)
+        {
+            return;
+        }
+
+        TableDef acesDef = await writer.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        byte[]? adminsSid = await HarvestAdminsSidAsync(acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
+
+        byte[][] sids = adminsSid != null
+            ? [Constants.Aces.OwnerSid, adminsSid, Constants.Aces.UsersSid]
+            : [Constants.Aces.OwnerSid, Constants.Aces.UsersSid];
+
+        for (int i = 0; i < sids.Length; i++)
+        {
+            object[] row = acesDef.CreateNullValueRow();
+            acesDef.SetValueByName(row, "ObjectId", objectId);
+            acesDef.SetValueByName(row, "ACM", i == 0 ? Constants.Aces.RelationshipOwnerAcm : Constants.Aces.RelationshipGroupAcm);
+            acesDef.SetValueByName(row, "FInheritable", false);
+            acesDef.SetValueByName(row, "SID", sids[i]);
+            await writer.InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, row, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static long ParseInt64(string value)
+    {
+        return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed) ? parsed : 0L;
+    }
+
+    private static int ParseInt32(string value)
+    {
+        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) ? parsed : 0;
+    }
+
+    private static byte[] ParseHexBytes(string hex)
+    {
+#if NET5_0_OR_GREATER
+        return Convert.FromHexString(hex);
+#else
+        byte[] bytes = new byte[hex.Length / 2];
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            bytes[i] = byte.Parse(hex.AsSpan(i * 2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        }
+
+        return bytes;
+#endif
     }
 
     /// <summary>
@@ -206,23 +287,62 @@ internal sealed class CatalogWriter(AccessWriter writer)
         return result;
     }
 
-    private static long ParseInt64(string value)
+    private async ValueTask<int> AllocateRelationshipObjectIdAsync(TableDef msys, CancellationToken cancellationToken)
     {
-        return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed) ? parsed : 0L;
-    }
-
-    private static byte[] ParseHexBytes(string hex)
-    {
-#if NET5_0_OR_GREATER
-        return Convert.FromHexString(hex);
-#else
-        byte[] bytes = new byte[hex.Length / 2];
-        for (int i = 0; i < bytes.Length; i++)
+        ColumnInfo? idColumn = msys.FindColumn("Id");
+        if (idColumn == null)
         {
-            bytes[i] = byte.Parse(hex.AsSpan(i * 2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+            throw new InvalidDataException("MSysObjects does not expose an 'Id' column.");
         }
 
-        return bytes;
-#endif
+        var usedIds = new HashSet<int>();
+        int maxLow24 = 0;
+        long total = writer._stream.Length / writer._pgSz;
+        for (long pageNumber = 3; pageNumber < total; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != 0x01 || AccessBase.Ri32(page, writer._dataPage.TDefOff) != 2)
+                {
+                    continue;
+                }
+
+                foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
+                {
+                    int id = ParseInt32(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn));
+                    _ = usedIds.Add(id);
+                    if (id < 0)
+                    {
+                        maxLow24 = Math.Max(maxLow24, id & 0x00FFFFFF);
+                    }
+                }
+            }
+            finally
+            {
+                AccessBase.ReturnPage(page);
+            }
+        }
+
+        int low24 = Math.Max(1, maxLow24 + 1);
+        for (int attempt = 0; attempt < 0x00FFFFFE; attempt++)
+        {
+            if (low24 > 0x00FFFFFF)
+            {
+                low24 = 1;
+            }
+
+            int candidate = unchecked((int)(0x80000000u | (uint)low24));
+            if (!usedIds.Contains(candidate))
+            {
+                return candidate;
+            }
+
+            low24++;
+        }
+
+        throw new InvalidOperationException("No free negative MSysObjects relationship id is available.");
     }
 }

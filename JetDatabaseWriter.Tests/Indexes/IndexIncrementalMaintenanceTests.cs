@@ -10,15 +10,13 @@ using JetDatabaseWriter.Models;
 using Xunit;
 
 /// <summary>
-/// Round-trip tests for the single-leaf incremental incremental B-tree maintenance
+/// Round-trip tests for the single-leaf incremental B-tree maintenance
 /// fast path. The fast path is engaged on insert/update/delete when the
 /// index B-tree fits on a single leaf page; otherwise the writer falls back
 /// to the bulk <c>MaintainIndexesAsync</c> rebuild. Tests cover:
 /// <list type="bullet">
-///   <item>Insert hits fast path → exactly ONE new leaf page is appended per
-///   call (vs. one-leaf-per-rebuild for the bulk path).</item>
-///   <item>Delete hits fast path → ONE new leaf is appended, with the deleted
-///   row's pointer absent from the new leaf.</item>
+///   <item>Insert hits fast path → the single leaf page is rewritten in place.</item>
+///   <item>Delete hits fast path → the single leaf is rewritten without the deleted row pointer.</item>
 ///   <item>Read-back of inserted/deleted rows is correct.</item>
 ///   <item>Index leaf entry count tracks the table row count after each
 ///   incremental mutation.</item>
@@ -31,7 +29,7 @@ public sealed class IndexIncrementalMaintenanceTests
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
-    public async Task SingleInsert_AppendsExactlyOneNewLeafPage(DatabaseFormat format)
+    public async Task SingleInsert_ReusesSingleLeafPage(DatabaseFormat format)
     {
         await using var stream = await CreateFreshStreamAsync(format);
 
@@ -53,11 +51,8 @@ public sealed class IndexIncrementalMaintenanceTests
 
         int leafCountAfter = CountLeafPages(stream.ToArray(), format);
 
-        // Fast path appends one leaf per InsertRowAsync call. The bulk path
-        // would also append one leaf for a single-leaf tree, but the win is
-        // observable on update/delete and on text/numeric/etc. workloads.
-        // Here we just confirm the fast path yields a valid file.
-        Assert.Equal(leafCountBefore + 1, leafCountAfter);
+        Assert.Equal(leafCountBefore, leafCountAfter);
+        Assert.Equal(1, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);
         DataTable? dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
@@ -69,11 +64,10 @@ public sealed class IndexIncrementalMaintenanceTests
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
-    public async Task RepeatedSingleInserts_EachAppendsOneLeaf_AllRowsReadable(DatabaseFormat format)
+    public async Task RepeatedSingleInserts_ReuseSingleLeaf_AllRowsReadable(DatabaseFormat format)
     {
-        // Demonstrates the fast path advantage: 5 sequential single-row
-        // inserts append exactly 5 new leaf pages (one per call), without
-        // re-scanning the whole table for each.
+        // Demonstrates the fast path advantage: 5 sequential single-row inserts
+        // rewrite the existing single leaf without re-scanning the whole table.
         await using var stream = await CreateFreshStreamAsync(format);
 
         await using (var writer = await OpenWriterAsync(stream))
@@ -96,7 +90,7 @@ public sealed class IndexIncrementalMaintenanceTests
         }
 
         int leafCountAfter = CountLeafPages(stream.ToArray(), format);
-        Assert.Equal(leafCountBefore + 5, leafCountAfter);
+        Assert.Equal(leafCountBefore, leafCountAfter);
 
         // Latest leaf must hold all 5 entries.
         Assert.Equal(5, GetLatestLeafEntryCount(stream.ToArray(), format));
@@ -110,7 +104,7 @@ public sealed class IndexIncrementalMaintenanceTests
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
-    public async Task SingleDelete_AppendsOneLeaf_WithReducedEntryCount(DatabaseFormat format)
+    public async Task SingleDelete_ReusesSingleLeaf_WithReducedEntryCount(DatabaseFormat format)
     {
         await using var stream = await CreateFreshStreamAsync(format);
 
@@ -141,7 +135,7 @@ public sealed class IndexIncrementalMaintenanceTests
         }
 
         int leafCountAfter = CountLeafPages(stream.ToArray(), format);
-        Assert.Equal(leafCountBefore + 1, leafCountAfter);
+        Assert.Equal(leafCountBefore, leafCountAfter);
         Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using var reader = await OpenReaderAsync(stream);

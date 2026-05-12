@@ -68,9 +68,26 @@ internal static class EncryptionConverter
                 .ConfigureAwait(false), AccessEncryptionFormat.AccdbAesCfbWrapped);
         }
 
+        _ = source.Seek(0, SeekOrigin.Begin);
+        byte[] rawFile = new byte[source.Length];
+        await ReadExactAsync(source, rawFile, 0, rawFile.Length, cancellationToken).ConfigureAwait(false);
+
+        if (OfficeCryptoAgile.IsFlatAgileEncrypted(rawFile))
+        {
+            if (password.IsEmpty)
+            {
+                throw new UnauthorizedAccessException(
+                    "This .accdb file is encrypted with Access Agile encryption. " +
+                    "Provide the database password via AccessReaderOptions.Password to open it.");
+            }
+
+            return (OfficeCryptoAgile.DecryptFlatDatabase(rawFile, password.Span), AccessEncryptionFormat.AccdbAgile);
+        }
+
         DatabaseFormat fmt = DetectFormat(header);
-        AccessEncryptionFormat src = DetectFlatFormat(header, fmt);
-        byte[] plaintext = await ReadFlatDecryptedAsync(source, header, password, isLegacyAesCfb: false, cancellationToken)
+        AccessEncryptionFormat src = DetectFlatFormat(rawFile, fmt);
+        await using var rawStream = new MemoryStream(rawFile, writable: false);
+        byte[] plaintext = await ReadFlatDecryptedAsync(rawStream, header, password, isLegacyAesCfb: false, cancellationToken)
             .ConfigureAwait(false);
 
         return (plaintext, src);
@@ -281,17 +298,7 @@ internal static class EncryptionConverter
 
     private static byte[] BuildAccdbAgile(byte[] plaintext, ReadOnlySpan<char> password)
     {
-        // Agile wraps a clean (unencrypted) inner ACCDB. The plaintext bytes
-        // we have are already in that shape — pass them through
-        // OfficeCryptoAgile.Encrypt and emit the resulting CFB document.
-        (byte[] encryptionInfo, byte[] encryptedPackage) =
-            OfficeCryptoAgile.Encrypt(plaintext, password);
-
-        return CompoundFileWriter.Build(
-        [
-            new KeyValuePair<string, byte[]>("EncryptionInfo", encryptionInfo),
-            new KeyValuePair<string, byte[]>("EncryptedPackage", encryptedPackage),
-        ]);
+        return OfficeCryptoAgile.EncryptFlatDatabase(plaintext, password);
     }
 
     private static byte[] BuildAccdbStandard(byte[] plaintext, ReadOnlySpan<char> password)
@@ -307,6 +314,20 @@ internal static class EncryptionConverter
             new KeyValuePair<string, byte[]>("EncryptionInfo", encryptionInfo),
             new KeyValuePair<string, byte[]>("EncryptedPackage", encryptedPackage),
         ]);
+    }
+
+    private static byte[] PadEncryptionInfoForRegularFat(byte[] encryptionInfo)
+    {
+        const int miniStreamCutoff = 4096;
+        if (encryptionInfo.Length >= miniStreamCutoff)
+        {
+            return encryptionInfo;
+        }
+
+        byte[] padded = new byte[miniStreamCutoff];
+        Buffer.BlockCopy(encryptionInfo, 0, padded, 0, encryptionInfo.Length);
+        Array.Fill(padded, (byte)' ', encryptionInfo.Length, padded.Length - encryptionInfo.Length);
+        return padded;
     }
 
     private static void EncryptAllPages(byte[] db, int pageSize, PageDecryptionKeys keys)
@@ -462,6 +483,11 @@ internal static class EncryptionConverter
 
     private static AccessEncryptionFormat DetectFlatFormat(byte[] header, DatabaseFormat fmt)
     {
+        if (fmt == DatabaseFormat.AceAccdb && OfficeCryptoAgile.IsFlatAgileEncrypted(header))
+        {
+            return AccessEncryptionFormat.AccdbAgile;
+        }
+
         if (header.Length <= 0x62)
         {
             return AccessEncryptionFormat.None;

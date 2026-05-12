@@ -355,20 +355,29 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
             long firstPageNumber = writer._stream.Length / writer._pgSz;
             IndexBTreeBuilder.BuildResult build = IndexBTreeBuilder.Build(leafLayout, writer._pgSz, tdefPage, leafEntries, firstPageNumber);
-            foreach (byte[] page in build.Pages)
-            {
-                await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
-            }
+            long rootPageNumber = build.RootPageNumber;
+            long[] pageNumbers;
 
-            AccessBase.Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)build.RootPageNumber));
-            if (rebuiltIndexPageGroups is not null)
+            int oldRootPageNumber = AccessBase.Ri32(tdefBuffer, rie.FirstDpOffset);
+            if (build.Pages.Count == 1 && await CanReuseSingleLeafPageAsync(oldRootPageNumber, tdefPage, cancellationToken).ConfigureAwait(false))
             {
-                var pageNumbers = new long[build.Pages.Count];
-                for (int i = 0; i < pageNumbers.Length; i++)
+                await writer.WritePageAsync(oldRootPageNumber, build.Pages[0], cancellationToken).ConfigureAwait(false);
+                rootPageNumber = oldRootPageNumber;
+                pageNumbers = [oldRootPageNumber];
+            }
+            else
+            {
+                pageNumbers = new long[build.Pages.Count];
+                for (int i = 0; i < build.Pages.Count; i++)
                 {
+                    await writer.AppendPageAsync(build.Pages[i], cancellationToken).ConfigureAwait(false);
                     pageNumbers[i] = firstPageNumber + i;
                 }
+            }
 
+            AccessBase.Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)rootPageNumber));
+            if (rebuiltIndexPageGroups is not null)
+            {
                 rebuiltIndexPageGroups[rieKey] = pageNumbers;
             }
 
@@ -377,7 +386,8 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
         if (rebuiltIndexPageGroups is not null && HasAnyIndexPageGroup(rebuiltIndexPageGroups))
         {
-            long usageMapPage = await writer.AppendIndexUsageMapPageAsync(rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
+            long usageMapPage = ReadTableUsageMapPage(tdefBuffer);
+            await writer.UpdateTableIndexUsageMapRowsAsync(usageMapPage, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
             for (int realIdxNum = 0; realIdxNum < rebuiltIndexPageGroups.Length; realIdxNum++)
             {
                 if (rebuiltIndexPageGroups[realIdxNum].Length == 0)
@@ -402,6 +412,24 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         }
     }
 
+    private async ValueTask<bool> CanReuseSingleLeafPageAsync(int pageNumber, long tdefPage, CancellationToken cancellationToken)
+    {
+        if (pageNumber <= 0 || pageNumber >= writer._stream.Length / writer._pgSz)
+        {
+            return false;
+        }
+
+        byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return page[0] == 0x04 && AccessBase.Ri32(page, 4) == tdefPage;
+        }
+        finally
+        {
+            AccessBase.ReturnPage(page);
+        }
+    }
+
     private static bool HasAnyIndexPageGroup(long[][] groups)
     {
         for (int i = 0; i < groups.Length; i++)
@@ -414,6 +442,9 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
         return false;
     }
+
+    private static int ReadTableUsageMapPage(byte[] tdefBuffer) =>
+        tdefBuffer[0x38] | (tdefBuffer[0x39] << 8) | (tdefBuffer[0x3A] << 16);
 
     private static void WriteIndexUsageMapPointer(byte[] tdefBuffer, int usedPagesOffset, int rowIndex, long usageMapPage)
     {
@@ -784,12 +815,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 return false;
             }
 
-            // Append the new leaf and patch first_dp. Old leaf is orphaned —
-            // same disposal model as the bulk-rebuild path.
-            long newFirstDp = writer._stream.Length / writer._pgSz;
-            await writer.AppendPageAsync(newLeaf, cancellationToken).ConfigureAwait(false);
-            AccessBase.Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)newFirstDp));
-            tdefDirty = true;
+            await writer.WritePageAsync(firstDp, newLeaf, cancellationToken).ConfigureAwait(false);
         }
 
         if (tdefDirty)

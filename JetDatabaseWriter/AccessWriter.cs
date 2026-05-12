@@ -552,6 +552,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         bool tdefDirty = tdefPages.Length > 1;
 
+        long[]? leafPageNumbers = null;
+
         // Emit one empty index leaf page per real index and patch its page
         // number into the corresponding `first_dp` field of the real-idx physical
         // descriptor. The leaf starts empty because CreateTableAsync inserts no
@@ -561,7 +563,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         if (resolvedIndexes.Count > 0)
         {
             var layout = IndexLeafPageBuilder.GetLayout(_format);
-            var leafPageNumbers = new long[resolvedIndexes.Count];
+            leafPageNumbers = new long[resolvedIndexes.Count];
 
             for (int i = 0; i < resolvedIndexes.Count; i++)
             {
@@ -577,21 +579,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 long leafPageNumber = await AppendPageAsync(leafPage, cancellationToken).ConfigureAwait(false);
                 leafPageNumbers[i] = leafPageNumber;
                 WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
-            }
-
-            if (_format != DatabaseFormat.Jet3Mdb)
-            {
-                // DAO-authored TDEFs point each real index's used_pages field at a
-                // dedicated data page row whose bitmap marks that index's first leaf.
-                // Emit the same row+page structure here so CompactDatabase can walk
-                // the index allocation chain instead of seeing an empty descriptor.
-                long indexUsageMapPageNumber = await AppendIndexUsageMapPageAsync(leafPageNumbers, cancellationToken).ConfigureAwait(false);
-                for (int i = 0; i < usedPagesLogicalOffsets.Length; i++)
-                {
-                    int usedPagesOffset = usedPagesLogicalOffsets[i];
-                    tdefPages[usedPagesOffset / _pgSz][usedPagesOffset % _pgSz] = checked((byte)(i + 2));
-                    WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)indexUsageMapPageNumber));
-                }
             }
 
             tdefDirty = true;
@@ -611,6 +598,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         if (_format != DatabaseFormat.Jet3Mdb)
         {
             long usageMapPageNumber = await _dataPageInserter.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
+
+            if (leafPageNumbers is not null)
+            {
+                await UpdateTableIndexUsageMapRowsAsync(
+                    usageMapPageNumber,
+                    ToSinglePageGroups(leafPageNumbers),
+                    cancellationToken).ConfigureAwait(false);
+
+                for (int i = 0; i < usedPagesLogicalOffsets.Length; i++)
+                {
+                    int usedPagesOffset = usedPagesLogicalOffsets[i];
+                    tdefPages[usedPagesOffset / _pgSz][usedPagesOffset % _pgSz] = checked((byte)(i + 2));
+                    WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
+                }
+            }
 
             // PatchUsageMapPointers / PatchAutoNumFlag write only into the
             // TDEF header (offsets 0x18, 0x37..0x3F), which always live on
@@ -2286,6 +2288,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
         => _catalogWriter.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags, cancellationToken);
 
+    internal ValueTask<int> InsertRelationshipCatalogEntryAsync(string relationshipName, CancellationToken cancellationToken = default)
+        => _catalogWriter.InsertRelationshipCatalogEntryAsync(relationshipName, cancellationToken);
+
+    internal ValueTask InsertAceRowsForRelationshipAsync(int objectId, CancellationToken cancellationToken = default)
+        => _catalogWriter.InsertAceRowsForRelationshipAsync(objectId, cancellationToken);
+
     private async ValueTask RewriteTableAsync(
         string tableName,
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
@@ -2494,16 +2502,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // wrote into the original column descriptor. Complex columns (T_ATTACHMENT /
         // T_COMPLEX) return early above because their Flags byte is the magic 0x07
         // marker rather than real flag bits.
+        bool isAutoIncrement = (column.Flags & 0x04) != 0;
         bool? requiredFromLvProp = properties?.FindTarget(column.Name)?
             .GetBooleanValue(Constants.ColumnPropertyNames.Required);
-        bool isNullable = requiredFromLvProp is bool req
-            ? !req
-            : (column.Flags & 0x08) == 0; // legacy back-compat with older writer revisions
+        bool isNullable = isAutoIncrement
+            ? false
+            : requiredFromLvProp is bool req
+                ? !req
+                : (column.Flags & 0x08) == 0; // legacy back-compat with older writer revisions
 
         ColumnDefinition def = baseDef with
         {
             IsNullable = isNullable,
-            IsAutoIncrement = (column.Flags & 0x04) != 0,
+            IsAutoIncrement = isAutoIncrement,
             IsHyperlink = column.Type == T_MEMO && (column.Flags & 0x80) != 0,
             IsCompressedUnicode = column.IsCompressedUnicode,
         };
@@ -2577,19 +2588,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
     }
 
-    // Matches the DAO-observed shape for a real-index usage-map page: two leading
-    // zero rows, then one 69-byte usage-map row per real index. Each usage-map row
-    // stores a page-aligned base in bytes 1..4 and a bitmap starting at byte 5.
+    // Matches the DAO-observed shape for a real-index usage-map page: table rows
+    // 0/1 first, then one 69-byte usage-map row per real index. Each usage-map
+    // row stores a page-aligned base in bytes 1..4 and a bitmap starting at byte 5.
     internal ValueTask<long> AppendIndexUsageMapPageAsync(long[] leafPageNumbers, CancellationToken cancellationToken)
-    {
-        var pageGroups = new long[leafPageNumbers.Length][];
-        for (int i = 0; i < leafPageNumbers.Length; i++)
-        {
-            pageGroups[i] = [leafPageNumbers[i]];
-        }
-
-        return AppendIndexUsageMapPageAsync(pageGroups, cancellationToken);
-    }
+        => AppendIndexUsageMapPageAsync(ToSinglePageGroups(leafPageNumbers), cancellationToken);
 
     internal async ValueTask<long> AppendIndexUsageMapPageAsync(IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
     {
@@ -2639,6 +2642,76 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Wu16(page, 2, freeSpace);
 
         return await AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async ValueTask UpdateTableIndexUsageMapRowsAsync(long usageMapPageNumber, IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
+    {
+        byte[] page = await ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
+
+        const int rowSize = 69;
+        int existingRowCount = Ru16(page, _dataPage.NumRows);
+        int rowCount = Math.Max(existingRowCount, indexPageGroups.Count + 2);
+        int rowStart = _pgSz;
+        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        {
+            rowStart -= rowSize;
+            Wu16(page, _dataPage.RowsStart + (rowIndex * 2), rowStart);
+
+            if (rowIndex < 2)
+            {
+                continue;
+            }
+
+            int groupIndex = rowIndex - 2;
+            if (groupIndex >= indexPageGroups.Count || indexPageGroups[groupIndex].Length == 0)
+            {
+                continue;
+            }
+
+            Array.Clear(page, rowStart, rowSize);
+            WriteIndexUsageMapRow(page, rowStart, indexPageGroups[groupIndex]);
+        }
+
+        Wi32(page, _dataPage.TDefOff, 0);
+        Wu16(page, _dataPage.NumRows, rowCount);
+        int freeSpace = rowStart - (_dataPage.RowsStart + (rowCount * 2));
+        Wu16(page, 2, freeSpace);
+        await WritePageAsync(usageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static long[][] ToSinglePageGroups(long[] pageNumbers)
+    {
+        var pageGroups = new long[pageNumbers.Length][];
+        for (int i = 0; i < pageNumbers.Length; i++)
+        {
+            pageGroups[i] = [pageNumbers[i]];
+        }
+
+        return pageGroups;
+    }
+
+    private static void WriteIndexUsageMapRow(byte[] page, int rowStart, long[] indexPageNumbers)
+    {
+        long firstPageNumber = indexPageNumbers.Length == 0 ? 0 : indexPageNumbers[0];
+        int basePageNumber = firstPageNumber < 512
+            ? 0
+            : checked((int)((firstPageNumber / 8) * 8));
+
+        page[rowStart] = 0x00;
+        Wi32(page, rowStart + 1, basePageNumber);
+
+        for (int i = 0; i < indexPageNumbers.Length; i++)
+        {
+            int bitIndex = checked((int)(indexPageNumbers[i] - basePageNumber));
+            if ((uint)bitIndex >= 512)
+            {
+                throw new NotSupportedException(
+                    "Index B-tree allocation spans more than one inline usage-map bitmap; " +
+                    "REFERENCE usage maps for index pages are not yet supported.");
+            }
+
+            page[rowStart + 5 + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
+        }
     }
 
     // ── Row-level APIs for complex (Attachment / MultiValue) columns ──

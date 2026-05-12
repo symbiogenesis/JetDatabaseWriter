@@ -143,6 +143,20 @@ internal static class EncryptionManager
     }
 
     /// <summary>
+    /// Applies or removes the fixed RC4 mask Access uses for page-0 header
+    /// bytes <c>0x18..0x97</c>. The transform is symmetric.
+    /// </summary>
+    internal static void TransformHeaderMask(byte[] headerPage)
+    {
+        Guard.NotNull(headerPage, nameof(headerPage));
+        int length = Math.Min(128, headerPage.Length - 0x18);
+        if (length > 0)
+        {
+            Rc4Transform(headerPage, 0x18, length, HeaderRc4Key);
+        }
+    }
+
+    /// <summary>
     /// Detects the on-disk encryption format of the database at
     /// <paramref name="path"/>. Returns <see cref="AccessEncryptionFormat.None"/>
     /// when the file is unencrypted. The file is read but not modified.
@@ -189,7 +203,7 @@ internal static class EncryptionManager
         try
         {
             _ = stream.Seek(0, SeekOrigin.Begin);
-            byte[] sniff = new byte[0x80];
+            byte[] sniff = new byte[Constants.PageSizes.Jet4];
             int read = 0;
             while (read < sniff.Length)
             {
@@ -456,8 +470,9 @@ internal static class EncryptionManager
     /// <summary>
     /// If <paramref name="header"/> has CFB magic and the contained streams
     /// describe an Office Crypto API ("Agile" or "Standard") encrypted package,
-    /// returns the decrypted inner ACCDB bytes. Returns <c>null</c> when the
-    /// file is not an encrypted CFB document.
+    /// or the stream is an Access-native flat Agile ACCDB, returns the decrypted
+    /// inner ACCDB bytes. Returns <c>null</c> when the file is not an encrypted
+    /// Office document.
     /// Throws <see cref="UnauthorizedAccessException"/> when an encrypted package
     /// is detected but no password was supplied.
     /// </summary>
@@ -467,6 +482,37 @@ internal static class EncryptionManager
         ReadOnlyMemory<char> password,
         CancellationToken cancellationToken)
     {
+        if (!CompoundFileReader.HasCompoundFileMagic(header))
+        {
+            long originalPosition = stream.Position;
+            try
+            {
+                _ = stream.Seek(0, SeekOrigin.Begin);
+                byte[] rawFile = new byte[stream.Length];
+                await stream.ReadExactlyAsync(rawFile.AsMemory(), cancellationToken).ConfigureAwait(false);
+                if (!OfficeCryptoAgile.IsFlatAgileEncrypted(rawFile))
+                {
+                    return null;
+                }
+
+                if (password.IsEmpty)
+                {
+                    throw new UnauthorizedAccessException(
+                        "This .accdb file is encrypted with Access Agile encryption. " +
+                        "Provide the database password via AccessReaderOptions.Password to open it.");
+                }
+
+                return OfficeCryptoAgile.DecryptFlatDatabase(rawFile, password.Span);
+            }
+            finally
+            {
+                if (stream.CanSeek)
+                {
+                    _ = stream.Seek(originalPosition, SeekOrigin.Begin);
+                }
+            }
+        }
+
         (byte[]? plaintext, _) = await TryDecryptCompoundFileWithFormatAsync(stream, header, password, cancellationToken)
             .ConfigureAwait(false);
         return plaintext;

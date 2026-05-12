@@ -14,8 +14,8 @@ that target the same on-disk format(s) we do:
 
 This file lists **open** gaps only. Each entry is tagged with the source
 project (`[J]` Jackcess, `[M]` mdbtools, `[O]` OpenMcdf) and the rough
-difficulty (`S`/`M`/`L`). When a gap is closed, remove it from this file —
-the test source is the canonical record of what's covered.
+difficulty (`S`/`M`/`L`). When a gap is closed, remove it from this file and
+leave the detailed resolution in the relevant design note or test source.
 
 All tests should be **self-contained** — exercisable with `dotnet test`
 alone. No Java runtime or mdbtools install should be required. DAO
@@ -79,51 +79,12 @@ in [GeneralEncoderSharedTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collatio
 
 ## 3. DAO round-trip validation
 
-Tests in this section use `DAO.DBEngine.120` via
-`AccessRoundTripEnvironment` and auto-skip when Access is not installed.
-Existing infrastructure in `AccessRoundTripTests` (`RoundTripSession`,
-`CaptureSnapshotAsync`, `AssertTdefMagicStampsAsync`, etc.) and the
-newer `DaoValidationTests` (single-table DAO scripts via
-`AccessRoundTripEnvironment.RunDaoScript`) should be reused for new DAO
-scenarios rather than reinventing the setup/teardown boilerplate.
-
-- [ ] **`[S]`** **FK Compact & Repair acceptance** — the two existing tests
-  (`SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`,
-  `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`) remain known-gap
-  opt-in tests. DAO Compact itself succeeds, but post-compact verification
-  still fails for writer-created FK-bearing tables. The focused single-FK
-  test currently reports row count 0 after compact; the standalone
-  `fk-dao-baseline` FormatProbe mode (legacy `DIAG_FK_DAO_BASELINE`) can produce an even stronger symptom where
-  CompactDatabase exits 0 but omits the writer-created FK tables and
-  relationship rows entirely. See
-  [round-trip-openrecordset-hypothesis.md](/docs/design/round-trip-openrecordset-hypothesis.md).
-- [x] **`[S]`** **DAO OpenRecordset row-count** —
-  `DaoValidationTests.DaoOpenRecordset_RowCount_MatchesWriterOutput` now
-  passes on Access-equipped hosts. The original `OpenRecordset`
-  TDEF-layout blocker is resolved.
-- [x] **`[S]`** **DAO index traversal** —
-  `DaoValidationTests.DaoIndexTraversal_Seek_LocatesRowByPrimaryKey` now
-  passes on Access-equipped hosts.
-- [x] **`[S]`** **DAO AutoNumber continuation** —
-  `DaoValidationTests.DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert`
-  now passes; DAO continues after the writer's persisted AutoNumber
-  high-water value instead of reusing an existing ID.
-- [x] **`[M]`** **DAO Memo/OLE fidelity** —
-  `DaoValidationTests.DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly`
-  now passes after the OpenRecordset and usage-map fixes.
-- [ ] **`[S]`** **DAO FK enforcement unskip** —
-  `DaoValidationTests.DaoRelationshipEnforcement_FkViolation_RaisesError`
-  passes with `JETDATABASEWRITER_RUN_KNOWN_ACCESS_COMPAT_GAPS=1` after
-  DAO-shaped FK logical cross-references and real-index `used_pages` fixes.
-  It is still guarded as a known-gap opt-in test until the adjacent FK
-  Compact & Repair behavior is either fixed or intentionally split into a
-  separate tracked gap.
-- [ ] **`[L]`** **DAO CompactDatabase on encrypted output** — test
-  implemented in
-  `DaoValidationTests.DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds`;
-  still a known-gap opt-in test. Do not start this until plaintext FK
-  Compact & Repair has a clear root cause; the encrypted failure may be in
-  encryption/container metadata rather than the plain TDEF/index path.
+No open DAO round-trip coverage gaps are currently tracked here. The former
+OpenRecordset, FK enforcement, FK Compact & Repair, Memo/OLE fidelity,
+AutoNumber continuation, and encrypted CompactDatabase gaps now run under the
+normal Microsoft Access guard and pass on Access-equipped hosts. The resolution
+details live in [round-trip-openrecordset-hypothesis.md](design/round-trip-openrecordset-hypothesis.md)
+and [round-trip-test-failures.md](design/round-trip-test-failures.md).
 
 ---
 

@@ -278,7 +278,7 @@ internal static class LongRowBisect
         return pos >= 0 ? pos + from : -1;
     }
 
-    private static int FindColumnOrdinal(IReadOnlyList<ColumnMetadata> columns, string name)
+    private static int FindColumnOrdinal(List<ColumnMetadata> columns, string name)
     {
         for (int i = 0; i < columns.Count; i++)
         {
@@ -329,7 +329,7 @@ internal static class LongRowBisect
                     methodCache.Add(handlerType, method);
                 }
 
-                delegates[i] = (Func<char, byte[]?>)method.CreateDelegate(typeof(Func<char, byte[]?>), handler);
+                delegates[i] = method.CreateDelegate<Func<char, byte[]?>>(handler);
             }
 
             return delegates;

@@ -384,8 +384,8 @@ public sealed class DaoValidationTests
     /// enforcement".
     /// </summary>
     [Fact(
-        Skip = AccessRoundTripEnvironment.RequiresKnownAccessCompatibilityGapOptInSkipReason,
-        SkipUnless = nameof(AccessRoundTripEnvironment.RunKnownAccessCompatibilityGapTests),
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoRelationshipEnforcement_FkViolation_RaisesError()
     {
@@ -469,15 +469,15 @@ public sealed class DaoValidationTests
     }
 
     /// <summary>
-    /// Creates an ACCDB, encrypts it with Agile (AES) encryption, then runs
-    /// DAO CompactDatabase with the password supplied. Verifies the compacted
-    /// file reopens with our reader. Validates the encryption header is
-    /// well-formed enough for Access's own engine.
+    /// Creates an ACCDB, encrypts it with Access-native Agile encryption, then
+    /// runs DAO CompactDatabase with the password supplied. Verifies the
+    /// compacted file reopens with our reader. Validates the encryption metadata
+    /// is well-formed enough for Access's own engine.
     /// Closes §3 gap: "DAO CompactDatabase on encrypted output".
     /// </summary>
     [Fact(
-        Skip = AccessRoundTripEnvironment.RequiresKnownAccessCompatibilityGapOptInSkipReason,
-        SkipUnless = nameof(AccessRoundTripEnvironment.RunKnownAccessCompatibilityGapTests),
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds()
     {
@@ -520,10 +520,11 @@ public sealed class DaoValidationTests
         string dbLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(dbPath);
         string compLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(compactedPath);
         string attributesLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral($"{CreateDatabaseAttributes};PWD={Password}");
+        string sourcePasswordLiteral = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral($";PWD={Password}");
 
         string script =
             $$"""
-            $engine.CompactDatabase({{dbLiteral}}, {{compLiteral}}, {{attributesLiteral}})
+            $engine.CompactDatabase({{dbLiteral}}, {{compLiteral}}, {{attributesLiteral}}, 0, {{sourcePasswordLiteral}})
             Write-Output 'OK'
             """;
 
