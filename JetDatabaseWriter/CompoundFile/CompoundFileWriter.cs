@@ -12,13 +12,13 @@ using CfbConstants = JetDatabaseWriter.Constants.CompoundFile;
 /// format ("MS-CFB"). Emits a compound document containing the supplied named
 /// streams as top-level entries under the Root Entry.
 ///
-/// Only the subset needed to wrap Office Crypto API "Agile" encrypted .accdb
-/// files is implemented:
+/// Only the subset needed to wrap Office Crypto API encrypted .accdb files and
+/// test fixtures is implemented:
 ///   • Single root storage with N stream children (typically two:
 ///     <c>EncryptionInfo</c> and <c>EncryptedPackage</c>)
 ///   • By default, mini-stream cutoff is set to 0, so every stream uses the regular FAT
-///   • Up to 109 FAT sectors, addressed via the
-///     fixed 109-entry header DIFAT — no DIFAT extension sectors
+///   • FAT sectors addressed by the header DIFAT and, when needed, DIFAT
+///     extension sectors
 ///   • Directory entries stored in regular directory sectors
 ///
 /// The directory red-black tree is laid out as an ascending right-sibling

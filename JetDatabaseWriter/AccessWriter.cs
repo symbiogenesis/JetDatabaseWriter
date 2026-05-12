@@ -63,13 +63,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeStateLockAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private readonly ReaderWriterLockSlim _stateLock = new(LockRecursionPolicy.NoRecursion);
 
-    // Agile re-encryption context. When non-null, the underlying _stream is an
+    // Office Crypto re-encryption context. When non-null, the underlying _stream is an
     // in-memory MemoryStream containing the *decrypted* inner ACCDB; on
-    // DisposeAsync the bytes are re-encrypted with Office Crypto API "Agile"
+    // DisposeAsync the bytes are re-encrypted with the original Office Crypto format
     // and written back to _outerEncryptedStream (which holds the original CFB).
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via RewrapAndCloseOuterEncryptedStreamAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private readonly Stream? _outerEncryptedStream;
     private readonly bool _outerEncryptedLeaveOpen;
+    private readonly AccessEncryptionFormat _outerEncryptedFormat;
     private readonly bool _isAgileEncryptedRewrap;
 
     /// <summary>The single instance owning index B-tree maintenance: bulk rebuild,
@@ -145,7 +146,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         AccessWriterOptions options,
         Stream? outerEncryptedStream = null,
         bool outerEncryptedLeaveOpen = false,
-        bool isAgileEncryptedRewrap = false,
+        AccessEncryptionFormat outerEncryptedFormat = AccessEncryptionFormat.None,
         bool leaveOpen = false)
         : base(stream, header, path, leaveOpen)
     {
@@ -153,7 +154,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         _lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
         _outerEncryptedStream = outerEncryptedStream;
         _outerEncryptedLeaveOpen = outerEncryptedLeaveOpen;
-        _isAgileEncryptedRewrap = isAgileEncryptedRewrap;
+        _outerEncryptedFormat = outerEncryptedFormat;
+        _isAgileEncryptedRewrap = outerEncryptedFormat != AccessEncryptionFormat.None;
         Relationships = new RelationshipManager(this);
         _indexMaintainer = new IndexMaintainer(this);
         ComplexColumns = new ComplexColumnManager(this);
@@ -186,7 +188,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // are written in place — the existing PrepareEncryptedPageForWrite
         // pipeline re-encrypts every page we flush.
         bool isLegacyAesCfb =
-            EncryptionManager.IsCompoundFileEncrypted(header) && !isAgileEncryptedRewrap;
+            EncryptionManager.IsCompoundFileEncrypted(header) && !_isAgileEncryptedRewrap;
 
         // Populate page-encryption keys for in-place re-encryption of writes
         // (Jet3 XOR is already configured by AccessBase; this resolves the
@@ -275,14 +277,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             if (EncryptionManager.IsCompoundFileEncrypted(header))
             {
                 _ = stream.Seek(0, SeekOrigin.Begin);
-                byte[]? decryptedAgile = await EncryptionManager
-                    .TryDecryptAgileCompoundFileAsync(stream, header, options.Password, cancellationToken)
+                (byte[]? decryptedPackage, AccessEncryptionFormat outerFormat) = await EncryptionManager
+                    .TryDecryptCompoundFileWithFormatAsync(stream, header, options.Password, cancellationToken)
                     .ConfigureAwait(false);
 
-                if (decryptedAgile != null)
+                if (decryptedPackage != null)
                 {
                     var inner = new MemoryStream();
-                    await inner.WriteAsync(decryptedAgile.AsMemory(), cancellationToken).ConfigureAwait(false);
+                    await inner.WriteAsync(decryptedPackage.AsMemory(), cancellationToken).ConfigureAwait(false);
                     inner.Position = 0;
                     byte[] innerHeader = await ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
 
@@ -293,7 +295,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                         options,
                         outerEncryptedStream: stream,
                         outerEncryptedLeaveOpen: leaveOpen,
-                        isAgileEncryptedRewrap: true);
+                        outerEncryptedFormat: outerFormat);
                 }
 
                 // CFB magic but not a real Agile compound document: treat as
@@ -1789,9 +1791,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     /// <summary>
     /// Re-encrypts the in-memory decrypted ACCDB (held by <c>_stream</c>) using
-    /// freshly-generated Agile parameters and writes the resulting CFB document
-    /// back to <see cref="_outerEncryptedStream"/>. Called from
-    /// <see cref="DisposeAsync"/> when the writer was opened on an Agile-encrypted
+    /// freshly-generated Office Crypto parameters and writes the resulting CFB
+    /// document back to <see cref="_outerEncryptedStream"/>. Called from
+    /// <see cref="DisposeAsync"/> when the writer was opened on an Office Crypto
     /// .accdb file.
     /// </summary>
     private async ValueTask RewrapAgileOnDisposeAsync()
@@ -1801,14 +1803,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         byte[] inner = memory.ToArray();
 
-        (byte[] encryptionInfo, byte[] encryptedPackage) =
-            OfficeCryptoAgile.Encrypt(inner, _options.Password.Span);
+        (byte[] encryptionInfo, byte[] encryptedPackage) = _outerEncryptedFormat == AccessEncryptionFormat.AccdbStandard
+            ? OfficeCryptoStandard.Encrypt(inner, _options.Password.Span)
+            : OfficeCryptoAgile.Encrypt(inner, _options.Password.Span);
 
-        byte[] cfb = CompoundFileWriter.Build(
-        [
-            new KeyValuePair<string, byte[]>("EncryptionInfo", encryptionInfo),
-            new KeyValuePair<string, byte[]>("EncryptedPackage", encryptedPackage),
-        ]);
+        byte[] cfb = EncryptionConverter.BuildOfficeCryptoCompoundFile(encryptionInfo, encryptedPackage);
 
         _ = _outerEncryptedStream!.Seek(0, SeekOrigin.Begin);
         await _outerEncryptedStream.WriteAsync(cfb.AsMemory()).ConfigureAwait(false);

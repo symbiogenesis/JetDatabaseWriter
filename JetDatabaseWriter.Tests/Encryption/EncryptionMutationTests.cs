@@ -1,10 +1,14 @@
 namespace JetDatabaseWriter.Tests.Encryption;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.CompoundFile;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -17,9 +21,9 @@ using Xunit;
 /// <see cref="AccessWriter.ChangePasswordAsync(string, string, string, AccessWriterOptions?, System.Threading.CancellationToken)"/>,
 /// and <see cref="AccessWriter.DecryptAsync(string, string, AccessWriterOptions?, System.Threading.CancellationToken)"/>.
 ///
-/// Each format follows the same round-trip:
+/// Each selectable format follows the same round-trip:
 ///   1. Clone an unencrypted source database to a temp file.
-///   2. Encrypt with one of the four supported formats.
+///   2. Encrypt with one of the supported target formats.
 ///   3. Verify <see cref="AccessReader"/> can re-open with the new password.
 ///   4. Change the password; verify only the new password works.
 ///   5. Decrypt; verify the file opens with no password and matches the original tables.
@@ -151,11 +155,9 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         List<string> originalTables = await ListTablesAsync(path, password: null);
 
         await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbAesCfbWrapped, NoLockOptions, TestContext.Current.CancellationToken);
-        Assert.Equal(AccessEncryptionFormat.AccdbAgile, await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
-
-        // The cheap detector cannot distinguish synthetic CFB-wrapped AES from
-        // real Agile by header magic alone; use the reader as the source of
-        // truth.
+        Assert.Equal(
+            AccessEncryptionFormat.AccdbAesCfbWrapped,
+            await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
         await AssertOpenableAsync(path, FirstPassword, originalTables);
 
         await AccessWriter.ChangePasswordAsync(path, FirstPassword, SecondPassword, NoLockOptions, TestContext.Current.CancellationToken);
@@ -167,7 +169,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         await AssertOpenableAsync(path, password: null, originalTables);
     }
 
-    // ───── ACCDB Agile (Office Crypto API) ───────────────────────────
+    // ───── ACCDB Agile (Access-native flat layout) ───────────────────
 
     [Fact]
     public async Task EncryptDecrypt_AccdbAgile_RoundTripsThroughChangePassword()
@@ -178,6 +180,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         List<string> originalTables = await ListTablesAsync(path, password: null);
 
         await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbAgile, NoLockOptions, ct);
+        await AssertFlatAgileAsync(path, ct);
 
         // Open BEFORE detect.
         await AssertOpenableAsync(path, FirstPassword, originalTables);
@@ -185,6 +188,32 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         Assert.Equal(AccessEncryptionFormat.AccdbAgile, await AccessWriter.DetectEncryptionFormatAsync(path, ct));
 
         await AccessWriter.ChangePasswordAsync(path, FirstPassword, SecondPassword, NoLockOptions, ct);
+        await AssertFlatAgileAsync(path, ct);
+        await AssertWrongPasswordAsync(path, FirstPassword);
+        await AssertOpenableAsync(path, SecondPassword, originalTables);
+
+        await AccessWriter.DecryptAsync(path, SecondPassword, NoLockOptions, ct);
+        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(path, ct));
+        await AssertOpenableAsync(path, password: null, originalTables);
+    }
+
+    // ───── ACCDB Agile (Office Crypto CFB v4 layout) ─────────────────
+
+    [Fact]
+    public async Task EncryptDecrypt_AccdbAgileCfb_RoundTripsThroughChangePassword()
+    {
+        var ct = TestContext.Current.CancellationToken;
+
+        string path = await CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
+        List<string> originalTables = await ListTablesAsync(path, password: null);
+
+        await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbAgileCfb, NoLockOptions, ct);
+        await AssertOfficeCryptoAgileCfbV4Async(path, ct);
+        Assert.Equal(AccessEncryptionFormat.AccdbAgileCfb, await AccessWriter.DetectEncryptionFormatAsync(path, ct));
+        await AssertOpenableAsync(path, FirstPassword, originalTables);
+
+        await AccessWriter.ChangePasswordAsync(path, FirstPassword, SecondPassword, NoLockOptions, ct);
+        await AssertOfficeCryptoAgileCfbV4Async(path, ct);
         await AssertWrongPasswordAsync(path, FirstPassword);
         await AssertOpenableAsync(path, SecondPassword, originalTables);
 
@@ -202,9 +231,9 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         List<string> originalTables = await ListTablesAsync(path, password: null);
 
         await AccessWriter.EncryptAsync(path, FirstPassword, AccessEncryptionFormat.AccdbStandard, NoLockOptions, TestContext.Current.CancellationToken);
-
-        // The cheap header-based detector sees any CFB as AccdbAgile.
-        Assert.Equal(AccessEncryptionFormat.AccdbAgile, await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
+        Assert.Equal(
+            AccessEncryptionFormat.AccdbStandard,
+            await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
 
         await AssertOpenableAsync(path, FirstPassword, originalTables);
 
@@ -479,6 +508,34 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     }
 
     private static readonly AccessWriterOptions NoLockOptions = new() { UseLockFile = false };
+
+    private static async Task AssertFlatAgileAsync(string path, CancellationToken cancellationToken)
+    {
+        byte[] bytes = await File.ReadAllBytesAsync(path, cancellationToken);
+
+        Assert.False(CompoundFileReader.HasCompoundFileMagic(bytes));
+        Assert.True(OfficeCryptoAgile.IsFlatAgileEncrypted(bytes));
+    }
+
+    private static async Task AssertOfficeCryptoAgileCfbV4Async(string path, CancellationToken cancellationToken)
+    {
+        byte[] bytes = await File.ReadAllBytesAsync(path, cancellationToken);
+
+        Assert.True(CompoundFileReader.HasCompoundFileMagic(bytes));
+
+        ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(0x1A, 2));
+        ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(0x1E, 2));
+
+        Assert.Equal(Constants.CompoundFile.V4.MajorVersion, majorVersion);
+        Assert.Equal(Constants.CompoundFile.V4.SectorShift, sectorShift);
+
+        await using var stream = new MemoryStream(bytes, writable: false);
+        var streams = await CompoundFileReader.ReadStreamsAsync(stream, cancellationToken);
+
+        Assert.True(streams.ContainsKey("EncryptionInfo"));
+        Assert.True(streams.ContainsKey("EncryptedPackage"));
+        Assert.True(OfficeCryptoAgile.IsAgileEncryptionInfo(streams["EncryptionInfo"]));
+    }
 
     private static async Task<List<string>> ListTablesAsync(string path, string? password)
     {

@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -17,9 +18,9 @@ using Xunit;
 /// Regression tests for ECMA-376 §2.3.4.10–.13 "Agile" encryption support
 /// in <see cref="AccessReader"/> and <see cref="AccessWriter"/>.
 ///
-/// Agile encryption is the modern scheme used by password-encrypted .accdb
-/// files produced by Access 2010 SP1+ / Microsoft 365 with the "Encrypt with
-/// Password" command. The file is a CFB compound document with two streams:
+/// Office Crypto Agile encryption is one form of the modern scheme used by
+/// password-encrypted .accdb files. These tests exercise the CFB compound
+/// document shape with two streams:
 ///
 ///   • <c>EncryptionInfo</c>  — version (4,4) header + UTF-8 XML descriptor
 ///                              (PBKDF salt, spinCount, hashAlgorithm,
@@ -269,6 +270,9 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
                     TestContext.Current.CancellationToken);
             }
 
+            byte[] rewritten = await File.ReadAllBytesAsync(temp, TestContext.Current.CancellationToken);
+            AssertCfbV4(rewritten);
+
             // Reopen via AccessReader: must still detect Agile, decrypt,
             // and surface the freshly-inserted row.
             await using var reader = await AccessReader.OpenAsync(temp, CorrectPasswordOptions(), TestContext.Current.CancellationToken);
@@ -422,6 +426,17 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
         }
 
         throw new InvalidOperationException("EncryptedPackage directory entry not found in CFB fixture.");
+    }
+
+    private static void AssertCfbV4(byte[] cfbFile)
+    {
+        Assert.True(CompoundFileReader.HasCompoundFileMagic(cfbFile));
+
+        ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(cfbFile.AsSpan(0x1A, 2));
+        ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(cfbFile.AsSpan(0x1E, 2));
+
+        Assert.Equal(Constants.CompoundFile.V4.MajorVersion, majorVersion);
+        Assert.Equal(Constants.CompoundFile.V4.SectorShift, sectorShift);
     }
 
     private async Task<byte[]> BuildAgileEncryptedFixtureAsync()

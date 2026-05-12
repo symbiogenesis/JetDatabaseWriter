@@ -47,14 +47,32 @@ public sealed class CompoundFileWriterTests
     }
 
     [Fact]
-    public async Task RoundTrip_TypicalAgileEncryptedAccdbShape()
+    public async Task RoundTrip_DefaultV3_TopLevelStreams()
     {
-        // Mirrors the real shape produced by the Agile-encrypted .accdb
-        // wrapper: a small EncryptionInfo blob and a larger EncryptedPackage.
         byte[] info = CreatePatternedBuffer(2048);
         byte[] pkg = CreatePatternedBuffer(80_000);
 
         byte[] cfb = CompoundFileWriter.Build(
+        [
+            new("EncryptionInfo", info),
+            new("EncryptedPackage", pkg),
+        ]);
+
+        await using var ms = new MemoryStream(cfb);
+        var streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, streams.Count);
+        Assert.Equal(info, streams["EncryptionInfo"]);
+        Assert.Equal(pkg, streams["EncryptedPackage"]);
+    }
+
+    [Fact]
+    public async Task RoundTrip_OfficeCryptoV4_TypicalEncryptedAccdbShape()
+    {
+        byte[] info = CreatePatternedBuffer(4096);
+        byte[] pkg = CreatePatternedBuffer(80_000);
+
+        byte[] cfb = CompoundFileWriter.BuildOfficeCrypto(
         [
             new("EncryptionInfo", info),
             new("EncryptedPackage", pkg),
@@ -133,6 +151,13 @@ public sealed class CompoundFileWriterTests
 
         ushort majorVersion = (ushort)(cfb[0x1A] | (cfb[0x1B] << 8));
         Assert.Equal(Constants.CompoundFile.V4.MajorVersion, majorVersion);
+    }
+
+    [Fact]
+    public void BuildOfficeCrypto_SmallRegularStream_Throws()
+    {
+        _ = Assert.Throws<ArgumentException>(() =>
+            CompoundFileWriter.BuildOfficeCrypto([new("S", CreatePatternedBuffer(64))]));
     }
 
     [Fact]
