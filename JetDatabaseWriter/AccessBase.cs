@@ -14,6 +14,7 @@ using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -205,18 +206,7 @@ public abstract class AccessBase : IAccessBase
 
         var hdr = new byte[0x80];
         _ = fs.Seek(0, SeekOrigin.Begin);
-
-        int read = 0;
-        while (read < hdr.Length)
-        {
-            int got = await fs.ReadAsync(hdr.AsMemory(read, hdr.Length - read), cancellationToken).ConfigureAwait(false);
-            if (got == 0)
-            {
-                break;
-            }
-
-            read += got;
-        }
+        await fs.ReadExactlyAsync(hdr.AsMemory(), cancellationToken).ConfigureAwait(false);
 
         return hdr;
     }
@@ -527,42 +517,39 @@ public abstract class AccessBase : IAccessBase
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var buf = ArrayPool<byte>.Shared.Rent(_pgSz);
-        await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        byte[] buf = ArrayPool<byte>.Shared.Rent(_pgSz);
         try
         {
-            // Inside an explicit transaction, prefer the journal: the page may
-            // be a transaction-local mutation (or an appended page that has no
-            // on-disk slot yet). Journal bytes are plaintext; bypass decrypt.
-            byte[]? journaled = ActiveJournal?.TryGet(n);
-            if (journaled is not null)
+            await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
-                Buffer.BlockCopy(journaled, 0, buf, 0, _pgSz);
-                return buf;
-            }
-
-            _ = _stream.Seek(n * _pgSz, SeekOrigin.Begin);
-
-            int read = 0;
-            while (read < _pgSz)
-            {
-                int got = await _stream.ReadAsync(buf.AsMemory(read, _pgSz - read), cancellationToken).ConfigureAwait(false);
-                if (got == 0)
+                // Inside an explicit transaction, prefer the journal: the page may
+                // be a transaction-local mutation (or an appended page that has no
+                // on-disk slot yet). Journal bytes are plaintext; bypass decrypt.
+                byte[]? journaled = ActiveJournal?.TryGet(n);
+                if (journaled is not null)
                 {
-                    break;
+                    Buffer.BlockCopy(journaled, 0, buf, 0, _pgSz);
+                    return buf;
                 }
 
-                read += got;
+                _ = _stream.Seek(n * _pgSz, SeekOrigin.Begin);
+                await _stream.ReadExactlyAsync(buf.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
             }
+            finally
+            {
+                _ = _ioGate.Release();
+            }
+
+            EncryptionManager.DecryptPageInPlace(buf, n, _pgSz, _pageKeys);
+
+            return buf;
         }
-        finally
+        catch
         {
-            _ = _ioGate.Release();
+            ReturnPage(buf);
+            throw;
         }
-
-        EncryptionManager.DecryptPageInPlace(buf, n, _pgSz, _pageKeys);
-
-        return buf;
     }
 
     // ── TDEF parsing ─────────────────────────────────────────────────

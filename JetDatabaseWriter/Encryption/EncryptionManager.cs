@@ -204,17 +204,11 @@ internal static class EncryptionManager
         {
             _ = stream.Seek(0, SeekOrigin.Begin);
             byte[] sniff = new byte[Constants.PageSizes.Jet4];
-            int read = 0;
-            while (read < sniff.Length)
-            {
-                int got = await stream.ReadAsync(sniff.AsMemory(read, sniff.Length - read), cancellationToken).ConfigureAwait(false);
-                if (got == 0)
-                {
-                    break;
-                }
-
-                read += got;
-            }
+            _ = await stream.ReadAtLeastAsync(
+                sniff.AsMemory(),
+                sniff.Length,
+                throwOnEndOfStream: false,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
 
             AccessEncryptionFormat headerFormat = EncryptionConverter.Detect(sniff);
             if (headerFormat == AccessEncryptionFormat.AccdbAgileCfb)
@@ -501,7 +495,7 @@ internal static class EncryptionManager
             {
                 _ = stream.Seek(0, SeekOrigin.Begin);
                 byte[] rawFile = new byte[stream.Length];
-                await ReadExactAsync(stream, rawFile, cancellationToken).ConfigureAwait(false);
+                await stream.ReadExactlyAsync(rawFile.AsMemory(), cancellationToken).ConfigureAwait(false);
                 if (!OfficeCryptoAgile.IsFlatAgileEncrypted(rawFile))
                 {
                     return null;
@@ -629,24 +623,6 @@ internal static class EncryptionManager
         return OfficeCryptoAgile.IsAgileEncryptionInfo(encryptionInfo)
             ? AccessEncryptionFormat.AccdbAgileCfb
             : AccessEncryptionFormat.None;
-    }
-
-    private static async ValueTask ReadExactAsync(
-        Stream stream,
-        byte[] buffer,
-        CancellationToken cancellationToken)
-    {
-        int read = 0;
-        while (read < buffer.Length)
-        {
-            int got = await stream.ReadAsync(buffer.AsMemory(read, buffer.Length - read), cancellationToken).ConfigureAwait(false);
-            if (got == 0)
-            {
-                throw new EndOfStreamException("Unexpected end of stream while reading database bytes.");
-            }
-
-            read += got;
-        }
     }
 
     private static async ValueTask ReencryptFileAsync(

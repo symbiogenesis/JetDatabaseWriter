@@ -67,7 +67,7 @@ internal static class CompoundFileReader
     {
         byte[] header = new byte[512];
         _ = stream.Seek(0, SeekOrigin.Begin);
-        await ReadExactAsync(stream, header, 0, header.Length, cancellationToken).ConfigureAwait(false);
+        await stream.ReadExactlyAsync(header.AsMemory(), cancellationToken).ConfigureAwait(false);
 
         if (!HasCompoundFileMagic(header))
         {
@@ -298,7 +298,7 @@ internal static class CompoundFileReader
         // to 4096 for v4); sector index 0 begins immediately after that.
         long offset = (sectorIndex + 1) * sectorSize;
         _ = stream.Seek(offset, SeekOrigin.Begin);
-        await ReadExactAsync(stream, buffer, 0, sectorSize, cancellationToken).ConfigureAwait(false);
+        await stream.ReadExactlyAsync(buffer.AsMemory(0, sectorSize), cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<byte[]> ReadChainAsync(
@@ -336,7 +336,7 @@ internal static class CompoundFileReader
             // we actually need — the disk sector's trailing padding is
             // simply left unread, so no scratch/pool buffer is required.
             int toRead = Math.Min(runSectors * sectorSize, remaining);
-            await ReadExactAsync(stream, result, dstOffset, toRead, cancellationToken).ConfigureAwait(false);
+            await stream.ReadExactlyAsync(result.AsMemory(dstOffset, toRead), cancellationToken).ConfigureAwait(false);
             dstOffset += toRead;
             sector = next;
         }
@@ -445,21 +445,6 @@ internal static class CompoundFileReader
         long capacity = (long)chainLength * sectorSize;
         int length = exactSize >= 0 && exactSize < capacity ? (int)exactSize : (int)capacity;
         return new byte[length];
-    }
-
-    private static async ValueTask ReadExactAsync(Stream stream, byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-    {
-        int read = 0;
-        while (read < count)
-        {
-            int got = await stream.ReadAsync(buffer.AsMemory(offset + read, count - read), cancellationToken).ConfigureAwait(false);
-            if (got == 0)
-            {
-                throw new EndOfStreamException("Unexpected end of stream while reading CFB data.");
-            }
-
-            read += got;
-        }
     }
 
     private readonly record struct CfbHeader(

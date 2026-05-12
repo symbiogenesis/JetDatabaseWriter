@@ -44,7 +44,7 @@ internal static class EncryptionConverter
 
         _ = source.Seek(0, SeekOrigin.Begin);
         byte[] header = new byte[HeaderLength];
-        await ReadExactAsync(source, header, 0, header.Length, cancellationToken).ConfigureAwait(false);
+        await source.ReadExactlyAsync(header.AsMemory(), cancellationToken).ConfigureAwait(false);
 
         // Agile / Standard is the outermost container — when present, decrypt its
         // EncryptedPackage and recurse on the inner ACCDB bytes.
@@ -70,7 +70,7 @@ internal static class EncryptionConverter
 
         _ = source.Seek(0, SeekOrigin.Begin);
         byte[] rawFile = new byte[source.Length];
-        await ReadExactAsync(source, rawFile, 0, rawFile.Length, cancellationToken).ConfigureAwait(false);
+        await source.ReadExactlyAsync(rawFile.AsMemory(), cancellationToken).ConfigureAwait(false);
 
         if (OfficeCryptoAgile.IsFlatAgileEncrypted(rawFile))
         {
@@ -232,7 +232,7 @@ internal static class EncryptionConverter
 
         // Page 0: copy the header verbatim, then sanitise it.
         _ = source.Seek(0, SeekOrigin.Begin);
-        await ReadExactAsync(source, result, 0, pageSize, cancellationToken).ConfigureAwait(false);
+        await source.ReadExactlyAsync(result.AsMemory(0, pageSize), cancellationToken).ConfigureAwait(false);
         StripEncryptionFromHeader(result, fmt, isLegacyAesCfb);
 
         bool hasPageEncryption = EncryptionManager.HasPageEncryption(pageKeys);
@@ -242,7 +242,7 @@ internal static class EncryptionConverter
         {
             cancellationToken.ThrowIfCancellationRequested();
             _ = source.Seek(offset, SeekOrigin.Begin);
-            await ReadExactAsync(source, result, (int)offset, pageSize, cancellationToken).ConfigureAwait(false);
+            await source.ReadExactlyAsync(result.AsMemory((int)offset, pageSize), cancellationToken).ConfigureAwait(false);
 
             if (hasPageEncryption)
             {
@@ -541,21 +541,5 @@ internal static class EncryptionConverter
 
         return (majorVersion == Constants.CompoundFile.V3.MajorVersion && sectorShift == Constants.CompoundFile.V3.SectorShift) ||
             (majorVersion == Constants.CompoundFile.V4.MajorVersion && sectorShift == Constants.CompoundFile.V4.SectorShift);
-    }
-
-    private static async ValueTask ReadExactAsync(Stream source, byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-    {
-        int read = 0;
-        while (read < count)
-        {
-            int got = await source.ReadAsync(buffer.AsMemory(offset + read, count - read), cancellationToken).ConfigureAwait(false);
-            if (got == 0)
-            {
-                throw new EndOfStreamException(
-                    $"Expected {count} bytes at offset {offset}; only {read} available.");
-            }
-
-            read += got;
-        }
     }
 }
