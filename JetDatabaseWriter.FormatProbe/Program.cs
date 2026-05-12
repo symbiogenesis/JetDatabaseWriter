@@ -187,13 +187,16 @@ static async Task<int> RunModeAsync(string mode, string fixtures, string probeDi
 
 static async Task RunAppendicesAsync(string fixtures, string probeDir)
 {
-    await WriteIndexAppendixAsync(
-        Path.Combine(fixtures, "NorthwindTraders.accdb"),
-        Path.Combine(probeDir, "format-probe-appendix-index.md"));
+    var appendices = new List<Task>
+    {
+        WriteIndexAppendixAsync(
+            Path.Combine(fixtures, "NorthwindTraders.accdb"),
+            Path.Combine(probeDir, "format-probe-appendix-index.md")),
 
-    await WriteComplexAppendixAsync(
-        Path.Combine(fixtures, "ComplexFields.accdb"),
-        Path.Combine(probeDir, "format-probe-appendix-complex.md"));
+        WriteComplexAppendixAsync(
+            Path.Combine(fixtures, "ComplexFields.accdb"),
+            Path.Combine(probeDir, "format-probe-appendix-complex.md")),
+    };
 
     // probe: Jet3 (.mdb Access 97) index TDEF + leaf-page layouts. The format probe
     // limitation in docs/design/index-and-relationship-format-notes.md says Jet3
@@ -202,9 +205,9 @@ static async Task RunAppendicesAsync(string fixtures, string probeDir)
     // logical-idx entry (20 bytes per mdbtools), and the leaf-page (0x04)
     // bitmask layout (§4.2: bitmask at 0x16, first entry at 0xF8) by dumping
     // the TDEFs and one leaf page per index from the Jackcess V1997 corpus.
-    await WriteJet3IndexAppendixAsync(
+    appendices.Add(WriteJet3IndexAppendixAsync(
         fixtures,
-        Path.Combine(probeDir, "format-probe-appendix-jet3-index.md"));
+        Path.Combine(probeDir, "format-probe-appendix-jet3-index.md")));
 
     // Catalog probe: Jet3 + Jet4 .mdb + ACCDB catalog scan. The catalog probe in
     // docs/design/index-and-relationship-format-notes.md asks whether
@@ -213,9 +216,11 @@ static async Task RunAppendicesAsync(string fixtures, string probeDir)
     // discovers every .mdb / .accdb fixture under the Databases/ tree
     // (including the Jackcess/ corpus) so the answer is grounded across
     // every format and Access version we have on disk.
-    await WriteMdbCatalogAppendixAsync(
+    appendices.Add(WriteMdbCatalogAppendixAsync(
         fixtures,
-        Path.Combine(probeDir, "format-probe-appendix-mdb-catalogs.md"));
+        Path.Combine(probeDir, "format-probe-appendix-mdb-catalogs.md")));
+
+    await Task.WhenAll(appendices);
 }
 
 static async Task<int> RunRoundTripBisectAsync(string fixtures)

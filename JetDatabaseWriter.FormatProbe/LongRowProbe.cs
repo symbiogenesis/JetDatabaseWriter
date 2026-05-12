@@ -11,7 +11,6 @@ namespace JetDatabaseWriter.FormatProbe;
 
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -84,12 +83,12 @@ internal static class LongRowProbe
             sb.AppendLine(CultureInfo.InvariantCulture, $"### {tableName}");
             sb.AppendLine();
 
-            DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+            List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, ct);
+            int dataOrdinal = FindColumnOrdinal(columns, "data");
             var rowValues = new List<string?>();
-            foreach (DataRow r in dt.Rows)
+            await foreach (string[] row in reader.RowsAsStrings(tableName, cancellationToken: ct))
             {
-                object v = r["data"];
-                rowValues.Add(v is DBNull ? null : (string?)v);
+                rowValues.Add(dataOrdinal < row.Length ? row[dataOrdinal] : null);
             }
 
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
@@ -167,6 +166,19 @@ internal static class LongRowProbe
         }
 
         return result;
+    }
+
+    private static int FindColumnOrdinal(IReadOnlyList<ColumnMetadata> columns, string name)
+    {
+        for (int i = 0; i < columns.Count; i++)
+        {
+            if (string.Equals(columns[i].Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        throw new InvalidOperationException($"Column '{name}' not found.");
     }
 
     private static string Truncate(string s, int n) => s.Length <= n ? s : s[..n] + "…";
