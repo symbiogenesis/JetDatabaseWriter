@@ -99,6 +99,8 @@ static void AddLegacyEnvironmentModes(List<string> modes)
     AddEnvMode(modes, "DIAG_RT_BISECT", "rt-bisect");
     AddEnvMode(modes, "DIAG_LONG_ROW_PROBE", "long-row-probe");
     AddEnvMode(modes, "DIAG_LONG_ROW_BISECT", "long-row-bisect");
+    AddEnvMode(modes, "DIAG_LONG_ROW_SUFFIX", "long-row-suffix");
+    AddEnvMode(modes, "DIAG_LONG_ROW_CRC_SWEEP", "long-row-crc-sweep");
     AddEnvMode(modes, "DIAG_MEMO_READBACK", "memo-readback");
     AddEnvMode(modes, "DIAG_RT_DAO_BASELINE", "rt-dao-baseline");
 }
@@ -124,6 +126,8 @@ static string NormalizeMode(string mode) => mode.ToUpperInvariant() switch
     "RT-BISECT" or "ROUNDTRIP-BISECT" or "ROUND-TRIP-BISECT" => "rt-bisect",
     "LONG-ROW" or "LONG-ROW-PROBE" => "long-row-probe",
     "LONG-ROW-BISECT" or "LONG-ROW-BOUNDARY" => "long-row-bisect",
+    "LONG-ROW-SUFFIX" or "LONG-ROW-SUFFIX-ANALYSIS" => "long-row-suffix",
+    "LONG-ROW-CRC" or "LONG-ROW-CRC-SWEEP" or "LONG-ROW-SUFFIX-CRC" => "long-row-crc-sweep",
     "MEMO" or "MEMO-READBACK" => "memo-readback",
     _ => mode,
 };
@@ -172,6 +176,14 @@ static async Task<int> RunModeAsync(string mode, string fixtures, string probeDi
             return await JetDatabaseWriter.FormatProbe.LongRowBisect.RunAsync(
                 fixtures,
                 Path.Combine(probeDir, "format-probe-long-row-bisect.md"));
+        case "long-row-suffix":
+            return await JetDatabaseWriter.FormatProbe.LongRowSuffixProbe.RunAnalysisAsync(
+                fixtures,
+                Path.Combine(probeDir, "format-probe-long-row-suffix-analysis.md"));
+        case "long-row-crc-sweep":
+            return await JetDatabaseWriter.FormatProbe.LongRowSuffixProbe.RunCrcSweepAsync(
+                fixtures,
+                Path.Combine(probeDir, "format-probe-long-row-crc-sweep.md"));
         case "memo-readback":
             return await RunMemoReadbackAsync();
         case "rt-dao-baseline":
@@ -256,6 +268,8 @@ static void PrintUsage()
     Console.WriteLine("  rt-bisect        Run the round-trip bisection probe");
     Console.WriteLine("  long-row-probe   Dump long-row index leaf entries");
     Console.WriteLine("  long-row-bisect  Run long-row chunk-boundary bisection");
+    Console.WriteLine("  long-row-suffix  Dump V2010 long-row suffix source diagnostics");
+    Console.WriteLine("  long-row-crc-sweep  Run the slow V2010 long-row CRC-16 suffix sweep");
     Console.WriteLine("  memo-readback    Run the memo readback diagnostic");
     Console.WriteLine();
     Console.WriteLine("Usage: dotnet run --project JetDatabaseWriter.FormatProbe -- <mode>[,<mode>]");
