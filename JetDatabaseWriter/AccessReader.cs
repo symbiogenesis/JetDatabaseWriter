@@ -221,12 +221,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
 #pragma warning disable CA2000
         FileStream fs = CreateStream(path, options);
 #pragma warning restore CA2000
-        return await OpenAsync(
+        AccessReader reader = await OpenAsync(
             fs,
             options,
             leaveOpen: false,
             suppressPageCache: suppressPageCache,
             cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (reader.ParallelPageReadsEnabled)
+        {
+            reader.EnableRandomAccessPageReadsIfSupported();
+        }
+
+        return reader;
     }
 
     /// <summary>
@@ -2139,8 +2145,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return tableName != null && string.Equals(tableIdStr, tableName, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static FileStream CreateStream(string path, AccessReaderOptions options) =>
-        OpenDatabaseFileStream(path, options.FileAccess, options.FileShare, FileOptions.Asynchronous | FileOptions.SequentialScan);
+    private static FileStream CreateStream(string path, AccessReaderOptions options)
+    {
+        FileOptions accessPattern = options.ParallelPageReadsEnabled ? FileOptions.RandomAccess : FileOptions.SequentialScan;
+        return OpenDatabaseFileStream(path, options.FileAccess, options.FileShare, FileOptions.Asynchronous | accessPattern);
+    }
 
     private static string ResolveTypeName(ColumnInfo col) =>
         JetTypeInfo.IsHyperlinkColumn(col) ? "Hyperlink" : JetTypeInfo.GetTypeDisplayName(col.Type);

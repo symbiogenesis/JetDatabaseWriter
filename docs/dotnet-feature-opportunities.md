@@ -60,7 +60,7 @@ The project has a few central file-open paths plus several direct `new FileStrea
 
 **Expected benefit:** readability, maintainability, and modest I/O robustness/performance during create/re-encrypt workflows.
 
-### 3. Consider `RandomAccess` for page reads on path-backed streams
+### 3. Consider `RandomAccess` for page reads on path-backed streams (DONE)
 
 **Feature family:** .NET 6+ `System.IO.RandomAccess` positional reads/writes.
 
@@ -83,7 +83,7 @@ The project has a few central file-open paths plus several direct `new FileStrea
 
 **Expected benefit:** performance and correctness headroom for parallel page reads; less reliance on mutable stream position.
 
-### 4. Use `Stream.ReadExactlyAsync` / `ReadAtLeastAsync` where exact bytes are required
+### 4. Use `Stream.ReadExactlyAsync` / `ReadAtLeastAsync` where exact bytes are required (DONE)
 
 **Feature family:** .NET 7+ exact-read APIs.
 
