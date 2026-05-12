@@ -34,7 +34,7 @@ internal static class RoundTripBisect
             return 1;
         }
 
-        Directory.CreateDirectory(workRoot);
+        FormatProbeArtifacts.EnsureDirectory(workRoot);
 
         var steps = new (string Name, Func<AccessWriter, Task> Action)[]
         {
@@ -138,9 +138,9 @@ internal static class RoundTripBisect
 
         foreach (var (name, action) in steps)
         {
-            string srcPath = Path.Combine(workRoot, $"{name}.accdb");
-            string dstPath = Path.Combine(workRoot, $"{name}.compacted.accdb");
-            File.Copy(baselinePath, srcPath, overwrite: true);
+            string srcPath = FormatProbeArtifacts.GetFilePath(workRoot, $"rt-bisect-{name}.accdb");
+            string dstPath = FormatProbeArtifacts.GetFilePath(workRoot, $"rt-bisect-{name}.compacted.accdb");
+            FormatProbeArtifacts.Copy(baselinePath, srcPath, overwrite: true);
 
             try
             {
@@ -212,8 +212,8 @@ internal static class RoundTripBisect
             try { $e.CompactDatabase($src,$dst); exit 0 } finally { [GC]::Collect() }
 
             """;
-        string scriptPath = Path.Combine(Path.GetDirectoryName(dst)!, "compact.ps1");
-        File.WriteAllText(scriptPath, script);
+        string scriptPath = FormatProbeArtifacts.GetFilePath(Path.GetDirectoryName(dst)!, "rt-bisect-compact.ps1");
+        FormatProbeArtifacts.WriteAllText(scriptPath, script);
 
         var psi = new ProcessStartInfo(powerShellPath)
         {

@@ -52,8 +52,7 @@ internal static class LongRowProbe
             sb.AppendLine();
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(outFile)!);
-        await File.WriteAllTextAsync(outFile, sb.ToString());
+        await FormatProbeArtifacts.WriteAllTextAsync(outFile, sb.ToString());
         Console.WriteLine($"Wrote {outFile}");
         return 0;
     }

@@ -16,14 +16,7 @@
 //   dotnet run --project JetDatabaseWriter.FormatProbe -- rt-dao-baseline
 //   Legacy: $env:DIAG_RT_DAO_BASELINE = "1"; dotnet run --project JetDatabaseWriter.FormatProbe
 //
-// Outputs land under %TEMP%\JetDatabaseWriter.RtDaoBaseline\:
-//   - writer\source.accdb              (NorthwindTraders + RT_Customers via writer)
-//   - writer\source.compacted.accdb    (DAO compact output, if it succeeds)
-//   - dao\source.accdb                 (NorthwindTraders + RT_Customers via DAO)
-//   - dao\source.compacted.accdb       (DAO compact output, if it succeeds)
-//   - pages\<page>_writer.bin          (raw bytes of every "interesting" page, unless DIAG_SKIP_PAGE_BINS=1)
-//   - pages\<page>_dao.bin
-//   - dao-baseline-diff.md             (the report)
+// Outputs land under docs/format-probe/format-probe-rt-dao-baseline-*.
 
 namespace JetDatabaseWriter.FormatProbe;
 
@@ -42,6 +35,8 @@ using JetDatabaseWriter.Models;
 
 internal static class DaoBaselineProbe
 {
+    private const string ProbeSlug = "rt-dao-baseline";
+
     private static readonly AccessReaderOptions ProbeReaderOptions = new() { UseLockFile = false };
 
     public static async Task<int> RunAsync(string baselinePath, string workRoot)
@@ -60,18 +55,15 @@ internal static class DaoBaselineProbe
         }
 
         workRoot = PrepareWorkRoot(workRoot);
-        _ = Directory.CreateDirectory(workRoot);
-        string writerDir = Path.Combine(workRoot, "writer");
-        string daoDir = Path.Combine(workRoot, "dao");
-        string pagesDir = Path.Combine(workRoot, "pages");
-        _ = Directory.CreateDirectory(writerDir);
-        _ = Directory.CreateDirectory(daoDir);
-        _ = Directory.CreateDirectory(pagesDir);
+        FormatProbeArtifacts.EnsureDirectory(workRoot);
+        string writerDir = FormatProbeArtifacts.CreateDirectory(workRoot, $"{ProbeSlug}-writer");
+        string daoDir = FormatProbeArtifacts.CreateDirectory(workRoot, $"{ProbeSlug}-dao");
+        string pagesDir = FormatProbeArtifacts.CreateDirectory(workRoot, $"{ProbeSlug}-pages");
 
-        string writerPath = Path.Combine(writerDir, "source.accdb");
-        string daoPath = Path.Combine(daoDir, "source.accdb");
-        File.Copy(baselinePath, writerPath, overwrite: true);
-        File.Copy(baselinePath, daoPath, overwrite: true);
+        string writerPath = FormatProbeArtifacts.GetFilePath(writerDir, $"{ProbeSlug}-source.accdb");
+        string daoPath = FormatProbeArtifacts.GetFilePath(daoDir, $"{ProbeSlug}-source.accdb");
+        FormatProbeArtifacts.Copy(baselinePath, writerPath, overwrite: true);
+        FormatProbeArtifacts.Copy(baselinePath, daoPath, overwrite: true);
 
         Console.WriteLine($"[dao-baseline] baseline = {baselinePath}");
         Console.WriteLine($"[dao-baseline] workRoot = {workRoot}");
@@ -103,8 +95,8 @@ internal static class DaoBaselineProbe
         // 2. DAO authoring.
         string powerShellPath = hostProbe.HostPath;
 
-        string writerCompactPath = Path.Combine(writerDir, "source.compacted.accdb");
-        string daoCompactPath = Path.Combine(daoDir, "source.compacted.accdb");
+        string writerCompactPath = FormatProbeArtifacts.GetFilePath(writerDir, $"{ProbeSlug}-source-compacted.accdb");
+        string daoCompactPath = FormatProbeArtifacts.GetFilePath(daoDir, $"{ProbeSlug}-source-compacted.accdb");
         DaoProbeResults daoResults = RunDaoProbeBatch(
             powerShellPath,
             writerPath,
@@ -198,12 +190,12 @@ internal static class DaoBaselineProbe
         _ = sb.AppendLine();
         _ = sb.AppendLine("1. **Compare the new TDEF pages.** §4 dumps the writer's RT_Customers TDEF and the DAO baseline's TDEF side-by-side as hex. Any byte that differs is a candidate explanation for the DAO err 3011 `'MSysDb'` rejection.");
         _ = sb.AppendLine("2. **Compare the new MSysObjects row bytes.** §5 dumps the catalog row body for the writer's and DAO's RT_Customers entries. The `LvProp` (varIdx 8) bytes here are the empirical answer to whether DAO actually requires a non-null `LvProp` for an empty user-table catalog row, and (if so) what the payload looks like.");
-        _ = sb.AppendLine("3. **Compare per-table usage-map and PK-leaf pages** by binary-diffing the per-page `.bin` files under `pages\\` (writer vs dao) for the page numbers identified in §3.");
+        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"3. **Compare per-table usage-map and PK-leaf pages** by binary-diffing the per-page `.bin` files under `{Path.GetFileName(pagesDir)}\\` (writer vs dao) for the page numbers identified in §3.");
         _ = sb.AppendLine("4. **Read the §7 hypothesis table.** Each H26-H45 row gives a one-line PASS/FAIL verdict, letting a single probe execution rule 5-10 hypotheses in or out without a full hex walk-through.");
         _ = sb.AppendLine();
 
-        string outPath = Path.Combine(workRoot, "dao-baseline-diff.md");
-        await File.WriteAllTextAsync(outPath, sb.ToString());
+        string outPath = FormatProbeArtifacts.GetFilePath(workRoot, $"{ProbeSlug}-diff.md");
+        await FormatProbeArtifacts.WriteAllTextAsync(outPath, sb.ToString());
         Console.WriteLine($"[dao-baseline] wrote {outPath}");
         return 0;
     }
@@ -219,9 +211,7 @@ internal static class DaoBaselineProbe
             return workRoot;
         }
 
-        return Path.Combine(
-            workRoot,
-            DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss-fffffff", CultureInfo.InvariantCulture));
+        return FormatProbeArtifacts.CreateWorkDirectory(workRoot, ProbeSlug);
     }
 
     // ────────────────────────── DAO interop ─────────────────────────────────
@@ -262,7 +252,7 @@ internal static class DaoBaselineProbe
         (int code, string stdout, string stderr) = RunPwsh(
             powerShellPath,
             script,
-            Path.Combine(Path.GetDirectoryName(daoPath)!, "dao-probe-batch.ps1"));
+            FormatProbeArtifacts.GetFilePath(Path.GetDirectoryName(daoPath)!, $"{ProbeSlug}-dao-probe-batch.ps1"));
         Dictionary<string, DaoStepResult> results = ParseDaoStepResults(stdout);
         DaoStepResult missing = code == 0
             ? new DaoStepResult(1, "PowerShell batch did not emit a result for this step.")
@@ -423,7 +413,7 @@ internal static class DaoBaselineProbe
 
     private static (int Code, string StdOut, string StdErr) RunPwsh(string powerShellPath, string script, string scriptPath)
     {
-        File.WriteAllText(scriptPath, script);
+        FormatProbeArtifacts.WriteAllText(scriptPath, script);
         var psi = new ProcessStartInfo(powerShellPath)
         {
             UseShellExecute = false,
@@ -624,7 +614,9 @@ internal static class DaoBaselineProbe
                 types[pageNumber] = bytes.Length > 0 ? bytes[0] : (byte)0xFF;
                 if (writePageBins)
                 {
-                    await File.WriteAllBytesAsync(Path.Combine(pagesDir, $"page{pageNumber:D5}_{tag}.bin"), bytes);
+                    await FormatProbeArtifacts.WriteAllBytesAsync(
+                        GetPageArtifactPath(pagesDir, $"page{pageNumber:D5}_{tag}.bin"),
+                        bytes);
                 }
             }
 
@@ -744,6 +736,9 @@ internal static class DaoBaselineProbe
         _ = sb.AppendLine();
     }
 
+    private static string GetPageArtifactPath(string pagesDir, string fileName) =>
+        FormatProbeArtifacts.GetFilePath(pagesDir, $"{ProbeSlug}-{fileName}");
+
     private static async Task EmitRtCustomersTdefDumpsAsync(StringBuilder sb, ReaderSnapshot? w, ReaderSnapshot? d, string pagesDir)
     {
         _ = sb.AppendLine("## §4 RT_Customers TDEF (raw bytes)");
@@ -756,16 +751,16 @@ internal static class DaoBaselineProbe
 
         if (w?.RtTdefBytes.Length > 0)
         {
-            await File.WriteAllBytesAsync(Path.Combine(pagesDir, "rt_customers_tdef_writer.bin"), w.RtTdefBytes);
+            await FormatProbeArtifacts.WriteAllBytesAsync(GetPageArtifactPath(pagesDir, "rt-customers-tdef-writer.bin"), w.RtTdefBytes);
         }
 
         if (d?.RtTdefBytes.Length > 0)
         {
-            await File.WriteAllBytesAsync(Path.Combine(pagesDir, "rt_customers_tdef_dao.bin"), d.RtTdefBytes);
+            await FormatProbeArtifacts.WriteAllBytesAsync(GetPageArtifactPath(pagesDir, "rt-customers-tdef-dao.bin"), d.RtTdefBytes);
         }
 
-        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Writer TDEF: {w?.RtTdefBytes.Length ?? 0} bytes (`pages/rt_customers_tdef_writer.bin`)");
-        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- DAO    TDEF: {d?.RtTdefBytes.Length ?? 0} bytes (`pages/rt_customers_tdef_dao.bin`)");
+        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Writer TDEF: {w?.RtTdefBytes.Length ?? 0} bytes (`{Path.GetFileName(pagesDir)}/{Path.GetFileName(GetPageArtifactPath(pagesDir, "rt-customers-tdef-writer.bin"))}`)");
+        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- DAO    TDEF: {d?.RtTdefBytes.Length ?? 0} bytes (`{Path.GetFileName(pagesDir)}/{Path.GetFileName(GetPageArtifactPath(pagesDir, "rt-customers-tdef-dao.bin"))}`)");
         _ = sb.AppendLine();
 
         if (w?.RtTdefBytes.Length > 0 && d?.RtTdefBytes.Length > 0)
@@ -954,9 +949,9 @@ internal static class DaoBaselineProbe
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Row length: {rowLen} bytes");
         byte[] rowBytes = new byte[rowLen.Value];
         Buffer.BlockCopy(hostBytes, rowOffset.Value, rowBytes, 0, rowLen.Value);
-        string outBin = Path.Combine(pagesDir, $"msysobjects_row_{label}.bin");
-        await File.WriteAllBytesAsync(outBin, rowBytes);
-        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Raw bytes: `pages/msysobjects_row_{label}.bin`");
+        string outBin = GetPageArtifactPath(pagesDir, $"msysobjects-row-{label}.bin");
+        await FormatProbeArtifacts.WriteAllBytesAsync(outBin, rowBytes);
+        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Raw bytes: `{Path.GetFileName(pagesDir)}/{Path.GetFileName(outBin)}`");
         _ = sb.AppendLine();
         EmitSingleHex(sb, $"{label} MSysObjects row body", rowBytes, maxBytes: 512);
     }
