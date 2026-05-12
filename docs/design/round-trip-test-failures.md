@@ -1,6 +1,35 @@
 # Round-Trip Test Failures — Investigation Status
 
-## Current status (2026-05-10)
+## Current status (2026-05-11)
+
+**Original DAO OpenRecordset blocker: RESOLVED.** The row-count, index seek,
+MEMO fidelity, and AutoNumber continuation DAO validation tests now pass on
+Access-equipped hosts. The remaining plaintext failure is narrower: FK-bearing
+writer-created tables still do not survive DAO Compact & Repair.
+
+**DAO FK enforcement: RESOLVED in the current branch, pending unskip.** The
+PowerShell validation harness must use `$db.Execute(sql, 128)` (`dbFailOnError`)
+to surface constraint errors. With that harness fix plus DAO-shaped FK logical
+cross-references and non-zero real-index `used_pages` pointers, DAO rejects an
+orphan child insert with error `-2146825087` and leaves the child row count
+unchanged.
+
+**FK Compact & Repair: STILL OPEN.** The `DIAG_FK_DAO_BASELINE` probe now shows
+that writer and DAO baselines can match on `MSysRelationships`, FK logical
+cross-references, `MSysACEs` row shape, and text-column LvProp blobs, while DAO
+`CompactDatabase` still returns success and omits the writer-created FK tables
+from the compacted output. The Northwind round-trip test has a related symptom:
+the writer-created FK tables are visible after compact but their row counts are
+0. The current strongest lead is real-index allocation metadata used by compact,
+especially whether rebuilt index `used_pages` rows must share the same usage-map
+page as the table owned/free rows rather than a separately appended index
+usage-map page.
+
+## Previous status (2026-05-10, superseded)
+
+The notes below are historical. The 2026-05-11 status above supersedes the
+OpenRecordset blocker: those DAO recordset tests now pass, while FK Compact &
+Repair remains open.
 
 **LvProp inline-marker hypothesis: DISCONFIRMED.** Tested the theory that the
 all-zero 12-byte `LvProp` placeholder was being interpreted by DAO as a
@@ -21,18 +50,19 @@ magic == `0x00000659`, but the writer correctly stamps `0x00000783`
 stamps" section below. Updated the assertion to expect `0x00000783` for
 real-idx physical descriptors and `0x00000659` for the TDEF header / column
 descriptors / logical-idx entries (matching what the writer actually emits
-and what DAO requires). The two `AccessRoundTripTests` tests can now be
-re-enabled once the underlying TDEF / `OpenRecordset` issue is resolved.
+and what DAO requires). Historical note: at this point the two
+`AccessRoundTripTests` compact tests were still waiting on the then-open
+`OpenRecordset` issue; the current blocker is now FK Compact & Repair.
 
-## Current status (2026-05-05)
+## Previous status (2026-05-05, superseded)
 
 **Catalog index maintenance: RESOLVED.** Three index fixes (prefix compression cap, entry-start bitmask sentinel, split-path `maxPrefixLength` cap) plus catalog row fixes (LvProp, MSysACEs, magic stamps, compressed-unicode encoding) make DAO Compact & Repair succeed for both N1 and N2+ cases. The `MSysDb (3011)` and `Object invalid or no longer set` errors are gone.
 
 **TDEF column flags / ExtraFlags: PARTIALLY RESOLVED.** Removed the writer-private `0x08` NOT-NULL flag bit and the unconditional `ExtraFlags=0x01` (compressed unicode) on TEXT/MEMO columns. Persistence of `IsNullable` was rewired to read from `MSysObjects.LvProp` `Required` rather than the column flags byte. The DAO baseline probe (`DIAG_RT_DAO_BASELINE`) `OpenDatabase` path now succeeds against writer-created tables.
 
-**Remaining blocker: DAO `OpenRecordset` still rejects writer-created user tables** with `"Unrecognized database format ''."` — the residual TDEF-layout incompatibility surfaces only when DAO materializes a recordset, not when it opens the database/catalog. Unskipping the three `OpenRecordset` tests in `DaoValidationTests` (and the two `AccessRoundTripTests` compact/repair tests, which depend on the same path) confirms this: 3 of the 4 unskipped DAO tests fail with the same COM error, even though `DAO.DBEngine.120.OpenDatabase` succeeds and the FormatProbe baseline passes. Tests have been re-skipped with a refined reason; the next investigation must diff a writer TDEF byte-for-byte against an Access-authored equivalent of the same schema (the `DIAG_RT_DAO_BASELINE` probe already produces this diff in the report).
+**Historical blocker at this point: DAO `OpenRecordset` rejected writer-created user tables** with `"Unrecognized database format ''."` — the residual TDEF-layout incompatibility surfaced only when DAO materialized a recordset, not when it opened the database/catalog. Unskipping the three `OpenRecordset` tests in `DaoValidationTests` (and the two `AccessRoundTripTests` compact/repair tests, which depended on the same path) confirmed this: 3 of the 4 unskipped DAO tests failed with the same COM error, even though `DAO.DBEngine.120.OpenDatabase` succeeded and the FormatProbe baseline passed. Later work resolved this original blocker; see the 2026-05-11 status above.
 
-**Test suite: still green with the 5 DAO tests re-skipped.**
+**Historical test-suite state:** green with the 5 DAO tests re-skipped.
 
 ### Reader-side fixes (2026-05-04, revised 2026-05-05)
 
@@ -51,7 +81,7 @@ Files changed: `AccessBase.cs`, `RowEncoder.cs`, `LongValueEncoder.cs`, `ColumnI
 **Fixes landed (all necessary, collectively sufficient for catalog correctness):**
 
 - ✅ **LvProp**: `Constants.SystemObjects.DefaultLvPropPlaceholder` (12 zero bytes) stamped when `JetExpressionConverter.BuildLvPropBlob` returns null.
-- ✅ **MSysACEs**: `InsertAceRowsForTableAsync` inserts 3 ACE rows (owner/admins/users) per new user table. Harvests the Admins-group SID dynamically. Gated on `catalogFlags == 0` (user tables only). Column name corrected from `"Inheritable"` to `"FInheritable"` (the TDEF column name for the boolean ACE field).
+- ✅ **MSysACEs**: `InsertAceRowsForTableAsync` inserts 3 ACE rows (owner/admins/users) per new user table. Harvests the Admins-group SID dynamically. Gated on `catalogFlags == 0` (user tables only). Column name corrected from `"Inheritable"` to `"FInheritable"` (the TDEF column name for the boolean ACE field). DAO-authored user-table ACE rows use `FInheritable = False`.
 - ⛔ **GPM (page 1) ruled out for append-only writes**: Page 1's bitmap uses convention "1 = free, 0 = in-use". Pages appended beyond original file size already have bits = 0 (in-use by default).
 - ✅ **TDEF magic stamps (`0x00000659` / `0x00000783`)**: Column descriptors (bytes 1–4) and logical-idx entry descriptors (first 4 bytes) stamped with `0x00000659` (format-wide magic). Real-idx physical descriptors (first 4 bytes) stamped with `0x00000783` (`Jet4.RealIdx.LeadingMagic` — a distinct constant, NOT the format-wide magic). Applied across `BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, and `RelationshipManager.EmitFkLogicalIdxAsync`.
 - ✅ **Real-idx flags byte**: `0x80` bit set at `Constants.TableDefinition.Jet4.RealIdx.FlagsOffset` for FK backing indexes.
@@ -170,8 +200,8 @@ Supporting fixes (each was a real defect; each is regression-guarded):
 - Harvests the Admins-group SID dynamically from existing ACE rows (any SID > 2 bytes on an existing ACE data page).
 - Uses `InsertSystemRowAndMaintainAsync` pattern (row insertion + index maintenance on MSysACEs).
 - Constants in `Constants.Aces`: `DefaultAcm = 0x000FFEFF`, `OwnerSid = [0x71, 0x10]`, `UsersSid = [0x70, 0x10]`.
-- Column values per row: `ObjectId = (int)tdefPageNumber`, `ACM = DefaultAcm`, `FInheritable = true`, `SID = <varies>`.
-- **Bug fix (2026-05-03):** `SetValueByName("Inheritable", true)` was silently failing because the MSysACEs TDEF column is named `"FInheritable"`, not `"Inheritable"`. `TableDef.SetValueByName` returns without writing when the name doesn't match. Fixed to `SetValueByName("FInheritable", true)`.
+- Column values per row: `ObjectId = (int)tdefPageNumber`, `ACM = DefaultAcm`, `FInheritable = false`, `SID = <varies>`.
+- **Bug fix (2026-05-03, refined 2026-05-11):** `SetValueByName("Inheritable", true)` was silently failing because the MSysACEs TDEF column is named `"FInheritable"`, not `"Inheritable"`. `TableDef.SetValueByName` returns without writing when the name doesn't match. DAO-authored user-table ACE rows carry `FInheritable = False`, so the compatible value is `SetValueByName("FInheritable", false)`.
 
 ### TDEF magic stamps (`0x00000659`, added 2026-05-03)
 
@@ -367,11 +397,11 @@ Root cause of N2+ failure (fixed 2026-05-04):
 | **16** | **Prefix compression (`pref_len`) growing beyond original** | ✅ **fixed** | `BuildLeafPage` was recomputing `pref_len` from scratch, increasing it beyond the original page's value (page 8: 0→1, page 2790: 1→4). This shifted entry positions and made the bitmask inconsistent. Fix: cap `pref_len` at the original page's value. Values now match baseline/DAO. |
 | **17** | **Missing entry-start bitmask sentinel** | ✅ **fixed** | Access/DAO writes a one-past-the-end bit in the entry-start bitmask at the position immediately after the last entry. The writer was omitting this sentinel. Fix: `BuildLeafPage` now writes the sentinel after the entry loop. Verified on every leaf page in NorthwindTraders.accdb. |
 | **18** | **Split-path `maxPrefixLength` cap missing** | ✅ **fixed** | `TryBuildSplitLeafPages` was calling `BuildLeafPage` without `maxPrefixLength`, allowing split-product pages to get unrestricted pref (N2: page 2790 pref 1→4, page 3019 pref=16). Fix: plumbed `int maxPrefixLength` through `TryBuildSplitLeafPages` and all three call sites now pass the original leaf's `pref_len`. |
-| **19** | **User-table TDEF page layout incompatibility** | 🟡 **partially fixed** | DAO `OpenDatabase` now succeeds against writer-created tables (the `0x08` private NOT-NULL bit and unconditional `ExtraFlags=0x01` on TEXT/MEMO have been removed; `Required` moved to `LvProp`). DAO `OpenRecordset` still throws `"Unrecognized database format ''."` on the same tables — there is at least one further byte-level incompatibility in the writer's TDEF that DAO validates only when materializing a recordset. Re-skipping the 5 DAO recordset/compact tests until a byte-for-byte TDEF diff identifies the remaining defect. |
+| **19** | **User-table TDEF page layout incompatibility** | ✅ **resolved for OpenRecordset (2026-05-10/11)** | DAO `OpenDatabase` and `OpenRecordset` now succeed against writer-created non-FK tables after the TDEF length/trailer, real-idx magic, and usage-map work recorded in [round-trip-openrecordset-hypothesis.md](round-trip-openrecordset-hypothesis.md). FK Compact & Repair remains a separate open compatibility surface. |
 | **20** | **`LvProp` placeholder is a dangling chained-LVAL pointer** | ❌ **disconfirmed (2026-05-10)** | Hypothesis: the 12-byte all-zero `LvProp` placeholder parses as `bitmask=0x00` (chained-LVAL) with `lval_dp=0`, so `OpenRecordset`'s per-column property walk dereferences page 0 and fails with `"Unrecognized database format ''."`. **Tested:** changed byte index 3 from `0x00` to `0x80` (well-formed empty inline long-value: `memo_len=0`, `bitmask=0x80`, no payload). Unskipped all 5 DAO tests. **All 5 still failed with the identical error at the same `OpenRecordset` line.** Inline-marker bit makes no observable difference. Reverted. The defect is not in the catalog row's `LvProp` payload. |
 ## Recommended next steps (priority order)
 
-**All catalog index issues are resolved.** DAO Compact & Repair now succeeds for both N1 and N2+ scenarios. The remaining blocker is a per-table TDEF page layout incompatibility that causes DAO to drop rows from writer-created user tables during compact. Next steps focus on the TDEF issue:
+**All catalog index issues are resolved.** DAO Compact & Repair now succeeds for both N1 and N2+ scenarios. The original user-table `OpenRecordset` blocker is also resolved. Current next steps are tracked in [round-trip-openrecordset-hypothesis.md](round-trip-openrecordset-hypothesis.md) and focus on FK Compact & Repair:
 
 1. ~~**Byte-level diff of pages 8 and 2790**~~ ✅ Done.
 2. ~~**Inspect `pref_len` / prefix compression**~~ ✅ Done. Pref_len cap fix landed.
@@ -379,15 +409,18 @@ Root cause of N2+ failure (fixed 2026-05-04):
 4. ~~**Investigate N2 failure**~~ ✅ Done (2026-05-04). Root cause identified and fixed.
 5. ~~**Fix `TryBuildSplitLeafPages` to pass `maxPrefixLength` cap**~~ ✅ Done (2026-05-04). Split-path cap fix landed. N2+ now passes DAO compact.
 6. ~~**Investigate page 2994**~~ ✅ Resolved — was a cascading failure from corrupted split-product index pages; now passes with the split-path fix.
-7. **Investigate user-table TDEF incompatibility** — DAO `OpenDatabase` succeeds (after the `0x08` flag / `ExtraFlags=0x01` fix landed 2026-05-05) but DAO `OpenRecordset` still rejects writer-created tables with `"Unrecognized database format ''."` Use the `DIAG_RT_DAO_BASELINE` probe to dump a fresh side-by-side TDEF hex diff of writer vs DAO `RT_Customers`; the residual defect is no longer in the column flags / ExtraFlags bytes that the previous diff highlighted, **and is not in the catalog row's `LvProp` payload** (disconfirmed 2026-05-10 — see hypothesis #20). Likely candidates: var-len trailer / EOD layout, real-idx 51-byte physical-descriptor padding, redundant column-number field at column-descriptor offset 9, logical-idx field counts, or an `ExtraFlags` bit on a non-TEXT column type that DAO requires. The 5 DAO tests in `DaoValidationTests` and `AccessRoundTripTests` are re-skipped until this is resolved.
+7. ~~**Investigate user-table TDEF incompatibility**~~ ✅ Resolved for non-FK DAO `OpenRecordset` validation. Keep the historical DAO baseline notes below for context; do not use them as the current next-step list.
 
-## DAO `OpenRecordset` regression after column-flag fix (2026-05-05)
+## DAO `OpenRecordset` regression after column-flag fix (2026-05-05, historical)
+
+This section captures the state before the later OpenRecordset fixes. See the
+2026-05-11 current status for the live test state.
 
 The `0x08` NOT-NULL flag and unconditional TEXT/MEMO `ExtraFlags=0x01` were the two writer-private bits the DAO baseline diff identified earlier ("CustomerID flags=0x0F vs DAO 0x07; Name flags=0x0A vs DAO 0x02; Name ExtraFlags=0x01 vs DAO 0x00"). Removing them and persisting `Required` via `LvProp` was a necessary correction:
 
 - ✅ DAO baseline probe (`DIAG_RT_DAO_BASELINE`) `OpenDatabase` path now succeeds against the writer copy.
 - ✅ The 5 column-flag bytes that previously diverged from DAO now match.
-- ❌ DAO `OpenRecordset('SELECT COUNT(*) ...')`, `OpenRecordset('<table>')`, and `OpenRecordset` followed by Seek/insert all still throw the same `"Unrecognized database format ''."` COMException on writer-created tables.
+- Historical result: DAO `OpenRecordset('SELECT COUNT(*) ...')`, `OpenRecordset('<table>')`, and `OpenRecordset` followed by Seek/insert all threw the same `"Unrecognized database format ''."` COMException on writer-created tables.
 
 Empirically isolating: `OpenDatabase` parses only the catalog (`MSysObjects`) TDEF and the database header. `OpenRecordset` is the first operation that fully validates the user-table TDEF, its real-idx physical descriptors, and its column descriptors against DAO's strictest schema parser. The remaining defect is therefore something `OpenRecordset` validates that `OpenDatabase` does not — likely:
 
@@ -395,7 +428,7 @@ Empirically isolating: `OpenDatabase` parses only the catalog (`MSysObjects`) TD
 - A real-idx physical-descriptor field (51 bytes per slot) that DAO inspects only when it builds the recordset's index plan.
 - An `ExtraFlags` value DAO requires on a non-text column type that the writer leaves at `0x00`.
 
-Tests re-skipped (5 total):
+Historical tests re-skipped at this point (5 total):
 
 - `DaoValidationTests.DaoOpenRecordset_RowCount_MatchesWriterOutput`
 - `DaoValidationTests.DaoIndexTraversal_Seek_LocatesRowByPrimaryKey`
@@ -403,7 +436,7 @@ Tests re-skipped (5 total):
 - `AccessRoundTripTests.SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`
 - `AccessRoundTripTests.CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`
 
-Skip reason updated to distinguish "DAO `OpenDatabase` now succeeds" from "DAO `OpenRecordset` still rejects writer-created tables ('Unrecognized database format')".
+Historical skip reason distinguished "DAO `OpenDatabase` now succeeds" from "DAO `OpenRecordset` rejects writer-created tables ('Unrecognized database format')". The current state supersedes that skip reason.
 
 ## N2 failure analysis (2026-05-04) — RESOLVED
 

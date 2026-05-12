@@ -70,7 +70,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
             object[] row = acesDef.CreateNullValueRow();
             acesDef.SetValueByName(row, "ObjectId", (int)tdefPageNumber);
             acesDef.SetValueByName(row, "ACM", Constants.Aces.DefaultAcm);
-            acesDef.SetValueByName(row, "FInheritable", true);
+            acesDef.SetValueByName(row, "FInheritable", false);
             acesDef.SetValueByName(row, "SID", sid);
             await writer.InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, row, cancellationToken: cancellationToken).ConfigureAwait(false);
         }

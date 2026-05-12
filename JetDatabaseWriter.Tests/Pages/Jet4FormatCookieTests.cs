@@ -319,8 +319,8 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
                 int acm = Convert.ToInt32(row["ACM"], CultureInfo.InvariantCulture);
                 Assert.Equal(Constants.Aces.DefaultAcm, acm);
 
-                // Inheritable should be true.
-                Assert.True(Convert.ToBoolean(row["FInheritable"], CultureInfo.InvariantCulture));
+                // Match DAO-authored user tables: table ACE rows are not inheritable.
+                Assert.False(Convert.ToBoolean(row["FInheritable"], CultureInfo.InvariantCulture));
 
                 // SID should be non-null.
                 object sidVal = row["SID"];

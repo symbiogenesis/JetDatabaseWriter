@@ -2580,14 +2580,25 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     // Matches the DAO-observed shape for a real-index usage-map page: two leading
     // zero rows, then one 69-byte usage-map row per real index. Each usage-map row
     // stores a page-aligned base in bytes 1..4 and a bitmap starting at byte 5.
-    private async ValueTask<long> AppendIndexUsageMapPageAsync(long[] leafPageNumbers, CancellationToken cancellationToken)
+    internal ValueTask<long> AppendIndexUsageMapPageAsync(long[] leafPageNumbers, CancellationToken cancellationToken)
+    {
+        var pageGroups = new long[leafPageNumbers.Length][];
+        for (int i = 0; i < leafPageNumbers.Length; i++)
+        {
+            pageGroups[i] = [leafPageNumbers[i]];
+        }
+
+        return AppendIndexUsageMapPageAsync(pageGroups, cancellationToken);
+    }
+
+    internal async ValueTask<long> AppendIndexUsageMapPageAsync(IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
     {
         byte[] page = new byte[_pgSz];
         page[0] = 0x01;
         page[1] = 0x01;
 
         const int rowSize = 69;
-        int rowCount = leafPageNumbers.Length + 2;
+        int rowCount = indexPageGroups.Count + 2;
         int rowStart = _pgSz;
         for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
@@ -2599,15 +2610,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 continue;
             }
 
-            long leafPageNumber = leafPageNumbers[rowIndex - 2];
-            int basePageNumber = leafPageNumber < 512
+            long[] indexPageNumbers = indexPageGroups[rowIndex - 2];
+            long firstPageNumber = indexPageNumbers.Length == 0 ? 0 : indexPageNumbers[0];
+            int basePageNumber = firstPageNumber < 512
                 ? 0
-                : checked((int)((leafPageNumber / 8) * 8));
-            int bitIndex = checked((int)(leafPageNumber - basePageNumber));
+                : checked((int)((firstPageNumber / 8) * 8));
 
             page[rowStart] = 0x00;
             Wi32(page, rowStart + 1, basePageNumber);
-            page[rowStart + 5 + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
+
+            for (int i = 0; i < indexPageNumbers.Length; i++)
+            {
+                int bitIndex = checked((int)(indexPageNumbers[i] - basePageNumber));
+                if ((uint)bitIndex >= 512)
+                {
+                    throw new NotSupportedException(
+                        "Index B-tree allocation spans more than one inline usage-map bitmap; " +
+                        "REFERENCE usage maps for index pages are not yet supported.");
+                }
+
+                page[rowStart + 5 + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
+            }
         }
 
         Wi32(page, _dataPage.TDefOff, 0);
