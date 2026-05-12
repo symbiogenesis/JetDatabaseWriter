@@ -34,7 +34,7 @@ Encryption is both correctness-sensitive and allocation-sensitive. Standard encr
 
 **Compatibility note:** keep SHA-1, MD5, AES-CBC, and AES-ECB where the JET/Office formats require them. The recommendation is about safer/faster API shape, not changing algorithms.
 
-### 2. Use `FileStreamOptions` and preallocation in file creation/replacement
+### 2. Use `FileStreamOptions` and preallocation in file creation/replacement (DONE)
 
 **Feature family:** .NET 6+ `FileStreamOptions`, `PreallocationSize`, clearer async/sequential/random access options.
 
@@ -83,7 +83,7 @@ The project has a few central file-open paths plus several direct `new FileStrea
 
 **Expected benefit:** performance and correctness headroom for parallel page reads; less reliance on mutable stream position.
 
-### 4. Use `Stream.ReadExactlyAsync` / `ReadAtLeastAsync` where exact bytes are required (DONE)
+### 4. Use `Stream.ReadExactlyAsync` / `ReadAtLeastAsync` where exact bytes are required
 
 **Feature family:** .NET 7+ exact-read APIs.
 
@@ -381,8 +381,8 @@ These are worth preserving but do not need modernization churn right now.
 ## Suggested implementation order
 
 1. Crypto hash/HMAC modernization in `OfficeCryptoStandard`, `OfficeCryptoAgile`, `EncryptionManager`, and `EncryptionConverter`, backed by existing encryption tests plus allocation benchmarks.
-2. `FileStreamOptions` and preallocation in database create/re-encrypt paths.
-3. Exact-read helpers for headers, CFB sectors, and encryption sniffing. (DONE)
+2. `FileStreamOptions` and preallocation in database create/re-encrypt paths. (DONE)
+3. Exact-read helpers for headers, CFB sectors, and encryption sniffing.
 4. `ZLibStream` experiments for Access attachment/OLE decompression with fixture tests.
 5. Package validation/API compatibility in pack/release builds.
 6. Targeted lower-priority polish: frozen static lookups, span Base64/hex parsing, `System.Threading.Lock` in tests, and FormatProbe LINQ cleanups.

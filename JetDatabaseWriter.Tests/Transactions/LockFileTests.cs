@@ -690,9 +690,13 @@ public sealed class LockFileTests : IDisposable
     {
         using var fs = new FileStream(
             path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete);
+            new FileStreamOptions
+            {
+                Mode = FileMode.Open,
+                Access = FileAccess.Read,
+                Share = FileShare.ReadWrite | FileShare.Delete,
+                BufferSize = 4096,
+            });
         byte[] buf = new byte[fs.Length];
         int read = 0;
         while (read < buf.Length)

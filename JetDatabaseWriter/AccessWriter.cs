@@ -345,7 +345,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format, options?.WriteFullCatalogSchema ?? true);
 
-        await using (var fs = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
+        await using (var fs = FileStreamFactory.Open(
+            path,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            FileOptions.Asynchronous,
+            preallocationSize: dbBytes.Length))
         {
             await fs.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
             await fs.FlushAsync(cancellationToken).ConfigureAwait(false);

@@ -176,7 +176,12 @@ internal static class EncryptionManager
             throw new FileNotFoundException($"Database file not found: {path}", path);
         }
 
-        await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
+        await using var fs = FileStreamFactory.Open(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            FileOptions.Asynchronous);
         return await DetectEncryptionFormatAsync(fs, cancellationToken).ConfigureAwait(false);
     }
 
@@ -684,7 +689,13 @@ internal static class EncryptionManager
     private static async ValueTask ReplaceFileAtomicAsync(string path, byte[] contents, CancellationToken cancellationToken)
     {
         string tempPath = path + ".reenc-" + Guid.NewGuid().ToString("N") + ".tmp";
-        await using (var fs = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
+        await using (var fs = FileStreamFactory.Open(
+            tempPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            FileOptions.Asynchronous,
+            preallocationSize: contents.Length))
         {
             await fs.WriteAsync(contents.AsMemory(), cancellationToken).ConfigureAwait(false);
             await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
