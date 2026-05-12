@@ -15,6 +15,7 @@ using JetDatabaseWriter.Models;
 
 internal static class FkDaoBaselineProbe
 {
+    private const string ProbeSlug = "fk-dao-baseline";
     private const string Parent = "DaoFkParent";
     private const string Child = "DaoFkChild";
     private const string FkName = "DaoFK_Child_Parent";
@@ -35,13 +36,13 @@ internal static class FkDaoBaselineProbe
         }
 
         workRoot = PrepareWorkRoot(workRoot);
-        _ = Directory.CreateDirectory(workRoot);
-        string writerPath = Path.Combine(workRoot, "writer.accdb");
-        string daoPath = Path.Combine(workRoot, "dao.accdb");
-        string writerCompactPath = Path.Combine(workRoot, "writer-compact.accdb");
-        string daoCompactPath = Path.Combine(workRoot, "dao-compact.accdb");
-        File.Copy(baselinePath, writerPath, overwrite: true);
-        File.Copy(baselinePath, daoPath, overwrite: true);
+        FormatProbeArtifacts.EnsureDirectory(workRoot);
+        string writerPath = FormatProbeArtifacts.GetFilePath(workRoot, $"{ProbeSlug}-writer.accdb");
+        string daoPath = FormatProbeArtifacts.GetFilePath(workRoot, $"{ProbeSlug}-dao.accdb");
+        string writerCompactPath = FormatProbeArtifacts.GetFilePath(workRoot, $"{ProbeSlug}-writer-compact.accdb");
+        string daoCompactPath = FormatProbeArtifacts.GetFilePath(workRoot, $"{ProbeSlug}-dao-compact.accdb");
+        FormatProbeArtifacts.Copy(baselinePath, writerPath, overwrite: true);
+        FormatProbeArtifacts.Copy(baselinePath, daoPath, overwrite: true);
 
         await AuthorWriterAsync(writerPath);
         (int daoCode, string daoOut, string daoErr) = RunPowerShell(hostProbe.HostPath, workRoot, BuildDaoAuthoringScript(daoPath));
@@ -104,9 +105,7 @@ internal static class FkDaoBaselineProbe
             return workRoot;
         }
 
-        return Path.Combine(
-            workRoot,
-            DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss-fffffff", CultureInfo.InvariantCulture));
+        return FormatProbeArtifacts.CreateWorkDirectory(workRoot, ProbeSlug);
     }
 
     private static async Task AuthorWriterAsync(string path)
@@ -667,8 +666,8 @@ internal static class FkDaoBaselineProbe
 
     private static (int Code, string StdOut, string StdErr) RunPowerShell(string powerShellPath, string workRoot, string script)
     {
-        string scriptPath = Path.Combine(workRoot, $"fk-dao-{Guid.NewGuid():N}.ps1");
-        File.WriteAllText(scriptPath, script);
+        string scriptPath = FormatProbeArtifacts.GetFilePath(workRoot, $"{ProbeSlug}-{Guid.NewGuid():N}.ps1");
+        FormatProbeArtifacts.WriteAllText(scriptPath, script);
         try
         {
             var psi = new ProcessStartInfo(powerShellPath)

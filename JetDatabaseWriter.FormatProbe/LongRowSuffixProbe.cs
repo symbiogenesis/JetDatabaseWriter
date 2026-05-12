@@ -567,8 +567,7 @@ internal static class LongRowSuffixProbe
 
     private static async Task WriteOutputAsync(string outFile, StringBuilder sb)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(outFile)!);
-        await File.WriteAllTextAsync(outFile, sb.ToString());
+        await FormatProbeArtifacts.WriteAllTextAsync(outFile, sb.ToString());
         Console.WriteLine($"Wrote {outFile}");
     }
 

@@ -1,5 +1,5 @@
 // Diagnostic probe: reads test fixtures and emits annotated TDEF hex dumps to
-// docs/format-probe/*-format-probe-appendix.md. One-shot research tool; not part of
+// docs/format-probe/format-probe-*. One-shot research tool; not part of
 // the shipping library. See docs/design/index-and-relationship-format-notes.md
 // and docs/design/complex-columns-format-notes.md for what these dumps validate.
 
@@ -23,7 +23,7 @@ internal static class FormatProbeApplication
     {
         string repoRoot = FindRepoRoot();
         string fixtures = Path.Combine(repoRoot, "JetDatabaseWriter.Tests", "Databases");
-        string probeDir = Path.Combine(repoRoot, "docs", "format-probe");
+        string probeDir = FormatProbeArtifacts.GetOutputDirectory(repoRoot);
 
         var modesArgument = new Argument<string[]>("modes")
         {
@@ -76,7 +76,7 @@ internal static class FormatProbeApplication
                 }
             }
 
-            Console.WriteLine($"Done. Check generated files under {probeDir} or the probe temp directory for results.");
+            Console.WriteLine($"Done. Check generated files under {probeDir}.");
             return 0;
         });
 
@@ -123,6 +123,7 @@ internal static class FormatProbeApplication
         AddEnvMode(modes, "DIAG_RT_BISECT", "rt-bisect");
         AddEnvMode(modes, "DIAG_LONG_ROW_PROBE", "long-row-probe");
         AddEnvMode(modes, "DIAG_LONG_ROW_BISECT", "long-row-bisect");
+        AddEnvMode(modes, "DIAG_LONG_ROW_CORPUS", "long-row-corpus");
         AddEnvMode(modes, "DIAG_LONG_ROW_SUFFIX", "long-row-suffix");
         AddEnvMode(modes, "DIAG_LONG_ROW_CRC_SWEEP", "long-row-crc-sweep");
         AddEnvMode(modes, "DIAG_MEMO_READBACK", "memo-readback");
@@ -150,6 +151,7 @@ internal static class FormatProbeApplication
         "RT-BISECT" or "ROUNDTRIP-BISECT" or "ROUND-TRIP-BISECT" => "rt-bisect",
         "LONG-ROW" or "LONG-ROW-PROBE" => "long-row-probe",
         "LONG-ROW-BISECT" or "LONG-ROW-BOUNDARY" => "long-row-bisect",
+        "LONG-ROW-CORPUS" or "LONG-ROW-SCAN" or "LONG-ROW-SUFFIX-CORPUS" => "long-row-corpus",
         "LONG-ROW-SUFFIX" or "LONG-ROW-SUFFIX-ANALYSIS" => "long-row-suffix",
         "LONG-ROW-CRC" or "LONG-ROW-CRC-SWEEP" or "LONG-ROW-SUFFIX-CRC" => "long-row-crc-sweep",
         "MEMO" or "MEMO-READBACK" => "memo-readback",
@@ -167,6 +169,7 @@ internal static class FormatProbeApplication
         "rt-bisect" or
         "long-row-probe" or
         "long-row-bisect" or
+        "long-row-corpus" or
         "long-row-suffix" or
         "long-row-crc-sweep" or
         "memo-readback";
@@ -189,6 +192,7 @@ internal static class FormatProbeApplication
       rt-bisect           Run the round-trip bisection probe
       long-row-probe      Dump long-row index leaf entries
       long-row-bisect     Run long-row chunk-boundary bisection
+    long-row-corpus     Scan V2010 fixtures for 510-byte long-row keys
       long-row-suffix     Dump V2010 long-row suffix source diagnostics
       long-row-crc-sweep  Run the slow V2010 long-row CRC-16 suffix sweep
       memo-readback       Run the memo readback diagnostic
@@ -207,51 +211,55 @@ internal static class FormatProbeApplication
             case "index":
                 await WriteIndexAppendixAsync(
                     Path.Combine(fixtures, "NorthwindTraders.accdb"),
-                    Path.Combine(probeDir, "format-probe-appendix-index.md"));
+                    FormatProbeArtifacts.GetFilePath(probeDir, "appendix-index.md"));
                 return 0;
             case "complex":
                 await WriteComplexAppendixAsync(
                     Path.Combine(fixtures, "ComplexFields.accdb"),
-                    Path.Combine(probeDir, "format-probe-appendix-complex.md"));
+                    FormatProbeArtifacts.GetFilePath(probeDir, "appendix-complex.md"));
                 return 0;
             case "jet3-index":
                 await WriteJet3IndexAppendixAsync(
                     fixtures,
-                    Path.Combine(probeDir, "format-probe-appendix-jet3-index.md"));
+                    FormatProbeArtifacts.GetFilePath(probeDir, "appendix-jet3-index.md"));
                 return 0;
             case "mdb-catalog":
                 await WriteMdbCatalogAppendixAsync(
                     fixtures,
-                    Path.Combine(probeDir, "format-probe-appendix-mdb-catalogs.md"));
+                    FormatProbeArtifacts.GetFilePath(probeDir, "appendix-mdb-catalogs.md"));
                 return 0;
             case "fk-dao-baseline":
                 return await JetDatabaseWriter.FormatProbe.FkDaoBaselineProbe.RunAsync(
                     GetRoundTripBaseline(fixtures),
-                    CreateProbeWorkRoot("JetDatabaseWriter.FkDaoBaseline"));
+                    FormatProbeArtifacts.CreateWorkDirectory(probeDir, "fk-dao-baseline"));
             case "rt-bisect":
-                return await RunRoundTripBisectAsync(fixtures);
+                return await RunRoundTripBisectAsync(fixtures, probeDir);
             case "long-row-probe":
                 return await JetDatabaseWriter.FormatProbe.LongRowProbe.RunAsync(
                     fixtures,
-                    Path.Combine(probeDir, "format-probe-long-row-dump.md"));
+                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-dump.md"));
             case "long-row-bisect":
                 return await JetDatabaseWriter.FormatProbe.LongRowBisect.RunAsync(
                     fixtures,
-                    Path.Combine(probeDir, "format-probe-long-row-bisect.md"));
+                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-bisect.md"));
+            case "long-row-corpus":
+                return await JetDatabaseWriter.FormatProbe.LongRowSuffixProbe.RunCorpusScanAsync(
+                    fixtures,
+                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-corpus.md"));
             case "long-row-suffix":
                 return await JetDatabaseWriter.FormatProbe.LongRowSuffixProbe.RunAnalysisAsync(
                     fixtures,
-                    Path.Combine(probeDir, "format-probe-long-row-suffix-analysis.md"));
+                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-suffix-analysis.md"));
             case "long-row-crc-sweep":
                 return await JetDatabaseWriter.FormatProbe.LongRowSuffixProbe.RunCrcSweepAsync(
                     fixtures,
-                    Path.Combine(probeDir, "format-probe-long-row-crc-sweep.md"));
+                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-crc-sweep.md"));
             case "memo-readback":
                 return await RunMemoReadbackAsync();
             case "rt-dao-baseline":
                 return await JetDatabaseWriter.FormatProbe.DaoBaselineProbe.RunAsync(
                     GetRoundTripBaseline(fixtures),
-                    CreateProbeWorkRoot("JetDatabaseWriter.RtDaoBaseline"));
+                    FormatProbeArtifacts.CreateWorkDirectory(probeDir, "rt-dao-baseline"));
             default:
                 await Console.Error.WriteLineAsync($"Unknown FormatProbe mode: {mode}");
                 return 1;
@@ -264,11 +272,11 @@ internal static class FormatProbeApplication
     {
         WriteIndexAppendixAsync(
             Path.Combine(fixtures, "NorthwindTraders.accdb"),
-            Path.Combine(probeDir, "format-probe-appendix-index.md")),
+            FormatProbeArtifacts.GetFilePath(probeDir, "appendix-index.md")),
 
         WriteComplexAppendixAsync(
             Path.Combine(fixtures, "ComplexFields.accdb"),
-            Path.Combine(probeDir, "format-probe-appendix-complex.md")),
+            FormatProbeArtifacts.GetFilePath(probeDir, "appendix-complex.md")),
     };
 
         // probe: Jet3 (.mdb Access 97) index TDEF + leaf-page layouts. The format probe
@@ -280,7 +288,7 @@ internal static class FormatProbeApplication
         // the TDEFs and one leaf page per index from the Jackcess V1997 corpus.
         appendices.Add(WriteJet3IndexAppendixAsync(
             fixtures,
-            Path.Combine(probeDir, "format-probe-appendix-jet3-index.md")));
+            FormatProbeArtifacts.GetFilePath(probeDir, "appendix-jet3-index.md")));
 
         // Catalog probe: Jet3 + Jet4 .mdb + ACCDB catalog scan. The catalog probe in
         // docs/design/index-and-relationship-format-notes.md asks whether
@@ -291,25 +299,15 @@ internal static class FormatProbeApplication
         // every format and Access version we have on disk.
         appendices.Add(WriteMdbCatalogAppendixAsync(
             fixtures,
-            Path.Combine(probeDir, "format-probe-appendix-mdb-catalogs.md")));
+            FormatProbeArtifacts.GetFilePath(probeDir, "appendix-mdb-catalogs.md")));
 
         await Task.WhenAll(appendices);
     }
 
-    private static async Task<int> RunRoundTripBisectAsync(string fixtures)
+    private static async Task<int> RunRoundTripBisectAsync(string fixtures, string probeDir)
     {
-        string workRoot = CreateProbeWorkRoot("JetDatabaseWriter.RtBisect");
+        string workRoot = FormatProbeArtifacts.CreateWorkDirectory(probeDir, "rt-bisect");
         return await JetDatabaseWriter.FormatProbe.RoundTripBisect.RunAsync(GetRoundTripBaseline(fixtures), workRoot);
-    }
-
-    private static string CreateProbeWorkRoot(string probeName)
-    {
-        string root = Path.Combine(
-            Path.GetTempPath(),
-            probeName,
-            DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss-fffffff", CultureInfo.InvariantCulture));
-        _ = Directory.CreateDirectory(root);
-        return root;
     }
 
     private static string GetRoundTripBaseline(string fixtures) =>
@@ -545,8 +543,7 @@ internal static class FormatProbeApplication
             userTablesEmitted++;
         }
 
-        _ = Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
-        await File.WriteAllTextAsync(outPath, sb.ToString());
+        await FormatProbeArtifacts.WriteAllTextAsync(outPath, sb.ToString());
         Console.WriteLine($"Wrote {outPath}");
     }
 
@@ -618,8 +615,7 @@ internal static class FormatProbeApplication
             await EmitTDefAsync(reader, sb, hit.Name, hit.Page, includeIndexAnnotations: false, includeComplexAnnotations: true, preloadedBytes: hit.Bytes);
         }
 
-        _ = Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
-        await File.WriteAllTextAsync(outPath, sb.ToString());
+        await FormatProbeArtifacts.WriteAllTextAsync(outPath, sb.ToString());
         Console.WriteLine($"Wrote {outPath}");
     }
 
@@ -774,8 +770,7 @@ internal static class FormatProbeApplication
             }
         }
 
-        _ = Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
-        await File.WriteAllTextAsync(outPath, sb.ToString());
+        await FormatProbeArtifacts.WriteAllTextAsync(outPath, sb.ToString());
         Console.WriteLine($"Wrote {outPath}");
     }
 
@@ -1008,8 +1003,7 @@ internal static class FormatProbeApplication
             }
         }
 
-        _ = Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
-        await File.WriteAllTextAsync(outPath, sb.ToString());
+        await FormatProbeArtifacts.WriteAllTextAsync(outPath, sb.ToString());
         Console.WriteLine($"Wrote {outPath}");
     }
 
