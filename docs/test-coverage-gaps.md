@@ -48,18 +48,20 @@ in [GeneralEncoderSharedTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collatio
   V2010 (General sort order) `Table11` / `Table11_desc` are still skipped
   in [GeneralEncoderFixtureTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collation/GeneralEncoderFixtureTests.cs):
   the encoder matches the first 508 of 510 bytes but the final 2-byte
-  suffix algorithm is unknown (exhaustive testing of ~3.4 M hash/CRC/input
-  combinations found no match — see resolution doc for details). The
-  partial result is now locked in by
+  suffix algorithm is unknown. The checked-in V2010 fixture corpus has only
+  six suffix-bearing keys, but `long-row-dao-lab` can generate fresh
+  Access-authored examples on DAO-equipped Windows hosts; the current probe
+  run produced 102 Text/Memo 510-byte keys, all matching through byte 507.
+  Exhaustive CRC/hash candidate testing against the original six constraints
+  found no match — see resolution doc for details. The partial result is now locked in by
   [GeneralEncoderLongRowPrefixTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collation/GeneralEncoderLongRowPrefixTests.cs),
   which asserts byte-exact match on bytes `[0..507]` for every 510-byte
   long-row leaf in those two tables (and full byte-exact match for the
   short / null entries that share the same indexes); regressions in the
   encoder body or in the suffix algorithm (when discovered) will trip it.
-  Binary single-column long keys in V2010 `binIdxTest` and Memo-keyed
-  indexes via
-  [IndexCodesAggregateTests.cs](../../JetDatabaseWriter.Tests/Indexes/IndexCodesAggregateTests.cs)
-  also still run un-asserted for the same reason. See
+  The `long-row-corpus` probe found no 510-byte Binary keys in the checked-in
+  Jackcess V2010 fixtures, so Binary long-key suffix behavior remains
+  unobserved rather than known-skipped. See
   [format-probe-long-row-index-encoding.md](format-probe/format-probe-long-row-index-encoding.md).
 
 ---
