@@ -8,6 +8,7 @@
     <Features>strict</Features>
     <Deterministic>true</Deterministic>
     <WarningLevel>9999</WarningLevel>
+    <NuGetAuditMode>all</NuGetAuditMode>
     <AnalysisLevel>latest-all</AnalysisLevel>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
