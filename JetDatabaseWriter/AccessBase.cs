@@ -62,6 +62,7 @@ public abstract class AccessBase : IAccessBase
     private protected readonly Encoding _ansiEncoding;
     private protected readonly int _codePage;
     private protected readonly string _path;
+    private bool _useRandomAccessPageReads;
 
     internal Encoding AnsiEncoding => _ansiEncoding;
 
@@ -171,6 +172,25 @@ public abstract class AccessBase : IAccessBase
 
     /// <inheritdoc/>
     public int CodePage => _codePage;
+
+    internal bool UsesRandomAccessPageReads
+    {
+        get => _useRandomAccessPageReads;
+    }
+
+    private protected void EnableRandomAccessPageReadsIfSupported()
+    {
+#if NET6_0_OR_GREATER
+        if (_stream is FileStream fileStream &&
+            !fileStream.SafeFileHandle.IsInvalid &&
+            !fileStream.SafeFileHandle.IsClosed)
+        {
+            _useRandomAccessPageReads = true;
+        }
+#else
+        _useRandomAccessPageReads = false;
+#endif
+    }
 
     /// <inheritdoc/>
     public virtual async ValueTask DisposeAsync()
@@ -520,25 +540,34 @@ public abstract class AccessBase : IAccessBase
         byte[] buf = ArrayPool<byte>.Shared.Rent(_pgSz);
         try
         {
-            await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
+#if NET6_0_OR_GREATER
+            if (_useRandomAccessPageReads && ActiveJournal is null && _stream is FileStream fileStream)
             {
-                // Inside an explicit transaction, prefer the journal: the page may
-                // be a transaction-local mutation (or an appended page that has no
-                // on-disk slot yet). Journal bytes are plaintext; bypass decrypt.
-                byte[]? journaled = ActiveJournal?.TryGet(n);
-                if (journaled is not null)
-                {
-                    Buffer.BlockCopy(journaled, 0, buf, 0, _pgSz);
-                    return buf;
-                }
-
-                _ = _stream.Seek(n * _pgSz, SeekOrigin.Begin);
-                await _stream.ReadExactlyAsync(buf.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
+                await ReadPageRandomAccessAsync(fileStream, n, buf, cancellationToken).ConfigureAwait(false);
             }
-            finally
+            else
+#endif
             {
-                _ = _ioGate.Release();
+                await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    // Inside an explicit transaction, prefer the journal: the page may
+                    // be a transaction-local mutation (or an appended page that has no
+                    // on-disk slot yet). Journal bytes are plaintext; bypass decrypt.
+                    byte[]? journaled = ActiveJournal?.TryGet(n);
+                    if (journaled is not null)
+                    {
+                        Buffer.BlockCopy(journaled, 0, buf, 0, _pgSz);
+                        return buf;
+                    }
+
+                    _ = _stream.Seek(n * _pgSz, SeekOrigin.Begin);
+                    await _stream.ReadExactlyAsync(buf.AsMemory(0, _pgSz), cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _ = _ioGate.Release();
+                }
             }
 
             EncryptionManager.DecryptPageInPlace(buf, n, _pgSz, _pageKeys);
@@ -551,6 +580,28 @@ public abstract class AccessBase : IAccessBase
             throw;
         }
     }
+
+#if NET6_0_OR_GREATER
+    private async ValueTask ReadPageRandomAccessAsync(FileStream fileStream, long pageNumber, byte[] page, CancellationToken cancellationToken)
+    {
+        long fileOffset = pageNumber * _pgSz;
+        int totalRead = 0;
+        while (totalRead < _pgSz)
+        {
+            int bytesRead = await RandomAccess.ReadAsync(
+                fileStream.SafeFileHandle,
+                page.AsMemory(totalRead, _pgSz - totalRead),
+                fileOffset + totalRead,
+                cancellationToken).ConfigureAwait(false);
+            if (bytesRead == 0)
+            {
+                throw new EndOfStreamException();
+            }
+
+            totalRead += bytesRead;
+        }
+    }
+#endif
 
     // ── TDEF parsing ─────────────────────────────────────────────────
 
