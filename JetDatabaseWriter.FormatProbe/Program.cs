@@ -4,8 +4,10 @@
 // and docs/design/complex-columns-format-notes.md for what these dumps validate.
 
 using System.Collections.Generic;
+using System.CommandLine;
 using System.Globalization;
 using System.Text;
+using System.Threading;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
@@ -17,61 +19,76 @@ string repoRoot = FindRepoRoot();
 string fixtures = Path.Combine(repoRoot, "JetDatabaseWriter.Tests", "Databases");
 string probeDir = Path.Combine(repoRoot, "docs", "format-probe");
 
-IReadOnlyList<string> selectedModes = ResolveModes(args);
-if (selectedModes.Count == 0)
+var modesArgument = new Argument<string[]>("modes")
 {
-    PrintUsage();
-    return 0;
-}
+    Arity = ArgumentArity.ZeroOrMore,
+    Description = "FormatProbe modes to run. Comma-separated values are accepted.",
+};
 
-if (selectedModes.Count == 1 && selectedModes[0].Equals("help", StringComparison.OrdinalIgnoreCase))
+var modeOption = new Option<string[]>("--mode", "-m")
 {
-    PrintUsage();
-    return 0;
-}
+    Arity = ArgumentArity.ZeroOrMore,
+    Description = "FormatProbe mode(s) to run. Comma-separated values are accepted.",
+};
 
-foreach (string selectedMode in selectedModes)
+var rootCommand = new RootCommand(GetRootCommandDescription())
 {
-    int result = await RunModeAsync(selectedMode, fixtures, probeDir);
-    if (result != 0)
+    modesArgument,
+    modeOption,
+};
+
+rootCommand.SetAction(async (parseResult, cancellationToken) =>
+{
+    IReadOnlyList<string> selectedModes = ResolveModes(
+        parseResult.GetValue(modesArgument) ?? [],
+        parseResult.GetValue(modeOption) ?? []);
+
+    if (selectedModes.Count == 0)
     {
-        return result;
+        return await ShowHelpAsync(rootCommand, cancellationToken);
     }
-}
 
-Console.WriteLine($"Done. Check generated files under {probeDir} or the probe temp directory for results.");
-return 0;
+    if (selectedModes.Any(mode => mode.Equals("help", StringComparison.OrdinalIgnoreCase)))
+    {
+        return await ShowHelpAsync(rootCommand, cancellationToken);
+    }
 
-static IReadOnlyList<string> ResolveModes(string[] args)
+    string? unknownMode = selectedModes.FirstOrDefault(mode => !IsKnownMode(mode));
+    if (unknownMode is not null)
+    {
+        await Console.Error.WriteLineAsync($"Unknown FormatProbe mode: {unknownMode}");
+        _ = await ShowHelpAsync(rootCommand, cancellationToken);
+        return 1;
+    }
+
+    foreach (string selectedMode in selectedModes)
+    {
+        int result = await RunModeAsync(selectedMode, fixtures, probeDir);
+        if (result != 0)
+        {
+            return result;
+        }
+    }
+
+    Console.WriteLine($"Done. Check generated files under {probeDir} or the probe temp directory for results.");
+    return 0;
+});
+
+ParseResult parseResult = rootCommand.Parse(args);
+return await parseResult.InvokeAsync(cancellationToken: CancellationToken.None);
+
+static IReadOnlyList<string> ResolveModes(IEnumerable<string> modeArguments, IEnumerable<string> modeOptions)
 {
     var modes = new List<string>();
-    for (int index = 0; index < args.Length; index++)
+
+    foreach (string mode in modeArguments)
     {
-        string arg = args[index];
-        if (arg is "-h" or "--help" or "help")
-        {
-            return ["help"];
-        }
+        AddModeValues(modes, mode);
+    }
 
-        if (arg.Equals("--mode", StringComparison.OrdinalIgnoreCase))
-        {
-            if (index + 1 >= args.Length)
-            {
-                return ["help"];
-            }
-
-            AddModeValues(modes, args[++index]);
-            continue;
-        }
-
-        const string modePrefix = "--mode=";
-        if (arg.StartsWith(modePrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            AddModeValues(modes, arg[modePrefix.Length..]);
-            continue;
-        }
-
-        AddModeValues(modes, arg.StartsWith("--", StringComparison.Ordinal) ? arg[2..] : arg);
+    foreach (string mode in modeOptions)
+    {
+        AddModeValues(modes, mode);
     }
 
     if (modes.Count == 0)
@@ -132,13 +149,51 @@ static string NormalizeMode(string mode) => mode.ToUpperInvariant() switch
     _ => mode,
 };
 
+static bool IsKnownMode(string mode) => mode is
+    "appendices" or
+    "index" or
+    "complex" or
+    "jet3-index" or
+    "mdb-catalog" or
+    "fk-dao-baseline" or
+    "rt-dao-baseline" or
+    "rt-bisect" or
+    "long-row-probe" or
+    "long-row-bisect" or
+    "long-row-suffix" or
+    "long-row-crc-sweep" or
+    "memo-readback";
+
+static Task<int> ShowHelpAsync(RootCommand rootCommand, CancellationToken cancellationToken) =>
+    rootCommand.Parse(["--help"]).InvokeAsync(cancellationToken: cancellationToken);
+
+static string GetRootCommandDescription() =>
+    """
+    Diagnostic probe that reads test fixtures and emits format research artifacts.
+
+    Modes:
+      appendices          Generate every appendix that the old default run produced
+      index               Generate the index/relationship appendix
+      complex             Generate the complex-column appendix
+      jet3-index          Generate the Jet3 index appendix
+      mdb-catalog         Scan the fixture corpus for catalog tables
+      fk-dao-baseline     Run the FK DAO baseline probe
+      rt-dao-baseline     Run the round-trip DAO baseline probe
+      rt-bisect           Run the round-trip bisection probe
+      long-row-probe      Dump long-row index leaf entries
+      long-row-bisect     Run long-row chunk-boundary bisection
+      long-row-suffix     Dump V2010 long-row suffix source diagnostics
+      long-row-crc-sweep  Run the slow V2010 long-row CRC-16 suffix sweep
+      memo-readback       Run the memo readback diagnostic
+
+    Positional modes and --mode/-m values both accept comma-separated lists.
+    Legacy DIAG_* environment variables still select the matching mode when no CLI mode is supplied.
+    """;
+
 static async Task<int> RunModeAsync(string mode, string fixtures, string probeDir)
 {
     switch (mode)
     {
-        case "help":
-            PrintUsage();
-            return 0;
         case "appendices":
             await RunAppendicesAsync(fixtures, probeDir);
             return 0;
@@ -192,7 +247,6 @@ static async Task<int> RunModeAsync(string mode, string fixtures, string probeDi
                 CreateProbeWorkRoot("JetDatabaseWriter.RtDaoBaseline"));
         default:
             await Console.Error.WriteLineAsync($"Unknown FormatProbe mode: {mode}");
-            PrintUsage();
             return 1;
     }
 }
@@ -254,27 +308,6 @@ static string CreateProbeWorkRoot(string probeName)
 static string GetRoundTripBaseline(string fixtures) =>
     Environment.GetEnvironmentVariable("DIAG_RT_BASELINE")
     ?? Path.Combine(fixtures, "NorthwindTraders.accdb");
-
-static void PrintUsage()
-{
-    Console.WriteLine("FormatProbe modes:");
-    Console.WriteLine("  appendices       Generate every appendix that the old default run produced");
-    Console.WriteLine("  index            Generate the index/relationship appendix");
-    Console.WriteLine("  complex          Generate the complex-column appendix");
-    Console.WriteLine("  jet3-index       Generate the Jet3 index appendix");
-    Console.WriteLine("  mdb-catalog      Scan the fixture corpus for catalog tables");
-    Console.WriteLine("  fk-dao-baseline  Run the FK DAO baseline probe");
-    Console.WriteLine("  rt-dao-baseline  Run the round-trip DAO baseline probe");
-    Console.WriteLine("  rt-bisect        Run the round-trip bisection probe");
-    Console.WriteLine("  long-row-probe   Dump long-row index leaf entries");
-    Console.WriteLine("  long-row-bisect  Run long-row chunk-boundary bisection");
-    Console.WriteLine("  long-row-suffix  Dump V2010 long-row suffix source diagnostics");
-    Console.WriteLine("  long-row-crc-sweep  Run the slow V2010 long-row CRC-16 suffix sweep");
-    Console.WriteLine("  memo-readback    Run the memo readback diagnostic");
-    Console.WriteLine();
-    Console.WriteLine("Usage: dotnet run --project JetDatabaseWriter.FormatProbe -- <mode>[,<mode>]");
-    Console.WriteLine("Legacy DIAG_* environment variables still select the matching mode when no CLI mode is supplied.");
-}
 
 static async Task<int> RunMemoReadbackAsync()
 {
