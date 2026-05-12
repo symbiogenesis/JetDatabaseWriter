@@ -511,7 +511,7 @@ All three call sites (`TrySpliceCatalogIndexEntryAsync`, `TrySurgicalCrossLeafMa
 
 ## FormatProbe diagnostic harness
 
-`JetDatabaseWriter.FormatProbe` carries mode-based opt-in probes for triaging this regression. No-argument runs print usage and exit quickly; pass an explicit mode after `--`. Legacy `DIAG_*` environment variables still select the matching mode when no CLI mode is supplied.
+`JetDatabaseWriter.FormatProbe` carries mode-based opt-in probes for triaging this regression. No-argument runs show the generated `System.CommandLine` help page and exit quickly; pass an explicit mode after `--`, or use the CPM-managed option form `--mode` / `-m`. Positional and option values both accept comma-separated mode lists. Legacy `DIAG_*` environment variables still select the matching mode when no CLI mode is supplied, and `System.CommandLine` handles `--help` / `--version`.
 
 ### `rt-bisect` — escalating-step regression bisector
 

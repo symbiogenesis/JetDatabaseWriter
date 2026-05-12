@@ -9,9 +9,12 @@
     <RunAnalyzersDuringBuild Condition="'$(Configuration)' == 'Release'">true</RunAnalyzersDuringBuild>
     <EnforceCodeStyleInBuild Condition="'$(Configuration)' == 'Release'">true</EnforceCodeStyleInBuild>
     <GenerateDocumentationFile Condition="'$(Configuration)' == 'Release'">true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CA1031</NoWarn>
+    <NoWarn>$(NoWarn);CA1031;CA1303</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\JetDatabaseWriter\JetDatabaseWriter.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
   </ItemGroup>
 </Project>
