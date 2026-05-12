@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.FormatProbe;
 
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -158,31 +157,32 @@ internal static class FkDaoBaselineProbe
     private static async Task<Dictionary<string, int>> DumpCatalogRowsAsync(AccessReader reader)
     {
         var ids = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        DataTable? objects = await reader.ReadDataTableAsync("MSysObjects");
-        if (objects is null)
+        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysObjects");
+        if (columns.Count == 0)
         {
             Console.WriteLine("MSysObjects: <missing>");
             return ids;
         }
 
+        Dictionary<string, int> ordinals = BuildOrdinals(columns);
         Console.WriteLine("MSysObjects:");
-        foreach (DataRow row in objects.Rows)
+        await foreach (object[] row in reader.Rows("MSysObjects"))
         {
-            string name = row["Name"]?.ToString() ?? string.Empty;
+            string name = ValueText(GetValue(row, ordinals, "Name"));
             if (!string.Equals(name, Parent, StringComparison.Ordinal)
                 && !string.Equals(name, Child, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            int id = Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture);
+            int id = ToInt32(GetValue(row, ordinals, "Id"));
             ids[name] = id;
 
-            object owner = objects.Columns.Contains("Owner") ? row["Owner"] : DBNull.Value;
-            object lvProp = objects.Columns.Contains("LvProp") ? row["LvProp"] : DBNull.Value;
+            object? owner = GetValue(row, ordinals, "Owner");
+            object? lvProp = GetValue(row, ordinals, "LvProp");
             Console.WriteLine(
                 FormattableString.Invariant(
-                    $"  name={name} id={row["Id"]} parent={row["ParentId"]} type={row["Type"]} flags={row["Flags"]} owner={BlobSummary(owner)} lvProp={BlobSummary(lvProp)}"));
+                    $"  name={name} id={ValueText(GetValue(row, ordinals, "Id"))} parent={ValueText(GetValue(row, ordinals, "ParentId"))} type={ValueText(GetValue(row, ordinals, "Type"))} flags={ValueText(GetValue(row, ordinals, "Flags"))} owner={BlobSummary(owner)} lvProp={BlobSummary(lvProp)}"));
         }
 
         return ids;
@@ -196,63 +196,71 @@ internal static class FkDaoBaselineProbe
             return;
         }
 
-        DataTable? aces = await reader.ReadDataTableAsync("MSysACEs");
-        if (aces is null || !aces.Columns.Contains("ObjectId"))
+        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysACEs");
+        Dictionary<string, int> ordinals = BuildOrdinals(columns);
+        if (!ordinals.ContainsKey("ObjectId"))
         {
             Console.WriteLine("  <missing>");
             return;
         }
 
-        foreach ((string name, int id) in catalogIds.OrderBy(static kvp => kvp.Key, StringComparer.Ordinal))
+        Dictionary<int, string> idToName = catalogIds.ToDictionary(static kvp => kvp.Value, static kvp => kvp.Key);
+        var linesByName = catalogIds.ToDictionary(static kvp => kvp.Key, static _ => new List<string>(), StringComparer.OrdinalIgnoreCase);
+        await foreach (object[] row in reader.Rows("MSysACEs"))
         {
-            foreach (DataRow row in aces.Rows)
+            int objectId = ToInt32(GetValue(row, ordinals, "ObjectId"));
+            if (!idToName.TryGetValue(objectId, out string? name))
             {
-                int objectId = Convert.ToInt32(row["ObjectId"], CultureInfo.InvariantCulture);
-                if (objectId != id)
-                {
-                    continue;
-                }
+                continue;
+            }
 
-                object acm = aces.Columns.Contains("ACM") ? row["ACM"] : DBNull.Value;
-                object inheritable = aces.Columns.Contains("FInheritable") ? row["FInheritable"] : DBNull.Value;
-                object sid = aces.Columns.Contains("SID") ? row["SID"] : DBNull.Value;
-                Console.WriteLine(
-                    FormattableString.Invariant(
-                        $"  table={name} objectId={objectId} acm={acm} inheritable={inheritable} sid={BlobSummary(sid)}"));
+            object? acm = GetValue(row, ordinals, "ACM");
+            object? inheritable = GetValue(row, ordinals, "FInheritable");
+            object? sid = GetValue(row, ordinals, "SID");
+            linesByName[name].Add(FormattableString.Invariant(
+                $"  table={name} objectId={objectId} acm={ValueText(acm)} inheritable={ValueText(inheritable)} sid={BlobSummary(sid)}"));
+        }
+
+        foreach ((string name, _) in catalogIds.OrderBy(static kvp => kvp.Key, StringComparer.Ordinal))
+        {
+            foreach (string line in linesByName[name])
+            {
+                Console.WriteLine(line);
             }
         }
     }
 
     private static async Task DumpRelationshipsAsync(AccessReader reader)
     {
-        DataTable? rels = await reader.ReadDataTableAsync("MSysRelationships");
-        if (rels is null)
+        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysRelationships");
+        if (columns.Count == 0)
         {
             Console.WriteLine("MSysRelationships: <missing>");
             return;
         }
 
+        Dictionary<string, int> ordinals = BuildOrdinals(columns);
         Console.WriteLine("MSysRelationships:");
-        foreach (DataRow row in rels.Rows)
+        await foreach (object[] row in reader.Rows("MSysRelationships"))
         {
-            string name = row["szRelationship"]?.ToString() ?? string.Empty;
+            string name = ValueText(GetValue(row, ordinals, "szRelationship"));
             if (!string.Equals(name, FkName, StringComparison.Ordinal))
             {
                 continue;
             }
 
             string line =
-                $"  ccolumn={row["ccolumn"]} grbit={row["grbit"]} icolumn={row["icolumn"]} " +
-                $"szColumn={row["szColumn"]} szObject={row["szObject"]} " +
-                $"szReferencedColumn={row["szReferencedColumn"]} szReferencedObject={row["szReferencedObject"]}";
+                $"  ccolumn={ValueText(GetValue(row, ordinals, "ccolumn"))} grbit={ValueText(GetValue(row, ordinals, "grbit"))} icolumn={ValueText(GetValue(row, ordinals, "icolumn"))} " +
+                $"szColumn={ValueText(GetValue(row, ordinals, "szColumn"))} szObject={ValueText(GetValue(row, ordinals, "szObject"))} " +
+                $"szReferencedColumn={ValueText(GetValue(row, ordinals, "szReferencedColumn"))} szReferencedObject={ValueText(GetValue(row, ordinals, "szReferencedObject"))}";
             Console.WriteLine(line);
         }
     }
 
     private static async Task DumpTDefAsync(AccessReader reader, string tableName)
     {
-        DataTable? rows = await reader.ReadDataTableAsync(tableName);
-        Console.WriteLine(FormattableString.Invariant($"{tableName}: rows={rows?.Rows.Count ?? -1}"));
+        long rowCount = await reader.GetRealRowCountAsync(tableName);
+        Console.WriteLine(FormattableString.Invariant($"{tableName}: rows={rowCount}"));
 
         CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName);
         if (entry is null)
@@ -383,7 +391,25 @@ internal static class FkDaoBaselineProbe
         return string.Join(",", parts);
     }
 
-    private static string BlobSummary(object value) => value switch
+    private static Dictionary<string, int> BuildOrdinals(IEnumerable<ColumnMetadata> columns)
+        => columns.ToDictionary(static column => column.Name, static column => column.Ordinal, StringComparer.OrdinalIgnoreCase);
+
+    private static object? GetValue(object?[] row, IReadOnlyDictionary<string, int> ordinals, string columnName)
+        => ordinals.TryGetValue(columnName, out int ordinal) && ordinal >= 0 && ordinal < row.Length
+            ? row[ordinal]
+            : DBNull.Value;
+
+    private static int ToInt32(object? value)
+        => value is null or DBNull
+            ? 0
+            : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+
+    private static string ValueText(object? value)
+        => value is null or DBNull
+            ? string.Empty
+            : Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+
+    private static string BlobSummary(object? value) => value switch
     {
         byte[] bytes => $"byte[{bytes.Length}] {ToHex(bytes)}",
         string text => $"string[{text.Length}] {text}",

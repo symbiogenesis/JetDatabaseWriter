@@ -36,6 +36,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 
@@ -445,6 +446,57 @@ internal static class DaoBaselineProbe
 
     // ────────────────────────── Snapshot / per-file analysis ────────────────
 
+    private static async Task<bool> CanReadPagesDirectlyAsync(AccessReader reader)
+    {
+        if (reader.DatabaseFormat == DatabaseFormat.Jet3Mdb)
+        {
+            return false;
+        }
+
+        AccessEncryptionFormat encryption = await AccessWriter.DetectEncryptionFormatAsync(reader.HostDatabasePath);
+        return encryption is AccessEncryptionFormat.None or AccessEncryptionFormat.AccdbLegacyPassword;
+    }
+
+    private static FileStream OpenPageReadStream(string path, int pageSize)
+        => new(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            pageSize,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+    private static async Task<byte[]> ReadPageDirectAsync(FileStream stream, int pageSize, long pageNumber)
+    {
+        var page = new byte[pageSize];
+        stream.Position = checked(pageNumber * pageSize);
+        int offset = 0;
+        while (offset < page.Length)
+        {
+            int read = await stream.ReadAsync(page.AsMemory(offset));
+            if (read == 0)
+            {
+                throw new EndOfStreamException("Unexpected end of database file while reading a page.");
+            }
+
+            offset += read;
+        }
+
+        return page;
+    }
+
+    private static async Task<byte[][]> LoadPagesDirectAsync(string path, int pageSize, int pageCount)
+    {
+        var pages = new byte[pageCount][];
+        await using FileStream stream = OpenPageReadStream(path, pageSize);
+        for (int pageNumber = 0; pageNumber < pages.Length; pageNumber++)
+        {
+            pages[pageNumber] = await ReadPageDirectAsync(stream, pageSize, pageNumber);
+        }
+
+        return pages;
+    }
+
     private sealed class BaselinePageCache
     {
         public static async Task<BaselinePageCache> LoadAsync(AccessReader reader)
@@ -456,24 +508,36 @@ internal static class DaoBaselineProbe
                 throw new InvalidOperationException("Baseline is too large to cache page bytes in memory.");
             }
 
-            var pages = new byte[(int)pageCount][];
-            for (int pageNumber = 0; pageNumber < pages.Length; pageNumber++)
+            bool directFilePages = await CanReadPagesDirectlyAsync(reader);
+            byte[][] pages;
+            if (directFilePages)
             {
-                pages[pageNumber] = await reader.GetRawPageBytesAsync(pageNumber, default);
+                pages = await LoadPagesDirectAsync(reader.HostDatabasePath, pageSize, (int)pageCount);
+            }
+            else
+            {
+                pages = new byte[(int)pageCount][];
+                for (int pageNumber = 0; pageNumber < pages.Length; pageNumber++)
+                {
+                    pages[pageNumber] = await reader.GetRawPageBytesAsync(pageNumber, default);
+                }
             }
 
-            return new BaselinePageCache(pageSize, pages);
+            return new BaselinePageCache(pageSize, pages, directFilePages);
         }
 
         private readonly byte[][] pages;
 
-        private BaselinePageCache(int pageSize, byte[][] pages)
+        private BaselinePageCache(int pageSize, byte[][] pages, bool usesDirectFilePages)
         {
             PageSize = pageSize;
             this.pages = pages;
+            UsesDirectFilePages = usesDirectFilePages;
         }
 
         public int PageSize { get; }
+
+        public bool UsesDirectFilePages { get; }
 
         public long PageCount => pages.LongLength;
 
@@ -508,16 +572,43 @@ internal static class DaoBaselineProbe
             int pgSz = r.PageSize;
             long pageCount = new FileInfo(r.HostDatabasePath).Length / pgSz;
             long shared = Math.Min(pageCount, baseline.PageCount);
+            bool directFilePages = baseline.UsesDirectFilePages && await CanReadPagesDirectlyAsync(r);
 
             var differing = new List<long>();
             var pageBytes = new Dictionary<long, byte[]>();
-            for (long p = 0; p < shared; p++)
+            if (directFilePages)
             {
-                byte[] a = await r.GetRawPageBytesAsync(p, default);
-                if (!a.AsSpan().SequenceEqual(baseline.GetPage(p)))
+                await using FileStream stream = OpenPageReadStream(r.HostDatabasePath, pgSz);
+                for (long p = 0; p < shared; p++)
                 {
-                    differing.Add(p);
-                    pageBytes[p] = a;
+                    byte[] page = await ReadPageDirectAsync(stream, pgSz, p);
+                    if (!page.AsSpan().SequenceEqual(baseline.GetPage(p)))
+                    {
+                        differing.Add(p);
+                        pageBytes[p] = page;
+                    }
+                }
+
+                for (long p = baseline.PageCount; p < pageCount; p++)
+                {
+                    pageBytes[p] = await ReadPageDirectAsync(stream, pgSz, p);
+                }
+            }
+            else
+            {
+                for (long p = 0; p < shared; p++)
+                {
+                    byte[] page = await r.GetRawPageBytesAsync(p, default);
+                    if (!page.AsSpan().SequenceEqual(baseline.GetPage(p)))
+                    {
+                        differing.Add(p);
+                        pageBytes[p] = page;
+                    }
+                }
+
+                for (long p = baseline.PageCount; p < pageCount; p++)
+                {
+                    pageBytes[p] = await r.GetRawPageBytesAsync(p, default);
                 }
             }
 
@@ -525,7 +616,6 @@ internal static class DaoBaselineProbe
             for (long p = baseline.PageCount; p < pageCount; p++)
             {
                 added.Add(p);
-                pageBytes[p] = await r.GetRawPageBytesAsync(p, default);
             }
 
             var types = new Dictionary<long, byte>();
