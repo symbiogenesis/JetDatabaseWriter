@@ -461,25 +461,21 @@ internal static class EncryptionConverter
         try
         {
             int utf8Len = System.Text.Encoding.UTF8.GetBytes(password, utf8);
-            using var sha = SHA256.Create();
             Span<byte> hash = stackalloc byte[32];
-            if (!sha.TryComputeHash(utf8.Slice(0, utf8Len), hash, out _))
-            {
-                throw new CryptographicException("SHA-256 hash computation failed.");
-            }
+            OfficeCryptoPrimitives.HashSha256(utf8.Slice(0, utf8Len), hash);
 
-            utf8.Slice(0, utf8Len).Clear();
+            CryptographicOperations.ZeroMemory(utf8.Slice(0, utf8Len));
 
             byte[] key = new byte[16];
             hash.Slice(0, 16).CopyTo(key);
-            hash.Clear();
+            CryptographicOperations.ZeroMemory(hash);
             return key;
         }
         finally
         {
             if (rented != null)
             {
-                Array.Clear(rented, 0, rented.Length);
+                CryptographicOperations.ZeroMemory(rented);
             }
         }
     }

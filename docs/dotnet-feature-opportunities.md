@@ -4,36 +4,6 @@ This document lists places where .NET and C# features from roughly .NET 6 throug
 
 The main project targets `netstandard2.1;net10.0`. Any BCL feature that is unavailable to `netstandard2.1` should either be isolated behind `#if NET6_0_OR_GREATER` / `#if NET8_0_OR_GREATER` / `#if NET10_0_OR_GREATER`, implemented through a small compatibility helper, or deliberately left out until the older asset is dropped.
 
-## Highest-value candidate
-
-### 1. Use one-shot and span-based crypto APIs in Office Crypto paths
-
-**Feature family:** .NET 6+ one-shot hash and HMAC helpers such as `SHA1.HashData`, `SHA1.TryHashData`, `SHA512.HashData`, `SHA512.TryHashData`, `SHA256.HashData`, `HMACSHA512.HashData`, and `HMACSHA512.TryHashData`; `CryptographicOperations.ZeroMemory`; span-based text encoding.
-
-**Where:**
-
-- `JetDatabaseWriter/Encryption/OfficeCryptoStandard.cs`
-- `JetDatabaseWriter/Encryption/OfficeCryptoAgile.cs`
-- `JetDatabaseWriter/Encryption/EncryptionManager.cs`
-- `JetDatabaseWriter/Encryption/EncryptionConverter.cs`
-
-**Why it matters:**
-
-Encryption is both correctness-sensitive and allocation-sensitive. Standard encryption performs 50,000 SHA-1 iterations; Agile performs 100,000 SHA-512 iterations. Current code often creates hash/HMAC instances and allocates intermediate byte arrays for inputs and outputs. That is correct, but the newer APIs express the single-shot intent better and can reduce GC pressure in password verification, encryption, re-encryption, and encrypted page open paths.
-
-**Concrete work:**
-
-- Replace `SHA1.Create().ComputeHash(...)` in Standard verifier hashing, password verification, key finalization, and PBKDF loops with static span-based helpers where possible.
-- Replace `SHA512.Create().ComputeHash(...)` in Agile verifier hashing, `ResolvePassword`, `SegmentIv`, `FlatPageIv`, `HmacIv`, `DeriveKey`, `DeriveAllPasswordKeys`, and `FinalizeKey` with span-based static helpers.
-- Replace `new HMACSHA512(key).ComputeHash(data)` in Agile data-integrity creation and verification with `HMACSHA512.HashData` / `TryHashData`.
-- Replace disposable `SHA256` instances used for AES page-key derivation with `SHA256.TryHashData` or a helper that writes into a stack span.
-- Avoid `password.ToArray()` in Standard key derivation. Encode `ReadOnlySpan<char>` directly into a stack or pooled UTF-16 buffer, then scrub it with `CryptographicOperations.ZeroMemory`.
-- Prefer `CryptographicOperations.FixedTimeEquals` for verifier/HMAC comparison helpers after validating comparable lengths. The existing XOR loops are constant-time-ish, but the BCL API makes the security intent clearer.
-
-**Expected benefit:** performance, robustness, code clarity, lower allocation pressure, and clearer security intent.
-
-**Compatibility note:** keep SHA-1, MD5, AES-CBC, and AES-ECB where the JET/Office formats require them. The recommendation is about safer/faster API shape, not changing algorithms.
-
 ## Medium-value candidates
 
 ### 3. Use frozen/read-only collection types for immutable lookup data
@@ -80,31 +50,6 @@ Some hot loops perform a lookup and then an add/update. `CollectionsMarshal.GetV
 - Wrap any usage in small helper methods with tests, because misuse can create subtle correctness bugs.
 
 **Expected benefit:** performance in selected loops, with a readability tradeoff.
-
-### 6. Use modern AES one-shot APIs where they match the required cipher mode (DONE)
-
-**Feature family:** newer `Aes` span/one-shot helpers such as CBC/ECB encrypt/decrypt methods where available on the target.
-
-**Status:** Implemented for Standard/Agile CBC package encryption and decryption in the `net6+` asset, with the existing transform fallback retained for `netstandard2.1`. The page-level ECB path in `EncryptionManager` remains unchanged because it uses cached in-place transforms and avoids temporary page buffers.
-
-**Where:**
-
-- `JetDatabaseWriter/Encryption/OfficeCryptoStandard.cs`
-- `JetDatabaseWriter/Encryption/OfficeCryptoAgile.cs`
-- `JetDatabaseWriter/Encryption/EncryptionManager.cs`
-
-**Why it matters:**
-
-The code used `ICryptoTransform.TransformFinalBlock` or cached transforms. That is a normal implementation, but one-shot AES helpers remove transform lifetime boilerplate in Standard/Agile package encryption and decryption where the modern API is available. The page-level ECB path in `EncryptionManager` is already in-place and allocation-aware, so it should be changed only if a newer API can preserve the same in-place behavior and format-required no-padding semantics.
-
-**Concrete work:**
-
-- Use `Aes.EncryptCbc` / `Aes.DecryptCbc` for `AesCbcZeroIv`, `AesCbcRaw`, and Agile package segment encryption under `#if NET6_0_OR_GREATER`.
-- Keep the existing `ICryptoTransform.TransformFinalBlock` fallback for `netstandard2.1`.
-- Keep spec-required `PaddingMode.None`, zero IVs, per-segment IV derivation, and ECB page encryption exactly as-is.
-- Benchmark and fuzz before replacing the in-place page transform path.
-
-**Expected benefit:** readability and potential allocation reduction in package encryption/decryption.
 
 ### 7. Introduce `TimeProvider` only where it buys deterministic behavior
 
@@ -212,6 +157,7 @@ These are worth preserving but do not need modernization churn right now.
 - Collection expressions and target-typed `new` are already common.
 - Primary constructors and `required` members are already used where they improve local code clarity, especially in FormatProbe and scaffold code.
 - The scaffold tool already uses `FrozenDictionary<Type, string>` for static type-name lookup.
+- Office Crypto Standard/Agile paths use one-shot AES-CBC APIs and shared span-based hash/HMAC helpers on modern targets, with `netstandard2.1` fallbacks where required.
 - xUnit v3 and Microsoft Testing Platform are already wired through `global.json`, the test project, and VS Code tasks.
 - Central package management, package lock files, nullable, latest analyzers, warnings-as-errors, NuGet audit, reproducible builds, XML docs, symbols, and strict arithmetic are already enabled.
 
@@ -226,6 +172,5 @@ These are worth preserving but do not need modernization churn right now.
 
 ## Suggested implementation order
 
-1. Crypto hash/HMAC modernization in `OfficeCryptoStandard`, `OfficeCryptoAgile`, `EncryptionManager`, and `EncryptionConverter`, backed by existing encryption tests plus allocation benchmarks.
-2. Package validation/API compatibility in pack/release builds.
-3. Targeted lower-priority polish: frozen static lookups, span Base64/hex parsing, `System.Threading.Lock` in tests, and FormatProbe LINQ cleanups.
+1. Package validation/API compatibility in pack/release builds.
+2. Targeted lower-priority polish: frozen static lookups, span Base64/hex parsing, `System.Threading.Lock` in tests, and FormatProbe LINQ cleanups.

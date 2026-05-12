@@ -110,7 +110,7 @@ internal static class OfficeCryptoAgile
         }
         finally
         {
-            Array.Clear(passwordUtf16, 0, passwordUtf16.Length);
+            CryptographicOperations.ZeroMemory(passwordUtf16);
         }
     }
 
@@ -150,11 +150,7 @@ internal static class OfficeCryptoAgile
                 NormalizeIv(passwordSalt, Constants.AgileEncryption.BlockSize),
                 encrypt: true);
 
-            byte[] verifierHash;
-            using (var sha2 = SHA512.Create())
-            {
-                verifierHash = sha2.ComputeHash(verifierHashInput);
-            }
+            byte[] verifierHash = OfficeCryptoPrimitives.Sha512(verifierHashInput);
 
             byte[] verifierHashCipher = AesCbcRaw(
                 PadToBlock(verifierHash),
@@ -175,11 +171,7 @@ internal static class OfficeCryptoAgile
             // key, compute HMAC-SHA512 over the EncryptedPackage, and encrypt
             // both the key and the value with the intermediate key.
             byte[] hmacKey = RandomBytes(Constants.AgileEncryption.HashBytes);
-            byte[] hmacValue;
-            using (var hmac = new HMACSHA512(hmacKey))
-            {
-                hmacValue = hmac.ComputeHash(encryptedPackage);
-            }
+            byte[] hmacValue = OfficeCryptoPrimitives.HmacSha512(hmacKey, encryptedPackage);
 
             byte[] hmacKeyCipher = AesCbcRaw(
                 PadToBlock(hmacKey),
@@ -217,7 +209,7 @@ internal static class OfficeCryptoAgile
         }
         finally
         {
-            Array.Clear(passwordUtf16, 0, passwordUtf16.Length);
+            CryptographicOperations.ZeroMemory(passwordUtf16);
         }
     }
 
@@ -330,7 +322,7 @@ internal static class OfficeCryptoAgile
         }
         finally
         {
-            Array.Clear(passwordUtf16, 0, passwordUtf16.Length);
+            CryptographicOperations.ZeroMemory(passwordUtf16);
         }
     }
 
@@ -451,13 +443,9 @@ internal static class OfficeCryptoAgile
         byte[] verifierInput = AesCbcDecrypt(d.EncryptedVerifierHashInput, verifierInputKey, d.PasswordSalt);
         byte[] storedHash = AesCbcDecrypt(d.EncryptedVerifierHashValue, verifierHashKey, d.PasswordSalt);
 
-        byte[] expectedHash;
-        using (var sha = SHA512.Create())
-        {
-            expectedHash = sha.ComputeHash(Truncate(verifierInput, d.PasswordSaltSize));
-        }
+        byte[] expectedHash = OfficeCryptoPrimitives.Sha512(Truncate(verifierInput, d.PasswordSaltSize));
 
-        if (!CryptographicEquals(expectedHash, storedHash, expectedHash.Length))
+        if (!OfficeCryptoPrimitives.FixedTimeEquals(expectedHash, storedHash, expectedHash.Length))
         {
             throw new UnauthorizedAccessException(
                 "The provided password is incorrect for this database.");
@@ -490,13 +478,9 @@ internal static class OfficeCryptoAgile
         byte[] hmacValueRaw = AesCbcRaw(d.EncryptedHmacValue, intermediateKey, hmacValueIv, encrypt: false);
         byte[] storedHmac = Truncate(hmacValueRaw, d.KeyDataHashSize);
 
-        byte[] computedHmac;
-        using (var hmac = new HMACSHA512(hmacKey))
-        {
-            computedHmac = hmac.ComputeHash(encryptedPackage);
-        }
+        byte[] computedHmac = OfficeCryptoPrimitives.HmacSha512(hmacKey, encryptedPackage);
 
-        if (!CryptographicEquals(computedHmac, storedHmac, d.KeyDataHashSize))
+        if (!OfficeCryptoPrimitives.FixedTimeEquals(computedHmac, storedHmac, d.KeyDataHashSize))
         {
             throw new InvalidDataException(
                 "Package integrity check failed: the EncryptedPackage HMAC does not match the stored dataIntegrity value.");
@@ -510,40 +494,47 @@ internal static class OfficeCryptoAgile
         //   H_(i+1) = SHA512(uint32_le(i) || H_i)
         //   H_final = SHA512(H_spinCount || blockKey)
         //   key     = H_final truncated, or padded with 0x36 to keyByteCount.
-        using var sha = SHA512.Create();
+        const int HashBytes = OfficeCryptoPrimitives.Sha512HashBytes;
+        byte[] h = new byte[HashBytes];
+        byte[] scratchHash = new byte[HashBytes];
 
-        byte[] buf = new byte[salt.Length + passwordUtf16.Length];
-        Buffer.BlockCopy(salt, 0, buf, 0, salt.Length);
-        Buffer.BlockCopy(passwordUtf16, 0, buf, salt.Length, passwordUtf16.Length);
-        byte[] h = sha.ComputeHash(buf);
-
-        byte[] iter = new byte[4 + h.Length];
-        for (int i = 0; i < spinCount; i++)
+        try
         {
-            BinaryPrimitives.WriteInt32LittleEndian(iter.AsSpan(0, 4), i);
+            byte[] buf = new byte[salt.Length + passwordUtf16.Length];
+            Buffer.BlockCopy(salt, 0, buf, 0, salt.Length);
+            Buffer.BlockCopy(passwordUtf16, 0, buf, salt.Length, passwordUtf16.Length);
+            OfficeCryptoPrimitives.HashSha512(buf, h);
 
-            Buffer.BlockCopy(h, 0, iter, 4, h.Length);
-            h = sha.ComputeHash(iter);
+            byte[] iter = new byte[4 + h.Length];
+            for (int i = 0; i < spinCount; i++)
+            {
+                BinaryPrimitives.WriteInt32LittleEndian(iter.AsSpan(0, 4), i);
+
+                Buffer.BlockCopy(h, 0, iter, 4, h.Length);
+                OfficeCryptoPrimitives.HashSha512(iter, scratchHash);
+                (h, scratchHash) = (scratchHash, h);
+            }
+
+            byte[] final = new byte[h.Length + blockKey.Length];
+            Buffer.BlockCopy(h, 0, final, 0, h.Length);
+            Buffer.BlockCopy(blockKey, 0, final, h.Length, blockKey.Length);
+            OfficeCryptoPrimitives.HashSha512(final, scratchHash);
+
+            byte[] key = new byte[keyByteCount];
+            int copyLength = Math.Min(scratchHash.Length, keyByteCount);
+            Buffer.BlockCopy(scratchHash, 0, key, 0, copyLength);
+            for (int i = copyLength; i < keyByteCount; i++)
+            {
+                key[i] = 0x36;
+            }
+
+            return key;
         }
-
-        byte[] final = new byte[h.Length + blockKey.Length];
-        Buffer.BlockCopy(h, 0, final, 0, h.Length);
-        Buffer.BlockCopy(blockKey, 0, final, h.Length, blockKey.Length);
-        byte[] hf = sha.ComputeHash(final);
-
-        if (hf.Length >= keyByteCount)
+        finally
         {
-            return Truncate(hf, keyByteCount);
+            CryptographicOperations.ZeroMemory(h);
+            CryptographicOperations.ZeroMemory(scratchHash);
         }
-
-        byte[] padded = new byte[keyByteCount];
-        Buffer.BlockCopy(hf, 0, padded, 0, hf.Length);
-        for (int i = hf.Length; i < keyByteCount; i++)
-        {
-            padded[i] = 0x36;
-        }
-
-        return padded;
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -604,11 +595,7 @@ internal static class OfficeCryptoAgile
         Buffer.BlockCopy(keyDataSalt, 0, data, 0, keyDataSalt.Length);
         BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(keyDataSalt.Length, 4), segmentIndex);
 
-        byte[] hash;
-        using (var sha = SHA512.Create())
-        {
-            hash = sha.ComputeHash(data);
-        }
+        byte[] hash = OfficeCryptoPrimitives.Sha512(data);
 
         return Truncate(hash, blockSize);
     }
@@ -626,11 +613,7 @@ internal static class OfficeCryptoAgile
         Buffer.BlockCopy(keyDataSalt, 0, data, 0, keyDataSalt.Length);
         Buffer.BlockCopy(blockKey, 0, data, keyDataSalt.Length, blockKey.Length);
 
-        byte[] hash;
-        using (var sha = SHA512.Create())
-        {
-            hash = sha.ComputeHash(data);
-        }
+        byte[] hash = OfficeCryptoPrimitives.Sha512(data);
 
         return Truncate(hash, blockSize);
     }
@@ -745,22 +728,6 @@ internal static class OfficeCryptoAgile
         return r;
     }
 
-    private static bool CryptographicEquals(byte[] a, byte[] b, int length)
-    {
-        if (a.Length < length || b.Length < length)
-        {
-            return false;
-        }
-
-        int diff = 0;
-        for (int i = 0; i < length; i++)
-        {
-            diff |= a[i] ^ b[i];
-        }
-
-        return diff == 0;
-    }
-
     // ════════════════════════════════════════════════════════════════
     // Encryption helpers
     // ════════════════════════════════════════════════════════════════
@@ -774,53 +741,68 @@ internal static class OfficeCryptoAgile
     private static (byte[] VerifierInput, byte[] VerifierHash, byte[] KeyValue, byte[] HmacKey, byte[] HmacValue)
         DeriveAllPasswordKeys(byte[] passwordUtf16, byte[] passwordSalt)
     {
-        using var sha = SHA512.Create();
+        const int HashBytes = OfficeCryptoPrimitives.Sha512HashBytes;
+        byte[] h = new byte[HashBytes];
+        byte[] scratchHash = new byte[HashBytes];
 
-        // Initial: H0 = SHA512(salt || passwordUtf16Le).
-        byte[] init = new byte[passwordSalt.Length + passwordUtf16.Length];
-        Buffer.BlockCopy(passwordSalt, 0, init, 0, passwordSalt.Length);
-        Buffer.BlockCopy(passwordUtf16, 0, init, passwordSalt.Length, passwordUtf16.Length);
-        byte[] h = sha.ComputeHash(init);
-
-        // Iterate: H_(i+1) = SHA512(uint32_le(i) || H_i).
-        byte[] iter = new byte[4 + h.Length];
-        for (int i = 0; i < Constants.AgileEncryption.SpinCount; i++)
+        try
         {
-            BinaryPrimitives.WriteInt32LittleEndian(iter.AsSpan(0, 4), i);
+            // Initial: H0 = SHA512(salt || passwordUtf16Le).
+            byte[] init = new byte[passwordSalt.Length + passwordUtf16.Length];
+            Buffer.BlockCopy(passwordSalt, 0, init, 0, passwordSalt.Length);
+            Buffer.BlockCopy(passwordUtf16, 0, init, passwordSalt.Length, passwordUtf16.Length);
+            OfficeCryptoPrimitives.HashSha512(init, h);
 
-            Buffer.BlockCopy(h, 0, iter, 4, h.Length);
-            h = sha.ComputeHash(iter);
+            // Iterate: H_(i+1) = SHA512(uint32_le(i) || H_i).
+            byte[] iter = new byte[4 + h.Length];
+            for (int i = 0; i < Constants.AgileEncryption.SpinCount; i++)
+            {
+                BinaryPrimitives.WriteInt32LittleEndian(iter.AsSpan(0, 4), i);
+
+                Buffer.BlockCopy(h, 0, iter, 4, h.Length);
+                OfficeCryptoPrimitives.HashSha512(iter, scratchHash);
+                (h, scratchHash) = (scratchHash, h);
+            }
+
+            // Mix in each block-key constant.
+            return (
+                FinalizeKey(h, BlockKeyVerifierHashInput),
+                FinalizeKey(h, BlockKeyVerifierHashValue),
+                FinalizeKey(h, BlockKeyEncryptedKeyValue),
+                FinalizeKey(h, BlockKeyHmacKey),
+                FinalizeKey(h, BlockKeyHmacValue));
         }
-
-        // Mix in each block-key constant.
-        return (
-            FinalizeKey(sha, h, BlockKeyVerifierHashInput),
-            FinalizeKey(sha, h, BlockKeyVerifierHashValue),
-            FinalizeKey(sha, h, BlockKeyEncryptedKeyValue),
-            FinalizeKey(sha, h, BlockKeyHmacKey),
-            FinalizeKey(sha, h, BlockKeyHmacValue));
+        finally
+        {
+            CryptographicOperations.ZeroMemory(h);
+            CryptographicOperations.ZeroMemory(scratchHash);
+        }
     }
 
-    private static byte[] FinalizeKey(SHA512 sha, byte[] iteratedHash, byte[] blockKey)
+    private static byte[] FinalizeKey(byte[] iteratedHash, byte[] blockKey)
     {
         byte[] buf = new byte[iteratedHash.Length + blockKey.Length];
         Buffer.BlockCopy(iteratedHash, 0, buf, 0, iteratedHash.Length);
         Buffer.BlockCopy(blockKey, 0, buf, iteratedHash.Length, blockKey.Length);
-        byte[] hf = sha.ComputeHash(buf);
+        byte[] hf = new byte[OfficeCryptoPrimitives.Sha512HashBytes];
+        OfficeCryptoPrimitives.HashSha512(buf, hf);
 
-        if (hf.Length >= Constants.AgileEncryption.KeyBytes)
+        try
         {
-            return Truncate(hf, Constants.AgileEncryption.KeyBytes);
-        }
+            byte[] key = new byte[Constants.AgileEncryption.KeyBytes];
+            int copyLength = Math.Min(hf.Length, key.Length);
+            Buffer.BlockCopy(hf, 0, key, 0, copyLength);
+            for (int i = copyLength; i < key.Length; i++)
+            {
+                key[i] = 0x36;
+            }
 
-        byte[] padded = new byte[Constants.AgileEncryption.KeyBytes];
-        Buffer.BlockCopy(hf, 0, padded, 0, hf.Length);
-        for (int i = hf.Length; i < Constants.AgileEncryption.KeyBytes; i++)
+            return key;
+        }
+        finally
         {
-            padded[i] = 0x36;
+            CryptographicOperations.ZeroMemory(hf);
         }
-
-        return padded;
     }
 
     private static byte[] EncryptPackage(byte[] intermediateKey, byte[] keyDataSalt, byte[] plaintext)
@@ -913,11 +895,7 @@ internal static class OfficeCryptoAgile
                 NormalizeIv(passwordSalt, Constants.AgileEncryption.BlockSize),
                 encrypt: true);
 
-            byte[] verifierHash;
-            using (var sha2 = SHA512.Create())
-            {
-                verifierHash = sha2.ComputeHash(verifierHashInput);
-            }
+            byte[] verifierHash = OfficeCryptoPrimitives.Sha512(verifierHashInput);
 
             byte[] verifierHashCipher = AesCbcRaw(
                 PadToBlock(verifierHash),
@@ -951,7 +929,7 @@ internal static class OfficeCryptoAgile
         }
         finally
         {
-            Array.Clear(passwordUtf16, 0, passwordUtf16.Length);
+            CryptographicOperations.ZeroMemory(passwordUtf16);
         }
     }
 
@@ -1020,11 +998,7 @@ internal static class OfficeCryptoAgile
         byte[] data = new byte[keyDataSalt.Length + blockKey.Length];
         Buffer.BlockCopy(keyDataSalt, 0, data, 0, keyDataSalt.Length);
         Buffer.BlockCopy(blockKey, 0, data, keyDataSalt.Length, blockKey.Length);
-        byte[] hash;
-        using (var sha = SHA512.Create())
-        {
-            hash = sha.ComputeHash(data);
-        }
+        byte[] hash = OfficeCryptoPrimitives.Sha512(data);
 
         return Truncate(hash, Constants.AgileEncryption.BlockSize);
     }

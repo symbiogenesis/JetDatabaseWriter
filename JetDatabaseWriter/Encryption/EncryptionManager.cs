@@ -986,20 +986,16 @@ internal static class EncryptionManager
         {
             int utf8Len = Encoding.UTF8.GetBytes(password, utf8);
             Span<byte> hash = stackalloc byte[32];
-            using var sha = SHA256.Create();
-            if (!sha.TryComputeHash(utf8.Slice(0, utf8Len), hash, out _))
-            {
-                throw new CryptographicException("SHA-256 hash computation failed.");
-            }
+            OfficeCryptoPrimitives.HashSha256(utf8.Slice(0, utf8Len), hash);
 
             byte[] key = hash.Slice(0, 16).ToArray(); // AES-128
-            hash.Clear();
+            CryptographicOperations.ZeroMemory(hash);
             return key;
         }
         finally
         {
             // Scrub any password bytes from the buffer we used.
-            (rented ?? stackBuf).Clear();
+            CryptographicOperations.ZeroMemory(utf8);
         }
     }
 }
