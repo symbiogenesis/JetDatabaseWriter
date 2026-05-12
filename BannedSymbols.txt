@@ -1,0 +1,57 @@
+// Project-specific banned APIs. Keep this list focused so RS0030 remains high-signal.
+
+// Blocking and sync-over-async APIs.
+M:System.Threading.Thread.Join;Use async coordination and cancellation instead of blocking a thread.
+M:System.Threading.Thread.Join(System.Int32);Use async coordination and cancellation instead of blocking a thread.
+M:System.Threading.Thread.Join(System.TimeSpan);Use async coordination and cancellation instead of blocking a thread.
+M:System.Threading.Thread.Sleep(System.Int32);Use await Task.Delay(...) for asynchronous delays.
+M:System.Threading.Thread.Sleep(System.TimeSpan);Use await Task.Delay(...) for asynchronous delays.
+M:System.Threading.Tasks.Task.Wait;Await the task instead of blocking.
+M:System.Threading.Tasks.Task.Wait(System.Int32);Await the task or use WaitAsync with a timeout/cancellation token.
+M:System.Threading.Tasks.Task.Wait(System.Int32,System.Threading.CancellationToken);Await the task or use WaitAsync with a timeout/cancellation token.
+M:System.Threading.Tasks.Task.Wait(System.Threading.CancellationToken);Await the task instead of blocking.
+M:System.Threading.Tasks.Task.Wait(System.TimeSpan);Await the task or use WaitAsync with a timeout/cancellation token.
+M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[]);Use await Task.WhenAll(...) instead of blocking.
+M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[],System.Int32);Use await Task.WhenAll(...) or WaitAsync with a timeout/cancellation token.
+M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[],System.Int32,System.Threading.CancellationToken);Use await Task.WhenAll(...) or WaitAsync with a timeout/cancellation token.
+M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[],System.Threading.CancellationToken);Use await Task.WhenAll(...) instead of blocking.
+M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[],System.TimeSpan);Use await Task.WhenAll(...) or WaitAsync with a timeout/cancellation token.
+M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[]);Use await Task.WhenAny(...) instead of blocking.
+M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[],System.Int32);Use await Task.WhenAny(...) or WaitAsync with a timeout/cancellation token.
+M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[],System.Int32,System.Threading.CancellationToken);Use await Task.WhenAny(...) or WaitAsync with a timeout/cancellation token.
+M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[],System.Threading.CancellationToken);Use await Task.WhenAny(...) instead of blocking.
+M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[],System.TimeSpan);Use await Task.WhenAny(...) or WaitAsync with a timeout/cancellation token.
+P:System.Threading.Tasks.Task`1.Result;Await the task instead of blocking on Result.
+
+// Process termination APIs.
+M:System.Environment.FailFast(System.String);Let top-level exception handling/logging handle fatal failures.
+M:System.Environment.FailFast(System.String,System.Exception);Let top-level exception handling/logging handle fatal failures.
+
+// Unsafe serialization APIs.
+T:System.Runtime.Serialization.Formatters.Binary.BinaryFormatter;BinaryFormatter is unsafe and obsolete. Use System.Text.Json or a purpose-built serializer.
+
+// Weak or obsolete cryptography APIs.
+T:System.Security.Cryptography.DES;Use AES.
+T:System.Security.Cryptography.MD5;Use SHA-256 or stronger unless interoperating with a legacy checksum format.
+T:System.Security.Cryptography.RC2;Use AES.
+T:System.Security.Cryptography.Rijndael;Use AES.
+T:System.Security.Cryptography.SHA1;Use SHA-256 or stronger.
+T:System.Security.Cryptography.TripleDES;Use AES.
+
+// Legacy HTTP APIs.
+T:System.Net.HttpWebRequest;Use HttpClient.
+T:System.Net.WebClient;Use HttpClient.
+T:System.Net.WebRequest;Use HttpClient.
+
+// Ambiguous process-start overloads.
+M:System.Diagnostics.Process.Start(System.String);Use ProcessStartInfo with explicit UseShellExecute and arguments.
+M:System.Diagnostics.Process.Start(System.String,System.String);Use ProcessStartInfo with explicit UseShellExecute and argument handling.
+
+// Reflection activation APIs.
+T:System.Activator;Use dependency injection, typed factories, or explicit constructors instead of reflection activation.
+
+// Ambiguous local clock APIs.
+P:System.DateTime.Now;Prefer TimeProvider, DateTimeOffset.UtcNow, DateTime.UtcNow, or DateTimeOffset.Now for intentional local display timestamps.
+
+// Process termination APIs.
+M:System.Environment.Exit(System.Int32);Return an error result or throw an exception instead of terminating the process.
