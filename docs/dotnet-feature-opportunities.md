@@ -4,7 +4,7 @@ This document lists places where .NET and C# features from roughly .NET 6 throug
 
 The main project targets `netstandard2.1;net10.0`. Any BCL feature that is unavailable to `netstandard2.1` should either be isolated behind `#if NET6_0_OR_GREATER` / `#if NET8_0_OR_GREATER` / `#if NET10_0_OR_GREATER`, implemented through a small compatibility helper, or deliberately left out until the older asset is dropped.
 
-## Highest-value candidates
+## Highest-value candidate
 
 ### 1. Use one-shot and span-based crypto APIs in Office Crypto paths
 
@@ -34,102 +34,9 @@ Encryption is both correctness-sensitive and allocation-sensitive. Standard encr
 
 **Compatibility note:** keep SHA-1, MD5, AES-CBC, and AES-ECB where the JET/Office formats require them. The recommendation is about safer/faster API shape, not changing algorithms.
 
-### 2. Use `FileStreamOptions` and preallocation in file creation/replacement (DONE)
-
-**Feature family:** .NET 6+ `FileStreamOptions`, `PreallocationSize`, clearer async/sequential/random access options.
-
-**Where:**
-
-- `JetDatabaseWriter/AccessBase.cs`
-- `JetDatabaseWriter/AccessWriter.cs`
-- `JetDatabaseWriter/Encryption/EncryptionManager.cs`
-- `JetDatabaseWriter/Transactions/LockFileSlotWriter.cs`
-- transaction and lock-file tests that open `FileStream` directly
-
-**Why it matters:**
-
-The project has a few central file-open paths plus several direct `new FileStream(...)` calls. `FileStreamOptions` would make access/share/options choices harder to misread, and `PreallocationSize` can reduce fragmentation and partial-allocation surprises when writing known-size database images or temporary encrypted replacements.
-
-**Concrete work:**
-
-- Update `AccessBase.OpenDatabaseFileStream` to construct `FileStreamOptions` from the existing mode/access/share/options/buffer-size inputs.
-- Use `FileStreamOptions` in `AccessWriter.CreateDatabaseAsync(string, ...)` and set `PreallocationSize = dbBytes.Length` when creating the initial database image.
-- Use `FileStreamOptions` in `EncryptionManager.ReplaceFileAtomicAsync` and set `PreallocationSize = contents.Length` for the replacement file.
-- Consider using `FileStreamOptions` in `LockFileSlotWriter.Open` for the JET lock file path, while preserving `FileShare.ReadWrite | FileShare.Delete` semantics.
-- Clean up direct `FileStream` construction in transaction/byte-range-lock tests for consistency.
-
-**Expected benefit:** readability, maintainability, and modest I/O robustness/performance during create/re-encrypt workflows.
-
-### 3. Consider `RandomAccess` for page reads on path-backed streams (DONE)
-
-**Feature family:** .NET 6+ `System.IO.RandomAccess` positional reads/writes.
-
-**Where:**
-
-- `JetDatabaseWriter/AccessBase.cs`
-- `JetDatabaseWriter/AccessReader.cs`
-- `JetDatabaseWriter/AccessReaderOptions.cs`
-
-**Why it matters:**
-
-`ReadPageAsync` currently serializes stream positioning through `_ioGate`, seeks, then reads. That is correct for arbitrary `Stream` inputs, encrypted streams, and journal-aware writer paths, but it prevents true positional reads when the backing source is a `FileStream`. This is especially relevant because `AccessReaderOptions` already has `ParallelPageReadsEnabled`; positional I/O would make that option easier to exploit without shared stream-position races.
-
-**Concrete work:**
-
-- Add an internal path/file-handle fast path for `FileStream`-backed readers that uses `RandomAccess.ReadAsync(handle, buffer, fileOffset, cancellationToken)`.
-- Keep the current `_ioGate` + seek/read path for caller-supplied streams, active journals, in-memory decrypted Office Crypto streams, and any stream without a safe file handle.
-- Benchmark table streaming and catalog scans before enabling by default; the current page cache and DAO-format constraints may make the win workload-dependent.
-- If positional writes are considered later, account carefully for byte-range locks, transaction journals, and page encryption.
-
-**Expected benefit:** performance and correctness headroom for parallel page reads; less reliance on mutable stream position.
-
-### 4. Use `Stream.ReadExactlyAsync` / `ReadAtLeastAsync` where exact bytes are required (DONE)
-
-**Feature family:** .NET 7+ exact-read APIs.
-
-**Where:**
-
-- `JetDatabaseWriter/AccessBase.cs`
-- `JetDatabaseWriter/CompoundFile/CompoundFileReader.cs`
-- `JetDatabaseWriter/Encryption/EncryptionManager.cs`
-
-**Why it matters:**
-
-Several methods manually loop until a header, page, CFB sector, or sniff buffer is filled. Manual loops are fine, but exact-read APIs document the invariant directly and give more uniform truncated-file behavior.
-
-**Concrete work:**
-
-- Use `ReadExactlyAsync` in `ReadHeaderAsync` for the 128-byte database header.
-- Use exact reads in CFB sector/header parsing where partial data is always corrupt.
-- Use exact reads in encryption detection and sniffing only where truncation should be an error; retain partial-read tolerance where the code is intentionally probing short streams.
-- Keep page reads conservative: a missing page in a corrupt/truncated database should produce a clear format error, but the writer's transaction/journal paths may need their existing behavior.
-
-**Expected benefit:** correctness, robustness, and readability.
-
-### 5. Use `ZLibStream` for zlib-wrapped attachment data (DONE)
-
-**Feature family:** .NET 6+ `System.IO.Compression.ZLibStream`.
-
-**Where:**
-
-- `JetDatabaseWriter/AccessReader.cs`
-- possibly `JetDatabaseWriter/ComplexColumns/Models/AttachmentWrapper.cs`, after confirming the exact wire format
-
-**Why it matters:**
-
-`AccessReader.DecompressAttachmentData` scans for a zlib header, skips the 2-byte header, then feeds the remainder to `DeflateStream`. That works for many payloads, but it hand-rolls part of the zlib wrapper handling. `ZLibStream` understands the wrapper directly, which should make attachment/OLE decompression less brittle.
-
-**Concrete work:**
-
-- In the heuristic reader path, once `FindZlibHeader` locates a candidate, feed the slice beginning at the zlib header to `ZLibStream` instead of skipping into `DeflateStream`.
-- Keep `AttachmentWrapper.RawDeflate` on `DeflateStream` unless DAO/Jackcess fixture evidence shows that wrapper payload is zlib-wrapped rather than raw deflate.
-- Add tests with known zlib-wrapped and raw-deflate attachment samples before changing writer output.
-
-**Expected benefit:** correctness and maintainability for complex attachment/OLE payload handling.
-
 ## Medium-value candidates
 
-### 6. Replace `BinaryWriter` + `MemoryStream` with direct span writers in small binary serializers
+### 2. Replace `BinaryWriter` + `MemoryStream` with direct span writers in small binary serializers
 
 **Feature family:** span APIs, `BinaryPrimitives`, `IBufferWriter<byte>` / `ArrayBufferWriter<byte>` where useful.
 
@@ -150,7 +57,7 @@ The column-property block serializer builds known little-endian binary layouts u
 
 **Expected benefit:** readability for binary layout, small allocation reduction, and easier auditing.
 
-### 7. Use frozen/read-only collection types for immutable lookup data
+### 3. Use frozen/read-only collection types for immutable lookup data
 
 **Feature family:** .NET 8+ `FrozenDictionary` / `FrozenSet`; newer read-only collection helpers.
 
@@ -172,7 +79,7 @@ The scaffold tool already uses `FrozenDictionary<Type, string>` for friendly typ
 
 **Expected benefit:** code quality and small lookup/read-only correctness gains.
 
-### 8. Use `CollectionsMarshal.GetValueRefOrAddDefault` only in measured dictionary-building hot paths
+### 4. Use `CollectionsMarshal.GetValueRefOrAddDefault` only in measured dictionary-building hot paths
 
 **Feature family:** .NET 6+ `CollectionsMarshal` dictionary ref APIs.
 
@@ -195,7 +102,7 @@ Some hot loops perform a lookup and then an add/update. `CollectionsMarshal.GetV
 
 **Expected benefit:** performance in selected loops, with a readability tradeoff.
 
-### 9. Use span-based Base64 and hex parsing to avoid substring/split allocations
+### 5. Use span-based Base64 and hex parsing to avoid substring/split allocations
 
 **Feature family:** span overloads for `Convert`, `Convert.FromHexString`, `Convert.TryFromBase64String`, `Convert.TryFromBase64Chars`, `Convert.ToHexString`.
 
@@ -218,7 +125,7 @@ Several string-to-binary paths split strings or allocate substrings before parsi
 
 **Expected benefit:** performance, fewer exception-driven parse paths, and cleaner malformed-input handling.
 
-### 10. Use modern AES one-shot APIs where they match the required cipher mode
+### 6. Use modern AES one-shot APIs where they match the required cipher mode
 
 **Feature family:** newer `Aes` span/one-shot helpers such as CBC/ECB encrypt/decrypt methods where available on the target.
 
@@ -240,7 +147,7 @@ The code currently uses `ICryptoTransform.TransformFinalBlock` or cached transfo
 
 **Expected benefit:** readability and potential allocation reduction in package encryption/decryption.
 
-### 11. Introduce `TimeProvider` only where it buys deterministic behavior
+### 7. Introduce `TimeProvider` only where it buys deterministic behavior
 
 **Feature family:** .NET 8+ `TimeProvider`.
 
@@ -266,28 +173,7 @@ The writer stamps `DateCreate`, `DateUpdate`, and default attachment timestamps 
 
 ## Low-value or situational candidates
 
-### 12. Use .NET 8 LINQ helpers in probes and diagnostics
-
-**Feature family:** `CountBy`, `AggregateBy`, `Index`, and newer LINQ aggregation helpers.
-
-**Where:**
-
-- `JetDatabaseWriter.FormatProbe/FormatProbeApplication.cs`
-- `JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs`
-- `JetDatabaseWriter.FormatProbe/LongRowBisect.cs`
-
-**Why it matters:**
-
-FormatProbe is an analysis tool, not a production hot path. Some summaries scan the same collection multiple times with `Count(...)` / `Sum(...)`. Newer LINQ helpers can reduce scans and clarify intent, but the performance impact is tiny compared with DAO and file I/O.
-
-**Concrete work:**
-
-- Replace repeated verdict counting with a single local aggregation or `CountBy` when it makes the code clearer.
-- Avoid clever LINQ if a simple `foreach` is more readable.
-
-**Expected benefit:** readability and minor analysis-tool performance.
-
-### 13. Use `System.Threading.Lock` for simple synchronous locks after target constraints are settled
+### 9. Use `System.Threading.Lock` for simple synchronous locks after target constraints are settled
 
 **Feature family:** .NET 9+ `System.Threading.Lock`.
 
@@ -308,7 +194,7 @@ FormatProbe is an analysis tool, not a production hot path. Some summaries scan 
 
 **Expected benefit:** small readability/allocation polish in tests.
 
-### 14. Use package validation and API compatibility checks before publishing
+### 10. Use package validation and API compatibility checks before publishing
 
 **Feature family:** SDK package validation, API compatibility checks, analyzer properties.
 
@@ -331,7 +217,7 @@ The library is packaged with symbols, documentation, strict analyzers, and multi
 
 **Expected benefit:** release robustness and code quality.
 
-### 15. Add more BenchmarkDotNet diagnostics for modernization work
+### 11. Add more BenchmarkDotNet diagnostics for modernization work
 
 **Feature family:** modern BenchmarkDotNet diagnosers and memory/disassembly exporters.
 
@@ -351,7 +237,7 @@ Many candidate changes are micro-optimizations. BenchmarkDotNet is already prese
 
 - Add `MemoryDiagnoser` consistently where allocation changes are being evaluated.
 - Use disassembly or hardware-counter diagnosers only for focused investigations, not default benchmark runs.
-- Add targeted benchmarks before changing `RandomAccess`, `CollectionsMarshal`, hash loops, zlib handling, or index key encoding.
+- Add targeted benchmarks before changing `CollectionsMarshal`, hash loops, or index key encoding.
 
 **Expected benefit:** performance correctness and better regression visibility.
 
@@ -381,8 +267,5 @@ These are worth preserving but do not need modernization churn right now.
 ## Suggested implementation order
 
 1. Crypto hash/HMAC modernization in `OfficeCryptoStandard`, `OfficeCryptoAgile`, `EncryptionManager`, and `EncryptionConverter`, backed by existing encryption tests plus allocation benchmarks.
-2. `FileStreamOptions` and preallocation in database create/re-encrypt paths. (DONE)
-3. Exact-read helpers for headers, CFB sectors, and encryption sniffing.
-4. `ZLibStream` experiments for Access attachment/OLE decompression with fixture tests.
-5. Package validation/API compatibility in pack/release builds.
-6. Targeted lower-priority polish: frozen static lookups, span Base64/hex parsing, `System.Threading.Lock` in tests, and FormatProbe LINQ cleanups.
+2. Package validation/API compatibility in pack/release builds.
+3. Targeted lower-priority polish: frozen static lookups, span Base64/hex parsing, `System.Threading.Lock` in tests, and FormatProbe LINQ cleanups.

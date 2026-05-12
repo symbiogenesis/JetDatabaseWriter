@@ -1072,8 +1072,21 @@ internal static class DaoBaselineProbe
         }
 
         _ = sb.AppendLine();
-        int pass = rows.Count(r => r.Verdict.Contains("PASS", StringComparison.Ordinal));
-        int fail = rows.Count(r => r.Verdict.Contains("FAIL", StringComparison.Ordinal));
+        int pass = 0;
+        int fail = 0;
+        foreach (HypothesisRow row in rows)
+        {
+            if (row.Verdict.Contains("PASS", StringComparison.Ordinal))
+            {
+                pass++;
+            }
+
+            if (row.Verdict.Contains("FAIL", StringComparison.Ordinal))
+            {
+                fail++;
+            }
+        }
+
         int na = rows.Count - pass - fail;
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"**Summary:** {pass} ✅ PASS · {fail} ❌ FAIL · {na} ⚠️ N/A/INFO ({rows.Count} total).");
         _ = sb.AppendLine();
