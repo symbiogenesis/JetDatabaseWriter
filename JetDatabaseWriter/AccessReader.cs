@@ -64,6 +64,11 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// </summary>
 public sealed class AccessReader : AccessBase, IAccessReader
 {
+#if NET8_0_OR_GREATER
+    private static readonly SearchValues<byte> OlePayloadSignatureFirstBytes = SearchValues.Create([0x25, 0x42, 0x47, 0x49, 0x4D, 0x50, 0x7B, 0x89, 0xD0, 0xFF]);
+    private static readonly SearchValues<byte> ZlibHeaderSuffixes = SearchValues.Create([0x01, 0x5E, 0x9C, 0xDA]);
+#endif
+
     private readonly AsyncReentrantOperationGate _operationGate = new();
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeReaderResourcesAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private readonly AsyncLazyInitializer<Dictionary<long, long[]>> _ownedDataPageIndex;
@@ -2182,90 +2187,107 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         int scanEnd = Math.Min(valueEnd, valueStart + 512);
+#if NET8_0_OR_GREATER
+        ReadOnlySpan<byte> searchWindow = buffer.AsSpan(valueStart, scanEnd - valueStart - 3);
+        int consumed = 0;
+        while (consumed < searchWindow.Length)
+        {
+            int relative = searchWindow[consumed..].IndexOfAny(OlePayloadSignatureFirstBytes);
+            if (relative < 0)
+            {
+                return false;
+            }
+
+            int i = valueStart + consumed + relative;
+            ReadOnlySpan<byte> window = buffer.AsSpan(i, scanEnd - i);
+            if (TryMatchOlePayloadMagic(window, out mimeType))
+            {
+                payloadStart = i;
+                payloadLength = valueEnd - i;
+                return true;
+            }
+
+            consumed += relative + 1;
+        }
+#else
         for (int i = valueStart; i < scanEnd - 3; i++)
         {
             ReadOnlySpan<byte> window = buffer.AsSpan(i, scanEnd - i);
-            int fileLen = valueEnd - i;
-
-            // ── Images ──
-            if (window.StartsWith(Constants.OleMagicBytes.Jpeg))
+            if (TryMatchOlePayloadMagic(window, out mimeType))
             {
                 payloadStart = i;
-                payloadLength = fileLen;
-                mimeType = "image/jpeg";
-                return true;
-            }
-
-            if (window.StartsWith(Constants.OleMagicBytes.Png))
-            {
-                payloadStart = i;
-                payloadLength = fileLen;
-                mimeType = "image/png";
-                return true;
-            }
-
-            if (window.StartsWith(Constants.OleMagicBytes.Gif))
-            {
-                payloadStart = i;
-                payloadLength = fileLen;
-                mimeType = "image/gif";
-                return true;
-            }
-
-            if (window.StartsWith(Constants.OleMagicBytes.Bmp))
-            {
-                payloadStart = i;
-                payloadLength = fileLen;
-                mimeType = "image/bmp";
-                return true;
-            }
-
-            if (window.StartsWith(Constants.OleMagicBytes.TiffLittleEndian) ||
-                window.StartsWith(Constants.OleMagicBytes.TiffBigEndian))
-            {
-                payloadStart = i;
-                payloadLength = fileLen;
-                mimeType = "image/tiff";
-                return true;
-            }
-
-            // ── Documents ──
-            if (window.StartsWith(Constants.OleMagicBytes.Pdf))
-            {
-                payloadStart = i;
-                payloadLength = fileLen;
-                mimeType = "application/pdf";
-                return true;
-            }
-
-            // ZIP (also DOCX/XLSX/PPTX). For simplicity, return generic zip MIME.
-            if (window.StartsWith(Constants.OleMagicBytes.Zip))
-            {
-                payloadStart = i;
-                payloadLength = fileLen;
-                mimeType = "application/zip";
-                return true;
-            }
-
-            // DOC (Word 97-2003): OLE compound file.
-            if (window.StartsWith(Constants.OleMagicBytes.OleCompound))
-            {
-                payloadStart = i;
-                payloadLength = fileLen;
-                mimeType = "application/msword";
-                return true;
-            }
-
-            // RTF: {\rt
-            if (window.StartsWith(Constants.OleMagicBytes.Rtf))
-            {
-                payloadStart = i;
-                payloadLength = fileLen;
-                mimeType = "application/rtf";
+                payloadLength = valueEnd - i;
                 return true;
             }
         }
+#endif
 
+        return false;
+    }
+
+    private static bool TryMatchOlePayloadMagic(ReadOnlySpan<byte> window, out string? mimeType)
+    {
+        // ── Images ──
+        if (window.StartsWith(Constants.OleMagicBytes.Jpeg))
+        {
+            mimeType = "image/jpeg";
+            return true;
+        }
+
+        if (window.StartsWith(Constants.OleMagicBytes.Png))
+        {
+            mimeType = "image/png";
+            return true;
+        }
+
+        if (window.StartsWith(Constants.OleMagicBytes.Gif))
+        {
+            mimeType = "image/gif";
+            return true;
+        }
+
+        if (window.StartsWith(Constants.OleMagicBytes.Bmp))
+        {
+            mimeType = "image/bmp";
+            return true;
+        }
+
+        if (window.StartsWith(Constants.OleMagicBytes.TiffLittleEndian) ||
+            window.StartsWith(Constants.OleMagicBytes.TiffBigEndian))
+        {
+            mimeType = "image/tiff";
+            return true;
+        }
+
+        // ── Documents ──
+        if (window.StartsWith(Constants.OleMagicBytes.Pdf))
+        {
+            mimeType = "application/pdf";
+            return true;
+        }
+
+        // ZIP (also DOCX/XLSX/PPTX). For simplicity, return generic zip MIME.
+        if (window.StartsWith(Constants.OleMagicBytes.Zip))
+        {
+            mimeType = "application/zip";
+            return true;
+        }
+
+        // DOC (Word 97-2003): OLE compound file.
+        if (window.StartsWith(Constants.OleMagicBytes.OleCompound))
+        {
+            mimeType = "application/msword";
+            return true;
+        }
+
+        // RTF: {\rt
+        if (window.StartsWith(Constants.OleMagicBytes.Rtf))
+        {
+            mimeType = "application/rtf";
+            return true;
+        }
+
+        mimeType = null;
         return false;
     }
 
@@ -2523,15 +2545,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // Scan for zlib header (0x78) after the compression flag byte.
             // Access attachment data starts with a 1-byte compression flag,
             // followed by implementation-dependent header bytes, then zlib-compressed data.
-            int zlibPos = -1;
-            for (int i = offset; i < data.Length - 1; i++)
-            {
-                if (data[i] == 0x78 && (data[i + 1] == 0x01 || data[i + 1] == 0x5E || data[i + 1] == 0x9C || data[i + 1] == 0xDA))
-                {
-                    zlibPos = i;
-                    break;
-                }
-            }
+            int zlibPos = FindZlibHeader(data, offset);
 
             if (zlibPos < 0 || zlibPos + 2 >= data.Length)
             {
@@ -2551,6 +2565,47 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // Not valid deflate — return raw bytes without compression flag.
             return data.AsSpan(offset).ToArray();
         }
+    }
+
+    private static int FindZlibHeader(byte[] data, int offset)
+    {
+        if (offset >= data.Length - 1)
+        {
+            return -1;
+        }
+
+#if NET8_0_OR_GREATER
+        ReadOnlySpan<byte> searchWindow = data.AsSpan(offset, data.Length - offset - 1);
+        int consumed = 0;
+        while (consumed < searchWindow.Length)
+        {
+            int relative = searchWindow[consumed..].IndexOf((byte)0x78);
+            if (relative < 0)
+            {
+                return -1;
+            }
+
+            int candidate = offset + consumed + relative;
+            if (ZlibHeaderSuffixes.Contains(data[candidate + 1]))
+            {
+                return candidate;
+            }
+
+            consumed += relative + 1;
+        }
+
+        return -1;
+#else
+        for (int i = offset; i < data.Length - 1; i++)
+        {
+            if (data[i] == 0x78 && (data[i + 1] == 0x01 || data[i + 1] == 0x5E || data[i + 1] == 0x9C || data[i + 1] == 0xDA))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+#endif
     }
 
     /// <summary>

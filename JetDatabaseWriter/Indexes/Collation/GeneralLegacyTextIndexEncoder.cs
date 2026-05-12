@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Indexes.Collation;
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -73,6 +74,10 @@ internal static class GeneralLegacyTextIndexEncoder
     private const string GenLegExtResource = "JetDatabaseWriter.IndexCodeTables.index_codes_ext_genleg.txt.gz";
 
     private static readonly byte[] CrazyCodesSuffix = [0xFF, 0x02, 0x80, 0xFF, 0x80];
+
+#if NET8_0_OR_GREATER
+    private static readonly SearchValues<char> LineBreakChars = SearchValues.Create("\r\n");
+#endif
 
     internal static readonly byte[] SurrogateExtraBytes = [0x3F];
 
@@ -235,6 +240,9 @@ internal static class GeneralLegacyTextIndexEncoder
 
     private static int FindFirstLineBreak(string text)
     {
+#if NET8_0_OR_GREATER
+        return text.AsSpan().IndexOfAny(LineBreakChars);
+#else
         for (int i = 0; i < text.Length; i++)
         {
             char c = text[i];
@@ -245,6 +253,7 @@ internal static class GeneralLegacyTextIndexEncoder
         }
 
         return -1;
+#endif
     }
 
     /// <summary>
