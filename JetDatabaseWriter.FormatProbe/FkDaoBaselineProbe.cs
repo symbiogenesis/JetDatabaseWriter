@@ -35,11 +35,7 @@ internal static class FkDaoBaselineProbe
             return 1;
         }
 
-        if (Directory.Exists(workRoot))
-        {
-            Directory.Delete(workRoot, recursive: true);
-        }
-
+        workRoot = PrepareWorkRoot(workRoot);
         _ = Directory.CreateDirectory(workRoot);
         string writerPath = Path.Combine(workRoot, "writer.accdb");
         string daoPath = Path.Combine(workRoot, "dao.accdb");
@@ -58,29 +54,60 @@ internal static class FkDaoBaselineProbe
             return daoCode;
         }
 
-        await DumpDatabaseAsync("writer", writerPath);
-        await DumpDatabaseAsync("dao", daoPath);
+        bool dumpSnapshots = ShouldDumpSnapshots();
+        if (dumpSnapshots)
+        {
+            await DumpDatabaseAsync("writer", writerPath);
+            await DumpDatabaseAsync("dao", daoPath);
+        }
+        else
+        {
+            Console.WriteLine("[fk-dao-baseline] detailed table dumps skipped by DIAG_FK_SUMMARY_ONLY/DIAG_FK_SKIP_DUMPS");
+        }
 
-        (int writerCompact, string writerCompactOut, string writerCompactErr) = RunPowerShell(hostProbe.HostPath, workRoot, BuildDaoCompactScript(writerPath, writerCompactPath));
-        (int daoCompact, string daoCompactOut, string daoCompactErr) = RunPowerShell(hostProbe.HostPath, workRoot, BuildDaoCompactScript(daoPath, daoCompactPath));
+        PostAuthoringProbeResults postAuthoringResults = RunPostAuthoringProbes(
+            hostProbe.HostPath,
+            workRoot,
+            writerPath,
+            writerCompactPath,
+            daoPath,
+            daoCompactPath);
+        (int writerCompact, string writerCompactOut, string writerCompactErr) = postAuthoringResults.WriterCompact;
+        (int daoCompact, string daoCompactOut, string daoCompactErr) = postAuthoringResults.DaoCompact;
         Console.WriteLine(FormattableString.Invariant($"writer compact: exit={writerCompact}, stdout={writerCompactOut.Trim()}, stderr={writerCompactErr.Trim()}"));
         Console.WriteLine(FormattableString.Invariant($"dao compact:    exit={daoCompact}, stdout={daoCompactOut.Trim()}, stderr={daoCompactErr.Trim()}"));
-        if (writerCompact == 0 && File.Exists(writerCompactPath))
+        if (dumpSnapshots && writerCompact == 0 && File.Exists(writerCompactPath))
         {
             await DumpDatabaseAsync("writer compact", writerCompactPath);
         }
 
-        if (daoCompact == 0 && File.Exists(daoCompactPath))
+        if (dumpSnapshots && daoCompact == 0 && File.Exists(daoCompactPath))
         {
             await DumpDatabaseAsync("dao compact", daoCompactPath);
         }
 
-        (int writerEnforce, string writerOut, string writerErr) = RunPowerShell(hostProbe.HostPath, workRoot, BuildDaoOrphanInsertScript(writerPath));
-        (int daoEnforce, string daoOut2, string daoErr2) = RunPowerShell(hostProbe.HostPath, workRoot, BuildDaoOrphanInsertScript(daoPath));
+        (int writerEnforce, string writerOut, string writerErr) = postAuthoringResults.WriterOrphanInsert;
+        (int daoEnforce, string daoOut2, string daoErr2) = postAuthoringResults.DaoOrphanInsert;
         Console.WriteLine(FormattableString.Invariant($"writer orphan insert probe: exit={writerEnforce}, stdout={writerOut.Trim()}, stderr={writerErr.Trim()}"));
         Console.WriteLine(FormattableString.Invariant($"dao orphan insert probe:    exit={daoEnforce}, stdout={daoOut2.Trim()}, stderr={daoErr2.Trim()}"));
         Console.WriteLine(FormattableString.Invariant($"[fk-dao-baseline] files: {workRoot}"));
         return 0;
+    }
+
+    private static bool ShouldDumpSnapshots() =>
+        string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_FK_SUMMARY_ONLY"))
+        && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_FK_SKIP_DUMPS"));
+
+    private static string PrepareWorkRoot(string workRoot)
+    {
+        if (!Directory.Exists(workRoot) || !Directory.EnumerateFileSystemEntries(workRoot).Any())
+        {
+            return workRoot;
+        }
+
+        return Path.Combine(
+            workRoot,
+            DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss-fffffff", CultureInfo.InvariantCulture));
     }
 
     private static async Task AuthorWriterAsync(string path)
@@ -441,52 +468,152 @@ internal static class FkDaoBaselineProbe
             """;
     }
 
-    private static string BuildDaoCompactScript(string sourcePath, string destinationPath)
+    private readonly record struct PowerShellStepResult(int Code, string StdOut, string StdErr);
+
+    private sealed record PostAuthoringProbeResults(
+        PowerShellStepResult WriterCompact,
+        PowerShellStepResult DaoCompact,
+        PowerShellStepResult WriterOrphanInsert,
+        PowerShellStepResult DaoOrphanInsert);
+
+    private static PostAuthoringProbeResults RunPostAuthoringProbes(
+        string powerShellPath,
+        string workRoot,
+        string writerPath,
+        string writerCompactPath,
+        string daoPath,
+        string daoCompactPath)
     {
-        string source = Quote(sourcePath);
-        string destination = Quote(destinationPath);
-        return $$"""
-                        $ErrorActionPreference='Stop'
-                        $e = New-Object -ComObject DAO.DBEngine.120
-                        try {
-                            if (Test-Path {{destination}}) { Remove-Item -LiteralPath {{destination}} -Force }
-                            $e.CompactDatabase({{source}}, {{destination}})
-                            Write-Output 'OK'
-                        } finally {
-                            [System.Runtime.InteropServices.Marshal]::ReleaseComObject($e) | Out-Null
-                        }
-                        """;
+        (int code, string stdout, string stderr) = RunPowerShell(
+            powerShellPath,
+            workRoot,
+            BuildPostAuthoringProbeScript(writerPath, writerCompactPath, daoPath, daoCompactPath));
+        Dictionary<string, PowerShellStepResult> results = ParsePowerShellStepResults(stdout);
+        PowerShellStepResult fallback = code == 0
+            ? new PowerShellStepResult(1, string.Empty, "PowerShell batch did not emit a result for this step.")
+            : new PowerShellStepResult(code, stdout, stderr);
+
+        return new PostAuthoringProbeResults(
+            GetPowerShellStepResult(results, "writer-compact", fallback),
+            GetPowerShellStepResult(results, "dao-compact", fallback),
+            GetPowerShellStepResult(results, "writer-orphan", fallback),
+            GetPowerShellStepResult(results, "dao-orphan", fallback));
     }
 
-    private static string BuildDaoOrphanInsertScript(string path)
+    private static string BuildPostAuthoringProbeScript(
+        string writerPath,
+        string writerCompactPath,
+        string daoPath,
+        string daoCompactPath)
     {
-        string db = Quote(path);
         return $$"""
-                        $ErrorActionPreference='Stop'
-                        $e = New-Object -ComObject DAO.DBEngine.120
-                        try {
-                            $db = $e.OpenDatabase({{db}})
-                            try {
-                                $errorCode = 0
-                                try {
-                                    $db.Execute("INSERT INTO [{{Child}}] (ParentId, Detail) VALUES (99999, 'Orphan')", 128)
-                                } catch {
-                                    $errorCode = $_.Exception.ErrorCode
-                                    if ($errorCode -eq 0 -and $_.Exception.HResult -ne 0) { $errorCode = $_.Exception.HResult }
-                                }
-                                $rs = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [{{Child}}]', 4)
-                                try {
-                                    Write-Output "$errorCode|$($rs.Fields('Cnt').Value)"
-                                } finally {
-                                    $rs.Close()
-                                }
-                            } finally {
-                                $db.Close()
-                            }
-                        } finally {
-                            [System.Runtime.InteropServices.Marshal]::ReleaseComObject($e) | Out-Null
-                        }
-                        """;
+            $ErrorActionPreference='Stop'
+            $writerPath = {{Quote(writerPath)}}
+            $writerCompactPath = {{Quote(writerCompactPath)}}
+            $daoPath = {{Quote(daoPath)}}
+            $daoCompactPath = {{Quote(daoCompactPath)}}
+
+            function Write-StepResult([string]$name, [int]$code, [string]$stdout, [string]$stderr) {
+                if ($null -eq $stdout) { $stdout = '' }
+                if ($null -eq $stderr) { $stderr = '' }
+                $stdout64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($stdout))
+                $stderr64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($stderr))
+                Write-Output "$name|$code|$stdout64|$stderr64"
+            }
+
+            function Get-ErrorCode($errorRecord) {
+                $code = [int]$errorRecord.Exception.HResult
+                $errorCode = $errorRecord.Exception.ErrorCode
+                if ($code -eq 0 -and $null -ne $errorCode) { $code = [int]$errorCode }
+                if ($code -eq 0) { $code = 1 }
+                return $code
+            }
+
+            function Invoke-Step([string]$name, [scriptblock]$body) {
+                try {
+                    $output = & $body | Out-String
+                    Write-StepResult $name 0 $output ''
+                } catch {
+                    Write-StepResult $name (Get-ErrorCode $_) '' $_.Exception.Message
+                }
+            }
+
+            function Compact-Database([string]$sourcePath, [string]$destinationPath) {
+                if (Test-Path -LiteralPath $destinationPath) { Remove-Item -LiteralPath $destinationPath -Force }
+                $engine.CompactDatabase($sourcePath, $destinationPath)
+                Write-Output 'OK'
+            }
+
+            function Probe-OrphanInsert([string]$path) {
+                $db = $engine.OpenDatabase($path)
+                try {
+                    $errorCode = 0
+                    try {
+                        $db.Execute("INSERT INTO [{{Child}}] (ParentId, Detail) VALUES (99999, 'Orphan')", 128)
+                    } catch {
+                        $errorCode = $_.Exception.ErrorCode
+                        if ($errorCode -eq 0 -and $_.Exception.HResult -ne 0) { $errorCode = $_.Exception.HResult }
+                    }
+
+                    $recordset = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [{{Child}}]', 4)
+                    try {
+                        Write-Output "$errorCode|$($recordset.Fields('Cnt').Value)"
+                    } finally {
+                        $recordset.Close()
+                    }
+                } finally {
+                    $db.Close()
+                }
+            }
+
+            $engine = New-Object -ComObject DAO.DBEngine.120
+            try {
+                Invoke-Step 'writer-compact' { Compact-Database $writerPath $writerCompactPath }
+                Invoke-Step 'dao-compact' { Compact-Database $daoPath $daoCompactPath }
+                Invoke-Step 'writer-orphan' { Probe-OrphanInsert $writerPath }
+                Invoke-Step 'dao-orphan' { Probe-OrphanInsert $daoPath }
+            } finally {
+                [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null
+            }
+            """;
+    }
+
+    private static Dictionary<string, PowerShellStepResult> ParsePowerShellStepResults(string stdout)
+    {
+        var results = new Dictionary<string, PowerShellStepResult>(StringComparer.OrdinalIgnoreCase);
+        foreach (string line in stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = line.Split('|', 4);
+            if (parts.Length != 4 || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int code))
+            {
+                continue;
+            }
+
+            results[parts[0]] = new PowerShellStepResult(
+                code,
+                DecodeBase64(parts[2]),
+                DecodeBase64(parts[3]));
+        }
+
+        return results;
+    }
+
+    private static PowerShellStepResult GetPowerShellStepResult(
+        Dictionary<string, PowerShellStepResult> results,
+        string name,
+        PowerShellStepResult fallback) =>
+        results.TryGetValue(name, out PowerShellStepResult result) ? result : fallback;
+
+    private static string DecodeBase64(string value)
+    {
+        try
+        {
+            return Encoding.UTF8.GetString(Convert.FromBase64String(value));
+        }
+        catch (FormatException)
+        {
+            return value;
+        }
     }
 
     private static (int Code, string StdOut, string StdErr) RunPowerShell(string powerShellPath, string workRoot, string script)

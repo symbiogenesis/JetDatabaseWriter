@@ -29,7 +29,7 @@ Companion: [round-trip-test-failures.md](round-trip-test-failures.md)
 
 | ID | Problem | Fix | Verification |
 |---|---|---|---|
-| H48 | Jet4/ACE TDEF `tdef_len` was 8 bytes shorter than DAO's for tables with at least one index. DAO-authored TDEFs count 8 trailing zero bytes after the `0xFFFF` no-usage-map sentinel; the writer did not. | [JetDatabaseWriter/Schema/TDefPageBuilder.cs](../../JetDatabaseWriter/Schema/TDefPageBuilder.cs): after writing the `0xFFFF` sentinel, advance `namePos += 8` when `jet4 && numIdx > 0`. | `DIAG_RT_DAO_BASELINE` reported `OpenRecordset('RT_Customers')` exit=0 for both writer and DAO copies. `DaoOpenRecordset_RowCount_MatchesWriterOutput` passes. |
+| H48 | Jet4/ACE TDEF `tdef_len` was 8 bytes shorter than DAO's for tables with at least one index. DAO-authored TDEFs count 8 trailing zero bytes after the `0xFFFF` no-usage-map sentinel; the writer did not. | [JetDatabaseWriter/Schema/TDefPageBuilder.cs](../../JetDatabaseWriter/Schema/TDefPageBuilder.cs): after writing the `0xFFFF` sentinel, advance `namePos += 8` when `jet4 && numIdx > 0`. | `rt-dao-baseline` FormatProbe mode (legacy `DIAG_RT_DAO_BASELINE`) reported `OpenRecordset('RT_Customers')` exit=0 for both writer and DAO copies. `DaoOpenRecordset_RowCount_MatchesWriterOutput` passes. |
 | H48-adj | `RelationshipManager.AddFkLogicalIdxEntry` stamped `0x00000659` on an appended real-idx physical descriptor. DAO expects the Jet4 real-idx descriptor magic `0x00000783`. | [JetDatabaseWriter/Relationships/RelationshipManager.cs](../../JetDatabaseWriter/Relationships/RelationshipManager.cs): use `Constants.TableDefinition.Jet4.RealIdx.LeadingMagic`. | FK-bearing table TDEF magic assertions pass. |
 | H49 | Newly appended user-table data pages were not recorded in the per-table owned/free usage maps. DAO sequential and snapshot recordsets walk those maps, so rows existed on disk but could appear invisible to DAO. | [JetDatabaseWriter/Pages/DataPageInserter.cs](../../JetDatabaseWriter/Pages/DataPageInserter.cs): mark newly appended user-table data pages in both owned and free usage-map rows. The INLINE row body is `type byte + int32 start_page + 64 bitmap bytes`; bitmap bits start at row offset `+5`. | `DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly` passes. |
 | AutoNumber-adj | DAO chooses the next AutoNumber from the TDEF high-water value at offset `0x14`. The writer generated unique IDs for its own rows but did not persist that high-water value, so DAO reused an existing ID. | [JetDatabaseWriter/AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs): after successful inserts, write the maximum inserted AutoNumber value to `Constants.TableDefinition.AutoNumberOffset` in [JetDatabaseWriter/Constants.cs](../../JetDatabaseWriter/Constants.cs). | `DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert` passes. |
@@ -47,12 +47,12 @@ Companion: [round-trip-test-failures.md](round-trip-test-failures.md)
 | Usage-map scope | Writer-created user-table TDEFs can be marked in place. Pre-existing system-table TDEF usage maps must not be mutated by this path. | Marking system-table maps caused DAO `OpenDatabase` to raise `"Invalid argument"`. |
 | AutoNumber high-water | TDEF bytes `0x14..0x17` store the last issued AutoNumber value, not the next value. | DAO-authored 10-row AutoNumber fixture stamped `0A 00 00 00`. |
 | Real-idx descriptor magic | Jet4 real-idx physical descriptors use leading magic `0x00000783`, not the format-wide TDEF magic `0x00000659`. | H48-adj fix and TDEF magic assertions. |
-| FK logical cross-reference | On DAO-authored FK pairs, `rel_tbl_type` is side-specific (`0x01` parent side, `0x02` child side) and `rel_idx_num` cross-references the partner logical-index number. | `DIAG_FK_DAO_BASELINE` writer-vs-DAO dump. |
-| FK logical ordering/name | DAO inserts FK logical entries before the existing `PrimaryKey` logical entry. The parent-side logical name is hidden (`.rB` in the simple baseline); the child side uses the relationship name. | `DIAG_FK_DAO_BASELINE` writer-vs-DAO dump. This is confirmed format ground truth, but matching it has not yet been proven sufficient for compact survival. |
+| FK logical cross-reference | On DAO-authored FK pairs, `rel_tbl_type` is side-specific (`0x01` parent side, `0x02` child side) and `rel_idx_num` cross-references the partner logical-index number. | `fk-dao-baseline` FormatProbe mode (legacy `DIAG_FK_DAO_BASELINE`) writer-vs-DAO dump. |
+| FK logical ordering/name | DAO inserts FK logical entries before the existing `PrimaryKey` logical entry. The parent-side logical name is hidden (`.rB` in the simple baseline); the child side uses the relationship name. | `fk-dao-baseline` FormatProbe mode writer-vs-DAO dump. This is confirmed format ground truth, but matching it has not yet been proven sufficient for compact survival. |
 | Real-index `used_pages` | Jet4/ACE real-index descriptors used by FK enforcement need a non-zero `used_pages` row/page pointer to an INLINE usage-map row for the index pages. | FK enforcement failed before this pointer was patched and passed afterward. |
-| `MSysACEs.FInheritable` | DAO-created user-table ACE rows use `FInheritable = False`, with `ACM = 0x000FFEFF` and owner/admins/users SIDs. | `DIAG_FK_DAO_BASELINE` dump. Changing this alone did not fix FK compact. |
-| DAO text-column LvProp shape | DAO programmatic table creation emits `AllowZeroLength = False` for text columns, skips `Required` for AutoNumber columns, emits `Required = True/False` for non-AutoNumber text columns, writes Boolean property entries with `ddlFlag = 0x01`, and uses property-block chunk subtype `0x0001`. | `DIAG_FK_DAO_BASELINE` raw `MSysObjects.LvProp` hex diff. Matching this alone did not fix FK compact. |
-| Compact can silently omit objects | DAO `CompactDatabase` can return success while omitting writer-created FK tables and `MSysRelationships` rows from the compacted output, or while preserving table metadata but dropping rows, depending on fixture shape. | `DIAG_FK_DAO_BASELINE` and the focused single-FK compact test. Treat exit code 0 as insufficient; always reopen and verify schema plus row counts. |
+| `MSysACEs.FInheritable` | DAO-created user-table ACE rows use `FInheritable = False`, with `ACM = 0x000FFEFF` and owner/admins/users SIDs. | `fk-dao-baseline` dump. Changing this alone did not fix FK compact. |
+| DAO text-column LvProp shape | DAO programmatic table creation emits `AllowZeroLength = False` for text columns, skips `Required` for AutoNumber columns, emits `Required = True/False` for non-AutoNumber text columns, writes Boolean property entries with `ddlFlag = 0x01`, and uses property-block chunk subtype `0x0001`. | `fk-dao-baseline` raw `MSysObjects.LvProp` hex diff. Matching this alone did not fix FK compact. |
+| Compact can silently omit objects | DAO `CompactDatabase` can return success while omitting writer-created FK tables and `MSysRelationships` rows from the compacted output, or while preserving table metadata but dropping rows, depending on fixture shape. | `fk-dao-baseline` and the focused single-FK compact test. Treat exit code 0 as insufficient; always reopen and verify schema plus row counts. |
 
 ## 5. Disconfirmed Causes
 
@@ -80,17 +80,16 @@ Do not re-test these for the original `OpenRecordset` failure unless a new fixtu
 
 | Action | Detail |
 |---|---|
-| 1. Complete index usage-map diff | Extend or clean up `DIAG_FK_DAO_BASELINE` to dump each real-index `used_pages` row body. Compare DAO's row placement with the writer's post-rebuild map. In current dumps DAO points PK/FK index `used_pages` rows into the same usage-map page as table row 0/1 in the simple baseline, while the writer may allocate a separate index usage-map page after rebuild. |
+| 1. Complete index usage-map diff | Extend or clean up `fk-dao-baseline` to dump each real-index `used_pages` row body. Compare DAO's row placement with the writer's post-rebuild map. In current dumps DAO points PK/FK index `used_pages` rows into the same usage-map page as table row 0/1 in the simple baseline, while the writer may allocate a separate index usage-map page after rebuild. |
 | 2. Compare compact inputs vs outputs | For both the simple FK baseline and the Northwind round-trip test, record whether compact omits catalog rows, omits relationship rows, drops data rows, or rewrites TDEF/index usage-map pointers. These are distinct failure modes. |
 | 3. Keep FK enforcement guarded but documented | The enforcement test now passes with the opt-in switch. Do not unskip it until the surrounding FK compact work is either fixed or explicitly split into a separate follow-up. |
 | 4. Patch narrowly | Once the compact-specific byte delta is isolated, patch only that metadata path. Avoid further changes to `MSysRelationships`/LvProp/ACE fields unless a new DAO diff proves a mismatch. |
-| 5. Verify | Re-run `DIAG_FK_DAO_BASELINE`, the single-FK compact test, and the composite-FK compact test with `JETDATABASEWRITER_RUN_KNOWN_ACCESS_COMPAT_GAPS=1`. |
+| 5. Verify | Re-run `fk-dao-baseline`, the single-FK compact test, and the composite-FK compact test with `JETDATABASEWRITER_RUN_KNOWN_ACCESS_COMPAT_GAPS=1`. |
 
 Useful verification commands:
 
 ```pwsh
-$env:DIAG_FK_DAO_BASELINE = "1"
-dotnet run --project JetDatabaseWriter.FormatProbe
+dotnet run --project JetDatabaseWriter.FormatProbe -- fk-dao-baseline
 ```
 
 ```pwsh
@@ -134,8 +133,8 @@ Defer this until plaintext FK enforcement and FK compact behavior are understood
 
 | Goal | Command |
 |---|---|
-| Reproduce original H48 baseline diff | `$env:DIAG_RT_DAO_BASELINE = "1"; dotnet run --project JetDatabaseWriter.FormatProbe` |
-| Inspect preserved memo fixture | `$env:DIAG_MEMO_READBACK = "1"; dotnet run --project JetDatabaseWriter.FormatProbe` |
+| Reproduce original H48 baseline diff | `dotnet run --project JetDatabaseWriter.FormatProbe -- rt-dao-baseline` |
+| Inspect preserved memo fixture | `dotnet run --project JetDatabaseWriter.FormatProbe -- memo-readback` |
 | Run the normal DAO validation class | `dotnet test --project JetDatabaseWriter.Tests --filter-class "JetDatabaseWriter.Tests.RoundTrip.DaoValidationTests"` |
 | Run known-gap tests locally | Set `JETDATABASEWRITER_RUN_KNOWN_ACCESS_COMPAT_GAPS=1`, then run the focused method with `--filter-method`. |
 

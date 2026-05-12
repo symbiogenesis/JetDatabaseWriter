@@ -4,8 +4,8 @@
 // step first breaks DAO.
 //
 // USAGE
-//   $env:DIAG_RT_BISECT = "1"
-//   dotnet run --project JetDatabaseWriter.FormatProbe
+//   dotnet run --project JetDatabaseWriter.FormatProbe -- rt-bisect
+//   Legacy: $env:DIAG_RT_BISECT = "1"; dotnet run --project JetDatabaseWriter.FormatProbe
 
 namespace JetDatabaseWriter.FormatProbe;
 

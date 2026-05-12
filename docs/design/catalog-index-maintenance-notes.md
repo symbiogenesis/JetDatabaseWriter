@@ -130,7 +130,7 @@ We never touch entries we did not insert. The "Databases" row (and any other row
 The shipped splice is exercised by:
 
 - `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` is hit on every `AccessWriter.CreateTableAsync` call against a real-idx-bearing catalog table; any user-table create going through the existing test suite covers it.
-- The `DIAG_RT_DAO_BASELINE` probe (FormatProbe `DaoBaselineProbe`) re-decodes the spliced leaves and compares them against a DAO-authored copy of the same operation, asserting every original key still decodes losslessly and the new key sorts correctly.
+- The `rt-dao-baseline` FormatProbe mode (legacy `DIAG_RT_DAO_BASELINE`, implemented by `DaoBaselineProbe`) re-decodes the spliced leaves and compares them against a DAO-authored copy of the same operation, asserting every original key still decodes losslessly and the new key sorts correctly.
 
 The two gating round-trip tests (§1) **do not yet pass** — they fail because the split path in `TrySpliceCatalogIndexEntryAsync` omits the `maxPrefixLength` parameter when building split-product pages, allowing `pref_len` to grow beyond the original value (see [`round-trip-test-failures.md`](round-trip-test-failures.md) §"N2 failure analysis"). The single-table N1 case (which never triggers a split on NorthwindTraders) passes DAO compact. The byte-level divergence is exclusively in the split-product pages' prefix length field.
 

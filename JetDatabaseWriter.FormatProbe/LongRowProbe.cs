@@ -4,7 +4,8 @@
 // verify (a) the chunk separator across formats, (b) the chunk-boundary
 // rule, and (c) the per-format byte budget.
 //
-// Invoke via:  set DIAG_LONG_ROW_PROBE=1 ; dotnet run --project JetDatabaseWriter.FormatProbe
+// Invoke via: dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-probe
+// Legacy: set DIAG_LONG_ROW_PROBE=1 ; dotnet run --project JetDatabaseWriter.FormatProbe
 
 namespace JetDatabaseWriter.FormatProbe;
 
@@ -71,10 +72,10 @@ internal static class LongRowProbe
 
         var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
+        List<string> tables = await reader.ListTablesAsync(ct);
 
         foreach (string tableName in new[] { "Table11", "Table11_desc" })
         {
-            List<string> tables = await reader.ListTablesAsync(ct);
             if (!tables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
             {
                 continue;

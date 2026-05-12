@@ -5,7 +5,8 @@
 // for each chunk searches for the (K_start, K_end) source-character range
 // whose inline-only encoding matches the chunk bytes exactly.
 //
-// Usage: $env:DIAG_LONG_ROW_BISECT="1" ; dotnet run --project JetDatabaseWriter.FormatProbe
+// Usage: dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-bisect
+// Legacy: $env:DIAG_LONG_ROW_BISECT="1" ; dotnet run --project JetDatabaseWriter.FormatProbe
 
 namespace JetDatabaseWriter.FormatProbe;
 

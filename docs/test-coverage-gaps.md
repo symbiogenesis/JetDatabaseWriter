@@ -93,7 +93,7 @@ scenarios rather than reinventing the setup/teardown boilerplate.
   opt-in tests. DAO Compact itself succeeds, but post-compact verification
   still fails for writer-created FK-bearing tables. The focused single-FK
   test currently reports row count 0 after compact; the standalone
-  `DIAG_FK_DAO_BASELINE` probe can produce an even stronger symptom where
+  `fk-dao-baseline` FormatProbe mode (legacy `DIAG_FK_DAO_BASELINE`) can produce an even stronger symptom where
   CompactDatabase exits 0 but omits the writer-created FK tables and
   relationship rows entirely. See
   [round-trip-openrecordset-hypothesis.md](/docs/design/round-trip-openrecordset-hypothesis.md).
