@@ -25,7 +25,7 @@ using Xunit;
 /// produces 510-byte entries whose first 508 bytes match the on-disk leaves
 /// but whose final 2-byte suffix is computed by an algorithm that has so far
 /// resisted reverse-engineering (see
-/// <c>docs/design/long-row-index-encoding.md</c>).
+/// <c>docs/format-probe/format-probe-long-row-index-encoding.md</c>).
 /// </para>
 /// <para>
 /// This test locks in the partial result we <em>do</em> have: each leaf key

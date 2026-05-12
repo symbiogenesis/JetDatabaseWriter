@@ -5,6 +5,7 @@
 //
 // USAGE
 //   dotnet run --project JetDatabaseWriter.FormatProbe -- rt-bisect
+//   Set DIAG_RT_RUN_ALL=1 to keep probing after the first failure.
 //   Legacy: $env:DIAG_RT_BISECT = "1"; dotnet run --project JetDatabaseWriter.FormatProbe
 
 namespace JetDatabaseWriter.FormatProbe;
@@ -126,8 +127,14 @@ internal static class RoundTripBisect
             }),
         };
 
+        bool runAllSteps = IsTruthy(Environment.GetEnvironmentVariable("DIAG_RT_RUN_ALL"));
+
         Console.WriteLine($"[bisect] baseline = {baselinePath}");
         Console.WriteLine($"[bisect] workRoot = {workRoot}");
+        if (!runAllSteps)
+        {
+            Console.WriteLine("[bisect] stopping at first failure (set DIAG_RT_RUN_ALL=1 for exhaustive output)");
+        }
 
         foreach (var (name, action) in steps)
         {
@@ -145,6 +152,11 @@ internal static class RoundTripBisect
             catch (Exception ex)
             {
                 Console.WriteLine($"[bisect] {name}: WRITE FAILED — {ex.GetType().Name}: {ex.Message}");
+                if (!runAllSteps)
+                {
+                    break;
+                }
+
                 continue;
             }
 
@@ -163,11 +175,21 @@ internal static class RoundTripBisect
                 }
 
                 Console.WriteLine($"           stderr: {firstLine}");
+                if (!runAllSteps)
+                {
+                    break;
+                }
             }
         }
 
         return 0;
     }
+
+    private static bool IsTruthy(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+           && !string.Equals(value, "0", StringComparison.OrdinalIgnoreCase)
+           && !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase)
+           && !string.Equals(value, "no", StringComparison.OrdinalIgnoreCase);
 
     private static (int Code, string StdErr) RunDaoCompact(string powerShellPath, string src, string dst)
     {
