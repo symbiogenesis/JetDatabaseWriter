@@ -81,29 +81,6 @@ Some hot loops perform a lookup and then an add/update. `CollectionsMarshal.GetV
 
 **Expected benefit:** performance in selected loops, with a readability tradeoff.
 
-### 5. Use span-based Base64 and hex parsing to avoid substring/split allocations
-
-**Feature family:** span overloads for `Convert`, `Convert.FromHexString`, `Convert.TryFromBase64String`, `Convert.TryFromBase64Chars`, `Convert.ToHexString`.
-
-**Where:**
-
-- `JetDatabaseWriter/AccessReader.cs`
-- `JetDatabaseWriter/ValueDecoding/TypedValueParser.cs`
-- `JetDatabaseWriter/Models/Hyperlink.cs`
-- `JetDatabaseWriter/Indexes/Helpers/IndexHelpers.cs`, if binary debug-key formatting appears in hot diagnostics
-
-**Why it matters:**
-
-Several string-to-binary paths split strings or allocate substrings before parsing Base64 or dash-separated hex. These paths are not the main table-read hot path, but they affect OLE, binary round-tripping, diagnostics, and strict parsing behavior.
-
-**Concrete work:**
-
-- Replace Base64 `Substring` + `Convert.FromBase64String` in data-URI parsing with span-based `TryFromBase64Chars` / `TryFromBase64String` and exact destination sizing.
-- Keep `Convert.FromHexString` for plain hex, but add a small dash-separated hex parser that walks the string span rather than `Split('-')` + per-token conversion.
-- Consider `Convert.ToHexString` for any future binary string output if the dash-separated `BitConverter.ToString` format is not part of public behavior.
-
-**Expected benefit:** performance, fewer exception-driven parse paths, and cleaner malformed-input handling.
-
 ### 6. Use modern AES one-shot APIs where they match the required cipher mode
 
 **Feature family:** newer `Aes` span/one-shot helpers such as CBC/ECB encrypt/decrypt methods where available on the target.

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Globalization;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 
 /// <summary>
@@ -67,17 +68,22 @@ internal static class TypedValueParser
             int comma = hexString.IndexOf(',', StringComparison.Ordinal);
             if (comma > 0 && hexString.AsSpan(0, comma).IndexOf(";base64".AsSpan(), StringComparison.Ordinal) >= 0)
             {
-                return Convert.FromBase64String(hexString[(comma + 1)..]);
+                if (BinaryStringParser.TryDecodeBase64(hexString.AsSpan(comma + 1), out byte[] bytes))
+                {
+                    return bytes;
+                }
+
+                throw new FormatException("Invalid Base64 data URI payload.");
             }
         }
 
         // Try to use Convert.FromHexString if input is a plain hex string (no dashes)
 #if NET5_0_OR_GREATER
-        if (!hexString.Contains('-'))
+        if (hexString.AsSpan().IndexOf('-') < 0)
         {
             try
             {
-                return Convert.FromHexString(hexString);
+                return Convert.FromHexString(hexString.AsSpan());
             }
             catch (FormatException)
             {
@@ -92,20 +98,6 @@ internal static class TypedValueParser
 #endif
 
         // Fallback: dash-separated format ("XX-XX-XX-XX")
-        try
-        {
-            string[] hexValues = hexString.Split('-', StringSplitOptions.RemoveEmptyEntries);
-            byte[] bytes = new byte[hexValues.Length];
-            for (int i = 0; i < hexValues.Length; i++)
-            {
-                bytes[i] = Convert.ToByte(hexValues[i], 16);
-            }
-
-            return bytes;
-        }
-        catch (FormatException)
-        {
-            return [];
-        }
+        return BinaryStringParser.TryParseDashSeparatedHex(hexString.AsSpan(), out byte[] dashSeparatedBytes) ? dashSeparatedBytes : [];
     }
 }

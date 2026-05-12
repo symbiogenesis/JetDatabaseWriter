@@ -1174,14 +1174,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             int comma = s.IndexOf(',', StringComparison.Ordinal);
             if (comma >= 0 && comma + 1 < s.Length)
             {
-                try
-                {
-                    return Convert.FromBase64String(s.Substring(comma + 1));
-                }
-                catch (FormatException)
-                {
-                    return [];
-                }
+                return BinaryStringParser.TryDecodeBase64(s.AsSpan(comma + 1), out byte[] bytes) ? bytes : [];
             }
         }
 
@@ -2666,37 +2659,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
             int commaIdx = value.IndexOf(',', StringComparison.Ordinal);
             if (commaIdx >= 0)
             {
-                try
-                {
-                    return Convert.FromBase64String(value.Substring(commaIdx + 1));
-                }
-                catch (FormatException)
-                {
-                    return [];
-                }
+                return BinaryStringParser.TryDecodeBase64(value.AsSpan(commaIdx + 1), out byte[] bytes) ? bytes : [];
             }
 
             return [];
         }
 
         // Hex string from Binary column: "XX-XX-XX-..."
-        if (colType == T_BINARY && value.Contains('-', StringComparison.Ordinal))
+        if (colType == T_BINARY && value.AsSpan().IndexOf('-') >= 0)
         {
-            try
-            {
-                string[] parts = value.Split('-');
-                var bytes = new byte[parts.Length];
-                for (int i = 0; i < parts.Length; i++)
-                {
-                    bytes[i] = Convert.ToByte(parts[i], 16);
-                }
-
-                return bytes;
-            }
-            catch (FormatException)
-            {
-                return [];
-            }
+            return BinaryStringParser.TryParseDashSeparatedHex(value.AsSpan(), out byte[] bytes) ? bytes : [];
         }
 
         // Plain text (Memo): encode as UTF-8
@@ -3660,14 +3632,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return null;
             }
 
-            try
-            {
-                return Convert.FromBase64String(value[Prefix.Length..]);
-            }
-            catch (FormatException)
-            {
-                return null;
-            }
+            return BinaryStringParser.TryDecodeBase64(value.AsSpan(Prefix.Length), out byte[] bytes) ? bytes : null;
         }
     }
 
