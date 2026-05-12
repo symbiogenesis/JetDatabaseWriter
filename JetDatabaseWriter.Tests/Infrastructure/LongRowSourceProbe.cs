@@ -487,18 +487,6 @@ public sealed class LongRowSourceProbe
         }
     }
 
-    private static string ModeStr(int mode)
-    {
-        return mode switch
-        {
-            0 => "normal/init0",
-            1 => "reflected/init0",
-            2 => "normal/initFF",
-            3 => "reflected/initFF",
-            _ => "?",
-        };
-    }
-
     private static ushort ReflectU16(ushort v)
     {
         unchecked
@@ -512,119 +500,6 @@ public sealed class LongRowSourceProbe
 
             return r;
         }
-    }
-
-    private static ushort CrcGeneric(byte[] data, ushort poly, ushort reflectedPoly, ushort init, bool reflected)
-    {
-        unchecked
-        {
-            ushort crc = init;
-            if (reflected)
-            {
-                foreach (byte b in data)
-                {
-                    crc ^= b;
-                    for (int i = 0; i < 8; i++)
-                    {
-                        crc = (crc & 1) != 0
-                            ? (ushort)((crc >> 1) ^ reflectedPoly)
-                            : (ushort)(crc >> 1);
-                    }
-                }
-            }
-            else
-            {
-                foreach (byte b in data)
-                {
-                    crc ^= (ushort)(b << 8);
-                    for (int i = 0; i < 8; i++)
-                    {
-                        crc = (crc & 0x8000) != 0
-                            ? (ushort)((crc << 1) ^ poly)
-                            : (ushort)(crc << 1);
-                    }
-                }
-            }
-
-            return crc;
-        }
-    }
-
-    // Adler-16: mod 251 (largest prime < 256)
-    private static ushort Adler16(byte[] data)
-    {
-        unchecked
-        {
-            uint a = 1, b = 0;
-            foreach (byte d in data)
-            {
-                a = (a + d) % 251;
-                b = (b + a) % 251;
-            }
-
-            return (ushort)((b << 8) | a);
-        }
-    }
-
-    // MurmurHash3 32-bit → XOR-fold to 16 bits
-    private static ushort Murmur3_16(byte[] data, uint seed)
-    {
-        unchecked
-        {
-            uint h = seed;
-            int len = data.Length;
-            int nblocks = len / 4;
-
-            for (int i = 0; i < nblocks; i++)
-            {
-                uint k = BitConverter.ToUInt32(data, i * 4);
-                k *= 0xcc9e2d51;
-                k = (k << 15) | (k >> 17);
-                k *= 0x1b873593;
-                h ^= k;
-                h = (h << 13) | (h >> 19);
-                h = (h * 5) + 0xe6546b64;
-            }
-
-            int tail = nblocks * 4;
-            uint k1 = 0;
-            switch (len & 3)
-            {
-                case 3:
-                    k1 ^= (uint)data[tail + 2] << 16;
-                    goto case 2;
-                case 2:
-                    k1 ^= (uint)data[tail + 1] << 8;
-                    goto case 1;
-                case 1:
-                    k1 ^= data[tail];
-                    k1 *= 0xcc9e2d51;
-                    k1 = (k1 << 15) | (k1 >> 17);
-                    k1 *= 0x1b873593;
-                    h ^= k1;
-                    break;
-            }
-
-            h ^= (uint)len;
-            h ^= h >> 16;
-            h *= 0x85ebca6b;
-            h ^= h >> 13;
-            h *= 0xc2b2ae35;
-            h ^= h >> 16;
-
-            return (ushort)((h >> 16) ^ (h & 0xFFFF));
-        }
-    }
-
-    private static string ExtractHex(byte[] data, int start, int end)
-    {
-        if (start >= data.Length)
-        {
-            return "(OOB)";
-        }
-
-        end = Math.Min(end, data.Length - 1);
-        return Convert.ToHexString(data.AsSpan(start, end - start + 1));
     }
 
     private static async Task<List<IndexEntry>> CollectAllLeafKeysAsync(
@@ -649,47 +524,6 @@ public sealed class LongRowSourceProbe
         return result;
     }
 
-    private static int FirstDiff(byte[] expected, byte[] actual)
-    {
-        int common = Math.Min(expected.Length, actual.Length);
-        for (int i = 0; i < common; i++)
-        {
-            if (expected[i] != actual[i])
-            {
-                return i;
-            }
-        }
-
-        return expected.Length == actual.Length ? -1 : common;
-    }
-
-    private static string Tail(byte[] bytes, int count)
-        => Convert.ToHexString(bytes.AsSpan(Math.Max(0, bytes.Length - count)));
-
-    private static string DescribeChars(string value, int prefixLen)
-    {
-        int start = Math.Max(0, prefixLen - 4);
-        int end = Math.Min(value.Length, prefixLen + 1);
-        var sb = new System.Text.StringBuilder();
-        for (int i = start; i < end; i++)
-        {
-            if (sb.Length > 0)
-            {
-                sb.Append(' ');
-            }
-
-            sb.Append('[');
-            sb.Append(i);
-            sb.Append("]=");
-            sb.Append((int)value[i]);
-            sb.Append('(');
-            sb.Append(Show(value[i]));
-            sb.Append(')');
-        }
-
-        return sb.ToString();
-    }
-
     private static GeneralLegacyTextIndexEncoder.CharHandler[] GetGeneralCodes()
         => GetLazyField<GeneralLegacyTextIndexEncoder.CharHandler[]>(typeof(GeneralTextIndexEncoder), "Codes");
 
@@ -706,21 +540,6 @@ public sealed class LongRowSourceProbe
         return lazy.Value;
     }
 
-    private static string Show(char c)
-        => c < 0x20 ? $"\\x{(int)c:X2}" : c.ToString();
-
     private static string InlineHex(byte[]? bytes)
         => bytes is null ? "(none)" : Convert.ToHexString(bytes);
-
-    private static string ExtraHex(GeneralLegacyTextIndexEncoder.CharHandler ch)
-    {
-        byte[]? extra = ch.ExtraBytes;
-        byte mod = ch.ExtraByteModifier;
-        if (extra is not null)
-        {
-            return Convert.ToHexString(extra);
-        }
-
-        return mod != 0 ? $"mod={mod:X2}" : "(none)";
-    }
 }
