@@ -83,7 +83,7 @@ The project has a few central file-open paths plus several direct `new FileStrea
 
 **Expected benefit:** performance and correctness headroom for parallel page reads; less reliance on mutable stream position.
 
-### 4. Use `Stream.ReadExactlyAsync` / `ReadAtLeastAsync` where exact bytes are required
+### 4. Use `Stream.ReadExactlyAsync` / `ReadAtLeastAsync` where exact bytes are required (DONE)
 
 **Feature family:** .NET 7+ exact-read APIs.
 
@@ -382,7 +382,7 @@ These are worth preserving but do not need modernization churn right now.
 
 1. Crypto hash/HMAC modernization in `OfficeCryptoStandard`, `OfficeCryptoAgile`, `EncryptionManager`, and `EncryptionConverter`, backed by existing encryption tests plus allocation benchmarks.
 2. `FileStreamOptions` and preallocation in database create/re-encrypt paths.
-3. Exact-read helpers for headers, CFB sectors, and encryption sniffing.
+3. Exact-read helpers for headers, CFB sectors, and encryption sniffing. (DONE)
 4. `ZLibStream` experiments for Access attachment/OLE decompression with fixture tests.
 5. Package validation/API compatibility in pack/release builds.
 6. Targeted lower-priority polish: frozen static lookups, span Base64/hex parsing, `System.Threading.Lock` in tests, and FormatProbe LINQ cleanups.
