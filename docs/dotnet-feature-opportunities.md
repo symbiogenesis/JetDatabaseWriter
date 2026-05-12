@@ -81,9 +81,11 @@ Some hot loops perform a lookup and then an add/update. `CollectionsMarshal.GetV
 
 **Expected benefit:** performance in selected loops, with a readability tradeoff.
 
-### 6. Use modern AES one-shot APIs where they match the required cipher mode
+### 6. Use modern AES one-shot APIs where they match the required cipher mode (DONE)
 
 **Feature family:** newer `Aes` span/one-shot helpers such as CBC/ECB encrypt/decrypt methods where available on the target.
+
+**Status:** Implemented for Standard/Agile CBC package encryption and decryption in the `net6+` asset, with the existing transform fallback retained for `netstandard2.1`. The page-level ECB path in `EncryptionManager` remains unchanged because it uses cached in-place transforms and avoids temporary page buffers.
 
 **Where:**
 
@@ -93,11 +95,12 @@ Some hot loops perform a lookup and then an add/update. `CollectionsMarshal.GetV
 
 **Why it matters:**
 
-The code currently uses `ICryptoTransform.TransformFinalBlock` or cached transforms. That is a normal implementation, but one-shot AES helpers can remove transform lifetime boilerplate in Standard/Agile package encryption and decryption. The page-level ECB path in `EncryptionManager` is already in-place and allocation-aware, so it should be changed only if the newer API can preserve the same in-place behavior and format-required no-padding semantics.
+The code used `ICryptoTransform.TransformFinalBlock` or cached transforms. That is a normal implementation, but one-shot AES helpers remove transform lifetime boilerplate in Standard/Agile package encryption and decryption where the modern API is available. The page-level ECB path in `EncryptionManager` is already in-place and allocation-aware, so it should be changed only if a newer API can preserve the same in-place behavior and format-required no-padding semantics.
 
 **Concrete work:**
 
-- Evaluate one-shot AES helpers for `AesCbcZeroIv` and `AesCbcRaw`.
+- Use `Aes.EncryptCbc` / `Aes.DecryptCbc` for `AesCbcZeroIv`, `AesCbcRaw`, and Agile package segment encryption under `#if NET6_0_OR_GREATER`.
+- Keep the existing `ICryptoTransform.TransformFinalBlock` fallback for `netstandard2.1`.
 - Keep spec-required `PaddingMode.None`, zero IVs, per-segment IV derivation, and ECB page encryption exactly as-is.
 - Benchmark and fuzz before replacing the in-place page transform path.
 

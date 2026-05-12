@@ -453,6 +453,13 @@ internal static class OfficeCryptoStandard
 
         using (aes)
         {
+#if NET6_0_OR_GREATER
+            aes.Key = key;
+            ReadOnlySpan<byte> zeroIv = stackalloc byte[16];
+            return encrypt
+                ? aes.EncryptCbc(data, zeroIv, PaddingMode.None)
+                : aes.DecryptCbc(data, zeroIv, PaddingMode.None);
+#else
             aes.Mode = CipherMode.CBC;
             aes.Padding = PaddingMode.None;
             aes.Key = key;
@@ -469,6 +476,7 @@ internal static class OfficeCryptoStandard
                 byte[]? result = transform.TransformFinalBlock(data, 0, data.Length);
                 return result ?? throw new CryptographicException("AES transform returned no data.");
             }
+#endif
         }
     }
 

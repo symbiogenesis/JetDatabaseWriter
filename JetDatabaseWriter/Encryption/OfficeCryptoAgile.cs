@@ -667,6 +667,12 @@ internal static class OfficeCryptoAgile
 
         using (aes)
         {
+#if NET6_0_OR_GREATER
+            aes.Key = key;
+            return encrypt
+                ? aes.EncryptCbc(data, iv, PaddingMode.None)
+                : aes.DecryptCbc(data, iv, PaddingMode.None);
+#else
             aes.Mode = CipherMode.CBC;
             aes.Padding = PaddingMode.None;
             aes.Key = key;
@@ -683,6 +689,7 @@ internal static class OfficeCryptoAgile
                 byte[]? result = transform.TransformFinalBlock(data, 0, data.Length);
                 return result ?? throw new CryptographicException("AES transform returned no data.");
             }
+#endif
         }
     }
 
@@ -843,27 +850,44 @@ internal static class OfficeCryptoAgile
             }
         }
 
-        using var aes = Aes.Create();
-        aes.Mode = CipherMode.CBC;
-        aes.Padding = PaddingMode.None;
-        aes.Key = intermediateKey;
-
-        int writeOffset = 8;
-        for (int seg = 0; seg < totalSegments; seg++)
+        Aes? aes = Aes.Create();
+#pragma warning disable CA1508 // InferSharp treats Aes.Create as unknown/null-capable.
+        if (aes is null)
         {
-            int offset = seg * Constants.AgileEncryption.SegmentSize;
-            int segLen = Math.Min(Constants.AgileEncryption.SegmentSize, plaintext.Length - offset);
-            int paddedLen = ((segLen + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize) * Constants.AgileEncryption.BlockSize;
+            throw new CryptographicException("AES provider creation failed.");
+        }
+#pragma warning restore CA1508
 
-            byte[] block = new byte[paddedLen];
-            Buffer.BlockCopy(plaintext, offset, block, 0, segLen);
+        using (aes)
+        {
+#if !NET6_0_OR_GREATER
+            aes.Mode = CipherMode.CBC;
+            aes.Padding = PaddingMode.None;
+#endif
+            aes.Key = intermediateKey;
 
-            aes.IV = SegmentIv(keyDataSalt, seg, Constants.AgileEncryption.BlockSize);
-            using ICryptoTransform t = aes.CreateEncryptor();
-            byte[] cipher = t.TransformFinalBlock(block, 0, paddedLen);
-            Buffer.BlockCopy(cipher, 0, result, writeOffset, paddedLen);
+            int writeOffset = 8;
+            for (int seg = 0; seg < totalSegments; seg++)
+            {
+                int offset = seg * Constants.AgileEncryption.SegmentSize;
+                int segLen = Math.Min(Constants.AgileEncryption.SegmentSize, plaintext.Length - offset);
+                int paddedLen = ((segLen + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize) * Constants.AgileEncryption.BlockSize;
 
-            writeOffset += paddedLen;
+                byte[] block = new byte[paddedLen];
+                Buffer.BlockCopy(plaintext, offset, block, 0, segLen);
+
+                byte[] iv = SegmentIv(keyDataSalt, seg, Constants.AgileEncryption.BlockSize);
+#if NET6_0_OR_GREATER
+                byte[] cipher = aes.EncryptCbc(block, iv, PaddingMode.None);
+#else
+                aes.IV = iv;
+                using ICryptoTransform t = aes.CreateEncryptor();
+                byte[] cipher = t.TransformFinalBlock(block, 0, paddedLen);
+#endif
+                Buffer.BlockCopy(cipher, 0, result, writeOffset, paddedLen);
+
+                writeOffset += paddedLen;
+            }
         }
 
         return result;
