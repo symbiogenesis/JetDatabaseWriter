@@ -292,6 +292,15 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         int rowCount = Math.Min(snapshot.Rows.Count, locations.Count);
 
         bool tdefDirty = false;
+        long[][]? rebuiltIndexPageGroups = writer._format == DatabaseFormat.Jet3Mdb ? null : new long[numRealIdx][];
+        if (rebuiltIndexPageGroups is not null)
+        {
+            for (int i = 0; i < rebuiltIndexPageGroups.Length; i++)
+            {
+                rebuiltIndexPageGroups[i] = Array.Empty<long>();
+            }
+        }
+
         foreach (var (rieKey, rie) in realIdxByNum)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -352,6 +361,38 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             }
 
             AccessBase.Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)build.RootPageNumber));
+            if (rebuiltIndexPageGroups is not null)
+            {
+                var pageNumbers = new long[build.Pages.Count];
+                for (int i = 0; i < pageNumbers.Length; i++)
+                {
+                    pageNumbers[i] = firstPageNumber + i;
+                }
+
+                rebuiltIndexPageGroups[rieKey] = pageNumbers;
+            }
+
+            tdefDirty = true;
+        }
+
+        if (rebuiltIndexPageGroups is not null && HasAnyIndexPageGroup(rebuiltIndexPageGroups))
+        {
+            long usageMapPage = await writer.AppendIndexUsageMapPageAsync(rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
+            for (int realIdxNum = 0; realIdxNum < rebuiltIndexPageGroups.Length; realIdxNum++)
+            {
+                if (rebuiltIndexPageGroups[realIdxNum].Length == 0)
+                {
+                    continue;
+                }
+
+                if (!realIdxByNum.TryGetValue(realIdxNum, out RealIdxEntry rebuiltEntry))
+                {
+                    continue;
+                }
+
+                WriteIndexUsageMapPointer(tdefBuffer, rebuiltEntry.FirstDpOffset - 4, realIdxNum + 2, usageMapPage);
+            }
+
             tdefDirty = true;
         }
 
@@ -359,6 +400,28 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         {
             await writer.WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private static bool HasAnyIndexPageGroup(long[][] groups)
+    {
+        for (int i = 0; i < groups.Length; i++)
+        {
+            if (groups[i].Length > 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void WriteIndexUsageMapPointer(byte[] tdefBuffer, int usedPagesOffset, int rowIndex, long usageMapPage)
+    {
+        int pageNumber = checked((int)usageMapPage);
+        tdefBuffer[usedPagesOffset] = checked((byte)rowIndex);
+        tdefBuffer[usedPagesOffset + 1] = (byte)(pageNumber & 0xFF);
+        tdefBuffer[usedPagesOffset + 2] = (byte)((pageNumber >> 8) & 0xFF);
+        tdefBuffer[usedPagesOffset + 3] = (byte)((pageNumber >> 16) & 0xFF);
     }
 
     /// <summary>

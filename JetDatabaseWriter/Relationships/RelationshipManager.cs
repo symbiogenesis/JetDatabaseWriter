@@ -195,9 +195,10 @@ internal sealed class RelationshipManager(AccessWriter writer)
     /// <summary>
     /// Pre-computed real-idx slot information for one side of a relationship.
     /// </summary>
-    private readonly record struct FkSidePlan(int RealIdxNum, bool AllocatesNewRealIdx, long NewLeafPageNumber)
+    private readonly record struct FkSidePlan(int RealIdxNum, int LogicalIdxNum, bool AllocatesNewRealIdx, long NewLeafPageNumber)
     {
         // RealIdxNum:           real-idx slot index used for index_num2 on this side.
+        // LogicalIdxNum:        logical-idx number written as index_num for this side.
         // AllocatesNewRealIdx:  true when a new real-idx slot must be appended.
         // NewLeafPageNumber:    pre-allocated empty leaf page (set when AllocatesNewRealIdx).
         public FkSidePlan WithLeafPage(long page) => this with { NewLeafPageNumber = page };
@@ -230,9 +231,27 @@ internal sealed class RelationshipManager(AccessWriter writer)
             fkColNums[i] = foreignDef.Columns[fkIdx].ColNum;
         }
 
-        // Read both TDEF pages and decide each side's real-idx slot.
-        (FkSidePlan pkPlan, List<string> pkExistingNames) = await PrepareFkSideAsync(primaryTdefPage, pkColNums, cancellationToken).ConfigureAwait(false);
-        (FkSidePlan fkPlan, List<string> fkExistingNames) = await PrepareFkSideAsync(foreignTdefPage, fkColNums, cancellationToken).ConfigureAwait(false);
+        // Read both TDEF pages and decide each side's real-idx slot and new
+        // logical-idx number. rel_idx_num cross-references the partner
+        // logical-idx number, not the partner physical real-idx slot.
+        FkSidePlan pkPlan;
+        FkSidePlan fkPlan;
+        List<string> pkExistingNames;
+        List<string> fkExistingNames;
+        if (primaryTdefPage == foreignTdefPage)
+        {
+            (pkPlan, fkPlan, pkExistingNames) = await PrepareSelfReferentialFkSidesAsync(
+                primaryTdefPage,
+                pkColNums,
+                fkColNums,
+                cancellationToken).ConfigureAwait(false);
+            fkExistingNames = pkExistingNames;
+        }
+        else
+        {
+            (pkPlan, pkExistingNames) = await PrepareFkSideAsync(primaryTdefPage, pkColNums, cancellationToken).ConfigureAwait(false);
+            (fkPlan, fkExistingNames) = await PrepareFkSideAsync(foreignTdefPage, fkColNums, cancellationToken).ConfigureAwait(false);
+        }
 
         // Allocate empty leaf pages for any newly-allocated real-idx slots.
         // Both leaf pages are appended before any TDEF mutation so the page
@@ -254,10 +273,10 @@ internal sealed class RelationshipManager(AccessWriter writer)
         byte cascadeUpsByte = (byte)(relationship.CascadeUpdates ? 1 : 0);
         byte cascadeDelsByte = (byte)(relationship.CascadeDeletes ? 1 : 0);
 
-        // Choose unique-within-tdef logical-idx names. The PK side uses the
-        // relationship name; the FK side appends "_FK" to disambiguate when
-        // both endpoints land on the same table (self-referential).
-        string pkName = IndexHelpers.MakeUniqueLogicalIdxName(relationship.Name, pkExistingNames);
+        // Choose unique-within-tdef logical-idx names. DAO uses a hidden .rB/.rC
+        // style logical name on the parent side and the public relationship name
+        // on the child side.
+        string pkName = MakeUniqueParentRelationshipLogicalName(pkExistingNames);
         string fkName = IndexHelpers.MakeUniqueLogicalIdxName(
             primaryTdefPage == foreignTdefPage ? relationship.Name + "_FK" : relationship.Name,
             fkExistingNames);
@@ -270,9 +289,11 @@ internal sealed class RelationshipManager(AccessWriter writer)
             pkColNums,
             pkName,
             realIdxNumThisSide: pkPlan.RealIdxNum,
+            logicalIdxNumThisSide: pkPlan.LogicalIdxNum,
             allocateNewRealIdx: pkPlan.AllocatesNewRealIdx,
             preAllocatedLeafPage: pkPlan.NewLeafPageNumber,
-            relIdxNumOtherSide: fkPlan.RealIdxNum,
+            relTblTypeThisSide: 0x01,
+            relIdxNumOtherSide: fkPlan.LogicalIdxNum,
             relTblPageOther: foreignTdefPage,
             cascadeUps: 0,
             cascadeDels: 0,
@@ -283,9 +304,11 @@ internal sealed class RelationshipManager(AccessWriter writer)
             fkColNums,
             fkName,
             realIdxNumThisSide: fkPlan.RealIdxNum,
+            logicalIdxNumThisSide: fkPlan.LogicalIdxNum,
             allocateNewRealIdx: fkPlan.AllocatesNewRealIdx,
             preAllocatedLeafPage: fkPlan.NewLeafPageNumber,
-            relIdxNumOtherSide: pkPlan.RealIdxNum,
+            relTblTypeThisSide: 0x02,
+            relIdxNumOtherSide: pkPlan.LogicalIdxNum,
             relTblPageOther: primaryTdefPage,
             cascadeUps: cascadeUpsByte,
             cascadeDels: cascadeDelsByte,
@@ -315,11 +338,73 @@ internal sealed class RelationshipManager(AccessWriter writer)
             int sharedSlot = FindCoveringRealIdx(page, columnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
             List<string> existingNames = ReadLogicalIdxNames(page, layout.LogIdxNamesStart, layout.NumIdx);
 
+            int logicalIdxNum = NextLogicalIdxNumber(page, in layout);
             FkSidePlan plan = sharedSlot >= 0
-                ? new FkSidePlan(sharedSlot, false, 0)
-                : new FkSidePlan(layout.NumRealIdx, true, 0);
+                ? new FkSidePlan(sharedSlot, logicalIdxNum, false, 0)
+                : new FkSidePlan(layout.NumRealIdx, logicalIdxNum, true, 0);
 
             return (plan, existingNames);
+        }
+        finally
+        {
+            AccessBase.ReturnPage(page);
+        }
+    }
+
+    /// <summary>
+    /// Plans both sides of a self-referential relationship from one original
+    /// TDEF snapshot. When both sides need new real-idx descriptors, the
+    /// second side must reserve the slot after the first side's pending slot;
+    /// preparing each side independently would make both claim the same slot.
+    /// </summary>
+    private async ValueTask<(FkSidePlan PkPlan, FkSidePlan FkPlan, List<string> ExistingNames)> PrepareSelfReferentialFkSidesAsync(
+        long tdefPage,
+        int[] pkColumnNumbers,
+        int[] fkColumnNumbers,
+        CancellationToken cancellationToken)
+    {
+        byte[] page = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!TryParseFkTDefLayout(page, out FkTDefLayout layout))
+            {
+                throw new NotSupportedException(
+                    $"TDEF at page {tdefPage} cannot be mutated in place (multi-page chain, malformed counts, or not a TDEF).");
+            }
+
+            int pkSharedSlot = FindCoveringRealIdx(page, pkColumnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
+            int fkSharedSlot = FindCoveringRealIdx(page, fkColumnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
+            int nextRealIdxNum = layout.NumRealIdx;
+
+            bool pkAllocates = pkSharedSlot < 0;
+            int pkRealIdxNum = pkAllocates ? nextRealIdxNum++ : pkSharedSlot;
+
+            bool fkAllocates;
+            int fkRealIdxNum;
+            if (fkSharedSlot >= 0)
+            {
+                fkAllocates = false;
+                fkRealIdxNum = fkSharedSlot;
+            }
+            else if (pkAllocates && ColumnNumbersEqual(pkColumnNumbers, fkColumnNumbers))
+            {
+                fkAllocates = false;
+                fkRealIdxNum = pkRealIdxNum;
+            }
+            else
+            {
+                fkAllocates = true;
+                fkRealIdxNum = nextRealIdxNum;
+            }
+
+            int pkLogicalIdxNum = NextLogicalIdxNumber(page, in layout);
+            int fkLogicalIdxNum = pkLogicalIdxNum + 1;
+            List<string> existingNames = ReadLogicalIdxNames(page, layout.LogIdxNamesStart, layout.NumIdx);
+
+            return (
+                new FkSidePlan(pkRealIdxNum, pkLogicalIdxNum, pkAllocates, 0),
+                new FkSidePlan(fkRealIdxNum, fkLogicalIdxNum, fkAllocates, 0),
+                existingNames);
         }
         finally
         {
@@ -337,8 +422,10 @@ internal sealed class RelationshipManager(AccessWriter writer)
         int[] columnNumbers,
         string indexName,
         int realIdxNumThisSide,
+        int logicalIdxNumThisSide,
         bool allocateNewRealIdx,
         long preAllocatedLeafPage,
+        byte relTblTypeThisSide,
         int relIdxNumOtherSide,
         long relTblPageOther,
         byte cascadeUps,
@@ -435,7 +522,8 @@ internal sealed class RelationshipManager(AccessWriter writer)
                 }
             }
 
-            // bytes 34..37 used_pages = 0 (no usage bitmap emitted)
+            // bytes 34..37 used_pages = 0 initially; MaintainIndexesAsync
+            // patches the DAO-shaped index usage-map pointer after rebuilding.
             // bytes 38..41 first_dp = preAllocatedLeafPage
             AccessBase.Wi32(newTd, phys + 38, checked((int)preAllocatedLeafPage));
 
@@ -446,37 +534,41 @@ internal sealed class RelationshipManager(AccessWriter writer)
                 Constants.TableDefinition.UnknownIndexFlag;
         }
 
-        // Logical-idx entries (existing).
+        // Logical-idx entries. DAO prepends relationship logical entries before
+        // the existing PrimaryKey entry; CompactDatabase preserves FK tables only
+        // when the entry/name ordering follows that shape.
         int newLogIdxStart = newRealIdxDescStart + oldRealIdxPhysLen + deltaRealIdxPhys;
         int oldLogIdxLen = numIdx * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
-        Buffer.BlockCopy(td, logIdxStart, newTd, newLogIdxStart, oldLogIdxLen);
 
-        // Append the new FK logical-idx entry.
+        // Write the new FK logical-idx entry first.
         // bytes 0..3   Jet4/ACE format magic cookie (0x00000659). DAO checks
         //              this during CompactDatabase.
         // bytes 24..27 trailing(4) = 0
-        int newLogEntry = newLogIdxStart + oldLogIdxLen;
+        int newLogEntry = newLogIdxStart;
         AccessBase.Wi32(newTd, newLogEntry, Constants.TableDefinition.Jet4.FormatMagic);
-        AccessBase.Wi32(newTd, newLogEntry + 4, numIdx);                  // index_num (next sequential)
+        AccessBase.Wi32(newTd, newLogEntry + 4, logicalIdxNumThisSide);   // index_num (logical-index number)
         AccessBase.Wi32(newTd, newLogEntry + 8, realIdxNumThisSide);      // index_num2
-        newTd[newLogEntry + 12] = 0x01;                        // rel_tbl_type — empirical: 0x01 on FK entries (appendix §"Companies")
-        AccessBase.Wi32(newTd, newLogEntry + 13, relIdxNumOtherSide);     // rel_idx_num — slot on the OTHER table
+        newTd[newLogEntry + 12] = relTblTypeThisSide;          // rel_tbl_type: 0x01 parent-side, 0x02 child-side
+        AccessBase.Wi32(newTd, newLogEntry + 13, relIdxNumOtherSide);     // rel_idx_num — logical index on the OTHER table
         AccessBase.Wi32(newTd, newLogEntry + 17, checked((int)relTblPageOther)); // rel_tbl_page
         newTd[newLogEntry + 21] = cascadeUps;
         newTd[newLogEntry + 22] = cascadeDels;
         newTd[newLogEntry + 23] = 0x02;                        // index_type = FK
 
-        // Logical-idx names (existing).
-        int newLogIdxNamesStart = newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
-        Buffer.BlockCopy(td, logIdxNamesStart, newTd, newLogIdxNamesStart, logIdxNamesLen);
+        int existingLogIdxStart = newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
+        Buffer.BlockCopy(td, logIdxStart, newTd, existingLogIdxStart, oldLogIdxLen);
 
-        // Append the new logical-idx name (UTF-16 length-prefixed).
-        int newNameOffset = newLogIdxNamesStart + logIdxNamesLen;
+        // Logical-idx names follow the same order as their entries.
+        int newLogIdxNamesStart = existingLogIdxStart + oldLogIdxLen;
+        int newNameOffset = newLogIdxNamesStart;
         AccessBase.Wu16(newTd, newNameOffset, nameBytes.Length);
         Buffer.BlockCopy(nameBytes, 0, newTd, newNameOffset + 2, nameBytes.Length);
 
+        int existingNamesOffset = newNameOffset + nameRecordSize;
+        Buffer.BlockCopy(td, logIdxNamesStart, newTd, existingNamesOffset, logIdxNamesLen);
+
         // Trailing variable-length-column block (Access-emitted TDEFs only).
-        int newTrailingStart = newNameOffset + nameRecordSize;
+        int newTrailingStart = existingNamesOffset + logIdxNamesLen;
         if (trailingLen > 0)
         {
             Buffer.BlockCopy(td, trailingStart, newTd, newTrailingStart, trailingLen);
@@ -555,6 +647,30 @@ internal sealed class RelationshipManager(AccessWriter writer)
         return list;
     }
 
+    private static string MakeUniqueParentRelationshipLogicalName(IReadOnlyList<string> existing)
+    {
+        var taken = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
+        for (char suffix = 'B'; suffix <= 'Z'; suffix++)
+        {
+            string candidate = ".r" + suffix;
+            if (!taken.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        for (int i = 1; i < int.MaxValue; i++)
+        {
+            string candidate = ".r" + i.ToString(CultureInfo.InvariantCulture);
+            if (!taken.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return ".r";
+    }
+
     /// <summary>
     /// Real-idx sharing per §3.3: returns the existing real-idx slot whose col_map
     /// matches <paramref name="columnNumbers"/> exactly (in declaration
@@ -573,6 +689,40 @@ internal sealed class RelationshipManager(AccessWriter writer)
         }
 
         return -1;
+    }
+
+    private static bool ColumnNumbersEqual(int[] left, int[] right)
+    {
+        if (left.Length != right.Length)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < left.Length; i++)
+        {
+            if (left[i] != right[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static int NextLogicalIdxNumber(byte[] td, in FkTDefLayout layout)
+    {
+        int max = -1;
+        for (int li = 0; li < layout.NumIdx; li++)
+        {
+            int entry = layout.LogIdxStart + (li * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
+            int indexNum = AccessBase.Ri32(td, entry + 4);
+            if (indexNum > max)
+            {
+                max = indexNum;
+            }
+        }
+
+        return max + 1;
     }
 
     // ════════════════════════════════════════════════════════════════

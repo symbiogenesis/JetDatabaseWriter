@@ -54,21 +54,23 @@ One per target. The first property block in the blob describes the *table* itsel
 Payload layout (`chunkLen − 6` bytes total):
 
 ```
-0       4       innerRecLen   uint32   total bytes of this property-block payload (= chunkLen − 6).
-                                       mdbtools reads only the lo-16 bits as int16 and skips the hi-16,
-                                       which is equivalent to a uint32 read since these blocks never exceed 64 KiB.
+0       4       innerHeader   uint32   opaque to the reader. DAO programmatic table creation
+                                       has been observed writing 4 + 2 + targetNameLen here
+                                       (header through target name), not the full payload length.
+                                       Earlier writer versions wrote chunkLen - 6; mdbtools ignores it.
 4       2       targetNameLen uint16   bytes of UTF-16LE target name
 6       ...     targetName    UTF-16LE bytes (Jet4) / codepage bytes (Jet3)
 N       ...     entries       sequence of property entries until payload exhausted
 ```
 
-Writer parity: emit `innerRecLen = chunkLen − 6` and the rest verbatim; reader treats the first 4 bytes as opaque on round-trip.
+Writer parity: treat the first 4 bytes as opaque on read and preserve existing values during round-trip. For new DAO-shaped column property blocks, prefer the DAO-observed `4 + 2 + targetNameLen` value.
 
 ### 2.5 Property entry
 
 ```
 0       2       entryLen        uint16   total bytes including these 2
-2       1       ddlFlag         byte     hypothesis: 0x00 normally, 0x01 = "DDL-set"
+2       1       ddlFlag         byte     DAO writes 0x01 for Boolean properties created through DDL/DAO
+                                         (`Required`, `AllowZeroLength`); 0x00 also appears in older blobs.
                                          (mdbtools does not interpret this byte)
 3       1       dataType        byte     Jet column-type code (see §3)
 4       2       nameIndex       uint16   index into the name-pool
@@ -101,6 +103,22 @@ For the four properties we care about in this PR series, the dataType is always 
 
 mdbtools accepts chunk types `0x00`, `0x01`, and `0x02` as property blocks and treats all three identically. The subtype likely distinguishes table vs column vs index property blocks, but neither mdbtools nor Jackcess depends on the distinction.
 
+The 2026-05-11 DAO FK baseline found that programmatic DAO table creation emits column property blocks with subtype `0x01` for the simple Short Text / Long / AutoNumber schema under test. Subtype `0x00` remains readable, but `0x01` is the closer DAO shape for newly-authored column targets.
+
 This library:
 - **Reads:** accepts all three chunk subtypes as property blocks; unknown chunk types are preserved as opaque bytes for round-trip.
-- **Writes:** emits `0x00` exclusively. Round-trip tests against Access-authored fixtures pass without per-target-kind subtype emission.
+- **Writes:** should preserve parsed subtypes on round-trip and prefer `0x01` for newly-created column property targets when pursuing DAO Compact & Repair compatibility.
+
+## 5. DAO-created column property facts (2026-05-11)
+
+The FK Compact investigation compared writer-authored and DAO-authored tables with this schema: `Parent(ParentId AutoNumber PK, Label Text Required)` and `Child(ChildId AutoNumber PK, ParentId Long Required, Detail Text Nullable)`.
+
+Observed DAO `MSysObjects.LvProp` facts:
+
+- AutoNumber columns do not carry a `Required` property, even when DAO field/index objects are marked required. Their non-null behavior comes from the AutoNumber column flag and PK/index metadata.
+- Text columns carry `AllowZeroLength = False` (`dataType = 0x01`, Boolean value `0x00`).
+- Non-null text columns carry `Required = True`; nullable text columns can carry `Required = False`.
+- Boolean property entries created by DAO use `ddlFlag = 0x01`.
+- The name pool may contain both `Required` and `AllowZeroLength`; target property order in the observed blobs was `Required` then `AllowZeroLength` for non-null text, and `AllowZeroLength` then `Required` for nullable text. Access appears to tolerate either order when reading, but byte-for-byte DAO parity should preserve the observed order where practical.
+
+These LvProp differences were real DAO deltas, but matching them was not sufficient by itself to make writer-created FK tables survive DAO Compact & Repair. Treat them as compatibility facts, not as the whole compact root cause.

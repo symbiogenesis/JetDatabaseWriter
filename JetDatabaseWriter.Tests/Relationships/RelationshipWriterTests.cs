@@ -314,6 +314,48 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     }
 
     [Fact]
+    public async Task CreateRelationshipAsync_SingleColumn_EmitsDaoCompatibleFkCrossReferences()
+    {
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+
+        string parent = MakeTableName("XRParent");
+        string child = MakeTableName("XRChild");
+        string relName = $"FK_{child}_{parent}";
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                parent,
+                [new("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false }],
+                TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(
+                child,
+                [new("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false }, new("ParentId", typeof(int)) { IsNullable = false }],
+                TestContext.Current.CancellationToken);
+
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition(relName, parent, "Id", child, "ParentId"),
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        var parentEntry = await reader.GetCatalogEntryAsync(parent, TestContext.Current.CancellationToken);
+        var childEntry = await reader.GetCatalogEntryAsync(child, TestContext.Current.CancellationToken);
+        Assert.NotNull(parentEntry);
+        Assert.NotNull(childEntry);
+
+        byte[] fileBytes = temp.ToArray();
+        RawLogicalIdxEntry parentFk = ReadSingleFkLogicalEntry(fileBytes, parentEntry.TDefPage, childEntry.TDefPage);
+        RawLogicalIdxEntry childFk = ReadSingleFkLogicalEntry(fileBytes, childEntry.TDefPage, parentEntry.TDefPage);
+
+        Assert.Equal(0x01, parentFk.RelTblType);
+        Assert.Equal(0x02, childFk.RelTblType);
+        Assert.Equal(childFk.IndexNum, parentFk.RelIdxNum);
+        Assert.Equal(parentFk.IndexNum, childFk.RelIdxNum);
+        Assert.NotEqual(0, childFk.RealIdxUsedPages);
+    }
+
+    [Fact]
     public async Task CreateRelationshipAsync_MultiColumn_EmitsFkLogicalIdxEntriesOnBothSides()
     {
         var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
@@ -431,6 +473,63 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         object v = row[column];
         return v == DBNull.Value ? string.Empty : v.ToString() ?? string.Empty;
     }
+
+    private static RawLogicalIdxEntry ReadSingleFkLogicalEntry(byte[] fileBytes, long tdefPage, long relatedTdefPage)
+    {
+        const int PageSize = 4096;
+        const int TDefBlockEnd = 63;
+        const int ColumnDescriptorSize = 25;
+        const int RealIdxSkipEntrySize = 12;
+        const int RealIdxPhysSize = 52;
+        const int LogicalIdxEntrySize = 28;
+
+        int pageStart = checked((int)tdefPage * PageSize);
+        int numCols = BitConverter.ToUInt16(fileBytes, pageStart + 0x2D);
+        int numIdx = BitConverter.ToInt32(fileBytes, pageStart + 0x2F);
+        int numRealIdx = BitConverter.ToInt32(fileBytes, pageStart + 0x33);
+        int colStart = pageStart + TDefBlockEnd + (numRealIdx * RealIdxSkipEntrySize);
+        int namePos = colStart + (numCols * ColumnDescriptorSize);
+        for (int i = 0; i < numCols; i++)
+        {
+            int nameLen = BitConverter.ToUInt16(fileBytes, namePos);
+            namePos += 2 + nameLen;
+        }
+
+        int logIdxStart = namePos + (numRealIdx * RealIdxPhysSize);
+        var entries = new List<RawLogicalIdxEntry>();
+        for (int i = 0; i < numIdx; i++)
+        {
+            int entry = logIdxStart + (i * LogicalIdxEntrySize);
+            if (fileBytes[entry + 23] != 0x02)
+            {
+                continue;
+            }
+
+            if (BitConverter.ToInt32(fileBytes, entry + 17) != relatedTdefPage)
+            {
+                continue;
+            }
+
+            int realIdxNum = BitConverter.ToInt32(fileBytes, entry + 8);
+            int realIdxStart = logIdxStart - (numRealIdx * RealIdxPhysSize) + (realIdxNum * RealIdxPhysSize);
+
+            entries.Add(new RawLogicalIdxEntry(
+                BitConverter.ToInt32(fileBytes, entry + 4),
+                realIdxNum,
+                fileBytes[entry + 12],
+                BitConverter.ToInt32(fileBytes, entry + 13),
+                BitConverter.ToInt32(fileBytes, realIdxStart + 34)));
+        }
+
+        return Assert.Single(entries);
+    }
+
+    private readonly record struct RawLogicalIdxEntry(
+        int IndexNum,
+        int RealIdxNum,
+        byte RelTblType,
+        int RelIdxNum,
+        int RealIdxUsedPages);
 
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken cancellationToken)
     {

@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Schema;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -80,7 +79,7 @@ internal sealed class ColumnPropertyBlockBuilder
 
     /// <summary>
     /// Adds (or returns an existing) target by case-insensitive name. New targets
-    /// default to chunk-type <c>0x00</c> (the property-block subtype this library emits).
+    /// default to chunk-type <c>0x01</c> (the property-block subtype DAO emits for new columns).
     /// </summary>
     public TargetBuilder GetOrAddTarget(string name)
     {
@@ -93,7 +92,7 @@ internal sealed class ColumnPropertyBlockBuilder
             }
         }
 
-        var nt = new TargetBuilder { Name = name, ChunkType = ColumnPropertyChunkType.PropertyBlock };
+        var nt = new TargetBuilder { Name = name, ChunkType = ColumnPropertyChunkType.PropertyBlockAlt1 };
         Targets.Add(nt);
         return nt;
     }
@@ -227,17 +226,16 @@ internal sealed class ColumnPropertyBlockBuilder
         using var ms = new MemoryStream();
         using var bw = new BinaryWriter(ms, Encoding.Unicode, leaveOpen: true);
 
-        // Inner header — first 4 bytes are opaque per mdbtools (read & discarded).
-        // Convention used here: write the payload's eventual total byte count for
-        // forward debuggability; the parser ignores it.
-        bw.Write(0u); // placeholder; patched at the end below.
-
         byte[] nameBytes = encoding.GetBytes(target.Name);
         if (nameBytes.Length > ushort.MaxValue)
         {
             throw new InvalidOperationException($"Property target name '{target.Name}' encodes to {nameBytes.Length} bytes, exceeding the uint16 length limit.");
         }
 
+        // Inner header — first 4 bytes are opaque per mdbtools (read & discarded).
+        // DAO writes the byte count through the target-name field, not the whole
+        // payload length: sizeof(uint32) + sizeof(uint16) + targetNameBytes.
+        bw.Write((uint)(sizeof(uint) + sizeof(ushort) + nameBytes.Length));
         bw.Write((ushort)nameBytes.Length);
         bw.Write(nameBytes);
 
@@ -264,11 +262,7 @@ internal sealed class ColumnPropertyBlockBuilder
         }
 
         bw.Flush();
-        byte[] payload = ms.ToArray();
-
-        // Patch the leading uint32 with the payload byte count (cosmetic; ignored on read).
-        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(0, 4), (uint)payload.Length);
-        return payload;
+        return ms.ToArray();
     }
 
     private static void WriteChunk(BinaryWriter bw, ColumnPropertyChunkType chunkType, byte[] payload)
@@ -323,7 +317,7 @@ internal sealed class ColumnPropertyBlockBuilder
             {
                 Name = propertyName,
                 DataType = ColumnPropertyBlock.DataTypeBoolean,
-                DdlFlag = 0x00,
+                DdlFlag = 0x01,
                 Value = [value ? (byte)0xFF : (byte)0x00],
             });
         }

@@ -17,6 +17,14 @@ string repoRoot = FindRepoRoot();
 string fixtures = Path.Combine(repoRoot, "JetDatabaseWriter.Tests", "Databases");
 string probeDir = Path.Combine(repoRoot, "docs", "format-probe");
 
+if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_FK_DAO_BASELINE")))
+{
+    string baseline = Environment.GetEnvironmentVariable("DIAG_RT_BASELINE")
+        ?? Path.Combine(fixtures, "NorthwindTraders.accdb");
+    string workRoot = Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.FkDaoBaseline");
+    return await JetDatabaseWriter.FormatProbe.FkDaoBaselineProbe.RunAsync(baseline, workRoot);
+}
+
 await WriteIndexAppendixAsync(
     Path.Combine(fixtures, "NorthwindTraders.accdb"),
     Path.Combine(probeDir, "format-probe-appendix-index.md"));

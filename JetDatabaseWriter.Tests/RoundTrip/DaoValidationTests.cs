@@ -438,7 +438,7 @@ public sealed class DaoValidationTests
                 $$"""
                         $errorCode = 0
                         try {
-                            $db.Execute("INSERT INTO [{{Child}}] (ParentId, Detail) VALUES (99999, 'Orphan')")
+                            $db.Execute("INSERT INTO [{{Child}}] (ParentId, Detail) VALUES (99999, 'Orphan')", 128)
                         } catch {
                             $errorCode = $_.Exception.ErrorCode
                             if ($errorCode -eq 0) {

@@ -87,39 +87,43 @@ newer `DaoValidationTests` (single-table DAO scripts via
 `AccessRoundTripEnvironment.RunDaoScript`) should be reused for new DAO
 scenarios rather than reinventing the setup/teardown boilerplate.
 
-- [ ] **`[S]`** **Compact & Repair acceptance** — the two existing tests
+- [ ] **`[S]`** **FK Compact & Repair acceptance** — the two existing tests
   (`SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`,
-  `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`) now run on
-  Access-equipped hosts (via `SkipUnless`) and fail visibly. DAO Compact
-  itself **succeeds** (catalog index fixes resolved `MSysDb 3011`), but DAO
-  **drops rows** from writer-created user tables (row count = 0 post-compact)
-  because it cannot open the writer's user-table TDEFs (“Unrecognized
-  database format”). Blocked on a per-table TDEF structural incompatibility;
-  the catalog layer is correct. See
-  [round-trip-test-failures.md](/docs/design/round-trip-test-failures.md).
-- [ ] **`[S]`** **DAO OpenRecordset row-count** — test implemented in
-  `DaoValidationTests.DaoOpenRecordset_RowCount_MatchesWriterOutput`;
-  skipped with a doc pointer. DAO can `OpenDatabase` the writer’s file
-  (catalog is fine) but `OpenRecordset` rejects the writer-created
-  user-table TDEF with “Unrecognized database format”. Disconfirmed
-  hypothesis: catalog text-encoding (MSysObjects.Name compression) was
-  fixed (`EncodeJet4Text` now respects `COMPRESSED_UNICODE_EXT_FLAG_MASK`)
-  but did not resolve this. Blocked on TDEF page-layout compatibility.
-- [ ] **`[S]`** **DAO index traversal** — test implemented in
-  `DaoValidationTests.DaoIndexTraversal_Seek_LocatesRowByPrimaryKey`;
-  same status as row-count (skipped, blocked on TDEF).
-- [ ] **`[S]`** **DAO AutoNumber continuation** — test implemented in
-  `DaoValidationTests.DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert`;
-  same status as row-count (skipped, blocked on TDEF).
-- [ ] **`[M]`** **DAO Memo/OLE fidelity** — test implemented in
-  `DaoValidationTests.DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly`;
-  same status as row-count (skipped, blocked on TDEF — `OpenRecordset`
-  rejects writer-created tables).
+  `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`) remain known-gap
+  opt-in tests. DAO Compact itself succeeds, but post-compact verification
+  still fails for writer-created FK-bearing tables. The focused single-FK
+  test currently reports row count 0 after compact; the standalone
+  `DIAG_FK_DAO_BASELINE` probe can produce an even stronger symptom where
+  CompactDatabase exits 0 but omits the writer-created FK tables and
+  relationship rows entirely. See
+  [round-trip-openrecordset-hypothesis.md](/docs/design/round-trip-openrecordset-hypothesis.md).
+- [x] **`[S]`** **DAO OpenRecordset row-count** —
+  `DaoValidationTests.DaoOpenRecordset_RowCount_MatchesWriterOutput` now
+  passes on Access-equipped hosts. The original `OpenRecordset`
+  TDEF-layout blocker is resolved.
+- [x] **`[S]`** **DAO index traversal** —
+  `DaoValidationTests.DaoIndexTraversal_Seek_LocatesRowByPrimaryKey` now
+  passes on Access-equipped hosts.
+- [x] **`[S]`** **DAO AutoNumber continuation** —
+  `DaoValidationTests.DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert`
+  now passes; DAO continues after the writer's persisted AutoNumber
+  high-water value instead of reusing an existing ID.
+- [x] **`[M]`** **DAO Memo/OLE fidelity** —
+  `DaoValidationTests.DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly`
+  now passes after the OpenRecordset and usage-map fixes.
+- [ ] **`[S]`** **DAO FK enforcement unskip** —
+  `DaoValidationTests.DaoRelationshipEnforcement_FkViolation_RaisesError`
+  passes with `JETDATABASEWRITER_RUN_KNOWN_ACCESS_COMPAT_GAPS=1` after
+  DAO-shaped FK logical cross-references and real-index `used_pages` fixes.
+  It is still guarded as a known-gap opt-in test until the adjacent FK
+  Compact & Repair behavior is either fixed or intentionally split into a
+  separate tracked gap.
 - [ ] **`[L]`** **DAO CompactDatabase on encrypted output** — test
   implemented in
   `DaoValidationTests.DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds`;
-  skipped, blocked on TDEF — DAO's `CompactDatabase` internally hits the
-  same "Unrecognized database format" when processing writer-created tables.
+  still a known-gap opt-in test. Do not start this until plaintext FK
+  Compact & Repair has a clear root cause; the encrypted failure may be in
+  encryption/container metadata rather than the plain TDEF/index path.
 
 ---
 

@@ -97,8 +97,10 @@ Key deltas vs. Jet4:
                         // varies across tables — same per-tdef cookie pattern as §3.1
 4 bytes  index_num      // logical index number; NOT necessarily sequential
 4 bytes  index_num2     // index into the real-index list (which physical idx backs this)
-1 byte   rel_tbl_type   // type of the *other* table in this FK relationship
-4 bytes  rel_idx_num    // -1 (0xFFFFFFFF) when this is not a FK
+1 byte   rel_tbl_type   // FK role: 0x01 on parent-side FK logical entries,
+                        // 0x02 on child-side FK logical entries; 0x00 for non-FK
+4 bytes  rel_idx_num    // -1 (0xFFFFFFFF) when this is not a FK; otherwise the
+                        // partner logical-index number, not the partner real-idx slot
 4 bytes  rel_tbl_page   // page number of the other table in the FK
 1 byte   cascade_ups    // FK cascade-updates: only bit 0x01 (CASCADE_UPDATES_FLAG)
                         // signals "cascade enabled". DAO/Access stamps placeholder
@@ -134,6 +136,18 @@ This matches the offsets `AccessReader.ParseIndexMetadata` uses for the Jet3 pat
 > "There can be more logical index infos than physical index infos (currently only seen for foreign-key indexes). In this situation, one or more of the logical indexes actually share the same underlying physical index (the `index_num2` indicates which physical index backs which logical index)." — HACKING.md
 
 When the user enables "enforce referential integrity" in the Access GUI, both sides of the relationship gain an extra logical index (type `0x02`). If the FK columns are already covered by a user-created index, the new logical FK index reuses that physical index data instead of duplicating it.
+
+### 3.4 DAO FK compatibility findings (2026-05-11)
+
+The `DIAG_FK_DAO_BASELINE` probe creates the same parent/child/enforced-FK schema through this writer and through DAO, then dumps `MSysObjects`, `MSysACEs`, `MSysRelationships`, TDEF FK logical entries, and CompactDatabase output. Current empirical facts:
+
+- `MSysRelationships` rows can match DAO exactly and still not be sufficient for DAO Compact & Repair. The per-table TDEF FK logical entries and backing real-index allocation metadata matter too.
+- Parent-side FK logical entries use `rel_tbl_type = 0x01`; child-side FK logical entries use `rel_tbl_type = 0x02`.
+- `rel_idx_num` cross-references the partner logical-index number (`index_num`), not the partner real-index physical slot (`index_num2`).
+- DAO prepends the FK logical entry before the existing `PrimaryKey` logical entry. The matching logical-index name list follows the same order.
+- DAO names the parent-side FK logical entry with a hidden `.rB`-style name in the simple baseline; the child-side FK logical entry uses the public relationship name.
+- Jet4/ACE FK backing real-index descriptors need a non-zero `used_pages` pointer. DAO FK enforcement failed when rebuilt descriptors had `used_pages = 0`, even though `first_dp` pointed at a valid B-tree. After patching `used_pages`, DAO rejected orphan inserts with error `-2146825087`.
+- The current unresolved Compact & Repair lead is the exact placement/shape of those real-index usage-map rows after bulk rebuilds. DAO-authored simple FK tables place table used/free rows and real-index rows in one usage-map page (`row 0`, `row 1`, then `row >= 2`); the writer path under investigation can append a separate index usage-map page after rebuilding. Confirm this before changing the writer again.
 
 ## 4. Index page layout (page types `0x03` and `0x04`)
 

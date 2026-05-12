@@ -83,6 +83,7 @@ internal static class Constants
         public const string InputMask = "InputMask";
         public const string Caption = "Caption";
         public const string Required = "Required";
+        public const string AllowZeroLength = "AllowZeroLength";
 
         /// <summary>
         /// Calculated-column expression string (Access 2010+, ACCDB only). Written as a

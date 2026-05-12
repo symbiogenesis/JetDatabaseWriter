@@ -70,8 +70,9 @@ internal static class JetExpressionConverter
     /// Builds a property blob from the supplied <paramref name="columns"/> by emitting
     /// a per-column <see cref="ColumnPropertyBlockBuilder.TargetBuilder"/> for every
     /// column that declares any persisted property — <c>Required</c> (NOT NULL),
-    /// <c>DefaultValueExpression</c> / <c>DefaultValue</c>, <c>ValidationRuleExpression</c>,
-    /// <c>ValidationText</c>, or <c>Description</c>. Returns <see langword="null"/>
+    /// text-column <c>AllowZeroLength</c>, <c>DefaultValueExpression</c> /
+    /// <c>DefaultValue</c>, <c>ValidationRuleExpression</c>, <c>ValidationText</c>,
+    /// or <c>Description</c>. Returns <see langword="null"/>
     /// when no column declares a persisted property.
     /// </summary>
     /// <param name="columns">Column definitions. May be <see langword="null"/>.</param>
@@ -106,12 +107,14 @@ internal static class JetExpressionConverter
             ?? ToJetExpression(col.DefaultValue);
 
         // Required = true is persisted explicitly to match how DAO/Access surface
-        // NOT NULL constraints. The TDEF column-flag byte has no DAO-recognised
-        // bit for nullability (see docs/design/round-trip-test-failures.md), so
-        // LvProp is the only round-trip-safe place to record it.
-        bool emitRequired = !col.IsNullable;
+        // NOT NULL constraints. AutoNumber columns are the DAO-observed exception:
+        // even when marked required, their non-null semantics come from the auto
+        // column flag and DAO does not emit a Required property for them.
+        bool emitAllowZeroLength = IsTextLikeColumn(col);
+        bool emitRequired = !col.IsAutoIncrement && (!col.IsNullable || emitAllowZeroLength);
 
         bool any = emitRequired
+            || emitAllowZeroLength
             || defaultExpr is not null
             || col.ValidationRuleExpression is not null
             || col.ValidationText is not null
@@ -123,9 +126,14 @@ internal static class JetExpressionConverter
         }
 
         ColumnPropertyBlockBuilder.TargetBuilder target = builder.GetOrAddTarget(col.Name);
+        if (emitAllowZeroLength)
+        {
+            target.AddBoolean(Constants.ColumnPropertyNames.AllowZeroLength, false);
+        }
+
         if (emitRequired)
         {
-            target.AddBoolean(Constants.ColumnPropertyNames.Required, true);
+            target.AddBoolean(Constants.ColumnPropertyNames.Required, !col.IsNullable);
         }
 
         if (defaultExpr is not null)
@@ -148,4 +156,7 @@ internal static class JetExpressionConverter
             target.AddText(Constants.ColumnPropertyNames.Description, col.Description, format);
         }
     }
+
+    private static bool IsTextLikeColumn(ColumnDefinition col) =>
+        col.ClrType == typeof(string) || col.ClrType == typeof(Hyperlink);
 }
