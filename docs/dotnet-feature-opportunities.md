@@ -36,27 +36,6 @@ Encryption is both correctness-sensitive and allocation-sensitive. Standard encr
 
 ## Medium-value candidates
 
-### 2. Replace `BinaryWriter` + `MemoryStream` with direct span writers in small binary serializers
-
-**Feature family:** span APIs, `BinaryPrimitives`, `IBufferWriter<byte>` / `ArrayBufferWriter<byte>` where useful.
-
-**Where:**
-
-- `JetDatabaseWriter/Schema/ColumnPropertyBlockBuilder.cs`
-- optionally similar small schema/CFB emitters after profiling
-
-**Why it matters:**
-
-The column-property block serializer builds known little-endian binary layouts using `MemoryStream` and `BinaryWriter`. The code is correct, but this area is format-sensitive and already documented by exact byte layout. Direct span writes can make the on-disk structure more explicit and avoid small transient allocations.
-
-**Concrete work:**
-
-- Replace `WriteChunk`, `BuildNamePoolPayload`, and `BuildPropertyBlockPayload` with helpers that reserve exact sizes and write with `BinaryPrimitives.WriteUInt16LittleEndian` / `WriteUInt32LittleEndian`.
-- Use `Encoding.GetByteCount` to compute exact string payload sizes before allocating.
-- Preserve the current stable name-pool ordering and unknown-chunk re-emission behavior.
-
-**Expected benefit:** readability for binary layout, small allocation reduction, and easier auditing.
-
 ### 3. Use frozen/read-only collection types for immutable lookup data
 
 **Feature family:** .NET 8+ `FrozenDictionary` / `FrozenSet`; newer read-only collection helpers.
@@ -248,6 +227,7 @@ These are worth preserving but do not need modernization churn right now.
 - `ValueTask` and `IAsyncEnumerable<T>` are already central to the reader/writer API and hot paths.
 - `AccessReader` already uses `[EnumeratorCancellation]`, pooled row buffers, and sync-completing `ValueTask` paths for typed row decoding.
 - `Span<T>`, `ReadOnlySpan<T>`, `Memory<T>`, `MemoryMarshal`, and `BinaryPrimitives` are already widely used in page parsing, row encoding/decoding, index encoding, and text handling.
+- `ColumnPropertyBlockBuilder` now uses exact-size byte arrays plus `BinaryPrimitives` for chunk, name-pool, and property-block serialization while preserving stable name-pool ordering and unknown-chunk re-emission.
 - `SearchValues` is already used for OLE payload signature scanning, zlib header suffix detection, and collation line-break scanning.
 - Collection expressions and target-typed `new` are already common.
 - Primary constructors and `required` members are already used where they improve local code clarity, especially in FormatProbe and scaffold code.
