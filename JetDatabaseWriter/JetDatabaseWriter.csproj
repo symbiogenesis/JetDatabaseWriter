@@ -46,9 +46,7 @@
     <EmbeddedResource Include="Indexes\CodeTables\index_codes_gen_97.txt.gz" LogicalName="JetDatabaseWriter.IndexCodeTables.index_codes_gen_97.txt.gz" />
     <EmbeddedResource Include="Indexes\CodeTables\index_mappings_ext_gen_97.txt.gz" LogicalName="JetDatabaseWriter.IndexCodeTables.index_mappings_ext_gen_97.txt.gz" />
   </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="System.Text.Encoding.CodePages" />
-  </ItemGroup>
+
   <!--
     System.Linq.AsyncEnumerable (Where/ToListAsync/etc. over IAsyncEnumerable<T>) ships in the
     BCL on .NET 10+. For older consumers (anything resolving the netstandard2.1 asset), pull in
@@ -57,5 +55,6 @@
   -->
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.1'">
     <PackageReference Include="System.Linq.Async" />
+    <PackageReference Include="System.Text.Encoding.CodePages" />
   </ItemGroup>
 </Project>

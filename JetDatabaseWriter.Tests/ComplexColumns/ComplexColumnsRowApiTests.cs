@@ -1,9 +1,12 @@
 namespace JetDatabaseWriter.Tests.ComplexColumns;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.ComplexColumns.Models;
@@ -52,6 +55,47 @@ public sealed class ComplexColumnsRowApiTests
         Assert.True(ok);
         Assert.Equal("txt", ext);
         Assert.Equal(payload, decoded);
+    }
+
+    [Fact]
+    public void AttachmentWrapper_TryDecode_AcceptsKnownRawDeflateSample()
+    {
+        byte[] wrapped =
+        [
+            0x01, 0x00, 0x00, 0x00,
+            0x24, 0x00, 0x00, 0x00,
+            0x13, 0x61, 0x60, 0x60, 0x60, 0x04, 0x62, 0x0E,
+            0x20, 0x2E, 0x61, 0xA8, 0x00, 0x62, 0x06, 0x86,
+            0xA2, 0xC4, 0x72, 0x85, 0x94, 0xD4, 0xB4, 0x9C,
+            0xC4, 0x92, 0x54, 0x85, 0x82, 0xC4, 0xCA, 0x9C,
+            0xFC, 0xC4, 0x14, 0x00,
+        ];
+
+        byte[] rawBody = wrapped.AsSpan(8, BinaryPrimitives.ReadInt32LittleEndian(wrapped.AsSpan(4, 4))).ToArray();
+        Assert.Throws<InvalidDataException>(() => InflateWithZlib(rawBody));
+
+        bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded);
+
+        Assert.True(ok);
+        Assert.Equal("txt", ext);
+        Assert.Equal(Encoding.UTF8.GetBytes("raw deflate payload"), decoded);
+    }
+
+    [Fact]
+    public void AccessReader_DecompressAttachmentData_ZlibWrappedSample_InflatesFromHeader()
+    {
+        byte[] raw =
+        [
+            0x01, 0xA5, 0x5A,
+            0x78, 0xDA, 0xAB, 0xCA, 0xC9, 0x4C, 0x52, 0x48,
+            0x2C, 0x29, 0x49, 0x4C, 0xCE, 0xC8, 0x4D, 0xCD,
+            0x2B, 0x51, 0x28, 0x48, 0xAC, 0xCC, 0xC9, 0x4F,
+            0x4C, 0x01, 0x00, 0x6B, 0xCA, 0x09, 0x05,
+        ];
+
+        byte[] decoded = InvokeDecompressAttachmentData(raw, 1);
+
+        Assert.Equal(Encoding.UTF8.GetBytes("zlib attachment payload"), decoded);
     }
 
     [Fact]
@@ -433,5 +477,21 @@ public sealed class ComplexColumnsRowApiTests
         Assert.Equal("a", values[1]);
         Assert.Equal("medium-tag", values[2]);
         Assert.Equal(new string('x', 80), values[3]);
+    }
+
+    private static byte[] InvokeDecompressAttachmentData(byte[] bytes, int offset)
+    {
+        MethodInfo? method = typeof(AccessReader).GetMethod("DecompressAttachmentData", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        return (byte[])method!.Invoke(null, [bytes, offset])!;
+    }
+
+    private static byte[] InflateWithZlib(byte[] bytes)
+    {
+        using var input = new MemoryStream(bytes);
+        using var zlib = new ZLibStream(input, CompressionMode.Decompress);
+        using var output = new MemoryStream();
+        zlib.CopyTo(output);
+        return output.ToArray();
     }
 }

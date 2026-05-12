@@ -66,7 +66,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
 {
 #if NET8_0_OR_GREATER
     private static readonly SearchValues<byte> OlePayloadSignatureFirstBytes = SearchValues.Create([0x25, 0x42, 0x47, 0x49, 0x4D, 0x50, 0x7B, 0x89, 0xD0, 0xFF]);
+    private static readonly SearchValues<byte> ZlibHeaderFirstBytes = SearchValues.Create([(byte)0x78]);
     private static readonly SearchValues<byte> ZlibHeaderSuffixes = SearchValues.Create([0x01, 0x5E, 0x9C, 0xDA]);
+#else
+    private static readonly byte[] OlePayloadSignatureFirstBytes = [0x25, 0x42, 0x47, 0x49, 0x4D, 0x50, 0x7B, 0x89, 0xD0, 0xFF];
+    private static readonly byte[] ZlibHeaderFirstBytes = [0x78];
+    private static readonly byte[] ZlibHeaderSuffixes = [0x01, 0x5E, 0x9C, 0xDA];
 #endif
 
     private readonly AsyncReentrantOperationGate _operationGate = new();
@@ -2187,43 +2192,75 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         int scanEnd = Math.Min(valueEnd, valueStart + 512);
+        string? matchedMimeType = null;
+        int candidate = FindMatchingBytePattern(
+            buffer,
+            valueStart,
+            scanEnd,
+            4,
+            OlePayloadSignatureFirstBytes,
+            static (ReadOnlySpan<byte> window, ref string? state) => TryMatchOlePayloadMagic(window, out state),
+            ref matchedMimeType);
+        if (candidate < 0)
+        {
+            return false;
+        }
+
+        payloadStart = candidate;
+        payloadLength = valueEnd - candidate;
+        mimeType = matchedMimeType;
+        return true;
+    }
+
+    private delegate bool BytePatternMatcher<TState>(ReadOnlySpan<byte> window, ref TState state);
+
+    private static int FindMatchingBytePattern<TState>(
+        byte[] buffer,
+        int searchStart,
+        int searchEnd,
+        int minimumPatternLength,
 #if NET8_0_OR_GREATER
-        ReadOnlySpan<byte> searchWindow = buffer.AsSpan(valueStart, scanEnd - valueStart - 3);
+        SearchValues<byte> firstBytes,
+#else
+        byte[] firstBytes,
+#endif
+        BytePatternMatcher<TState> matcher,
+        ref TState state)
+    {
+        int searchLimit = searchEnd - minimumPatternLength + 1;
+        if (searchLimit <= searchStart)
+        {
+            return -1;
+        }
+
+        ReadOnlySpan<byte> searchWindow = buffer.AsSpan(searchStart, searchLimit - searchStart);
         int consumed = 0;
         while (consumed < searchWindow.Length)
         {
-            int relative = searchWindow[consumed..].IndexOfAny(OlePayloadSignatureFirstBytes);
+            int relative = IndexOfAny(searchWindow[consumed..], firstBytes);
             if (relative < 0)
             {
-                return false;
+                return -1;
             }
 
-            int i = valueStart + consumed + relative;
-            ReadOnlySpan<byte> window = buffer.AsSpan(i, scanEnd - i);
-            if (TryMatchOlePayloadMagic(window, out mimeType))
+            int candidate = searchStart + consumed + relative;
+            ReadOnlySpan<byte> window = buffer.AsSpan(candidate, searchEnd - candidate);
+            if (matcher(window, ref state))
             {
-                payloadStart = i;
-                payloadLength = valueEnd - i;
-                return true;
+                return candidate;
             }
 
             consumed += relative + 1;
         }
-#else
-        for (int i = valueStart; i < scanEnd - 3; i++)
-        {
-            ReadOnlySpan<byte> window = buffer.AsSpan(i, scanEnd - i);
-            if (TryMatchOlePayloadMagic(window, out mimeType))
-            {
-                payloadStart = i;
-                payloadLength = valueEnd - i;
-                return true;
-            }
-        }
-#endif
 
-        return false;
+        return -1;
     }
+
+#if NET8_0_OR_GREATER
+    private static int IndexOfAny(ReadOnlySpan<byte> source, SearchValues<byte> values) => source.IndexOfAny(values);
+#else
+    private static int IndexOfAny(ReadOnlySpan<byte> source, byte[] values) => source.IndexOfAny(values);
+#endif
 
     private static bool TryMatchOlePayloadMagic(ReadOnlySpan<byte> window, out string? mimeType)
     {
@@ -2534,9 +2571,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     };
 
     /// <summary>
-    /// Decompresses Access attachment file data using raw Deflate.
-    /// Access stores attachment data with a 1-byte compression flag followed by
-    /// deflate-compressed content.
+    /// Decompresses Access attachment file data by locating the zlib-wrapped
+    /// deflate payload that follows the compression flag.
     /// </summary>
     private static byte[] DecompressAttachmentData(byte[] data, int offset)
     {
@@ -2552,13 +2588,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 return data.AsSpan(offset).ToArray();
             }
 
-            // Skip the 2-byte zlib header for raw DeflateStream
-            int deflateStart = zlibPos + 2;
-            using var input = new MemoryStream(data, deflateStart, data.Length - deflateStart);
-            using var deflate = new System.IO.Compression.DeflateStream(input, System.IO.Compression.CompressionMode.Decompress);
-            using var output = new MemoryStream();
-            deflate.CopyTo(output);
-            return output.ToArray();
+            return InflateZlibPayload(data, zlibPos);
         }
         catch (InvalidDataException)
         {
@@ -2569,43 +2599,45 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private static int FindZlibHeader(byte[] data, int offset)
     {
-        if (offset >= data.Length - 1)
-        {
-            return -1;
-        }
+        bool unused = false;
+        return FindMatchingBytePattern(
+            data,
+            offset,
+            data.Length,
+            2,
+            ZlibHeaderFirstBytes,
+            static (ReadOnlySpan<byte> window, ref bool state) => IsZlibHeader(window),
+            ref unused);
+    }
+
+    private static bool IsZlibHeader(ReadOnlySpan<byte> window) =>
+        window.Length >= 2 && IsZlibHeaderSuffix(window[1]);
+
+    private static bool IsZlibHeaderSuffix(byte value)
+    {
+#if NET8_0_OR_GREATER
+        return ZlibHeaderSuffixes.Contains(value);
+#else
+        return Array.IndexOf(ZlibHeaderSuffixes, value) >= 0;
+#endif
+    }
+
+    private static byte[] InflateZlibPayload(byte[] data, int zlibPos)
+    {
+        using var output = new MemoryStream();
 
 #if NET8_0_OR_GREATER
-        ReadOnlySpan<byte> searchWindow = data.AsSpan(offset, data.Length - offset - 1);
-        int consumed = 0;
-        while (consumed < searchWindow.Length)
-        {
-            int relative = searchWindow[consumed..].IndexOf((byte)0x78);
-            if (relative < 0)
-            {
-                return -1;
-            }
-
-            int candidate = offset + consumed + relative;
-            if (ZlibHeaderSuffixes.Contains(data[candidate + 1]))
-            {
-                return candidate;
-            }
-
-            consumed += relative + 1;
-        }
-
-        return -1;
+        using var input = new MemoryStream(data, zlibPos, data.Length - zlibPos);
+        using var zlib = new System.IO.Compression.ZLibStream(input, System.IO.Compression.CompressionMode.Decompress);
+        zlib.CopyTo(output);
 #else
-        for (int i = offset; i < data.Length - 1; i++)
-        {
-            if (data[i] == 0x78 && (data[i + 1] == 0x01 || data[i + 1] == 0x5E || data[i + 1] == 0x9C || data[i + 1] == 0xDA))
-            {
-                return i;
-            }
-        }
-
-        return -1;
+        int deflateStart = zlibPos + 2;
+        using var input = new MemoryStream(data, deflateStart, data.Length - deflateStart);
+        using var deflate = new System.IO.Compression.DeflateStream(input, System.IO.Compression.CompressionMode.Decompress);
+        deflate.CopyTo(output);
 #endif
+
+        return output.ToArray();
     }
 
     /// <summary>

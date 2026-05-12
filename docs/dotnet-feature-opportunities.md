@@ -106,7 +106,7 @@ Several methods manually loop until a header, page, CFB sector, or sniff buffer 
 
 **Expected benefit:** correctness, robustness, and readability.
 
-### 5. Use `ZLibStream` for zlib-wrapped attachment data
+### 5. Use `ZLibStream` for zlib-wrapped attachment data (DONE)
 
 **Feature family:** .NET 6+ `System.IO.Compression.ZLibStream`.
 

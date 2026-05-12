@@ -129,12 +129,6 @@
           "StyleCop.Analyzers.Unstable": "1.2.0.556"
         }
       },
-      "System.Text.Encoding.CodePages": {
-        "type": "Direct",
-        "requested": "[10.0.7, )",
-        "resolved": "10.0.7",
-        "contentHash": "jVwqeYm6ihKbC8+f9dC+VGlWb6areYWTi+3aHuawZXazkiVs3DxQTNeiMYbcZ/H+JzVkPXfkLUUzUFPQneobFg=="
-      },
       "StyleCop.Analyzers.Unstable": {
         "type": "Transitive",
         "resolved": "1.2.0.556",

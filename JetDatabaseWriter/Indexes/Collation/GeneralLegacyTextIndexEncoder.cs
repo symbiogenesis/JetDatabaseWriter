@@ -77,6 +77,8 @@ internal static class GeneralLegacyTextIndexEncoder
 
 #if NET8_0_OR_GREATER
     private static readonly SearchValues<char> LineBreakChars = SearchValues.Create("\r\n");
+#else
+    private static readonly char[] LineBreakChars = ['\r', '\n'];
 #endif
 
     internal static readonly byte[] SurrogateExtraBytes = [0x3F];
@@ -238,23 +240,11 @@ internal static class GeneralLegacyTextIndexEncoder
         return [.. bout];
     }
 
-    private static int FindFirstLineBreak(string text)
-    {
 #if NET8_0_OR_GREATER
-        return text.AsSpan().IndexOfAny(LineBreakChars);
+    private static int FindFirstLineBreak(string text) => text.AsSpan().IndexOfAny(LineBreakChars);
 #else
-        for (int i = 0; i < text.Length; i++)
-        {
-            char c = text[i];
-            if (c == '\r' || c == '\n')
-            {
-                return i;
-            }
-        }
-
-        return -1;
+    private static int FindFirstLineBreak(string text) => text.IndexOfAny(LineBreakChars);
 #endif
-    }
 
     /// <summary>
     /// Runs the per-codepoint state machine over <paramref name="chars"/>
