@@ -289,17 +289,20 @@ internal sealed class ConstraintRegistry(
             // falling back to the legacy 0x08 bit only when LvProp is absent.
             bool isComplex = col.Type == T_ATTACHMENT || col.Type == T_COMPLEX;
             bool isNullable;
+            bool isAutoIncrement = !isComplex && (col.Flags & 0x04) != 0;
             if (isComplex)
             {
                 isNullable = true;
+            }
+            else if (isAutoIncrement)
+            {
+                isNullable = false;
             }
             else
             {
                 bool? required = properties?.FindTarget(col.Name)?.GetBooleanValue(Constants.ColumnPropertyNames.Required);
                 isNullable = required is bool r ? !r : (col.Flags & 0x08) == 0;
             }
-
-            bool isAutoIncrement = !isComplex && (col.Flags & 0x04) != 0;
 
             ColumnConstraint c = new()
             {

@@ -128,10 +128,25 @@ public sealed class PersistedColumnPropertiesTests
         var cols = new List<ColumnDefinition>
         {
             new("X", typeof(int)),
-            new("Y", typeof(string), maxLength: 50),
         };
 
         Assert.Null(JetExpressionConverter.BuildLvPropBlob(cols, DatabaseFormat.Jet4Mdb));
+    }
+
+    [Fact]
+    public void BuildLvPropBlob_TextColumn_EmitsDaoShapeAllowZeroLengthFalse()
+    {
+        var cols = new List<ColumnDefinition>
+        {
+            new("Y", typeof(string), maxLength: 50),
+        };
+
+        byte[] blob = JetExpressionConverter.BuildLvPropBlob(cols, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyTarget target = parsed.FindTarget("Y")!;
+
+        Assert.False(target.GetBooleanValue(Constants.ColumnPropertyNames.AllowZeroLength));
+        Assert.False(target.GetBooleanValue(Constants.ColumnPropertyNames.Required));
     }
 
     [Fact]

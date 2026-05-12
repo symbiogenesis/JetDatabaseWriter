@@ -35,7 +35,7 @@ applyTo: "**"
 
 | Acronym | Meaning |
 |---------|---------|
-| **CFB** | Compound File Binary — OLE2 container format wrapping Agile-encrypted .accdb files |
+| **CFB** | Compound File Binary — OLE2 container format used by Office Crypto wrappers and test fixtures; Access-native Agile `.accdb` files use a flat page layout instead |
 | **FAT** | File Allocation Table — sector chain mapping in a CFB file |
 | **DIFAT** | Double-Indirect FAT — extension array when >109 FAT sectors overflow the header |
 | **Mini-FAT** | Mini File Allocation Table — allocation table for streams < 4096 bytes |

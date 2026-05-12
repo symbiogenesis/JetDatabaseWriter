@@ -13,9 +13,9 @@ using Xunit;
 /// <see cref="CompoundFileReader"/>. Modelled on OpenMcdf's StreamTests
 /// (WriteThenRead pattern), but using only this assembly's CFB code.
 ///
-/// <see cref="CompoundFileWriter"/> emits CFB v4 (4096-byte sectors) with
-/// a single root storage and N top-level streams — matching the encrypted
-/// .accdb wrapping use case.
+/// <see cref="CompoundFileWriter"/> emits a single root storage and N top-level
+/// streams. The default writer uses CFB v3 (512-byte sectors); the Office-crypto
+/// variant uses CFB v4 (4096-byte sectors).
 /// </summary>
 public sealed class CompoundFileWriterTests
 {
@@ -110,15 +110,27 @@ public sealed class CompoundFileWriterTests
     }
 
     [Fact]
-    public void Build_OutputUsesV4SectorSize()
+    public void Build_OutputUsesV3SectorSize()
     {
         byte[] cfb = CompoundFileWriter.Build([new("S", CreatePatternedBuffer(64))]);
 
-        // sectorShift at offset 0x1E (little-endian uint16); 12 == 4096-byte sectors.
+        // sectorShift at offset 0x1E (little-endian uint16); 9 == 512-byte sectors.
+        ushort sectorShift = (ushort)(cfb[0x1E] | (cfb[0x1F] << 8));
+        Assert.Equal(Constants.CompoundFile.V3.SectorShift, sectorShift);
+
+        // majorVersion at offset 0x1A; v3 == 3.
+        ushort majorVersion = (ushort)(cfb[0x1A] | (cfb[0x1B] << 8));
+        Assert.Equal(Constants.CompoundFile.V3.MajorVersion, majorVersion);
+    }
+
+    [Fact]
+    public void BuildOfficeCrypto_OutputUsesV4SectorSize()
+    {
+        byte[] cfb = CompoundFileWriter.BuildOfficeCrypto([new("S", CreatePatternedBuffer(4096))]);
+
         ushort sectorShift = (ushort)(cfb[0x1E] | (cfb[0x1F] << 8));
         Assert.Equal(Constants.CompoundFile.V4.SectorShift, sectorShift);
 
-        // majorVersion at offset 0x1A; v4 == 4.
         ushort majorVersion = (ushort)(cfb[0x1A] | (cfb[0x1B] << 8));
         Assert.Equal(Constants.CompoundFile.V4.MajorVersion, majorVersion);
     }

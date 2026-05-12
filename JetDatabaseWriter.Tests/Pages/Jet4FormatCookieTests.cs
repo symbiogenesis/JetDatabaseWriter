@@ -247,14 +247,14 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     // ═══════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task CreateTable_CatalogRow_LvPropIsNonNull_12Bytes()
+    public async Task CreateTable_CatalogRow_LvPropPlaceholderForNoProperties_Is12Bytes()
     {
         MemoryStream ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, ct);
 
         await using (var writer = await AccessWriter.OpenAsync(
             ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
         {
-            await writer.CreateTableAsync("TestLvProp", [new ColumnDefinition("X", typeof(string), 50)], ct);
+            await writer.CreateTableAsync("TestLvProp", [new ColumnDefinition("X", typeof(int))], ct);
         }
 
         ms.Position = 0;

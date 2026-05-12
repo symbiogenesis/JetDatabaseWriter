@@ -121,4 +121,4 @@ Observed DAO `MSysObjects.LvProp` facts:
 - Boolean property entries created by DAO use `ddlFlag = 0x01`.
 - The name pool may contain both `Required` and `AllowZeroLength`; target property order in the observed blobs was `Required` then `AllowZeroLength` for non-null text, and `AllowZeroLength` then `Required` for nullable text. Access appears to tolerate either order when reading, but byte-for-byte DAO parity should preserve the observed order where practical.
 
-These LvProp differences were real DAO deltas, but matching them was not sufficient by itself to make writer-created FK tables survive DAO Compact & Repair. Treat them as compatibility facts, not as the whole compact root cause.
+These LvProp differences were real DAO deltas, but matching them was not sufficient by itself to make writer-created FK tables survive DAO Compact & Repair. The final compact fix also required system-table row placement, Type=8 relationship catalog objects, relationship ACE rows, shared table/index usage-map rows, and in-place single-leaf reuse. Treat the LvProp shape as a compatibility fact, not as the whole compact root cause.

@@ -52,6 +52,15 @@ internal sealed class DataPageInserter(AccessWriter writer)
             ReturnPage(cached);
         }
 
+        if (tdefPage <= 1024)
+        {
+            PageInsertTarget? existingTarget = await TryFindExistingSystemTablePageAsync(tdefPage, rowLength, cancellationToken).ConfigureAwait(false);
+            if (existingTarget is not null)
+            {
+                return existingTarget;
+            }
+        }
+
         // When the cached page is full, append a new data page directly
         // instead of scanning every page in the file. The previous O(N)
         // scan read + decrypted every page to find one with free space,
@@ -80,6 +89,26 @@ internal sealed class DataPageInserter(AccessWriter writer)
             PageNumber = newPageNumber,
             Page = await writer.ReadPageAsync(newPageNumber, cancellationToken).ConfigureAwait(false),
         };
+    }
+
+    private async ValueTask<PageInsertTarget?> TryFindExistingSystemTablePageAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
+    {
+        long total = writer._stream.Length / writer._pgSz;
+        for (long pageNumber = 1; pageNumber < total; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            if (page[0] == 0x01 && Ri32(page, writer._dataPage.TDefOff) == tdefPage && CanInsertRow(page, rowLength))
+            {
+                writer.SetCachedInsertPageNumber(tdefPage, pageNumber);
+                return new PageInsertTarget { PageNumber = pageNumber, Page = page };
+            }
+
+            ReturnPage(page);
+        }
+
+        return null;
     }
 
     /// <summary>
