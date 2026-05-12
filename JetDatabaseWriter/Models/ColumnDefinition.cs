@@ -91,7 +91,8 @@ public sealed record ColumnDefinition
     /// </summary>
     /// <remarks>
     /// DAO's programmatic <c>TableDef.CreateField(name, dbText)</c> path omits
-    /// the bit (verified via the <c>DIAG_RT_DAO_BASELINE</c> probe); set this
+    /// the bit (verified via the <c>rt-dao-baseline</c> FormatProbe mode,
+    /// legacy <c>DIAG_RT_DAO_BASELINE</c>); set this
     /// to <see langword="false"/> when you need byte-for-byte parity with
     /// DAO-authored TDEFs. The reader/encoder treat the <c>FF FE</c>
     /// compressed marker as the canonical signal regardless of this flag, so

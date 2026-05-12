@@ -17,82 +17,247 @@ string repoRoot = FindRepoRoot();
 string fixtures = Path.Combine(repoRoot, "JetDatabaseWriter.Tests", "Databases");
 string probeDir = Path.Combine(repoRoot, "docs", "format-probe");
 
-if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_FK_DAO_BASELINE")))
+IReadOnlyList<string> selectedModes = ResolveModes(args);
+if (selectedModes.Count == 0)
 {
-    string baseline = Environment.GetEnvironmentVariable("DIAG_RT_BASELINE")
-        ?? Path.Combine(fixtures, "NorthwindTraders.accdb");
-    string workRoot = Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.FkDaoBaseline");
-    return await JetDatabaseWriter.FormatProbe.FkDaoBaselineProbe.RunAsync(baseline, workRoot);
+    PrintUsage();
+    return 0;
 }
 
-await WriteIndexAppendixAsync(
-    Path.Combine(fixtures, "NorthwindTraders.accdb"),
-    Path.Combine(probeDir, "format-probe-appendix-index.md"));
-
-await WriteComplexAppendixAsync(
-    Path.Combine(fixtures, "ComplexFields.accdb"),
-    Path.Combine(probeDir, "format-probe-appendix-complex.md"));
-
-// probe: Jet3 (.mdb Access 97) index TDEF + leaf-page layouts. The format probe
-// limitation in docs/design/index-and-relationship-format-notes.md says Jet3
-// rejects IndexDefinition entirely; format probe establishes empirical ground truth
-// for the Jet3 real-idx physical descriptor (39 bytes per mdbtools), the
-// logical-idx entry (20 bytes per mdbtools), and the leaf-page (0x04)
-// bitmask layout (§4.2: bitmask at 0x16, first entry at 0xF8) by dumping
-// the TDEFs and one leaf page per index from the Jackcess V1997 corpus.
-await WriteJet3IndexAppendixAsync(
-    fixtures,
-    Path.Combine(probeDir, "format-probe-appendix-jet3-index.md"));
-
-// Catalog probe: Jet3 + Jet4 .mdb + ACCDB catalog scan. The catalog probe in
-// docs/design/index-and-relationship-format-notes.md asks whether
-// MSysIndexes / MSysIndexColumns system tables exist in legacy .mdb
-// formats (they are absent from modern .accdb). The probe recursively
-// discovers every .mdb / .accdb fixture under the Databases/ tree
-// (including the Jackcess/ corpus) so the answer is grounded across
-// every format and Access version we have on disk.
-await WriteMdbCatalogAppendixAsync(
-    fixtures,
-    Path.Combine(probeDir, "format-probe-appendix-mdb-catalogs.md"));
-
-if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_RT_BISECT")))
+if (selectedModes.Count == 1 && selectedModes[0].Equals("help", StringComparison.OrdinalIgnoreCase))
 {
-    string baseline = Environment.GetEnvironmentVariable("DIAG_RT_BASELINE")
-        ?? Path.Combine(fixtures, "NorthwindTraders.accdb");
-    string workRoot = Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.RtBisect");
-    if (Directory.Exists(workRoot))
-    {
-        Directory.Delete(workRoot, true);
-    }
+    PrintUsage();
+    return 0;
+}
 
-    int rc = await JetDatabaseWriter.FormatProbe.RoundTripBisect.RunAsync(baseline, workRoot);
-    if (rc != 0)
+foreach (string selectedMode in selectedModes)
+{
+    int result = await RunModeAsync(selectedMode, fixtures, probeDir);
+    if (result != 0)
     {
-        return rc;
+        return result;
     }
 }
 
-if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_LONG_ROW_PROBE")))
+Console.WriteLine($"Done. Check generated files under {probeDir} or the probe temp directory for results.");
+return 0;
+
+static IReadOnlyList<string> ResolveModes(string[] args)
 {
-    string outFile = Path.Combine(probeDir, "format-probe-long-row-dump.md");
-    int rc = await JetDatabaseWriter.FormatProbe.LongRowProbe.RunAsync(fixtures, outFile);
-    if (rc != 0)
+    var modes = new List<string>();
+    for (int index = 0; index < args.Length; index++)
     {
-        return rc;
+        string arg = args[index];
+        if (arg is "-h" or "--help" or "help")
+        {
+            return ["help"];
+        }
+
+        if (arg.Equals("--mode", StringComparison.OrdinalIgnoreCase))
+        {
+            if (index + 1 >= args.Length)
+            {
+                return ["help"];
+            }
+
+            AddModeValues(modes, args[++index]);
+            continue;
+        }
+
+        const string modePrefix = "--mode=";
+        if (arg.StartsWith(modePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            AddModeValues(modes, arg[modePrefix.Length..]);
+            continue;
+        }
+
+        AddModeValues(modes, arg.StartsWith("--", StringComparison.Ordinal) ? arg[2..] : arg);
+    }
+
+    if (modes.Count == 0)
+    {
+        AddLegacyEnvironmentModes(modes);
+    }
+
+    return modes
+        .Select(NormalizeMode)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+}
+
+static void AddModeValues(List<string> modes, string value)
+{
+    foreach (string mode in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        modes.Add(mode);
     }
 }
 
-if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_LONG_ROW_BISECT")))
+static void AddLegacyEnvironmentModes(List<string> modes)
 {
-    string outFile = Path.Combine(probeDir, "long-row-bisect.md");
-    int rc = await JetDatabaseWriter.FormatProbe.LongRowBisect.RunAsync(fixtures, outFile);
-    if (rc != 0)
+    AddEnvMode(modes, "DIAG_FK_DAO_BASELINE", "fk-dao-baseline");
+    AddEnvMode(modes, "DIAG_RT_BISECT", "rt-bisect");
+    AddEnvMode(modes, "DIAG_LONG_ROW_PROBE", "long-row-probe");
+    AddEnvMode(modes, "DIAG_LONG_ROW_BISECT", "long-row-bisect");
+    AddEnvMode(modes, "DIAG_MEMO_READBACK", "memo-readback");
+    AddEnvMode(modes, "DIAG_RT_DAO_BASELINE", "rt-dao-baseline");
+}
+
+static void AddEnvMode(List<string> modes, string variableName, string mode)
+{
+    if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(variableName)))
     {
-        return rc;
+        modes.Add(mode);
     }
 }
 
-if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_MEMO_READBACK")))
+static string NormalizeMode(string mode) => mode.ToUpperInvariant() switch
+{
+    "HELP" => "help",
+    "ALL" or "APPENDIX" or "APPENDICES" => "appendices",
+    "INDEX" or "INDEXES" or "INDEX-APPENDIX" => "index",
+    "COMPLEX" or "COMPLEX-COLUMNS" or "COMPLEX-APPENDIX" => "complex",
+    "JET3" or "JET3-INDEX" or "JET3-INDEXES" => "jet3-index",
+    "CATALOG" or "CATALOGS" or "MDB-CATALOG" or "MDB-CATALOGS" => "mdb-catalog",
+    "FK" or "FK-DAO" or "FK-DAO-BASELINE" => "fk-dao-baseline",
+    "RT" or "RT-DAO" or "RT-DAO-BASELINE" => "rt-dao-baseline",
+    "RT-BISECT" or "ROUNDTRIP-BISECT" or "ROUND-TRIP-BISECT" => "rt-bisect",
+    "LONG-ROW" or "LONG-ROW-PROBE" => "long-row-probe",
+    "LONG-ROW-BISECT" or "LONG-ROW-BOUNDARY" => "long-row-bisect",
+    "MEMO" or "MEMO-READBACK" => "memo-readback",
+    _ => mode,
+};
+
+static async Task<int> RunModeAsync(string mode, string fixtures, string probeDir)
+{
+    switch (mode)
+    {
+        case "help":
+            PrintUsage();
+            return 0;
+        case "appendices":
+            await RunAppendicesAsync(fixtures, probeDir);
+            return 0;
+        case "index":
+            await WriteIndexAppendixAsync(
+                Path.Combine(fixtures, "NorthwindTraders.accdb"),
+                Path.Combine(probeDir, "format-probe-appendix-index.md"));
+            return 0;
+        case "complex":
+            await WriteComplexAppendixAsync(
+                Path.Combine(fixtures, "ComplexFields.accdb"),
+                Path.Combine(probeDir, "format-probe-appendix-complex.md"));
+            return 0;
+        case "jet3-index":
+            await WriteJet3IndexAppendixAsync(
+                fixtures,
+                Path.Combine(probeDir, "format-probe-appendix-jet3-index.md"));
+            return 0;
+        case "mdb-catalog":
+            await WriteMdbCatalogAppendixAsync(
+                fixtures,
+                Path.Combine(probeDir, "format-probe-appendix-mdb-catalogs.md"));
+            return 0;
+        case "fk-dao-baseline":
+            return await JetDatabaseWriter.FormatProbe.FkDaoBaselineProbe.RunAsync(
+                GetRoundTripBaseline(fixtures),
+                CreateProbeWorkRoot("JetDatabaseWriter.FkDaoBaseline"));
+        case "rt-bisect":
+            return await RunRoundTripBisectAsync(fixtures);
+        case "long-row-probe":
+            return await JetDatabaseWriter.FormatProbe.LongRowProbe.RunAsync(
+                fixtures,
+                Path.Combine(probeDir, "format-probe-long-row-dump.md"));
+        case "long-row-bisect":
+            return await JetDatabaseWriter.FormatProbe.LongRowBisect.RunAsync(
+                fixtures,
+                Path.Combine(probeDir, "long-row-bisect.md"));
+        case "memo-readback":
+            return await RunMemoReadbackAsync();
+        case "rt-dao-baseline":
+            return await JetDatabaseWriter.FormatProbe.DaoBaselineProbe.RunAsync(
+                GetRoundTripBaseline(fixtures),
+                CreateProbeWorkRoot("JetDatabaseWriter.RtDaoBaseline"));
+        default:
+            await Console.Error.WriteLineAsync($"Unknown FormatProbe mode: {mode}");
+            PrintUsage();
+            return 1;
+    }
+}
+
+static async Task RunAppendicesAsync(string fixtures, string probeDir)
+{
+    await WriteIndexAppendixAsync(
+        Path.Combine(fixtures, "NorthwindTraders.accdb"),
+        Path.Combine(probeDir, "format-probe-appendix-index.md"));
+
+    await WriteComplexAppendixAsync(
+        Path.Combine(fixtures, "ComplexFields.accdb"),
+        Path.Combine(probeDir, "format-probe-appendix-complex.md"));
+
+    // probe: Jet3 (.mdb Access 97) index TDEF + leaf-page layouts. The format probe
+    // limitation in docs/design/index-and-relationship-format-notes.md says Jet3
+    // rejects IndexDefinition entirely; format probe establishes empirical ground truth
+    // for the Jet3 real-idx physical descriptor (39 bytes per mdbtools), the
+    // logical-idx entry (20 bytes per mdbtools), and the leaf-page (0x04)
+    // bitmask layout (§4.2: bitmask at 0x16, first entry at 0xF8) by dumping
+    // the TDEFs and one leaf page per index from the Jackcess V1997 corpus.
+    await WriteJet3IndexAppendixAsync(
+        fixtures,
+        Path.Combine(probeDir, "format-probe-appendix-jet3-index.md"));
+
+    // Catalog probe: Jet3 + Jet4 .mdb + ACCDB catalog scan. The catalog probe in
+    // docs/design/index-and-relationship-format-notes.md asks whether
+    // MSysIndexes / MSysIndexColumns system tables exist in legacy .mdb
+    // formats (they are absent from modern .accdb). The probe recursively
+    // discovers every .mdb / .accdb fixture under the Databases/ tree
+    // (including the Jackcess/ corpus) so the answer is grounded across
+    // every format and Access version we have on disk.
+    await WriteMdbCatalogAppendixAsync(
+        fixtures,
+        Path.Combine(probeDir, "format-probe-appendix-mdb-catalogs.md"));
+}
+
+static async Task<int> RunRoundTripBisectAsync(string fixtures)
+{
+    string workRoot = CreateProbeWorkRoot("JetDatabaseWriter.RtBisect");
+    return await JetDatabaseWriter.FormatProbe.RoundTripBisect.RunAsync(GetRoundTripBaseline(fixtures), workRoot);
+}
+
+static string CreateProbeWorkRoot(string probeName)
+{
+    string root = Path.Combine(
+        Path.GetTempPath(),
+        probeName,
+        DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss-fffffff", CultureInfo.InvariantCulture));
+    _ = Directory.CreateDirectory(root);
+    return root;
+}
+
+static string GetRoundTripBaseline(string fixtures) =>
+    Environment.GetEnvironmentVariable("DIAG_RT_BASELINE")
+    ?? Path.Combine(fixtures, "NorthwindTraders.accdb");
+
+static void PrintUsage()
+{
+    Console.WriteLine("FormatProbe modes:");
+    Console.WriteLine("  appendices       Generate every appendix that the old default run produced");
+    Console.WriteLine("  index            Generate the index/relationship appendix");
+    Console.WriteLine("  complex          Generate the complex-column appendix");
+    Console.WriteLine("  jet3-index       Generate the Jet3 index appendix");
+    Console.WriteLine("  mdb-catalog      Scan the fixture corpus for catalog tables");
+    Console.WriteLine("  fk-dao-baseline  Run the FK DAO baseline probe");
+    Console.WriteLine("  rt-dao-baseline  Run the round-trip DAO baseline probe");
+    Console.WriteLine("  rt-bisect        Run the round-trip bisection probe");
+    Console.WriteLine("  long-row-probe   Dump long-row index leaf entries");
+    Console.WriteLine("  long-row-bisect  Run long-row chunk-boundary bisection");
+    Console.WriteLine("  memo-readback    Run the memo readback diagnostic");
+    Console.WriteLine();
+    Console.WriteLine("Usage: dotnet run --project JetDatabaseWriter.FormatProbe -- <mode>[,<mode>]");
+    Console.WriteLine("Legacy DIAG_* environment variables still select the matching mode when no CLI mode is supplied.");
+}
+
+static async Task<int> RunMemoReadbackAsync()
 {
     string dbPath = Environment.GetEnvironmentVariable("DIAG_MEMO_PATH")
         ?? Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.MemoDiag", "writer_memo.accdb");
@@ -101,16 +266,15 @@ if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_MEMO_REA
     string tableName = Environment.GetEnvironmentVariable("DIAG_MEMO_TABLE") ?? "MemoFidelity";
     var dt = await rdr.ReadDataTableAsync(tableName);
     Console.WriteLine($"Reader sees RowCount={dt!.Rows.Count}");
-    foreach (System.Data.DataRow r in dt!.Rows)
+    foreach (System.Data.DataRow row in dt!.Rows)
     {
-        Console.WriteLine($"  Id={r[0]}");
+        Console.WriteLine($"  Id={row[0]}");
         if (dt.Rows.Count > 5)
         {
             break;
         }
     }
 
-    // Dump TDEF and the first data page.
     var catalog = await ReadCatalogAsync(rdr);
     var entry = catalog.First(c => c.Name == tableName);
     Console.WriteLine($"TDEF page = {entry.TdefPage}");
@@ -118,21 +282,19 @@ if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_MEMO_REA
     Console.WriteLine($"TDEF[0]={tdefPage[0]:X2} (0x02 expected)");
     int tdefLen = BitConverter.ToInt32(tdefPage, 8);
     int rowCount = BitConverter.ToInt32(tdefPage, 16);
-    int firstDataPage = BitConverter.ToInt32(tdefPage, 36); // owned-pages or first_dp ?
+    _ = BitConverter.ToInt32(tdefPage, 36); // data-page hint retained for debugger inspection.
     Console.WriteLine($"TDEF tdef_len={tdefLen} row_count={rowCount}");
 
-    // Hex dump the first 64 bytes of TDEF
     var hex = new StringBuilder("TDEF[0..96] = ");
-    for (int i = 0; i < 96; i++)
+    for (int index = 0; index < 96; index++)
     {
-        _ = hex.Append(tdefPage[i].ToString("X2", CultureInfo.InvariantCulture));
-        _ = hex.Append(i % 16 == 15 ? "\n              " : " ");
+        _ = hex.Append(tdefPage[index].ToString("X2", CultureInfo.InvariantCulture));
+        _ = hex.Append(index % 16 == 15 ? "\n              " : " ");
     }
 
     Console.WriteLine(hex.ToString());
     Console.WriteLine($"first 4 bytes after position 36 (data page hint): {BitConverter.ToInt32(tdefPage, 36)}");
 
-    // Decode owned-pages usage map pointer at offset 0x37 (1-byte row + 3-byte page LE).
     int ownedRow = tdefPage[0x37];
     int ownedPage = tdefPage[0x38] | (tdefPage[0x39] << 8) | (tdefPage[0x3A] << 16);
     int freeRow = tdefPage[0x3B];
@@ -140,114 +302,99 @@ if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_MEMO_REA
     Console.WriteLine($"owned-pages usage-map: row={ownedRow} page={ownedPage}");
     Console.WriteLine($"free-space usage-map: row={freeRow} page={freePage}");
 
-    // Dump the usage-map page.
     if (ownedPage > 0 && ownedPage < 100000)
     {
-        byte[] um = await rdr.ReadPageAsync(ownedPage);
-        Console.WriteLine($"usage-map page {ownedPage}: tag={um[0]:X2}{um[1]:X2} numRows={BitConverter.ToUInt16(um, 12)}");
-        var umHex = new StringBuilder($"page[{ownedPage}][0..160] = ");
-        for (int i = 0; i < 160; i++)
+        byte[] usageMap = await rdr.ReadPageAsync(ownedPage);
+        Console.WriteLine($"usage-map page {ownedPage}: tag={usageMap[0]:X2}{usageMap[1]:X2} numRows={BitConverter.ToUInt16(usageMap, 12)}");
+        var usageMapHex = new StringBuilder($"page[{ownedPage}][0..160] = ");
+        for (int index = 0; index < 160; index++)
         {
-            _ = umHex.Append(um[i].ToString("X2", CultureInfo.InvariantCulture));
-            _ = umHex.Append(i % 16 == 15 ? "\n              " : " ");
+            _ = usageMapHex.Append(usageMap[index].ToString("X2", CultureInfo.InvariantCulture));
+            _ = usageMapHex.Append(index % 16 == 15 ? "\n              " : " ");
         }
 
-        Console.WriteLine(umHex.ToString());
+        Console.WriteLine(usageMapHex.ToString());
 
-        // Read the row at index ownedRow. Row offsets are at RowsStart..
-        int rowOff = um[14 + (ownedRow * 2)] | (um[15 + (ownedRow * 2)] << 8);
-        rowOff &= 0x1FFF;
-        Console.WriteLine($"usage-map row{ownedRow} offset = {rowOff}");
+        int rowOffset = usageMap[14 + (ownedRow * 2)] | (usageMap[15 + (ownedRow * 2)] << 8);
+        rowOffset &= 0x1FFF;
+        Console.WriteLine($"usage-map row{ownedRow} offset = {rowOffset}");
 
-        // Print first 80 bytes of the row.
         var rowHex = new StringBuilder("usage-map row body = ");
-        for (int i = rowOff; i < Math.Min(rowOff + 80, um.Length); i++)
+        for (int index = rowOffset; index < Math.Min(rowOffset + 80, usageMap.Length); index++)
         {
-            _ = rowHex.Append(um[i].ToString("X2", CultureInfo.InvariantCulture));
-            _ = rowHex.Append((i - rowOff) % 16 == 15 ? "\n              " : " ");
+            _ = rowHex.Append(usageMap[index].ToString("X2", CultureInfo.InvariantCulture));
+            _ = rowHex.Append((index - rowOffset) % 16 == 15 ? "\n              " : " ");
         }
 
         Console.WriteLine(rowHex.ToString());
 
-        int rowOff1 = um[14 + (freeRow * 2)] | (um[15 + (freeRow * 2)] << 8);
-        rowOff1 &= 0x1FFF;
-        Console.WriteLine($"usage-map row{freeRow} (free) offset = {rowOff1}");
-        var rowHex1 = new StringBuilder("usage-map row1 body = ");
-        for (int i = rowOff1; i < Math.Min(rowOff1 + 16, um.Length); i++)
+        int freeRowOffset = usageMap[14 + (freeRow * 2)] | (usageMap[15 + (freeRow * 2)] << 8);
+        freeRowOffset &= 0x1FFF;
+        Console.WriteLine($"usage-map row{freeRow} (free) offset = {freeRowOffset}");
+        var freeRowHex = new StringBuilder("usage-map row1 body = ");
+        for (int index = freeRowOffset; index < Math.Min(freeRowOffset + 16, usageMap.Length); index++)
         {
-            _ = rowHex1.Append(um[i].ToString("X2", CultureInfo.InvariantCulture));
-            _ = rowHex1.Append(' ');
+            _ = freeRowHex.Append(usageMap[index].ToString("X2", CultureInfo.InvariantCulture));
+            _ = freeRowHex.Append(' ');
         }
 
-        Console.WriteLine(rowHex1.ToString());
+        Console.WriteLine(freeRowHex.ToString());
     }
 
-    long fileLen = new FileInfo(dbPath).Length;
+    long fileLength = new FileInfo(dbPath).Length;
     int pageSize = rdr.PageSize;
-    long maxPage = fileLen / pageSize;
+    long maxPage = fileLength / pageSize;
     Console.WriteLine($"file pages = {maxPage}");
-    for (long p = entry.TdefPage + 1; p <= entry.TdefPage + 60 && p < maxPage; p++)
+    for (long pageNumber = entry.TdefPage + 1; pageNumber <= entry.TdefPage + 60 && pageNumber < maxPage; pageNumber++)
     {
-        byte[] pg = await rdr.ReadPageAsync(p);
-        if (pg[0] == 0x01)
+        byte[] page = await rdr.ReadPageAsync(pageNumber);
+        if (page[0] != 0x01)
         {
-            int parentTdef = BitConverter.ToInt32(pg, 4);
-            if (parentTdef == entry.TdefPage)
-            {
-                int numRows = BitConverter.ToUInt16(pg, 12);
-                int freeSpace = BitConverter.ToUInt16(pg, 2);
-                Console.WriteLine($"data page {p}: numRows={numRows} freeSpace={freeSpace} parentTdef={parentTdef}");
-                int rowOffP = pg[14] | (pg[15] << 8);
-                int rowStart = rowOffP & 0x1FFF;
-                Console.WriteLine($"  row0 raw offset word = 0x{rowOffP:X4}, start = {rowStart}");
-                var pgHex = new StringBuilder($"page[{p}][0..96] = ");
-                for (int i = 0; i < 96; i++)
-                {
-                    _ = pgHex.Append(pg[i].ToString("X2", CultureInfo.InvariantCulture));
-                    _ = pgHex.Append(i % 16 == 15 ? "\n              " : " ");
-                }
-
-                Console.WriteLine(pgHex.ToString());
-
-                // Dump the row body itself.
-                int rowEnd = pg.Length;
-                if (numRows > 1)
-                {
-                    int prevRowOff = pg[16] | (pg[17] << 8);
-                    rowEnd = prevRowOff & 0x1FFF;
-                }
-
-                int rowLen = rowEnd - rowStart;
-                Console.WriteLine($"  row0 length = {rowLen}");
-                var rowBodyHex = new StringBuilder($"page[{p}] row0 body = ");
-                for (int i = rowStart; i < rowEnd && i < rowStart + 200; i++)
-                {
-                    _ = rowBodyHex.Append(pg[i].ToString("X2", CultureInfo.InvariantCulture));
-                    _ = rowBodyHex.Append((i - rowStart) % 16 == 15 ? "\n              " : " ");
-                }
-
-                Console.WriteLine(rowBodyHex.ToString());
-            }
+            continue;
         }
+
+        int parentTdef = BitConverter.ToInt32(page, 4);
+        if (parentTdef != entry.TdefPage)
+        {
+            continue;
+        }
+
+        int numRows = BitConverter.ToUInt16(page, 12);
+        int freeSpace = BitConverter.ToUInt16(page, 2);
+        Console.WriteLine($"data page {pageNumber}: numRows={numRows} freeSpace={freeSpace} parentTdef={parentTdef}");
+        int rowOffsetWord = page[14] | (page[15] << 8);
+        int rowStart = rowOffsetWord & 0x1FFF;
+        Console.WriteLine($"  row0 raw offset word = 0x{rowOffsetWord:X4}, start = {rowStart}");
+        var pageHex = new StringBuilder($"page[{pageNumber}][0..96] = ");
+        for (int index = 0; index < 96; index++)
+        {
+            _ = pageHex.Append(page[index].ToString("X2", CultureInfo.InvariantCulture));
+            _ = pageHex.Append(index % 16 == 15 ? "\n              " : " ");
+        }
+
+        Console.WriteLine(pageHex.ToString());
+
+        int rowEnd = page.Length;
+        if (numRows > 1)
+        {
+            int previousRowOffset = page[16] | (page[17] << 8);
+            rowEnd = previousRowOffset & 0x1FFF;
+        }
+
+        int rowLength = rowEnd - rowStart;
+        Console.WriteLine($"  row0 length = {rowLength}");
+        var rowBodyHex = new StringBuilder($"page[{pageNumber}] row0 body = ");
+        for (int index = rowStart; index < rowEnd && index < rowStart + 200; index++)
+        {
+            _ = rowBodyHex.Append(page[index].ToString("X2", CultureInfo.InvariantCulture));
+            _ = rowBodyHex.Append((index - rowStart) % 16 == 15 ? "\n              " : " ");
+        }
+
+        Console.WriteLine(rowBodyHex.ToString());
     }
 
     return 0;
 }
-
-if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_RT_DAO_BASELINE")))
-{
-    string baseline = Environment.GetEnvironmentVariable("DIAG_RT_BASELINE")
-        ?? Path.Combine(fixtures, "NorthwindTraders.accdb");
-    string workRoot = Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.RtDaoBaseline");
-    int rc = await JetDatabaseWriter.FormatProbe.DaoBaselineProbe.RunAsync(baseline, workRoot);
-    if (rc != 0)
-    {
-        return rc;
-    }
-}
-
-Console.WriteLine($"Done. Check the generated markdown files under {probeDir} for the probe results.");
-return 0;
 
 static string FindRepoRoot()
 {
@@ -263,7 +410,7 @@ static string FindRepoRoot()
 static async Task WriteIndexAppendixAsync(string fixturePath, string outPath)
 {
     Console.WriteLine($"Probing {Path.GetFileName(fixturePath)} ...");
-    await using var reader = await AccessReader.OpenAsync(fixturePath);
+    await using var reader = await AccessReader.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
     var catalog = await ReadCatalogAsync(reader);
 
     var sb = new StringBuilder();
@@ -273,7 +420,7 @@ static async Task WriteIndexAppendixAsync(string fixturePath, string outPath)
     _ = sb.AppendLine(CultureInfo.InvariantCulture, $"Generated by: `JetDatabaseWriter.FormatProbe` on {DateTimeOffset.UtcNow:u}");
     _ = sb.AppendLine(CultureInfo.InvariantCulture, $"Format: {reader.DatabaseFormat}, page size: {reader.PageSize}");
     _ = sb.AppendLine();
-    _ = sb.AppendLine("This appendix is regenerated by re-running `dotnet run --project JetDatabaseWriter.FormatProbe`.");
+    _ = sb.AppendLine("This appendix is regenerated by re-running `dotnet run --project JetDatabaseWriter.FormatProbe -- index`.");
     _ = sb.AppendLine("It exists to ground the offset claims in [`index-and-relationship-format-notes.md`](../design/index-and-relationship-format-notes.md) against real Access-produced bytes rather than the partial mdbtools spec.");
     _ = sb.AppendLine();
 
@@ -335,7 +482,7 @@ static async Task WriteIndexAppendixAsync(string fixturePath, string outPath)
         }
 
         _ = picked.Add(c.TdefPage);
-        await EmitTDefAsync(reader, sb, c.Name, c.TdefPage, includeIndexAnnotations: true);
+        await EmitTDefAsync(reader, sb, c.Name, c.TdefPage, includeIndexAnnotations: true, preloadedBytes: td);
         userTablesEmitted++;
     }
 
@@ -347,7 +494,7 @@ static async Task WriteIndexAppendixAsync(string fixturePath, string outPath)
 static async Task WriteComplexAppendixAsync(string fixturePath, string outPath)
 {
     Console.WriteLine($"Probing {Path.GetFileName(fixturePath)} ...");
-    await using var reader = await AccessReader.OpenAsync(fixturePath);
+    await using var reader = await AccessReader.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
     var catalog = await ReadCatalogAsync(reader);
 
     var sb = new StringBuilder();
@@ -357,7 +504,7 @@ static async Task WriteComplexAppendixAsync(string fixturePath, string outPath)
     _ = sb.AppendLine(CultureInfo.InvariantCulture, $"Generated by: `JetDatabaseWriter.FormatProbe` on {DateTimeOffset.UtcNow:u}");
     _ = sb.AppendLine(CultureInfo.InvariantCulture, $"Format: {reader.DatabaseFormat}, page size: {reader.PageSize}");
     _ = sb.AppendLine();
-    _ = sb.AppendLine("Regenerate with `dotnet run --project JetDatabaseWriter.FormatProbe`. See [`complex-columns-format-notes.md`](../design/complex-columns-format-notes.md) for the unverified spec this appendix grounds.");
+    _ = sb.AppendLine("Regenerate with `dotnet run --project JetDatabaseWriter.FormatProbe -- complex`. See [`complex-columns-format-notes.md`](../design/complex-columns-format-notes.md) for the unverified spec this appendix grounds.");
     _ = sb.AppendLine();
 
     // Catalog summary
@@ -374,7 +521,7 @@ static async Task WriteComplexAppendixAsync(string fixturePath, string outPath)
 
     // Find every table with a complex column, plus MSysComplexColumns,
     // every flat table (`f_*` naming convention), every type/template table (`MSysComplexType_*`).
-    var hits = new List<(string Name, long Page, string Reason)>();
+    var hits = new List<(string Name, long Page, string Reason, byte[]? Bytes)>();
 
     foreach (var c in catalog.Where(c => c.Type == 1 && c.TdefPage > 0))
     {
@@ -387,29 +534,29 @@ static async Task WriteComplexAppendixAsync(string fixturePath, string outPath)
         bool hasComplex = HasComplexColumn(bytes, reader.DatabaseFormat);
         if (hasComplex && !c.Name.StartsWith("f_", StringComparison.Ordinal))
         {
-            hits.Add((c.Name, c.TdefPage, "parent table — has T_ATTACHMENT (0x11) or T_COMPLEX (0x12) column"));
+            hits.Add((c.Name, c.TdefPage, "parent table — has T_ATTACHMENT (0x11) or T_COMPLEX (0x12) column", bytes));
         }
     }
 
     foreach (var c in catalog.Where(c => c.Name.Equals("MSysComplexColumns", StringComparison.OrdinalIgnoreCase)))
     {
-        hits.Insert(0, (c.Name, c.TdefPage, "catalog: `MSysComplexColumns` schema"));
+        hits.Insert(0, (c.Name, c.TdefPage, "catalog: `MSysComplexColumns` schema", null));
     }
 
     foreach (var c in catalog.Where(c => c.Type == 1 && c.Name.StartsWith("MSysComplexType_", StringComparison.Ordinal)))
     {
-        hits.Add((c.Name, c.TdefPage, "complex-type template table (Jackcess `typeObjTable`)"));
+        hits.Add((c.Name, c.TdefPage, "complex-type template table (Jackcess `typeObjTable`)", null));
     }
 
     foreach (var c in catalog.Where(c => c.Type == 1 && c.Name.StartsWith("f_", StringComparison.Ordinal)))
     {
-        hits.Add((c.Name, c.TdefPage, "hidden flat (child) table — `f_<guid>_<userColName>`"));
+        hits.Add((c.Name, c.TdefPage, "hidden flat (child) table — `f_<guid>_<userColName>`", null));
     }
 
     foreach (var hit in hits.DistinctBy(h => h.Page))
     {
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"### Reason: {hit.Reason}");
-        await EmitTDefAsync(reader, sb, hit.Name, hit.Page, includeIndexAnnotations: false, includeComplexAnnotations: true);
+        await EmitTDefAsync(reader, sb, hit.Name, hit.Page, includeIndexAnnotations: false, includeComplexAnnotations: true, preloadedBytes: hit.Bytes);
     }
 
     _ = Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
@@ -435,6 +582,8 @@ static async Task WriteMdbCatalogAppendixAsync(string fixturesDir, string outPat
     _ = sb.AppendLine("# Format probe appendix: legacy `.mdb` and `.accdb` catalog tables");
     _ = sb.AppendLine();
     _ = sb.AppendLine(CultureInfo.InvariantCulture, $"Generated by: `JetDatabaseWriter.FormatProbe` on {DateTimeOffset.UtcNow:u}");
+    _ = sb.AppendLine();
+    _ = sb.AppendLine("Regenerate with `dotnet run --project JetDatabaseWriter.FormatProbe -- mdb-catalog`.");
     _ = sb.AppendLine();
     _ = sb.AppendLine("This appendix grounds the catalog probe question in [`index-and-relationship-format-notes.md`](../design/index-and-relationship-format-notes.md) §6:");
     _ = sb.AppendLine("**do legacy `.mdb` (Jet3 / Jet4) or `.accdb` files contain `MSysIndexes` / `MSysIndexColumns` system tables, or is index metadata always carried inside the per-table TDEF block?**");
@@ -464,7 +613,7 @@ static async Task WriteMdbCatalogAppendixAsync(string fixturesDir, string outPat
         Console.WriteLine($"Probing {relPath} ...");
         try
         {
-            await using var reader = await AccessReader.OpenAsync(fixturePath);
+            await using var reader = await AccessReader.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
             var catalog = await ReadCatalogAsync(reader);
             bool hasIdx = catalog.Any(c => c.Name.Equals("MSysIndexes", StringComparison.OrdinalIgnoreCase));
             bool hasIdxCols = catalog.Any(c => c.Name.Equals("MSysIndexColumns", StringComparison.OrdinalIgnoreCase));
@@ -685,7 +834,7 @@ static async Task WriteJet3IndexAppendixAsync(string fixturesDir, string outPath
     _ = sb.AppendLine();
     _ = sb.AppendLine("Each fixture below is dumped TDEF-by-TDEF for the user tables that carry at least one logical index, plus a hex dump of the first index leaf page reachable from each real-idx `first_dp`. Compare against the §3.1 / §3.2 / §4.2 mappings; mismatches indicate the spec needs amending before Jet3 empty-leaf can ship safely.");
     _ = sb.AppendLine();
-    _ = sb.AppendLine("Regenerate with `dotnet run --project JetDatabaseWriter.FormatProbe`.");
+    _ = sb.AppendLine("Regenerate with `dotnet run --project JetDatabaseWriter.FormatProbe -- jet3-index`.");
     _ = sb.AppendLine();
 
     foreach (string rel in candidates)
@@ -699,7 +848,7 @@ static async Task WriteJet3IndexAppendixAsync(string fixturesDir, string outPath
         }
 
         Console.WriteLine($"Probing Jet3 indexes in {rel} ...");
-        await using var reader = await AccessReader.OpenAsync(full);
+        await using var reader = await AccessReader.OpenAsync(full, new AccessReaderOptions { UseLockFile = false });
         if (reader.DatabaseFormat != DatabaseFormat.Jet3Mdb)
         {
             _ = sb.AppendLine(CultureInfo.InvariantCulture, $"## `{Md(rel)}` — _skipped (not Jet3, format = {reader.DatabaseFormat})_");
@@ -739,7 +888,7 @@ static async Task WriteJet3IndexAppendixAsync(string fixturesDir, string outPath
                 continue;
             }
 
-            await EmitTDefAsync(reader, sb, c.Name, c.TdefPage, includeIndexAnnotations: true);
+            await EmitTDefAsync(reader, sb, c.Name, c.TdefPage, includeIndexAnnotations: true, preloadedBytes: td);
             await EmitJet3LeafPagesAsync(reader, sb, td, numRealIdx);
             userTablesEmitted++;
         }
@@ -830,12 +979,13 @@ static async Task EmitJet3LeafPagesAsync(AccessReader reader, StringBuilder sb, 
         _ = sb.AppendLine();
         _ = sb.AppendLine("| Candidate | Source bytes | Value | Resolves? |");
         _ = sb.AppendLine("|---|---|---:|---|");
-        await DescribeCandidateAsync(reader, sb, "skip entry [0..3]", skip0);
-        await DescribeCandidateAsync(reader, sb, "skip entry [4..7]", skip4);
-        await DescribeCandidateAsync(reader, sb, "phys desc [34..37]", phys34);
+        long pageCount = new FileInfo(reader.HostDatabasePath).Length / reader.PageSize;
+        await DescribeCandidateAsync(reader, sb, "skip entry [0..3]", skip0, pageCount);
+        await DescribeCandidateAsync(reader, sb, "skip entry [4..7]", skip4, pageCount);
+        await DescribeCandidateAsync(reader, sb, "phys desc [34..37]", phys34, pageCount);
         _ = sb.AppendLine();
 
-        long? leafPage = await PickFirstResolvableAsync(reader, [skip0, skip4, phys34]);
+        long? leafPage = await PickFirstResolvableAsync(reader, [skip0, skip4, phys34], pageCount);
         if (leafPage is null)
         {
             _ = sb.AppendLine("> No candidate resolved to a `0x03`/`0x04` page.");
@@ -882,7 +1032,7 @@ static async Task EmitJet3LeafPagesAsync(AccessReader reader, StringBuilder sb, 
     }
 }
 
-static async Task DescribeCandidateAsync(AccessReader reader, StringBuilder sb, string label, long? value)
+static async Task DescribeCandidateAsync(AccessReader reader, StringBuilder sb, string label, long? value, long pageCount)
 {
     if (value is null)
     {
@@ -892,7 +1042,7 @@ static async Task DescribeCandidateAsync(AccessReader reader, StringBuilder sb, 
 
     long v = value.Value;
     string verdict = "no";
-    if (v > 0 && v < (reader.PageSize == 0 ? long.MaxValue : long.MaxValue))
+    if (IsValidPageNumber(v, pageCount))
     {
         try
         {
@@ -911,7 +1061,7 @@ static async Task DescribeCandidateAsync(AccessReader reader, StringBuilder sb, 
     _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {label} | LE u32 | {v} | {verdict} |");
 }
 
-static async Task<long?> PickFirstResolvableAsync(AccessReader reader, IEnumerable<long?> candidates)
+static async Task<long?> PickFirstResolvableAsync(AccessReader reader, IEnumerable<long?> candidates, long pageCount)
 {
     foreach (long? c in candidates)
     {
@@ -921,7 +1071,7 @@ static async Task<long?> PickFirstResolvableAsync(AccessReader reader, IEnumerab
         }
 
         long v = c.Value;
-        if (v <= 0)
+        if (!IsValidPageNumber(v, pageCount))
         {
             continue;
         }
@@ -942,15 +1092,18 @@ static async Task<long?> PickFirstResolvableAsync(AccessReader reader, IEnumerab
     return null;
 }
 
+static bool IsValidPageNumber(long pageNumber, long pageCount) => pageNumber > 0 && pageNumber < pageCount;
+
 static async Task EmitTDefAsync(
     AccessReader reader,
     StringBuilder sb,
     string name,
     long page,
     bool includeIndexAnnotations = false,
-    bool includeComplexAnnotations = false)
+    bool includeComplexAnnotations = false,
+    byte[]? preloadedBytes = null)
 {
-    byte[]? bytes = await reader.GetRawTDefBytesAsync(page, default);
+    byte[]? bytes = preloadedBytes ?? await reader.GetRawTDefBytesAsync(page, default);
     if (bytes is null)
     {
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"## `{Md(name)}` — TDEF page {page}");

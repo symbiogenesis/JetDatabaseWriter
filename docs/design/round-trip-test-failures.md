@@ -14,7 +14,7 @@ cross-references and non-zero real-index `used_pages` pointers, DAO rejects an
 orphan child insert with error `-2146825087` and leaves the child row count
 unchanged.
 
-**FK Compact & Repair: STILL OPEN.** The `DIAG_FK_DAO_BASELINE` probe now shows
+**FK Compact & Repair: STILL OPEN.** The `fk-dao-baseline` FormatProbe mode (legacy `DIAG_FK_DAO_BASELINE`) now shows
 that writer and DAO baselines can match on `MSysRelationships`, FK logical
 cross-references, `MSysACEs` row shape, and text-column LvProp blobs, while DAO
 `CompactDatabase` still returns success and omits the writer-created FK tables
@@ -38,7 +38,7 @@ the bitmask byte to `0x80` (well-formed empty inline long-value) would let
 `OpenRecordset` succeed. Applied the change, unskipped all 5 DAO tests, ran
 them: **all 5 still failed with the identical `"Unrecognized database format
 ''."` error at the exact same `OpenRecordset` call site.** The
-`DIAG_RT_BISECT` probe still reports N0–N4 ✅. Reverted the constant to 12
+`rt-bisect` FormatProbe mode (legacy `DIAG_RT_BISECT`) still reports N0–N4 ✅. Reverted the constant to 12
 zero bytes; added a disconfirmation note to its XML doc so we don't re-test
 this. Defect is genuinely inside the user-table TDEF, not the catalog row's
 `LvProp` payload.
@@ -58,7 +58,7 @@ and what DAO requires). Historical note: at this point the two
 
 **Catalog index maintenance: RESOLVED.** Three index fixes (prefix compression cap, entry-start bitmask sentinel, split-path `maxPrefixLength` cap) plus catalog row fixes (LvProp, MSysACEs, magic stamps, compressed-unicode encoding) make DAO Compact & Repair succeed for both N1 and N2+ cases. The `MSysDb (3011)` and `Object invalid or no longer set` errors are gone.
 
-**TDEF column flags / ExtraFlags: PARTIALLY RESOLVED.** Removed the writer-private `0x08` NOT-NULL flag bit and the unconditional `ExtraFlags=0x01` (compressed unicode) on TEXT/MEMO columns. Persistence of `IsNullable` was rewired to read from `MSysObjects.LvProp` `Required` rather than the column flags byte. The DAO baseline probe (`DIAG_RT_DAO_BASELINE`) `OpenDatabase` path now succeeds against writer-created tables.
+**TDEF column flags / ExtraFlags: PARTIALLY RESOLVED.** Removed the writer-private `0x08` NOT-NULL flag bit and the unconditional `ExtraFlags=0x01` (compressed unicode) on TEXT/MEMO columns. Persistence of `IsNullable` was rewired to read from `MSysObjects.LvProp` `Required` rather than the column flags byte. The DAO baseline probe (`rt-dao-baseline`, legacy `DIAG_RT_DAO_BASELINE`) `OpenDatabase` path now succeeds against writer-created tables.
 
 **Historical blocker at this point: DAO `OpenRecordset` rejected writer-created user tables** with `"Unrecognized database format ''."` — the residual TDEF-layout incompatibility surfaced only when DAO materialized a recordset, not when it opened the database/catalog. Unskipping the three `OpenRecordset` tests in `DaoValidationTests` (and the two `AccessRoundTripTests` compact/repair tests, which depended on the same path) confirmed this: 3 of the 4 unskipped DAO tests failed with the same COM error, even though `DAO.DBEngine.120.OpenDatabase` succeeded and the FormatProbe baseline passed. Later work resolved this original blocker; see the 2026-05-11 status above.
 
@@ -300,7 +300,7 @@ Note: An earlier `dump-type1.ps1` sweep had a script bug (PowerShell banker's ro
 
 ## DAO baseline differences (2026-05-03 evening)
 
-Empirical comparison of writer-authored vs DAO-authored `RT_Customers` against the same `NorthwindTraders.accdb` baseline. Source: `DIAG_RT_DAO_BASELINE` probe; full report at `%TEMP%\JetDatabaseWriter.RtDaoBaseline\dao-baseline-diff.md`.
+Empirical comparison of writer-authored vs DAO-authored `RT_Customers` against the same `NorthwindTraders.accdb` baseline. Source: `rt-dao-baseline` FormatProbe mode (legacy `DIAG_RT_DAO_BASELINE`); full report at `%TEMP%\JetDatabaseWriter.RtDaoBaseline\dao-baseline-diff.md`.
 
 **DAO compact verdict: ✅ accepts DAO-authored copy, ❌ rejects writer-authored copy with `MSysDb (3011)` from the same starting fixture.** This isolates the cause to the writer's output, not the test infra or the fixture.
 
@@ -418,7 +418,7 @@ This section captures the state before the later OpenRecordset fixes. See the
 
 The `0x08` NOT-NULL flag and unconditional TEXT/MEMO `ExtraFlags=0x01` were the two writer-private bits the DAO baseline diff identified earlier ("CustomerID flags=0x0F vs DAO 0x07; Name flags=0x0A vs DAO 0x02; Name ExtraFlags=0x01 vs DAO 0x00"). Removing them and persisting `Required` via `LvProp` was a necessary correction:
 
-- ✅ DAO baseline probe (`DIAG_RT_DAO_BASELINE`) `OpenDatabase` path now succeeds against the writer copy.
+- ✅ DAO baseline probe (`rt-dao-baseline`, legacy `DIAG_RT_DAO_BASELINE`) `OpenDatabase` path now succeeds against the writer copy.
 - ✅ The 5 column-flag bytes that previously diverged from DAO now match.
 - Historical result: DAO `OpenRecordset('SELECT COUNT(*) ...')`, `OpenRecordset('<table>')`, and `OpenRecordset` followed by Seek/insert all threw the same `"Unrecognized database format ''."` COMException on writer-created tables.
 
@@ -497,16 +497,17 @@ All three call sites (`TrySpliceCatalogIndexEntryAsync`, `TrySurgicalCrossLeafMa
 
 ## FormatProbe diagnostic harness
 
-`JetDatabaseWriter.FormatProbe` carries two opt-in probes for triaging this regression. Both are off by default — they only fire when the matching environment variable is set.
+`JetDatabaseWriter.FormatProbe` carries mode-based opt-in probes for triaging this regression. No-argument runs print usage and exit quickly; pass an explicit mode after `--`. Legacy `DIAG_*` environment variables still select the matching mode when no CLI mode is supplied.
 
-### `DIAG_RT_BISECT` — escalating-step regression bisector
+### `rt-bisect` — escalating-step regression bisector
 
 [RoundTripBisect.cs](../../JetDatabaseWriter.FormatProbe/RoundTripBisect.cs):
 
 ```pwsh
-$env:DIAG_RT_BISECT = "1"
-dotnet run --project JetDatabaseWriter.FormatProbe
+dotnet run --project JetDatabaseWriter.FormatProbe -- rt-bisect
 ```
+
+Legacy equivalent: `$env:DIAG_RT_BISECT = "1"; dotnet run --project JetDatabaseWriter.FormatProbe`.
 
 Copies `NorthwindTraders.accdb` once per step, runs the writer through an escalating action set (`N0` open/close → `N1` one table → `N2` two tables → `N3` add relationship → `N4` insert rows), and shells DAO compact for each. One line per step:
 
@@ -517,14 +518,15 @@ Copies `NorthwindTraders.accdb` once per step, runs the writer through an escala
 
 `N1_CreateOneTable` is the smallest writer surface that breaks DAO. If it already fails, the relationship / insert paths are off the critical path.
 
-### `DIAG_RT_DAO_BASELINE` — DAO-authored ground-truth comparator
+### `rt-dao-baseline` — DAO-authored ground-truth comparator
 
 [DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs):
 
 ```pwsh
-$env:DIAG_RT_DAO_BASELINE = "1"
-dotnet run --project JetDatabaseWriter.FormatProbe
+dotnet run --project JetDatabaseWriter.FormatProbe -- rt-dao-baseline
 ```
+
+Legacy equivalent: `$env:DIAG_RT_DAO_BASELINE = "1"; dotnet run --project JetDatabaseWriter.FormatProbe`.
 
 Makes two copies of `NorthwindTraders.accdb`. On copy A runs the writer's N1 step (`CreateTableAsync RT_Customers`); on copy B shells `DAO.DBEngine.120` from `SysWOW64\WindowsPowerShell` and creates the same table via `Database.CreateTableDef` / `TableDef.CreateField` / `TableDef.CreateIndex` / `TableDefs.Append` — the API path Microsoft Access UI uses internally. Then runs `DBEngine.CompactDatabase` on both, captures both verdicts, and emits a side-by-side report at `%TEMP%\JetDatabaseWriter.RtDaoBaseline\dao-baseline-diff.md` with:
 
@@ -539,7 +541,7 @@ Per-page raw bytes for every changed/added page are dumped to `pages\page<NNNNN>
 
 ### Hooking either probe into a fresh failure
 
-The `DIAG_RT_KEEP=1` work dirs (`%TEMP%\JetDatabaseWriter.Tests.RoundTrip\<guid>\source.accdb`) survive failing test runs verbatim. Pair `DIAG_RT_BISECT` with `DIAG_RT_DAO_BASELINE` to find the smallest reproducer and then diff the writer's output against a DAO-authored ground truth for the same operation.
+The `DIAG_RT_KEEP=1` work dirs (`%TEMP%\JetDatabaseWriter.Tests.RoundTrip\<guid>\source.accdb`) survive failing test runs verbatim. Pair `rt-bisect` with `rt-dao-baseline` to find the smallest reproducer and then diff the writer's output against a DAO-authored ground truth for the same operation.
 
 ## Background
 

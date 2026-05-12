@@ -13,15 +13,15 @@
 // "Access UI" file format, so this is a true substitute for the manual step.
 //
 // USAGE
-//   $env:DIAG_RT_DAO_BASELINE = "1"
-//   dotnet run --project JetDatabaseWriter.FormatProbe
+//   dotnet run --project JetDatabaseWriter.FormatProbe -- rt-dao-baseline
+//   Legacy: $env:DIAG_RT_DAO_BASELINE = "1"; dotnet run --project JetDatabaseWriter.FormatProbe
 //
 // Outputs land under %TEMP%\JetDatabaseWriter.RtDaoBaseline\:
 //   - writer\source.accdb              (NorthwindTraders + RT_Customers via writer)
 //   - writer\source.compacted.accdb    (DAO compact output, if it succeeds)
 //   - dao\source.accdb                 (NorthwindTraders + RT_Customers via DAO)
 //   - dao\source.compacted.accdb       (DAO compact output, if it succeeds)
-//   - pages\<page>_writer.bin          (raw bytes of every "interesting" page)
+//   - pages\<page>_writer.bin          (raw bytes of every "interesting" page, unless DIAG_SKIP_PAGE_BINS=1)
 //   - pages\<page>_dao.bin
 //   - dao-baseline-diff.md             (the report)
 
@@ -41,6 +41,8 @@ using JetDatabaseWriter.Models;
 
 internal static class DaoBaselineProbe
 {
+    private static readonly AccessReaderOptions ProbeReaderOptions = new() { UseLockFile = false };
+
     public static async Task<int> RunAsync(string baselinePath, string workRoot)
     {
         if (!File.Exists(baselinePath))
@@ -56,11 +58,7 @@ internal static class DaoBaselineProbe
             return 1;
         }
 
-        if (Directory.Exists(workRoot))
-        {
-            Directory.Delete(workRoot, recursive: true);
-        }
-
+        workRoot = PrepareWorkRoot(workRoot);
         _ = Directory.CreateDirectory(workRoot);
         string writerDir = Path.Combine(workRoot, "writer");
         string daoDir = Path.Combine(workRoot, "dao");
@@ -76,6 +74,7 @@ internal static class DaoBaselineProbe
 
         Console.WriteLine($"[dao-baseline] baseline = {baselinePath}");
         Console.WriteLine($"[dao-baseline] workRoot = {workRoot}");
+        bool writePageBins = ShouldWritePageBins();
 
         // 1. Writer authoring.
         string writerErr = string.Empty;
@@ -103,7 +102,17 @@ internal static class DaoBaselineProbe
         // 2. DAO authoring.
         string powerShellPath = hostProbe.HostPath;
 
-        (int daoCreateCode, string daoCreateErr) = RunDaoCreateRtCustomers(powerShellPath, daoPath);
+        string writerCompactPath = Path.Combine(writerDir, "source.compacted.accdb");
+        string daoCompactPath = Path.Combine(daoDir, "source.compacted.accdb");
+        DaoProbeResults daoResults = RunDaoProbeBatch(
+            powerShellPath,
+            writerPath,
+            writerCompactPath,
+            daoPath,
+            daoCompactPath,
+            runWriterChecks: string.IsNullOrEmpty(writerErr));
+
+        (int daoCreateCode, string daoCreateErr) = daoResults.DaoCreate;
         Console.WriteLine($"[dao-baseline] DAO authoring: exit={daoCreateCode}{(daoCreateCode == 0 ? string.Empty : "  err=" + Truncate(daoCreateErr))}");
         if (daoCreateCode != 0)
         {
@@ -116,23 +125,15 @@ internal static class DaoBaselineProbe
         }
 
         // 3. DAO compact verdicts (sanity).
-        (int writerCompactCode, string writerCompactErr) = string.IsNullOrEmpty(writerErr)
-            ? RunDaoCompact(powerShellPath, writerPath, Path.Combine(writerDir, "source.compacted.accdb"))
-            : (-1, "skipped — writer authoring failed");
-        (int daoCompactCode, string daoCompactErr) = daoCreateCode == 0
-            ? RunDaoCompact(powerShellPath, daoPath, Path.Combine(daoDir, "source.compacted.accdb"))
-            : (-1, "skipped — DAO authoring failed");
+        (int writerCompactCode, string writerCompactErr) = daoResults.WriterCompact;
+        (int daoCompactCode, string daoCompactErr) = daoResults.DaoCompact;
 
         Console.WriteLine($"[dao-baseline] DAO compact (writer copy): exit={writerCompactCode}{(writerCompactCode == 0 ? string.Empty : "  err=" + Truncate(writerCompactErr))}");
         Console.WriteLine($"[dao-baseline] DAO compact (DAO copy):    exit={daoCompactCode}{(daoCompactCode == 0 ? string.Empty : "  err=" + Truncate(daoCompactErr))}");
 
         // 3b. DAO OpenRecordset("RT_Customers") smoke (H46 verdict).
-        (int writerOrCode, string writerOrErr) = string.IsNullOrEmpty(writerErr)
-            ? RunDaoOpenRecordset(powerShellPath, writerPath)
-            : (-1, "skipped — writer authoring failed");
-        (int daoOrCode, string daoOrErr) = daoCreateCode == 0
-            ? RunDaoOpenRecordset(powerShellPath, daoPath)
-            : (-1, "skipped — DAO authoring failed");
+        (int writerOrCode, string writerOrErr) = daoResults.WriterOpenRecordset;
+        (int daoOrCode, string daoOrErr) = daoResults.DaoOpenRecordset;
 
         Console.WriteLine($"[dao-baseline] DAO OpenRecordset (writer copy): exit={writerOrCode}{(writerOrCode == 0 ? string.Empty : "  err=" + Truncate(writerOrErr))}");
         Console.WriteLine($"[dao-baseline] DAO OpenRecordset (DAO copy):    exit={daoOrCode}{(daoOrCode == 0 ? string.Empty : "  err=" + Truncate(daoOrErr))}");
@@ -161,33 +162,34 @@ internal static class DaoBaselineProbe
 
         _ = sb.AppendLine();
 
-        await using (var basReader = await AccessReader.OpenAsync(baselinePath))
+        await using (var basReader = await AccessReader.OpenAsync(baselinePath, ProbeReaderOptions))
         {
-            int pgSz = basReader.PageSize;
-            long basPageCount = new FileInfo(baselinePath).Length / pgSz;
+            BaselinePageCache baselinePages = await BaselinePageCache.LoadAsync(basReader);
+            int pgSz = baselinePages.PageSize;
+            long basPageCount = baselinePages.PageCount;
 
             ReaderSnapshot? writerSnap = null;
             ReaderSnapshot? daoSnap = null;
 
             if (string.IsNullOrEmpty(writerErr))
             {
-                await using var r = await AccessReader.OpenAsync(writerPath);
-                writerSnap = await ReaderSnapshot.CaptureAsync(r, basReader, basPageCount, "writer", pagesDir);
+                await using var r = await AccessReader.OpenAsync(writerPath, ProbeReaderOptions);
+                writerSnap = await ReaderSnapshot.CaptureAsync(r, baselinePages, "writer", pagesDir, writePageBins);
             }
 
             if (daoCreateCode == 0)
             {
-                await using var r = await AccessReader.OpenAsync(daoPath);
-                daoSnap = await ReaderSnapshot.CaptureAsync(r, basReader, basPageCount, "dao", pagesDir);
+                await using var r = await AccessReader.OpenAsync(daoPath, ProbeReaderOptions);
+                daoSnap = await ReaderSnapshot.CaptureAsync(r, baselinePages, "dao", pagesDir, writePageBins);
             }
 
             EmitFileLevel(sb, basPageCount, pgSz, writerSnap, daoSnap);
             EmitCatalogDiff(sb, writerSnap, daoSnap);
             EmitChangedPagesTable(sb, basPageCount, writerSnap, daoSnap);
             await EmitRtCustomersTdefDumpsAsync(sb, writerSnap, daoSnap, pagesDir);
-            await EmitNewMSysObjectsRowDumpsAsync(sb, basReader, writerSnap, daoSnap, pagesDir, basPageCount, pgSz);
+            await EmitNewMSysObjectsRowDumpsAsync(sb, writerSnap, daoSnap, pagesDir, pgSz);
             await EmitHypothesisAccumulatingDiffAsync(sb, writerSnap, daoSnap, writerPath, daoPath);
-            await EmitDaoOnlyPageHexAsync(sb, basReader, writerPath, daoPath, basPageCount, pgSz, daoSnap);
+            EmitDaoOnlyPageHex(sb, baselinePages, writerSnap, daoSnap);
         }
 
         _ = sb.AppendLine();
@@ -205,131 +207,220 @@ internal static class DaoBaselineProbe
         return 0;
     }
 
-    // ────────────────────────── DAO interop ─────────────────────────────────
+    private static bool ShouldWritePageBins() =>
+        string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_SKIP_PAGE_BINS"))
+        && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DIAG_NO_PAGE_BINS"));
 
-    private static (int Code, string StdErr) RunDaoCreateRtCustomers(string powerShellPath, string dbPath)
+    private static string PrepareWorkRoot(string workRoot)
     {
-        // dbLong=4 (Int32), dbText=10. dbAutoIncrField=16. Required=true on all
-        // not-null fields. Index "PrimaryKey" with Primary/Unique/Required and
-        // a single CustomerID field.
-        string dbLit = dbPath.Replace("'", "''", StringComparison.Ordinal);
-        string script = string.Join('\n', new[]
+        if (!Directory.Exists(workRoot) || !Directory.EnumerateFileSystemEntries(workRoot).Any())
         {
-            "$ErrorActionPreference='Stop'",
-            $"$path='{dbLit}'",
-            "$e = New-Object -ComObject DAO.DBEngine.120",
-            "try {",
-            "  $db = $e.OpenDatabase($path)",
-            "  $td = $db.CreateTableDef('RT_Customers')",
-            "  $f1 = $td.CreateField('CustomerID', 4)",          // dbLong
-            "  $f1.Attributes = $f1.Attributes -bor 16",          // dbAutoIncrField
-            "  $f1.Required = $true",
-            "  $td.Fields.Append($f1)",
-            "  $f2 = $td.CreateField('Name', 10, 100)",           // dbText, size 100
-            "  $f2.Required = $true",
-            "  $td.Fields.Append($f2)",
-            "  $idx = $td.CreateIndex('PrimaryKey')",
-            "  $idx.Primary = $true",
-            "  $idx.Unique  = $true",
-            "  $idx.Required = $true",
-            "  $idxFld = $idx.CreateField('CustomerID')",
-            "  $idx.Fields.Append($idxFld)",
-            "  $td.Indexes.Append($idx)",
-            "  $db.TableDefs.Append($td)",
-            "  $db.Close()",
-            "  exit 0",
-            "} finally { [GC]::Collect(); [GC]::WaitForPendingFinalizers() }",
-        });
-        return RunPwsh(powerShellPath, script, Path.Combine(Path.GetDirectoryName(dbPath)!, "dao-create.ps1"));
-    }
-
-    private static (int Code, string StdErr) RunDaoOpenRecordset(string powerShellPath, string dbPath)
-    {
-        // Mirrors the failure reproducer in DaoValidationTests: open the
-        // database read-only, materialise a forward-only recordset, and
-        // immediately close. If DAO accepts the table the script exits 0;
-        // otherwise the COM exception ("Unrecognized database format ''.")
-        // surfaces via stderr and a non-zero exit code.
-        string dbLit = dbPath.Replace("'", "''", StringComparison.Ordinal);
-        string script =
-            """
-            $ErrorActionPreference='Stop'
-
-            """ +
-            $"""
-            $path='{dbLit}'
-
-            """ +
-            """
-            $e = New-Object -ComObject DAO.DBEngine.120
-
-            """ +
-            """
-            try {
-
-            """ +
-            """
-              $db = $e.OpenDatabase($path, $false, $true)
-
-            """ +
-            """
-              try {
-
-            """ +
-            """
-                $rs = $db.OpenRecordset('RT_Customers', 2)
-
-            """ +
-            """
-                try { $rs.Close() } catch { }
-
-            """ +
-            """
-              } finally { $db.Close() }
-
-            """ +
-            """
-              exit 0
-
-            """ +
-            """
-            } finally { [GC]::Collect(); [GC]::WaitForPendingFinalizers() }
-
-            """;
-        return RunPwsh(powerShellPath, script, Path.Combine(Path.GetDirectoryName(dbPath)!, "dao-openrecordset.ps1"));
-    }
-
-    private static (int Code, string StdErr) RunDaoCompact(string powerShellPath, string src, string dst)
-    {
-        if (File.Exists(dst))
-        {
-            File.Delete(dst);
+            return workRoot;
         }
 
-        string srcLit = src.Replace("'", "''", StringComparison.Ordinal);
-        string dstLit = dst.Replace("'", "''", StringComparison.Ordinal);
-        string script =
-            """
-            $ErrorActionPreference='Stop'
-
-            """ +
-            $"""
-            $src='{srcLit}'
-            $dst='{dstLit}'
-
-            """ +
-            """
-            $e=New-Object -ComObject DAO.DBEngine.120
-
-            """ +
-            """
-            try { $e.CompactDatabase($src,$dst); exit 0 } finally { [GC]::Collect() }
-
-            """;
-        return RunPwsh(powerShellPath, script, Path.Combine(Path.GetDirectoryName(dst)!, "compact.ps1"));
+        return Path.Combine(
+            workRoot,
+            DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss-fffffff", CultureInfo.InvariantCulture));
     }
 
-    private static (int Code, string StdErr) RunPwsh(string powerShellPath, string script, string scriptPath)
+    // ────────────────────────── DAO interop ─────────────────────────────────
+
+    private readonly record struct DaoStepResult(int Code, string StdErr);
+
+    private sealed record DaoProbeResults(
+        DaoStepResult DaoCreate,
+        DaoStepResult WriterCompact,
+        DaoStepResult DaoCompact,
+        DaoStepResult WriterOpenRecordset,
+        DaoStepResult DaoOpenRecordset);
+
+    private static DaoProbeResults RunDaoProbeBatch(
+        string powerShellPath,
+        string writerPath,
+        string writerCompactPath,
+        string daoPath,
+        string daoCompactPath,
+        bool runWriterChecks)
+    {
+        if (File.Exists(writerCompactPath))
+        {
+            File.Delete(writerCompactPath);
+        }
+
+        if (File.Exists(daoCompactPath))
+        {
+            File.Delete(daoCompactPath);
+        }
+
+        string script = BuildDaoProbeBatchScript(
+            writerPath,
+            writerCompactPath,
+            daoPath,
+            daoCompactPath,
+            runWriterChecks);
+        (int code, string stdout, string stderr) = RunPwsh(
+            powerShellPath,
+            script,
+            Path.Combine(Path.GetDirectoryName(daoPath)!, "dao-probe-batch.ps1"));
+        Dictionary<string, DaoStepResult> results = ParseDaoStepResults(stdout);
+        DaoStepResult missing = code == 0
+            ? new DaoStepResult(1, "PowerShell batch did not emit a result for this step.")
+            : new DaoStepResult(code, stderr);
+
+        return new DaoProbeResults(
+            GetDaoStepResult(results, "dao-create", missing),
+            GetDaoStepResult(results, "writer-compact", missing),
+            GetDaoStepResult(results, "dao-compact", missing),
+            GetDaoStepResult(results, "writer-open-recordset", missing),
+            GetDaoStepResult(results, "dao-open-recordset", missing));
+    }
+
+    private static string BuildDaoProbeBatchScript(
+        string writerPath,
+        string writerCompactPath,
+        string daoPath,
+        string daoCompactPath,
+        bool runWriterChecks)
+    {
+        string runWriter = runWriterChecks ? "$true" : "$false";
+        return $$"""
+            $ErrorActionPreference='Stop'
+            $writerPath = {{PowerShellLiteral(writerPath)}}
+            $writerCompactPath = {{PowerShellLiteral(writerCompactPath)}}
+            $daoPath = {{PowerShellLiteral(daoPath)}}
+            $daoCompactPath = {{PowerShellLiteral(daoCompactPath)}}
+            $runWriterChecks = {{runWriter}}
+            $script:lastStepCode = 0
+
+            function Write-StepResult([string]$name, [int]$code, [string]$message) {
+                if ($null -eq $message) { $message = '' }
+                $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($message))
+                Write-Output "$name|$code|$encoded"
+            }
+
+            function Get-ErrorCode($errorRecord) {
+                $code = [int]$errorRecord.Exception.HResult
+                $errorCode = $errorRecord.Exception.ErrorCode
+                if ($code -eq 0 -and $null -ne $errorCode) { $code = [int]$errorCode }
+                if ($code -eq 0) { $code = 1 }
+                return $code
+            }
+
+            function Invoke-DaoStep([string]$name, [scriptblock]$body) {
+                try {
+                    & $body
+                    $script:lastStepCode = 0
+                    Write-StepResult $name 0 ''
+                } catch {
+                    $code = Get-ErrorCode $_
+                    $script:lastStepCode = $code
+                    Write-StepResult $name $code $_.Exception.Message
+                }
+            }
+
+            function Compact-Database([string]$sourcePath, [string]$destinationPath) {
+                if (Test-Path -LiteralPath $destinationPath) { Remove-Item -LiteralPath $destinationPath -Force }
+                $engine.CompactDatabase($sourcePath, $destinationPath)
+            }
+
+            function Open-RtCustomers([string]$path) {
+                $db = $engine.OpenDatabase($path, $false, $true)
+                try {
+                    $recordset = $db.OpenRecordset('RT_Customers', 2)
+                    try { } finally { $recordset.Close() }
+                } finally {
+                    $db.Close()
+                }
+            }
+
+            $engine = New-Object -ComObject DAO.DBEngine.120
+            try {
+                Invoke-DaoStep 'dao-create' {
+                    $db = $engine.OpenDatabase($daoPath)
+                    try {
+                        $td = $db.CreateTableDef('RT_Customers')
+                        $f1 = $td.CreateField('CustomerID', 4)
+                        $f1.Attributes = $f1.Attributes -bor 16
+                        $f1.Required = $true
+                        $td.Fields.Append($f1)
+                        $f2 = $td.CreateField('Name', 10, 100)
+                        $f2.Required = $true
+                        $td.Fields.Append($f2)
+                        $idx = $td.CreateIndex('PrimaryKey')
+                        $idx.Primary = $true
+                        $idx.Unique = $true
+                        $idx.Required = $true
+                        $idxFld = $idx.CreateField('CustomerID')
+                        $idx.Fields.Append($idxFld)
+                        $td.Indexes.Append($idx)
+                        $db.TableDefs.Append($td)
+                    } finally {
+                        $db.Close()
+                    }
+                }
+
+                $daoCreateCode = $script:lastStepCode
+
+                if ($runWriterChecks) {
+                    Invoke-DaoStep 'writer-compact' { Compact-Database $writerPath $writerCompactPath }
+                    Invoke-DaoStep 'writer-open-recordset' { Open-RtCustomers $writerPath }
+                } else {
+                    Write-StepResult 'writer-compact' -1 'skipped - writer authoring failed'
+                    Write-StepResult 'writer-open-recordset' -1 'skipped - writer authoring failed'
+                }
+
+                if ($daoCreateCode -eq 0) {
+                    Invoke-DaoStep 'dao-compact' { Compact-Database $daoPath $daoCompactPath }
+                    Invoke-DaoStep 'dao-open-recordset' { Open-RtCustomers $daoPath }
+                } else {
+                    Write-StepResult 'dao-compact' -1 'skipped - DAO authoring failed'
+                    Write-StepResult 'dao-open-recordset' -1 'skipped - DAO authoring failed'
+                }
+            } finally {
+                [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null
+                [GC]::Collect()
+                [GC]::WaitForPendingFinalizers()
+            }
+            """;
+    }
+
+    private static string PowerShellLiteral(string value) =>
+        "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+    private static Dictionary<string, DaoStepResult> ParseDaoStepResults(string stdout)
+    {
+        var results = new Dictionary<string, DaoStepResult>(StringComparer.OrdinalIgnoreCase);
+        foreach (string line in stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = line.Split('|', 3);
+            if (parts.Length != 3 || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int code))
+            {
+                continue;
+            }
+
+            string message;
+            try
+            {
+                message = Encoding.UTF8.GetString(Convert.FromBase64String(parts[2]));
+            }
+            catch (FormatException)
+            {
+                message = parts[2];
+            }
+
+            results[parts[0]] = new DaoStepResult(code, message);
+        }
+
+        return results;
+    }
+
+    private static DaoStepResult GetDaoStepResult(
+        Dictionary<string, DaoStepResult> results,
+        string name,
+        DaoStepResult fallback) =>
+        results.TryGetValue(name, out DaoStepResult result) ? result : fallback;
+
+    private static (int Code, string StdOut, string StdErr) RunPwsh(string powerShellPath, string script, string scriptPath)
     {
         File.WriteAllText(scriptPath, script);
         var psi = new ProcessStartInfo(powerShellPath)
@@ -346,13 +437,48 @@ internal static class DaoBaselineProbe
         psi.ArgumentList.Add(scriptPath);
 
         using var p = Process.Start(psi)!;
+        string stdout = p.StandardOutput.ReadToEnd();
         string err = p.StandardError.ReadToEnd();
-        _ = p.StandardOutput.ReadToEnd();
         _ = p.WaitForExit(120_000);
-        return (p.ExitCode, err);
+        return (p.ExitCode, stdout, err);
     }
 
     // ────────────────────────── Snapshot / per-file analysis ────────────────
+
+    private sealed class BaselinePageCache
+    {
+        public static async Task<BaselinePageCache> LoadAsync(AccessReader reader)
+        {
+            int pageSize = reader.PageSize;
+            long pageCount = new FileInfo(reader.HostDatabasePath).Length / pageSize;
+            if (pageCount > int.MaxValue)
+            {
+                throw new InvalidOperationException("Baseline is too large to cache page bytes in memory.");
+            }
+
+            var pages = new byte[(int)pageCount][];
+            for (int pageNumber = 0; pageNumber < pages.Length; pageNumber++)
+            {
+                pages[pageNumber] = await reader.GetRawPageBytesAsync(pageNumber, default);
+            }
+
+            return new BaselinePageCache(pageSize, pages);
+        }
+
+        private readonly byte[][] pages;
+
+        private BaselinePageCache(int pageSize, byte[][] pages)
+        {
+            PageSize = pageSize;
+            this.pages = pages;
+        }
+
+        public int PageSize { get; }
+
+        public long PageCount => pages.LongLength;
+
+        public byte[] GetPage(long pageNumber) => pages[checked((int)pageNumber)];
+    }
 
     private sealed class ReaderSnapshot
     {
@@ -366,39 +492,50 @@ internal static class DaoBaselineProbe
 
         public required Dictionary<long, byte> PageTypes { get; init; } // for the union of the above
 
+        public required Dictionary<long, byte[]> PageBytes { get; init; } // same key set as PageTypes
+
         public required CatalogEntry? RtCustomers { get; init; }
 
         public required byte[] RtTdefBytes { get; init; } // empty if not found
 
-        public static async Task<ReaderSnapshot> CaptureAsync(AccessReader r, AccessReader baseline, long baselinePageCount, string tag, string pagesDir)
+        public static async Task<ReaderSnapshot> CaptureAsync(
+            AccessReader r,
+            BaselinePageCache baseline,
+            string tag,
+            string pagesDir,
+            bool writePageBins)
         {
             int pgSz = r.PageSize;
             long pageCount = new FileInfo(r.HostDatabasePath).Length / pgSz;
-            long shared = Math.Min(pageCount, baselinePageCount);
+            long shared = Math.Min(pageCount, baseline.PageCount);
 
             var differing = new List<long>();
+            var pageBytes = new Dictionary<long, byte[]>();
             for (long p = 0; p < shared; p++)
             {
                 byte[] a = await r.GetRawPageBytesAsync(p, default);
-                byte[] b = await baseline.GetRawPageBytesAsync(p, default);
-                if (!a.AsSpan().SequenceEqual(b))
+                if (!a.AsSpan().SequenceEqual(baseline.GetPage(p)))
                 {
                     differing.Add(p);
+                    pageBytes[p] = a;
                 }
             }
 
             var added = new List<long>();
-            for (long p = baselinePageCount; p < pageCount; p++)
+            for (long p = baseline.PageCount; p < pageCount; p++)
             {
                 added.Add(p);
+                pageBytes[p] = await r.GetRawPageBytesAsync(p, default);
             }
 
             var types = new Dictionary<long, byte>();
-            foreach (long p in differing.Concat(added))
+            foreach ((long pageNumber, byte[] bytes) in pageBytes.OrderBy(static kvp => kvp.Key))
             {
-                byte[] bytes = await r.GetRawPageBytesAsync(p, default);
-                types[p] = bytes.Length > 0 ? bytes[0] : (byte)0xFF;
-                await File.WriteAllBytesAsync(Path.Combine(pagesDir, $"page{p:D5}_{tag}.bin"), bytes);
+                types[pageNumber] = bytes.Length > 0 ? bytes[0] : (byte)0xFF;
+                if (writePageBins)
+                {
+                    await File.WriteAllBytesAsync(Path.Combine(pagesDir, $"page{pageNumber:D5}_{tag}.bin"), bytes);
+                }
             }
 
             var catalog = await ReadCatalogAsync(r);
@@ -417,6 +554,7 @@ internal static class DaoBaselineProbe
                 PagesDifferingFromBaseline = differing,
                 PagesAddedBeyondBaseline = added,
                 PageTypes = types,
+                PageBytes = pageBytes,
                 RtCustomers = rt,
                 RtTdefBytes = tdefBytes,
             };
@@ -575,7 +713,7 @@ internal static class DaoBaselineProbe
         }
     }
 
-    private static async Task EmitNewMSysObjectsRowDumpsAsync(StringBuilder sb, AccessReader baseline, ReaderSnapshot? w, ReaderSnapshot? d, string pagesDir, long basPages, int pgSz)
+    private static async Task EmitNewMSysObjectsRowDumpsAsync(StringBuilder sb, ReaderSnapshot? w, ReaderSnapshot? d, string pagesDir, int pgSz)
     {
         _ = sb.AppendLine("## §5 New MSysObjects row bytes");
         _ = sb.AppendLine();
@@ -584,16 +722,16 @@ internal static class DaoBaselineProbe
 
         if (w is not null)
         {
-            await EmitNewMSysObjectsRowAsync(sb, baseline, w, "writer", pagesDir, basPages, pgSz);
+            await EmitNewMSysObjectsRowAsync(sb, w, "writer", pagesDir, pgSz);
         }
 
         if (d is not null)
         {
-            await EmitNewMSysObjectsRowAsync(sb, baseline, d, "dao",    pagesDir, basPages, pgSz);
+            await EmitNewMSysObjectsRowAsync(sb, d, "dao", pagesDir, pgSz);
         }
     }
 
-    private static async Task EmitNewMSysObjectsRowAsync(StringBuilder sb, AccessReader baseline, ReaderSnapshot snap, string label, string pagesDir, long basPages, int pgSz)
+    private static async Task EmitNewMSysObjectsRowAsync(StringBuilder sb, ReaderSnapshot snap, string label, string pagesDir, int pgSz)
     {
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"### {label}");
         _ = sb.AppendLine();
@@ -603,14 +741,6 @@ internal static class DaoBaselineProbe
             _ = sb.AppendLine();
             return;
         }
-
-        // Find the MSysObjects data page (page_type=0x01) in this snapshot that contains
-        // the catalog row. The writer may have **appended** an entirely new MSysObjects
-        // data page (when the existing pages were full), so search both the
-        // shared-range diffs *and* the added-beyond-baseline pages.
-        await using var r = await AccessReader.OpenAsync(snap.Tag == "writer"
-            ? Path.Combine(Path.GetDirectoryName(pagesDir)!, "writer", "source.accdb")
-            : Path.Combine(Path.GetDirectoryName(pagesDir)!, "dao",    "source.accdb"));
 
         long? hostPage = null;
         byte[]? hostBytes = null;
@@ -635,7 +765,11 @@ internal static class DaoBaselineProbe
                 continue;
             }
 
-            byte[] page = await r.GetRawPageBytesAsync(p, default);
+            if (!snap.PageBytes.TryGetValue(p, out byte[]? page))
+            {
+                continue;
+            }
+
             if (page.Length < RowsStartOff + 2)
             {
                 continue;
@@ -831,8 +965,8 @@ internal static class DaoBaselineProbe
         // ── H26: per-table usage-map row 0 type byte == 0x01 (MAP_TYPE_REFERENCE)
         if (w.RtCustomers is { TdefPage: > 0 } wRt && d.RtCustomers is { TdefPage: > 0 } dRt)
         {
-            await using var wr = await AccessReader.OpenAsync(writerPath);
-            await using var dr = await AccessReader.OpenAsync(daoPath);
+            await using var wr = await AccessReader.OpenAsync(writerPath, ProbeReaderOptions);
+            await using var dr = await AccessReader.OpenAsync(daoPath, ProbeReaderOptions);
             (HypothesisRow h26, HypothesisRow h45) = await CheckUsageMapRowAsync(wr, dr, wt, dt, wRt.TdefPage, dRt.TdefPage);
             rows.Add(h26);
             rows.Add(h45);
@@ -1443,7 +1577,7 @@ internal static class DaoBaselineProbe
 
     // ─────── §6 DAO-only diffs (pages writer never touches) ────────────────
 
-    private static async Task EmitDaoOnlyPageHexAsync(StringBuilder sb, AccessReader baseline, string writerPath, string daoPath, long basPages, int pgSz, ReaderSnapshot? d)
+    private static void EmitDaoOnlyPageHex(StringBuilder sb, BaselinePageCache baseline, ReaderSnapshot? w, ReaderSnapshot? d)
     {
         _ = sb.AppendLine("## §6 Pages DAO modifies that the writer never touches");
         _ = sb.AppendLine();
@@ -1456,21 +1590,9 @@ internal static class DaoBaselineProbe
             return;
         }
 
-        await using var w = await AccessReader.OpenAsync(writerPath);
-        await using var dr = await AccessReader.OpenAsync(daoPath);
-
-        // Build writer's set of differing-from-baseline pages on the fly.
-        // Pages DAO touches in the shared range that the writer does NOT.
-        var writerDiff = new HashSet<long>();
-        for (long p = 0; p < basPages; p++)
-        {
-            byte[] a = await w.GetRawPageBytesAsync(p, default);
-            byte[] b = await baseline.GetRawPageBytesAsync(p, default);
-            if (!a.AsSpan().SequenceEqual(b))
-            {
-                _ = writerDiff.Add(p);
-            }
-        }
+        var writerDiff = w is null
+            ? new HashSet<long>()
+            : new HashSet<long>(w.PagesDifferingFromBaseline);
 
         var daoOnly = d.PagesDifferingFromBaseline.Where(p => !writerDiff.Contains(p)).ToList();
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- DAO-only pages (in shared range): {daoOnly.Count} → {string.Join(", ", daoOnly.Select(p => p.ToString(CultureInfo.InvariantCulture)))}");
@@ -1478,8 +1600,12 @@ internal static class DaoBaselineProbe
 
         foreach (long p in daoOnly)
         {
-            byte[] basBytes = await baseline.GetRawPageBytesAsync(p, default);
-            byte[] daoBytes = await dr.GetRawPageBytesAsync(p, default);
+            byte[] basBytes = baseline.GetPage(p);
+            if (!d.PageBytes.TryGetValue(p, out byte[]? daoBytes))
+            {
+                continue;
+            }
+
             int common = Math.Min(basBytes.Length, daoBytes.Length);
             var diffs = new List<int>();
             for (int i = 0; i < common; i++)
