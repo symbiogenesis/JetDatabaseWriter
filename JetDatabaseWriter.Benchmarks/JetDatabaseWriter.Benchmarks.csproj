@@ -9,7 +9,7 @@
         <ProjectReference Include="..\JetDatabaseWriter\JetDatabaseWriter.csproj" />
     </ItemGroup>
     <ItemGroup>
-        <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+        <PackageReference Include="BenchmarkDotNet" />
     </ItemGroup>
     <ItemGroup>
         <None Include="..\JetDatabaseWriter.Tests\Databases\NorthwindTraders.accdb" Link="NorthwindTraders.accdb">
