@@ -37,11 +37,9 @@ public enum AccessEncryptionFormat
     AccdbAesCfbWrapped = 3,
 
     /// <summary>
-    /// Office Crypto API ECMA-376 "Agile" encryption used by Access 2010 SP1+
-    /// and Microsoft 365 (<c>.accdb</c>). The file is a real OLE Compound File
-    /// containing <c>EncryptionInfo</c> (XML descriptor: SHA-512 PBKDF, AES-CBC)
-    /// and <c>EncryptedPackage</c> (4096-byte segmented AES-CBC of the inner
-    /// ACCDB).
+    /// Access-native ECMA-376 "Agile" encryption used by Access 2010 SP1+
+    /// and Microsoft 365 (<c>.accdb</c>). The <c>EncryptionInfo</c> descriptor
+    /// is embedded in page 0 and data pages are encrypted in place.
     /// </summary>
     AccdbAgile = 4,
 
@@ -53,4 +51,12 @@ public enum AccessEncryptionFormat
     /// ACCDB).
     /// </summary>
     AccdbStandard = 5,
+
+    /// <summary>
+    /// Office Crypto API ECMA-376 "Agile" encryption in a CFB v4 compound
+    /// document. The outer OLE container stores <c>EncryptionInfo</c> and
+    /// <c>EncryptedPackage</c> streams; the encrypted package contains the
+    /// inner clean ACCDB image.
+    /// </summary>
+    AccdbAgileCfb = 6,
 }

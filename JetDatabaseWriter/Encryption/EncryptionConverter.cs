@@ -132,6 +132,7 @@ internal static class EncryptionConverter
             case AccessEncryptionFormat.AccdbAesCfbWrapped:
             case AccessEncryptionFormat.AccdbAgile:
             case AccessEncryptionFormat.AccdbStandard:
+            case AccessEncryptionFormat.AccdbAgileCfb:
                 if (fmt != DatabaseFormat.AceAccdb)
                 {
                     throw new NotSupportedException(
@@ -155,6 +156,7 @@ internal static class EncryptionConverter
             AccessEncryptionFormat.AccdbAesCfbWrapped => BuildAccdbAesCfbWrapped(plaintext, pageSize, targetPassword.Span),
             AccessEncryptionFormat.AccdbAgile => BuildAccdbAgile(plaintext, targetPassword.Span),
             AccessEncryptionFormat.AccdbStandard => BuildAccdbStandard(plaintext, targetPassword.Span),
+            AccessEncryptionFormat.AccdbAgileCfb => BuildAccdbAgileCfb(plaintext, targetPassword.Span),
             _ => throw new NotSupportedException($"Unhandled target encryption format: {targetFormat}."),
         };
     }
@@ -169,15 +171,25 @@ internal static class EncryptionConverter
 
         if (EncryptionManager.IsCompoundFileEncrypted(rawFile))
         {
-            // Cheap heuristic: if the file is a real CFB document (sector size
-            // and DIFAT look sane) and contains an EncryptionInfo stream we
-            // call it Agile; otherwise it's the synthetic legacy AES layout.
-            // The full Agile probe happens lazily in ReadDecryptedAsync.
-            return AccessEncryptionFormat.AccdbAgile;
+            return IsValidCompoundFileHeader(rawFile)
+                ? AccessEncryptionFormat.AccdbAgileCfb
+                : AccessEncryptionFormat.AccdbAesCfbWrapped;
         }
 
         DatabaseFormat fmt = DetectFormat(rawFile);
         return DetectFlatFormat(rawFile, fmt);
+    }
+
+    internal static byte[] BuildOfficeCryptoCompoundFile(byte[] encryptionInfo, byte[] encryptedPackage)
+    {
+        Guard.NotNull(encryptionInfo, nameof(encryptionInfo));
+        Guard.NotNull(encryptedPackage, nameof(encryptedPackage));
+
+        return CompoundFileWriter.BuildOfficeCrypto(
+        [
+            new KeyValuePair<string, byte[]>("EncryptionInfo", PadEncryptionInfoForRegularFat(encryptionInfo)),
+            new KeyValuePair<string, byte[]>("EncryptedPackage", encryptedPackage),
+        ]);
     }
 
     /// <summary>
@@ -301,6 +313,14 @@ internal static class EncryptionConverter
         return OfficeCryptoAgile.EncryptFlatDatabase(plaintext, password);
     }
 
+    private static byte[] BuildAccdbAgileCfb(byte[] plaintext, ReadOnlySpan<char> password)
+    {
+        (byte[] encryptionInfo, byte[] encryptedPackage) =
+            OfficeCryptoAgile.Encrypt(plaintext, password);
+
+        return BuildOfficeCryptoCompoundFile(encryptionInfo, encryptedPackage);
+    }
+
     private static byte[] BuildAccdbStandard(byte[] plaintext, ReadOnlySpan<char> password)
     {
         // Standard wraps a clean (unencrypted) inner ACCDB. The plaintext bytes
@@ -309,11 +329,7 @@ internal static class EncryptionConverter
         (byte[] encryptionInfo, byte[] encryptedPackage) =
             OfficeCryptoStandard.Encrypt(plaintext, password);
 
-        return CompoundFileWriter.Build(
-        [
-            new KeyValuePair<string, byte[]>("EncryptionInfo", encryptionInfo),
-            new KeyValuePair<string, byte[]>("EncryptedPackage", encryptedPackage),
-        ]);
+        return BuildOfficeCryptoCompoundFile(encryptionInfo, encryptedPackage);
     }
 
     private static byte[] PadEncryptionInfoForRegularFat(byte[] encryptionInfo)
@@ -416,7 +432,8 @@ internal static class EncryptionConverter
                 $"Password is too long for this database format: {password.Length} characters (maximum {MaxPasswordLength}). " +
                 "Jet4 RC4, ACCDB legacy ';pwd=', and ACCDB AES CFB-wrapped formats all store the password in a fixed " +
                 "40-byte header area whose 32nd byte is reused by the encryption flag, restricting the password to " +
-                $"{MaxPasswordLength} UTF-16 characters. Use AccessEncryptionFormat.AccdbAgile for longer passwords.");
+                $"{MaxPasswordLength} UTF-16 characters. Use AccessEncryptionFormat.AccdbAgile or " +
+                "AccessEncryptionFormat.AccdbAgileCfb for longer passwords.");
         }
 
         Span<byte> padded = stackalloc byte[40];
@@ -510,6 +527,20 @@ internal static class EncryptionConverter
         }
 
         return AccessEncryptionFormat.None;
+    }
+
+    private static bool IsValidCompoundFileHeader(byte[] header)
+    {
+        if (header.Length < 0x20)
+        {
+            return false;
+        }
+
+        ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(0x1A, 2));
+        ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(0x1E, 2));
+
+        return (majorVersion == Constants.CompoundFile.V3.MajorVersion && sectorShift == Constants.CompoundFile.V3.SectorShift) ||
+            (majorVersion == Constants.CompoundFile.V4.MajorVersion && sectorShift == Constants.CompoundFile.V4.SectorShift);
     }
 
     private static async ValueTask ReadExactAsync(Stream source, byte[] buffer, int offset, int count, CancellationToken cancellationToken)

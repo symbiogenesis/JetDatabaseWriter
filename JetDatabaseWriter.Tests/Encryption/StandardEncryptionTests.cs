@@ -7,6 +7,7 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
@@ -278,6 +279,8 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
                     [99, "standard-write-roundtrip"],
                     TestContext.Current.CancellationToken);
             }
+
+            await AssertStandardCfbV4FileAsync(temp, TestContext.Current.CancellationToken);
 
             // Reopen via AccessReader: must detect Standard encryption,
             // decrypt, and surface the freshly-inserted row.
@@ -605,14 +608,7 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
                 NoLockOptions(),
                 TestContext.Current.CancellationToken);
 
-            // Header should now be CFB magic (Standard files are CFB-wrapped).
-            byte[] header = new byte[8];
-            await using (var fs = File.OpenRead(path))
-            {
-                _ = await fs.ReadAsync(header.AsMemory(), TestContext.Current.CancellationToken);
-            }
-
-            Assert.True(CompoundFileReader.HasCompoundFileMagic(header));
+            await AssertStandardCfbV4FileAsync(path, TestContext.Current.CancellationToken);
 
             // Should still be openable with the password.
             await using var reader = await AccessReader.OpenAsync(
@@ -646,6 +642,8 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
                 NewPassword,
                 NoLockOptions(),
                 TestContext.Current.CancellationToken);
+
+            await AssertStandardCfbV4FileAsync(path, TestContext.Current.CancellationToken);
 
             // Old password should fail.
             var oldOpts = new AccessReaderOptions { Password = TestPassword.AsMemory(), UseLockFile = false };
@@ -708,6 +706,26 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
     };
 
     private static AccessWriterOptions NoLockOptions() => new() { UseLockFile = false };
+
+    private static async Task AssertStandardCfbV4FileAsync(string path, CancellationToken cancellationToken)
+    {
+        byte[] bytes = await File.ReadAllBytesAsync(path, cancellationToken);
+
+        Assert.True(CompoundFileReader.HasCompoundFileMagic(bytes));
+
+        ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(0x1A, 2));
+        ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(0x1E, 2));
+
+        Assert.Equal(Constants.CompoundFile.V4.MajorVersion, majorVersion);
+        Assert.Equal(Constants.CompoundFile.V4.SectorShift, sectorShift);
+
+        await using var stream = new MemoryStream(bytes, writable: false);
+        var streams = await CompoundFileReader.ReadStreamsAsync(stream, cancellationToken);
+
+        Assert.True(streams.ContainsKey("EncryptionInfo"));
+        Assert.True(streams.ContainsKey("EncryptedPackage"));
+        Assert.True(OfficeCryptoAgile.IsStandardEncryptionInfo(streams["EncryptionInfo"]));
+    }
 
     /// <summary>
     /// Builds a fake EncryptionInfo with customizable fields for negative tests.

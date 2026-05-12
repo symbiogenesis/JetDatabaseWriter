@@ -23,8 +23,9 @@ Microsoft Access guard and pass.
 Access-native flat Agile ACCDB encryption rather than a CFB wrapper. The flat
 encoding key at page-0 offset `0x3E` is read/written through the fixed Access
 header mask, per-page IV derivation uses the unmasked key, and DAO
-`CompactDatabase` uses the five-argument source-password form. The encrypted
-compact test now passes.
+`CompactDatabase` uses the five-argument source-password form. Office Crypto
+Agile CFB output remains available through `AccessEncryptionFormat.AccdbAgileCfb`.
+The encrypted compact test now passes.
 
 Full-suite verification: `dotnet test --project JetDatabaseWriter.Tests` passed
 with 3234 succeeded, 0 failed, and 2 intentionally skipped diagnostic probes.

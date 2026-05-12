@@ -216,7 +216,19 @@ internal static class EncryptionManager
                 read += got;
             }
 
-            return EncryptionConverter.Detect(sniff);
+            AccessEncryptionFormat headerFormat = EncryptionConverter.Detect(sniff);
+            if (headerFormat == AccessEncryptionFormat.AccdbAgileCfb)
+            {
+                _ = stream.Seek(0, SeekOrigin.Begin);
+                AccessEncryptionFormat cfbFormat = await TryDetectCompoundFileFormatAsync(stream, cancellationToken)
+                    .ConfigureAwait(false);
+                if (cfbFormat != AccessEncryptionFormat.None)
+                {
+                    return cfbFormat;
+                }
+            }
+
+            return headerFormat;
         }
         finally
         {
@@ -489,7 +501,7 @@ internal static class EncryptionManager
             {
                 _ = stream.Seek(0, SeekOrigin.Begin);
                 byte[] rawFile = new byte[stream.Length];
-                await stream.ReadExactlyAsync(rawFile.AsMemory(), cancellationToken).ConfigureAwait(false);
+                await ReadExactAsync(stream, rawFile, cancellationToken).ConfigureAwait(false);
                 if (!OfficeCryptoAgile.IsFlatAgileEncrypted(rawFile))
                 {
                     return null;
@@ -583,7 +595,58 @@ internal static class EncryptionManager
         }
 
         return (OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, password.Span),
-                AccessEncryptionFormat.AccdbAgile);
+            AccessEncryptionFormat.AccdbAgileCfb);
+    }
+
+    private static async ValueTask<AccessEncryptionFormat> TryDetectCompoundFileFormatAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        Dictionary<string, byte[]>? streams = null;
+        try
+        {
+            streams = await CompoundFileReader.ReadStreamsAsync(stream, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidDataException)
+        {
+            return AccessEncryptionFormat.None;
+        }
+        catch (EndOfStreamException)
+        {
+            return AccessEncryptionFormat.None;
+        }
+
+        if (streams == null || !streams.TryGetValue("EncryptionInfo", out byte[]? encryptionInfo))
+        {
+            return AccessEncryptionFormat.None;
+        }
+
+        if (OfficeCryptoAgile.IsStandardEncryptionInfo(encryptionInfo))
+        {
+            return AccessEncryptionFormat.AccdbStandard;
+        }
+
+        return OfficeCryptoAgile.IsAgileEncryptionInfo(encryptionInfo)
+            ? AccessEncryptionFormat.AccdbAgileCfb
+            : AccessEncryptionFormat.None;
+    }
+
+    private static async ValueTask ReadExactAsync(
+        Stream stream,
+        byte[] buffer,
+        CancellationToken cancellationToken)
+    {
+        int read = 0;
+        while (read < buffer.Length)
+        {
+            int got = await stream.ReadAsync(buffer.AsMemory(read, buffer.Length - read), cancellationToken).ConfigureAwait(false);
+            if (got == 0)
+            {
+                throw new EndOfStreamException("Unexpected end of stream while reading database bytes.");
+            }
+
+            read += got;
+        }
     }
 
     private static async ValueTask ReencryptFileAsync(
