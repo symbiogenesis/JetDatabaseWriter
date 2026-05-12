@@ -12,7 +12,6 @@ namespace JetDatabaseWriter.FormatProbe;
 
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -32,23 +31,23 @@ internal static class LongRowBisect
         sb.AppendLine("# Long-row chunk-boundary bisection");
         sb.AppendLine();
 
-        // Build inline-only encoder via reflection on the existing per-codepoint tables.
-        var (genlegCodes, genlegExt) = LoadHandlers("GeneralLegacyTextIndexEncoder");
-        var (genCodes, genExt) = LoadHandlers("GeneralTextIndexEncoder");
+        // Build inline-only encoders over the existing per-codepoint tables.
+        InlineEncoder genlegEncoder = LoadEncoder("GeneralLegacyTextIndexEncoder");
+        InlineEncoder genEncoder = LoadEncoder("GeneralTextIndexEncoder");
 
-        var tasks = new (string Path, byte[] Sep, dynamic Codes, dynamic ExtCodes)[]
+        var tasks = new (string Path, byte[] Sep, InlineEncoder Encoder)[]
         {
-            (Path.Combine(fixturesDir, "Jackcess", "V2000", "testIndexCodesV2000.mdb"), [0x08, 0x07, 0x08, 0x04], genlegCodes, genlegExt),
-            (Path.Combine(fixturesDir, "Jackcess", "V2003", "testIndexCodesV2003.mdb"), [0x08, 0x07, 0x08, 0x04], genlegCodes, genlegExt),
-            (Path.Combine(fixturesDir, "Jackcess", "V2007", "testIndexCodesV2007.accdb"), [0x08, 0x07, 0x08, 0x04], genlegCodes, genlegExt),
-            (Path.Combine(fixturesDir, "Jackcess", "V2010", "testIndexCodesV2010.accdb"), [0x07, 0x09, 0x07, 0x06], genCodes, genExt),
+            (Path.Combine(fixturesDir, "Jackcess", "V2000", "testIndexCodesV2000.mdb"), [0x08, 0x07, 0x08, 0x04], genlegEncoder),
+            (Path.Combine(fixturesDir, "Jackcess", "V2003", "testIndexCodesV2003.mdb"), [0x08, 0x07, 0x08, 0x04], genlegEncoder),
+            (Path.Combine(fixturesDir, "Jackcess", "V2007", "testIndexCodesV2007.accdb"), [0x08, 0x07, 0x08, 0x04], genlegEncoder),
+            (Path.Combine(fixturesDir, "Jackcess", "V2010", "testIndexCodesV2010.accdb"), [0x07, 0x09, 0x07, 0x06], genEncoder),
         };
 
         foreach (var t in tasks)
         {
             sb.AppendLine(CultureInfo.InvariantCulture, $"## {Path.GetFileName(t.Path)} (separator: {Convert.ToHexString(t.Sep)})");
             sb.AppendLine();
-            await BisectAsync(t.Path, t.Sep, (object[])t.Codes, (object[])t.ExtCodes, sb);
+            await BisectAsync(t.Path, t.Sep, t.Encoder, sb);
             sb.AppendLine();
         }
 
@@ -59,19 +58,19 @@ internal static class LongRowBisect
     }
 
     private static readonly MethodInfo LoadCodesMethod = typeof(AccessReader).Assembly
-        .GetType("JetDatabaseWriter.Internal.GeneralLegacyTextIndexEncoder")!
+        .GetType("JetDatabaseWriter.Indexes.Collation.GeneralLegacyTextIndexEncoder")!
         .GetMethod("LoadCodes", BindingFlags.NonPublic | BindingFlags.Static)!;
 
-    private static (object[] Codes, object[] Ext) LoadHandlers(string typeName)
+    private static InlineEncoder LoadEncoder(string typeName)
     {
         var suffix = typeName == "GeneralTextIndexEncoder" ? "gen" : "genleg";
 
         var codes = (object[])LoadCodesMethod.Invoke(null, [$"JetDatabaseWriter.IndexCodeTables.index_codes_{suffix}.txt.gz", (char)0x0000, (char)0x00FF])!;
         var ext = (object[])LoadCodesMethod.Invoke(null, [$"JetDatabaseWriter.IndexCodeTables.index_codes_ext_{suffix}.txt.gz", (char)0x0100, (char)0xFFFF])!;
-        return (codes, ext);
+        return new InlineEncoder(codes, ext);
     }
 
-    private static async Task BisectAsync(string path, byte[] sep, object[] codes, object[] extCodes, StringBuilder sb)
+    private static async Task BisectAsync(string path, byte[] sep, InlineEncoder encoder, StringBuilder sb)
     {
         if (!File.Exists(path))
         {
@@ -83,12 +82,12 @@ internal static class LongRowBisect
             path, new AccessReaderOptions { UseLockFile = false }, CancellationToken.None);
 
         var layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
-        DataTable dt = await reader.ReadDataTableAsync("Table11");
+        List<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Table11");
+        int dataOrdinal = FindColumnOrdinal(columns, "data");
         var rowValues = new List<string?>();
-        foreach (DataRow r in dt.Rows)
+        await foreach (string[] row in reader.RowsAsStrings("Table11", cancellationToken: CancellationToken.None))
         {
-            object v = r["data"];
-            rowValues.Add(v is DBNull ? null : (string?)v);
+            rowValues.Add(dataOrdinal < row.Length ? row[dataOrdinal] : null);
         }
 
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Table11");
@@ -139,6 +138,7 @@ internal static class LongRowBisect
         foreach (var (rowIdx, val) in longRows)
         {
             sb.AppendLine(CultureInfo.InvariantCulture, $"### row[{rowIdx}] len={val.Length}");
+            InlineEncodingCache inlineCache = encoder.Encode(val);
 
             // Show some specific source chars to diagnose chunk-boundary rule.
             for (int probe = 175; probe <= 185 && probe < val.Length; probe++)
@@ -147,24 +147,14 @@ internal static class LongRowBisect
                 sb.AppendLine(CultureInfo.InvariantCulture, $"  val[{probe}] = U+{(int)c:X4} ('{(char.IsControl(c) ? '?' : c)}')");
             }
 
-            // Encode various prefixes inline-only and search for a leaf containing the result
-            // followed by the separator.
-            var candidates = new List<(int K, byte[] Bytes)>();
-
-            // Try all source positions K from 100 to 200 — covers expected K1.
-            for (int k = 100; k <= 200 && k <= val.Length; k++)
-            {
-                byte[] inline = EncodeInlineOnly(val.AsSpan(0, k), codes, extCodes);
-                candidates.Add((k, inline));
-            }
-
             // Find which leaf this row belongs to: scan for one whose first chunk
             // matches one of the candidates.
             int matchedLeaf = -1;
             int matchedK = -1;
             byte[]? leafBytes = null;
-            foreach (byte[] k in allKeys)
+            for (int leafIndex = 0; leafIndex < allKeys.Count; leafIndex++)
             {
+                byte[] k = allKeys[leafIndex];
                 if (k.Length < 200)
                 {
                     continue;
@@ -177,12 +167,12 @@ internal static class LongRowBisect
                     continue;
                 }
 
-                var chunk1 = k.AsSpan(1, sepAt - 1).ToArray();
-                foreach (var (cand, candBytes) in candidates)
+                int chunk1Length = sepAt - 1;
+                for (int cand = 100; cand <= 200 && cand <= val.Length; cand++)
                 {
-                    if (chunk1.AsSpan().SequenceEqual(candBytes))
+                    if (inlineCache.SliceEqualsBytes(0, cand, k, 1, chunk1Length))
                     {
-                        matchedLeaf = allKeys.IndexOf(k);
+                        matchedLeaf = leafIndex;
                         matchedK = cand;
                         leafBytes = k;
                         break;
@@ -220,30 +210,30 @@ internal static class LongRowBisect
 
             // Try a range of (K2_start, K2_end) pairs.
             int? bestK2Start = null, bestK2End = null;
-            byte[]? bestChunk2 = null;
+            int bestChunk2Length = 0;
             for (int k2s = matchedK; k2s <= matchedK + 5 && k2s <= val.Length; k2s++)
             {
                 for (int k2e = k2s + 50; k2e <= val.Length && k2e <= matchedK + 600; k2e++)
                 {
-                    byte[] inline2 = EncodeInlineOnly(val.AsSpan(k2s, k2e - k2s), codes, extCodes);
-                    if (inline2.Length == 0)
+                    int inline2Length = inlineCache.ByteLength(k2s, k2e);
+                    if (inline2Length == 0)
                     {
                         continue;
                     }
 
-                    if (chunk2Start + inline2.Length > leafBytes.Length)
+                    if (chunk2Start + inline2Length > leafBytes.Length)
                     {
                         continue;
                     }
 
-                    if (leafBytes.AsSpan(chunk2Start, inline2.Length).SequenceEqual(inline2))
+                    if (inlineCache.SliceMatchesAt(k2s, k2e, leafBytes, chunk2Start))
                     {
                         // Track longest match
-                        if (bestChunk2 is null || inline2.Length > bestChunk2.Length)
+                        if (inline2Length > bestChunk2Length)
                         {
                             bestK2Start = k2s;
                             bestK2End = k2e;
-                            bestChunk2 = inline2;
+                            bestChunk2Length = inline2Length;
                         }
                     }
                 }
@@ -252,7 +242,7 @@ internal static class LongRowBisect
             if (bestK2Start.HasValue)
             {
                 sb.AppendLine(CultureInfo.InvariantCulture, $"  chunk #2: K2_start={bestK2Start} K2_end={bestK2End}  (drops {bestK2Start - matchedK} chars between chunks)");
-                sb.AppendLine(CultureInfo.InvariantCulture, $"  chunk #2 byte-length: {bestChunk2!.Length}");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  chunk #2 byte-length: {bestChunk2Length}");
             }
             else
             {
@@ -265,16 +255,16 @@ internal static class LongRowBisect
                 // Also show what inline-encoding val[181..255] would yield.
                 if (val.Length > 255)
                 {
-                    var trial = EncodeInlineOnly(val.AsSpan(181, 74), codes, extCodes);
-                    sb.AppendLine(CultureInfo.InvariantCulture, $"  inline-only(val[181..255]) ({trial.Length} B): {Convert.ToHexString(trial)}");
+                    int trialEnd = Math.Min(255, val.Length);
+                    sb.AppendLine(CultureInfo.InvariantCulture, $"  inline-only(val[181..255]) ({inlineCache.ByteLength(181, trialEnd)} B): {inlineCache.ToHex(181, trialEnd)}");
                 }
             }
 
             // Show the full structure
-            sb.AppendLine(CultureInfo.InvariantCulture, $"  total leaf bytes: {leafBytes.Length}, header(1) + chunk1({sepIdx - 1}) + sep(4) + chunk2({bestChunk2?.Length ?? 0}) + tail({leafBytes.Length - chunk2Start - (bestChunk2?.Length ?? 0)})");
-            if (bestChunk2 is not null)
+            sb.AppendLine(CultureInfo.InvariantCulture, $"  total leaf bytes: {leafBytes.Length}, header(1) + chunk1({sepIdx - 1}) + sep(4) + chunk2({bestChunk2Length}) + tail({leafBytes.Length - chunk2Start - bestChunk2Length})");
+            if (bestK2Start.HasValue)
             {
-                int tailStart = chunk2Start + bestChunk2.Length;
+                int tailStart = chunk2Start + bestChunk2Length;
                 sb.AppendLine(CultureInfo.InvariantCulture, $"  tail hex: {Convert.ToHexString(leafBytes.AsSpan(tailStart).ToArray())}");
             }
 
@@ -288,29 +278,101 @@ internal static class LongRowBisect
         return pos >= 0 ? pos + from : -1;
     }
 
-    /// <summary>
-    /// Run the per-codepoint state machine over <paramref name="chars"/> and return
-    /// only the inline bytes (no flag, no END_TEXT, no extras/unprintable/crazy, no
-    /// END_EXTRA_TEXT). Mirrors GeneralLegacyTextIndexEncoder.EncodeWithTables but
-    /// stops after the inline-emission loop.
-    /// </summary>
-    private static byte[] EncodeInlineOnly(ReadOnlySpan<char> chars, object[] codes, object[] extCodes)
+    private static int FindColumnOrdinal(IReadOnlyList<ColumnMetadata> columns, string name)
     {
-        var bout = new List<byte>(chars.Length * 2);
-        foreach (char c in chars)
+        for (int i = 0; i < columns.Count; i++)
         {
-            object handler = c <= 0x00FF ? codes[c] : extCodes[c - 0x0100];
-            var t = handler.GetType();
-
-            // Call GetInlineBytes(c)
-            var m = t.GetMethod("GetInlineBytes")!;
-            byte[]? inline = (byte[]?)m.Invoke(handler, [c]);
-            if (inline is not null)
+            if (string.Equals(columns[i].Name, name, StringComparison.OrdinalIgnoreCase))
             {
-                bout.AddRange(inline);
+                return i;
             }
         }
 
-        return [.. bout];
+        throw new InvalidOperationException($"Column '{name}' not found.");
+    }
+
+    private sealed class InlineEncoder
+    {
+        private readonly Func<char, byte[]?>[] codes;
+        private readonly Func<char, byte[]?>[] extCodes;
+
+        public InlineEncoder(object[] codes, object[] extCodes)
+        {
+            this.codes = BuildDelegates(codes);
+            this.extCodes = BuildDelegates(extCodes);
+        }
+
+        public InlineEncodingCache Encode(string value) => new(value, this);
+
+        public void AppendInline(char c, List<byte> output)
+        {
+            Func<char, byte[]?> getInlineBytes = c <= 0x00FF ? codes[c] : extCodes[c - 0x0100];
+            byte[]? inline = getInlineBytes(c);
+            if (inline is not null)
+            {
+                output.AddRange(inline);
+            }
+        }
+
+        private static Func<char, byte[]?>[] BuildDelegates(object[] handlers)
+        {
+            var methodCache = new Dictionary<Type, MethodInfo>();
+            var delegates = new Func<char, byte[]?>[handlers.Length];
+            for (int i = 0; i < handlers.Length; i++)
+            {
+                object handler = handlers[i];
+                Type handlerType = handler.GetType();
+                if (!methodCache.TryGetValue(handlerType, out MethodInfo? method))
+                {
+                    method = handlerType.GetMethod("GetInlineBytes")
+                        ?? throw new MissingMethodException(handlerType.FullName, "GetInlineBytes");
+                    methodCache.Add(handlerType, method);
+                }
+
+                delegates[i] = (Func<char, byte[]?>)method.CreateDelegate(typeof(Func<char, byte[]?>), handler);
+            }
+
+            return delegates;
+        }
+    }
+
+    private sealed class InlineEncodingCache
+    {
+        private readonly byte[] bytes;
+        private readonly int[] offsets;
+
+        public InlineEncodingCache(string value, InlineEncoder encoder)
+        {
+            offsets = new int[value.Length + 1];
+            var output = new List<byte>(value.Length * 2);
+            for (int i = 0; i < value.Length; i++)
+            {
+                offsets[i] = output.Count;
+                encoder.AppendInline(value[i], output);
+            }
+
+            offsets[value.Length] = output.Count;
+            bytes = [.. output];
+        }
+
+        public int ByteLength(int start, int end)
+            => offsets[end] - offsets[start];
+
+        public bool SliceEqualsBytes(int start, int end, byte[] other, int otherOffset, int otherLength)
+        {
+            int byteLength = ByteLength(start, end);
+            return byteLength == otherLength
+                   && bytes.AsSpan(offsets[start], byteLength).SequenceEqual(other.AsSpan(otherOffset, otherLength));
+        }
+
+        public bool SliceMatchesAt(int start, int end, byte[] haystack, int haystackOffset)
+        {
+            int byteLength = ByteLength(start, end);
+            return haystackOffset + byteLength <= haystack.Length
+                   && bytes.AsSpan(offsets[start], byteLength).SequenceEqual(haystack.AsSpan(haystackOffset, byteLength));
+        }
+
+        public string ToHex(int start, int end)
+            => Convert.ToHexString(bytes.AsSpan(offsets[start], ByteLength(start, end)));
     }
 }

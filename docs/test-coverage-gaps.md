@@ -60,7 +60,7 @@ in [GeneralEncoderSharedTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collatio
   indexes via
   [IndexCodesAggregateTests.cs](../../JetDatabaseWriter.Tests/Indexes/IndexCodesAggregateTests.cs)
   also still run un-asserted for the same reason. See
-  [long-row-index-encoding.md](long-row-index-encoding.md).
+  [format-probe-long-row-index-encoding.md](format-probe/format-probe-long-row-index-encoding.md).
 
 ---
 

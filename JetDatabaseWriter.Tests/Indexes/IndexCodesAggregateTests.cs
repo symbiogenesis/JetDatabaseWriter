@@ -165,7 +165,7 @@ public sealed class IndexCodesAggregateTests
 
         // Memo-keyed indexes (long rows) are now byte-exact under General
         // Legacy thanks to the 2-chunk long-row encoder. See
-        // <c>docs/design/long-row-index-encoding.md</c> ("Status" table).
+        // <c>docs/format-probe/format-probe-long-row-index-encoding.md</c> ("Status" table).
         // The V2010 "General" sort-order long-row suffix is still unsolved
         // but this test only runs against V2000/V2003/V2007 fixtures.
         int totalMismatched = report.Sum(r => r.Mismatched);

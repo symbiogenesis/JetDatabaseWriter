@@ -222,7 +222,7 @@ public sealed class LongRowSourceProbe
     /// all 6 constraints simultaneously — false-positive rate ≈ 2^-96.
     /// </para>
     /// </summary>
-    [Fact(Skip = "Diagnostic probe — long-running brute-force sweep (×3 minutes); un-skip locally to investigate. Last run: 0/14,680,064 combos hit; see docs/design/long-row-index-encoding.md.")]
+    [Fact(Skip = "Diagnostic probe — long-running brute-force sweep (×3 minutes); un-skip locally to investigate. Last run: 0/14,680,064 combos hit; see docs/format-probe/format-probe-long-row-index-encoding.md.")]
     public async Task DumpV2010CrcFullSweep()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;

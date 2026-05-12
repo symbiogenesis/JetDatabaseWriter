@@ -509,6 +509,8 @@ dotnet run --project JetDatabaseWriter.FormatProbe -- rt-bisect
 
 Legacy equivalent: `$env:DIAG_RT_BISECT = "1"; dotnet run --project JetDatabaseWriter.FormatProbe`.
 
+The bisector stops after the first write or DAO compact failure by default, because later escalating steps are normally downstream of that break. Set `$env:DIAG_RT_RUN_ALL = "1"` for the older exhaustive N0-N4 output.
+
 Copies `NorthwindTraders.accdb` once per step, runs the writer through an escalating action set (`N0` open/close → `N1` one table → `N2` two tables → `N3` add relationship → `N4` insert rows), and shells DAO compact for each. One line per step:
 
 ```

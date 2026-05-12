@@ -29,14 +29,14 @@ public sealed class GeneralEncoderFixtureTests
 
     // V2010 "General" sort-order long-row entries are pinned at 510 bytes
     // and end with a 2-byte suffix whose algorithm has so far resisted
-    // reverse-engineering — see <c>docs/design/long-row-index-encoding.md</c>
+    // reverse-engineering — see <c>docs/format-probe/format-probe-long-row-index-encoding.md</c>
     // ("V2010: Continuous encoding with 510-byte cap" / "The 2-byte suffix").
     // Bytes [0..507] match byte-exact; the unknown suffix at [508..509] is
     // covered by <see cref="GeneralEncoderLongRowPrefixTests"/>.
     // FIXME: remove the two table entries when the suffix is solved.
     // for details and rationale, see:
     //  <c>docs/design/test-coverage-gaps.md</c> ("§1.1 General-encoder coverage gap").
-    //  <c>docs/design/long-row-index-encoding.md</c> ("V2010: Continuous encoding with 510-byte cap" / "The 2-byte suffix").
+    //  <c>docs/format-probe/format-probe-long-row-index-encoding.md</c> ("V2010: Continuous encoding with 510-byte cap" / "The 2-byte suffix").
     private static readonly HashSet<string> LongRowStressTables = new(StringComparer.OrdinalIgnoreCase)
     {
         "Table11",
