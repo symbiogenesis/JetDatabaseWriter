@@ -1,8 +1,8 @@
 namespace JetDatabaseWriter.Schema;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
-using System.IO;
 using System.Text;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
@@ -27,6 +27,11 @@ using JetDatabaseWriter.Schema.Models;
 /// </remarks>
 internal sealed class ColumnPropertyBlockBuilder
 {
+    private const int MagicLength = 4;
+    private const int ChunkHeaderLength = sizeof(uint) + sizeof(ushort);
+    private const int PropertyBlockTargetHeaderLength = sizeof(uint) + sizeof(ushort);
+    private const int PropertyEntryHeaderLength = sizeof(ushort) + sizeof(byte) + sizeof(byte) + sizeof(ushort) + sizeof(ushort);
+
     /// <summary>Gets the mutable list of property targets in emission order. The first target is conventionally the table itself.</summary>
     public List<TargetBuilder> Targets { get; } = [];
 
@@ -169,53 +174,66 @@ internal sealed class ColumnPropertyBlockBuilder
             }
         }
 
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms, Encoding.Unicode, leaveOpen: true);
+        byte[] namePoolPayload = BuildNamePoolPayload(nameOrder, stringEncoding);
 
-        // Magic
-        byte[] magic = isJet3
-            ? [(byte)'K', (byte)'K', (byte)'D', 0x00]
-            : [(byte)'M', (byte)'R', (byte)'2', 0x00];
-        bw.Write(magic);
+        var propertyBlockPayloads = new byte[Targets.Count][];
+        int totalLength = MagicLength;
+        totalLength = AddChunkLength(totalLength, namePoolPayload.Length);
+
+        for (int targetIndex = 0; targetIndex < Targets.Count; targetIndex++)
+        {
+            propertyBlockPayloads[targetIndex] = BuildPropertyBlockPayload(Targets[targetIndex], nameToIndex, stringEncoding);
+            totalLength = AddChunkLength(totalLength, propertyBlockPayloads[targetIndex].Length);
+        }
+
+        foreach (ColumnPropertyUnknownChunk unknownChunk in UnknownChunks)
+        {
+            totalLength = AddChunkLength(totalLength, unknownChunk.Payload.Length);
+        }
+
+        byte[] blob = new byte[totalLength];
+        int offset = 0;
+        WriteMagic(blob, ref offset, isJet3);
 
         // Name-pool chunk (always first; mdbtools requires it before property blocks).
-        WriteChunk(bw, ColumnPropertyChunkType.NamePool, BuildNamePoolPayload(nameOrder, stringEncoding));
+        WriteChunk(blob, ref offset, ColumnPropertyChunkType.NamePool, namePoolPayload);
 
         // Property-block chunks.
-        foreach (TargetBuilder t in Targets)
+        for (int targetIndex = 0; targetIndex < Targets.Count; targetIndex++)
         {
-            WriteChunk(bw, t.ChunkType, BuildPropertyBlockPayload(t, nameToIndex, stringEncoding));
+            WriteChunk(blob, ref offset, Targets[targetIndex].ChunkType, propertyBlockPayloads[targetIndex]);
         }
 
         // Unknown chunks (preserved verbatim — re-emit at the end so they don't shadow
         // the name pool the parser depends on).
-        foreach (ColumnPropertyUnknownChunk u in UnknownChunks)
+        foreach (ColumnPropertyUnknownChunk unknownChunk in UnknownChunks)
         {
-            WriteChunk(bw, (ColumnPropertyChunkType)u.ChunkType, u.Payload);
+            WriteChunk(blob, ref offset, (ColumnPropertyChunkType)unknownChunk.ChunkType, unknownChunk.Payload);
         }
 
-        bw.Flush();
-        return ms.ToArray();
+        return blob;
     }
 
     private static byte[] BuildNamePoolPayload(List<string> names, Encoding encoding)
     {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms, Encoding.Unicode, leaveOpen: true);
-        foreach (string n in names)
+        var byteCounts = new int[names.Count];
+        int payloadLength = 0;
+        for (int nameIndex = 0; nameIndex < names.Count; nameIndex++)
         {
-            byte[] bytes = encoding.GetBytes(n);
-            if (bytes.Length > ushort.MaxValue)
-            {
-                throw new InvalidOperationException($"Property name '{n}' encodes to {bytes.Length} bytes, exceeding the uint16 length limit.");
-            }
-
-            bw.Write((ushort)bytes.Length);
-            bw.Write(bytes);
+            int byteCount = GetUInt16StringByteCount(encoding, names[nameIndex], "Property name");
+            byteCounts[nameIndex] = byteCount;
+            payloadLength = AddPayloadLength(payloadLength, sizeof(ushort) + byteCount, "name-pool payload");
         }
 
-        bw.Flush();
-        return ms.ToArray();
+        byte[] payload = new byte[payloadLength];
+        int offset = 0;
+        for (int nameIndex = 0; nameIndex < names.Count; nameIndex++)
+        {
+            int byteCount = byteCounts[nameIndex];
+            WriteLengthPrefixedEncodedString(payload, ref offset, encoding, names[nameIndex], byteCount);
+        }
+
+        return payload;
     }
 
     private static byte[] BuildPropertyBlockPayload(
@@ -223,59 +241,143 @@ internal sealed class ColumnPropertyBlockBuilder
         Dictionary<string, ushort> nameToIndex,
         Encoding encoding)
     {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms, Encoding.Unicode, leaveOpen: true);
-
-        byte[] nameBytes = encoding.GetBytes(target.Name);
-        if (nameBytes.Length > ushort.MaxValue)
+        int targetNameByteCount = GetUInt16StringByteCount(encoding, target.Name, "Property target name");
+        int payloadLength = PropertyBlockTargetHeaderLength + targetNameByteCount;
+        var entryLengths = new int[target.Entries.Count];
+        for (int entryIndex = 0; entryIndex < target.Entries.Count; entryIndex++)
         {
-            throw new InvalidOperationException($"Property target name '{target.Name}' encodes to {nameBytes.Length} bytes, exceeding the uint16 length limit.");
+            EntryBuilder entry = target.Entries[entryIndex];
+            int valueLength = entry.Value.Length;
+            int entryLength = PropertyEntryHeaderLength + valueLength;
+            if (entryLength > ushort.MaxValue)
+            {
+                throw new InvalidOperationException($"Property entry '{entry.Name}' value is {valueLength} bytes; max supported is {ushort.MaxValue - PropertyEntryHeaderLength}.");
+            }
+
+            entryLengths[entryIndex] = entryLength;
+            payloadLength = AddPayloadLength(payloadLength, entryLength, "property-block payload");
         }
+
+        byte[] payload = new byte[payloadLength];
+        int offset = 0;
 
         // Inner header — first 4 bytes are opaque per mdbtools (read & discarded).
         // DAO writes the byte count through the target-name field, not the whole
         // payload length: sizeof(uint32) + sizeof(uint16) + targetNameBytes.
-        bw.Write((uint)(sizeof(uint) + sizeof(ushort) + nameBytes.Length));
-        bw.Write((ushort)nameBytes.Length);
-        bw.Write(nameBytes);
+        WriteUInt32(payload, ref offset, (uint)(PropertyBlockTargetHeaderLength + targetNameByteCount));
+        WriteLengthPrefixedEncodedString(payload, ref offset, encoding, target.Name, targetNameByteCount);
 
-        foreach (EntryBuilder e in target.Entries)
+        for (int entryIndex = 0; entryIndex < target.Entries.Count; entryIndex++)
         {
-            if (!nameToIndex.TryGetValue(e.Name, out ushort nameIndex))
+            EntryBuilder entry = target.Entries[entryIndex];
+            if (!nameToIndex.TryGetValue(entry.Name, out ushort nameIndex))
             {
-                throw new InvalidOperationException($"Entry name '{e.Name}' was not registered in the name pool.");
+                throw new InvalidOperationException($"Entry name '{entry.Name}' was not registered in the name pool.");
             }
 
-            int valueLen = e.Value.Length;
-            int entryLen = 8 + valueLen;
-            if (entryLen > ushort.MaxValue)
-            {
-                throw new InvalidOperationException($"Property entry '{e.Name}' value is {valueLen} bytes; max supported is {ushort.MaxValue - 8}.");
-            }
-
-            bw.Write((ushort)entryLen);
-            bw.Write(e.DdlFlag);
-            bw.Write(e.DataType);
-            bw.Write(nameIndex);
-            bw.Write((ushort)valueLen);
-            bw.Write(e.Value);
+            int entryLength = entryLengths[entryIndex];
+            int valueLength = entry.Value.Length;
+            WriteUInt16(payload, ref offset, (ushort)entryLength);
+            payload[offset++] = entry.DdlFlag;
+            payload[offset++] = entry.DataType;
+            WriteUInt16(payload, ref offset, nameIndex);
+            WriteUInt16(payload, ref offset, (ushort)valueLength);
+            WriteBytes(payload, ref offset, entry.Value);
         }
 
-        bw.Flush();
-        return ms.ToArray();
+        return payload;
     }
 
-    private static void WriteChunk(BinaryWriter bw, ColumnPropertyChunkType chunkType, byte[] payload)
+    private static int AddChunkLength(int totalLength, int payloadLength)
     {
-        long chunkLen = 6L + payload.Length;
-        if (chunkLen > uint.MaxValue)
+        return AddLength(totalLength, GetChunkLength(payloadLength), "Property block blob", null);
+    }
+
+    private static int AddPayloadLength(int payloadLength, int additionalLength, string payloadDescription)
+    {
+        return AddLength(payloadLength, additionalLength, "Property", payloadDescription);
+    }
+
+    private static int AddLength(int length, long additionalLength, string valueDescription, string? detail)
+    {
+        long newLength = length + additionalLength;
+        if (newLength > int.MaxValue)
         {
-            throw new InvalidOperationException($"Property chunk would be {chunkLen} bytes, exceeding the uint32 length limit.");
+            string description = detail is null ? valueDescription : $"{valueDescription} {detail}";
+            throw new InvalidOperationException($"{description} would be {newLength} bytes, exceeding the supported array length.");
         }
 
-        bw.Write((uint)chunkLen);
-        bw.Write((ushort)chunkType);
-        bw.Write(payload);
+        return (int)newLength;
+    }
+
+    private static int GetUInt16StringByteCount(Encoding encoding, string value, string valueDescription)
+    {
+        int byteCount = encoding.GetByteCount(value);
+        if (byteCount > ushort.MaxValue)
+        {
+            throw new InvalidOperationException($"{valueDescription} '{value}' encodes to {byteCount} bytes, exceeding the uint16 length limit.");
+        }
+
+        return byteCount;
+    }
+
+    private static void WriteChunk(byte[] blob, ref int offset, ColumnPropertyChunkType chunkType, ReadOnlySpan<byte> payload)
+    {
+        long chunkLength = GetChunkLength(payload.Length);
+        WriteUInt32(blob, ref offset, (uint)chunkLength);
+        WriteUInt16(blob, ref offset, (ushort)chunkType);
+        WriteBytes(blob, ref offset, payload);
+    }
+
+    private static long GetChunkLength(int payloadLength)
+    {
+        long chunkLength = ChunkHeaderLength + (long)payloadLength;
+        if (chunkLength > uint.MaxValue)
+        {
+            throw new InvalidOperationException($"Property chunk would be {chunkLength} bytes, exceeding the uint32 length limit.");
+        }
+
+        return chunkLength;
+    }
+
+    private static void WriteMagic(byte[] blob, ref int offset, bool isJet3)
+    {
+        ReadOnlySpan<byte> magic = isJet3 ? "KKD\0"u8 : "MR2\0"u8;
+        WriteBytes(blob, ref offset, magic);
+    }
+
+    private static void WriteLengthPrefixedEncodedString(
+        byte[] buffer,
+        ref int offset,
+        Encoding encoding,
+        string value,
+        int byteCount)
+    {
+        WriteUInt16(buffer, ref offset, (ushort)byteCount);
+        WriteEncodedString(buffer, ref offset, encoding, value, byteCount);
+    }
+
+    private static void WriteEncodedString(byte[] buffer, ref int offset, Encoding encoding, string value, int byteCount)
+    {
+        offset += encoding.GetBytes(value.AsSpan(), buffer.AsSpan(offset, byteCount));
+    }
+
+    private static void WriteUInt16(byte[] buffer, ref int offset, ushort value)
+    {
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset), value);
+        offset += sizeof(ushort);
+    }
+
+    private static void WriteUInt32(byte[] buffer, ref int offset, uint value)
+    {
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(offset), value);
+        offset += sizeof(uint);
+    }
+
+    private static void WriteBytes(byte[] buffer, ref int offset, ReadOnlySpan<byte> value)
+    {
+        value.CopyTo(buffer.AsSpan(offset));
+        offset += value.Length;
     }
 
     /// <summary>Mutable builder for a single property target (table or column).</summary>
