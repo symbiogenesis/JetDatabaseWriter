@@ -589,7 +589,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
             using var aes = Aes.Create();
             aes.Key = aesKey;
+#pragma warning disable SCS0013 // ECB mode is intentional to support legacy AES-encrypted .accdb fixtures with flat per-page AES-ECB encryption beneath the CFB wrapper.
             aes.Mode = CipherMode.ECB;
+#pragma warning restore SCS0013 // ECB mode is intentional to support legacy AES-encrypted .accdb fixtures with flat per-page AES-ECB encryption beneath the CFB wrapper.
             aes.Padding = PaddingMode.None;
             using var encryptor = aes.CreateEncryptor();
             byte[] block = new byte[length];

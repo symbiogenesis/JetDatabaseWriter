@@ -567,7 +567,7 @@ internal static class OfficeCryptoAgile
         {
             int remaining = (int)decryptedSize - writeOffset;
             int segmentLen = Math.Min(segmentSize, remaining);
-            int paddedLen = ((segmentLen + blockSize - 1) / blockSize) * blockSize;
+            int paddedLen = (segmentLen + blockSize - 1) / blockSize * blockSize;
 
             if (readOffset + paddedLen > encryptedPackage.Length)
             {
@@ -650,6 +650,7 @@ internal static class OfficeCryptoAgile
 
         using (aes)
         {
+#pragma warning disable SCS0013 // This is required for ECMA-376-compliant AES-CBC encryption.
 #if NET6_0_OR_GREATER
             aes.Key = key;
             return encrypt
@@ -657,6 +658,7 @@ internal static class OfficeCryptoAgile
                 : aes.DecryptCbc(data, iv, PaddingMode.None);
 #else
             aes.Mode = CipherMode.CBC;
+#pragma warning restore SCS0013 // This is required for ECMA-376-compliant AES-CBC encryption.
             aes.Padding = PaddingMode.None;
             aes.Key = key;
             aes.IV = iv;
@@ -815,7 +817,7 @@ internal static class OfficeCryptoAgile
         if (totalSegments > 0)
         {
             int lastLen = plaintext.Length - ((totalSegments - 1) * Constants.AgileEncryption.SegmentSize);
-            paddedTail = ((lastLen + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize) * Constants.AgileEncryption.BlockSize;
+            paddedTail = (lastLen + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize * Constants.AgileEncryption.BlockSize;
         }
 
         int paddedTotal = totalSegments == 0
@@ -843,7 +845,9 @@ internal static class OfficeCryptoAgile
         using (aes)
         {
 #if !NET6_0_OR_GREATER
+#pragma warning disable SCS0013 // Agile encryption requires AES-CBC, which is considered weak but is mandated by ECMA-376.
             aes.Mode = CipherMode.CBC;
+#pragma warning restore SCS0013 // Agile encryption requires AES-CBC, which is considered weak but is mandated by ECMA-376.
             aes.Padding = PaddingMode.None;
 #endif
             aes.Key = intermediateKey;
@@ -853,7 +857,7 @@ internal static class OfficeCryptoAgile
             {
                 int offset = seg * Constants.AgileEncryption.SegmentSize;
                 int segLen = Math.Min(Constants.AgileEncryption.SegmentSize, plaintext.Length - offset);
-                int paddedLen = ((segLen + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize) * Constants.AgileEncryption.BlockSize;
+                int paddedLen = (segLen + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize * Constants.AgileEncryption.BlockSize;
 
                 byte[] block = new byte[paddedLen];
                 Buffer.BlockCopy(plaintext, offset, block, 0, segLen);
@@ -1005,7 +1009,7 @@ internal static class OfficeCryptoAgile
 
     private static byte[] PadToBlock(byte[] data)
     {
-        int padded = ((data.Length + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize) * Constants.AgileEncryption.BlockSize;
+        int padded = (data.Length + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize * Constants.AgileEncryption.BlockSize;
         if (padded == data.Length)
         {
             return data;
