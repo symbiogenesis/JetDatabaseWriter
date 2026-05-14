@@ -1,9 +1,7 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
-using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 /// <summary>

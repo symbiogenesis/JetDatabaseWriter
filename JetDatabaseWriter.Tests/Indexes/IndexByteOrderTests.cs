@@ -4,8 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using JetDatabaseWriter.Indexes.Collation;
-using JetDatabaseWriter.Pages;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 /// <summary>

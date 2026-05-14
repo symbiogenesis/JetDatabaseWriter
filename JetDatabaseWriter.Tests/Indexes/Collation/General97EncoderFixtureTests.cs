@@ -3,9 +3,7 @@ namespace JetDatabaseWriter.Tests.Indexes.Collation;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes.Collation;
-using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Tests.Infrastructure;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 /// <summary>

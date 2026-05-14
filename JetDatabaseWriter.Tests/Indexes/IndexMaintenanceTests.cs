@@ -6,7 +6,6 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;

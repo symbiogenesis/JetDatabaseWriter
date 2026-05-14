@@ -10,9 +10,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Tests.Infrastructure;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 #pragma warning disable CA5358 // ECB mode is intentional for deterministic test fixture encryption
