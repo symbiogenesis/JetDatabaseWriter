@@ -68,12 +68,12 @@ public sealed class PageDecryptionKeys : IDisposable
             throw new InvalidOperationException("AesPageKey must be set before requesting AES transforms.");
         }
 
-#pragma warning disable CA5358 // ECB mode is required to match the ACCDB AES page encryption scheme
+#pragma warning disable SCS0013, CA5358 // ECB mode is required to match the ACCDB AES page encryption scheme
         _aes = Aes.Create();
         _aes.Key = _aesPageKey;
         _aes.Mode = CipherMode.ECB;
         _aes.Padding = PaddingMode.None;
-#pragma warning restore CA5358
+#pragma warning restore SCS0013, CA5358 // ECB mode is required to match the ACCDB AES page encryption scheme
 
         _aesEncryptor = _aes.CreateEncryptor();
         _aesDecryptor = _aes.CreateDecryptor();

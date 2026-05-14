@@ -10,12 +10,8 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Tests.Infrastructure;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
-
-#pragma warning disable CA5358 // ECB mode is intentional for deterministic test fixture encryption
 
 /// <summary>
 /// Regression tests for ACCDB AES page decryption (synthetic CFB-wrapped legacy AES path).
@@ -325,7 +321,9 @@ public sealed class CfbAesDecryptionTests(DatabaseCache db) : IClassFixture<Data
         // avoiding per-page Aes/transform allocations and intermediate buffers.
         using var aes = Aes.Create();
         aes.Key = DeriveSimpleAesKey(TestDatabases.AesEncryptedPassword);
+#pragma warning disable SCS0013, CA5358 // ECB mode is intentional for deterministic test fixture encryption
         aes.Mode = CipherMode.ECB;
+#pragma warning restore SCS0013, CA5358 // ECB mode is intentional for deterministic test fixture encryption
         aes.Padding = PaddingMode.None;
         using var encryptor = aes.CreateEncryptor();
 

@@ -3,14 +3,13 @@ namespace JetDatabaseWriter.Tests.Fuzz;
 using System;
 using System.Data;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Tests.Infrastructure;
 using SharpFuzz;
 using Xunit;
 
 #pragma warning disable CA1031 // Catching all exceptions is intentional for fuzz testing.
-#pragma warning disable CA5394 // Using non-cryptographic random for fuzz testing is acceptable.
+#pragma warning disable SCS0005, CA5394 // Using non-cryptographic random for fuzz testing is acceptable.
 
 /// <summary>
 /// Fuzz test for AccessReader. This test is designed to find crashes and robustness issues by exploring random input data.

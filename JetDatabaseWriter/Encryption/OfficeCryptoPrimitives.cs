@@ -22,10 +22,12 @@ internal static class OfficeCryptoPrimitives
 
     public static void HashSha1(ReadOnlySpan<byte> source, Span<byte> destination)
     {
+#pragma warning disable SCS0006 // SHA-1 is mandated by the MS-OFFCRYPTO Standard encryption spec.
 #if NET6_0_OR_GREATER
         bool ok = SHA1.TryHashData(source, destination, out int bytesWritten);
 #else
         using SHA1 sha = SHA1.Create();
+#pragma warning restore SCS0006 // SHA-1 is mandated by the MS-OFFCRYPTO Standard encryption spec.
         bool ok = sha.TryComputeHash(source, destination, out int bytesWritten);
 #endif
         if (!ok || bytesWritten != Sha1HashBytes)

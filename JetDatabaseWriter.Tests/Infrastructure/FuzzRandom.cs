@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Tests.Infrastructure;
 
 using System;
 
-#pragma warning disable CA5394 // Using non-cryptographic random for fuzz testing is acceptable.
+#pragma warning disable SCS0005, CA5394 // Using non-cryptographic random for fuzz testing is acceptable.
 
 /// <summary>
 /// A random number generator that uses fuzzed bytes as entropy and falls back to a standard Random instance if the fuzzed bytes are exhausted.

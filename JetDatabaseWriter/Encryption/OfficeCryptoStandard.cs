@@ -459,6 +459,7 @@ internal static class OfficeCryptoStandard
 
         using (aes)
         {
+#pragma warning disable SCS0013 // AES-CBC with IV=0 is the spec-mandated mode for MS-OFFCRYPTO Standard encryption.
 #if NET6_0_OR_GREATER
             aes.Key = key;
             ReadOnlySpan<byte> zeroIv = stackalloc byte[16];
@@ -467,6 +468,7 @@ internal static class OfficeCryptoStandard
                 : aes.DecryptCbc(data, zeroIv, PaddingMode.None);
 #else
             aes.Mode = CipherMode.CBC;
+#pragma warning restore SCS0013 // AES-CBC with IV=0 is the spec-mandated mode for MS-OFFCRYPTO Standard encryption.
             aes.Padding = PaddingMode.None;
             aes.Key = key;
             aes.IV = new byte[16]; // All zeros.
