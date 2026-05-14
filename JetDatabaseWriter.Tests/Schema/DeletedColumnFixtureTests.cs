@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Tests.Schema;
 using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
