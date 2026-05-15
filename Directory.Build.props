@@ -1,5 +1,5 @@
 <Project>
-  <Sdk Name="DotNet.ReproducibleBuilds.Isolated" Version="1.2.39" />
+  <Sdk Name="DotNet.ReproducibleBuilds.Isolated" Version="2.0.2" />
 
   <PropertyGroup>
     <!-- Static Analysis Settings -->
