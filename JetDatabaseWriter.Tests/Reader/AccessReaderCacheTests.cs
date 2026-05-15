@@ -10,6 +10,29 @@ using Xunit;
 public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     [Fact]
+    public async Task OpenAsync_WithZeroPageCacheSize_DoesNotAllocateCache()
+    {
+        byte[] bytes = await db.GetFileAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        var options = new AccessReaderOptions
+        {
+            PageCacheSize = 0,
+            UseLockFile = false,
+        };
+
+        using var stream = new MemoryStream(bytes, writable: false);
+        await using var reader = await AccessReader.OpenAsync(
+            stream,
+            options,
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, reader.PageCacheSize);
+        Assert.Null(ReadPrivateField(reader, "_pageCache"));
+        Assert.Null(ReadPrivateField(reader, "_rowBoundsCache"));
+        Assert.NotEmpty(await reader.ListTablesAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task OpenUncachedAsync_WithPositivePageCacheSize_SuppressesCacheAllocation()
     {
         byte[] bytes = await db.GetFileAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);

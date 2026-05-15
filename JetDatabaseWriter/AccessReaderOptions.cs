@@ -27,7 +27,7 @@ public sealed class AccessReaderOptions : IAccessOptions
         Password = plainTextPassword.AsMemory();
     }
 
-    /// <summary>Gets the maximum number of pages to keep in cache. 0 = unlimited, -1 = disabled. Default: 256 (1 MB for 4K pages).</summary>
+    /// <summary>Gets the maximum number of pages to keep in cache. Positive values enable caching; 0 or negative disables it. Default: 256 (1 MB for 4K pages).</summary>
     public int PageCacheSize { get; init; } = 256;
 
     /// <summary>Gets a value indicating whether verbose diagnostic information is logged. Default: false.</summary>
