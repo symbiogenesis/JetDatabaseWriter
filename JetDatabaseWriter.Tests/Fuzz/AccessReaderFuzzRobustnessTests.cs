@@ -8,7 +8,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using Xunit;
 
-#pragma warning disable CA5394 // System.Random is fine — no security context here, just deterministic fuzz seeds.
+#pragma warning disable SCS0005, CA5394 // System.Random is fine — no security context here, just deterministic fuzz seeds.
 
 /// <summary>
 /// Robustness tests that mirror the mdbtools libFuzzer harness

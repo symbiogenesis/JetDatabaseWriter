@@ -882,7 +882,6 @@ internal static class EncryptionManager
 
     // ── Crypto primitives ────────────────────────────────────────────
 
-#pragma warning disable CA5351 // MD5 is required by the Jet4 RC4 key derivation spec
     /// <summary>
     /// Derives the RC4 key for a specific page: MD5(dbKey LE + pageNumber LE)[0..4].
     /// </summary>
@@ -892,6 +891,7 @@ internal static class EncryptionManager
         BinaryPrimitives.WriteUInt32LittleEndian(input.Slice(0, 4), dbKey);
         BinaryPrimitives.WriteUInt32LittleEndian(input.Slice(4, 4), pageNumber);
         Span<byte> hash = stackalloc byte[16];
+#pragma warning disable CA5351, SCS0006 // MD5 is required by the Jet4 RC4 key derivation spec, and this code is not used for any security-sensitive purpose. The 8-byte input is too short to be meaningfully brute-forced, and the output is truncated to 4 bytes for the actual key, so collision resistance is not a concern.
         using (var md5 = MD5.Create())
         {
             if (!md5.TryComputeHash(input, hash, out _))
@@ -899,10 +899,10 @@ internal static class EncryptionManager
                 throw new CryptographicException("MD5 hash computation failed.");
             }
         }
+#pragma warning restore CA5351, SCS0006 // MD5 is required by the Jet4 RC4 key derivation spec, and this code is not used for any security-sensitive purpose. The 8-byte input is too short to be meaningfully brute-forced, and the output is truncated to 4 bytes for the actual key, so collision resistance is not a concern.
 
         hash.Slice(0, 4).CopyTo(destination);
     }
-#pragma warning restore CA5351
 
     /// <summary>In-place RC4 transform (encrypt and decrypt are the same operation).</summary>
     private static void Rc4Transform(byte[] data, int offset, int length, ReadOnlySpan<byte> key)

@@ -10,10 +10,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Pages;
-using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 /// <summary>
