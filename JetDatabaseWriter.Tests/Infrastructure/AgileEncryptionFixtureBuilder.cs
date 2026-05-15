@@ -5,13 +5,10 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using JetDatabaseWriter.CompoundFile;
-using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Tests.Encryption;
-using JetDatabaseWriter.ValueDecoding;
 
 #pragma warning disable CA5358 // ECMA-376 Agile encryption uses fixed cipher modes per spec.
 #pragma warning disable CA5379 // SHA-512 is the spec-mandated hash for Agile here.
-#pragma warning disable CA5401 // AES-CBC IVs are spec-derived (salt/blockKey) for fixture interoperability.
 
 /// <summary>
 /// Builds a real, ECMA-376 §2.3.4 "Agile"–encrypted .accdb fixture in
@@ -565,12 +562,14 @@ internal static class AgileEncryptionFixtureBuilder
     private static byte[] AesCbc(byte[] data, byte[] key, byte[] iv, bool encrypt)
     {
         using var aes = Aes.Create();
+#pragma warning disable SCS0013, CA5401 // AES-CBC IVs are spec-derived (salt/blockKey) for fixture interoperability.
         aes.Mode = CipherMode.CBC;
         aes.Padding = PaddingMode.None;
         aes.Key = key;
         aes.IV = iv;
 
         using ICryptoTransform t = encrypt ? aes.CreateEncryptor() : aes.CreateDecryptor();
+#pragma warning restore SCS0013, CA5401 // AES-CBC IVs are spec-derived (salt/blockKey) for fixture interoperability.
         return t.TransformFinalBlock(data, 0, data.Length);
     }
 

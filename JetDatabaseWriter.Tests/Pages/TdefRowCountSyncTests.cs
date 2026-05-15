@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 /// <summary>

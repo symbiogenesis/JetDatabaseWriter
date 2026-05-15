@@ -2,9 +2,6 @@ namespace JetDatabaseWriter.Tests.Indexes;
 
 using System;
 using JetDatabaseWriter.Indexes;
-using JetDatabaseWriter.Indexes.Collation;
-using JetDatabaseWriter.Pages;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 /// <summary>

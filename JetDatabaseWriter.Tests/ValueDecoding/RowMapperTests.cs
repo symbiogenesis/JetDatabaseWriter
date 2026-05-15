@@ -3,8 +3,6 @@ namespace JetDatabaseWriter.Tests.ValueDecoding;
 using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Pages;
-using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;

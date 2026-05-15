@@ -10,9 +10,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Tests.Infrastructure;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 #pragma warning disable CA5358 // ECB mode is intentional for deterministic test fixture encryption
@@ -589,7 +587,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
             using var aes = Aes.Create();
             aes.Key = aesKey;
+#pragma warning disable SCS0013 // ECB mode is intentional to support legacy AES-encrypted .accdb fixtures with flat per-page AES-ECB encryption beneath the CFB wrapper.
             aes.Mode = CipherMode.ECB;
+#pragma warning restore SCS0013 // ECB mode is intentional to support legacy AES-encrypted .accdb fixtures with flat per-page AES-ECB encryption beneath the CFB wrapper.
             aes.Padding = PaddingMode.None;
             using var encryptor = aes.CreateEncryptor();
             byte[] block = new byte[length];

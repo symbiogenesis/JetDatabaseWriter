@@ -6,9 +6,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
-using JetDatabaseWriter.Pages;
-using JetDatabaseWriter.Pages.Models;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 /// <summary>
