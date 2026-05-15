@@ -20,6 +20,9 @@
 
     <Configurations>Debug;Release;Test</Configurations>
 
+    <!-- Keep default SDK globs from treating nested project outputs as source files. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);**\bin\**;**\obj\**;**\.artifacts\**</DefaultItemExcludes>
+
     <!-- Generate the lock file -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
 
