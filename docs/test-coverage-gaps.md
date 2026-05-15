@@ -51,7 +51,10 @@ in [GeneralEncoderSharedTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collatio
   suffix algorithm is unknown. The checked-in V2010 fixture corpus has only
   six suffix-bearing keys, but `long-row-dao-lab` can generate fresh
   Access-authored examples on DAO-equipped Windows hosts; the current probe
-  run produced 102 Text/Memo 510-byte keys, all matching through byte 507.
+  run produced 518 Text/Memo 510-byte keys, all matching through byte 507.
+  The DAO lab now also demonstrates that identical long strings can receive
+  different suffixes, so the remaining algorithm is not a pure function of
+  the string value exposed to `GeneralTextIndexEncoder.Encode(string?, bool)`.
   Exhaustive CRC/hash candidate testing against the original six constraints
   found no match — see resolution doc for details. The partial result is now locked in by
   [GeneralEncoderLongRowPrefixTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collation/GeneralEncoderLongRowPrefixTests.cs),

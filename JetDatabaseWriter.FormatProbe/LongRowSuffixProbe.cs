@@ -7,15 +7,20 @@
 namespace JetDatabaseWriter.FormatProbe;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Numerics;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Indexes.Models;
@@ -23,18 +28,33 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueDecoding;
 
 internal static class LongRowSuffixProbe
 {
     private const int PrefixMatchLength = 508;
     private const int LongRowEntryLength = GeneralLegacyTextIndexEncoder.MaxEntryLengthGeneralV2010;
+    private const int DaoLabAlphabetLength = 65;
     private const string GeneralResource = "JetDatabaseWriter.IndexCodeTables.index_codes_gen.txt.gz";
     private const string GeneralExtResource = "JetDatabaseWriter.IndexCodeTables.index_codes_ext_gen.txt.gz";
     private const char FirstChar = (char)0x0000;
     private const char LastChar = (char)0x00FF;
     private const char FirstExtChar = (char)0x0100;
     private const char LastExtChar = (char)0xFFFF;
+    private const int DaoLabBaseRowCount = 256;
+    private const int DaoLabPairMatrixStart = DaoLabBaseRowCount;
+    private const int DaoLabPairMatrixRowCount = DaoLabAlphabetLength * DaoLabAlphabetLength;
+    private const int DaoLabAuxMatrixStart = DaoLabPairMatrixStart + DaoLabPairMatrixRowCount;
+    private const int DaoLabAuxMatrixRowCount = DaoLabAlphabetLength * DaoLabAlphabetLength;
+    private const int DaoLabRowCount = DaoLabAuxMatrixStart + DaoLabAuxMatrixRowCount;
+    private const string DaoLabAlphabet = " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+";
+    private const uint LcMapSortKey = 0x00000400;
+    private const uint LcMapHash = 0x00040000;
+    private const uint NormIgnoreCase = 0x00000001;
+    private const uint NormIgnoreNonSpace = 0x00000002;
+    private const uint NormIgnoreSymbols = 0x00000004;
+    private const uint SortStringsSort = 0x00001000;
 
     private static readonly Lazy<GeneralLegacyTextIndexEncoder.CharHandler[]> GeneralCodes = new(
         () => GeneralLegacyTextIndexEncoder.LoadCodes(GeneralResource, FirstChar, LastChar));
@@ -55,10 +75,26 @@ internal static class LongRowSuffixProbe
         "extras only",
         "unprint only",
         "extras+unprint",
+        "full[508..511]",
+        "full[508..512]",
+        "full[508..513]",
         "full[..508]",
         "full[1..508]",
         "full[..510] suffix zeroed",
     ];
+
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    private static extern int LCMapStringEx(
+        string lpLocaleName,
+        uint dwMapFlags,
+        string lpSrcStr,
+        int cchSrc,
+        byte[] lpDestStr,
+        int cchDest,
+        IntPtr lpVersionInformation,
+        IntPtr lpReserved,
+        IntPtr sortHandle);
 
     public static async Task<int> RunAnalysisAsync(string fixturesDir, string outFile)
     {
@@ -139,19 +175,18 @@ internal static class LongRowSuffixProbe
         string scriptPath = FormatProbeArtifacts.GetFilePath(workRoot, "long-row-dao-lab-author.ps1");
         FormatProbeArtifacts.Copy(baseFixture, labPath, overwrite: true);
 
-        const int LabRowCount = 48;
         (int exitCode, string stdout, string stderr) = RunPowerShell(
             hostProbe.HostPath,
-            BuildDaoLabScript(labPath, LabRowCount),
+            BuildDaoLabScript(labPath, DaoLabRowCount),
             scriptPath,
-            TimeSpan.FromMinutes(2));
+            TimeSpan.FromMinutes(5));
 
         sb.AppendLine("## DAO authoring");
         sb.AppendLine();
         sb.AppendLine(CultureInfo.InvariantCulture, $"- PowerShell host: `{hostProbe.HostPath}`");
         sb.AppendLine(CultureInfo.InvariantCulture, $"- Lab database: `{labPath}`");
         sb.AppendLine(CultureInfo.InvariantCulture, $"- Script: `{scriptPath}`");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"- Requested rows per table: {LabRowCount}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- Requested rows per table: {DaoLabRowCount}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"- Exit code: {exitCode}");
         if (!string.IsNullOrWhiteSpace(stdout))
         {
@@ -172,11 +207,1771 @@ internal static class LongRowSuffixProbe
 
         int summaryInsertOffset = sb.Length;
         var totals = new CorpusScanTotals { FixturesScanned = 1 };
-        await ScanFixtureForLongRowsAsync(labPath, sb, totals, CancellationToken.None, maxExamples: 200);
+        await ScanFixtureForLongRowsAsync(labPath, sb, totals, CancellationToken.None, maxExamples: 600);
         sb.Insert(summaryInsertOffset, BuildCorpusSummary(totals));
+
+        await AppendDaoLabPatternSummaryAsync(labPath, sb, CancellationToken.None);
 
         await WriteOutputAsync(outFile, sb);
         return 0;
+    }
+
+    private static async Task AppendDaoLabPatternSummaryAsync(string labPath, StringBuilder sb, CancellationToken ct)
+    {
+        await using var reader = await AccessReader.OpenAsync(
+            labPath,
+            new AccessReaderOptions { UseLockFile = false },
+            ct);
+
+        sb.AppendLine("## DAO lab suffix pattern summary");
+        sb.AppendLine();
+        sb.AppendLine("Groups are synthetic text families emitted by `New-LabText`: seed 0-63 varies char[253], 64-127 varies char[254], 128-191 varies char[20], 192-255 adds international/unprintable characters plus optional CR/LF, then later ranges form plain and auxiliary char[253]/char[254] pair matrices over the DAO lab alphabet.");
+        sb.AppendLine();
+
+        foreach ((string tableName, int seedBase) in new[] { ("Table11", 100000), ("Table11_desc", 101000) })
+        {
+            SuffixPatternTable table = await BuildSuffixPatternTableAsync(reader, tableName, seedBase, ct);
+            AppendSyntheticGroupSummary(sb, table);
+            AppendDuplicateValueSummary(sb, table);
+            AppendSuffixCandidateSummary(sb, table);
+            AppendWideAffineTailSummary(sb, table);
+            AppendRawLeafCompressionSummary(sb, tableName, table.Index, table.Layout, table.ReaderPageSize, table.RawLeafPages);
+        }
+    }
+
+    private static async Task<SuffixPatternTable> BuildSuffixPatternTableAsync(
+        AccessReader reader,
+        string tableName,
+        int seedBase,
+        CancellationToken ct)
+    {
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+        int pageSize = reader.PageSize;
+
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
+        IndexMetadata index = indexes.First(idx => idx.Columns.Count == 1 && idx.Columns[0].Name.Equals("data", StringComparison.OrdinalIgnoreCase));
+        IndexColumnReference keyColumn = index.Columns[0];
+
+        List<LeafEntryDetail> leafEntries = await CollectDetailedLeafEntriesFromRootAsync(
+            reader,
+            layout,
+            pageSize,
+            index.FirstDp,
+            ct);
+        List<RawLeafPageSummary> rawLeafPages = await CollectRawLeafPageSummariesAsync(reader, layout, pageSize, index.FirstDp, ct);
+        Dictionary<long, PhysicalRowSnapshot> rowByPointer = await BuildPhysicalRowSnapshotMapAsync(reader, tableName, ct);
+
+        var rows = new List<SuffixPatternRow>();
+        foreach (LeafEntryDetail leafEntry in leafEntries)
+        {
+            IndexEntry entry = leafEntry.Entry;
+            if (entry.Key.Length != LongRowEntryLength
+                || !rowByPointer.TryGetValue(EncodeDataPointer(entry.DataPage, entry.DataRow), out PhysicalRowSnapshot rowSnapshot)
+                || rowSnapshot.Value is not string text)
+            {
+                continue;
+            }
+
+            byte[] encodedKey = GeneralTextIndexEncoder.Encode(text, keyColumn.IsAscending);
+            byte[] fullKey = BuildFullV2010Entry(text, keyColumn.IsAscending, GeneralCodes.Value, GeneralExtCodes.Value);
+            ushort accessSuffix = (ushort)((entry.Key[508] << 8) | entry.Key[509]);
+            ushort encoderSuffix = encodedKey.Length >= LongRowEntryLength
+                ? (ushort)((encodedKey[508] << 8) | encodedKey[509])
+                : (ushort)0;
+            bool prefixMatch = encodedKey.Length >= PrefixMatchLength
+                && entry.Key.AsSpan(0, PrefixMatchLength).SequenceEqual(encodedKey.AsSpan(0, PrefixMatchLength));
+
+            rows.Add(new SuffixPatternRow(
+                rowSnapshot.RowLabel,
+                TryParseLabSeed(rowSnapshot.RowLabel, seedBase),
+                leafEntry.Position,
+                entry.DataPage,
+                entry.DataRow,
+                accessSuffix,
+                encoderSuffix,
+                fullKey.Length,
+                DescribeFullTail(fullKey),
+                prefixMatch,
+                leafEntry.LeafPage,
+                leafEntry.EntryIndex,
+                leafEntry.PrefixLength,
+                leafEntry.RawKeyLength,
+                leafEntry.EntryStart,
+                text));
+        }
+
+        return new SuffixPatternTable(
+            tableName,
+            seedBase,
+            index,
+            keyColumn.IsAscending,
+            layout,
+            pageSize,
+            rows,
+            rawLeafPages);
+    }
+
+    private static int? TryParseLabSeed(string rowLabel, int seedBase)
+    {
+        string label = rowLabel.Trim('`');
+        if (!label.StartsWith("lab", StringComparison.OrdinalIgnoreCase)
+            || label.Length != 9
+            || !int.TryParse(label.AsSpan(3), NumberStyles.None, CultureInfo.InvariantCulture, out int labNumber))
+        {
+            return null;
+        }
+
+        int seed = labNumber - seedBase;
+        return seed is >= 0 && seed < DaoLabRowCount ? seed : null;
+    }
+
+    private static void AppendSyntheticGroupSummary(StringBuilder sb, SuffixPatternTable table)
+    {
+        sb.AppendLine(CultureInfo.InvariantCulture, $"### {table.TableName}.DataIndex synthetic groups");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- ascending: {table.Ascending}");
+        sb.AppendLine();
+        sb.AppendLine("| Group | Seed range | Count | Access suffixes | Encoder suffixes | Full lengths | First examples | Last examples |");
+        sb.AppendLine("|---:|---|---:|---:|---:|---|---|---|");
+
+        for (int group = 0; group < 4; group++)
+        {
+            int minSeed = group * 64;
+            int maxSeed = minSeed + 63;
+            List<SuffixPatternRow> rows = table.Rows
+                .Where(row => row.Seed is >= 0 && row.Seed >= minSeed && row.Seed <= maxSeed)
+                .OrderBy(row => row.Seed)
+                .ToList();
+
+            string accessCount = rows.Select(row => row.AccessSuffix).Distinct().Count().ToString(CultureInfo.InvariantCulture);
+            string encoderCount = rows.Select(row => row.EncoderSuffix).Distinct().Count().ToString(CultureInfo.InvariantCulture);
+            string lengths = rows.Count == 0
+                ? "-"
+                : string.Join(", ", rows.Select(row => row.FullLength).Distinct().OrderBy(length => length).Select(length => length?.ToString(CultureInfo.InvariantCulture) ?? "-"));
+
+            sb.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"| {group} | {minSeed}-{maxSeed} | {rows.Count} | {accessCount} | {encoderCount} | {lengths} | {DescribeSeedExamples(rows.Take(4))} | {DescribeSeedExamples(rows.TakeLast(4))} |");
+        }
+
+        sb.AppendLine();
+
+        foreach (int group in new[] { 0, 1 })
+        {
+            int minSeed = group * 64;
+            int maxSeed = minSeed + 63;
+            List<SuffixPatternRow> rows = table.Rows
+                .Where(row => row.Seed is >= 0 && row.Seed >= minSeed && row.Seed <= maxSeed)
+                .OrderBy(row => row.Seed)
+                .ToList();
+            if (rows.Count == 0)
+            {
+                continue;
+            }
+
+            sb.AppendLine(CultureInfo.InvariantCulture, $"Seed detail for group {group} ({minSeed}-{maxSeed}):");
+            sb.AppendLine();
+            sb.AppendLine("| Seed | Access suffix | Encoder suffix | Prefix | Data ptr | Leaf entry | pref_len | raw len | raw start | Full tail |");
+            sb.AppendLine("|---:|:---:|:---:|:---:|---:|---|---:|---:|---:|---|");
+            foreach (SuffixPatternRow row in rows)
+            {
+                sb.AppendLine(
+                    CultureInfo.InvariantCulture,
+                    $"| {row.Seed} | `{row.AccessSuffix:X4}` | `{row.EncoderSuffix:X4}` | {(row.PrefixMatch ? "yes" : "no")} | {row.DataPage}:{row.DataRow} | {row.LeafPage}:{row.LeafEntryIndex} | {row.PrefixLength} | {row.RawKeyLength} | {row.EntryStart} | {row.FullTail} |");
+            }
+
+            sb.AppendLine();
+        }
+
+        AppendPairMatrixSummary(sb, table, DaoLabPairMatrixStart, "Pair matrix");
+        AppendPairMatrixSummary(sb, table, DaoLabAuxMatrixStart, "Auxiliary pair matrix");
+    }
+
+    private static void AppendPairMatrixSummary(StringBuilder sb, SuffixPatternTable table, int matrixStart, string title)
+    {
+        List<SuffixPatternRow> rows = table.Rows
+            .Where(row => row.Seed is not null && row.Seed.Value >= matrixStart && row.Seed.Value < matrixStart + DaoLabPairMatrixRowCount)
+            .OrderBy(row => row.Seed)
+            .ToList();
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        int accessDistinct = rows.Select(row => row.AccessSuffix).Distinct().Count();
+        int encoderDistinct = rows.Select(row => row.EncoderSuffix).Distinct().Count();
+        int accessCollisionBuckets = rows.GroupBy(row => row.AccessSuffix).Count(group => group.Count() > 1);
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"{title} summary for seeds {matrixStart}-{matrixStart + DaoLabPairMatrixRowCount - 1}:");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- rows: {rows.Count}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- Access suffixes: {accessDistinct}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- encoder suffixes: {encoderDistinct}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- Access suffix collision buckets: {accessCollisionBuckets}");
+        sb.AppendLine();
+        AppendPairMatrixModelSummary(sb, table, rows, matrixStart);
+
+        sb.AppendLine("| Pair | Access suffix | Encoder suffix | Full tail |");
+        sb.AppendLine("|---|:---:|:---:|---|");
+
+        foreach (SuffixPatternRow row in rows.Take(8).Concat(rows.Skip(Math.Max(0, rows.Count - 8))))
+        {
+            int pair = row.Seed!.Value - matrixStart;
+            char first = DaoLabAlphabet[pair / DaoLabAlphabet.Length];
+            char second = DaoLabAlphabet[pair % DaoLabAlphabet.Length];
+            sb.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"| `{EscapeMarkdown(new string(new[] { first, second }))}` | `{row.AccessSuffix:X4}` | `{row.EncoderSuffix:X4}` | {row.FullTail} |");
+        }
+
+        sb.AppendLine();
+    }
+
+    private static void AppendPairMatrixModelSummary(StringBuilder sb, SuffixPatternTable table, List<SuffixPatternRow> rows, int matrixStart)
+    {
+        int size = DaoLabAlphabet.Length;
+        var suffixes = new ushort[size * size];
+        var present = new bool[size * size];
+        foreach (SuffixPatternRow row in rows)
+        {
+            int pair = row.Seed!.Value - matrixStart;
+            int first = pair / size;
+            int second = pair % size;
+            if (first >= 0 && first < size && second >= 0 && second < size)
+            {
+                int index = (first * size) + second;
+                suffixes[index] = row.AccessSuffix;
+                present[index] = true;
+            }
+        }
+
+        int baseIndex = DaoLabAlphabet.IndexOf('a', StringComparison.Ordinal);
+        int baseOffset = (baseIndex * size) + baseIndex;
+        if (baseIndex < 0 || !present[baseOffset])
+        {
+            return;
+        }
+
+        ushort baseValue = suffixes[baseOffset];
+        int xorMatches = 0;
+        int addMatches = 0;
+        int highXorMatches = 0;
+        int highAddMatches = 0;
+        int lowXorMatches = 0;
+        int lowAddMatches = 0;
+        int total = 0;
+
+        for (int first = 0; first < size; first++)
+        {
+            for (int second = 0; second < size; second++)
+            {
+                int index = (first * size) + second;
+                if (!present[index])
+                {
+                    continue;
+                }
+
+                ushort actual = suffixes[index];
+                int rowBaseOffset = (first * size) + baseIndex;
+                int columnBaseOffset = (baseIndex * size) + second;
+                if (!present[rowBaseOffset] || !present[columnBaseOffset])
+                {
+                    continue;
+                }
+
+                ushort rowBase = suffixes[rowBaseOffset];
+                ushort columnBase = suffixes[columnBaseOffset];
+                ushort xorPredicted = (ushort)(rowBase ^ columnBase ^ baseValue);
+                ushort addPredicted = unchecked((ushort)(rowBase + columnBase - baseValue));
+
+                if (xorPredicted == actual)
+                {
+                    xorMatches++;
+                }
+
+                if (addPredicted == actual)
+                {
+                    addMatches++;
+                }
+
+                byte actualHigh = (byte)(actual >> 8);
+                byte actualLow = unchecked((byte)actual);
+                byte xorHigh = (byte)((rowBase >> 8) ^ (columnBase >> 8) ^ (baseValue >> 8));
+                byte xorLow = unchecked((byte)(rowBase ^ columnBase ^ baseValue));
+                byte addHigh = unchecked((byte)((rowBase >> 8) + (columnBase >> 8) - (baseValue >> 8)));
+                byte addLow = unchecked((byte)(rowBase + columnBase - baseValue));
+
+                if (xorHigh == actualHigh)
+                {
+                    highXorMatches++;
+                }
+
+                if (addHigh == actualHigh)
+                {
+                    highAddMatches++;
+                }
+
+                if (xorLow == actualLow)
+                {
+                    lowXorMatches++;
+                }
+
+                if (addLow == actualLow)
+                {
+                    lowAddMatches++;
+                }
+
+                total++;
+            }
+        }
+
+        sb.AppendLine("Pair matrix model checks:");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- XOR row/column decomposition: {xorMatches}/{total}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- Add row/column decomposition: {addMatches}/{total}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- High-byte XOR/add decomposition: {highXorMatches}/{total}, {highAddMatches}/{total}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- Low-byte XOR/add decomposition: {lowXorMatches}/{total}, {lowAddMatches}/{total}");
+
+        List<Crc16AffineHit> crcHits = FindCrc16AffineHits(table, rows, maxHits: 8);
+        string crcHitText = crcHits.Count == 0
+            ? "-"
+            : "`" + string.Join(" ", crcHits.Select(hit => $"poly={hit.Polynomial:X4}/xor={hit.XorConstant:X4}/refIn={hit.RefIn}/refOut={hit.RefOut}")) + "`";
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- CRC-16 affine hits over `full[508..]`: {crcHits.Count} {crcHitText}");
+        AppendPairMatrixAffineBitSummary(sb, table, rows, matrixStart);
+        sb.AppendLine();
+        sb.AppendLine("Pair contribution examples (`H(x,a) ^ H(a,a)` and `H(a,x) ^ H(a,a)`):");
+        sb.AppendLine();
+        sb.AppendLine("| Char | Row contribution | Column contribution | Row suffix | Column suffix |");
+        sb.AppendLine("|---|:---:|:---:|:---:|:---:|");
+        foreach (int index in Enumerable.Range(0, Math.Min(16, size)).Concat(Enumerable.Range(Math.Max(16, size - 8), Math.Min(8, size - Math.Max(16, size - 8)))))
+        {
+            int rowOffset = (index * size) + baseIndex;
+            int columnOffset = (baseIndex * size) + index;
+            if (!present[rowOffset] || !present[columnOffset])
+            {
+                continue;
+            }
+
+            ushort rowSuffix = suffixes[rowOffset];
+            ushort columnSuffix = suffixes[columnOffset];
+            sb.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"| `{EscapeMarkdown(DaoLabAlphabet[index].ToString())}` | `{rowSuffix ^ baseValue:X4}` | `{columnSuffix ^ baseValue:X4}` | `{rowSuffix:X4}` | `{columnSuffix:X4}` |");
+        }
+
+        sb.AppendLine();
+    }
+
+    private static List<Crc16AffineHit> FindCrc16AffineHits(
+        SuffixPatternTable table,
+        List<SuffixPatternRow> rows,
+        int maxHits)
+    {
+        var constraints = rows
+            .Where(row => row.Text is not null)
+            .Select(row => new RollingConstraint(
+                SliceOrEmpty(BuildFullV2010Entry(row.Text!, table.Ascending, GeneralCodes.Value, GeneralExtCodes.Value), 508),
+                row.AccessSuffix))
+            .Where(constraint => constraint.Input.Length > 0)
+            .ToArray();
+
+        var hits = new List<Crc16AffineHit>();
+        if (constraints.Length == 0)
+        {
+            return hits;
+        }
+
+        for (int polynomial = 0; polynomial <= 0xFFFF; polynomial++)
+        {
+            ushort polynomialValue = (ushort)polynomial;
+            ushort reflectedPolynomial = ReflectU16(polynomialValue);
+            for (int mode = 0; mode < 4; mode++)
+            {
+                bool refIn = (mode & 1) != 0;
+                bool refOut = (mode & 2) != 0;
+                ushort first = CrcFull(constraints[0].Input, polynomialValue, reflectedPolynomial, 0, 0, refIn, refOut);
+                ushort xorConstant = (ushort)(constraints[0].Target ^ first);
+
+                bool allMatch = true;
+                for (int index = 1; index < constraints.Length; index++)
+                {
+                    ushort crc = CrcFull(constraints[index].Input, polynomialValue, reflectedPolynomial, 0, 0, refIn, refOut);
+                    if ((ushort)(crc ^ xorConstant) != constraints[index].Target)
+                    {
+                        allMatch = false;
+                        break;
+                    }
+                }
+
+                if (allMatch)
+                {
+                    hits.Add(new Crc16AffineHit(polynomialValue, xorConstant, refIn, refOut));
+                    if (hits.Count >= maxHits)
+                    {
+                        return hits;
+                    }
+                }
+            }
+        }
+
+        return hits;
+    }
+
+    private static void AppendPairMatrixAffineBitSummary(
+        StringBuilder sb,
+        SuffixPatternTable table,
+        List<SuffixPatternRow> rows,
+        int matrixStart)
+    {
+        SuffixPatternRow[] usableRows = rows.Where(row => row.Text is not null).ToArray();
+        ushort[] targets = usableRows.Select(row => row.AccessSuffix).ToArray();
+
+        sb.AppendLine("- Affine bit models:");
+        AppendAffineBitResult(sb, "full[508..511] raw bits", usableRows, targets, table, 24, BuildRawTailFeature);
+        AppendAffineBitResult(sb, "trimmed-full[508..511] raw bits", usableRows, targets, table, 24, BuildTrimmedRawTailFeature);
+        AppendAffineBitResult(sb, "full[507..511] raw bits", usableRows, targets, table, 32, BuildRawWindowFeature507);
+        AppendAffineBitResult(sb, "trimmed-full[507..511] raw bits", usableRows, targets, table, 32, BuildTrimmedRawWindowFeature507);
+        AppendAffineBitResult(sb, "full[506..511] raw bits", usableRows, targets, table, 40, BuildRawWindowFeature506);
+        AppendAffineBitResult(sb, "trimmed-full[506..511] raw bits", usableRows, targets, table, 40, BuildTrimmedRawWindowFeature506);
+        AppendAffineBitResult(sb, "full[508..512] raw bits", usableRows, targets, table, 32, BuildRawTailFeature);
+        AppendAffineBitResult(sb, "full[508..513] raw bits", usableRows, targets, table, 40, BuildRawTailFeature);
+        if (OperatingSystem.IsWindows())
+        {
+            AppendAffineBitResult(sb, "text[253..255] LCMapHash ignore-case", usableRows, targets, table, 32, BuildLcMapHashFeature);
+        }
+
+        AppendTrainedAffineScore(sb, "trained full[508..511] model", table, usableRows, targets, 24, BuildRawTailFeature);
+        AppendTrainedAffineScore(sb, "trained trimmed-full[508..511] model", table, usableRows, targets, 24, BuildTrimmedRawTailFeature);
+        AppendTrainedAffineScore(sb, "trained full[506..511] model", table, usableRows, targets, 40, BuildRawWindowFeature506);
+        AppendTrainedAffineScore(sb, "trained trimmed-full[506..511] model", table, usableRows, targets, 40, BuildTrimmedRawWindowFeature506);
+        AppendSecondSpaceAffineScore(sb, table, usableRows, matrixStart, 24, BuildRawTailFeature);
+    }
+
+    private static void AppendAffineBitResult(
+        StringBuilder sb,
+        string label,
+        SuffixPatternRow[] rows,
+        ushort[] targets,
+        SuffixPatternTable table,
+        int bitCount,
+        Func<SuffixPatternRow, SuffixPatternTable, int, ulong?> buildFeature)
+    {
+        var features = new List<ulong>(rows.Length);
+        var featureTargets = new List<ushort>(rows.Length);
+        for (int index = 0; index < rows.Length; index++)
+        {
+            ulong? feature = buildFeature(rows[index], table, bitCount);
+            if (feature.HasValue)
+            {
+                features.Add(feature.Value | (1UL << bitCount));
+                featureTargets.Add(targets[index]);
+            }
+        }
+
+        bool fits = features.Count > 0 && TryFitAffineBinaryModel(features.ToArray(), featureTargets.ToArray(), bitCount + 1, out _);
+        sb.AppendLine(CultureInfo.InvariantCulture, $"  - {label}: {(fits ? "fits" : "no fit")} ({features.Count}/{rows.Length} rows)");
+    }
+
+    private static void AppendTrainedAffineScore(
+        StringBuilder sb,
+        string label,
+        SuffixPatternTable table,
+        SuffixPatternRow[] pairRows,
+        ushort[] pairTargets,
+        int bitCount,
+        Func<SuffixPatternRow, SuffixPatternTable, int, ulong?> buildFeature)
+    {
+        ulong[] pairFeatures = pairRows
+            .Select(row => buildFeature(row, table, bitCount))
+            .Where(feature => feature.HasValue)
+            .Select(feature => feature!.Value | (1UL << bitCount))
+            .ToArray();
+        if (pairFeatures.Length != pairTargets.Length
+            || !TryFitAffineBinaryModel(pairFeatures, pairTargets, bitCount + 1, out ulong[] coefficients))
+        {
+            sb.AppendLine(CultureInfo.InvariantCulture, $"  - {label}: no fit");
+            return;
+        }
+
+        int evaluated = 0;
+        int exact = 0;
+        foreach (SuffixPatternRow row in table.Rows.Where(row => row.Text is not null))
+        {
+            ulong? feature = buildFeature(row, table, bitCount);
+            if (!feature.HasValue)
+            {
+                continue;
+            }
+
+            evaluated++;
+            ushort predicted = PredictAffineBinary(feature.Value | (1UL << bitCount), coefficients);
+            if (predicted == row.AccessSuffix)
+            {
+                exact++;
+            }
+        }
+
+        string coefficientText = string.Join(" ", coefficients.Select(coefficient => coefficient.ToString("X7", CultureInfo.InvariantCulture)));
+        sb.AppendLine(CultureInfo.InvariantCulture, $"  - {label} scored on all rows: {exact}/{evaluated}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"  - {label} coefficients: `{coefficientText}`");
+    }
+
+    private static void AppendSecondSpaceAffineScore(
+        StringBuilder sb,
+        SuffixPatternTable table,
+        SuffixPatternRow[] pairRows,
+        int matrixStart,
+        int bitCount,
+        Func<SuffixPatternRow, SuffixPatternTable, int, ulong?> buildFeature)
+    {
+        SuffixPatternRow[] normalRows = pairRows.Where(row => !IsMatrixSecondSpace(row, matrixStart)).ToArray();
+        SuffixPatternRow[] secondSpaceRows = pairRows.Where(row => IsMatrixSecondSpace(row, matrixStart)).ToArray();
+        if (!TryTrainAffineRows(normalRows, table, bitCount, buildFeature, out ulong[] normalCoefficients)
+            || !TryTrainAffineRows(secondSpaceRows, table, bitCount, buildFeature, out ulong[] secondSpaceCoefficients))
+        {
+            sb.AppendLine("  - piecewise second-space full[508..511] model: no fit");
+            return;
+        }
+
+        int evaluated = 0;
+        int exact = 0;
+        foreach (SuffixPatternRow row in table.Rows.Where(row => row.Text is not null))
+        {
+            ulong? feature = buildFeature(row, table, bitCount);
+            if (!feature.HasValue)
+            {
+                continue;
+            }
+
+            bool secondSpace = HasSecondIndexedSpace(row.Text!);
+            ulong[] coefficients = secondSpace ? secondSpaceCoefficients : normalCoefficients;
+            ushort predicted = PredictAffineBinary(feature.Value | (1UL << bitCount), coefficients);
+            evaluated++;
+            if (predicted == row.AccessSuffix)
+            {
+                exact++;
+            }
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"  - piecewise second-space full[508..511] model scored on all rows: {exact}/{evaluated} (normal train {normalRows.Length}, second-space train {secondSpaceRows.Length})");
+    }
+
+    private static bool TryTrainAffineRows(
+        SuffixPatternRow[] rows,
+        SuffixPatternTable table,
+        int bitCount,
+        Func<SuffixPatternRow, SuffixPatternTable, int, ulong?> buildFeature,
+        out ulong[] coefficients)
+    {
+        coefficients = [];
+        ulong[] features = rows
+            .Select(row => buildFeature(row, table, bitCount))
+            .Where(feature => feature.HasValue)
+            .Select(feature => feature!.Value | (1UL << bitCount))
+            .ToArray();
+        ushort[] targets = rows.Select(row => row.AccessSuffix).ToArray();
+        return features.Length == targets.Length
+            && TryFitAffineBinaryModel(features, targets, bitCount + 1, out coefficients);
+    }
+
+    private static bool IsMatrixSecondSpace(SuffixPatternRow row, int matrixStart)
+    {
+        if (row.Seed is null || row.Seed.Value < matrixStart || row.Seed.Value >= matrixStart + DaoLabPairMatrixRowCount)
+        {
+            return false;
+        }
+
+        int pair = row.Seed.Value - matrixStart;
+        return pair % DaoLabAlphabet.Length == 0;
+    }
+
+    private static bool HasSecondIndexedSpace(string text)
+        => text.Length >= 255 && text[254] == ' ';
+
+    private static ulong? BuildRawTailFeature(SuffixPatternRow row, SuffixPatternTable table, int bitCount)
+        => BuildRawWindowFeature(row, table, start: 508, bitCount, trimIndexedText: false);
+
+    private static ulong? BuildTrimmedRawTailFeature(SuffixPatternRow row, SuffixPatternTable table, int bitCount)
+        => BuildRawWindowFeature(row, table, start: 508, bitCount, trimIndexedText: true);
+
+    private static ulong? BuildRawWindowFeature507(SuffixPatternRow row, SuffixPatternTable table, int bitCount)
+        => BuildRawWindowFeature(row, table, start: 507, bitCount, trimIndexedText: false);
+
+    private static ulong? BuildTrimmedRawWindowFeature507(SuffixPatternRow row, SuffixPatternTable table, int bitCount)
+        => BuildRawWindowFeature(row, table, start: 507, bitCount, trimIndexedText: true);
+
+    private static ulong? BuildRawWindowFeature506(SuffixPatternRow row, SuffixPatternTable table, int bitCount)
+        => BuildRawWindowFeature(row, table, start: 506, bitCount, trimIndexedText: false);
+
+    private static ulong? BuildTrimmedRawWindowFeature506(SuffixPatternRow row, SuffixPatternTable table, int bitCount)
+        => BuildRawWindowFeature(row, table, start: 506, bitCount, trimIndexedText: true);
+
+    private static ulong? BuildRawWindowFeature(
+        SuffixPatternRow row,
+        SuffixPatternTable table,
+        int start,
+        int bitCount,
+        bool trimIndexedText)
+    {
+        int bytesToTake = bitCount / 8;
+        string text = row.Text!;
+        if (trimIndexedText)
+        {
+            int take = Math.Min(text.Length, 255);
+            text = text.AsSpan(0, take).TrimEnd(' ').ToString();
+        }
+
+        byte[] full = BuildFullV2010Entry(text, table.Ascending, GeneralCodes.Value, GeneralExtCodes.Value);
+        byte[] tail = SliceOrEmpty(full, start, bytesToTake);
+        if (tail.Length != bytesToTake)
+        {
+            return null;
+        }
+
+        ulong feature = 0;
+        for (int index = 0; index < tail.Length; index++)
+        {
+            feature |= (ulong)tail[index] << (index * 8);
+        }
+
+        return feature;
+    }
+
+    private static ulong? BuildLcMapHashFeature(SuffixPatternRow row, SuffixPatternTable table, int bitCount)
+    {
+        _ = table;
+        _ = bitCount;
+        byte[] hash = LcMapHashBytes("en-US", LcMapHash | NormIgnoreCase, TextWindow(row.Text!, 253, 255));
+        return hash.Length == 4 ? BinaryPrimitives.ReadUInt32LittleEndian(hash) : null;
+    }
+
+    private static bool TryFitAffineBinaryModel(
+        ulong[] features,
+        ushort[] targets,
+        int variableCount,
+        out ulong[] coefficients)
+    {
+        coefficients = new ulong[16];
+        for (int targetBit = 0; targetBit < 16; targetBit++)
+        {
+            var basis = new ulong[variableCount];
+            var basisRhs = new int[variableCount];
+            for (int row = 0; row < features.Length; row++)
+            {
+                ulong mask = features[row];
+                int rhs = (targets[row] >> targetBit) & 1;
+                while (mask != 0)
+                {
+                    int pivot = 63 - BitOperations.LeadingZeroCount(mask);
+                    if (basis[pivot] == 0)
+                    {
+                        basis[pivot] = mask;
+                        basisRhs[pivot] = rhs;
+                        break;
+                    }
+
+                    mask ^= basis[pivot];
+                    rhs ^= basisRhs[pivot];
+                }
+
+                if (mask == 0 && rhs != 0)
+                {
+                    coefficients = [];
+                    return false;
+                }
+            }
+
+            ulong solution = 0;
+            for (int pivot = 0; pivot < variableCount; pivot++)
+            {
+                if (basis[pivot] == 0)
+                {
+                    continue;
+                }
+
+                ulong dependencyMask = pivot == 0 ? 0 : basis[pivot] & ((1UL << pivot) - 1);
+                int value = basisRhs[pivot] ^ (BitOperations.PopCount(solution & dependencyMask) & 1);
+                if (value != 0)
+                {
+                    solution |= 1UL << pivot;
+                }
+            }
+
+            coefficients[targetBit] = solution;
+        }
+
+        return true;
+    }
+
+    private static ushort PredictAffineBinary(ulong feature, ulong[] coefficients)
+    {
+        ushort result = 0;
+        for (int bit = 0; bit < coefficients.Length; bit++)
+        {
+            if ((BitOperations.PopCount(feature & coefficients[bit]) & 1) != 0)
+            {
+                result |= (ushort)(1 << bit);
+            }
+        }
+
+        return result;
+    }
+
+    private static void AppendDuplicateValueSummary(StringBuilder sb, SuffixPatternTable table)
+    {
+        List<IGrouping<string, SuffixPatternRow>> duplicateGroups = table.Rows
+            .Where(row => row.Text is not null)
+            .GroupBy(row => row.Text!, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .OrderByDescending(group => group.Select(row => row.AccessSuffix).Distinct().Count())
+            .ThenByDescending(group => group.Count())
+            .ToList();
+
+        int conflictingGroups = duplicateGroups.Count(group => group.Select(row => row.AccessSuffix).Distinct().Count() > 1);
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Exact duplicate value check for {table.TableName}.DataIndex:");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- duplicate text groups: {duplicateGroups.Count}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- duplicate groups with multiple Access suffixes: {conflictingGroups}");
+
+        if (duplicateGroups.Count == 0)
+        {
+            sb.AppendLine();
+            return;
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("| Rows | Access suffixes | Seeds | Data ptrs |");
+        sb.AppendLine("|---:|---|---|---|");
+        foreach (IGrouping<string, SuffixPatternRow> group in duplicateGroups.Take(8))
+        {
+            SuffixPatternRow[] rows = group.OrderBy(row => row.Position).ToArray();
+            string suffixes = string.Join(" ", rows.Select(row => row.AccessSuffix).Distinct().OrderBy(value => value).Select(value => $"`{value:X4}`"));
+            string seeds = string.Join(" ", rows.Select(row => row.Seed?.ToString(CultureInfo.InvariantCulture) ?? row.RowLabel));
+            string ptrs = string.Join(" ", rows.Select(row => string.Create(CultureInfo.InvariantCulture, $"{row.DataPage}:{row.DataRow}")));
+            sb.AppendLine(CultureInfo.InvariantCulture, $"| {rows.Length} | {suffixes} | `{seeds}` | `{ptrs}` |");
+        }
+
+        sb.AppendLine();
+    }
+
+    private static void AppendSuffixCandidateSummary(StringBuilder sb, SuffixPatternTable table)
+    {
+        SuffixCandidateContext[] contexts = table.Rows
+            .Where(row => row.Text is not null)
+            .Select(row => new SuffixCandidateContext(
+                row,
+                BuildFullV2010Entry(row.Text!, table.Ascending, GeneralCodes.Value, GeneralExtCodes.Value)))
+            .ToArray();
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Suffix candidate score for {table.TableName}.DataIndex:");
+        sb.AppendLine();
+        if (contexts.Length == 0)
+        {
+            sb.AppendLine("- no text rows available for candidate scoring");
+            sb.AppendLine();
+            return;
+        }
+
+        List<CandidateRule> rules = BuildSuffixCandidateRules();
+        List<CandidateScore> scores = rules
+            .Select(rule => ScoreCandidate(rule, contexts))
+            .Where(score => score.Evaluated > 0)
+            .OrderByDescending(score => score.Exact)
+            .ThenByDescending(score => score.BestXorCount)
+            .ThenByDescending(score => score.BestAddCount)
+            .ThenBy(score => score.Name, StringComparer.Ordinal)
+            .Take(16)
+            .ToList();
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- rows scored: {contexts.Length}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- candidates tested: {rules.Count}");
+        sb.AppendLine();
+        sb.AppendLine("| Candidate | Exact | Best XOR | XOR constant | Best add | Add constant |");
+        sb.AppendLine("|---|---:|---:|:---:|---:|:---:|");
+        foreach (CandidateScore score in scores)
+        {
+            sb.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"| {score.Name} | {score.Exact}/{score.Evaluated} | {score.BestXorCount}/{score.Evaluated} | `{score.BestXorConstant:X4}` | {score.BestAddCount}/{score.Evaluated} | `{score.BestAddConstant:X4}` |");
+        }
+
+        sb.AppendLine();
+        AppendRollingPolynomialSolverSummary(sb, contexts);
+        AppendAuxSignatureSummary(sb, contexts);
+        if (OperatingSystem.IsWindows())
+        {
+            AppendLcMapSortKeySweepSummary(sb, contexts);
+        }
+    }
+
+    private static void AppendAuxSignatureSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
+    {
+        Encoding cp1252 = Encoding.GetEncoding(1252);
+        var groups = contexts
+            .Select(context =>
+            {
+                byte[][] inputs = BuildInputCandidates(context.FullKey, context.Row.Text!, cp1252);
+                return new
+                {
+                    Context = context,
+                    Signature = Convert.ToHexString(inputs[10]),
+                    Length = inputs[10].Length,
+                };
+            })
+            .Where(item => item.Length > 0)
+            .GroupBy(item => item.Signature, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Take(12)
+            .ToList();
+
+        sb.AppendLine("Auxiliary stream signatures:");
+        sb.AppendLine();
+        if (groups.Count == 0)
+        {
+            sb.AppendLine("- no auxiliary streams in scored rows");
+            sb.AppendLine();
+            return;
+        }
+
+        sb.AppendLine("| Rows | Access suffixes | First rows | Signature |");
+        sb.AppendLine("|---:|---|---|---|");
+        foreach (var group in groups)
+        {
+            string suffixes = string.Join(" ", group.Select(item => item.Context.Row.AccessSuffix).Distinct().OrderBy(value => value).Select(value => $"`{value:X4}`"));
+            string rows = string.Join(" ", group.Take(6).Select(item => item.Context.Row.RowLabel));
+            sb.AppendLine(CultureInfo.InvariantCulture, $"| {group.Count()} | {suffixes} | `{rows}` | `{group.Key}` |");
+        }
+
+        sb.AppendLine();
+    }
+
+    private static void AppendLcMapSortKeySweepSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
+    {
+        var hits = new List<CandidateScore>();
+        foreach ((string label, uint flags) in new[]
+        {
+            ("en-US none", LcMapSortKey),
+            ("en-US ignore-case", LcMapSortKey | NormIgnoreCase),
+            ("en-US ignore-case-string", LcMapSortKey | NormIgnoreCase | SortStringsSort),
+            ("en-US ignore-case-nonspace", LcMapSortKey | NormIgnoreCase | NormIgnoreNonSpace),
+        })
+        {
+            byte[][] sortKeys = contexts
+                .Select(context => LcMapSortKeyBytes("en-US", flags, TextWindow(context.Row.Text!, 0, Math.Min(255, context.Row.Text!.Length))))
+                .ToArray();
+            int maxLength = sortKeys.Length == 0 ? 0 : sortKeys.Max(key => key.Length);
+            for (int offset = 0; offset + 1 < maxLength; offset++)
+            {
+                hits.Add(ScoreSortKeyOffset(contexts, sortKeys, $"{label} offset {offset} BE", offset, bigEndian: true));
+                hits.Add(ScoreSortKeyOffset(contexts, sortKeys, $"{label} offset {offset} LE", offset, bigEndian: false));
+            }
+        }
+
+        List<CandidateScore> best = hits
+            .Where(score => score.Evaluated > 0)
+            .OrderByDescending(score => score.Exact)
+            .ThenByDescending(score => score.BestXorCount)
+            .ThenByDescending(score => score.Evaluated)
+            .ThenBy(score => score.Name, StringComparer.Ordinal)
+            .Take(8)
+            .ToList();
+
+        sb.AppendLine("LCMap sort-key offset sweep:");
+        sb.AppendLine();
+        sb.AppendLine("| Candidate | Exact | Best XOR | XOR constant | Best add | Add constant |");
+        sb.AppendLine("|---|---:|---:|:---:|---:|:---:|");
+        foreach (CandidateScore score in best)
+        {
+            sb.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"| {score.Name} | {score.Exact}/{score.Evaluated} | {score.BestXorCount}/{score.Evaluated} | `{score.BestXorConstant:X4}` | {score.BestAddCount}/{score.Evaluated} | `{score.BestAddConstant:X4}` |");
+        }
+
+        sb.AppendLine();
+    }
+
+    private static CandidateScore ScoreSortKeyOffset(
+        SuffixCandidateContext[] contexts,
+        byte[][] sortKeys,
+        string name,
+        int offset,
+        bool bigEndian)
+    {
+        int evaluated = 0;
+        int exact = 0;
+        var xorCounts = new Dictionary<ushort, int>();
+        var addCounts = new Dictionary<ushort, int>();
+        for (int index = 0; index < contexts.Length; index++)
+        {
+            byte[] sortKey = sortKeys[index];
+            ushort? candidate = ReadWordOrNull(sortKey, offset, bigEndian);
+            if (!candidate.HasValue)
+            {
+                continue;
+            }
+
+            evaluated++;
+            ushort access = contexts[index].Row.AccessSuffix;
+            if (candidate.Value == access)
+            {
+                exact++;
+            }
+
+            IncrementCount(xorCounts, (ushort)(access ^ candidate.Value));
+            IncrementCount(addCounts, unchecked((ushort)(access - candidate.Value)));
+        }
+
+        (ushort bestXor, int bestXorCount) = BestCount(xorCounts);
+        (ushort bestAdd, int bestAddCount) = BestCount(addCounts);
+        return new CandidateScore(name, evaluated, exact, bestXorCount, bestXor, bestAddCount, bestAdd);
+    }
+
+    private static void AppendWideAffineTailSummary(StringBuilder sb, SuffixPatternTable table)
+    {
+        SuffixPatternRow[] trainRows = table.Rows
+            .Where(row => row is { Text: not null, Seed: not null })
+            .ToArray();
+        SuffixPatternRow[] allRows = table.Rows
+            .Where(row => row.Text is not null)
+            .ToArray();
+        if (trainRows.Length == 0 || allRows.Length == 0)
+        {
+            return;
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Wide affine tail models for {table.TableName}.DataIndex:");
+        sb.AppendLine();
+        sb.AppendLine("Trains on DAO-generated rows only; scores all rows, including the original fixture rows.");
+        sb.AppendLine();
+        sb.AppendLine("| Feature | Fit | Synthetic score | Original score | All score | Variables |");
+        sb.AppendLine("|---|:---:|---:|---:|---:|---:|");
+        AppendWideAffineTailResult(sb, table, trainRows, allRows, start: 0, includeLength: true);
+        AppendWideAffineTailResult(sb, table, trainRows, allRows, start: 508, includeLength: false);
+        AppendWideAffineTailResult(sb, table, trainRows, allRows, start: 508, includeLength: true);
+        AppendWideAffineTailResult(sb, table, trainRows, allRows, start: 510, includeLength: true);
+        sb.AppendLine();
+    }
+
+    private static void AppendWideAffineTailResult(
+        StringBuilder sb,
+        SuffixPatternTable table,
+        SuffixPatternRow[] trainRows,
+        SuffixPatternRow[] allRows,
+        int start,
+        bool includeLength)
+    {
+        int byteCount = trainRows
+            .Select(row => Math.Max(0, BuildFullV2010Entry(row.Text!, table.Ascending, GeneralCodes.Value, GeneralExtCodes.Value).Length - start))
+            .DefaultIfEmpty(0)
+            .Max();
+        int featureBytes = byteCount + (includeLength ? 1 : 0);
+        int variableCount = (featureBytes * 8) + 1;
+        BigInteger[] trainFeatures = trainRows
+            .Select(row => BuildWideTailFeature(row, table, start, byteCount, includeLength))
+            .ToArray();
+        ushort[] trainTargets = trainRows.Select(row => row.AccessSuffix).ToArray();
+
+        bool fits = TryFitWideAffineBinaryModel(trainFeatures, trainTargets, variableCount, out BigInteger[] coefficients);
+        string label = includeLength
+            ? $"full[{start}..]+len"
+            : $"full[{start}..]";
+        if (!fits)
+        {
+            sb.AppendLine(CultureInfo.InvariantCulture, $"| {label} | no | - | - | - | {variableCount} |");
+            return;
+        }
+
+        (int syntheticExact, int syntheticTotal) = ScoreWideAffineRows(trainRows, table, coefficients, start, byteCount, includeLength);
+        SuffixPatternRow[] originalRows = allRows.Where(row => row.Seed is null).ToArray();
+        (int originalExact, int originalTotal) = ScoreWideAffineRows(originalRows, table, coefficients, start, byteCount, includeLength);
+        (int allExact, int allTotal) = ScoreWideAffineRows(allRows, table, coefficients, start, byteCount, includeLength);
+
+        sb.AppendLine(
+            CultureInfo.InvariantCulture,
+            $"| {label} | yes | {syntheticExact}/{syntheticTotal} | {originalExact}/{originalTotal} | {allExact}/{allTotal} | {variableCount} |");
+    }
+
+    private static (int Exact, int Total) ScoreWideAffineRows(
+        SuffixPatternRow[] rows,
+        SuffixPatternTable table,
+        BigInteger[] coefficients,
+        int start,
+        int byteCount,
+        bool includeLength)
+    {
+        int exact = 0;
+        foreach (SuffixPatternRow row in rows)
+        {
+            BigInteger feature = BuildWideTailFeature(row, table, start, byteCount, includeLength);
+            ushort predicted = PredictWideAffineBinary(feature, coefficients);
+            if (predicted == row.AccessSuffix)
+            {
+                exact++;
+            }
+        }
+
+        return (exact, rows.Length);
+    }
+
+    private static BigInteger BuildWideTailFeature(
+        SuffixPatternRow row,
+        SuffixPatternTable table,
+        int start,
+        int byteCount,
+        bool includeLength)
+    {
+        byte[] full = BuildFullV2010Entry(row.Text!, table.Ascending, GeneralCodes.Value, GeneralExtCodes.Value);
+        byte[] bytes = new byte[byteCount + (includeLength ? 1 : 0) + 1];
+        int available = Math.Max(0, full.Length - start);
+        int take = Math.Min(byteCount, available);
+        if (take > 0)
+        {
+            full.AsSpan(start, take).CopyTo(bytes);
+        }
+
+        if (includeLength)
+        {
+            bytes[byteCount] = unchecked((byte)Math.Min(available, 255));
+        }
+
+        int interceptBit = (byteCount + (includeLength ? 1 : 0)) * 8;
+        bytes[interceptBit / 8] |= (byte)(1 << (interceptBit % 8));
+        return new BigInteger(bytes, isUnsigned: true, isBigEndian: false);
+    }
+
+    private static bool TryFitWideAffineBinaryModel(
+        BigInteger[] features,
+        ushort[] targets,
+        int variableCount,
+        out BigInteger[] coefficients)
+    {
+        coefficients = new BigInteger[16];
+        for (int targetBit = 0; targetBit < 16; targetBit++)
+        {
+            var basis = new BigInteger[variableCount];
+            var basisRhs = new int[variableCount];
+            for (int row = 0; row < features.Length; row++)
+            {
+                BigInteger mask = features[row];
+                int rhs = (targets[row] >> targetBit) & 1;
+                while (!mask.IsZero)
+                {
+                    int pivot = HighestSetBit(mask);
+                    if (basis[pivot].IsZero)
+                    {
+                        basis[pivot] = mask;
+                        basisRhs[pivot] = rhs;
+                        break;
+                    }
+
+                    mask ^= basis[pivot];
+                    rhs ^= basisRhs[pivot];
+                }
+
+                if (mask.IsZero && rhs != 0)
+                {
+                    coefficients = [];
+                    return false;
+                }
+            }
+
+            BigInteger solution = BigInteger.Zero;
+            for (int pivot = 0; pivot < variableCount; pivot++)
+            {
+                if (basis[pivot].IsZero)
+                {
+                    continue;
+                }
+
+                BigInteger dependencyMask = pivot == 0 ? BigInteger.Zero : basis[pivot] & ((BigInteger.One << pivot) - BigInteger.One);
+                int value = basisRhs[pivot] ^ Parity(solution & dependencyMask);
+                if (value != 0)
+                {
+                    solution |= BigInteger.One << pivot;
+                }
+            }
+
+            coefficients[targetBit] = solution;
+        }
+
+        return true;
+    }
+
+    private static ushort PredictWideAffineBinary(BigInteger feature, BigInteger[] coefficients)
+    {
+        ushort result = 0;
+        for (int bit = 0; bit < coefficients.Length; bit++)
+        {
+            if (Parity(feature & coefficients[bit]) != 0)
+            {
+                result |= (ushort)(1 << bit);
+            }
+        }
+
+        return result;
+    }
+
+    private static int HighestSetBit(BigInteger value)
+    {
+        byte[] bytes = value.ToByteArray(isUnsigned: true, isBigEndian: false);
+        int top = bytes.Length - 1;
+        return (top * 8) + (7 - BitOperations.LeadingZeroCount(bytes[top]) + 24);
+    }
+
+    private static int Parity(BigInteger value)
+    {
+        int parity = 0;
+        foreach (byte item in value.ToByteArray(isUnsigned: true, isBigEndian: false))
+        {
+            parity ^= BitOperations.PopCount(item) & 1;
+        }
+
+        return parity;
+    }
+
+    private static void AppendRollingPolynomialSolverSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
+    {
+        Encoding cp1252 = Encoding.GetEncoding(1252);
+        var inputIndexes = new[] { 0, 1, 2, 8, 9, 10, 11, 12, 13 };
+
+        sb.AppendLine("Rolling polynomial solver:");
+        sb.AppendLine();
+        sb.AppendLine("Tests `h = h * multiplier + byte (mod 65536)` with every odd multiplier, solving the seed from the first row and requiring an exact match on all rows.");
+        sb.AppendLine();
+        sb.AppendLine("| Input | Matches | First hits |");
+        sb.AppendLine("|---|---:|---|");
+
+        foreach (int inputIndex in inputIndexes)
+        {
+            RollingConstraint[] constraints = contexts
+                .Select(context =>
+                {
+                    byte[][] inputs = BuildInputCandidates(context.FullKey, context.Row.Text!, cp1252);
+                    return new RollingConstraint(inputs[inputIndex], context.Row.AccessSuffix);
+                })
+                .Where(constraint => constraint.Input.Length > 0)
+                .ToArray();
+
+            List<RollingPolynomialHit> hits = FindRollingPolynomialHits(constraints, maxHits: 8);
+            string hitText = hits.Count == 0
+                ? "-"
+                : "`" + string.Join(" ", hits.Select(hit => $"m={hit.Multiplier:X4}/seed={hit.Seed:X4}")) + "`";
+            sb.AppendLine(CultureInfo.InvariantCulture, $"| {InputCandidateNames[inputIndex]} | {hits.Count} | {hitText} |");
+        }
+
+        sb.AppendLine();
+    }
+
+    private static List<CandidateRule> BuildSuffixCandidateRules()
+    {
+        var rules = new List<CandidateRule>();
+        foreach ((string label, Func<SuffixCandidateContext, byte[]> getBytes) in BuildByteInputs())
+        {
+            rules.Add(new CandidateRule($"{label} word BE", context => ReadWordOrNull(getBytes(context), 0, bigEndian: true)));
+            rules.Add(new CandidateRule($"{label} word LE", context => ReadWordOrNull(getBytes(context), 0, bigEndian: false)));
+            rules.Add(new CandidateRule($"{label} FNV1a16", context => Fnv1A16(getBytes(context))));
+            AddHash32WordRules(rules, label, "FNV1a32", context => Fnv1A32(getBytes(context)));
+            rules.Add(new CandidateRule($"{label} DJB2-16", context => Djb216(getBytes(context))));
+            AddHash32WordRules(rules, label, "DJB2-32", context => Djb232(getBytes(context)));
+            AddHash32WordRules(rules, label, "SDBM-32", context => Sdbm32(getBytes(context)));
+            AddHash32WordRules(rules, label, "JenkinsOAAT-32", context => JenkinsOneAtATime32(getBytes(context)));
+            AddHash32WordRules(rules, label, "Murmur3-32 seed0", context => Murmur3X86_32(getBytes(context), 0));
+            AddHash32WordRules(rules, label, "Murmur3-32 seedFFFF", context => Murmur3X86_32(getBytes(context), 0xFFFF));
+            AddHash32WordRules(rules, label, "CRC32", context => Crc32(getBytes(context)));
+#pragma warning disable CA5350, CA5351 // Research-only scoring of legacy hash candidates; not used for security.
+            AddDigestWordRules(rules, label, "MD5", context => MD5.HashData(getBytes(context)));
+            AddDigestWordRules(rules, label, "SHA1", context => SHA1.HashData(getBytes(context)));
+#pragma warning restore CA5350, CA5351
+            rules.Add(new CandidateRule($"{label} Adler16", context => Adler16(getBytes(context))));
+            rules.Add(new CandidateRule($"{label} Fletcher16", context => Fletcher16(getBytes(context))));
+        }
+
+        foreach ((string label, Func<SuffixCandidateContext, string> getText) in BuildTextInputs())
+        {
+            AddCompareInfoRules(rules, label, getText, CultureInfo.InvariantCulture.CompareInfo, "Invariant");
+            AddCompareInfoRules(rules, label, getText, CultureInfo.GetCultureInfo("en-US").CompareInfo, "en-US");
+            if (OperatingSystem.IsWindows())
+            {
+                AddLcMapHashRules(rules, label, getText, "en-US");
+                AddLcMapSortKeyRules(rules, label, getText, "en-US");
+            }
+        }
+
+        return rules;
+    }
+
+    private static IEnumerable<(string Label, Func<SuffixCandidateContext, byte[]> GetBytes)> BuildByteInputs()
+    {
+        yield return ("full[508..]", context => SliceOrEmpty(context.FullKey, 508));
+        yield return ("full[510..]", context => SliceOrEmpty(context.FullKey, 510));
+        yield return ("full[508..511]", context => SliceOrEmpty(context.FullKey, 508, 3));
+        yield return ("full[508..512]", context => SliceOrEmpty(context.FullKey, 508, 4));
+        yield return ("full[508..513]", context => SliceOrEmpty(context.FullKey, 508, 5));
+        yield return ("full[..508]", context => context.FullKey.Length >= 508 ? context.FullKey[..508] : context.FullKey);
+        yield return ("full[..510] zero", context => ZeroSuffixCopy(context.FullKey));
+    }
+
+    private static IEnumerable<(string Label, Func<SuffixCandidateContext, string> GetText)> BuildTextInputs()
+    {
+        yield return ("text[253..255]", context => TextWindow(context.Row.Text!, 253, 255));
+        yield return ("text[254..255]", context => TextWindow(context.Row.Text!, 254, 255));
+        yield return ("text[253..]", context => TextWindow(context.Row.Text!, 253, context.Row.Text!.Length));
+        yield return ("text[..255]", context => TextWindow(context.Row.Text!, 0, 255));
+    }
+
+    private static void AddCompareInfoRules(
+        List<CandidateRule> rules,
+        string label,
+        Func<SuffixCandidateContext, string> getText,
+        CompareInfo compareInfo,
+        string compareLabel)
+    {
+        foreach (CompareOptions options in new[]
+        {
+            CompareOptions.None,
+            CompareOptions.IgnoreCase,
+            CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace,
+            CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace | CompareOptions.IgnoreSymbols,
+        })
+        {
+            string name = $"{label} {compareLabel} CompareHash {options}";
+            rules.Add(new CandidateRule($"{name} lo16", context => Low16(compareInfo.GetHashCode(getText(context), options))));
+            rules.Add(new CandidateRule($"{name} hi16", context => High16(compareInfo.GetHashCode(getText(context), options))));
+            rules.Add(new CandidateRule($"{name} lo16swap", context => ByteSwap(Low16(compareInfo.GetHashCode(getText(context), options)))));
+            rules.Add(new CandidateRule($"{name} hi16swap", context => ByteSwap(High16(compareInfo.GetHashCode(getText(context), options)))));
+        }
+    }
+
+    private static void AddHash32WordRules(
+        List<CandidateRule> rules,
+        string label,
+        string hashName,
+        Func<SuffixCandidateContext, uint> compute)
+    {
+        string name = $"{label} {hashName}";
+        rules.Add(new CandidateRule($"{name} lo16", context => unchecked((ushort)compute(context))));
+        rules.Add(new CandidateRule($"{name} hi16", context => unchecked((ushort)(compute(context) >> 16))));
+        rules.Add(new CandidateRule($"{name} lo16swap", context => ByteSwap(unchecked((ushort)compute(context)))));
+        rules.Add(new CandidateRule($"{name} hi16swap", context => ByteSwap(unchecked((ushort)(compute(context) >> 16)))));
+    }
+
+    private static void AddDigestWordRules(
+        List<CandidateRule> rules,
+        string label,
+        string hashName,
+        Func<SuffixCandidateContext, byte[]> compute)
+    {
+        foreach (int offset in new[] { 0, 2, 4, 6 })
+        {
+            string name = $"{label} {hashName} word{offset / 2}";
+            rules.Add(new CandidateRule($"{name} BE", context => ReadWordOrNull(compute(context), offset, bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} LE", context => ReadWordOrNull(compute(context), offset, bigEndian: false)));
+        }
+    }
+
+    private static void AddLcMapHashRules(
+        List<CandidateRule> rules,
+        string label,
+        Func<SuffixCandidateContext, string> getText,
+        string localeName)
+    {
+        foreach ((string optionLabel, uint flags) in new[]
+        {
+            ("none", LcMapHash),
+            ("ignore-case", LcMapHash | NormIgnoreCase),
+            ("ignore-case-nonspace", LcMapHash | NormIgnoreCase | NormIgnoreNonSpace),
+            ("ignore-case-nonspace-symbols", LcMapHash | NormIgnoreCase | NormIgnoreNonSpace | NormIgnoreSymbols),
+        })
+        {
+            string name = $"{label} LCMapHash {localeName} {optionLabel}";
+            rules.Add(new CandidateRule($"{name} word0 BE", context => ReadWordOrNull(LcMapHashBytes(localeName, flags, getText(context)), 0, bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} word0 LE", context => ReadWordOrNull(LcMapHashBytes(localeName, flags, getText(context)), 0, bigEndian: false)));
+            rules.Add(new CandidateRule($"{name} word1 BE", context => ReadWordOrNull(LcMapHashBytes(localeName, flags, getText(context)), 2, bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} word1 LE", context => ReadWordOrNull(LcMapHashBytes(localeName, flags, getText(context)), 2, bigEndian: false)));
+        }
+    }
+
+    private static void AddLcMapSortKeyRules(
+        List<CandidateRule> rules,
+        string label,
+        Func<SuffixCandidateContext, string> getText,
+        string localeName)
+    {
+        foreach ((string optionLabel, uint flags) in new[]
+        {
+            ("none", LcMapSortKey),
+            ("ignore-case", LcMapSortKey | NormIgnoreCase),
+            ("ignore-case-nonspace", LcMapSortKey | NormIgnoreCase | NormIgnoreNonSpace),
+            ("ignore-case-nonspace-symbols", LcMapSortKey | NormIgnoreCase | NormIgnoreNonSpace | NormIgnoreSymbols),
+        })
+        {
+            string name = $"{label} LCMapSortKey {localeName} {optionLabel}";
+            rules.Add(new CandidateRule($"{name} word0 BE", context => ReadWordOrNull(LcMapSortKeyBytes(localeName, flags, getText(context)), 0, bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} word0 LE", context => ReadWordOrNull(LcMapSortKeyBytes(localeName, flags, getText(context)), 0, bigEndian: false)));
+            rules.Add(new CandidateRule($"{name} word1 BE", context => ReadWordOrNull(LcMapSortKeyBytes(localeName, flags, getText(context)), 2, bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} word1 LE", context => ReadWordOrNull(LcMapSortKeyBytes(localeName, flags, getText(context)), 2, bigEndian: false)));
+            rules.Add(new CandidateRule($"{name} last BE", context => ReadLastWordOrNull(LcMapSortKeyBytes(localeName, flags, getText(context)), bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} last LE", context => ReadLastWordOrNull(LcMapSortKeyBytes(localeName, flags, getText(context)), bigEndian: false)));
+            rules.Add(new CandidateRule($"{name} FNV1a16", context => Fnv1A16(LcMapSortKeyBytes(localeName, flags, getText(context)))));
+            rules.Add(new CandidateRule($"{name} Adler16", context => Adler16(LcMapSortKeyBytes(localeName, flags, getText(context)))));
+            rules.Add(new CandidateRule($"{name} Fletcher16", context => Fletcher16(LcMapSortKeyBytes(localeName, flags, getText(context)))));
+        }
+    }
+
+    private static CandidateScore ScoreCandidate(CandidateRule rule, SuffixCandidateContext[] contexts)
+    {
+        int evaluated = 0;
+        int exact = 0;
+        var xorCounts = new Dictionary<ushort, int>();
+        var addCounts = new Dictionary<ushort, int>();
+        foreach (SuffixCandidateContext context in contexts)
+        {
+            ushort? candidate = rule.Compute(context);
+            if (!candidate.HasValue)
+            {
+                continue;
+            }
+
+            evaluated++;
+            ushort access = context.Row.AccessSuffix;
+            if (candidate.Value == access)
+            {
+                exact++;
+            }
+
+            IncrementCount(xorCounts, (ushort)(access ^ candidate.Value));
+            IncrementCount(addCounts, unchecked((ushort)(access - candidate.Value)));
+        }
+
+        (ushort bestXor, int bestXorCount) = BestCount(xorCounts);
+        (ushort bestAdd, int bestAddCount) = BestCount(addCounts);
+        return new CandidateScore(rule.Name, evaluated, exact, bestXorCount, bestXor, bestAddCount, bestAdd);
+    }
+
+    private static void IncrementCount(Dictionary<ushort, int> counts, ushort key)
+    {
+        counts.TryGetValue(key, out int count);
+        counts[key] = count + 1;
+    }
+
+    private static (ushort Key, int Count) BestCount(Dictionary<ushort, int> counts)
+    {
+        ushort bestKey = 0;
+        int bestCount = 0;
+        foreach ((ushort key, int count) in counts)
+        {
+            if (count > bestCount)
+            {
+                bestKey = key;
+                bestCount = count;
+            }
+        }
+
+        return (bestKey, bestCount);
+    }
+
+    private static List<RollingPolynomialHit> FindRollingPolynomialHits(
+        RollingConstraint[] constraints,
+        int maxHits)
+    {
+        var hits = new List<RollingPolynomialHit>();
+        if (constraints.Length == 0)
+        {
+            return hits;
+        }
+
+        RollingConstraint first = constraints[0];
+        for (int multiplierValue = 1; multiplierValue <= 0xFFFF; multiplierValue += 2)
+        {
+            ushort multiplier = (ushort)multiplierValue;
+            ushort power = PowModU16(multiplier, first.Input.Length);
+            ushort seedFactorInverse = ModInverseOdd(power);
+            ushort noSeed = RollingAddNoSeed(first.Input, multiplier);
+            ushort seed = unchecked((ushort)((first.Target - noSeed) * seedFactorInverse));
+
+            bool allMatch = true;
+            for (int constraintIndex = 0; constraintIndex < constraints.Length; constraintIndex++)
+            {
+                RollingConstraint constraint = constraints[constraintIndex];
+                if (RollingAdd(constraint.Input, multiplier, seed) != constraint.Target)
+                {
+                    allMatch = false;
+                    break;
+                }
+            }
+
+            if (allMatch)
+            {
+                hits.Add(new RollingPolynomialHit(multiplier, seed));
+                if (hits.Count >= maxHits)
+                {
+                    break;
+                }
+            }
+        }
+
+        return hits;
+    }
+
+    private static ushort RollingAdd(byte[] input, ushort multiplier, ushort seed)
+    {
+        unchecked
+        {
+            int hash = seed;
+            foreach (byte value in input)
+            {
+                hash = ((hash * multiplier) + value) & 0xFFFF;
+            }
+
+            return (ushort)hash;
+        }
+    }
+
+    private static ushort RollingAddNoSeed(byte[] input, ushort multiplier) =>
+        RollingAdd(input, multiplier, 0);
+
+    private static ushort PowModU16(ushort value, int exponent)
+    {
+        unchecked
+        {
+            int result = 1;
+            int factor = value;
+            int remaining = exponent;
+            while (remaining > 0)
+            {
+                if ((remaining & 1) != 0)
+                {
+                    result = (result * factor) & 0xFFFF;
+                }
+
+                factor = (factor * factor) & 0xFFFF;
+                remaining >>= 1;
+            }
+
+            return (ushort)result;
+        }
+    }
+
+    private static ushort ModInverseOdd(ushort value)
+    {
+        if ((value & 1) == 0)
+        {
+            throw new ArgumentException("Only odd values are invertible modulo 65536.", nameof(value));
+        }
+
+        unchecked
+        {
+            int inverse = value;
+            inverse *= 2 - (value * inverse);
+            inverse *= 2 - (value * inverse);
+            inverse *= 2 - (value * inverse);
+            inverse *= 2 - (value * inverse);
+            return (ushort)inverse;
+        }
+    }
+
+    private static byte[] SliceOrEmpty(byte[] bytes, int start) =>
+        bytes.Length > start ? bytes[start..] : [];
+
+    private static byte[] SliceOrEmpty(byte[] bytes, int start, int length)
+    {
+        if (length <= 0 || bytes.Length <= start)
+        {
+            return [];
+        }
+
+        int available = Math.Min(length, bytes.Length - start);
+        return bytes.AsSpan(start, available).ToArray();
+    }
+
+    private static byte[] ZeroSuffixCopy(byte[] bytes)
+    {
+        byte[] copy = bytes.Length >= LongRowEntryLength ? bytes[..LongRowEntryLength] : (byte[])bytes.Clone();
+        if (copy.Length >= LongRowEntryLength)
+        {
+            copy[508] = 0;
+            copy[509] = 0;
+        }
+
+        return copy;
+    }
+
+    private static string TextWindow(string text, int start, int endExclusive)
+    {
+        if (start >= text.Length)
+        {
+            return string.Empty;
+        }
+
+        int end = Math.Min(text.Length, Math.Max(start, endExclusive));
+        return text[start..end];
+    }
+
+    private static ushort? ReadWordOrNull(byte[] bytes, int offset, bool bigEndian)
+    {
+        if (offset < 0 || offset + 2 > bytes.Length)
+        {
+            return null;
+        }
+
+        return bigEndian
+            ? BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(offset, 2))
+            : BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(offset, 2));
+    }
+
+    private static ushort? ReadLastWordOrNull(byte[] bytes, bool bigEndian)
+    {
+        if (bytes.Length < 2)
+        {
+            return null;
+        }
+
+        int offset = bytes[^1] == 0 && bytes.Length >= 3 ? bytes.Length - 3 : bytes.Length - 2;
+        return ReadWordOrNull(bytes, offset, bigEndian);
+    }
+
+    private static ushort Fnv1A16(byte[] bytes)
+    {
+        unchecked
+        {
+            uint hash = Fnv1A32(bytes);
+
+            return (ushort)((hash >> 16) ^ hash);
+        }
+    }
+
+    private static uint Fnv1A32(byte[] bytes)
+    {
+        unchecked
+        {
+            uint hash = 2166136261u;
+            foreach (byte value in bytes)
+            {
+                hash ^= value;
+                hash *= 16777619u;
+            }
+
+            return hash;
+        }
+    }
+
+    private static ushort Djb216(byte[] bytes)
+    {
+        unchecked
+        {
+            uint hash = Djb232(bytes);
+
+            return (ushort)((hash >> 16) ^ hash);
+        }
+    }
+
+    private static uint Djb232(byte[] bytes)
+    {
+        unchecked
+        {
+            uint hash = 5381u;
+            foreach (byte value in bytes)
+            {
+                hash = ((hash << 5) + hash) + value;
+            }
+
+            return hash;
+        }
+    }
+
+    private static uint Sdbm32(byte[] bytes)
+    {
+        unchecked
+        {
+            uint hash = 0;
+            foreach (byte value in bytes)
+            {
+                hash = value + (hash << 6) + (hash << 16) - hash;
+            }
+
+            return hash;
+        }
+    }
+
+    private static uint JenkinsOneAtATime32(byte[] bytes)
+    {
+        unchecked
+        {
+            uint hash = 0;
+            foreach (byte value in bytes)
+            {
+                hash += value;
+                hash += hash << 10;
+                hash ^= hash >> 6;
+            }
+
+            hash += hash << 3;
+            hash ^= hash >> 11;
+            hash += hash << 15;
+            return hash;
+        }
+    }
+
+    private static uint Murmur3X86_32(byte[] bytes, uint seed)
+    {
+        unchecked
+        {
+            const uint C1 = 0xCC9E2D51;
+            const uint C2 = 0x1B873593;
+            uint hash = seed;
+            int roundedEnd = bytes.Length & ~3;
+
+            for (int index = 0; index < roundedEnd; index += 4)
+            {
+                uint k1 = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(index, 4));
+                k1 *= C1;
+                k1 = RotateLeft(k1, 15);
+                k1 *= C2;
+
+                hash ^= k1;
+                hash = RotateLeft(hash, 13);
+                hash = (hash * 5) + 0xE6546B64;
+            }
+
+            uint tail = 0;
+            switch (bytes.Length & 3)
+            {
+                case 3:
+                    tail ^= (uint)bytes[roundedEnd + 2] << 16;
+                    goto case 2;
+                case 2:
+                    tail ^= (uint)bytes[roundedEnd + 1] << 8;
+                    goto case 1;
+                case 1:
+                    tail ^= bytes[roundedEnd];
+                    tail *= C1;
+                    tail = RotateLeft(tail, 15);
+                    tail *= C2;
+                    hash ^= tail;
+                    break;
+            }
+
+            hash ^= (uint)bytes.Length;
+            hash ^= hash >> 16;
+            hash *= 0x85EBCA6B;
+            hash ^= hash >> 13;
+            hash *= 0xC2B2AE35;
+            hash ^= hash >> 16;
+            return hash;
+        }
+    }
+
+    private static uint RotateLeft(uint value, int offset) =>
+        (value << offset) | (value >> (32 - offset));
+
+    private static uint Crc32(byte[] bytes)
+    {
+        unchecked
+        {
+            uint crc = 0xFFFFFFFFu;
+            foreach (byte value in bytes)
+            {
+                crc ^= value;
+                for (int bit = 0; bit < 8; bit++)
+                {
+                    crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
+                }
+            }
+
+            return ~crc;
+        }
+    }
+
+    private static ushort Adler16(byte[] bytes)
+    {
+        const int Mod = 251;
+        int a = 1;
+        int b = 0;
+        foreach (byte value in bytes)
+        {
+            a = (a + value) % Mod;
+            b = (b + a) % Mod;
+        }
+
+        return (ushort)((b << 8) | a);
+    }
+
+    private static ushort Fletcher16(byte[] bytes)
+    {
+        int sum1 = 0;
+        int sum2 = 0;
+        foreach (byte value in bytes)
+        {
+            sum1 = (sum1 + value) % 255;
+            sum2 = (sum2 + sum1) % 255;
+        }
+
+        return (ushort)((sum2 << 8) | sum1);
+    }
+
+    private static ushort Low16(int value) => unchecked((ushort)value);
+
+    private static ushort High16(int value) => unchecked((ushort)(value >> 16));
+
+    private static ushort ByteSwap(ushort value) => unchecked((ushort)((value << 8) | (value >> 8)));
+
+    private static byte[] LcMapHashBytes(string localeName, uint flags, string value)
+    {
+        byte[] buffer = new byte[4];
+        int result = LCMapStringEx(localeName, flags, value, value.Length, buffer, buffer.Length, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+        return result > 0 ? buffer : [];
+    }
+
+    private static byte[] LcMapSortKeyBytes(string localeName, uint flags, string value)
+    {
+        byte[] buffer = new byte[Math.Max(32, (value.Length * 8) + 32)];
+        int result = LCMapStringEx(localeName, flags, value, value.Length, buffer, buffer.Length, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+        if (result <= 0)
+        {
+            return [];
+        }
+
+        int length = Math.Min(result, buffer.Length);
+        return buffer[..length];
+    }
+
+    private static string DescribeSeedExamples(IEnumerable<SuffixPatternRow> rows)
+    {
+        string[] parts = rows
+            .Select(row => string.Create(
+                CultureInfo.InvariantCulture,
+                $"{row.Seed}:{row.AccessSuffix:X4}/{row.EncoderSuffix:X4}"))
+            .ToArray();
+        return parts.Length == 0 ? "-" : $"`{string.Join(" ", parts)}`";
+    }
+
+    private static void AppendRawLeafCompressionSummary(
+        StringBuilder sb,
+        string tableName,
+        IndexMetadata index,
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        int pageSize,
+        IReadOnlyList<RawLeafPageSummary> pages)
+    {
+        _ = layout;
+        _ = pageSize;
+        sb.AppendLine(CultureInfo.InvariantCulture, $"### {tableName}.DataIndex raw leaf compression");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- first_dp: {index.FirstDp}");
+        sb.AppendLine();
+        sb.AppendLine("| Leaf page | pref_len | payload end | entries | 510-byte decoded entries | First long raw key len | First long raw key tail | First long decoded suffix |");
+        sb.AppendLine("|---:|---:|---:|---:|---:|---:|---|:---:|");
+
+        foreach (RawLeafPageSummary page in pages)
+        {
+            sb.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"| {page.PageNumber} | {page.PrefixLength} | {page.PayloadEnd} | {page.EntryCount} | {page.LongEntryCount} | {page.FirstLongRawKeyLength?.ToString(CultureInfo.InvariantCulture) ?? "-"} | {page.FirstLongRawKeyTail} | {(page.FirstLongDecodedSuffix.HasValue ? $"`{page.FirstLongDecodedSuffix.Value:X4}`" : "-")} |");
+        }
+
+        sb.AppendLine();
     }
 
     private static async Task ScanFixtureForLongRowsAsync(
@@ -337,10 +2132,10 @@ internal static class LongRowSuffixProbe
                 continue;
             }
 
-            int? fullLength = value is string text
-                ? BuildFullV2010Entry(text, keyColumn.IsAscending, GeneralCodes.Value, GeneralExtCodes.Value).Length
+            byte[]? fullKey = value is string text
+                ? BuildFullV2010Entry(text, keyColumn.IsAscending, GeneralCodes.Value, GeneralExtCodes.Value)
                 : null;
-            encoded.Add(new EncodedCorpusKey(value, key, fullLength));
+            encoded.Add(new EncodedCorpusKey(value, key, fullKey, DescribeCorpusRowLabel(row)));
         }
 
         encoded.Sort((left, right) => CompareBytesUnsignedPrefix(left.Key, right.Key));
@@ -390,7 +2185,9 @@ internal static class LongRowSuffixProbe
                     expectedSuffix,
                     actualSuffix,
                     encodedKey.Key.Length,
-                    encodedKey.FullLength,
+                    encodedKey.FullKey?.Length,
+                    DescribeFullTail(encodedKey.FullKey),
+                    encodedKey.RowLabel,
                     DescribeCorpusValue(encodedKey.Value)));
             }
         }
@@ -446,8 +2243,8 @@ internal static class LongRowSuffixProbe
         }
 
         sb.AppendLine();
-        sb.AppendLine("| Position | Data ptr | Prefix match | Access suffix | Encoder suffix | Encoded len | Full len | Value |");
-        sb.AppendLine("|---:|---:|:---:|:---:|:---:|---:|---:|---|");
+        sb.AppendLine("| Position | Data ptr | Row | Prefix match | Access suffix | Encoder suffix | Encoded len | Full len | Full tail | Value |");
+        sb.AppendLine("|---:|---:|---|:---:|:---:|:---:|---:|---:|---|---|");
         foreach (CorpusSuffixExample example in scan.Examples)
         {
             string fullLength = example.FullLength?.ToString(CultureInfo.InvariantCulture) ?? "-";
@@ -456,7 +2253,7 @@ internal static class LongRowSuffixProbe
                 : "-";
             sb.AppendLine(
                 CultureInfo.InvariantCulture,
-                $"| {example.Position} | {example.DataPage}:{example.DataRow} | {(example.PrefixMatch ? "yes" : "no")} | `{example.ExpectedSuffix:X4}` | {encoderSuffix} | {example.EncodedLength} | {fullLength} | {example.ValuePreview} |");
+                $"| {example.Position} | {example.DataPage}:{example.DataRow} | {example.RowLabel} | {(example.PrefixMatch ? "yes" : "no")} | `{example.ExpectedSuffix:X4}` | {encoderSuffix} | {example.EncodedLength} | {fullLength} | {example.FullTail} | {example.ValuePreview} |");
         }
 
         sb.AppendLine();
@@ -505,6 +2302,35 @@ internal static class LongRowSuffixProbe
         };
     }
 
+    private static string DescribeCorpusRowLabel(DataRow row)
+    {
+        string label = DescribeCorpusRowLabelValue(row);
+        return label == "-" ? "-" : $"`{EscapeMarkdown(label)}`";
+    }
+
+    private static string DescribeCorpusRowLabelValue(DataRow row)
+    {
+        DataColumnCollection columns = row.Table.Columns;
+        if (columns.Contains("name"))
+        {
+            object value = row["name"];
+            return value is DBNull ? "-" : Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+        }
+
+        return "-";
+    }
+
+    private static string DescribeFullTail(byte[]? fullKey)
+    {
+        if (fullKey is null || fullKey.Length <= 500)
+        {
+            return "-";
+        }
+
+        int tailLength = Math.Min(fullKey.Length - 500, 32);
+        return $"`{Convert.ToHexString(fullKey.AsSpan(500, tailLength))}`";
+    }
+
     private static string TruncateForReport(string value, int maxLength) =>
         value.Length <= maxLength
             ? value
@@ -523,23 +2349,55 @@ internal static class LongRowSuffixProbe
             $ErrorActionPreference = 'Stop'
             $dbPath = {{db}}
             $rowCount = {{rowCount}}
+            $alphabet = ' abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+'
 
             function New-LabText([int] $seed) {
-                $builder = [System.Text.StringBuilder]::new()
-                $fragments = @(
-                    'a;sldjfl;aksj dfl;kasj ldfkaslhdfkjhasjk dhfkljas djfhaskljd ',
-                    'a;s-ldjfl;aksj dfl;kasj l' + [char]0x00ED + 'dfkaslhdfkjhasjk dhfkljas djfhaskl ',
-                    '-a;sldjfl;ak' + [char]0x00C1 + 'sj dfl;kasj ldfkaslhdfkjhasjk dhfkljas djfhaskl '
-                )
-
-                for ($repeat = 0; $repeat -lt 15; $repeat++) {
-                    [void] $builder.Append($fragments[($seed + $repeat) % $fragments.Length])
-                    if ((($repeat + $seed) % 4) -eq 0) { [void] $builder.Append("`r`n") }
-                    if ((($repeat * 7 + $seed) % 9) -eq 0) { [void] $builder.Append('-') }
-                    if ((($repeat * 5 + $seed) % 11) -eq 0) { [void] $builder.Append([char]0x00C1) }
+                $chars = New-Object 'char[]' 360
+                for ($position = 0; $position -lt $chars.Length; $position++) {
+                    $chars[$position] = 'a'
                 }
 
-                return $builder.ToString()
+                if ($seed -ge {{DaoLabAuxMatrixStart}}) {
+                    $pair = $seed - {{DaoLabAuxMatrixStart}}
+                    $first = [int] [Math]::Floor($pair / $alphabet.Length)
+                    $second = [int] ($pair % $alphabet.Length)
+                    $chars[12] = [char]0x00C1
+                    $chars[25] = [char]0x00ED
+                    $chars[86] = '-'
+                    $chars[102] = '-'
+                    $chars[253] = $alphabet[$first]
+                    $chars[254] = $alphabet[$second]
+                    return [string]::new($chars)
+                }
+
+                if ($seed -ge {{DaoLabPairMatrixStart}}) {
+                    $pair = $seed - {{DaoLabPairMatrixStart}}
+                    $first = [int] [Math]::Floor($pair / $alphabet.Length)
+                    $second = [int] ($pair % $alphabet.Length)
+                    $chars[253] = $alphabet[$first]
+                    $chars[254] = $alphabet[$second]
+                    return [string]::new($chars)
+                }
+
+                $group = [Math]::Floor($seed / 64)
+                $variant = $seed % 64
+                $variantChar = $alphabet[$variant]
+
+                switch ($group) {
+                    0 { $chars[253] = $variantChar }
+                    1 { $chars[254] = $variantChar }
+                    2 { $chars[20] = $variantChar }
+                    default {
+                        $chars[12] = [char]0x00C1
+                        $chars[25] = [char]0x00ED
+                        $chars[86] = '-'
+                        $chars[102] = '-'
+                        $chars[253] = $variantChar
+                        if (($variant % 3) -eq 0) { $chars[179] = "`r"[0]; $chars[180] = "`n"[0] }
+                    }
+                }
+
+                return [string]::new($chars)
             }
 
             function Write-TableFields([object] $db, [string] $tableName) {
@@ -571,7 +2429,7 @@ internal static class LongRowSuffixProbe
                 $rs = $db.OpenRecordset($tableName, 2)
                 try {
                     for ($seed = 0; $seed -lt $rowCount; $seed++) {
-                        $text = [string] (New-LabText ($seed + $offset))
+                        $text = [string] (New-LabText $seed)
                         $rs.AddNew()
                         for ($fieldIndex = 0; $fieldIndex -lt $rs.Fields.Count; $fieldIndex++) {
                             $field = $rs.Fields.Item($fieldIndex)
@@ -1019,6 +2877,9 @@ internal static class LongRowSuffixProbe
             extras,
             unprint,
             [.. extras, .. unprint],
+            full.Length > 508 ? full[508..Math.Min(full.Length, 511)] : [],
+            full.Length > 508 ? full[508..Math.Min(full.Length, 512)] : [],
+            full.Length > 508 ? full[508..Math.Min(full.Length, 513)] : [],
             full.Length >= 508 ? full[..508] : full,
             full.Length >= 508 ? full[1..508] : full,
             selfCheck,
@@ -1201,6 +3062,375 @@ internal static class LongRowSuffixProbe
         return result;
     }
 
+    private static async Task<List<LeafEntryDetail>> CollectDetailedLeafEntriesFromRootAsync(
+        AccessReader reader,
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        int pageSize,
+        long rootPage,
+        CancellationToken ct)
+    {
+        long current = rootPage;
+        for (int depth = 0; depth < 32; depth++)
+        {
+            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            byte pageType = page[0];
+            if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                break;
+            }
+
+            if (pageType != Constants.IndexLeafPage.PageTypeIntermediate)
+            {
+                throw new InvalidOperationException(
+                    $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
+            }
+
+            List<DecodedIntermediateEntry> entries =
+                IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+            if (entries.Count == 0)
+            {
+                throw new InvalidOperationException($"Intermediate page {current} has no entries.");
+            }
+
+            current = entries[0].ChildPage;
+        }
+
+        var result = new List<LeafEntryDetail>();
+        int position = 0;
+        long visitGuard = 0;
+        while (current != 0)
+        {
+            if (++visitGuard > 100_000)
+            {
+                throw new InvalidOperationException("Leaf chain exceeds visit guard; possible cycle.");
+            }
+
+            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            if (page[0] != Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                throw new InvalidOperationException(
+                    $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
+            }
+
+            result.AddRange(DecodeLeafEntryDetails(layout, page, pageSize, current, ref position));
+
+            (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
+            current = next;
+        }
+
+        return result;
+    }
+
+    private static List<LeafEntryDetail> DecodeLeafEntryDetails(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        byte[] page,
+        int pageSize,
+        long leafPage,
+        ref int position)
+    {
+        var result = new List<LeafEntryDetail>();
+        int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(layout.PrefLenOffset, 2));
+        int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+        int payloadEnd = pageSize - freeSpace;
+        if (payloadEnd <= layout.FirstEntryOffset)
+        {
+            return result;
+        }
+
+        byte[]? sharedPrefix = null;
+        int entryStart = layout.FirstEntryOffset;
+        int entryIndex = 0;
+        bool isFirst = true;
+        while (entryStart < payloadEnd)
+        {
+            int next = NextEntryStartForProbe(layout, page, payloadEnd, entryStart);
+            int entryEnd = next < 0 ? payloadEnd : next;
+            int totalLength = entryEnd - entryStart;
+            int rawKeyLength = totalLength - 4;
+            if (rawKeyLength < 0)
+            {
+                break;
+            }
+
+            byte[] canonical;
+            if (isFirst)
+            {
+                canonical = new byte[rawKeyLength];
+                Buffer.BlockCopy(page, entryStart, canonical, 0, rawKeyLength);
+                if (pref > 0 && rawKeyLength >= pref)
+                {
+                    sharedPrefix = canonical[..pref];
+                }
+            }
+            else
+            {
+                canonical = new byte[pref + rawKeyLength];
+                if (pref > 0 && sharedPrefix is not null)
+                {
+                    Buffer.BlockCopy(sharedPrefix, 0, canonical, 0, pref);
+                }
+
+                Buffer.BlockCopy(page, entryStart, canonical, pref, rawKeyLength);
+            }
+
+            int dataPointerOffset = entryStart + rawKeyLength;
+            long dataPage = JetTypeInfo.ReadUInt24BigEndian(page.AsSpan(dataPointerOffset, 3));
+            byte dataRow = page[dataPointerOffset + 3];
+            result.Add(new LeafEntryDetail(
+                new IndexEntry(canonical, dataPage, dataRow),
+                position++,
+                leafPage,
+                entryIndex++,
+                pref,
+                rawKeyLength,
+                entryStart));
+
+            isFirst = false;
+            if (next < 0)
+            {
+                break;
+            }
+
+            entryStart = next;
+        }
+
+        return result;
+    }
+
+    private static async Task<Dictionary<long, PhysicalRowSnapshot>> BuildPhysicalRowSnapshotMapAsync(
+        AccessReader reader,
+        string tableName,
+        CancellationToken ct)
+    {
+        DataTable dataTable = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+        CatalogEntry catalogEntry = await reader.GetCatalogEntryAsync(tableName, ct)
+            ?? throw new InvalidOperationException($"Table '{tableName}' was not found in the catalog.");
+        List<RowLocation> locations = await CollectPhysicalRowLocationsAsync(reader, catalogEntry.TDefPage, ct);
+        if (locations.Count != dataTable.Rows.Count)
+        {
+            throw new InvalidOperationException(
+                $"Physical row count mismatch for {tableName}: locations={locations.Count}, rows={dataTable.Rows.Count}.");
+        }
+
+        var result = new Dictionary<long, PhysicalRowSnapshot>(locations.Count);
+        for (int rowIndex = 0; rowIndex < locations.Count; rowIndex++)
+        {
+            RowLocation location = locations[rowIndex];
+            DataRow row = dataTable.Rows[rowIndex];
+            object boxed = row["data"];
+            object? value = boxed is DBNull ? null : boxed;
+            result[EncodeDataPointer(location.PageNumber, (byte)location.RowIndex)] =
+                new PhysicalRowSnapshot(DescribeCorpusRowLabelValue(row), value);
+        }
+
+        return result;
+    }
+
+    private static async Task<List<RowLocation>> CollectPhysicalRowLocationsAsync(
+        AccessReader reader,
+        long tdefPage,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(reader.HostDatabasePath))
+        {
+            throw new InvalidOperationException("Physical row mapping requires a file-backed AccessReader.");
+        }
+
+        long totalPages = new FileInfo(reader.HostDatabasePath).Length / reader.PageSize;
+        var result = new List<RowLocation>();
+        for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
+        {
+            byte[] page = await reader.GetRawPageBytesAsync(pageNumber, ct);
+            if (page[0] != 0x01)
+            {
+                continue;
+            }
+
+            long owner = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(reader._dataPage.TDefOff, 4));
+            if (owner != tdefPage)
+            {
+                continue;
+            }
+
+            foreach (RowLocation location in reader.EnumerateLiveRowLocations(pageNumber, page))
+            {
+                if (location.RowSize >= reader._rowSz.NumCols)
+                {
+                    result.Add(location);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static long EncodeDataPointer(long page, byte row) => (page << 8) | row;
+
+    private static async Task<List<RawLeafPageSummary>> CollectRawLeafPageSummariesAsync(
+        AccessReader reader,
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        int pageSize,
+        long rootPage,
+        CancellationToken ct)
+    {
+        long current = rootPage;
+        for (int depth = 0; depth < 32; depth++)
+        {
+            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            byte pageType = page[0];
+            if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                break;
+            }
+
+            if (pageType != Constants.IndexLeafPage.PageTypeIntermediate)
+            {
+                throw new InvalidOperationException(
+                    $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
+            }
+
+            List<DecodedIntermediateEntry> entries =
+                IndexLeafIncremental.DecodeIntermediateEntries(layout, page, pageSize);
+            if (entries.Count == 0)
+            {
+                throw new InvalidOperationException($"Intermediate page {current} has no entries.");
+            }
+
+            current = entries[0].ChildPage;
+        }
+
+        var result = new List<RawLeafPageSummary>();
+        long visitGuard = 0;
+        while (current != 0)
+        {
+            if (++visitGuard > 100_000)
+            {
+                throw new InvalidOperationException("Leaf chain exceeds visit guard; possible cycle.");
+            }
+
+            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            if (page[0] != Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                throw new InvalidOperationException(
+                    $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
+            }
+
+            result.Add(SummarizeRawLeafPage(layout, page, pageSize, current));
+
+            (long _, long next, long _) = IndexLeafIncremental.ReadSiblingPointers(layout, page);
+            current = next;
+        }
+
+        return result;
+    }
+
+    private static RawLeafPageSummary SummarizeRawLeafPage(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        byte[] page,
+        int pageSize,
+        long pageNumber)
+    {
+        int prefixLength = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(layout.PrefLenOffset, 2));
+        int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+        int payloadEnd = pageSize - freeSpace;
+
+        int entryCount = 0;
+        int longEntryCount = 0;
+        int? firstLongRawKeyLength = null;
+        string firstLongRawKeyTail = "-";
+        ushort? firstLongDecodedSuffix = null;
+
+        if (payloadEnd <= layout.FirstEntryOffset)
+        {
+            return new RawLeafPageSummary(pageNumber, prefixLength, payloadEnd, 0, 0, null, "-", null);
+        }
+
+        int entryStart = layout.FirstEntryOffset;
+        bool isFirst = true;
+        while (entryStart < payloadEnd)
+        {
+            int next = NextEntryStartForProbe(layout, page, payloadEnd, entryStart);
+            int entryEnd = next < 0 ? payloadEnd : next;
+            int totalLength = entryEnd - entryStart;
+            int rawKeyLength = totalLength - 4;
+            if (rawKeyLength < 0)
+            {
+                break;
+            }
+
+            int decodedKeyLength = isFirst ? rawKeyLength : prefixLength + rawKeyLength;
+            if (decodedKeyLength == LongRowEntryLength)
+            {
+                longEntryCount++;
+                if (!firstLongRawKeyLength.HasValue)
+                {
+                    firstLongRawKeyLength = rawKeyLength;
+                    firstLongRawKeyTail = FormatTail(page.AsSpan(entryStart, rawKeyLength));
+                    if (rawKeyLength >= 2)
+                    {
+                        int suffixOffset = entryStart + rawKeyLength - 2;
+                        firstLongDecodedSuffix = (ushort)((page[suffixOffset] << 8) | page[suffixOffset + 1]);
+                    }
+                }
+            }
+
+            entryCount++;
+            isFirst = false;
+            if (next < 0)
+            {
+                break;
+            }
+
+            entryStart = next;
+        }
+
+        return new RawLeafPageSummary(
+            pageNumber,
+            prefixLength,
+            payloadEnd,
+            entryCount,
+            longEntryCount,
+            firstLongRawKeyLength,
+            firstLongRawKeyTail,
+            firstLongDecodedSuffix);
+    }
+
+    private static int NextEntryStartForProbe(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        byte[] page,
+        int payloadEnd,
+        int currentStart)
+    {
+        int searchStart = currentStart - layout.FirstEntryOffset + 1;
+        for (int bit = searchStart; bit < payloadEnd - layout.FirstEntryOffset; bit++)
+        {
+            int byteOffset = layout.BitmaskOffset + (bit / 8);
+            if (byteOffset >= layout.FirstEntryOffset)
+            {
+                return -1;
+            }
+
+            if ((page[byteOffset] & (1 << (bit % 8))) != 0)
+            {
+                int candidate = layout.FirstEntryOffset + bit;
+                return candidate < payloadEnd ? candidate : -1;
+            }
+        }
+
+        return -1;
+    }
+
+    private static string FormatTail(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.IsEmpty)
+        {
+            return "-";
+        }
+
+        int length = Math.Min(bytes.Length, 16);
+        return $"`{Convert.ToHexString(bytes[^length..])}`";
+    }
+
     private static int CompareBytesUnsignedPrefix(byte[] left, byte[] right)
     {
         int prefixLength = Math.Min(Math.Min(left.Length, right.Length), PrefixMatchLength);
@@ -1251,6 +3481,74 @@ internal static class LongRowSuffixProbe
 
     private readonly record struct ConstraintSet(string Label, byte[][] Inputs, ushort Expected);
 
+    private readonly record struct SuffixPatternTable(
+        string TableName,
+        int SeedBase,
+        IndexMetadata Index,
+        bool Ascending,
+        IndexLeafPageBuilder.LeafPageLayout Layout,
+        int ReaderPageSize,
+        IReadOnlyList<SuffixPatternRow> Rows,
+        IReadOnlyList<RawLeafPageSummary> RawLeafPages);
+
+    private readonly record struct SuffixPatternRow(
+        string RowLabel,
+        int? Seed,
+        int Position,
+        long DataPage,
+        byte DataRow,
+        ushort AccessSuffix,
+        ushort EncoderSuffix,
+        int? FullLength,
+        string FullTail,
+        bool PrefixMatch,
+        long LeafPage,
+        int LeafEntryIndex,
+        int PrefixLength,
+        int RawKeyLength,
+        int EntryStart,
+        string? Text);
+
+    private readonly record struct LeafEntryDetail(
+        IndexEntry Entry,
+        int Position,
+        long LeafPage,
+        int EntryIndex,
+        int PrefixLength,
+        int RawKeyLength,
+        int EntryStart);
+
+    private readonly record struct PhysicalRowSnapshot(string RowLabel, object? Value);
+
+    private readonly record struct SuffixCandidateContext(SuffixPatternRow Row, byte[] FullKey);
+
+    private readonly record struct CandidateRule(string Name, Func<SuffixCandidateContext, ushort?> Compute);
+
+    private readonly record struct CandidateScore(
+        string Name,
+        int Evaluated,
+        int Exact,
+        int BestXorCount,
+        ushort BestXorConstant,
+        int BestAddCount,
+        ushort BestAddConstant);
+
+    private readonly record struct RollingConstraint(byte[] Input, ushort Target);
+
+    private readonly record struct RollingPolynomialHit(ushort Multiplier, ushort Seed);
+
+    private readonly record struct Crc16AffineHit(ushort Polynomial, ushort XorConstant, bool RefIn, bool RefOut);
+
+    private readonly record struct RawLeafPageSummary(
+        long PageNumber,
+        int PrefixLength,
+        int PayloadEnd,
+        int EntryCount,
+        int LongEntryCount,
+        int? FirstLongRawKeyLength,
+        string FirstLongRawKeyTail,
+        ushort? FirstLongDecodedSuffix);
+
     private sealed class CorpusScanTotals
     {
         public int FixturesScanned { get; set; }
@@ -1270,7 +3568,7 @@ internal static class LongRowSuffixProbe
         public int PrefixMatches { get; set; }
     }
 
-    private readonly record struct EncodedCorpusKey(object? Value, byte[] Key, int? FullLength);
+    private readonly record struct EncodedCorpusKey(object? Value, byte[] Key, byte[]? FullKey, string RowLabel);
 
     private readonly record struct CorpusIndexScanResult(
         int EncodedLongCount,
@@ -1286,6 +3584,8 @@ internal static class LongRowSuffixProbe
         ushort ActualSuffix,
         int EncodedLength,
         int? FullLength,
+        string FullTail,
+        string RowLabel,
         string ValuePreview);
 
     private sealed class BytePrefixComparer : IComparer<byte[]>
