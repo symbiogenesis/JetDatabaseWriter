@@ -7,6 +7,7 @@
 namespace JetDatabaseWriter.FormatProbe;
 
 using System;
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
@@ -82,6 +83,14 @@ internal static class LongRowSuffixProbe
         "full[1..508]",
         "full[..510] suffix zeroed",
     ];
+
+    private static readonly int[] RollingInputIndexes = [0, 1, 2, 8, 9, 10, 11, 12, 13];
+
+    private static readonly SearchValues<char> MarkdownEscapeSearch = SearchValues.Create("`|\r\n");
+
+    private static readonly SearchValues<byte> EndTextSearch = SearchValues.Create([GeneralLegacyTextIndexEncoder.EndText]);
+
+    private static readonly Lazy<List<CandidateRule>> SuffixCandidateRules = new(BuildSuffixCandidateRules);
 
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
@@ -297,6 +306,8 @@ internal static class LongRowSuffixProbe
                 leafEntry.PrefixLength,
                 leafEntry.RawKeyLength,
                 leafEntry.EntryStart,
+                fullKey,
+                BuildTrimmedFullV2010Entry(text, keyColumn.IsAscending),
                 text));
         }
 
@@ -570,7 +581,7 @@ internal static class LongRowSuffixProbe
         var constraints = rows
             .Where(row => row.Text is not null)
             .Select(row => new RollingConstraint(
-                SliceOrEmpty(BuildFullV2010Entry(row.Text!, table.Ascending, GeneralCodes.Value, GeneralExtCodes.Value), 508),
+                SliceOrEmpty(row.FullKey, 508),
                 row.AccessSuffix))
             .Where(constraint => constraint.Input.Length > 0)
             .ToArray();
@@ -656,20 +667,28 @@ internal static class LongRowSuffixProbe
         int bitCount,
         Func<SuffixPatternRow, SuffixPatternTable, int, ulong?> buildFeature)
     {
-        var features = new List<ulong>(rows.Length);
-        var featureTargets = new List<ushort>(rows.Length);
+        ulong[] features = new ulong[rows.Length];
+        ushort[] featureTargets = new ushort[rows.Length];
+        int featureCount = 0;
         for (int index = 0; index < rows.Length; index++)
         {
             ulong? feature = buildFeature(rows[index], table, bitCount);
             if (feature.HasValue)
             {
-                features.Add(feature.Value | (1UL << bitCount));
-                featureTargets.Add(targets[index]);
+                features[featureCount] = feature.Value | (1UL << bitCount);
+                featureTargets[featureCount] = targets[index];
+                featureCount++;
             }
         }
 
-        bool fits = features.Count > 0 && TryFitAffineBinaryModel(features.ToArray(), featureTargets.ToArray(), bitCount + 1, out _);
-        sb.AppendLine(CultureInfo.InvariantCulture, $"  - {label}: {(fits ? "fits" : "no fit")} ({features.Count}/{rows.Length} rows)");
+        if (featureCount != rows.Length)
+        {
+            Array.Resize(ref features, featureCount);
+            Array.Resize(ref featureTargets, featureCount);
+        }
+
+        bool fits = featureCount > 0 && TryFitAffineBinaryModel(features, featureTargets, bitCount + 1, out _);
+        sb.AppendLine(CultureInfo.InvariantCulture, $"  - {label}: {(fits ? "fits" : "no fit")} ({featureCount}/{rows.Length} rows)");
     }
 
     private static void AppendTrainedAffineScore(
@@ -681,12 +700,18 @@ internal static class LongRowSuffixProbe
         int bitCount,
         Func<SuffixPatternRow, SuffixPatternTable, int, ulong?> buildFeature)
     {
-        ulong[] pairFeatures = pairRows
-            .Select(row => buildFeature(row, table, bitCount))
-            .Where(feature => feature.HasValue)
-            .Select(feature => feature!.Value | (1UL << bitCount))
-            .ToArray();
-        if (pairFeatures.Length != pairTargets.Length
+        ulong[] pairFeatures = new ulong[pairRows.Length];
+        int featureCount = 0;
+        for (int index = 0; index < pairRows.Length; index++)
+        {
+            ulong? feature = buildFeature(pairRows[index], table, bitCount);
+            if (feature.HasValue)
+            {
+                pairFeatures[featureCount++] = feature.Value | (1UL << bitCount);
+            }
+        }
+
+        if (featureCount != pairTargets.Length
             || !TryFitAffineBinaryModel(pairFeatures, pairTargets, bitCount + 1, out ulong[] coefficients))
         {
             sb.AppendLine(CultureInfo.InvariantCulture, $"  - {label}: no fit");
@@ -764,13 +789,21 @@ internal static class LongRowSuffixProbe
         out ulong[] coefficients)
     {
         coefficients = [];
-        ulong[] features = rows
-            .Select(row => buildFeature(row, table, bitCount))
-            .Where(feature => feature.HasValue)
-            .Select(feature => feature!.Value | (1UL << bitCount))
-            .ToArray();
-        ushort[] targets = rows.Select(row => row.AccessSuffix).ToArray();
-        return features.Length == targets.Length
+        ulong[] features = new ulong[rows.Length];
+        ushort[] targets = new ushort[rows.Length];
+        int featureCount = 0;
+        for (int index = 0; index < rows.Length; index++)
+        {
+            ulong? feature = buildFeature(rows[index], table, bitCount);
+            if (feature.HasValue)
+            {
+                features[featureCount++] = feature.Value | (1UL << bitCount);
+            }
+
+            targets[index] = rows[index].AccessSuffix;
+        }
+
+        return featureCount == targets.Length
             && TryFitAffineBinaryModel(features, targets, bitCount + 1, out coefficients);
     }
 
@@ -814,21 +847,20 @@ internal static class LongRowSuffixProbe
         bool trimIndexedText)
     {
         int bytesToTake = bitCount / 8;
-        string text = row.Text!;
-        if (trimIndexedText)
+        _ = table;
+        byte[] full = trimIndexedText ? row.TrimmedFullKey : row.FullKey;
+        if (bytesToTake == 0)
         {
-            int take = Math.Min(text.Length, 255);
-            text = text.AsSpan(0, take).TrimEnd(' ').ToString();
+            return 0;
         }
 
-        byte[] full = BuildFullV2010Entry(text, table.Ascending, GeneralCodes.Value, GeneralExtCodes.Value);
-        byte[] tail = SliceOrEmpty(full, start, bytesToTake);
-        if (tail.Length != bytesToTake)
+        if (full.Length <= start || full.Length - start < bytesToTake)
         {
             return null;
         }
 
         ulong feature = 0;
+        ReadOnlySpan<byte> tail = full.AsSpan(start, bytesToTake);
         for (int index = 0; index < tail.Length; index++)
         {
             feature |= (ulong)tail[index] << (index * 8);
@@ -959,9 +991,7 @@ internal static class LongRowSuffixProbe
     {
         SuffixCandidateContext[] contexts = table.Rows
             .Where(row => row.Text is not null)
-            .Select(row => new SuffixCandidateContext(
-                row,
-                BuildFullV2010Entry(row.Text!, table.Ascending, GeneralCodes.Value, GeneralExtCodes.Value)))
+            .Select(row => new SuffixCandidateContext(row))
             .ToArray();
 
         sb.AppendLine(CultureInfo.InvariantCulture, $"Suffix candidate score for {table.TableName}.DataIndex:");
@@ -973,9 +1003,11 @@ internal static class LongRowSuffixProbe
             return;
         }
 
-        List<CandidateRule> rules = BuildSuffixCandidateRules();
+        List<CandidateRule> rules = SuffixCandidateRules.Value;
+        var xorCounts = new CountAccumulator();
+        var addCounts = new CountAccumulator();
         List<CandidateScore> scores = rules
-            .Select(rule => ScoreCandidate(rule, contexts))
+            .Select(rule => ScoreCandidate(rule, contexts, xorCounts, addCounts))
             .Where(score => score.Evaluated > 0)
             .OrderByDescending(score => score.Exact)
             .ThenByDescending(score => score.BestXorCount)
@@ -1011,7 +1043,7 @@ internal static class LongRowSuffixProbe
         var groups = contexts
             .Select(context =>
             {
-                byte[][] inputs = BuildInputCandidates(context.FullKey, context.Row.Text!, cp1252);
+                byte[][] inputs = context.GetInputCandidates(cp1252);
                 return new
                 {
                     Context = context,
@@ -1050,6 +1082,8 @@ internal static class LongRowSuffixProbe
     private static void AppendLcMapSortKeySweepSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
         var hits = new List<CandidateScore>();
+        var xorCounts = new CountAccumulator();
+        var addCounts = new CountAccumulator();
         foreach ((string label, uint flags) in new[]
         {
             ("en-US none", LcMapSortKey),
@@ -1059,13 +1093,13 @@ internal static class LongRowSuffixProbe
         })
         {
             byte[][] sortKeys = contexts
-                .Select(context => LcMapSortKeyBytes("en-US", flags, TextWindow(context.Row.Text!, 0, Math.Min(255, context.Row.Text!.Length))))
+                .Select(context => LcMapSortKeyBytes("en-US", flags, context.TextInputs[3]))
                 .ToArray();
             int maxLength = sortKeys.Length == 0 ? 0 : sortKeys.Max(key => key.Length);
             for (int offset = 0; offset + 1 < maxLength; offset++)
             {
-                hits.Add(ScoreSortKeyOffset(contexts, sortKeys, $"{label} offset {offset} BE", offset, bigEndian: true));
-                hits.Add(ScoreSortKeyOffset(contexts, sortKeys, $"{label} offset {offset} LE", offset, bigEndian: false));
+                hits.Add(ScoreSortKeyOffset(contexts, sortKeys, $"{label} offset {offset} BE", offset, bigEndian: true, xorCounts: xorCounts, addCounts: addCounts));
+                hits.Add(ScoreSortKeyOffset(contexts, sortKeys, $"{label} offset {offset} LE", offset, bigEndian: false, xorCounts: xorCounts, addCounts: addCounts));
             }
         }
 
@@ -1097,12 +1131,12 @@ internal static class LongRowSuffixProbe
         byte[][] sortKeys,
         string name,
         int offset,
-        bool bigEndian)
+        bool bigEndian,
+        CountAccumulator xorCounts,
+        CountAccumulator addCounts)
     {
         int evaluated = 0;
         int exact = 0;
-        var xorCounts = new Dictionary<ushort, int>();
-        var addCounts = new Dictionary<ushort, int>();
         for (int index = 0; index < contexts.Length; index++)
         {
             byte[] sortKey = sortKeys[index];
@@ -1119,12 +1153,14 @@ internal static class LongRowSuffixProbe
                 exact++;
             }
 
-            IncrementCount(xorCounts, (ushort)(access ^ candidate.Value));
-            IncrementCount(addCounts, unchecked((ushort)(access - candidate.Value)));
+            xorCounts.Increment((ushort)(access ^ candidate.Value));
+            addCounts.Increment(unchecked((ushort)(access - candidate.Value)));
         }
 
-        (ushort bestXor, int bestXorCount) = BestCount(xorCounts);
-        (ushort bestAdd, int bestAddCount) = BestCount(addCounts);
+        (ushort bestXor, int bestXorCount) = xorCounts.Best();
+        (ushort bestAdd, int bestAddCount) = addCounts.Best();
+        xorCounts.Clear();
+        addCounts.Clear();
         return new CandidateScore(name, evaluated, exact, bestXorCount, bestXor, bestAddCount, bestAdd);
     }
 
@@ -1136,6 +1172,7 @@ internal static class LongRowSuffixProbe
         SuffixPatternRow[] allRows = table.Rows
             .Where(row => row.Text is not null)
             .ToArray();
+        SuffixPatternRow[] originalRows = allRows.Where(row => row.Seed is null).ToArray();
         if (trainRows.Length == 0 || allRows.Length == 0)
         {
             return;
@@ -1147,10 +1184,10 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         sb.AppendLine("| Feature | Fit | Synthetic score | Original score | All score | Variables |");
         sb.AppendLine("|---|:---:|---:|---:|---:|---:|");
-        AppendWideAffineTailResult(sb, table, trainRows, allRows, start: 0, includeLength: true);
-        AppendWideAffineTailResult(sb, table, trainRows, allRows, start: 508, includeLength: false);
-        AppendWideAffineTailResult(sb, table, trainRows, allRows, start: 508, includeLength: true);
-        AppendWideAffineTailResult(sb, table, trainRows, allRows, start: 510, includeLength: true);
+        AppendWideAffineTailResult(sb, table, trainRows, originalRows, allRows, start: 0, includeLength: true);
+        AppendWideAffineTailResult(sb, table, trainRows, originalRows, allRows, start: 508, includeLength: false);
+        AppendWideAffineTailResult(sb, table, trainRows, originalRows, allRows, start: 508, includeLength: true);
+        AppendWideAffineTailResult(sb, table, trainRows, originalRows, allRows, start: 510, includeLength: true);
         sb.AppendLine();
     }
 
@@ -1158,12 +1195,14 @@ internal static class LongRowSuffixProbe
         StringBuilder sb,
         SuffixPatternTable table,
         SuffixPatternRow[] trainRows,
+        SuffixPatternRow[] originalRows,
         SuffixPatternRow[] allRows,
         int start,
         bool includeLength)
     {
+        _ = table;
         int byteCount = trainRows
-            .Select(row => Math.Max(0, BuildFullV2010Entry(row.Text!, table.Ascending, GeneralCodes.Value, GeneralExtCodes.Value).Length - start))
+            .Select(row => Math.Max(0, row.FullKey.Length - start))
             .DefaultIfEmpty(0)
             .Max();
         int featureBytes = byteCount + (includeLength ? 1 : 0);
@@ -1184,7 +1223,6 @@ internal static class LongRowSuffixProbe
         }
 
         (int syntheticExact, int syntheticTotal) = ScoreWideAffineRows(trainRows, table, coefficients, start, byteCount, includeLength);
-        SuffixPatternRow[] originalRows = allRows.Where(row => row.Seed is null).ToArray();
         (int originalExact, int originalTotal) = ScoreWideAffineRows(originalRows, table, coefficients, start, byteCount, includeLength);
         (int allExact, int allTotal) = ScoreWideAffineRows(allRows, table, coefficients, start, byteCount, includeLength);
 
@@ -1222,7 +1260,8 @@ internal static class LongRowSuffixProbe
         int byteCount,
         bool includeLength)
     {
-        byte[] full = BuildFullV2010Entry(row.Text!, table.Ascending, GeneralCodes.Value, GeneralExtCodes.Value);
+        _ = table;
+        byte[] full = row.FullKey;
         byte[] bytes = new byte[byteCount + (includeLength ? 1 : 0) + 1];
         int available = Math.Max(0, full.Length - start);
         int take = Math.Min(byteCount, available);
@@ -1334,7 +1373,6 @@ internal static class LongRowSuffixProbe
     private static void AppendRollingPolynomialSolverSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
         Encoding cp1252 = Encoding.GetEncoding(1252);
-        var inputIndexes = new[] { 0, 1, 2, 8, 9, 10, 11, 12, 13 };
 
         sb.AppendLine("Rolling polynomial solver:");
         sb.AppendLine();
@@ -1343,12 +1381,12 @@ internal static class LongRowSuffixProbe
         sb.AppendLine("| Input | Matches | First hits |");
         sb.AppendLine("|---|---:|---|");
 
-        foreach (int inputIndex in inputIndexes)
+        foreach (int inputIndex in RollingInputIndexes)
         {
             RollingConstraint[] constraints = contexts
                 .Select(context =>
                 {
-                    byte[][] inputs = BuildInputCandidates(context.FullKey, context.Row.Text!, cp1252);
+                    byte[][] inputs = context.GetInputCandidates(cp1252);
                     return new RollingConstraint(inputs[inputIndex], context.Row.AccessSuffix);
                 })
                 .Where(constraint => constraint.Input.Length > 0)
@@ -1404,21 +1442,21 @@ internal static class LongRowSuffixProbe
 
     private static IEnumerable<(string Label, Func<SuffixCandidateContext, byte[]> GetBytes)> BuildByteInputs()
     {
-        yield return ("full[508..]", context => SliceOrEmpty(context.FullKey, 508));
-        yield return ("full[510..]", context => SliceOrEmpty(context.FullKey, 510));
-        yield return ("full[508..511]", context => SliceOrEmpty(context.FullKey, 508, 3));
-        yield return ("full[508..512]", context => SliceOrEmpty(context.FullKey, 508, 4));
-        yield return ("full[508..513]", context => SliceOrEmpty(context.FullKey, 508, 5));
-        yield return ("full[..508]", context => context.FullKey.Length >= 508 ? context.FullKey[..508] : context.FullKey);
-        yield return ("full[..510] zero", context => ZeroSuffixCopy(context.FullKey));
+        yield return ("full[508..]", context => context.ByteInputs[0]);
+        yield return ("full[510..]", context => context.ByteInputs[1]);
+        yield return ("full[508..511]", context => context.ByteInputs[2]);
+        yield return ("full[508..512]", context => context.ByteInputs[3]);
+        yield return ("full[508..513]", context => context.ByteInputs[4]);
+        yield return ("full[..508]", context => context.ByteInputs[5]);
+        yield return ("full[..510] zero", context => context.ByteInputs[6]);
     }
 
     private static IEnumerable<(string Label, Func<SuffixCandidateContext, string> GetText)> BuildTextInputs()
     {
-        yield return ("text[253..255]", context => TextWindow(context.Row.Text!, 253, 255));
-        yield return ("text[254..255]", context => TextWindow(context.Row.Text!, 254, 255));
-        yield return ("text[253..]", context => TextWindow(context.Row.Text!, 253, context.Row.Text!.Length));
-        yield return ("text[..255]", context => TextWindow(context.Row.Text!, 0, 255));
+        yield return ("text[253..255]", context => context.TextInputs[0]);
+        yield return ("text[254..255]", context => context.TextInputs[1]);
+        yield return ("text[253..]", context => context.TextInputs[2]);
+        yield return ("text[..255]", context => context.TextInputs[3]);
     }
 
     private static void AddCompareInfoRules(
@@ -1486,10 +1524,10 @@ internal static class LongRowSuffixProbe
         })
         {
             string name = $"{label} LCMapHash {localeName} {optionLabel}";
-            rules.Add(new CandidateRule($"{name} word0 BE", context => ReadWordOrNull(LcMapHashBytes(localeName, flags, getText(context)), 0, bigEndian: true)));
-            rules.Add(new CandidateRule($"{name} word0 LE", context => ReadWordOrNull(LcMapHashBytes(localeName, flags, getText(context)), 0, bigEndian: false)));
-            rules.Add(new CandidateRule($"{name} word1 BE", context => ReadWordOrNull(LcMapHashBytes(localeName, flags, getText(context)), 2, bigEndian: true)));
-            rules.Add(new CandidateRule($"{name} word1 LE", context => ReadWordOrNull(LcMapHashBytes(localeName, flags, getText(context)), 2, bigEndian: false)));
+            rules.Add(new CandidateRule($"{name} word0 BE", context => ReadWordOrNull(context.GetLcMapHashBytes(localeName, flags, getText(context)), 0, bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} word0 LE", context => ReadWordOrNull(context.GetLcMapHashBytes(localeName, flags, getText(context)), 0, bigEndian: false)));
+            rules.Add(new CandidateRule($"{name} word1 BE", context => ReadWordOrNull(context.GetLcMapHashBytes(localeName, flags, getText(context)), 2, bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} word1 LE", context => ReadWordOrNull(context.GetLcMapHashBytes(localeName, flags, getText(context)), 2, bigEndian: false)));
         }
     }
 
@@ -1508,24 +1546,26 @@ internal static class LongRowSuffixProbe
         })
         {
             string name = $"{label} LCMapSortKey {localeName} {optionLabel}";
-            rules.Add(new CandidateRule($"{name} word0 BE", context => ReadWordOrNull(LcMapSortKeyBytes(localeName, flags, getText(context)), 0, bigEndian: true)));
-            rules.Add(new CandidateRule($"{name} word0 LE", context => ReadWordOrNull(LcMapSortKeyBytes(localeName, flags, getText(context)), 0, bigEndian: false)));
-            rules.Add(new CandidateRule($"{name} word1 BE", context => ReadWordOrNull(LcMapSortKeyBytes(localeName, flags, getText(context)), 2, bigEndian: true)));
-            rules.Add(new CandidateRule($"{name} word1 LE", context => ReadWordOrNull(LcMapSortKeyBytes(localeName, flags, getText(context)), 2, bigEndian: false)));
-            rules.Add(new CandidateRule($"{name} last BE", context => ReadLastWordOrNull(LcMapSortKeyBytes(localeName, flags, getText(context)), bigEndian: true)));
-            rules.Add(new CandidateRule($"{name} last LE", context => ReadLastWordOrNull(LcMapSortKeyBytes(localeName, flags, getText(context)), bigEndian: false)));
-            rules.Add(new CandidateRule($"{name} FNV1a16", context => Fnv1A16(LcMapSortKeyBytes(localeName, flags, getText(context)))));
-            rules.Add(new CandidateRule($"{name} Adler16", context => Adler16(LcMapSortKeyBytes(localeName, flags, getText(context)))));
-            rules.Add(new CandidateRule($"{name} Fletcher16", context => Fletcher16(LcMapSortKeyBytes(localeName, flags, getText(context)))));
+            rules.Add(new CandidateRule($"{name} word0 BE", context => ReadWordOrNull(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)), 0, bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} word0 LE", context => ReadWordOrNull(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)), 0, bigEndian: false)));
+            rules.Add(new CandidateRule($"{name} word1 BE", context => ReadWordOrNull(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)), 2, bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} word1 LE", context => ReadWordOrNull(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)), 2, bigEndian: false)));
+            rules.Add(new CandidateRule($"{name} last BE", context => ReadLastWordOrNull(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)), bigEndian: true)));
+            rules.Add(new CandidateRule($"{name} last LE", context => ReadLastWordOrNull(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)), bigEndian: false)));
+            rules.Add(new CandidateRule($"{name} FNV1a16", context => Fnv1A16(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)))));
+            rules.Add(new CandidateRule($"{name} Adler16", context => Adler16(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)))));
+            rules.Add(new CandidateRule($"{name} Fletcher16", context => Fletcher16(context.GetLcMapSortKeyBytes(localeName, flags, getText(context)))));
         }
     }
 
-    private static CandidateScore ScoreCandidate(CandidateRule rule, SuffixCandidateContext[] contexts)
+    private static CandidateScore ScoreCandidate(
+        CandidateRule rule,
+        SuffixCandidateContext[] contexts,
+        CountAccumulator xorCounts,
+        CountAccumulator addCounts)
     {
         int evaluated = 0;
         int exact = 0;
-        var xorCounts = new Dictionary<ushort, int>();
-        var addCounts = new Dictionary<ushort, int>();
         foreach (SuffixCandidateContext context in contexts)
         {
             ushort? candidate = rule.Compute(context);
@@ -1541,35 +1581,15 @@ internal static class LongRowSuffixProbe
                 exact++;
             }
 
-            IncrementCount(xorCounts, (ushort)(access ^ candidate.Value));
-            IncrementCount(addCounts, unchecked((ushort)(access - candidate.Value)));
+            xorCounts.Increment((ushort)(access ^ candidate.Value));
+            addCounts.Increment(unchecked((ushort)(access - candidate.Value)));
         }
 
-        (ushort bestXor, int bestXorCount) = BestCount(xorCounts);
-        (ushort bestAdd, int bestAddCount) = BestCount(addCounts);
+        (ushort bestXor, int bestXorCount) = xorCounts.Best();
+        (ushort bestAdd, int bestAddCount) = addCounts.Best();
+        xorCounts.Clear();
+        addCounts.Clear();
         return new CandidateScore(rule.Name, evaluated, exact, bestXorCount, bestXor, bestAddCount, bestAdd);
-    }
-
-    private static void IncrementCount(Dictionary<ushort, int> counts, ushort key)
-    {
-        counts.TryGetValue(key, out int count);
-        counts[key] = count + 1;
-    }
-
-    private static (ushort Key, int Count) BestCount(Dictionary<ushort, int> counts)
-    {
-        ushort bestKey = 0;
-        int bestCount = 0;
-        foreach ((ushort key, int count) in counts)
-        {
-            if (count > bestCount)
-            {
-                bestKey = key;
-                bestCount = count;
-            }
-        }
-
-        return (bestKey, bestCount);
     }
 
     private static List<RollingPolynomialHit> FindRollingPolynomialHits(
@@ -2336,11 +2356,18 @@ internal static class LongRowSuffixProbe
             ? value
             : value[..maxLength] + "...";
 
-    private static string EscapeMarkdown(string value) =>
-        value.Replace("`", "'", StringComparison.Ordinal)
+    private static string EscapeMarkdown(string value)
+    {
+        if (value.AsSpan().IndexOfAny(MarkdownEscapeSearch) < 0)
+        {
+            return value;
+        }
+
+        return value.Replace("`", "'", StringComparison.Ordinal)
             .Replace("|", "\\|", StringComparison.Ordinal)
             .Replace("\r", "\\r", StringComparison.Ordinal)
             .Replace("\n", "\\n", StringComparison.Ordinal);
+    }
 
     private static string BuildDaoLabScript(string labPath, int rowCount)
     {
@@ -2814,6 +2841,32 @@ internal static class LongRowSuffixProbe
             GeneralLegacyTextIndexEncoder.LongRowSeparatorGeneral,
             maxEntryLength: int.MaxValue);
 
+    private static byte[] BuildTrimmedFullV2010Entry(string text, bool ascending)
+    {
+        int take = Math.Min(text.Length, 255);
+        string trimmedText = text.AsSpan(0, take).TrimEnd(' ').ToString();
+        return BuildFullV2010Entry(trimmedText, ascending, GeneralCodes.Value, GeneralExtCodes.Value);
+    }
+
+    private static byte[][] BuildCandidateByteInputs(byte[] full) =>
+    [
+        SliceOrEmpty(full, 508),
+        SliceOrEmpty(full, 510),
+        SliceOrEmpty(full, 508, 3),
+        SliceOrEmpty(full, 508, 4),
+        SliceOrEmpty(full, 508, 5),
+        full.Length >= 508 ? full[..508] : full,
+        ZeroSuffixCopy(full),
+    ];
+
+    private static string[] BuildCandidateTextInputs(string text) =>
+    [
+        TextWindow(text, 253, 255),
+        TextWindow(text, 254, 255),
+        TextWindow(text, 253, text.Length),
+        TextWindow(text, 0, 255),
+    ];
+
     private static int FindComplementedDescLeaf(List<IndexEntry> descKeys, byte[] expectedAsc)
     {
         unchecked
@@ -2888,15 +2941,10 @@ internal static class LongRowSuffixProbe
 
     private static (byte[] Extras, byte[] Unprint) SplitExtraAndUnprint(byte[] full)
     {
-        int endTextPos = -1;
-        for (int index = 508; index < full.Length; index++)
-        {
-            if (full[index] == GeneralLegacyTextIndexEncoder.EndText)
-            {
-                endTextPos = index;
-                break;
-            }
-        }
+        int relativeEndTextPos = full.Length > 508
+            ? full.AsSpan(508).IndexOfAny(EndTextSearch)
+            : -1;
+        int endTextPos = relativeEndTextPos >= 0 ? 508 + relativeEndTextPos : -1;
 
         byte[] extras = endTextPos >= 0 && endTextPos + 1 < full.Length
             ? full[(endTextPos + 1)..^1]
@@ -2904,15 +2952,25 @@ internal static class LongRowSuffixProbe
         byte[] unprint = [];
         if (extras.Length > 3)
         {
-            for (int index = 0; index < extras.Length - 2; index++)
+            int searchLimit = extras.Length - 2;
+            int searchStart = 0;
+            while (searchStart < searchLimit)
             {
-                if (extras[index] == GeneralLegacyTextIndexEncoder.EndText
-                    && extras[index + 1] == GeneralLegacyTextIndexEncoder.EndText)
+                int relativeIndex = extras.AsSpan(searchStart, searchLimit - searchStart).IndexOfAny(EndTextSearch);
+                if (relativeIndex < 0)
+                {
+                    break;
+                }
+
+                int index = searchStart + relativeIndex;
+                if (extras[index + 1] == GeneralLegacyTextIndexEncoder.EndText)
                 {
                     unprint = extras[(index + 2)..];
                     extras = extras[..index];
                     break;
                 }
+
+                searchStart = index + 1;
             }
         }
 
@@ -3507,6 +3565,8 @@ internal static class LongRowSuffixProbe
         int PrefixLength,
         int RawKeyLength,
         int EntryStart,
+        byte[] FullKey,
+        byte[] TrimmedFullKey,
         string? Text);
 
     private readonly record struct LeafEntryDetail(
@@ -3520,7 +3580,57 @@ internal static class LongRowSuffixProbe
 
     private readonly record struct PhysicalRowSnapshot(string RowLabel, object? Value);
 
-    private readonly record struct SuffixCandidateContext(SuffixPatternRow Row, byte[] FullKey);
+    private sealed class SuffixCandidateContext
+    {
+        private Dictionary<LcMapCacheKey, byte[]> lcMapHashBytes = [];
+        private Dictionary<LcMapCacheKey, byte[]> lcMapSortKeyBytes = [];
+        private byte[][]? inputCandidates;
+
+        public SuffixCandidateContext(SuffixPatternRow row)
+        {
+            Row = row;
+            FullKey = row.FullKey;
+            ByteInputs = BuildCandidateByteInputs(row.FullKey);
+            TextInputs = BuildCandidateTextInputs(row.Text!);
+        }
+
+        public SuffixPatternRow Row { get; }
+
+        public byte[] FullKey { get; }
+
+        public byte[][] ByteInputs { get; }
+
+        public string[] TextInputs { get; }
+
+        public byte[][] GetInputCandidates(Encoding cp1252) =>
+            inputCandidates ??= BuildInputCandidates(FullKey, Row.Text!, cp1252);
+
+        public byte[] GetLcMapHashBytes(string localeName, uint flags, string value)
+        {
+            var key = new LcMapCacheKey(localeName, flags, value);
+            if (!lcMapHashBytes.TryGetValue(key, out byte[]? bytes))
+            {
+                bytes = LcMapHashBytes(localeName, flags, value);
+                lcMapHashBytes.Add(key, bytes);
+            }
+
+            return bytes;
+        }
+
+        public byte[] GetLcMapSortKeyBytes(string localeName, uint flags, string value)
+        {
+            var key = new LcMapCacheKey(localeName, flags, value);
+            if (!lcMapSortKeyBytes.TryGetValue(key, out byte[]? bytes))
+            {
+                bytes = LcMapSortKeyBytes(localeName, flags, value);
+                lcMapSortKeyBytes.Add(key, bytes);
+            }
+
+            return bytes;
+        }
+    }
+
+    private readonly record struct LcMapCacheKey(string LocaleName, uint Flags, string Value);
 
     private readonly record struct CandidateRule(string Name, Func<SuffixCandidateContext, ushort?> Compute);
 
@@ -3587,6 +3697,49 @@ internal static class LongRowSuffixProbe
         string FullTail,
         string RowLabel,
         string ValuePreview);
+
+    private sealed class CountAccumulator
+    {
+        private readonly int[] counts = new int[ushort.MaxValue + 1];
+        private readonly List<ushort> touched = [];
+
+        public void Increment(ushort key)
+        {
+            if (counts[key] == 0)
+            {
+                touched.Add(key);
+            }
+
+            counts[key]++;
+        }
+
+        public (ushort Key, int Count) Best()
+        {
+            ushort bestKey = 0;
+            int bestCount = 0;
+            foreach (ushort key in touched)
+            {
+                int count = counts[key];
+                if (count > bestCount)
+                {
+                    bestKey = key;
+                    bestCount = count;
+                }
+            }
+
+            return (bestKey, bestCount);
+        }
+
+        public void Clear()
+        {
+            foreach (ushort key in touched)
+            {
+                counts[key] = 0;
+            }
+
+            touched.Clear();
+        }
+    }
 
     private sealed class BytePrefixComparer : IComparer<byte[]>
     {
