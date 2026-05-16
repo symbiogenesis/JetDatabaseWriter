@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
 using System.IO;
@@ -121,6 +122,154 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal(memo, table.Rows[0]["ComputedMemo"]);
     }
 
+    [Fact]
+    public async Task InsertRow_CalculatedColumns_EvaluatesMissingCachedValues()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcEval",
+                [
+                    new("Score", typeof(int)),
+                    new("Label", typeof(string), maxLength: 40),
+                    new("SafeLabel", typeof(string), maxLength: 80)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Nz([Label], \"missing\")",
+                    },
+                    new("CalcLabel", typeof(string), maxLength: 80)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "[SafeLabel] & \" #\" & [Score]",
+                    },
+                    new("IsHigh", typeof(bool))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "IIf([Score] >= 10, TRUE, FALSE)",
+                    },
+                    new("NextScore", typeof(int))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "[Score] + 1",
+                    },
+                    new("Weighted", typeof(decimal))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Round([Score] * 1.25, 2)",
+                    },
+                    new("LabelCode", typeof(string), maxLength: 20)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Left([Label], 2) & CStr(Len([Label]))",
+                    },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                "CalcEval",
+                [12, "Alpha", DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value],
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable table = await reader.ReadDataTableAsync("CalcEval", cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(table.AsEnumerable());
+
+        Assert.Equal("Alpha", row["SafeLabel"]);
+        Assert.Equal("Alpha #12", row["CalcLabel"]);
+        Assert.True(Convert.ToBoolean(row["IsHigh"], CultureInfo.InvariantCulture));
+        Assert.Equal(13, Convert.ToInt32(row["NextScore"], CultureInfo.InvariantCulture));
+        Assert.Equal(15.00m, Convert.ToDecimal(row["Weighted"], CultureInfo.InvariantCulture));
+        Assert.Equal("Al5", row["LabelCode"]);
+    }
+
+    [Fact]
+    public async Task UpdateRows_RecomputesCalculatedColumns()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcUpdate",
+                [
+                    new("Id", typeof(int)),
+                    new("Score", typeof(int)),
+                    new("Label", typeof(string), maxLength: 40),
+                    new("CalcLabel", typeof(string), maxLength: 80)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "[Label] & \" #\" & [Score]",
+                    },
+                    new("IsHigh", typeof(bool))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "[Score] >= 10",
+                    },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                "CalcUpdate",
+                [1, 12, "Alpha", DBNull.Value, DBNull.Value],
+                TestContext.Current.CancellationToken);
+
+            int updated = await writer.UpdateRowsAsync(
+                "CalcUpdate",
+                "Id",
+                1,
+                new Dictionary<string, object>
+                {
+                    ["Score"] = 3,
+                    ["Label"] = "Beta",
+                },
+                TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable table = await reader.ReadDataTableAsync("CalcUpdate", cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(table.AsEnumerable());
+
+        Assert.Equal("Beta #3", row["CalcLabel"]);
+        Assert.False(Convert.ToBoolean(row["IsHigh"], CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task InsertRowPoco_CalculatedColumnsCanBeOmitted()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcPoco",
+                [
+                    new("Score", typeof(int)),
+                    new("Label", typeof(string), maxLength: 40),
+                    new("CalcLabel", typeof(string), maxLength: 80)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "[Label] & \" #\" & [Score]",
+                    },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                "CalcPoco",
+                new SourceProjection { Score = 7, Label = "Gamma" },
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable table = await reader.ReadDataTableAsync("CalcPoco", cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(table.AsEnumerable());
+
+        Assert.Equal("Gamma #7", row["CalcLabel"]);
+    }
+
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var stream = new MemoryStream();
@@ -166,5 +315,12 @@ public sealed class CalculatedColumnWriteTests
         public int NextScore { get; set; }
 
         public decimal Weighted { get; set; }
+    }
+
+    private sealed class SourceProjection
+    {
+        public int Score { get; set; }
+
+        public string? Label { get; set; }
     }
 }

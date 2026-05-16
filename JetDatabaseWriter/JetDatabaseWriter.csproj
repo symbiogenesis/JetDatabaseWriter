@@ -47,6 +47,10 @@
     <EmbeddedResource Include="Indexes\CodeTables\index_mappings_ext_gen_97.txt.gz" LogicalName="JetDatabaseWriter.IndexCodeTables.index_mappings_ext_gen_97.txt.gz" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="ClosedXML.Parser" />
+  </ItemGroup>
+
   <!--
     System.Linq.AsyncEnumerable (Where/ToListAsync/etc. over IAsyncEnumerable<T>) ships in the
     BCL on .NET 10+. For older consumers (anything resolving the netstandard2.1 asset), pull in

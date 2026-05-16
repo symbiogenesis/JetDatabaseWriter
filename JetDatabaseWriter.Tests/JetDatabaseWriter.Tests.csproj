@@ -7,6 +7,9 @@
     <IsPackable>false</IsPackable>
     <RootNamespace>JetDatabaseWriter.Tests</RootNamespace>
     <NoWarn>$(NoWarn);CA1707;SA1615</NoWarn>
+    <RunAnalyzersDuringBuild Condition="'$(Configuration)' != 'Release'">false</RunAnalyzersDuringBuild>
+    <EnforceCodeStyleInBuild Condition="'$(Configuration)' != 'Release'">false</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile Condition="'$(Configuration)' != 'Release'">false</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>

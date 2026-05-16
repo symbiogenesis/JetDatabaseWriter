@@ -201,7 +201,10 @@
         }
       },
       "jetdatabasewriter": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "ClosedXML.Parser": "[2.0.0, )"
+        }
       },
       "jetdatabasewriter.scaffold": {
         "type": "Project",
@@ -210,6 +213,12 @@
           "Microsoft.CodeAnalysis.CSharp": "[5.3.0, )",
           "System.CommandLine": "[2.0.8, )"
         }
+      },
+      "ClosedXML.Parser": {
+        "type": "CentralTransitive",
+        "requested": "[2.0.0, )",
+        "resolved": "2.0.0",
+        "contentHash": "ngTqjYreDYNytG1W5d3ewHsw0ukmmrgV7EKnS4/40rXoYZGt07jrBvo+N+GxT49rcageUMUiprV0jYT4nwVBHQ=="
       },
       "Microsoft.CodeAnalysis.CSharp": {
         "type": "CentralTransitive",

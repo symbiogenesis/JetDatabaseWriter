@@ -1149,6 +1149,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 rowValues[update.Key] = update.Value ?? DBNull.Value;
             }
 
+            await Constraints.ApplyCalculatedAsync(tableName, tableDef, rowValues, force: true, cancellationToken).ConfigureAwait(false);
+
             pendingNewRows.Add((i, rowValues));
         }
 

@@ -246,11 +246,11 @@ public sealed record ColumnDefinition
     /// calculated-value wrapper.
     /// </para>
     /// <para>
-    /// The writer can create ACCDB calculated columns and stores the caller's
-    /// supplied row value as the persisted cached result. It does not evaluate
-    /// <see cref="CalculationExpression"/> on insert/update, so callers must
-    /// provide the cached value in row payloads until a client-side evaluator is
-    /// added. Microsoft Access will recompute the value when it opens the file.
+    /// The writer can create ACCDB calculated columns, stores caller-supplied
+    /// row values as persisted cached results, fills missing values on insert
+    /// when <see cref="CalculationExpression"/> is in the supported row-local
+    /// subset, and recomputes values on update. Microsoft Access will recompute
+    /// the value when it opens the file.
     /// See <c>docs/design/calculated-columns-format-notes.md</c>.
     /// </para>
     /// </remarks>

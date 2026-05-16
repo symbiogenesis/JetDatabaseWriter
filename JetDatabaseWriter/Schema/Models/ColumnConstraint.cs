@@ -20,9 +20,17 @@ internal sealed class ColumnConstraint
 
     public Func<object?, bool>? ValidationRule { get; set; }
 
+    public bool IsCalculated { get; set; }
+
+    public string? CalculationExpression { get; set; }
+
+    public byte CalculatedResultType { get; set; }
+
     // Lazy-seeded next auto-increment value (max(existing) + 1). Null until first use.
     public long? NextAutoValue { get; set; }
 
+    internal Expressions.CalculatedExpressionEvaluator.Plan? CalculatedExpressionPlan { get; set; }
+
     public bool HasAnyConstraint =>
-        !IsNullable || DefaultValue != null || IsAutoIncrement || ValidationRule != null;
+        !IsNullable || DefaultValue != null || IsAutoIncrement || ValidationRule != null || IsCalculated;
 }

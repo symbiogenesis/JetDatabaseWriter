@@ -76,7 +76,16 @@
         "contentHash": "zvn9Mqs/ox/83cpYPignI8hJEM2A93s2HkHs8HYMOAQW0PkampyoErAiIyKxgTLqbbad29HX/shv/6LGSjPJNQ=="
       },
       "jetdatabasewriter": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "ClosedXML.Parser": "[2.0.0, )"
+        }
+      },
+      "ClosedXML.Parser": {
+        "type": "CentralTransitive",
+        "requested": "[2.0.0, )",
+        "resolved": "2.0.0",
+        "contentHash": "ngTqjYreDYNytG1W5d3ewHsw0ukmmrgV7EKnS4/40rXoYZGt07jrBvo+N+GxT49rcageUMUiprV0jYT4nwVBHQ=="
       }
     }
   }

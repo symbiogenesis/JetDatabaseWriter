@@ -130,34 +130,52 @@ Delivered:
   updated Access-authored fixture coverage in
   `JetDatabaseWriter.Tests/Schema/CalculatedColumnFixtureTests.cs`.
 
-### Phase 2 — Subset expression evaluator
+### Phase 2 — Subset expression evaluator **(DONE)**
 
 Goal: on `INSERT` / `UPDATE`, recompute the value ourselves so callers do not
 have to supply it, and so updates to dependent columns refresh the persisted
 value the same way Access does.
 
-Translate the most common subset of Jackcess `expr`:
+Delivered:
 
-- Lexer + Pratt-style parser for VBA expression syntax.
-- Operators: arithmetic (`+ - * / \ ^ Mod`), string concat (`& +`), comparison,
-  `And Or Not Xor Eqv Imp`, `Is Null`, `Like` (with `?*#[]` patterns),
-  `Between..And`, `In(...)`.
-- Built-ins: `IIf`, `Nz`, `IsNull`, `IsNumeric`, `IsDate`, `Len`, `Left`,
-  `Right`, `Mid`, `InStr`, `InStrRev`, `Replace`, `UCase`, `LCase`, `Trim`,
-  `LTrim`, `RTrim`, `Space`, `String`, `StrConv`, `Format` (numeric +
-  date subset), `Year`, `Month`, `Day`, `Hour`, `Minute`, `Second`,
-  `Weekday`, `DateAdd`, `DateDiff`, `DatePart`, `Now`, `Date`, `Time`,
-  `CInt`, `CLng`, `CDbl`, `CSng`, `CCur`, `CDec`, `CStr`, `CDate`, `CBool`,
-  `CByte`, `Abs`, `Sgn`, `Int`, `Fix`, `Round`, `Sqr`.
-- Column reference resolution against the in-flight row (`[ColName]`,
-  `ColName`, `[Table].[Col]` — only the row-local form matters because calc
-  columns cannot reference other tables).
+- Added [ClosedXML.Parser](https://github.com/ClosedXML/ClosedXML.Parser) for
+  formula parsing and an internal AST factory that maps parser nodes into the
+  row-local calculated-column evaluator. ClosedXML.Parser handles expression
+  parsing only; all Access/ACE storage and type coercion remains in this
+  library.
+- `ConstraintRegistry` evaluates calculated columns during inserts when the row
+  omits the cached value or supplies `NULL`/`DBNull`, and recomputes calculated
+  columns during updates after source values are applied.
+- Caller-supplied cached values still work on insert. This preserves Phase 1B
+  behavior and lets unsupported expressions be persisted when the caller has
+  already computed the value.
+- Expressions are normalized for common Access syntax: leading `=` is ignored,
+  bracketed column references such as `[Column Name]` resolve against the
+  in-flight row, and `#date literal#` becomes `DATEVALUE("date literal")`.
+- Calculated columns may reference earlier or later calculated columns in the
+  same row; dependency evaluation is lazy and circular references are rejected.
 
-#### Formula parsing library recommendation
+Supported subset:
 
-For parsing and validating calculated column expressions (which use Access/Excel-style formula syntax), we recommend using [ClosedXML.Parser](https://github.com/ClosedXML/ClosedXML.Parser). This .NET library is actively maintained, supports modern Excel formula syntax, and is suitable for parsing and validating expressions before storing them in the Access/ACE on-disk format. Note: You must still implement all Access/ACE-specific binary writing logic yourself; ClosedXML.Parser only handles formula parsing, not database serialization.
+- Operators parsed by ClosedXML.Parser and currently evaluated here: arithmetic
+  (`+`, `-`, `*`, `/`, `^`), string concatenation (`&`), comparisons
+  (`=`, `<>`, `>`, `>=`, `<`, `<=`), unary plus/minus, and percent.
+- Constants and nulls: boolean literals, blank/null nodes, and `DBNull` values
+  from the in-flight row.
+- Built-ins: `IIf`/`IF`, `Nz`, `IsNull`/`IsBlank`, `IsNumeric`/`IsNumber`,
+  `IsDate`, `Len`, `Left`, `Right`, `Mid`, `UCase`/`Upper`, `LCase`/`Lower`,
+  `Trim`, `LTrim`, `RTrim`, `Abs`, `Round`, `Int`, `Fix`, `Date`/`Today`,
+  `Now`, `Time`, `DateValue`, `Year`, `Month`, `Day`, `Hour`, `Minute`,
+  `Second`, `CInt`, `CLng`, `CDbl`, `CSng`, `CCur`/`CDec`, `CStr`, `CDate`,
+  `CBool`, and `CByte`.
 
-Tests: golden expressions evaluated against an Access oracle.
+Still out of scope for Phase 2: full Jet/VBA grammar, logical word operators,
+`Like`, `Between`, `In`, `Mod`, domain aggregate functions, SQL/query
+evaluation, and cross-table lookups.
+
+Tests: focused insert/update/POCO coverage in
+`JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`, plus the Phase
+1B Access-authored fixture coverage.
 
 ### Phase 3 — Full VBA expression library + cross-table lookups
 

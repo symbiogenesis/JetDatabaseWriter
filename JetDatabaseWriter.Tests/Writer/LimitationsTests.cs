@@ -39,10 +39,10 @@ public sealed class LimitationsTests
     // ── Specialized column kinds ──────────────────────────────────────
 
     [Fact]
-    public void SpecializedColumns_NoCalculatedColumnEvaluationApi()
+    public void SpecializedColumns_NoPublicGeneralExpressionEvaluationApi()
     {
-        // Calculated-column schema and caller-supplied cached values now round-trip,
-        // but Jet/VBA expression evaluation is still outside the writer surface.
+        // Calculated-column evaluation is an internal write-path helper, not a
+        // public general-purpose Jet/VBA expression engine.
         Assert.NotNull(typeof(ColumnDefinition).GetProperty("IsCalculated"));
         Assert.NotNull(typeof(ColumnMetadata).GetProperty("IsCalculated"));
         Assert.NotNull(typeof(ColumnMetadata).GetProperty("CalculationExpression"));

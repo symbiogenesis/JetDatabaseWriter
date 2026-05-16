@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
@@ -127,18 +128,7 @@ internal sealed class ConstraintRegistry(
     public async ValueTask<List<(ColumnConstraint Constraint, long? PreviousValue)>?> ApplyAsync(
         string tableName, TableDef tableDef, object[] values, CancellationToken cancellationToken)
     {
-        if (!_constraints.TryGetValue(tableName, out List<ColumnConstraint>? list) || list == null)
-        {
-            // The table may have been created by an earlier writer instance (or by Access
-            // itself). Hydrate the registry from the persisted column flags so NOT NULL /
-            // AutoIncrement constraints declared at CreateTableAsync time still take effect
-            // after the database is closed and reopened. DefaultValue and ValidationRule are
-            // not persisted in the JET TDEF and remain client-side only.
-            ColumnPropertyBlock? props = readLvPropForTable is null
-                ? null
-                : await readLvPropForTable(tableName, cancellationToken).ConfigureAwait(false);
-            list = HydrateFromTableDef(tableName, tableDef, props);
-        }
+        List<ColumnConstraint> list = await GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
 
         // The constraint list is positionally aligned with the columns at registration time.
         // Add/Drop/Rename re-registers, so the count must match. Defensive bail-out otherwise.
@@ -155,6 +145,12 @@ internal sealed class ConstraintRegistry(
                 ColumnConstraint c = list[i];
                 object? value = values[i];
                 bool isNull = value is null || value is DBNull;
+
+                if (c.IsCalculated)
+                {
+                    values[i] = value ?? DBNull.Value;
+                    continue;
+                }
 
                 if (isNull && c.DefaultValue != null)
                 {
@@ -185,6 +181,9 @@ internal sealed class ConstraintRegistry(
 
                 values[i] = value ?? DBNull.Value;
             }
+
+            CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: false);
+            ValidateCalculatedResults(tableName, list, values);
         }
         catch
         {
@@ -198,6 +197,18 @@ internal sealed class ConstraintRegistry(
         return checkpoints;
     }
 
+    public async ValueTask ApplyCalculatedAsync(string tableName, TableDef tableDef, object[] values, bool force, CancellationToken cancellationToken)
+    {
+        List<ColumnConstraint> list = await GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
+        if (list.Count != tableDef.Columns.Count || values.Length != tableDef.Columns.Count)
+        {
+            return;
+        }
+
+        CalculatedExpressionEvaluator.Apply(tableDef, list, values, force);
+        ValidateCalculatedResults(tableName, list, values);
+    }
+
     private static ColumnConstraint ToConstraint(ColumnDefinition def)
     {
         return new ColumnConstraint
@@ -208,7 +219,36 @@ internal sealed class ConstraintRegistry(
             DefaultValue = def.DefaultValue,
             IsAutoIncrement = def.IsAutoIncrement,
             ValidationRule = def.ValidationRule,
+            IsCalculated = def.IsCalculated,
+            CalculationExpression = def.CalculationExpression,
+            CalculatedResultType = AccessWriter.TypeCodeFromDefinition(def),
         };
+    }
+
+    private static void ValidateCalculatedResults(string tableName, List<ColumnConstraint> constraints, object[] values)
+    {
+        for (int i = 0; i < constraints.Count; i++)
+        {
+            ColumnConstraint c = constraints[i];
+            if (!c.IsCalculated)
+            {
+                continue;
+            }
+
+            object? value = values[i];
+            bool isNull = value is null || value is DBNull;
+            if (isNull && !c.IsNullable)
+            {
+                throw new InvalidOperationException(
+                    $"Calculated column '{c.Name}' on table '{tableName}' evaluated to NULL but is marked NOT NULL.");
+            }
+
+            if (!isNull && c.ValidationRule != null && !c.ValidationRule(value))
+            {
+                throw new ArgumentException(
+                    $"Validation rule for calculated column '{c.Name}' on table '{tableName}' rejected value '{value}'.");
+            }
+        }
     }
 
     private static bool IsIntegralType(Type t)
@@ -267,6 +307,34 @@ internal sealed class ConstraintRegistry(
         }
     }
 
+    private static byte ResolveCalculatedResultType(ColumnInfo col, ColumnPropertyBlock? properties)
+    {
+        if (!col.IsCalculated)
+        {
+            return 0;
+        }
+
+        ColumnPropertyEntry? resultType = properties?.FindTarget(col.Name)?.Find(Constants.ColumnPropertyNames.ResultType);
+        return resultType is not null && resultType.Value.Length > 0 ? resultType.Value[0] : col.Type;
+    }
+
+    private async ValueTask<List<ColumnConstraint>> GetOrHydrateAsync(string tableName, TableDef tableDef, CancellationToken cancellationToken)
+    {
+        if (_constraints.TryGetValue(tableName, out List<ColumnConstraint>? list) && list != null)
+        {
+            return list;
+        }
+
+        // The table may have been created by an earlier writer instance (or by Access
+        // itself). Hydrate the registry from the persisted column flags and LvProp so
+        // NOT NULL, AutoIncrement, and calculated-column expressions still take effect
+        // after the database is closed and reopened.
+        ColumnPropertyBlock? props = readLvPropForTable is null
+            ? null
+            : await readLvPropForTable(tableName, cancellationToken).ConfigureAwait(false);
+        return HydrateFromTableDef(tableName, tableDef, props);
+    }
+
     /// <summary>
     /// Rebuilds a per-column constraint list from the persisted TDEF column flags
     /// and (when supplied) the table's <c>MSysObjects.LvProp</c> property block.
@@ -310,12 +378,15 @@ internal sealed class ConstraintRegistry(
                 ClrType = TdefTypeToClrType(col.Type),
                 IsNullable = isNullable,
                 IsAutoIncrement = isAutoIncrement,
+                IsCalculated = col.IsCalculated,
+                CalculationExpression = properties?.FindTarget(col.Name)?.GetTextValue(Constants.ColumnPropertyNames.Expression, properties.Format),
+                CalculatedResultType = ResolveCalculatedResultType(col, properties),
             };
 
             list.Add(c);
         }
 
-        // Always cache the hydrated list ΓÇö even when no column carries a constraint ΓÇö
+        // Always cache the hydrated list even when no column carries a constraint,
         // so subsequent inserts on the same table skip both HydrateFromTableDef and the
         // (potentially expensive) readLvPropForTable LvProp scan. Without this negative
         // caching, every row in a multi-row InsertRowsAsync re-reads MSysObjects.LvProp.
