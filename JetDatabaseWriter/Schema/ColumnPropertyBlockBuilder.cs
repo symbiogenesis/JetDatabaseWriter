@@ -407,6 +407,34 @@ internal sealed class ColumnPropertyBlockBuilder
             });
         }
 
+        /// <summary>Adds a Memo-typed (<c>0x0C</c>) string property using the supplied database format's encoding.</summary>
+        public void AddMemoText(string propertyName, string value, DatabaseFormat format)
+        {
+            Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
+            Guard.NotNull(value, nameof(value));
+            Encoding enc = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+            Entries.Add(new EntryBuilder
+            {
+                Name = propertyName,
+                DataType = ColumnPropertyBlock.DataTypeMemo,
+                DdlFlag = 0x00,
+                Value = enc.GetBytes(value),
+            });
+        }
+
+        /// <summary>Adds a Byte-typed (<c>0x02</c>) property.</summary>
+        public void AddByte(string propertyName, byte value)
+        {
+            Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
+            Entries.Add(new EntryBuilder
+            {
+                Name = propertyName,
+                DataType = ColumnPropertyBlock.DataTypeByte,
+                DdlFlag = 0x01,
+                Value = [value],
+            });
+        }
+
         /// <summary>
         /// Adds a Boolean-typed (<c>0x01</c>) property. Stored on disk as a single
         /// byte: <c>0xFF</c> = true, <c>0x00</c> = false. Matches the wire format

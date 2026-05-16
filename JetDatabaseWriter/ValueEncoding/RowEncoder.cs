@@ -147,6 +147,88 @@ internal sealed class RowEncoder(AccessWriter writer)
         dest[3] = 0;
     }
 
+    private static byte[]? EncodeCalculatedFixedPayload(ColumnInfo column, object value)
+    {
+        if (column.Type == T_BOOL)
+        {
+            return [Convert.ToBoolean(value, CultureInfo.InvariantCulture) ? (byte)0xFF : (byte)0x00];
+        }
+
+        if (column.Type == T_NUMERIC)
+        {
+            return EncodeCalculatedNumericValue(Convert.ToDecimal(value, CultureInfo.InvariantCulture));
+        }
+
+        int fixedSize = JetTypeInfo.GetFixedSize(column.Type);
+        if (fixedSize <= 0)
+        {
+            return null;
+        }
+
+        var payload = new byte[fixedSize];
+        int written = TryEncodeFixedValue(column, value, payload);
+        if (written <= 0)
+        {
+            return null;
+        }
+
+        if (written != payload.Length)
+        {
+            Array.Resize(ref payload, written);
+        }
+
+        return payload;
+    }
+
+    private static byte[]? EncodeCalculatedOleValue(object value)
+    {
+        if (value is PreEncodedLongValue preOle)
+        {
+            return preOle.HeaderBytes;
+        }
+
+        byte[]? data = value as byte[];
+        if (data == null)
+        {
+            string? stringValue = value as string;
+            if (string.IsNullOrEmpty(stringValue))
+            {
+                return null;
+            }
+
+            data = Encoding.UTF8.GetBytes(stringValue);
+        }
+
+        byte[] wrapped = CalculatedColumnUtil.Wrap(data);
+        if (wrapped.Length > AccessWriter.MaxInlineOleBytes)
+        {
+            throw new JetLimitationException($"Calculated OLE value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {AccessWriter.MaxInlineOleBytes} bytes.");
+        }
+
+        return LongValueEncoder.WrapInlineLongValue(wrapped);
+    }
+
+    private static byte[] EncodeCalculatedNumericValue(decimal value)
+    {
+        var payload = new byte[16];
+        BinaryPrimitives.WriteInt16LittleEndian(payload.AsSpan(0, 2), 14);
+
+        Span<byte> mantissa = stackalloc byte[12];
+        NumericEncoder.Decompose(value, mantissa, out bool negative, out int scale);
+        payload[2] = (byte)scale;
+        payload[3] = negative ? (byte)0x80 : (byte)0x00;
+
+        mantissa.Slice(8, 4).CopyTo(payload.AsSpan(4, 4));
+        mantissa.Slice(0, 4).CopyTo(payload.AsSpan(8, 4));
+        mantissa.Slice(4, 4).CopyTo(payload.AsSpan(12, 4));
+        return payload;
+    }
+
+    private static int GetCalculatedVariableSize(ColumnInfo column)
+        => column.Size > Constants.CalculatedColumn.ExtraDataLen
+            ? column.Size - Constants.CalculatedColumn.ExtraDataLen
+            : column.Size;
+
     /// <summary>
     /// Serializes a typed value array into the binary row format understood
     /// by the JET engine (null mask, fixed area, variable-length trailers).
@@ -193,7 +275,7 @@ internal sealed class RowEncoder(AccessWriter writer)
             ColumnInfo column = tableDef.Columns[i];
             object value = values[i] ?? DBNull.Value;
 
-            if (column.Type == T_BOOL)
+            if (column.Type == T_BOOL && !column.IsCalculated)
             {
                 if (value is not DBNull && Convert.ToBoolean(value, CultureInfo.InvariantCulture))
                 {
@@ -320,6 +402,11 @@ internal sealed class RowEncoder(AccessWriter writer)
 
     private byte[]? EncodeVariableValue(ColumnInfo column, object value)
     {
+        if (column.IsCalculated)
+        {
+            return EncodeCalculatedValue(column, value);
+        }
+
         switch (column.Type)
         {
             case T_TEXT:
@@ -338,6 +425,48 @@ internal sealed class RowEncoder(AccessWriter writer)
             default:
                 return null;
         }
+    }
+
+    private byte[]? EncodeCalculatedValue(ColumnInfo column, object value)
+    {
+        switch (column.Type)
+        {
+            case T_TEXT:
+                return CalculatedColumnUtil.Wrap(
+                    EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), GetCalculatedVariableSize(column), compress: false) ?? []);
+            case T_BINARY:
+                return CalculatedColumnUtil.Wrap(EncodeBinaryValue(value, GetCalculatedVariableSize(column)) ?? []);
+            case T_MEMO:
+                return EncodeCalculatedMemoValue(value);
+            case T_OLE:
+                return EncodeCalculatedOleValue(value);
+            default:
+                byte[]? payload = EncodeCalculatedFixedPayload(column, value);
+                return payload is null ? null : CalculatedColumnUtil.Wrap(payload);
+        }
+    }
+
+    private byte[]? EncodeCalculatedMemoValue(object value)
+    {
+        if (value is PreEncodedLongValue preMemo)
+        {
+            return preMemo.HeaderBytes;
+        }
+
+        string? text = Convert.ToString(value, CultureInfo.InvariantCulture);
+        if (text == null)
+        {
+            return null;
+        }
+
+        byte[] data = writer._format != DatabaseFormat.Jet3Mdb ? EncodeJet4Text(text, compress: false) : writer.AnsiEncoding.GetBytes(text);
+        byte[] wrapped = CalculatedColumnUtil.Wrap(data);
+        if (wrapped.Length > AccessWriter.MaxInlineMemoBytes)
+        {
+            throw new JetLimitationException($"Calculated MEMO value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {AccessWriter.MaxInlineMemoBytes} bytes.");
+        }
+
+        return LongValueEncoder.WrapInlineLongValue(wrapped);
     }
 
     private byte[]? EncodeTextValue(string? value, int maxSize, bool compress)

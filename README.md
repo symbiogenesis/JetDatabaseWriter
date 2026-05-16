@@ -39,6 +39,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 | ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Standard (Office 2007) / Agile (Office 2010+) — all read/write |
 | ✅ **Schema features** | Indexes, primary & foreign keys with referential integrity (cascade update/delete), linked tables (Access + ODBC catalog entries) |
 | ✅ **Complex columns** | Read/write attachments and multi-value columns (ACCDB) |
+| ✅ **Calculated columns** | ACCDB expression-column metadata and caller-supplied cached values round-trip |
 | ✅ **Concurrency** | `.ldb` / `.laccdb` lockfile + page-level byte-range locks matching the JET/ACE protocol |
 | ✅ **Transactions** | `BeginTransactionAsync()` → atomic `CommitAsync` / `RollbackAsync` via in-memory page journal |
 | ✅ **Performance** | Configurable LRU page cache, optional parallel page reads, streams millions of rows without loading the file |
@@ -678,7 +679,7 @@ All password-protected formats produced by Microsoft Access from Access 97 throu
 The items below are either **not yet implemented** or are important behavioral caveats, and are the most likely places to hit a wall.
 
 ### Specialized column kinds
-- **Calculated columns (Access 2010+ expression columns) — read-only metadata.** The library reads calc-column flags and the `Expression` / `ResultType` properties produced by Microsoft Access and surfaces them via `ColumnMetadata.IsCalculated` / `.CalculationExpression` / `.CalculatedResultType`. Writing calc columns and client-side evaluation of expressions are not implemented — `CreateTableAsync` throws `NotSupportedException` when `ColumnDefinition.IsCalculated = true`. See [docs/design/calculated-columns-format-notes.md](docs/design/calculated-columns-format-notes.md).
+- **Calculated columns (Access 2010+ expression columns) — no client-side evaluator.** ACCDB calculated-column metadata and caller-supplied cached values round-trip: `CreateTableAsync` writes the descriptor flags plus `Expression` / `ResultType` properties, and row reads unwrap cached values into their logical CLR types. The writer does not evaluate Jet/VBA expressions on insert/update, so callers must provide the cached value for calculated columns; Microsoft Access will recompute it when the database is opened there. See [docs/design/calculated-columns-format-notes.md](docs/design/calculated-columns-format-notes.md).
 
 ### Thread safety and concurrent access
 - **Do not treat a single `AccessReader` / `AccessWriter` instance as a parallel worker.** Low-level page I/O is funneled through one internal gate, so overlapping calls on the same instance block behind each other rather than running in parallel; `AccessWriter` also allows only one active explicit transaction per instance. **Concurrent writers against the same file will corrupt it.** Open with `UseLockFile = true` and `RespectExistingLockFile = true` (both defaults) to fail fast when another process already holds the database. The page byte-range locks are cooperative/advisory: they help protocol-obeying writers serialize page mutations, but they are not a substitute for external coordination with arbitrary tools.

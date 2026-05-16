@@ -118,7 +118,8 @@ internal static class JetExpressionConverter
             || defaultExpr is not null
             || col.ValidationRuleExpression is not null
             || col.ValidationText is not null
-            || col.Description is not null;
+            || col.Description is not null
+            || col.IsCalculated;
 
         if (!any)
         {
@@ -154,6 +155,12 @@ internal static class JetExpressionConverter
         if (col.Description is not null)
         {
             target.AddText(Constants.ColumnPropertyNames.Description, col.Description, format);
+        }
+
+        if (col.IsCalculated)
+        {
+            target.AddMemoText(Constants.ColumnPropertyNames.Expression, col.CalculationExpression ?? string.Empty, format);
+            target.AddByte(Constants.ColumnPropertyNames.ResultType, AccessWriter.TypeCodeFromDefinition(col));
         }
     }
 

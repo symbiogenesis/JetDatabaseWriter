@@ -15,8 +15,8 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// <see cref="AccessReader.Rows{T}(string, IProgress{long}?, System.Threading.CancellationToken)"/>
 /// fast path. The builder inspects the bound
 /// columns and refuses (returns <see langword="null"/>) when any column
-/// requires the slow path — T_MEMO/T_OLE LVAL chains, T_BINARY, T_NUMERIC,
-/// T_COMPLEX/T_ATTACHMENT, or any property typed as
+/// requires the slow path — calculated columns, T_MEMO/T_OLE LVAL chains,
+/// T_BINARY, T_NUMERIC, T_COMPLEX/T_ATTACHMENT, or any property typed as
 /// <see cref="Hyperlink"/>.
 /// </summary>
 internal static class DirectRowDecoderBuilder
@@ -84,6 +84,11 @@ internal static class DirectRowDecoderBuilder
             }
 
             ColumnInfo col = columns[i];
+            if (col.IsCalculated)
+            {
+                return null;
+            }
+
             if (!IsDirectlyDecodable(col.Type, acc.TargetType))
             {
                 return null;

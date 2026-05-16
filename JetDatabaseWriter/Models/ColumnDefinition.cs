@@ -233,8 +233,8 @@ public sealed record ColumnDefinition
     /// <summary>
     /// Gets a value indicating whether this column is an Access 2010+
     /// calculated (expression) column. Calculated columns store the result of
-    /// a Jet/VBA expression (<see cref="CalculationExpression"/>) computed by
-    /// Microsoft Access at insert / update time. ACE (.accdb) only.
+    /// a Jet/VBA expression (<see cref="CalculationExpression"/>). ACE
+    /// (.accdb) only.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -246,15 +246,12 @@ public sealed record ColumnDefinition
     /// calculated-value wrapper.
     /// </para>
     /// <para>
-    /// <b>Current status:</b> the library reads calc-column metadata
-    /// produced by Microsoft Access and surfaces it via
-    /// <see cref="ColumnMetadata.IsCalculated"/> /
-    /// <see cref="ColumnMetadata.CalculationExpression"/> /
-    /// <see cref="ColumnMetadata.CalculatedResultType"/>. Writing calc columns
-    /// and evaluating expressions client-side are not yet implemented;
-    /// <c>CreateTableAsync</c> throws <see cref="NotSupportedException"/> when
-    /// this flag is set. See
-    /// <c>docs/design/calculated-columns-format-notes.md</c>.
+    /// The writer can create ACCDB calculated columns and stores the caller's
+    /// supplied row value as the persisted cached result. It does not evaluate
+    /// <see cref="CalculationExpression"/> on insert/update, so callers must
+    /// provide the cached value in row payloads until a client-side evaluator is
+    /// added. Microsoft Access will recompute the value when it opens the file.
+    /// See <c>docs/design/calculated-columns-format-notes.md</c>.
     /// </para>
     /// </remarks>
     public bool IsCalculated { get; init; }
@@ -270,11 +267,11 @@ public sealed record ColumnDefinition
 
     /// <summary>
     /// Gets the JET column-type code (see <see cref="Constants.ColumnTypes"/>)
-    /// of the value <see cref="CalculationExpression"/> produces. Required
-    /// when <see cref="IsCalculated"/> is <see langword="true"/>; ignored
-    /// otherwise. Persisted in <c>MSysObjects.LvProp</c> as the
-    /// <see cref="Constants.ColumnPropertyNames.ResultType"/> property and
-    /// also written into the column descriptor's <c>col_type</c> byte.
+    /// of the value <see cref="CalculationExpression"/> produces. When left at
+    /// zero for a calculated column, the writer derives the result type from
+    /// <see cref="ClrType"/>. Persisted in <c>MSysObjects.LvProp</c> as the
+    /// <see cref="Constants.ColumnPropertyNames.ResultType"/> property and also
+    /// written into the column descriptor's <c>col_type</c> byte.
     /// </summary>
     public byte CalculatedResultType { get; init; }
 }

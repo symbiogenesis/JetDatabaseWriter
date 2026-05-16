@@ -14,9 +14,9 @@ files we translate from:
 
 ## On-disk format
 
-Calculated columns are an ACCDB-only (Jet 4 / ACE) feature. The Jet3 MDB
+Calculated columns are an ACCDB-only (ACE) feature. The Jet3 MDB
 descriptor has no slot for the extra-flags byte, so calc columns cannot exist in
-those files.
+those files. The writer rejects calculated columns for Jet3/Jet4 `.mdb` output.
 
 ### 1. Extra-flags byte (column descriptor)
 
@@ -59,7 +59,17 @@ last evaluated result** on the row, prefixed by a 23-byte header:
 
 For variable-width source types the on-disk `col_len` becomes
 `originalLen + CALC_EXTRA_DATA_LEN`. For fixed-width source types it is forced
-to `CALC_FIXED_FIELD_LEN` regardless of the underlying type.
+to `CALC_FIXED_FIELD_LEN` regardless of the underlying type. Long-value result
+types (`MEMO` / `OLE`) keep the normal LVAL row header in the row; the bytes
+inside the LVAL payload are wrapped.
+
+Two result types have Access-specific payload encodings inside the wrapper:
+
+- `T_BOOL`: one byte, `0xFF` for true and `0x00` for false. Calculated booleans
+  are not stored in the row null mask.
+- `T_NUMERIC`: 16 bytes: a 2-byte payload-length prefix, scale byte, sign byte
+  (`0x80` for negative), then the 96-bit decimal mantissa in Access's calculated
+  numeric byte order. This is not the normal 17-byte `T_NUMERIC` fixed slot.
 
 Helpers in this codebase: `CalculatedColumnUtil.Wrap` / `.Unwrap` (round-trip
 verified by `CalculatedColumnUtilTests`).
@@ -68,9 +78,7 @@ verified by `CalculatedColumnUtilTests`).
 
 ### Phase 1A — Read-side metadata + foundation **(DONE)**
 
-Goal: surface calc-column metadata to clients, recognise the format on disk,
-and reject unsupported writes with a clear error so callers can detect partial
-support today.
+Goal: surface calc-column metadata to clients and recognise the format on disk.
 
 Delivered:
 
@@ -84,19 +92,10 @@ Delivered:
   `CalculatedResultType` properties.
 - `AccessReader.GetColumnMetadataAsync` extracts `Expression` / `ResultType`
   from LvProp.
-- `AccessWriter.CreateTableAsync` throws `NotSupportedException` when any
-  `ColumnDefinition.IsCalculated == true` (message points at this doc and
-  mentions Phase 1B).
 - Tests: `JetDatabaseWriter.Tests/Schema/CalculatedColumnUtilTests.cs`,
-  expanded `LimitationsTests`.
+  expanded metadata fixture coverage.
 
-Phase 1A does **not** unwrap the persisted value when reading rows; the
-underlying typed-value parser still sees the original payload and would
-mis-decode a stored calc value. Real read-side row support lands with Phase 1B
-because we need the descriptor-length adjustments and `RowMapper` plumbing in
-the same change set.
-
-### Phase 1B — Write & round-trip the persisted value
+### Phase 1B — Write & round-trip the persisted value **(DONE)**
 
 Goal: be able to create a calc column, store an evaluated value, and have both
 ourselves and Access read it back correctly. Still **no client-side
@@ -112,31 +111,24 @@ Jackcess sources to translate:
   bucket so it can store the wrapper.
 - `ColumnImpl.writeRealCodecHandler` calls into the wrapper helpers.
 
-Required code changes here:
+Delivered:
 
-- `Schema/TDefPageBuilder` (or wherever the 25-byte
-  descriptor is emitted) — write the `0xC0` extra-flags byte and adjust
-  `col_len` (`CALC_FIXED_FIELD_LEN` for fixed, `original + 23` for variable).
-- `Schema/TDefPageBuilder` (`BuildTableDefinition`,
-  `BuildTDefPageWithIndexOffsets`) — treat all calc columns as variable-length
-  for slot allocation; ensure variable-column count, NULL bitmap, and offset
-  table line up.
-- `Schema/JetExpressionConverter.ApplyColumn` — when `IsCalculated`, emit
-  the `Expression` (Memo) and `ResultType` (Byte) LvProp entries on the
-  column.
-- `Schema/JetTypeInfo` (or the equivalent fixed-payload sizer) — return
-  `CALC_FIXED_FIELD_LEN` for any calc column regardless of its `JetType`.
-- `ValueEncoding/RowEncoder.TryEncodeFixedValue` /
-  `EncodeVariableValue` — wrap the encoded bytes through
-  `CalculatedColumnUtil.Wrap` before they reach the row payload.
-- Reader: `ValueDecoding/RowMapper.ReadFixed` / `ReadVarAsync` (or whichever methods materialise
-  per-column bytes) — call `CalculatedColumnUtil.Unwrap` for calc columns
-  before handing the bytes to `TypedValueParser`.
-- `AccessWriter.CreateTableAsync` — drop the Phase 1B guard once the above is
-  in place.
-
-Tests: round-trip create/insert/select using Access-generated oracle ACCDB
-files; cross-check against `JetDatabaseWriter.FormatProbe` dumps.
+- `Schema/TDefPageBuilder` emits the `0xC0` extra-flags byte, adjusts `col_len`,
+  and treats every calculated column as variable-area storage.
+- `Schema/JetExpressionConverter.ApplyColumn` emits `Expression` as Memo and
+  `ResultType` as Byte in `MSysObjects.LvProp`.
+- `AccessWriter.CreateTableAsync` accepts calculated columns for ACCDB, validates
+  expression/result-type constraints, and rejects unsupported Jet3/Jet4 MDB
+  targets.
+- `ValueEncoding/RowEncoder` wraps cached values by result type, including
+  calculated booleans, calculated numeric payloads, and calculated MEMO values
+  whose wrapped payload spills to LVAL pages.
+- `AccessReader` unwraps calculated cached values on the string, typed
+  `DataTable`, and POCO paths; the compiled direct POCO decoder falls back to
+  the unwrap-aware path for any bound calculated column.
+- Tests: `JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs` plus
+  updated Access-authored fixture coverage in
+  `JetDatabaseWriter.Tests/Schema/CalculatedColumnFixtureTests.cs`.
 
 ### Phase 2 — Subset expression evaluator
 

@@ -892,12 +892,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     ? subtype
                     : ResolveTypeName(col),
                 ClrType = JetTypeInfo.ResolveClrType(col),
-                MaxLength = col.Size > 0 ? col.Size : null,
+                MaxLength = GetMetadataMaxLength(col),
                 IsNullable = ResolveIsNullable(col, target),
                 IsFixedLength = col.IsFixed,
                 IsHyperlink = JetTypeInfo.IsHyperlinkColumn(col),
                 Ordinal = index,
-                Size = JetTypeInfo.GetColumnSize(col.Type, col.Size),
+                Size = JetTypeInfo.GetColumnSize(col.Type, GetMetadataDeclaredSize(col)),
                 DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, _format),
                 ValidationRuleExpression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, _format),
                 ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, _format),
@@ -933,6 +933,22 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return (col.Flags & 0x08) == 0;
+    }
+
+    private static int? GetMetadataMaxLength(ColumnInfo col)
+    {
+        int declaredSize = GetMetadataDeclaredSize(col);
+        return declaredSize > 0 ? declaredSize : null;
+    }
+
+    private static int GetMetadataDeclaredSize(ColumnInfo col)
+    {
+        if (col.IsCalculated && (col.Type == T_TEXT || col.Type == T_BINARY) && col.Size > Constants.CalculatedColumn.ExtraDataLen)
+        {
+            return col.Size - Constants.CalculatedColumn.ExtraDataLen;
+        }
+
+        return col.Size;
     }
 
     /// <inheritdoc/>
@@ -1902,6 +1918,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return DBNull.Value;
         }
 
+        if (col.IsCalculated)
+        {
+            return await ReadCalculatedVarValueAsync(row, start, len, col, cancellationToken).ConfigureAwait(false);
+        }
+
         Type targetType = JetTypeInfo.ResolveClrType(col);
         if (targetType == typeof(byte[]))
         {
@@ -1916,6 +1937,36 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         string rawValue = await ReadVarAsync(row, start, len, col, cancellationToken).ConfigureAwait(false);
         return TypedValueParser.ParseValue(rawValue, targetType, _strictParsing);
+    }
+
+    private async ValueTask<object> ReadCalculatedVarValueAsync(byte[] row, int start, int len, ColumnInfo col, CancellationToken cancellationToken)
+    {
+        switch (col.Type)
+        {
+            case T_TEXT:
+                return DecodeCalculatedTextPayload(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
+            case T_BINARY:
+                return CalculatedColumnUtil.Unwrap(row.AsSpan(start, len));
+            case T_MEMO:
+                {
+                    byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
+                    byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+                    return _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
+                }
+
+            case T_OLE:
+                {
+                    byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
+                    byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+                    return DecodeOleValueBytes(payload, 0, payload.Length);
+                }
+
+            default:
+                return CalculatedColumnUtil.ReadPayloadTyped(
+                    CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)),
+                    col.Type,
+                    _strictParsing);
+        }
     }
 
     /// <summary>
@@ -3061,6 +3112,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return string.Empty;
         }
 
+        if (col.IsCalculated)
+        {
+            return await ReadCalculatedVarAsync(row, start, len, col, cancellationToken).ConfigureAwait(false);
+        }
+
         try
         {
             switch (col.Type)
@@ -3116,6 +3172,56 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return string.Empty;
         }
     }
+
+    private async ValueTask<string> ReadCalculatedVarAsync(byte[] row, int start, int len, ColumnInfo col, CancellationToken cancellationToken)
+    {
+        try
+        {
+            switch (col.Type)
+            {
+                case T_TEXT:
+                    return DecodeCalculatedTextPayload(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
+                case T_BINARY:
+                    return JetTypeInfo.ToHexStringNoSeparator(CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)));
+                case T_MEMO:
+                    {
+                        byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
+                        byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+                        return _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
+                    }
+
+                case T_OLE:
+                    {
+                        byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(row, start, len, cancellationToken).ConfigureAwait(false);
+                        byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+                        return _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: true);
+                    }
+
+                default:
+                    return CalculatedColumnUtil.ReadPayloadString(
+                        CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)),
+                        col.Type,
+                        _strictParsing);
+            }
+        }
+        catch (JetLimitationException)
+        {
+            throw;
+        }
+        catch (ArgumentException)
+        {
+            return string.Empty;
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private string DecodeCalculatedTextPayload(byte[] payload)
+        => _format != DatabaseFormat.Jet3Mdb
+            ? DecodeJet4Text(payload, 0, payload.Length)
+            : _ansiEncoding.GetString(payload, 0, payload.Length);
 
     // ── Typed row cracker ────────────────────────────────────
     //
@@ -3213,6 +3319,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     ? (object)await _longValueDecoder.ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
                     : await _longValueDecoder.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
             }
+            else if (buffer[i] is CalculatedLongValueRef clvr)
+            {
+                buffer[i] = await ResolveCalculatedLongValueRefAsync(page, clvr, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return true;
@@ -3235,9 +3345,22 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     ? (object)await _longValueDecoder.ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
                     : await _longValueDecoder.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
             }
+            else if (row[i] is CalculatedLongValueRef clvr)
+            {
+                row[i] = await ResolveCalculatedLongValueRefAsync(page, clvr, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return row;
+    }
+
+    private async ValueTask<object> ResolveCalculatedLongValueRefAsync(byte[] page, CalculatedLongValueRef reference, CancellationToken cancellationToken)
+    {
+        byte[] raw = await _longValueDecoder.ReadLongValueRawBytesAsync(page, reference.Start, reference.Len, cancellationToken).ConfigureAwait(false);
+        byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+        return reference.IsOle
+            ? (object)DecodeOleValueBytes(payload, 0, payload.Length)
+            : _longValueDecoder.DecodeLongValue(payload, 0, payload.Length, isOle: false);
     }
 
     /// <summary>
@@ -3436,6 +3559,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
             };
         }
 
+        if (col.IsCalculated)
+        {
+            return ReadCalculatedVarTypedSync(page, start, len, col, ref needsLongValue);
+        }
+
         try
         {
             switch (col.Type)
@@ -3514,6 +3642,41 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
+    private object? ReadCalculatedVarTypedSync(byte[] page, int start, int len, ColumnInfo col, ref bool needsLongValue)
+    {
+        try
+        {
+            switch (col.Type)
+            {
+                case T_TEXT:
+                    return DecodeCalculatedTextPayload(CalculatedColumnUtil.Unwrap(page.AsSpan(start, len)));
+                case T_BINARY:
+                    return CalculatedColumnUtil.Unwrap(page.AsSpan(start, len));
+                case T_MEMO:
+                case T_OLE:
+                    needsLongValue = true;
+                    return new CalculatedLongValueRef(start, len, col.Type == T_OLE);
+                default:
+                    return CalculatedColumnUtil.ReadPayloadTyped(
+                        CalculatedColumnUtil.Unwrap(page.AsSpan(start, len)),
+                        col.Type,
+                        _strictParsing);
+            }
+        }
+        catch (JetLimitationException)
+        {
+            throw;
+        }
+        catch (ArgumentException)
+        {
+            return DBNull.Value;
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return DBNull.Value;
+        }
+    }
+
     /// <summary>
     /// Sentinel placed in the typed-row buffer for variable-area MEMO/OLE
     /// slots that need an LVAL chain walk to resolve. Replaced by the
@@ -3521,6 +3684,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <c>CrackRowTypedAsync</c>.
     /// </summary>
     private readonly record struct LongValueRef(int Start, int Len, bool IsOle);
+
+    private readonly record struct CalculatedLongValueRef(int Start, int Len, bool IsOle);
 
     /// <summary>
     /// Yields rows from every data page whose owning TDEF page equals <paramref name="tdefPage"/>.

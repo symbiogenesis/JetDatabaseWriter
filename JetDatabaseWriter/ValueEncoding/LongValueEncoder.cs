@@ -9,6 +9,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
@@ -79,6 +80,11 @@ internal sealed class LongValueEncoder(AccessWriter writer)
                     continue;
                 }
 
+                if (col.IsCalculated)
+                {
+                    data = CalculatedColumnUtil.Wrap(data);
+                }
+
                 inlineCap = MaxInlineOleBytes;
             }
             else
@@ -92,6 +98,11 @@ internal sealed class LongValueEncoder(AccessWriter writer)
                 data = writer._format != DatabaseFormat.Jet3Mdb
                     ? AccessBase.EncodeJet4Text(text, col.IsCompressedUnicode)
                     : writer.AnsiEncoding.GetBytes(text);
+                if (col.IsCalculated)
+                {
+                    data = CalculatedColumnUtil.Wrap(data);
+                }
+
                 inlineCap = MaxInlineMemoBytes;
             }
 

@@ -125,10 +125,8 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
 
     /// <summary>
     /// The fixture has 4 data rows (Bruce Wayne, Bart Simpson, John Doe,
-    /// Test User). All rows must be readable without throwing. The reader
-    /// surfaces calculated-column values as opaque wrapped bytes (the
-    /// 23-byte envelope is preserved); this test verifies the decode path
-    /// completes for every row.
+    /// Test User). All rows must be readable without throwing, and the reader
+    /// unwraps calculated-column cached values into their logical CLR types.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
@@ -155,17 +153,26 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
         Assert.Contains("Bart", firstNames);
         Assert.Contains("John", firstNames);
         Assert.Contains("Test", firstNames);
+
+        DataColumn lastFirstColumn = Assert.Single(dt.Columns.Cast<DataColumn>(), c => c.ColumnName == "LastFirst");
+        Assert.Equal(typeof(string), lastFirstColumn.DataType);
+
+        var lastFirstValues = dt.AsEnumerable()
+            .Select(r => r["LastFirst"]?.ToString())
+            .Where(v => !string.IsNullOrEmpty(v))
+            .ToList();
+
+        Assert.Contains(lastFirstValues, v => v!.Contains("Wayne", StringComparison.Ordinal));
     }
 
     /// <summary>
-    /// The boolean calculated column <c>IsRich</c> is present in the
-    /// metadata as a calculated column. The cached result values are
-    /// wrapped in a 23-byte envelope (opaque); this test verifies the
-    /// column metadata rather than the decoded value.
+    /// The calculated column <c>IsRich</c> is present in the metadata, and its
+    /// cached result values decode as nulls or the descriptor's CLR type rather
+    /// than the raw 23-byte calculated-value envelope.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
-    public async Task IsRich_IsReportedAsCalculatedBoolean()
+    public async Task IsRich_IsReportedAsCalculatedAndDecodesTypedValues()
     {
         AccessReader reader = await db.GetReaderAsync(
             TestDatabases.CalcFieldTestV2010,
@@ -179,5 +186,18 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
         Assert.True(isRich.IsCalculated);
         Assert.NotNull(isRich.CalculationExpression);
         Assert.True(isRich.CalculatedResultType > 0);
+
+        DataTable dt = await reader.ReadDataTableAsync(
+            "Table1",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        DataColumn isRichColumn = Assert.Single(dt.Columns.Cast<DataColumn>(), c => c.ColumnName == "IsRich");
+        Assert.Equal(isRich.ClrType, isRichColumn.DataType);
+        Assert.NotEqual(typeof(byte[]), isRichColumn.DataType);
+        Assert.All(
+            dt.AsEnumerable(),
+            row => Assert.True(
+                row["IsRich"] is DBNull || row["IsRich"].GetType() == isRich.ClrType,
+                $"Expected DBNull or {isRich.ClrType}; got {row["IsRich"].GetType()}"));
     }
 }

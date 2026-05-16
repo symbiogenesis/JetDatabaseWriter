@@ -453,26 +453,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             throw new ArgumentException("At least one column is required", nameof(columns));
         }
 
-        // Calculated columns (Access 2010+ expression columns) are recognised
-        // on the read side (see ColumnMetadata.IsCalculated) but writing them
-        // is not yet implemented \u2014 the on-disk format requires emitting the
-        // extra-flags byte at descriptor offset 16, the Expression / ResultType
-        // properties in MSysObjects.LvProp, and the 23-byte calculated-value
-        // wrapper around every cached cell value (see
-        // docs/design/calculated-columns-format-notes.md).
-        for (int i = 0; i < columns.Count; i++)
-        {
-            ColumnDefinition col = columns[i];
-            if (col.IsCalculated)
-            {
-                throw new NotSupportedException(
-                    $"Column '{col.Name}': writing calculated columns is not yet implemented. " +
-                    "See docs/design/calculated-columns-format-notes.md for the on-disk format. " +
-                    "Reading calc-column metadata produced by Microsoft Access is supported via " +
-                    "ColumnMetadata.IsCalculated / .CalculationExpression / .CalculatedResultType.");
-            }
-        }
-
         // Pre-process the column-level IsPrimaryKey shortcut. Synthesize one
         // composite PK IndexDefinition (named "PrimaryKey") from columns
         // marked IsPrimaryKey=true, in declaration order, and force those
@@ -2011,6 +1991,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     internal static byte TypeCodeFromDefinition(ColumnDefinition column)
     {
+        if (column.IsCalculated && column.CalculatedResultType != 0)
+        {
+            return column.CalculatedResultType;
+        }
+
         // Complex columns: Attachment and Multi-value have dedicated
         // type codes and override the CLR-driven mapping. The user picks one
         // explicitly via IsAttachment / IsMultiValue; declaring both is rejected
@@ -2069,6 +2054,61 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     internal static bool IsVariableType(byte type)
     {
         return type == T_TEXT || type == T_BINARY || type == T_MEMO || type == T_OLE;
+    }
+
+    internal static void ValidateCalculatedColumn(ColumnDefinition column, DatabaseFormat format)
+    {
+        if (!column.IsCalculated)
+        {
+            return;
+        }
+
+        if (format != DatabaseFormat.AceAccdb)
+        {
+            throw new NotSupportedException(
+                $"Column '{column.Name}': calculated columns are only supported in ACCDB databases.");
+        }
+
+        if (string.IsNullOrWhiteSpace(column.CalculationExpression))
+        {
+            throw new ArgumentException(
+                $"Column '{column.Name}' is calculated but has no CalculationExpression.",
+                nameof(column));
+        }
+
+        if (column.IsAttachment || column.IsMultiValue || column.IsHyperlink || column.ClrType == typeof(Hyperlink))
+        {
+            throw new NotSupportedException(
+                $"Column '{column.Name}': calculated Attachment, MultiValue, and Hyperlink columns are not supported.");
+        }
+
+        if (column.IsAutoIncrement)
+        {
+            throw new NotSupportedException(
+                $"Column '{column.Name}': calculated columns cannot be AutoNumber columns.");
+        }
+
+        byte type = TypeCodeFromDefinition(column);
+        switch (type)
+        {
+            case T_BOOL:
+            case T_BYTE:
+            case T_INT:
+            case T_LONG:
+            case T_MONEY:
+            case T_FLOAT:
+            case T_DOUBLE:
+            case T_DATETIME:
+            case T_BINARY:
+            case T_TEXT:
+            case T_MEMO:
+            case T_GUID:
+            case T_NUMERIC:
+                return;
+            default:
+                throw new NotSupportedException(
+                    $"Column '{column.Name}': calculated result type 0x{type:X2} is not supported.");
+        }
     }
 
     /// <summary>
@@ -2464,11 +2504,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         switch (column.Type)
         {
             case T_TEXT:
-                int charLen = _format != DatabaseFormat.Jet3Mdb ? Math.Max(1, column.Size / 2) : Math.Max(1, column.Size);
+                int textSize = column.IsCalculated
+                    ? Math.Max(0, column.Size - Constants.CalculatedColumn.ExtraDataLen)
+                    : column.Size;
+                int charLen = _format != DatabaseFormat.Jet3Mdb ? Math.Max(1, textSize / 2) : Math.Max(1, textSize);
                 baseDef = new ColumnDefinition(column.Name, typeof(string), charLen);
                 break;
             case T_BINARY:
-                baseDef = new ColumnDefinition(column.Name, typeof(byte[]), column.Size > 0 ? column.Size : 255);
+                int binarySize = column.IsCalculated
+                    ? Math.Max(0, column.Size - Constants.CalculatedColumn.ExtraDataLen)
+                    : column.Size;
+                baseDef = new ColumnDefinition(column.Name, typeof(byte[]), binarySize > 0 ? binarySize : 255);
                 break;
             case T_ATTACHMENT:
                 // preserve attachment columns across
@@ -2531,6 +2577,25 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         if (column.Type == T_NUMERIC)
         {
             def = def with { NumericPrecision = column.NumericPrecision, NumericScale = column.NumericScale };
+        }
+
+        if (column.IsCalculated)
+        {
+            ColumnPropertyTarget? target = properties?.FindTarget(column.Name);
+            byte resultType = column.Type;
+            ColumnPropertyEntry? resultTypeEntry = target?.Find(Constants.ColumnPropertyNames.ResultType);
+            if (resultTypeEntry is not null && resultTypeEntry.Value.Length >= 1)
+            {
+                resultType = resultTypeEntry.Value[0];
+            }
+
+            def = def with
+            {
+                IsCalculated = true,
+                CalculationExpression = target?.GetTextValue(Constants.ColumnPropertyNames.Expression, _format),
+                CalculatedResultType = resultType,
+                IsCompressedUnicode = false,
+            };
         }
 
         return def;

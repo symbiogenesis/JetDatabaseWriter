@@ -2,8 +2,11 @@ namespace JetDatabaseWriter.Schema;
 
 using System;
 using System.Buffers.Binary;
+using System.Globalization;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Constants;
+using static JetDatabaseWriter.Constants.ColumnTypes;
 
 /// <summary>
 /// Wrap / unwrap helpers for the 23-byte on-disk envelope every Access 2010+
@@ -56,5 +59,147 @@ internal static class CalculatedColumnUtil
         var unwrapped = new byte[copyLen];
         Buffer.BlockCopy(data, CalculatedColumn.DataOffset, unwrapped, 0, copyLen);
         return unwrapped;
+    }
+
+    internal static byte[] Unwrap(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < CalculatedColumn.DataOffset)
+        {
+            return data.ToArray();
+        }
+
+        int dataLen = BinaryPrimitives.ReadInt32LittleEndian(data.Slice(CalculatedColumn.DataLenOffset, 4));
+        int available = data.Length - CalculatedColumn.DataOffset;
+        int copyLen = Math.Max(0, Math.Min(available, dataLen));
+        var unwrapped = new byte[copyLen];
+        data.Slice(CalculatedColumn.DataOffset, copyLen).CopyTo(unwrapped);
+        return unwrapped;
+    }
+
+    internal static string ReadPayloadString(ReadOnlySpan<byte> payload, byte type, bool strictNumeric)
+    {
+        switch (type)
+        {
+            case T_BOOL:
+                return ReadBooleanPayload(payload) ? "True" : "False";
+            case T_NUMERIC:
+                object numeric = ReadNumericPayload(payload, strictNumeric);
+                return numeric is decimal decimalValue
+                    ? decimalValue.ToString("G", CultureInfo.InvariantCulture)
+                    : string.Empty;
+            default:
+                int required = type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(type);
+                return required > 0 && payload.Length >= required
+                    ? JetTypeInfo.ReadFixedString(payload, 0, type, required, strictNumeric)
+                    : string.Empty;
+        }
+    }
+
+    internal static object ReadPayloadTyped(ReadOnlySpan<byte> payload, byte type, bool strictNumeric)
+    {
+        switch (type)
+        {
+            case T_BOOL:
+                return ReadBooleanPayload(payload);
+            case T_NUMERIC:
+                return ReadNumericPayload(payload, strictNumeric);
+            default:
+                int required = type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(type);
+                return required > 0 && payload.Length >= required
+                    ? JetTypeInfo.ReadFixedTyped(payload, 0, type, required, strictNumeric)
+                    : DBNull.Value;
+        }
+    }
+
+    private static bool ReadBooleanPayload(ReadOnlySpan<byte> payload)
+        => payload.Length > 0 && payload[0] != 0;
+
+    private static object ReadNumericPayload(ReadOnlySpan<byte> payload, bool strict)
+    {
+        if (payload.Length < 4)
+        {
+            if (strict)
+            {
+                throw new JetLimitationException($"Calculated T_NUMERIC payload is too short (need at least 4 bytes, have {payload.Length}).");
+            }
+
+            return DBNull.Value;
+        }
+
+        short storedLen = BinaryPrimitives.ReadInt16LittleEndian(payload.Slice(0, 2));
+        int mantissaLen = AlignToFour((storedLen > 0 ? storedLen : payload.Length - 2) - 2);
+        mantissaLen = Math.Min(mantissaLen, payload.Length - 4);
+        if (mantissaLen <= 0)
+        {
+            return DBNull.Value;
+        }
+
+        if (mantissaLen > 12)
+        {
+            if (strict)
+            {
+                throw new JetLimitationException(
+                    $"Calculated T_NUMERIC mantissa is {mantissaLen} bytes, which exceeds the .NET decimal limit of 12 bytes.");
+            }
+
+            return DBNull.Value;
+        }
+
+        byte scale = payload[2];
+        if (scale > 28)
+        {
+            if (strict)
+            {
+                throw new JetLimitationException(
+                    $"Calculated T_NUMERIC scale {scale} exceeds the .NET decimal maximum of 28.");
+            }
+
+            return DBNull.Value;
+        }
+
+        byte[] mantissa = payload.Slice(4, mantissaLen).ToArray();
+        FixCalculatedNumericByteOrder(mantissa);
+
+        Span<byte> padded = stackalloc byte[12];
+        mantissa.CopyTo(padded.Slice(12 - mantissa.Length));
+
+        uint hi = BinaryPrimitives.ReadUInt32BigEndian(padded.Slice(0, 4));
+        uint mid = BinaryPrimitives.ReadUInt32BigEndian(padded.Slice(4, 4));
+        uint lo = BinaryPrimitives.ReadUInt32BigEndian(padded.Slice(8, 4));
+        bool negative = payload[3] != 0;
+
+        try
+        {
+            return new decimal(unchecked((int)lo), unchecked((int)mid), unchecked((int)hi), negative, scale);
+        }
+        catch (OverflowException ex)
+        {
+            if (strict)
+            {
+                throw new JetLimitationException(
+                    $"Calculated T_NUMERIC value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})",
+                    ex);
+            }
+
+            return DBNull.Value;
+        }
+    }
+
+    private static int AlignToFour(int value)
+        => value <= 0 ? 0 : ((value + 3) / 4) * 4;
+
+    private static void FixCalculatedNumericByteOrder(byte[] bytes)
+    {
+        int pos = 0;
+        if (bytes.Length % 8 != 0 && bytes.Length >= 4)
+        {
+            Array.Reverse(bytes, 0, 4);
+            pos = 4;
+        }
+
+        for (; pos + 8 <= bytes.Length; pos += 8)
+        {
+            Array.Reverse(bytes, pos, 8);
+        }
     }
 }

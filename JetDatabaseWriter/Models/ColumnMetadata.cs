@@ -87,8 +87,9 @@ public sealed record ColumnMetadata
     /// <see cref="Constants.CalculatedColumn.ExtFlagMask"/> bits in the column
     /// descriptor's extra-flags byte (Jackcess <c>CALCULATED_EXT_FLAG_MASK</c>).
     /// When <see langword="true"/>, the cached value is wrapped in a 23-byte
-    /// envelope on disk and the original expression is exposed via
-    /// <see cref="CalculationExpression"/>. ACE (.accdb) only.
+    /// envelope on disk; row readers unwrap it and expose the logical CLR value.
+    /// The original expression is exposed via <see cref="CalculationExpression"/>.
+    /// ACE (.accdb) only.
     /// </summary>
     public bool IsCalculated { get; init; }
 

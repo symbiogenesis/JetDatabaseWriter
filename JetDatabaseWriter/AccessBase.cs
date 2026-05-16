@@ -1200,7 +1200,7 @@ public abstract class AccessBase : IAccessBase
             }
         }
 
-        if (col.Type == T_BOOL)
+        if (col.Type == T_BOOL && !col.IsCalculated)
         {
             return new ColumnSlice(ColumnSliceKind.Bool, 0, 0, nullBit);
         }

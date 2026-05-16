@@ -187,6 +187,44 @@ internal sealed class LongValueDecoder(AccessReader reader)
         }
     }
 
+    internal async ValueTask<byte[]> ReadLongValueRawBytesAsync(byte[] row, int start, int len, CancellationToken cancellationToken)
+    {
+        if (len < 12)
+        {
+            return [];
+        }
+
+        byte bitmask = row[start + 3];
+        int memoLen = JetTypeInfo.ReadUInt24LittleEndian(row.AsSpan(start, 3));
+
+        switch (bitmask & 0xC0)
+        {
+            case 0x80:
+                int memoStart = start + 12;
+                int inlineLen = Math.Min(memoLen, row.Length - memoStart);
+                if (inlineLen <= 0)
+                {
+                    return [];
+                }
+
+                return row.AsSpan(memoStart, inlineLen).ToArray();
+
+            case 0x40:
+                LvalRowLocation memoLoc = await LocateLvalRowAsync(Ru32(row, start + 4), cancellationToken).ConfigureAwait(false);
+                int memoSize = Math.Min(memoLoc.Size, memoLen);
+                if (memoLoc.Failed || memoSize <= 0)
+                {
+                    return [];
+                }
+
+                return memoLoc.Page.AsSpan(memoLoc.Start, memoSize).ToArray();
+
+            default:
+                LvalChainResult chain = await ReadLvalChainAsync(Ru32(row, start + 4), memoLen, cancellationToken).ConfigureAwait(false);
+                return chain.Data ?? [];
+        }
+    }
+
     internal async ValueTask<byte[]> ReadOleValueBytesAsync(byte[] row, int start, int len, CancellationToken cancellationToken)
     {
         if (len < 12)

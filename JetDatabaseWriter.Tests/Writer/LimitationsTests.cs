@@ -1,11 +1,8 @@
 namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
-using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Threading.Tasks;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
@@ -42,43 +39,15 @@ public sealed class LimitationsTests
     // ── Specialized column kinds ──────────────────────────────────────
 
     [Fact]
-    public void SpecializedColumns_NoCalculatedColumnWriteApi()
+    public void SpecializedColumns_NoCalculatedColumnEvaluationApi()
     {
-        // Phase 1A status (see docs/design/calculated-columns-format-notes.md):
-        // calc-column metadata round-trips on read (ColumnMetadata.IsCalculated /
-        // .CalculationExpression / .CalculatedResultType), but writing calc
-        // columns (Phase 1B) and evaluating expressions client-side (Phase 2+)
-        // are not yet implemented. CreateTableAsync rejects IsCalculated=true
-        // with NotSupportedException; this pin asserts that contract until
-        // Phase 1B lifts it.
+        // Calculated-column schema and caller-supplied cached values now round-trip,
+        // but Jet/VBA expression evaluation is still outside the writer surface.
         Assert.NotNull(typeof(ColumnDefinition).GetProperty("IsCalculated"));
         Assert.NotNull(typeof(ColumnMetadata).GetProperty("IsCalculated"));
         Assert.NotNull(typeof(ColumnMetadata).GetProperty("CalculationExpression"));
-    }
-
-    [Fact]
-    public async Task SpecializedColumns_CreateTableAsync_RejectsIsCalculated()
-    {
-        await using var stream = await CreateFreshAccdbStreamAsync();
-        await using var writer = await OpenWriterAsync(stream);
-
-        var ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
-            await writer.CreateTableAsync(
-                "CalcRejection",
-                [
-                    new("Id", typeof(int)) { IsAutoIncrement = true, IsPrimaryKey = true },
-                    new("Computed", typeof(string), maxLength: 100)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = """
-                        [Id] & " row"
-                        """,
-                        CalculatedResultType = 0x0A, // T_TEXT
-                    },
-                ],
-                TestContext.Current.CancellationToken));
-
-        Assert.Contains("writing calculated columns is not yet implemented", ex.Message, StringComparison.Ordinal);
+        AssertNoMethodMatching(typeof(IAccessWriter), "Evaluate");
+        AssertNoMethodMatching(typeof(AccessWriter), "Evaluate");
     }
 
     // ── Forms, reports, macros, queries, VBA ──────────────────────────
@@ -129,31 +98,5 @@ public sealed class LimitationsTests
 
         string message = $"Type '{type.FullName}' must not expose any public method whose name contains '{substring}'. Found: {string.Join(", ", matches)}";
         Assert.True(matches.Length == 0, message);
-    }
-
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
-    {
-        var ms = new MemoryStream();
-        await using (var writer = await AccessWriter.CreateDatabaseAsync(
-            ms,
-            DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-        }
-
-        ms.Position = 0;
-        return ms;
-    }
-
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(
-            stream,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
     }
 }

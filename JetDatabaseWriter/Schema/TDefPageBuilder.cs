@@ -29,9 +29,12 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         for (int i = 0; i < columns.Count; i++)
         {
             ColumnDefinition definition = columns[i];
+            AccessWriter.ValidateCalculatedColumn(definition, format);
             byte type = AccessWriter.TypeCodeFromDefinition(definition);
-            bool variable = AccessWriter.IsVariableType(type);
-            int size = GetDeclaredSize(type, definition.MaxLength, format);
+            bool isCalculated = definition.IsCalculated;
+            bool variable = isCalculated || AccessWriter.IsVariableType(type);
+            int declaredSize = GetDeclaredSize(type, definition.MaxLength, format);
+            int size = isCalculated ? GetCalculatedDeclaredSize(type, declaredSize) : declaredSize;
 
             byte flags;
             bool isComplex = type == T_ATTACHMENT || type == T_COMPLEX;
@@ -88,9 +91,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 Misc = isComplex ? definition.ComplexId : 0,
                 NumericPrecision = type == T_NUMERIC ? AccessWriter.ResolveNumericPrecision(definition) : (byte)0,
                 NumericScale = type == T_NUMERIC ? AccessWriter.ResolveNumericScale(definition) : (byte)0,
-                ExtraFlags = (format != DatabaseFormat.Jet3Mdb && (type == T_TEXT || type == T_MEMO) && definition.IsCompressedUnicode)
-                    ? Constants.CompressedUnicodeExtFlagMask
-                    : (byte)0,
+                ExtraFlags = GetExtraFlags(definition, type, format),
             };
 
             result.Columns.Add(column);
@@ -155,7 +156,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             ColumnInfo col = tableDef.Columns[i];
             int o = colStart + (i * writer._colDesc.Size);
 
-            if (AccessWriter.IsVariableType(col.Type))
+            if (!col.IsFixed)
             {
                 numVarCols++;
             }
@@ -190,8 +191,15 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             }
             else if (col.Type == T_NUMERIC && writer._format != DatabaseFormat.Jet3Mdb)
             {
-                page[o + writer._colDesc.MiscOff] = col.NumericPrecision;
-                page[o + writer._colDesc.MiscOff + 1] = col.NumericScale;
+                if (!col.IsCalculated)
+                {
+                    page[o + writer._colDesc.MiscOff] = col.NumericPrecision;
+                    page[o + writer._colDesc.MiscOff + 1] = col.NumericScale;
+                }
+                else
+                {
+                    page[o + writer._colDesc.FlagsOff + 1] = col.ExtraFlags;
+                }
             }
             else if (jet4 && (col.Type == T_TEXT || col.Type == T_MEMO))
             {
@@ -212,6 +220,10 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 //                     decodes the FF FE compressed marker regardless of
                 //                     the bit.
                 AccessBase.Wi32(page, o + writer._colDesc.MiscOff, 0x00000409);
+                page[o + writer._colDesc.FlagsOff + 1] = col.ExtraFlags;
+            }
+            else if (jet4 && col.IsCalculated)
+            {
                 page[o + writer._colDesc.FlagsOff + 1] = col.ExtraFlags;
             }
 
@@ -442,6 +454,33 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             T_ATTACHMENT or T_COMPLEX => 4,
             _ => 0,
         };
+
+    private static int GetCalculatedDeclaredSize(byte type, int declaredSize)
+    {
+        if (type == T_MEMO || type == T_OLE)
+        {
+            return 0;
+        }
+
+        if (JetTypeInfo.IsAlwaysVariableLength(type))
+        {
+            return declaredSize + Constants.CalculatedColumn.ExtraDataLen;
+        }
+
+        return Constants.CalculatedColumn.FixedFieldLen;
+    }
+
+    private static byte GetExtraFlags(ColumnDefinition definition, byte type, DatabaseFormat format)
+    {
+        if (definition.IsCalculated)
+        {
+            return Constants.CalculatedColumn.ExtFlagMask;
+        }
+
+        return (format != DatabaseFormat.Jet3Mdb && (type == T_TEXT || type == T_MEMO) && definition.IsCompressedUnicode)
+            ? Constants.CompressedUnicodeExtFlagMask
+            : (byte)0;
+    }
 
     private static void BuildMSysObjectsTDef(byte[] db, int offset, DatabaseFormat format, bool fullCatalogSchema)
     {

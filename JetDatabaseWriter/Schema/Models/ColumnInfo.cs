@@ -91,7 +91,7 @@ internal sealed class ColumnInfo
         get
         {
             // BOOL stores its value in the null mask, never in fixed area.
-            if (Type == T_BOOL)
+            if (Type == T_BOOL && !IsCalculated)
             {
                 return true;
             }
