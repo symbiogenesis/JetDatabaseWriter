@@ -82,21 +82,3 @@ in [GeneralEncoderSharedTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collatio
   and row decode), but we still treat the cached value bytes as opaque and
   do not yet assert builtin-specific on-disk results.
 
----
-
-## 3. DAO round-trip validation
-
-No open DAO round-trip coverage gaps are currently tracked here. The former
-OpenRecordset, FK enforcement, FK Compact & Repair, Memo/OLE fidelity,
-AutoNumber continuation, and encrypted CompactDatabase gaps now run under the
-normal Microsoft Access guard and pass on Access-equipped hosts. The resolution
-details live in [round-trip-openrecordset-hypothesis.md](design/round-trip-openrecordset-hypothesis.md)
-and [round-trip-test-failures.md](design/round-trip-test-failures.md).
-
----
-
-## Notes on prioritisation
-
-- Items in **§3** (DAO) can only run on Windows + Access hosts but provide
-  the highest-confidence signal that our output is correct — the canonical
-  engine is the final arbiter.
