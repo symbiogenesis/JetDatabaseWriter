@@ -57,6 +57,12 @@ public sealed class GeneralEncoderLongRowPrefixTests
         { TestDatabases.TestIndexCodesV2010, "Table11_desc" },
     };
 
+    public static TheoryData<string, string[]> LongRowSuffixExpectations => new()
+    {
+        { "Table11", ["43EC", "1DAC", "A22D"] },
+        { "Table11_desc", ["37DD", "C1A1", "9A4E"] },
+    };
+
     [Theory]
     [MemberData(nameof(LongRowTables))]
     public async Task LongRowStressTable_FirstPrefixBytesMatchEncoderOutput(
@@ -186,6 +192,44 @@ public sealed class GeneralEncoderLongRowPrefixTests
             + $"(fixture='{fixturePath}'); this test exists to lock in the partial "
             + "long-row encoder result and is meaningless without any.";
         Assert.True(longRowKeysSeen > 0, noLongRowMsg);
+    }
+
+    [Theory]
+    [MemberData(nameof(LongRowSuffixExpectations))]
+    public async Task LongRowStressTable_OnDiskSuffixBytesMatchKnownFixtureValues(
+        string tableName,
+        string[] expectedSuffixes)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            TestDatabases.TestIndexCodesV2010,
+            new AccessReaderOptions { UseLockFile = false },
+            ct);
+
+        IndexLeafPageBuilder.LeafPageLayout layout =
+            IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
+        IndexMetadata dataIndex = Assert.Single(indexes, candidateIndex =>
+            candidateIndex.Columns.Count == 1
+            && !candidateIndex.IsForeignKey
+            && candidateIndex.FirstDp > 0
+            && candidateIndex.Columns[0].Name.Equals("data", StringComparison.OrdinalIgnoreCase));
+
+        List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
+            reader,
+            layout,
+            reader.PageSize,
+            dataIndex.FirstDp,
+            ct);
+
+        List<string> actualSuffixes = onDiskKeys
+            .Where(key => key.Length == LongRowEntryLength)
+            .Select(key => Convert.ToHexString(
+                key.AsSpan(PrefixMatchLength, LongRowEntryLength - PrefixMatchLength)))
+            .ToList();
+
+        Assert.Equal(expectedSuffixes, actualSuffixes);
     }
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
