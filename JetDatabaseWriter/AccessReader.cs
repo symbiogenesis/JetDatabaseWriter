@@ -872,18 +872,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             string? calcExpr = isCalc
                 ? target?.GetTextValue(Constants.ColumnPropertyNames.Expression, _format)
                 : null;
-            byte calcResultType = 0;
-            if (isCalc)
-            {
-                ColumnPropertyEntry? rt = target?.Find(Constants.ColumnPropertyNames.ResultType);
-                if (rt is not null && rt.Value.Length >= 1
-                    && (rt.DataType == ColumnPropertyBlock.DataTypeByte
-                        || rt.DataType == ColumnPropertyBlock.DataTypeInteger
-                        || rt.DataType == ColumnPropertyBlock.DataTypeLong))
-                {
-                    calcResultType = rt.Value[0];
-                }
-            }
+            byte calcResultType = isCalc ? ResolveCalculatedResultType(target) : (byte)0;
 
             return new ColumnMetadata
             {
@@ -897,7 +886,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 IsFixedLength = col.IsFixed,
                 IsHyperlink = JetTypeInfo.IsHyperlinkColumn(col),
                 Ordinal = index,
-                Size = JetTypeInfo.GetColumnSize(col.Type, GetMetadataDeclaredSize(col)),
+                Size = JetTypeInfo.GetColumnSize(JetTypeInfo.ResolveValueType(col), GetMetadataDeclaredSize(col)),
                 DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, _format),
                 ValidationRuleExpression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, _format),
                 ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, _format),
@@ -906,9 +895,20 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 NumericScale = col.NumericScale,
                 IsCalculated = isCalc,
                 CalculationExpression = calcExpr,
-                CalculatedResultType = calcResultType,
+                CalculatedResultType = calcResultType != 0 ? calcResultType : col.CalculatedResultType,
             };
         }).ToList();
+    }
+
+    private static byte ResolveCalculatedResultType(ColumnPropertyTarget? target)
+    {
+        ColumnPropertyEntry? rt = target?.Find(Constants.ColumnPropertyNames.ResultType);
+        return rt is not null && rt.Value.Length >= 1
+            && (rt.DataType == ColumnPropertyBlock.DataTypeByte
+                || rt.DataType == ColumnPropertyBlock.DataTypeInteger
+                || rt.DataType == ColumnPropertyBlock.DataTypeLong)
+            ? rt.Value[0]
+            : (byte)0;
     }
 
     /// <summary>
@@ -1964,7 +1964,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             default:
                 return CalculatedColumnUtil.ReadPayloadTyped(
                     CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)),
-                    col.Type,
+                    JetTypeInfo.ResolveValueType(col),
                     _strictParsing);
         }
     }
@@ -2196,7 +2196,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     private static string ResolveTypeName(ColumnInfo col) =>
-        JetTypeInfo.IsHyperlinkColumn(col) ? "Hyperlink" : JetTypeInfo.GetTypeDisplayName(col.Type);
+        JetTypeInfo.IsHyperlinkColumn(col) ? "Hyperlink" : JetTypeInfo.GetTypeDisplayName(JetTypeInfo.ResolveValueType(col));
 
     /// <summary>
     /// Unwraps common OLE 1.0 package envelopes and scans the resulting payload
@@ -2992,6 +2992,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             TableDef? td = await ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
             if (td != null && td.Columns.Count > 0)
             {
+                await HydrateCalculatedResultTypesAsync(entry.TDefPage, td, cancellationToken).ConfigureAwait(false);
                 return (entry, td);
             }
         }
@@ -3007,11 +3008,47 @@ public sealed class AccessReader : AccessBase, IAccessReader
             TableDef? sysTd = await ReadTableDefAsync(sysPage, cancellationToken).ConfigureAwait(false);
             if (sysTd != null && sysTd.Columns.Count > 0)
             {
+                await HydrateCalculatedResultTypesAsync(sysPage, sysTd, cancellationToken).ConfigureAwait(false);
                 return (new CatalogEntry(tableName, sysPage), sysTd);
             }
         }
 
         return null;
+    }
+
+    private async ValueTask HydrateCalculatedResultTypesAsync(long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
+    {
+        if (!tableDef.Columns.Exists(static col => col.IsCalculated))
+        {
+            return;
+        }
+
+        ColumnPropertyBlock? properties = await ReadLvPropForTableAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (properties is null)
+        {
+            return;
+        }
+
+        bool changed = false;
+        foreach (ColumnInfo col in tableDef.Columns)
+        {
+            if (!col.IsCalculated)
+            {
+                continue;
+            }
+
+            byte resultType = ResolveCalculatedResultType(properties.FindTarget(col.Name));
+            if (resultType != 0 && resultType != col.CalculatedResultType)
+            {
+                col.CalculatedResultType = resultType;
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            tableDef.InitializeColumnMetadata();
+        }
     }
 
     /// <summary>Yields decoded rows from a single data page.</summary>
@@ -3200,7 +3237,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 default:
                     return CalculatedColumnUtil.ReadPayloadString(
                         CalculatedColumnUtil.Unwrap(row.AsSpan(start, len)),
-                        col.Type,
+                        JetTypeInfo.ResolveValueType(col),
                         _strictParsing);
             }
         }
@@ -3659,7 +3696,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 default:
                     return CalculatedColumnUtil.ReadPayloadTyped(
                         CalculatedColumnUtil.Unwrap(page.AsSpan(start, len)),
-                        col.Type,
+                        JetTypeInfo.ResolveValueType(col),
                         _strictParsing);
             }
         }

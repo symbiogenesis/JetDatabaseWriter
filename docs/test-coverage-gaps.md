@@ -69,16 +69,4 @@ in [GeneralEncoderSharedTests.cs](../../JetDatabaseWriter.Tests/Indexes/Collatio
   unobserved rather than known-skipped. See
   [format-probe-long-row-index-encoding.md](format-probe/format-probe-long-row-index-encoding.md).
 
----
-
-## 2. Column type & row decode
-
-### 2.3 Calculated columns
-
-- [ ] **`[J]`** Access-authored calculated columns whose expressions use the
-  `Switch`/`IIf` builtins, with byte-level validation of the cached result
-  payload. General calculated-column fixture coverage now exists in
-  `CalculatedColumnFixtureTests` (metadata, expression text, result type,
-  and row decode), but we still treat the cached value bytes as opaque and
-  do not yet assert builtin-specific on-disk results.
 

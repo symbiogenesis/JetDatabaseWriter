@@ -3255,6 +3255,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     // return null and force the caller to the snapshot path.
                     case ColumnSliceKind.Fixed:
                     case ColumnSliceKind.Var:
+                        if (col.IsCalculated)
+                        {
+                            return null;
+                        }
+
                         result[i] = TryDecodeColumnSlice(pageBytes, loc.RowStart + slice.DataStart, col.Type, slice.DataLen);
                         if (result[i] is null)
                         {

@@ -63,6 +63,12 @@ to `CALC_FIXED_FIELD_LEN` regardless of the underlying type. Long-value result
 types (`MEMO` / `OLE`) keep the normal LVAL row header in the row; the bytes
 inside the LVAL payload are wrapped.
 
+The descriptor `col_type` controls how the wrapped value is placed in the row,
+but the `ResultType` LvProp controls how the wrapped payload is decoded. Access
+can store boolean calculated columns with an integer descriptor type while
+declaring `ResultType = T_BOOL`, so readers must honour `ResultType` for the
+payload.
+
 Two result types have Access-specific payload encodings inside the wrapper:
 
 - `T_BOOL`: one byte, `0xFF` for true and `0x00` for false. Calculated booleans
@@ -126,9 +132,12 @@ Delivered:
 - `AccessReader` unwraps calculated cached values on the string, typed
   `DataTable`, and POCO paths; the compiled direct POCO decoder falls back to
   the unwrap-aware path for any bound calculated column.
-- Tests: `JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs` plus
+- Tests: `JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`,
   updated Access-authored fixture coverage in
-  `JetDatabaseWriter.Tests/Schema/CalculatedColumnFixtureTests.cs`.
+  `JetDatabaseWriter.Tests/Schema/CalculatedColumnFixtureTests.cs`, and
+  byte-level cached-payload assertions in
+  `JetDatabaseWriter.Tests/Schema/CalculatedColumnPayloadTests.cs` (including
+  DAO-authored `IIf` / `Switch` calculated fields on Access-equipped hosts).
 
 ### Phase 2 — Subset expression evaluator **(DONE)**
 

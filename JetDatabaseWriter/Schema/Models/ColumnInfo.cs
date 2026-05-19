@@ -28,6 +28,14 @@ internal sealed class ColumnInfo
     public byte ExtraFlags { get; set; }
 
     /// <summary>
+    /// Gets or sets the logical JET type code stored in the calculated
+    /// column's <c>ResultType</c> LvProp property. The descriptor
+    /// <see cref="Type"/> still controls row storage layout, but the wrapped
+    /// cached payload is encoded as this type when present.
+    /// </summary>
+    public byte CalculatedResultType { get; set; }
+
+    /// <summary>
     /// Gets a value indicating whether the column is an Access 2010+ calculated
     /// (expression) column — i.e. the <see cref="Constants.CalculatedColumn.ExtFlagMask"/>
     /// bits are set in <see cref="ExtraFlags"/>. Calculated columns store every

@@ -1213,13 +1213,13 @@ public abstract class AccessBase : IAccessBase
         if (col.IsFixed)
         {
             int start = _rowSz.NumCols + col.FixedOff;
-            int sz = JetTypeInfo.GetFixedSize(col.Type);
+            int sz = col.IsCalculated ? col.Size : JetTypeInfo.GetFixedSize(col.Type);
             if (sz == 0 || start + sz > rowSize)
             {
                 return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
             }
 
-            return new ColumnSlice(ColumnSliceKind.Fixed, start, sz, false);
+            return new ColumnSlice(col.IsCalculated ? ColumnSliceKind.Var : ColumnSliceKind.Fixed, start, sz, false);
         }
 
         if (col.VarIdx >= layout.VarLen)

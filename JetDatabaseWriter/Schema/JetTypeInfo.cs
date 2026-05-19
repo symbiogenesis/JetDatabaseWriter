@@ -109,7 +109,15 @@ internal static class JetTypeInfo
     /// long-standing reader contract.
     /// </summary>
     public static Type ResolveClrType(ColumnInfo col)
-        => IsHyperlinkColumn(col) ? typeof(Hyperlink) : GetClrType(col.Type) ?? typeof(string);
+        => IsHyperlinkColumn(col) ? typeof(Hyperlink) : GetClrType(ResolveValueType(col)) ?? typeof(string);
+
+    /// <summary>
+    /// Returns the logical value type for a column. For calculated columns,
+    /// this prefers the persisted <c>ResultType</c> LvProp value when the
+    /// reader has hydrated it; otherwise it falls back to the descriptor type.
+    /// </summary>
+    public static byte ResolveValueType(ColumnInfo col)
+        => col.IsCalculated && col.CalculatedResultType != 0 ? col.CalculatedResultType : col.Type;
 
     /// <summary>
     /// Returns the human-friendly Access display name for a JET column-type code
