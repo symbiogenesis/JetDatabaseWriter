@@ -12,7 +12,6 @@ using Xunit;
 /// Fixture-based read tests for <c>MSysQueries</c> rows in the Jackcess
 /// <c>queryTestV2010.accdb</c> fixture. Verifies that the reader can
 /// decode system-table rows including parameterised query definitions.
-/// Covers §4 of <c>docs/design/test-coverage-gaps.md</c>.
 /// </summary>
 public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

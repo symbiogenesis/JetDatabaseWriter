@@ -10,7 +10,6 @@ using Xunit;
 /// <c>MSysNavPaneGroups</c>. These tables are present in every
 /// Access-authored ACCDB file and referenced by Jackcess but were not
 /// previously asserted by our test suite.
-/// Covers §4 of <c>docs/design/test-coverage-gaps.md</c>.
 /// </summary>
 public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

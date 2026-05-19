@@ -16,7 +16,6 @@ using Xunit;
 /// <see cref="ColumnMetadata.CalculationExpression"/>, and
 /// <see cref="ColumnMetadata.CalculatedResultType"/> are populated
 /// correctly, and that the cached result values decode without error.
-/// Covers §2.3 of <c>docs/design/test-coverage-gaps.md</c>.
 /// </summary>
 public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

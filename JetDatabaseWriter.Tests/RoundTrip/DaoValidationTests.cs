@@ -11,8 +11,8 @@ using Xunit;
 /// Microsoft Access is not installed.
 /// </summary>
 /// <remarks>
-/// Closes §5 coverage gaps: DAO OpenRecordset row-count, DAO index traversal,
-/// DAO AutoNumber continuation, and §2.1: DAO-authored Memo with embedded NULs.
+/// Covers DAO OpenRecordset row-count, DAO index traversal, DAO AutoNumber
+/// continuation, and DAO-authored Memo with embedded NULs.
 /// </remarks>
 [Trait("Category", "RequiresMicrosoftAccess")]
 public sealed class DaoValidationTests(DaoValidationFixture fixture) : IClassFixture<DaoValidationFixture>

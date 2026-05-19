@@ -55,9 +55,8 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                 // BigIndexTest V2000–V2010 excluded: schema-only templates
                 // with an empty text index (Jackcess populates at test time).
 
-                // BinIdxTest V2010 excluded: binary single-column indexes
-                // are intentionally filtered out (test-coverage-gaps.md
-                // §1.1).
+                // BinIdxTest V2010 excluded: binary long-key suffix behavior
+                // remains unobserved in the checked-in fixture corpus.
             })
             {
                 data.Add(p);
@@ -134,9 +133,9 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                 // <see cref="IndexKeyEncoder"/> general-binary-entry output
                 // — a known gap also flagged in upstream Jackcess
                 // (<c>"TODO long rows not handled completely yet in V2010 —
-                // seems to truncate entry at 508 bytes"</c>). Tracked under
-                // <c>docs/design/test-coverage-gaps.md</c> §1.1 (canonical
-                // home for the upstream long-row TODO cross-references).
+                // seems to truncate entry at 508 bytes"</c>). The text-key
+                // analogue is documented in
+                // <c>docs/format-probe/format-probe-long-row-index-encoding.md</c>.
                 if (colMeta.ClrType == typeof(byte[]))
                 {
                     continue;

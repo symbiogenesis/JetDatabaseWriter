@@ -15,7 +15,7 @@ using Xunit;
 /// <c>"Text;HDR=YES;FMT=Delimited"</c>). This is the remaining linked-table
 /// variant not exercised by <see cref="LinkedTableTests"/> or
 /// <see cref="LinkedTableTypeTests"/> (which cover Access-linked and
-/// ODBC-linked entries respectively). Closes §4 of test-coverage-gaps.md.
+/// ODBC-linked entries respectively).
 /// </summary>
 public sealed class LinkedTextTableTests : IDisposable
 {

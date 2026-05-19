@@ -11,10 +11,6 @@ using Xunit;
 /// Mirrors <see cref="GeneralLegacyEncoderFixtureTests"/> but targets the
 /// V1997 (Jet3) fixture, whose default text-index sort order is
 /// "General 97".
-/// <para>
-/// Closes the §1.1 General-97 encoder coverage gap from
-/// <c>docs/design/test-coverage-gaps.md</c>.
-/// </para>
 /// </summary>
 public sealed class General97EncoderFixtureTests
 {

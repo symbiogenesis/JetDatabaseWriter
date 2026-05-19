@@ -183,10 +183,10 @@ public sealed class CompoundFileReaderTests
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
-    // §7 coverage gap: corrupting the NumFatSectors field (offset 0x2C)
-    // to an absurdly large value MUST NOT cause an out-of-memory crash
-    // or infinite loop. The reader clamps NumFatSectors to the physical
-    // sector count derivable from the stream length.
+    // Corrupting the NumFatSectors field (offset 0x2C) to an absurdly
+    // large value MUST NOT cause an out-of-memory crash or infinite loop.
+    // The reader clamps NumFatSectors to the physical sector count
+    // derivable from the stream length.
     [Theory]
     [MemberData(nameof(HeaderFixtureFiles))]
     public async Task ReadStreams_CorruptNumFatSectors_DoesNotOom(string fileName)

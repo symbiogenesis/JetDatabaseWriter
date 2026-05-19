@@ -466,7 +466,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// <see cref="CreateTable_NewTable_StartsEmpty"/> which only checks the
     /// row count; this test exercises the data-page decode path against an
     /// empty data page whose <c>free_space</c> equals the full page-size
-    /// minus header (§5 coverage gap).
+    /// minus header.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
@@ -500,8 +500,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     }
 
     /// <summary>
-    /// §5 coverage gap: a table with more than 127 variable-length columns
-    /// exercises the 2-byte <c>num_var_cols</c> field in the row trailer
+    /// A table with more than 127 variable-length columns exercises the
+    /// 2-byte <c>num_var_cols</c> field in the row trailer
     /// (Jet4/ACE uses <c>uint16</c> for all trailer fields). Historically
     /// mdbtools' <c>pkrep</c> uncovered truncation bugs in the 1-byte path;
     /// this test verifies the writer and reader handle the wide field

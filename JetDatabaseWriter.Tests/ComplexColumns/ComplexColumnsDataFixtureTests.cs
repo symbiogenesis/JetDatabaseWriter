@@ -14,7 +14,6 @@ using Xunit;
 /// metadata (attachment, multi-value, and version-history kinds) and
 /// retrieves attachment payloads that were stored with deflate compression
 /// (txt extension → typeFlag <c>0x01</c>).
-/// Covers §2.2 of <c>docs/design/test-coverage-gaps.md</c>.
 /// </summary>
 public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

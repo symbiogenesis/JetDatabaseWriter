@@ -12,8 +12,7 @@ using Xunit;
 /// pointers (<c>0x4000</c>-flagged row offsets). The reader follows
 /// overflow pointers in V2007+/ACE; older format variants (V2000/V2003)
 /// may throw <c>JetLimitationException</c> due to deleted-column schema
-/// gaps in the fixture. Covers §5 of
-/// <c>docs/design/test-coverage-gaps.md</c>.
+/// gaps in the fixture.
 /// </summary>
 public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

@@ -1031,8 +1031,7 @@ public sealed class IndexKeyEncoderTests
     /// <summary>
     /// Cross-format isolation of the NUMERIC sort-key sign byte
     /// (payload byte 0, i.e. encoded byte 1 after the entry-flag prefix).
-    /// Closes the §1.2 test-coverage gap entry "Per-format isolated assertion
-    /// of <c>LegacyFixedPointColumnDescriptor</c> vs
+    /// Isolates <c>LegacyFixedPointColumnDescriptor</c> vs
     /// <c>FixedPointColumnDescriptor</c> sign-byte handling": the existing
     /// <c>Numeric_*</c> facts cover four of the eight (asc/desc × pos/neg ×
     /// legacy/new-style) combinations positionally, but no single assertion
@@ -1106,9 +1105,9 @@ public sealed class IndexKeyEncoderTests
     /// Full ascending + descending ordering matrix for <c>T_MONEY</c>,
     /// mirroring <see cref="Float_NegativeAndPositive_OrderCorrectly_AscendingAndDescending"/>
     /// and <see cref="Double_NegativeAndPositive_OrderCorrectly_AscendingAndDescending"/>.
-    /// Closes the §1.2 coverage gap: the fixture sweep covers Money
-    /// positionally only; this test isolates the encoding correctness
-    /// across the full value range including negative boundary values.
+    /// The fixture sweep covers Money positionally; this test isolates the
+    /// encoding correctness across the full value range including negative
+    /// boundary values.
     /// </summary>
     [Fact]
     public void Money_NegativeAndPositive_OrderCorrectly_AscendingAndDescending()

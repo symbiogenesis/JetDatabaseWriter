@@ -13,10 +13,6 @@ using Xunit;
 /// Mirrors <see cref="GeneralLegacyEncoderFixtureTests"/> but targets the
 /// V2010 fixture, whose default text-index sort order is "General"
 /// (Access 2010+) rather than "General Legacy".
-/// <para>
-/// Closes the §1.1 General-encoder coverage gap from
-/// <c>docs/design/test-coverage-gaps.md</c>.
-/// </para>
 /// </summary>
 public sealed class GeneralEncoderFixtureTests
 {
@@ -33,7 +29,6 @@ public sealed class GeneralEncoderFixtureTests
     // covered by <see cref="GeneralEncoderLongRowPrefixTests"/>.
     // FIXME: remove the two table entries when the suffix is solved.
     // for details and rationale, see:
-    //  <c>docs/design/test-coverage-gaps.md</c> ("§1.1 General-encoder coverage gap").
     //  <c>docs/format-probe/format-probe-long-row-index-encoding.md</c> ("V2010: Continuous encoding with 510-byte cap" / "The 2-byte suffix").
     private static readonly HashSet<string> LongRowStressTables = new(StringComparer.OrdinalIgnoreCase)
     {
