@@ -37,6 +37,12 @@ using Xunit;
 /// </summary>
 public sealed class GeneralEncoderLongRowPrefixTests
 {
+    private enum LongRowValidationMode
+    {
+        PrefixOnly,
+        FullKey,
+    }
+
     /// <summary>
     /// Number of bytes at the head of each long-row entry that the V2010
     /// "General" sort-order encoder reproduces byte-exact. The remaining
@@ -68,6 +74,63 @@ public sealed class GeneralEncoderLongRowPrefixTests
     public async Task LongRowStressTable_FirstPrefixBytesMatchEncoderOutput(
         string fixturePath,
         string tableName)
+        => await ValidateLongRowStressTableAsync(
+            fixturePath,
+            tableName,
+            LongRowValidationMode.PrefixOnly);
+
+    [Theory(Skip = "TDD: unskip when GeneralTextIndexEncoder computes the V2010 long-row suffix bytes [508..509].")]
+    [MemberData(nameof(LongRowTables))]
+    public async Task LongRowStressTable_AllBytesMatchEncoderOutput_WhenSuffixAlgorithmIsImplemented(
+        string fixturePath,
+        string tableName)
+        => await ValidateLongRowStressTableAsync(
+            fixturePath,
+            tableName,
+            LongRowValidationMode.FullKey);
+
+    [Theory]
+    [MemberData(nameof(LongRowSuffixExpectations))]
+    public async Task LongRowStressTable_OnDiskSuffixBytesMatchKnownFixtureValues(
+        string tableName,
+        string[] expectedSuffixes)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            TestDatabases.TestIndexCodesV2010,
+            new AccessReaderOptions { UseLockFile = false },
+            ct);
+
+        IndexLeafPageBuilder.LeafPageLayout layout =
+            IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
+
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
+        IndexMetadata dataIndex = Assert.Single(indexes, candidateIndex =>
+            candidateIndex.Columns.Count == 1
+            && !candidateIndex.IsForeignKey
+            && candidateIndex.FirstDp > 0
+            && candidateIndex.Columns[0].Name.Equals("data", StringComparison.OrdinalIgnoreCase));
+
+        List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
+            reader,
+            layout,
+            reader.PageSize,
+            dataIndex.FirstDp,
+            ct);
+
+        List<string> actualSuffixes = onDiskKeys
+            .Where(key => key.Length == LongRowEntryLength)
+            .Select(key => Convert.ToHexString(
+                key.AsSpan(PrefixMatchLength, LongRowEntryLength - PrefixMatchLength)))
+            .ToList();
+
+        Assert.Equal(expectedSuffixes, actualSuffixes);
+    }
+
+    private static async Task ValidateLongRowStressTableAsync(
+        string fixturePath,
+        string tableName,
+        LongRowValidationMode validationMode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using AccessReader reader = await AccessReader.OpenAsync(
@@ -134,9 +197,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
 
                 // Tables 11 / 11_desc contain a mix of NULL / short-text rows
                 // (whose entries fit under the cap and validate byte-exact)
-                // and long-row entries pinned at 510 bytes. We assert
-                // byte-exact for the former and prefix-only for the latter,
-                // which is where the unknown 2-byte suffix lives.
+                // and long-row entries pinned at 510 bytes.
                 if (expected.Length < LongRowEntryLength)
                 {
                     if (!actual.SequenceEqual(expected))
@@ -160,8 +221,21 @@ public sealed class GeneralEncoderLongRowPrefixTests
                     + $"value=\"{encoded[i].Value}\".";
                 Assert.True(actual.Length == LongRowEntryLength, actualLenMsg);
 
-                if (!actual.AsSpan(0, PrefixMatchLength)
-                    .SequenceEqual(expected.AsSpan(0, PrefixMatchLength)))
+                if (validationMode == LongRowValidationMode.FullKey)
+                {
+                    if (!actual.SequenceEqual(expected))
+                    {
+                        Assert.Fail(
+                            $"Encoder/leaf byte mismatch on long-row entry at position {i} "
+                            + $"in {tableName}.{index.Name} (column '{keyCol.Name}', "
+                            + $"ascending={keyCol.IsAscending}, fixture='{fixturePath}'). "
+                            + $"value=\"{encoded[i].Value}\". "
+                            + $"expected={Convert.ToHexString(expected)} "
+                            + $"actual={Convert.ToHexString(actual)}");
+                    }
+                }
+                else if (!actual.AsSpan(0, PrefixMatchLength)
+                         .SequenceEqual(expected.AsSpan(0, PrefixMatchLength)))
                 {
                     Assert.Fail(
                         $"Encoder/leaf prefix mismatch in first {PrefixMatchLength} bytes "
@@ -192,44 +266,6 @@ public sealed class GeneralEncoderLongRowPrefixTests
             + $"(fixture='{fixturePath}'); this test exists to lock in the partial "
             + "long-row encoder result and is meaningless without any.";
         Assert.True(longRowKeysSeen > 0, noLongRowMsg);
-    }
-
-    [Theory]
-    [MemberData(nameof(LongRowSuffixExpectations))]
-    public async Task LongRowStressTable_OnDiskSuffixBytesMatchKnownFixtureValues(
-        string tableName,
-        string[] expectedSuffixes)
-    {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessReader reader = await AccessReader.OpenAsync(
-            TestDatabases.TestIndexCodesV2010,
-            new AccessReaderOptions { UseLockFile = false },
-            ct);
-
-        IndexLeafPageBuilder.LeafPageLayout layout =
-            IndexLeafPageBuilder.GetLayout(reader.DatabaseFormat);
-
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
-        IndexMetadata dataIndex = Assert.Single(indexes, candidateIndex =>
-            candidateIndex.Columns.Count == 1
-            && !candidateIndex.IsForeignKey
-            && candidateIndex.FirstDp > 0
-            && candidateIndex.Columns[0].Name.Equals("data", StringComparison.OrdinalIgnoreCase));
-
-        List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
-            reader,
-            layout,
-            reader.PageSize,
-            dataIndex.FirstDp,
-            ct);
-
-        List<string> actualSuffixes = onDiskKeys
-            .Where(key => key.Length == LongRowEntryLength)
-            .Select(key => Convert.ToHexString(
-                key.AsSpan(PrefixMatchLength, LongRowEntryLength - PrefixMatchLength)))
-            .ToList();
-
-        Assert.Equal(expectedSuffixes, actualSuffixes);
     }
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
