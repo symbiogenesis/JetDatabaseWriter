@@ -54,6 +54,7 @@ internal static class LongRowSuffixProbe
     private const int DaoLabTemplateSampleRowCount = 12;
     private const int DaoLabRowCount = DaoLabTemplateSampleStart + DaoLabTemplateSampleRowCount;
     private const string DaoLabAlphabet = " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+";
+    private const int AuxInputCandidateIndex = 10;
     private const uint LcMapSortKey = 0x00000400;
     private const uint LcMapHash = 0x00040000;
     private const uint NormIgnoreCase = 0x00000001;
@@ -89,6 +90,9 @@ internal static class LongRowSuffixProbe
         "full[..508]",
         "full[1..508]",
         "full[..510] suffix zeroed",
+        "full[0..]",
+        "full[1..]",
+        "full[^2..]",
     ];
 
     private static readonly int[] RollingInputIndexes = [0, 1, 2, 8, 9, 10, 11, 12, 13, 14, 15, 16];
@@ -96,6 +100,8 @@ internal static class LongRowSuffixProbe
     private static readonly SearchValues<char> MarkdownEscapeSearch = SearchValues.Create("`|\r\n");
 
     private static readonly SearchValues<byte> EndTextSearch = SearchValues.Create([GeneralLegacyTextIndexEncoder.EndText]);
+
+    private static readonly Encoding Cp1252Encoding = Encoding.GetEncoding(1252);
 
     private static readonly Lazy<List<CandidateRule>> SuffixCandidateRules = new(BuildSuffixCandidateRules);
 
@@ -405,6 +411,7 @@ internal static class LongRowSuffixProbe
         AppendPairMatrixSummary(sb, table, DaoLabPairMatrixStart, "Pair matrix", includeCrc16: false);
         AppendPairMatrixSummary(sb, table, DaoLabAuxMatrixStart, "Auxiliary pair matrix", includeCrc16: false);
         AppendPairMatrixSummary(sb, table, DaoLabRow12MatrixStart, "Row12 template pair matrix", includeCrc16: false);
+        AppendGf2CrossMultiplicationSolverSummary(sb, table, DaoLabPairMatrixStart);
         AppendTemplateSampleSummary(sb, table);
     }
 
@@ -449,7 +456,7 @@ internal static class LongRowSuffixProbe
     {
         List<SuffixPatternRow[]> sharedPrefixGroups = table.Rows
             .Where(row => row.Text is not null && row.FullKey.Length >= PrefixMatchLength)
-            .GroupBy(row => Convert.ToHexString(row.FullKey.AsSpan(0, PrefixMatchLength)))
+            .GroupBy(row => row.FullKey, LongRowPrefixEqualityComparer.Instance)
             .Select(group => group.ToArray())
             .Where(rows => rows.Length > 1)
             .OrderByDescending(rows => rows.Length)
@@ -1201,7 +1208,7 @@ internal static class LongRowSuffixProbe
             .Select(row =>
             {
                 string label = row.Seed?.ToString(CultureInfo.InvariantCulture) ?? row.RowLabel.Trim('`');
-                return $"`{label}:{row.AccessSuffix:X4}:{Convert.ToHexString(SliceOrEmpty(row.FullKey, 508, 4))}`";
+                return $"`{label}:{row.AccessSuffix:X4}:{ToHexStringOrEmpty(row.FullKey, 508, 4)}`";
             });
 
         if (rows.Count > 8)
@@ -1256,6 +1263,9 @@ internal static class LongRowSuffixProbe
 
         sb.AppendLine();
         AppendRollingPolynomialSolverSummary(sb, contexts);
+        AppendCrcDerivedInitSolverSummary(sb, contexts);
+        AppendRotlFoldSolverSummary(sb, contexts);
+        AppendBitContributionMatrixSummary(sb, contexts);
         AppendAuxSignatureSummary(sb, contexts);
         AppendTruncationPhaseSummary(sb, contexts);
         AppendTruncationWindowSweepSummary(sb, contexts);
@@ -1267,7 +1277,7 @@ internal static class LongRowSuffixProbe
 
     private static void AppendAuxSignatureSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        Encoding cp1252 = Encoding.GetEncoding(1252);
+        Encoding cp1252 = Cp1252Encoding;
         var groups = contexts
             .Select(context =>
             {
@@ -1275,8 +1285,8 @@ internal static class LongRowSuffixProbe
                 return new
                 {
                     Context = context,
-                    Signature = Convert.ToHexString(inputs[10]),
-                    Length = inputs[10].Length,
+                    Signature = Convert.ToHexString(inputs[AuxInputCandidateIndex]),
+                    Length = inputs[AuxInputCandidateIndex].Length,
                 };
             })
             .Where(item => item.Length > 0)
@@ -1309,14 +1319,14 @@ internal static class LongRowSuffixProbe
 
     private static void AppendTruncationPhaseSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        Encoding cp1252 = Encoding.GetEncoding(1252);
+        Encoding cp1252 = Cp1252Encoding;
         var allGroups = contexts
             .Select(context =>
             {
                 byte[][] inputs = context.GetNormalizedInputCandidates(cp1252);
-                string auxSignature = Convert.ToHexString(inputs[10]);
-                string window = Convert.ToHexString(SliceOrEmpty(context.NormalizedFullKey, 500, 16));
-                string boundary = Convert.ToHexString(SliceOrEmpty(context.NormalizedFullKey, 506, 6));
+                string auxSignature = Convert.ToHexString(inputs[AuxInputCandidateIndex]);
+                string window = ToHexStringOrEmpty(context.NormalizedFullKey, 500, 16);
+                string boundary = ToHexStringOrEmpty(context.NormalizedFullKey, 506, 6);
                 return new
                 {
                     Context = context,
@@ -1374,18 +1384,16 @@ internal static class LongRowSuffixProbe
 
     private static void AppendTruncationWindowSweepSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        Encoding cp1252 = Encoding.GetEncoding(1252);
+        Encoding cp1252 = Cp1252Encoding;
         var rows = contexts
             .Select(context =>
             {
                 byte[][] inputs = context.GetNormalizedInputCandidates(cp1252);
-                return new
-                {
+                return new WindowSweepRow(
                     context.Row.AccessSuffix,
                     context.NormalizedFullKey,
-                    Phase = ClassifyTruncationPhase(context.NormalizedFullKey),
-                    AuxSignature = Convert.ToHexString(inputs[10]),
-                };
+                    ClassifyTruncationPhase(context.NormalizedFullKey),
+                    Convert.ToHexString(inputs[AuxInputCandidateIndex]));
             })
             .ToArray();
 
@@ -1396,28 +1404,15 @@ internal static class LongRowSuffixProbe
             {
                 for (int length = 2; length <= 20; length++)
                 {
-                    var groups = rows
-                        .GroupBy(row =>
-                        {
-                            string window = Convert.ToHexString(SliceOrEmpty(row.NormalizedFullKey, start, length));
-                            return includeAux
-                                ? string.Create(CultureInfo.InvariantCulture, $"{row.Phase}|{window}|{row.AuxSignature}")
-                                : string.Create(CultureInfo.InvariantCulture, $"{row.Phase}|{window}");
-                        })
-                        .Select(group => new
-                        {
-                            Rows = group.Count(),
-                            Suffixes = group.Select(row => row.AccessSuffix).Distinct().Count(),
-                        })
-                        .ToArray();
+                    WindowConflictCounts groupCounts = CountTruncationWindowConflicts(rows, start, length, includeAux);
 
                     candidates.Add(new WindowSweepResult(
                         start,
                         length,
                         includeAux,
-                        groups.Length,
-                        groups.Count(group => group.Suffixes > 1),
-                        groups.Where(group => group.Suffixes > 1).Sum(group => group.Rows)));
+                        groupCounts.Groups,
+                        groupCounts.ConflictingGroups,
+                        groupCounts.ConflictingRows));
                 }
             }
         }
@@ -1458,6 +1453,53 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
     }
 
+    private static WindowConflictCounts CountTruncationWindowConflicts(
+        WindowSweepRow[] rows,
+        int start,
+        int length,
+        bool includeAux)
+    {
+        var groups = new Dictionary<TruncationWindowKey, WindowGroupAccumulator>(TruncationWindowKeyComparer.Instance);
+        foreach (WindowSweepRow row in rows)
+        {
+            int windowLength = GetSliceLength(row.NormalizedFullKey, start, length);
+            string? auxSignature = includeAux ? row.AuxSignature : null;
+            var key = new TruncationWindowKey(row.Phase, auxSignature, row.NormalizedFullKey, start, windowLength);
+            if (!groups.TryGetValue(key, out WindowGroupAccumulator? group))
+            {
+                groups.Add(key, new WindowGroupAccumulator(row.AccessSuffix));
+                continue;
+            }
+
+            group.Add(row.AccessSuffix);
+        }
+
+        int conflictingGroups = 0;
+        int conflictingRows = 0;
+        foreach (WindowGroupAccumulator group in groups.Values)
+        {
+            if (!group.HasConflict)
+            {
+                continue;
+            }
+
+            conflictingGroups++;
+            conflictingRows += group.Rows;
+        }
+
+        return new WindowConflictCounts(groups.Count, conflictingGroups, conflictingRows);
+    }
+
+    private static int GetSliceLength(byte[] bytes, int start, int length)
+    {
+        if (length <= 0 || bytes.Length <= start)
+        {
+            return 0;
+        }
+
+        return Math.Min(length, bytes.Length - start);
+    }
+
     private static string ClassifyTruncationPhase(byte[] fullKey)
     {
         if (fullKey.Length <= 508)
@@ -1496,7 +1538,7 @@ internal static class LongRowSuffixProbe
             })
             {
                 byte[][] sortKeys = contexts
-                    .Select(context => LcMapSortKeyBytes("en-US", flags, getText(context)))
+                    .Select(context => context.GetLcMapSortKeyBytes("en-US", flags, getText(context)))
                     .ToArray();
                 int maxLength = sortKeys.Length == 0 ? 0 : sortKeys.Max(key => key.Length);
                 for (int offset = 0; offset + 1 < maxLength; offset++)
@@ -1777,7 +1819,7 @@ internal static class LongRowSuffixProbe
 
     private static void AppendRollingPolynomialSolverSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
     {
-        Encoding cp1252 = Encoding.GetEncoding(1252);
+        Encoding cp1252 = Cp1252Encoding;
 
         sb.AppendLine("Rolling polynomial solver:");
         sb.AppendLine();
@@ -1804,14 +1846,1182 @@ internal static class LongRowSuffixProbe
             sb.AppendLine(CultureInfo.InvariantCulture, $"| {InputCandidateNames[inputIndex]} | {hits.Count} | {hitText} |");
         }
 
+        // Sliding window: test full[508+k..] for k=2,4,6,8,10,12 (filling gaps between existing inputs).
+        foreach (int offset in new[] { 2, 4, 6, 8, 10, 12 })
+        {
+            int absoluteStart = 508 + offset;
+            RollingConstraint[] constraints = contexts
+                .Select(context => new RollingConstraint(
+                    SliceOrEmpty(context.FullKey, absoluteStart),
+                    context.Row.AccessSuffix))
+                .Where(constraint => constraint.Input.Length > 0)
+                .ToArray();
+
+            List<RollingPolynomialHit> hits = FindRollingPolynomialHits(constraints, maxHits: 8);
+            string hitText = hits.Count == 0
+                ? "-"
+                : "`" + string.Join(" ", hits.Select(hit => $"m={hit.Multiplier:X4}/seed={hit.Seed:X4}")) + "`";
+            sb.AppendLine(CultureInfo.InvariantCulture, $"| full[{absoluteStart}..] | {hits.Count} | {hitText} |");
+        }
+
+        // Also test odd offsets in case the boundary is not 2-byte aligned.
+        foreach (int offset in new[] { 1, 3, 5, 7, 9, 11 })
+        {
+            int absoluteStart = 508 + offset;
+            RollingConstraint[] constraints = contexts
+                .Select(context => new RollingConstraint(
+                    SliceOrEmpty(context.FullKey, absoluteStart),
+                    context.Row.AccessSuffix))
+                .Where(constraint => constraint.Input.Length > 0)
+                .ToArray();
+
+            List<RollingPolynomialHit> hits = FindRollingPolynomialHits(constraints, maxHits: 8);
+            string hitText = hits.Count == 0
+                ? "-"
+                : "`" + string.Join(" ", hits.Select(hit => $"m={hit.Multiplier:X4}/seed={hit.Seed:X4}")) + "`";
+            sb.AppendLine(CultureInfo.InvariantCulture, $"| full[{absoluteStart}..] | {hits.Count} | {hitText} |");
+        }
+
         sb.AppendLine();
+    }
+
+    private static void AppendCrcDerivedInitSolverSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
+    {
+        sb.AppendLine("CRC-16 derived-init solver (sliding window):");
+        sb.AppendLine();
+        sb.AppendLine("For each (polynomial, mode, start-offset), solves the init/constant from the first row, then verifies against all remaining rows.");
+        sb.AppendLine("Tests tail slices full[508+k..] for k=0..12, plus full[0..] and full[1..].");
+        sb.AppendLine();
+
+        if (contexts.Length < 3)
+        {
+            sb.AppendLine("- insufficient rows for solver (need >= 3)");
+            sb.AppendLine();
+            return;
+        }
+
+        // Build slice definitions: (label, byte-extractor) so we can sweep arbitrary structural slices,
+        // not just positional tails. New slices test "is the suffix a 16-bit CRC fingerprint of the
+        // prefix bytes / aux block / raw source text?"
+        var sliceDefs = new List<(string Label, Func<SuffixCandidateContext, byte[]> Extract)>
+        {
+            ("full[0..]", context => context.FullKey),
+            ("full[1..]", context => SliceOrEmpty(context.FullKey, 1)),
+        };
+        for (int k = 0; k <= 12; k++)
+        {
+            int start = 508 + k;
+            sliceDefs.Add(($"full[{start}..]", context => SliceOrEmpty(context.FullKey, start)));
+        }
+
+        // Prefix slices — fingerprint of the bytes that survived truncation.
+        sliceDefs.Add(("full[..508]", context => context.FullKey.Length >= 508 ? context.FullKey[..508] : context.FullKey));
+        sliceDefs.Add(("full[..510]", context => context.FullKey.Length >= 510 ? context.FullKey[..510] : context.FullKey));
+        sliceDefs.Add(("full[1..508]", context => context.FullKey.Length >= 508 ? context.FullKey[1..508] : SliceOrEmpty(context.FullKey, 1)));
+
+        // Aux block alone.
+        sliceDefs.Add(("aux-only", context => BuildByteRuleInputs(context)[24]));
+
+        // Raw source text encodings — short rows still produce non-empty slices.
+        sliceDefs.Add(("text-utf16le", context => EncodeTextOrEmpty(context.Row.Text, Encoding.Unicode)));
+        sliceDefs.Add(("text-cp1252", context => EncodeTextOrEmpty(context.Row.Text, Cp1252Encoding)));
+        sliceDefs.Add(("text[255..]-utf16le", context => EncodeTextTailOrEmpty(context.Row.Text, 255, Encoding.Unicode)));
+        sliceDefs.Add(("text[255..]-cp1252", context => EncodeTextTailOrEmpty(context.Row.Text, 255, Cp1252Encoding)));
+
+        sb.AppendLine("| Slice | Hits | Details |");
+        sb.AppendLine("|---|---:|---|");
+
+        foreach ((string label, Func<SuffixCandidateContext, byte[]> extract) in sliceDefs)
+        {
+            RollingConstraint[] constraints = contexts
+                .Select(context => new RollingConstraint(
+                    extract(context),
+                    context.Row.AccessSuffix))
+                .ToArray();
+            byte[] data0 = constraints[0].Input;
+            byte[] data1 = constraints[1].Input;
+            byte[] data2 = constraints[2].Input;
+            if (data0.Length == 0 || data1.Length == 0 || data2.Length == 0)
+            {
+                sb.AppendLine(CultureInfo.InvariantCulture, $"| {label} | 0 | (empty slice) |");
+                continue;
+            }
+
+            ushort expected0 = constraints[0].Target;
+            ushort expected1 = constraints[1].Target;
+            ushort expected2 = constraints[2].Target;
+
+            int hitCount = 0;
+            var hitDetails = new List<string>();
+
+            for (int poly = 0; poly <= 0xFFFF; poly++)
+            {
+                ushort polyVal = (ushort)poly;
+                ushort polyRef = ReflectU16(polyVal);
+
+                // Test 4 modes: (refIn=false, refIn=true) x (refOut matches refIn, refOut differs).
+                // For each, derive the constant from row0 and check rows 1-2.
+                for (int mode = 0; mode < 4; mode++)
+                {
+                    bool refIn = (mode & 1) != 0;
+                    bool refOut = (mode & 2) != 0;
+
+                    ushort crc0 = CrcFull(data0, polyVal, polyRef, 0, 0, refIn, refOut);
+                    ushort constant = (ushort)(expected0 ^ crc0);
+
+                    ushort crc1 = CrcFull(data1, polyVal, polyRef, 0, 0, refIn, refOut);
+                    if ((ushort)(crc1 ^ constant) != expected1)
+                    {
+                        continue;
+                    }
+
+                    ushort crc2 = CrcFull(data2, polyVal, polyRef, 0, 0, refIn, refOut);
+                    if ((ushort)(crc2 ^ constant) != expected2)
+                    {
+                        continue;
+                    }
+
+                    // Passed 3 constraints. Validate against ALL contexts.
+                    bool allMatch = true;
+                    for (int i = 3; i < constraints.Length; i++)
+                    {
+                        byte[] dataI = constraints[i].Input;
+                        if (dataI.Length == 0)
+                        {
+                            allMatch = false;
+                            break;
+                        }
+
+                        ushort crcI = CrcFull(dataI, polyVal, polyRef, 0, 0, refIn, refOut);
+                        if ((ushort)(crcI ^ constant) != constraints[i].Target)
+                        {
+                            allMatch = false;
+                            break;
+                        }
+                    }
+
+                    if (allMatch)
+                    {
+                        hitCount++;
+                        if (hitDetails.Count < 4)
+                        {
+                            hitDetails.Add($"poly={polyVal:X4} refIn={refIn} refOut={refOut} C={constant:X4}");
+                        }
+                    }
+                }
+            }
+
+            string details = hitCount == 0 ? "-" : "`" + string.Join("; ", hitDetails) + "`";
+            sb.AppendLine(CultureInfo.InvariantCulture, $"| {label} | {hitCount} | {details} |");
+        }
+
+        sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Exhaustively tests rotate-left + add/XOR models: h = rotl16(h, k) OP byte for each byte in full[508..].
+    /// Tests all 16 rotation amounts × 65536 init values × 2 operations (add, XOR) plus ESE-style rotl+add.
+    /// </summary>
+    private static void AppendRotlFoldSolverSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
+    {
+        sb.AppendLine("Rotate-fold solver (rotl16 + add/XOR, byte-at-a-time):");
+        sb.AppendLine();
+        sb.AppendLine("Tests `h = rotl16(h, k) + byte` and `h = rotl16(h, k) XOR byte` for each byte in full[508..end].");
+        sb.AppendLine("Sweeps k=0..15, init=0..65535. Also tests `h = rotl16(h XOR byte, k)` and `h = rotl16(h + byte, k)` variants.");
+        sb.AppendLine();
+
+        if (contexts.Length < 3)
+        {
+            sb.AppendLine("- insufficient rows");
+            sb.AppendLine();
+            return;
+        }
+
+        // Build constraint data: for each context, the input is full[508..end].
+        var constraints = contexts
+            .Select(c => (Input: SliceOrEmpty(c.FullKey, 508), Target: c.Row.AccessSuffix))
+            .Where(c => c.Input.Length > 0)
+            .ToArray();
+
+        if (constraints.Length < 3)
+        {
+            sb.AppendLine("- insufficient non-empty slices");
+            sb.AppendLine();
+            return;
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- rows tested: {constraints.Length}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- input lengths: {constraints.Min(c => c.Input.Length)}-{constraints.Max(c => c.Input.Length)} bytes");
+
+        // Pre-compute targets for quick comparison.
+        ushort target0 = constraints[0].Target;
+        ushort target1 = constraints[1].Target;
+        ushort target2 = constraints[2].Target;
+        byte[] input0 = constraints[0].Input;
+        byte[] input1 = constraints[1].Input;
+        byte[] input2 = constraints[2].Input;
+
+        int totalHits = 0;
+        var hitDetails = new List<string>();
+
+        // Test 4 model variants × 16 rotation amounts × 65536 inits.
+        for (int variant = 0; variant < 4; variant++)
+        {
+            string variantName = variant switch
+            {
+                0 => "rotl(h,k)+b",
+                1 => "rotl(h,k)^b",
+                2 => "rotl(h^b,k)",
+                3 => "rotl(h+b,k)",
+                _ => "?",
+            };
+
+            for (int k = 0; k < 16; k++)
+            {
+                // For given variant and k, compute hash of input0 for all 65536 inits and find which match target0.
+                // Then verify those against input1 and input2.
+                // Optimization: compute hash(input0, init=0) and derive the init-dependent offset.
+                // For variant 0 (rotl+add): h_final depends on init as rotl(init, k*n) + data_dependent_part.
+                // Due to carries in addition, we can't easily separate init from data. Do full search.
+
+                // But 65536 × 3 hashes per (variant, k) is fast enough.
+                for (int init = 0; init <= 0xFFFF; init++)
+                {
+                    ushort h0 = RotlFoldHash(input0, (ushort)init, k, variant);
+                    if (h0 != target0)
+                    {
+                        continue;
+                    }
+
+                    ushort h1 = RotlFoldHash(input1, (ushort)init, k, variant);
+                    if (h1 != target1)
+                    {
+                        continue;
+                    }
+
+                    ushort h2 = RotlFoldHash(input2, (ushort)init, k, variant);
+                    if (h2 != target2)
+                    {
+                        continue;
+                    }
+
+                    // Passed 3 constraints — verify all.
+                    int matchCount = 3;
+                    bool allMatch = true;
+                    for (int i = 3; i < constraints.Length; i++)
+                    {
+                        ushort hi = RotlFoldHash(constraints[i].Input, (ushort)init, k, variant);
+                        if (hi == constraints[i].Target)
+                        {
+                            matchCount++;
+                        }
+                        else
+                        {
+                            allMatch = false;
+                        }
+                    }
+
+                    totalHits++;
+                    if (hitDetails.Count < 8)
+                    {
+                        hitDetails.Add($"{variantName} k={k} init=0x{init:X4}: {matchCount}/{constraints.Length}{(allMatch ? " **ALL MATCH**" : string.Empty)}");
+                    }
+                }
+            }
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- total hits (3+ match): {totalHits}");
+        foreach (string detail in hitDetails)
+        {
+            sb.AppendLine(CultureInfo.InvariantCulture, $"  - {detail}");
+        }
+
+        sb.AppendLine();
+    }
+
+    private static ushort RotlFoldHash(byte[] input, ushort init, int k, int variant)
+    {
+        ushort h = init;
+        for (int i = 0; i < input.Length; i++)
+        {
+            byte b = input[i];
+            switch (variant)
+            {
+                case 0: // h = rotl(h, k) + b
+                    h = unchecked((ushort)(Rotl16(h, k) + b));
+                    break;
+                case 1: // h = rotl(h, k) ^ b
+                    h = unchecked((ushort)(Rotl16(h, k) ^ b));
+                    break;
+                case 2: // h = rotl(h ^ b, k)
+                    h = Rotl16(unchecked((ushort)(h ^ b)), k);
+                    break;
+                case 3: // h = rotl(h + b, k)
+                    h = Rotl16(unchecked((ushort)(h + b)), k);
+                    break;
+            }
+        }
+
+        return h;
+    }
+
+    private static ushort Rotl16(ushort value, int shift)
+    {
+        shift &= 15;
+        if (shift == 0)
+        {
+            return value;
+        }
+
+        return unchecked((ushort)((value << shift) | (value >> (16 - shift))));
+    }
+
+    /// <summary>
+    /// Analyzes the XOR decomposition residuals for the pair matrix to characterize
+    /// the non-linear coupling between byte positions. For each failing entry, reports
+    /// the residual (actual XOR predicted) and checks for carry-induced patterns.
+    /// Also tests whether the function could be addition-based with XOR lookup tables.
+    /// </summary>
+    private static void AppendBitContributionMatrixSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
+    {
+        sb.AppendLine("Bit contribution matrix and XOR residual analysis:");
+        sb.AppendLine();
+
+        if (contexts.Length < 3)
+        {
+            sb.AppendLine("- insufficient rows");
+            sb.AppendLine();
+            return;
+        }
+
+        // Build the byte-at-position data from the full[508..] inputs.
+        var inputs = contexts
+            .Select(c => (Input: SliceOrEmpty(c.FullKey, 508), Target: c.Row.AccessSuffix))
+            .Where(c => c.Input.Length >= 5)
+            .ToArray();
+
+        if (inputs.Length < 3)
+        {
+            sb.AppendLine("- insufficient 5+ byte inputs");
+            sb.AppendLine();
+            return;
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- rows with 5+ byte inputs: {inputs.Length}");
+
+        // Find a base row (first one with input starting 02 0E 02 01 00 = 'a','a' pattern).
+        int baseRow = -1;
+        for (int i = 0; i < inputs.Length; i++)
+        {
+            if (inputs[i].Input.Length >= 5
+                && inputs[i].Input[0] == 0x02
+                && inputs[i].Input[1] == 0x0E
+                && inputs[i].Input[2] == 0x02
+                && inputs[i].Input[3] == 0x01
+                && inputs[i].Input[4] == 0x00)
+            {
+                baseRow = i;
+                break;
+            }
+        }
+
+        if (baseRow < 0)
+        {
+            sb.AppendLine("- base row (02 0E 02 01 00) not found");
+            sb.AppendLine();
+            return;
+        }
+
+        ushort baseSuffix = inputs[baseRow].Target;
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- base suffix: 0x{baseSuffix:X4}");
+
+        // Group inputs by which positions differ from base.
+        // For 5-byte inputs: positions 0,1,2 vary; positions 3,4 are constant (01 00).
+        byte[] baseInput = inputs[baseRow].Input;
+
+        // Extract per-position contribution tables.
+        // Pos0-only changes: rows where only input[0] differs from base.
+        var pos0Only = new Dictionary<byte, ushort>(); // byte value → suffix
+        var pos1Only = new Dictionary<byte, ushort>();
+        var pos2Only = new Dictionary<byte, ushort>();
+        var pos01Change = new List<(byte B0, byte B1, ushort Suffix)>();
+        var pos12Change = new List<(byte B1, byte B2, ushort Suffix)>();
+        var pos012Change = new List<(byte B0, byte B1, byte B2, ushort Suffix)>();
+
+        foreach (var (input, target) in inputs)
+        {
+            if (input.Length < 5 || input[3] != 0x01 || input[4] != 0x00)
+            {
+                continue;
+            }
+
+            bool d0 = input[0] != baseInput[0];
+            bool d1 = input[1] != baseInput[1];
+            bool d2 = input[2] != baseInput[2];
+
+            if (!d0 && !d1 && !d2)
+            {
+                continue; // base row
+            }
+
+            if (d0 && !d1 && !d2)
+            {
+                pos0Only.TryAdd(input[0], target);
+            }
+            else if (!d0 && d1 && !d2)
+            {
+                pos1Only.TryAdd(input[1], target);
+            }
+            else if (!d0 && !d1 && d2)
+            {
+                pos2Only.TryAdd(input[2], target);
+            }
+
+            if (d0 && d1 && !d2)
+            {
+                pos01Change.Add((input[0], input[1], target));
+            }
+
+            if (!d0 && d1 && d2)
+            {
+                pos12Change.Add((input[1], input[2], target));
+            }
+
+            if (d0 || d1 || d2)
+            {
+                pos012Change.Add((input[0], input[1], input[2], target));
+            }
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- pos0-only distinct values: {pos0Only.Count}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- pos1-only distinct values: {pos1Only.Count}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- pos2-only distinct values: {pos2Only.Count}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- pos0+pos1 change rows: {pos01Change.Count}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- pos1+pos2 change rows: {pos12Change.Count}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- total varying rows: {pos012Change.Count}");
+        sb.AppendLine();
+
+        // Build XOR contribution tables.
+        // Contribution of value v at position p = suffix(v@p, base@others) XOR baseSuffix.
+        var contrib0 = new Dictionary<byte, ushort>();
+        foreach (var (val, suffix) in pos0Only)
+        {
+            contrib0[val] = (ushort)(suffix ^ baseSuffix);
+        }
+
+        var contrib1 = new Dictionary<byte, ushort>();
+        foreach (var (val, suffix) in pos1Only)
+        {
+            contrib1[val] = (ushort)(suffix ^ baseSuffix);
+        }
+
+        var contrib2 = new Dictionary<byte, ushort>();
+        foreach (var (val, suffix) in pos2Only)
+        {
+            contrib2[val] = (ushort)(suffix ^ baseSuffix);
+        }
+
+        // Display contribution tables.
+        sb.AppendLine("Per-position XOR contribution tables (value → delta from base):");
+        sb.AppendLine();
+        sb.AppendLine("| Position | Values | Sample entries |");
+        sb.AppendLine("|---|---:|---|");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"| pos[0] (full[508]) | {contrib0.Count} | {FormatContribSamples(contrib0)} |");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"| pos[1] (full[509]) | {contrib1.Count} | {FormatContribSamples(contrib1)} |");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"| pos[2] (full[510]) | {contrib2.Count} | {FormatContribSamples(contrib2)} |");
+        sb.AppendLine();
+
+        // XOR decomposition residual analysis.
+        // For each row with multiple positions changed, predict using XOR of individual contributions.
+        int xorPass = 0;
+        int xorFail = 0;
+        var residuals = new Dictionary<ushort, int>();
+        var failExamples = new List<string>();
+
+        foreach (var (b0, b1, b2, suffix) in pos012Change)
+        {
+            ushort c0 = (b0 != baseInput[0] && contrib0.TryGetValue(b0, out ushort v0)) ? v0 : (ushort)0;
+            ushort c1 = (b1 != baseInput[1] && contrib1.TryGetValue(b1, out ushort v1)) ? v1 : (ushort)0;
+            ushort c2 = (b2 != baseInput[2] && contrib2.TryGetValue(b2, out ushort v2)) ? v2 : (ushort)0;
+
+            ushort predicted = (ushort)(baseSuffix ^ c0 ^ c1 ^ c2);
+            if (predicted == suffix)
+            {
+                xorPass++;
+            }
+            else
+            {
+                xorFail++;
+                ushort residual = (ushort)(suffix ^ predicted);
+                residuals.TryGetValue(residual, out int count);
+                residuals[residual] = count + 1;
+
+                if (failExamples.Count < 20)
+                {
+                    failExamples.Add($"[{b0:X2},{b1:X2},{b2:X2}] actual=0x{suffix:X4} pred=0x{predicted:X4} residual=0x{residual:X4}");
+                }
+            }
+        }
+
+        sb.AppendLine("XOR decomposition residual analysis:");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- pass: {xorPass}, fail: {xorFail}, total: {xorPass + xorFail}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- distinct residuals: {residuals.Count}");
+        sb.AppendLine();
+
+        if (residuals.Count > 0)
+        {
+            sb.AppendLine("Residual distribution:");
+            sb.AppendLine();
+            sb.AppendLine("| Residual | Count | Binary | Trailing zeros |");
+            sb.AppendLine("|:---:|---:|---|---:|");
+            foreach (var (residual, count) in residuals.OrderByDescending(kvp => kvp.Value).ThenBy(kvp => kvp.Key).Take(20))
+            {
+                int tz = BitOperations.TrailingZeroCount(residual);
+                sb.AppendLine(CultureInfo.InvariantCulture, $"| `0x{residual:X4}` | {count} | `{Convert.ToString(residual, 2).PadLeft(16, '0')}` | {tz} |");
+            }
+
+            sb.AppendLine();
+
+            // Check if all residuals are powers of 2 (single carry bit flip).
+            bool allPow2 = residuals.Keys.All(r => BitOperations.PopCount(r) == 1);
+            bool allLowBits = residuals.Keys.All(r => (r & 0xFF00) == 0);
+            bool allHighBits = residuals.Keys.All(r => (r & 0x00FF) == 0);
+            int maxPopCount = residuals.Keys.Max(r => BitOperations.PopCount(r));
+            int minPopCount = residuals.Keys.Min(r => BitOperations.PopCount(r));
+            sb.AppendLine(CultureInfo.InvariantCulture, $"- all single-bit (power of 2): {allPow2}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"- all in low byte: {allLowBits}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"- all in high byte: {allHighBits}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"- popcount range: {minPopCount}-{maxPopCount}");
+            sb.AppendLine();
+
+            // Check if residuals match carry patterns from (A+B) vs (A XOR B).
+            // For addition: a+b = (a XOR b) XOR carry_chain.
+            // Carry residual at bit k means a carry propagated from bit k-1.
+            sb.AppendLine("Failing entries (first 20):");
+            sb.AppendLine();
+            sb.AppendLine("| Input [pos0,pos1,pos2] | Actual | Predicted | Residual |");
+            sb.AppendLine("|---|:---:|:---:|:---:|");
+            foreach (string example in failExamples)
+            {
+                // Parse the example string back (it's already formatted).
+                sb.AppendLine(CultureInfo.InvariantCulture, $"| {example} |");
+            }
+
+            sb.AppendLine();
+        }
+
+        // Test addition-based model: suffix = (T0[b0] + T1[b1] + T2[b2] + C) mod 65536.
+        // For single-position changes: T0[x] = (suffix_of_x - baseSuffix) mod 65536, etc.
+        // Then verify multi-position changes.
+        var addContrib0 = new Dictionary<byte, ushort>();
+        foreach (var (val, suffix) in pos0Only)
+        {
+            addContrib0[val] = unchecked((ushort)(suffix - baseSuffix));
+        }
+
+        var addContrib1 = new Dictionary<byte, ushort>();
+        foreach (var (val, suffix) in pos1Only)
+        {
+            addContrib1[val] = unchecked((ushort)(suffix - baseSuffix));
+        }
+
+        var addContrib2 = new Dictionary<byte, ushort>();
+        foreach (var (val, suffix) in pos2Only)
+        {
+            addContrib2[val] = unchecked((ushort)(suffix - baseSuffix));
+        }
+
+        int addPass = 0;
+        int addFail = 0;
+        foreach (var (b0, b1, b2, suffix) in pos012Change)
+        {
+            ushort ac0 = (b0 != baseInput[0] && addContrib0.TryGetValue(b0, out ushort av0)) ? av0 : (ushort)0;
+            ushort ac1 = (b1 != baseInput[1] && addContrib1.TryGetValue(b1, out ushort av1)) ? av1 : (ushort)0;
+            ushort ac2 = (b2 != baseInput[2] && addContrib2.TryGetValue(b2, out ushort av2)) ? av2 : (ushort)0;
+
+            ushort predicted = unchecked((ushort)(baseSuffix + ac0 + ac1 + ac2));
+            if (predicted == suffix)
+            {
+                addPass++;
+            }
+            else
+            {
+                addFail++;
+            }
+        }
+
+        sb.AppendLine("Addition-based separable model (suffix = T0[b0] + T1[b1] + T2[b2] + C mod 65536):");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- pass: {addPass}, fail: {addFail}, total: {addPass + addFail}");
+        sb.AppendLine();
+
+        // Test hybrid: suffix = T0[b0] XOR (T1[b1] + T2[b2]).
+        // Derive: T0[x] = suffix(x, base1, base2) XOR baseSuffix (from pos0-only).
+        // For pos1/pos2 combined: suffix = T0[base0] XOR (T1[b1] + T2[b2]) = 0 XOR (T1[b1] + T2[b2])
+        //   → suffix(base0, b1, b2) = T0[base0] XOR (T1[b1] + T2[b2]) = (T1[b1] + T2[b2]) XOR T0[base0].
+        // We know baseSuffix = T0[base0] XOR (T1[base1] + T2[base2]).
+        // And suffix(base0, b1, base2) = T0[base0] XOR (T1[b1] + T2[base2]).
+        // So delta1[b1] = suffix(base0, b1, base2) XOR baseSuffix = (T1[b1] + T2[base2]) XOR (T1[base1] + T2[base2])
+        //   = (T1[b1] - T1[base1]) contributed through addition.
+        // For the full prediction: suffix(b0, b1, b2) = T0[b0] XOR (T1[b1] + T2[b2]).
+        // suffix(b0, base1, base2) = T0[b0] XOR (T1[base1] + T2[base2]).
+        // So T0[b0] = suffix(b0, base1, base2) XOR (T1[base1] + T2[base2]).
+        // We don't know T1[base1] + T2[base2] directly. Let K = T1[base1] + T2[base2].
+        // baseSuffix = T0[base0] XOR K → K = baseSuffix XOR T0[base0].
+        // And T0[base0] is defined relative to itself (=0 in our XOR contribution table).
+        // Let's set T0[base0] = 0. Then K = baseSuffix.
+        // T0[b0] = suffix(b0, base1, base2) XOR baseSuffix = contrib0_xor[b0] (same as XOR contribution).
+        // T1[b1] + T2[base2] = suffix(base0, b1, base2) XOR T0[base0] = suffix(base0, b1, base2) XOR 0
+        //   → T1[b1] + T2[base2] = suffix(base0, b1, base2). Hmm, but we set T0[base0]=0...
+        // Actually suffix(base0, b1, base2) = T0[base0] XOR (T1[b1] + T2[base2]) = 0 XOR (T1[b1] + T2[base2])
+        //   = T1[b1] + T2[base2].
+        // And suffix(base0, base1, base2) = T1[base1] + T2[base2] = baseSuffix (since T0[base0]=0 XOR ... = baseSuffix means K=baseSuffix).
+        // Wait: baseSuffix = T0[base0] XOR (T1[base1] + T2[base2]) = 0 XOR (T1[base1] + T2[base2]) = T1[base1] + T2[base2].
+        // So K = baseSuffix. And:
+        // T1[b1] + T2[base2] = suffix(base0, b1, base2).
+        // → T1[b1] = suffix(base0, b1, base2) - T2[base2].
+        // T1[base1] + T2[b2] = suffix(base0, base1, b2).
+        // → T2[b2] = suffix(base0, base1, b2) - T1[base1].
+        // And T1[base1] + T2[base2] = baseSuffix.
+        // Set T2[base2] = 0 → T1[base1] = baseSuffix.
+        // Then T1[b1] = suffix(base0, b1, base2) - 0 = suffix(base0, b1, base2) = pos1Only[b1].
+        //   Wait: pos1Only stores suffixes where only pos1 differs. suffix(base0, b1, base2) = pos1Only[b1].
+        // T2[b2] = suffix(base0, base1, b2) - baseSuffix = pos2Only[b2] - baseSuffix.
+        //   Wait: pos2Only stores suffixes where only pos2 differs. suffix(base0, base1, b2) = pos2Only[b2].
+        //   T2[b2] = pos2Only[b2] - T1[base1] = pos2Only[b2] - baseSuffix.
+
+        // Prediction for any (b0, b1, b2):
+        //   suffix = T0[b0] XOR (T1[b1] + T2[b2])
+        //   = contrib0_xor[b0] XOR (pos1Suffix[b1] + (pos2Suffix[b2] - baseSuffix))
+        //   where contrib0_xor is the XOR contribution of b0 (= suffix(b0,base1,base2) XOR baseSuffix).
+
+        int hybridXorAddPass = 0;
+        int hybridXorAddFail = 0;
+        var hybridFailExamples = new List<string>();
+
+        foreach (var (b0, b1, b2, suffix) in pos012Change)
+        {
+            // T0[b0]:
+            ushort t0;
+            if (b0 == baseInput[0])
+            {
+                t0 = 0;
+            }
+            else if (!contrib0.TryGetValue(b0, out t0))
+            {
+                continue; // skip if we don't have a single-position reference
+            }
+
+            // T1[b1]:
+            ushort t1;
+            if (b1 == baseInput[1])
+            {
+                t1 = baseSuffix;
+            }
+            else if (pos1Only.TryGetValue(b1, out ushort s1))
+            {
+                t1 = s1;
+            }
+            else
+            {
+                continue;
+            }
+
+            // T2[b2]:
+            ushort t2;
+            if (b2 == baseInput[2])
+            {
+                t2 = 0;
+            }
+            else if (pos2Only.TryGetValue(b2, out ushort s2))
+            {
+                t2 = unchecked((ushort)(s2 - baseSuffix));
+            }
+            else
+            {
+                continue;
+            }
+
+            ushort predicted = unchecked((ushort)(t0 ^ (t1 + t2)));
+            if (predicted == suffix)
+            {
+                hybridXorAddPass++;
+            }
+            else
+            {
+                hybridXorAddFail++;
+                if (hybridFailExamples.Count < 10)
+                {
+                    ushort residual = (ushort)(suffix ^ predicted);
+                    hybridFailExamples.Add($"[{b0:X2},{b1:X2},{b2:X2}] T0=0x{t0:X4} T1=0x{t1:X4} T2=0x{t2:X4} actual=0x{suffix:X4} pred=0x{predicted:X4} res=0x{residual:X4}");
+                }
+            }
+        }
+
+        sb.AppendLine("Hybrid model A: suffix = T0[b0] XOR (T1[b1] + T2[b2]):");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- pass: {hybridXorAddPass}, fail: {hybridXorAddFail}, total: {hybridXorAddPass + hybridXorAddFail}");
+        if (hybridFailExamples.Count > 0)
+        {
+            sb.AppendLine();
+            foreach (string ex in hybridFailExamples)
+            {
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  - {ex}");
+            }
+        }
+
+        sb.AppendLine();
+
+        // Test hybrid B: suffix = (T0[b0] + T1[b1]) XOR T2[b2].
+        // Set T0[base0]=0, T1[base1]=0, T2[base2]=0.
+        // baseSuffix = (T0[base0] + T1[base1]) XOR T2[base2] = 0 XOR 0 = 0. But baseSuffix = 0x27A5 ≠ 0!
+        // So we need a constant: suffix = (T0[b0] + T1[b1]) XOR T2[b2] XOR C.
+        // baseSuffix = (0 + 0) XOR 0 XOR C = C → C = baseSuffix.
+        // suffix(b0, base1, base2) = (T0[b0] + 0) XOR 0 XOR baseSuffix = T0[b0] XOR baseSuffix.
+        // → T0[b0] = suffix(b0, base1, base2) XOR baseSuffix = contrib0_xor[b0].
+        // suffix(base0, b1, base2) = (0 + T1[b1]) XOR 0 XOR baseSuffix = T1[b1] XOR baseSuffix.
+        // → T1[b1] = suffix(base0, b1, base2) XOR baseSuffix = contrib1_xor[b1].
+        // suffix(base0, base1, b2) = (0 + 0) XOR T2[b2] XOR baseSuffix = T2[b2] XOR baseSuffix.
+        // → T2[b2] = suffix(base0, base1, b2) XOR baseSuffix = contrib2_xor[b2].
+        // Prediction: suffix = (contrib0[b0] + contrib1[b1]) XOR contrib2[b2] XOR baseSuffix.
+
+        int hybridAddXorPass = 0;
+        int hybridAddXorFail = 0;
+        var hybridBFailExamples = new List<string>();
+
+        foreach (var (b0, b1, b2, suffix) in pos012Change)
+        {
+            ushort c0 = (b0 != baseInput[0] && contrib0.TryGetValue(b0, out ushort cv0)) ? cv0 : (ushort)0;
+            ushort c1 = (b1 != baseInput[1] && contrib1.TryGetValue(b1, out ushort cv1)) ? cv1 : (ushort)0;
+            ushort c2 = (b2 != baseInput[2] && contrib2.TryGetValue(b2, out ushort cv2)) ? cv2 : (ushort)0;
+
+            ushort predicted = unchecked((ushort)((c0 + c1) ^ c2 ^ baseSuffix));
+            if (predicted == suffix)
+            {
+                hybridAddXorPass++;
+            }
+            else
+            {
+                hybridAddXorFail++;
+                if (hybridBFailExamples.Count < 10)
+                {
+                    ushort residual = (ushort)(suffix ^ predicted);
+                    hybridBFailExamples.Add($"[{b0:X2},{b1:X2},{b2:X2}] c0=0x{c0:X4} c1=0x{c1:X4} c2=0x{c2:X4} actual=0x{suffix:X4} pred=0x{predicted:X4} res=0x{residual:X4}");
+                }
+            }
+        }
+
+        sb.AppendLine("Hybrid model B: suffix = (T0[b0] + T1[b1]) XOR T2[b2] XOR C:");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- pass: {hybridAddXorPass}, fail: {hybridAddXorFail}, total: {hybridAddXorPass + hybridAddXorFail}");
+        if (hybridBFailExamples.Count > 0)
+        {
+            sb.AppendLine();
+            foreach (string ex in hybridBFailExamples)
+            {
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  - {ex}");
+            }
+        }
+
+        sb.AppendLine();
+
+        // Test hybrid C: suffix = T0[b0] XOR T1[b1] XOR (T2[b2] + T3_const) where b2 may interact with b1.
+        // Actually test: suffix = (T0[b0] XOR T1[b1]) + T2[b2] + C (addition wrapping XOR inputs).
+        int hybridXorPlusPass = 0;
+        int hybridXorPlusFail = 0;
+
+        // For this model: suffix(b0, base1, base2) = (T0[b0] XOR T1[base1]) + T2[base2] + C.
+        // Let T1[base1]=0, T2[base2]=0: suffix(b0,..) = T0[b0] + C.
+        // baseSuffix = T0[base0] + C. Let T0[base0]=0: C = baseSuffix.
+        // T0[b0] = suffix(b0,..) - baseSuffix = addContrib0[b0].
+        // suffix(base0, b1, base2) = (0 XOR T1[b1]) + 0 + baseSuffix = T1[b1] + baseSuffix.
+        // T1[b1] = suffix(..,b1,..) - baseSuffix = addContrib1[b1].
+        // suffix(base0, base1, b2) = (0 XOR 0) + T2[b2] + baseSuffix = T2[b2] + baseSuffix.
+        // T2[b2] = suffix(..,b2) - baseSuffix = addContrib2[b2].
+        // Prediction: suffix = (addC0[b0] XOR addC1[b1]) + addC2[b2] + baseSuffix.
+
+        foreach (var (b0, b1, b2, suffix) in pos012Change)
+        {
+            ushort ac0 = (b0 != baseInput[0] && addContrib0.TryGetValue(b0, out ushort av0)) ? av0 : (ushort)0;
+            ushort ac1 = (b1 != baseInput[1] && addContrib1.TryGetValue(b1, out ushort av1)) ? av1 : (ushort)0;
+            ushort ac2 = (b2 != baseInput[2] && addContrib2.TryGetValue(b2, out ushort av2)) ? av2 : (ushort)0;
+
+            ushort predicted = unchecked((ushort)((ac0 ^ ac1) + ac2 + baseSuffix));
+            if (predicted == suffix)
+            {
+                hybridXorPlusPass++;
+            }
+            else
+            {
+                hybridXorPlusFail++;
+            }
+        }
+
+        sb.AppendLine("Hybrid model C: suffix = (T0[b0] XOR T1[b1]) + T2[b2] + C:");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- pass: {hybridXorPlusPass}, fail: {hybridXorPlusFail}, total: {hybridXorPlusPass + hybridXorPlusFail}");
+        sb.AppendLine();
+
+        // Test all 6 orderings of 2-op hybrid: {+, ^} applied in 2 positions.
+        // Already tested: A = XOR(+), B = (+)XOR, C = (XOR)+.
+        // Additional: D = (+XOR), E = XOR+XOR (=just XOR), F = +(+) (=just +).
+        // D: suffix = T0[b0] + (T1[b1] XOR T2[b2]) + C.
+        int hybridDPass = 0;
+        int hybridDFail = 0;
+
+        foreach (var (b0, b1, b2, suffix) in pos012Change)
+        {
+            ushort ac0 = (b0 != baseInput[0] && addContrib0.TryGetValue(b0, out ushort av0)) ? av0 : (ushort)0;
+
+            // For this model: T1[b1] XOR T2[b2] contribution.
+            // suffix(base0, b1, base2) = 0 + (T1[b1] XOR T2[base2]) + baseSuffix.
+            // If T2[base2]=0: T1[b1] = suffix(..,b1,..) - baseSuffix = addContrib1[b1].
+            // suffix(base0, base1, b2) = 0 + (T1[base1] XOR T2[b2]) + baseSuffix.
+            // T1[base1] XOR T2[b2] = suffix(..) - baseSuffix = addContrib2[b2].
+            // If T1[base1]=0: T2[b2] = addContrib2[b2].
+            // Full: suffix = addC0[b0] + (addC1[b1] XOR addC2[b2]) + baseSuffix.
+            ushort ac1 = (b1 != baseInput[1] && addContrib1.TryGetValue(b1, out ushort av1)) ? av1 : (ushort)0;
+            ushort ac2 = (b2 != baseInput[2] && addContrib2.TryGetValue(b2, out ushort av2)) ? av2 : (ushort)0;
+
+            ushort predicted = unchecked((ushort)(ac0 + (ac1 ^ ac2) + baseSuffix));
+            if (predicted == suffix)
+            {
+                hybridDPass++;
+            }
+            else
+            {
+                hybridDFail++;
+            }
+        }
+
+        sb.AppendLine("Hybrid model D: suffix = T0[b0] + (T1[b1] XOR T2[b2]) + C:");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- pass: {hybridDPass}, fail: {hybridDFail}, total: {hybridDPass + hybridDFail}");
+        sb.AppendLine();
+    }
+
+    private static string FormatContribSamples(Dictionary<byte, ushort> contrib)
+    {
+        return string.Join(" ", contrib
+            .OrderBy(kvp => kvp.Key)
+            .Take(8)
+            .Select(kvp => $"0x{kvp.Key:X2}→0x{kvp.Value:X4}"));
+    }
+
+    /// <summary>
+    /// Tests whether the suffix is a GF(2^16) linear accumulator with a per-byte lookup table:
+    /// suffix = XOR(W[byte_i] * alpha^i) in GF(2^16) mod P.
+    /// Uses cross-multiplication constraints from the pair matrix to derive candidate P values.
+    /// </summary>
+    private static void AppendGf2CrossMultiplicationSolverSummary(StringBuilder sb, SuffixPatternTable table, int matrixStart)
+    {
+        sb.AppendLine("GF(2^16) cross-multiplication solver:");
+        sb.AppendLine();
+        sb.AppendLine("Tests whether pair matrix deltas are consistent with `suffix = XOR(W[b_i] * alpha^i)` in GF(2^16) mod P.");
+        sb.AppendLine("Derives constraints on P from cross-products of row/column contributions.");
+        sb.AppendLine();
+
+        int size = DaoLabAlphabetLength;
+        var suffixes = new ushort[size * size];
+        var present = new bool[size * size];
+
+        IReadOnlyList<SuffixPatternRow> rows = table.Rows;
+        foreach (SuffixPatternRow row in rows)
+        {
+            if (row.Seed is not int seed)
+            {
+                continue;
+            }
+
+            int pair = seed - matrixStart;
+            int first = pair / size;
+            int second = pair % size;
+            if (first >= 0 && first < size && second >= 0 && second < size)
+            {
+                int index = (first * size) + second;
+                suffixes[index] = row.AccessSuffix;
+                present[index] = true;
+            }
+        }
+
+        int baseIndex = DaoLabAlphabet.IndexOf('a', StringComparison.Ordinal);
+        if (baseIndex < 0 || !present[(baseIndex * size) + baseIndex])
+        {
+            sb.AppendLine("- base entry 'a,a' not present; skipping.");
+            sb.AppendLine();
+            return;
+        }
+
+        ushort baseValue = suffixes[(baseIndex * size) + baseIndex];
+
+        // Collect row contributions (pos0 = hash position 0 = tail[8]) and column contributions (pos2 = hash position 2 = tail[10]).
+        var rowContribs = new List<(int CharIndex, ushort Delta)>();
+        var colContribs = new List<(int CharIndex, ushort Delta)>();
+        for (int i = 0; i < size; i++)
+        {
+            int rowIdx = (i * size) + baseIndex;
+            int colIdx = (baseIndex * size) + i;
+            if (present[rowIdx])
+            {
+                ushort rc = (ushort)(suffixes[rowIdx] ^ baseValue);
+                if (rc != 0)
+                {
+                    rowContribs.Add((i, Delta: rc));
+                }
+            }
+
+            if (present[colIdx])
+            {
+                ushort cc = (ushort)(suffixes[colIdx] ^ baseValue);
+                if (cc != 0)
+                {
+                    colContribs.Add((i, Delta: cc));
+                }
+            }
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- non-zero row contributions: {rowContribs.Count}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- non-zero column contributions: {colContribs.Count}");
+
+        if (rowContribs.Count < 2 || colContribs.Count < 2)
+        {
+            sb.AppendLine("- insufficient non-zero contributions for cross-multiplication.");
+            sb.AppendLine();
+            return;
+        }
+
+        // For the model to hold: GF_mul(row[i], col[j], P) == GF_mul(row[j], col[i], P)
+        // for all i, j where both row and col are non-zero AND use the SAME underlying byte delta.
+        // Since row and col contributions for the SAME character come from the same W-delta
+        // (char253 2nd byte = char254 2nd byte for same char), we need chars that appear in BOTH lists.
+        var sharedChars = rowContribs
+            .Where(r => colContribs.Any(c => c.CharIndex == r.CharIndex))
+            .Select(r => (r.CharIndex, Row: r.Delta, Col: colContribs.First(c => c.CharIndex == r.CharIndex).Delta))
+            .ToList();
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- chars with both row and col contributions: {sharedChars.Count}");
+
+        if (sharedChars.Count < 2)
+        {
+            sb.AppendLine("- insufficient shared chars for cross-multiplication constraints.");
+            sb.AppendLine();
+            return;
+        }
+
+        // Build constraint polynomials: for each pair (i, j) of shared chars,
+        // R_ij = clmul(row[i], col[j]) XOR clmul(row[j], col[i])
+        // P must divide R_ij.
+        // Start by computing GCD of the first few R values.
+        uint gcdPoly = 0;
+        int constraintCount = 0;
+        var constraintDetails = new List<string>();
+
+        for (int i = 0; i < sharedChars.Count && i < 8; i++)
+        {
+            for (int j = i + 1; j < sharedChars.Count && j < 8; j++)
+            {
+                uint prod1 = CarrylessMultiply16(sharedChars[i].Row, sharedChars[j].Col);
+                uint prod2 = CarrylessMultiply16(sharedChars[j].Row, sharedChars[i].Col);
+                uint r = prod1 ^ prod2;
+                if (r == 0)
+                {
+                    // Trivially satisfied for all P — doesn't constrain.
+                    continue;
+                }
+
+                constraintCount++;
+                if (gcdPoly == 0)
+                {
+                    gcdPoly = r;
+                }
+                else
+                {
+                    gcdPoly = Gf2PolyGcd(gcdPoly, r);
+                }
+
+                if (constraintCount <= 3)
+                {
+                    constraintDetails.Add($"R({DaoLabAlphabet[sharedChars[i].CharIndex]},{DaoLabAlphabet[sharedChars[j].CharIndex]})=0x{r:X8}");
+                }
+            }
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- cross-multiplication constraints generated: {constraintCount}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- GCD polynomial (hex): 0x{gcdPoly:X8} (degree {Gf2PolyDegree(gcdPoly)})");
+        foreach (string detail in constraintDetails)
+        {
+            sb.AppendLine(CultureInfo.InvariantCulture, $"  - {detail}");
+        }
+
+        // Find all degree-16 factors of the GCD polynomial.
+        var candidatePolynomials = new List<ushort>();
+        if (Gf2PolyDegree(gcdPoly) >= 16)
+        {
+            // Try all degree-16 polynomials (x^16 + p) as divisors of gcdPoly.
+            for (int p = 0; p <= 0xFFFF; p++)
+            {
+                uint divisor = 0x10000u | (uint)p; // x^16 + p
+                if (Gf2PolyRemainder(gcdPoly, divisor) == 0)
+                {
+                    candidatePolynomials.Add((ushort)p);
+                }
+            }
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- degree-16 factor candidates: {candidatePolynomials.Count}");
+        if (candidatePolynomials.Count > 0 && candidatePolynomials.Count <= 16)
+        {
+            foreach (ushort p in candidatePolynomials)
+            {
+                sb.AppendLine(CultureInfo.InvariantCulture, $"  - P = x^16 + 0x{p:X4}");
+            }
+        }
+
+        // For each candidate P, verify against ALL constraint pairs (not just those used for GCD).
+        var validatedPolynomials = new List<ushort>();
+        foreach (ushort p in candidatePolynomials)
+        {
+            uint pFull = 0x10000u | (uint)p;
+            bool allMatch = true;
+            for (int i = 0; i < sharedChars.Count && allMatch; i++)
+            {
+                for (int j = i + 1; j < sharedChars.Count && allMatch; j++)
+                {
+                    ushort lhs = Gf2Multiply(sharedChars[i].Row, sharedChars[j].Col, pFull);
+                    ushort rhs = Gf2Multiply(sharedChars[j].Row, sharedChars[i].Col, pFull);
+                    if (lhs != rhs)
+                    {
+                        allMatch = false;
+                    }
+                }
+            }
+
+            if (allMatch)
+            {
+                validatedPolynomials.Add(p);
+            }
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- validated against all shared chars: {validatedPolynomials.Count}");
+        foreach (ushort p in validatedPolynomials)
+        {
+            // Compute alpha^2 = col[0] / row[0] in GF(2^16) mod (x^16 + p)
+            uint pFull = 0x10000u | (uint)p;
+            ushort alpha2 = Gf2Divide(sharedChars[0].Col, sharedChars[0].Row, pFull);
+            sb.AppendLine(CultureInfo.InvariantCulture, $"  - P = 0x{p:X4}, alpha^2 = 0x{alpha2:X4}");
+        }
+
+        sb.AppendLine();
+    }
+
+    /// <summary>Carryless (polynomial) multiplication of two 16-bit values → 32-bit result.</summary>
+    private static uint CarrylessMultiply16(ushort a, ushort b)
+    {
+        uint result = 0;
+        uint bb = b;
+        for (int i = 0; i < 16; i++)
+        {
+            if (((a >> i) & 1) != 0)
+            {
+                result ^= bb << i;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>GCD of two GF(2) polynomials (represented as bit vectors).</summary>
+    private static uint Gf2PolyGcd(uint a, uint b)
+    {
+        while (b != 0)
+        {
+            uint r = Gf2PolyRemainder(a, b);
+            a = b;
+            b = r;
+        }
+
+        return a;
+    }
+
+    /// <summary>Remainder of polynomial a divided by b in GF(2)[x].</summary>
+    private static uint Gf2PolyRemainder(uint a, uint b)
+    {
+        int degA = Gf2PolyDegree(a);
+        int degB = Gf2PolyDegree(b);
+        while (degA >= degB && a != 0)
+        {
+            a ^= b << (degA - degB);
+            degA = Gf2PolyDegree(a);
+        }
+
+        return a;
+    }
+
+    /// <summary>Degree of a GF(2) polynomial (highest set bit position).</summary>
+    private static int Gf2PolyDegree(uint p)
+    {
+        if (p == 0)
+        {
+            return -1;
+        }
+
+        return 31 - BitOperations.LeadingZeroCount(p);
+    }
+
+    /// <summary>Multiply two elements in GF(2^16) mod P (P given as full 17-bit polynomial).</summary>
+    private static ushort Gf2Multiply(ushort a, ushort b, uint p)
+    {
+        uint product = CarrylessMultiply16(a, b);
+        return (ushort)Gf2PolyRemainder(product, p);
+    }
+
+    /// <summary>Divide a by b in GF(2^16) mod P: returns a * b^(-1).</summary>
+    private static ushort Gf2Divide(ushort a, ushort b, uint p)
+    {
+        ushort bInv = Gf2Inverse(b, p);
+        return Gf2Multiply(a, bInv, p);
+    }
+
+    /// <summary>Multiplicative inverse in GF(2^16) via extended Euclidean algorithm.</summary>
+    private static ushort Gf2Inverse(ushort a, uint p)
+    {
+        if (a == 0)
+        {
+            return 0;
+        }
+
+        // Extended GCD in GF(2)[x]: find t such that a * t ≡ 1 mod P.
+        uint r0 = p;
+        uint r1 = a;
+        uint t0 = 0;
+        uint t1 = 1;
+        while (r1 != 0)
+        {
+            int degR0 = Gf2PolyDegree(r0);
+            int degR1 = Gf2PolyDegree(r1);
+            if (degR0 < degR1)
+            {
+                (r0, r1) = (r1, r0);
+                (t0, t1) = (t1, t0);
+                continue;
+            }
+
+            int shift = degR0 - degR1;
+            r0 ^= r1 << shift;
+            t0 ^= t1 << shift;
+        }
+
+        // r0 should be 1 (GCD = 1 for irreducible P, or if a is coprime with P).
+        return (ushort)Gf2PolyRemainder(t0, p);
     }
 
     private static List<CandidateRule> BuildSuffixCandidateRules()
     {
         var rules = new List<CandidateRule>();
-        foreach ((string label, Func<SuffixCandidateContext, byte[]> getBytes) in BuildByteInputs())
+        foreach ((string label, int inputIndex) in BuildByteInputs())
         {
+            Func<SuffixCandidateContext, byte[]> getBytes = context => context.GetByteRuleInput(inputIndex);
             rules.Add(new CandidateRule($"{label} word BE", context => ReadWordOrNull(getBytes(context), 0, bigEndian: true)));
             rules.Add(new CandidateRule($"{label} word LE", context => ReadWordOrNull(getBytes(context), 0, bigEndian: false)));
             rules.Add(new CandidateRule($"{label} FNV1a16", context => Fnv1A16(getBytes(context))));
@@ -1825,12 +3035,25 @@ internal static class LongRowSuffixProbe
             AddHash32WordRules(rules, label, "CRC32", context => Crc32(getBytes(context)));
             AddRotateMix16Rules(rules, label, getBytes);
 #pragma warning disable CA5350, CA5351 // Research-only scoring of legacy hash candidates; not used for security.
-            AddDigestWordRules(rules, label, "MD5", context => MD5.HashData(getBytes(context)));
-            AddDigestWordRules(rules, label, "SHA1", context => SHA1.HashData(getBytes(context)));
+            AddDigestWordRules(rules, label, "MD5", context => context.GetDigestBytes("MD5", inputIndex, bytes => MD5.HashData(bytes)));
+            AddDigestWordRules(rules, label, "SHA1", context => context.GetDigestBytes("SHA1", inputIndex, bytes => SHA1.HashData(bytes)));
 #pragma warning restore CA5350, CA5351
             rules.Add(new CandidateRule($"{label} Adler16", context => Adler16(getBytes(context))));
             rules.Add(new CandidateRule($"{label} Fletcher16", context => Fletcher16(getBytes(context))));
+            rules.Add(new CandidateRule($"{label} EseChecksum lo16", context => EseChecksum16(getBytes(context), low: true)));
+            rules.Add(new CandidateRule($"{label} EseChecksum hi16", context => EseChecksum16(getBytes(context), low: false)));
+            rules.Add(new CandidateRule($"{label} InternetCksum", context => InternetChecksum(getBytes(context))));
+            rules.Add(new CandidateRule($"{label} XorFold16", context => XorFold16(getBytes(context))));
+            rules.Add(new CandidateRule($"{label} AddFold16", context => AddFold16(getBytes(context))));
+            rules.Add(new CandidateRule($"{label} XorFoldWord16 BE", context => XorFoldWord16(getBytes(context), bigEndian: true)));
+            rules.Add(new CandidateRule($"{label} XorFoldWord16 LE", context => XorFoldWord16(getBytes(context), bigEndian: false)));
+            rules.Add(new CandidateRule($"{label} AddFoldWord16 BE", context => AddFoldWord16(getBytes(context), bigEndian: true)));
+            rules.Add(new CandidateRule($"{label} AddFoldWord16 LE", context => AddFoldWord16(getBytes(context), bigEndian: false)));
+            AddCrc16DirectRules(rules, label, getBytes);
         }
+
+        // Seeded CRC-16: init from key length or truncation boundary bytes.
+        AddSeededCrc16Rules(rules);
 
         foreach ((string label, Func<SuffixCandidateContext, string> getText) in BuildTextInputs())
         {
@@ -1848,26 +3071,119 @@ internal static class LongRowSuffixProbe
         return rules;
     }
 
-    private static IEnumerable<(string Label, Func<SuffixCandidateContext, byte[]> GetBytes)> BuildByteInputs()
+    private static IEnumerable<(string Label, int InputIndex)> BuildByteInputs()
     {
-        yield return ("full[508..]", context => context.ByteInputs[0]);
-        yield return ("full[510..]", context => context.ByteInputs[1]);
-        yield return ("full[503..511]", context => SliceOrEmpty(context.FullKey, 503, 8));
-        yield return ("full[500..511]", context => SliceOrEmpty(context.FullKey, 500, 11));
-        yield return ("full[503..521]", context => SliceOrEmpty(context.FullKey, 503, 19));
-        yield return ("trimmed[503..511]", context => SliceOrEmpty(context.TrimmedFullKey, 503, 8));
-        yield return ("trimmed[500..511]", context => SliceOrEmpty(context.TrimmedFullKey, 500, 11));
-        yield return ("trimmed[503..521]", context => SliceOrEmpty(context.TrimmedFullKey, 503, 19));
-        yield return ("trimmed[508..]", context => SliceOrEmpty(context.TrimmedFullKey, 508));
-        yield return ("full[503..511]+aux", context => ConcatBytes(SliceOrEmpty(context.FullKey, 503, 8), context.GetInputCandidates(Encoding.GetEncoding(1252))[10]));
-        yield return ("norm[503..511]+aux", context => ConcatBytes(SliceOrEmpty(context.NormalizedFullKey, 503, 8), context.GetNormalizedInputCandidates(Encoding.GetEncoding(1252))[10]));
-        yield return ("full[503..521]+aux", context => ConcatBytes(SliceOrEmpty(context.FullKey, 503, 19), context.GetInputCandidates(Encoding.GetEncoding(1252))[10]));
-        yield return ("norm[503..521]+aux", context => ConcatBytes(SliceOrEmpty(context.NormalizedFullKey, 503, 19), context.GetNormalizedInputCandidates(Encoding.GetEncoding(1252))[10]));
-        yield return ("full[508..511]", context => context.ByteInputs[2]);
-        yield return ("full[508..512]", context => context.ByteInputs[3]);
-        yield return ("full[508..513]", context => context.ByteInputs[4]);
-        yield return ("full[..508]", context => context.ByteInputs[5]);
-        yield return ("full[..510] zero", context => context.ByteInputs[6]);
+        yield return ("full[508..]", 0);
+        yield return ("full[510..]", 1);
+        yield return ("full[503..511]", 2);
+        yield return ("full[500..511]", 3);
+        yield return ("full[503..521]", 4);
+        yield return ("trimmed[503..511]", 5);
+        yield return ("trimmed[500..511]", 6);
+        yield return ("trimmed[503..521]", 7);
+        yield return ("trimmed[508..]", 8);
+        yield return ("full[503..511]+aux", 9);
+        yield return ("norm[503..511]+aux", 10);
+        yield return ("full[503..521]+aux", 11);
+        yield return ("norm[503..521]+aux", 12);
+        yield return ("full[508..511]", 13);
+        yield return ("full[508..512]", 14);
+        yield return ("full[508..513]", 15);
+        yield return ("full[..508]", 16);
+        yield return ("full[..510] zero", 17);
+        yield return ("full[0..]", 18);
+        yield return ("full[1..]", 19);
+        yield return ("full[^2..]", 20);
+        yield return ("norm[0..]", 21);
+        yield return ("full[0..]+lenLE", 22);
+        yield return ("full[510..]+lenLE", 23);
+        yield return ("aux-only", 24);
+        yield return ("full[1..^1]", 25);
+        yield return ("full[508..]+textLenBE", 26);
+        yield return ("full[508..]+textLenLE", 27);
+        yield return ("text-utf16le", 28);
+        yield return ("text-cp1252", 29);
+        yield return ("text[255..]-utf16le", 30);
+        yield return ("text[255..]-cp1252", 31);
+    }
+
+    private static byte[][] BuildByteRuleInputs(SuffixCandidateContext context)
+    {
+        byte[][] inputs = context.GetInputCandidates(Cp1252Encoding);
+        byte[][] normalizedInputs = context.GetNormalizedInputCandidates(Cp1252Encoding);
+        return
+        [
+            context.ByteInputs[0],
+            context.ByteInputs[1],
+            SliceOrEmpty(context.FullKey, 503, 8),
+            SliceOrEmpty(context.FullKey, 500, 11),
+            SliceOrEmpty(context.FullKey, 503, 19),
+            SliceOrEmpty(context.TrimmedFullKey, 503, 8),
+            SliceOrEmpty(context.TrimmedFullKey, 500, 11),
+            SliceOrEmpty(context.TrimmedFullKey, 503, 19),
+            SliceOrEmpty(context.TrimmedFullKey, 508),
+            ConcatBytes(SliceOrEmpty(context.FullKey, 503, 8), inputs[AuxInputCandidateIndex]),
+            ConcatBytes(SliceOrEmpty(context.NormalizedFullKey, 503, 8), normalizedInputs[AuxInputCandidateIndex]),
+            ConcatBytes(SliceOrEmpty(context.FullKey, 503, 19), inputs[AuxInputCandidateIndex]),
+            ConcatBytes(SliceOrEmpty(context.NormalizedFullKey, 503, 19), normalizedInputs[AuxInputCandidateIndex]),
+            context.ByteInputs[2],
+            context.ByteInputs[3],
+            context.ByteInputs[4],
+            context.ByteInputs[5],
+            context.ByteInputs[6],
+            context.FullKey,
+            SliceOrEmpty(context.FullKey, 1),
+            LastNOrEmpty(context.FullKey, 2),
+            context.NormalizedFullKey,
+            AppendLengthLE(context.FullKey),
+            AppendLengthLE(context.ByteInputs[1]),
+            inputs[AuxInputCandidateIndex],
+            context.FullKey.Length >= 2 ? context.FullKey[1..^1] : Array.Empty<byte>(),
+            AppendTextLengthBE(SliceOrEmpty(context.FullKey, 508), context.Row.Text),
+            AppendTextLengthLE(SliceOrEmpty(context.FullKey, 508), context.Row.Text),
+            EncodeTextOrEmpty(context.Row.Text, Encoding.Unicode),
+            EncodeTextOrEmpty(context.Row.Text, Cp1252Encoding),
+            EncodeTextTailOrEmpty(context.Row.Text, 255, Encoding.Unicode),
+            EncodeTextTailOrEmpty(context.Row.Text, 255, Cp1252Encoding),
+        ];
+    }
+
+    private static byte[] EncodeTextOrEmpty(string? text, Encoding encoding)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return Array.Empty<byte>();
+        }
+
+        return encoding.GetBytes(text);
+    }
+
+    private static byte[] EncodeTextTailOrEmpty(string? text, int startIndex, Encoding encoding)
+    {
+        if (string.IsNullOrEmpty(text) || text.Length <= startIndex)
+        {
+            return Array.Empty<byte>();
+        }
+
+        return encoding.GetBytes(text, startIndex, text.Length - startIndex);
+    }
+
+    private static byte[] AppendTextLengthBE(byte[] bytes, string? text)
+    {
+        int textLength = text?.Length ?? 0;
+        var result = new byte[bytes.Length + 2];
+        bytes.CopyTo(result, 0);
+        BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(bytes.Length), (ushort)textLength);
+        return result;
+    }
+
+    private static byte[] AppendTextLengthLE(byte[] bytes, string? text)
+    {
+        int textLength = text?.Length ?? 0;
+        var result = new byte[bytes.Length + 2];
+        bytes.CopyTo(result, 0);
+        BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(bytes.Length), (ushort)textLength);
+        return result;
     }
 
     private static byte[] ConcatBytes(byte[] first, byte[] second)
@@ -2212,6 +3528,12 @@ internal static class LongRowSuffixProbe
         return bytes.AsSpan(start, available).ToArray();
     }
 
+    private static string ToHexStringOrEmpty(byte[] bytes, int start, int length)
+    {
+        int available = GetSliceLength(bytes, start, length);
+        return available == 0 ? string.Empty : Convert.ToHexString(bytes.AsSpan(start, available));
+    }
+
     private static byte[] ZeroSuffixCopy(byte[] bytes)
     {
         byte[] copy = bytes.Length >= LongRowEntryLength ? bytes[..LongRowEntryLength] : (byte[])bytes.Clone();
@@ -2449,6 +3771,276 @@ internal static class LongRowSuffixProbe
         }
 
         return (ushort)((sum2 << 8) | sum1);
+    }
+
+    /// <summary>
+    /// ESE-style checksum: shift-left-1 + add per byte (from ESE's UlChecksum in checksum.cxx).
+    /// </summary>
+    private static ushort EseChecksum16(byte[] bytes, bool low)
+    {
+        unchecked
+        {
+            uint hash = 0;
+            foreach (byte value in bytes)
+            {
+                hash += value;
+                hash <<= 1;
+            }
+
+            return low ? (ushort)hash : (ushort)(hash >> 16);
+        }
+    }
+
+    /// <summary>
+    /// Internet checksum: one's complement 16-bit sum (RFC 1071).
+    /// </summary>
+    private static ushort InternetChecksum(byte[] bytes)
+    {
+        unchecked
+        {
+            uint sum = 0;
+            int index = 0;
+            for (; index + 1 < bytes.Length; index += 2)
+            {
+                sum += (uint)((bytes[index] << 8) | bytes[index + 1]);
+            }
+
+            if (index < bytes.Length)
+            {
+                sum += (uint)(bytes[index] << 8);
+            }
+
+            while ((sum >> 16) != 0)
+            {
+                sum = (sum & 0xFFFF) + (sum >> 16);
+            }
+
+            return (ushort)~sum;
+        }
+    }
+
+    /// <summary>
+    /// Simple XOR fold: XOR all bytes into a 16-bit accumulator (alternating high/low byte).
+    /// </summary>
+    private static ushort XorFold16(byte[] bytes)
+    {
+        unchecked
+        {
+            ushort hash = 0;
+            for (int index = 0; index < bytes.Length; index++)
+            {
+                if ((index & 1) == 0)
+                {
+                    hash ^= (ushort)(bytes[index] << 8);
+                }
+                else
+                {
+                    hash ^= bytes[index];
+                }
+            }
+
+            return hash;
+        }
+    }
+
+    /// <summary>
+    /// Simple ADD fold: add all bytes into a 16-bit accumulator (alternating high/low byte).
+    /// </summary>
+    private static ushort AddFold16(byte[] bytes)
+    {
+        unchecked
+        {
+            ushort hash = 0;
+            for (int index = 0; index < bytes.Length; index++)
+            {
+                if ((index & 1) == 0)
+                {
+                    hash += (ushort)(bytes[index] << 8);
+                }
+                else
+                {
+                    hash += bytes[index];
+                }
+            }
+
+            return hash;
+        }
+    }
+
+    /// <summary>
+    /// XOR fold of 16-bit words (big or little endian).
+    /// </summary>
+    private static ushort XorFoldWord16(byte[] bytes, bool bigEndian)
+    {
+        unchecked
+        {
+            ushort hash = 0;
+            for (int index = 0; index + 1 < bytes.Length; index += 2)
+            {
+                ushort word = bigEndian
+                    ? BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(index, 2))
+                    : BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(index, 2));
+                hash ^= word;
+            }
+
+            if (bytes.Length % 2 != 0)
+            {
+                hash ^= bigEndian ? (ushort)(bytes[^1] << 8) : bytes[^1];
+            }
+
+            return hash;
+        }
+    }
+
+    /// <summary>
+    /// ADD fold of 16-bit words (big or little endian).
+    /// </summary>
+    private static ushort AddFoldWord16(byte[] bytes, bool bigEndian)
+    {
+        unchecked
+        {
+            ushort hash = 0;
+            for (int index = 0; index + 1 < bytes.Length; index += 2)
+            {
+                ushort word = bigEndian
+                    ? BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(index, 2))
+                    : BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(index, 2));
+                hash += word;
+            }
+
+            if (bytes.Length % 2 != 0)
+            {
+                hash += bigEndian ? (ushort)(bytes[^1] << 8) : bytes[^1];
+            }
+
+            return hash;
+        }
+    }
+
+    private static byte[] LastNOrEmpty(byte[] bytes, int n) =>
+        bytes.Length >= n ? bytes[^n..] : [];
+
+    private static byte[] AppendLengthLE(byte[] bytes)
+    {
+        var result = new byte[bytes.Length + 2];
+        bytes.CopyTo(result, 0);
+        BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(bytes.Length), (ushort)bytes.Length);
+        return result;
+    }
+
+    private static void AddCrc16DirectRules(
+        List<CandidateRule> rules,
+        string label,
+        Func<SuffixCandidateContext, byte[]> getBytes)
+    {
+        // Test CRC-16 with the most common standard polynomials directly.
+        (string Name, ushort Poly)[] standardPolys =
+        [
+            ("CCITT", 0x1021),
+            ("IBM", 0x8005),
+            ("DNP", 0x3D65),
+            ("T10-DIF", 0x8BB7),
+            ("DECT-R", 0x0589),
+            ("CDMA2000", 0xC867),
+        ];
+
+        foreach ((string polyName, ushort poly) in standardPolys)
+        {
+            ushort reflectedPoly = ReflectU16(poly);
+            rules.Add(new CandidateRule($"{label} CRC16-{polyName} init0", context =>
+                CrcFull(getBytes(context), poly, reflectedPoly, 0, 0, refIn: false, refOut: false)));
+            rules.Add(new CandidateRule($"{label} CRC16-{polyName} initFF", context =>
+                CrcFull(getBytes(context), poly, reflectedPoly, 0xFFFF, 0, refIn: false, refOut: false)));
+            rules.Add(new CandidateRule($"{label} CRC16-{polyName} init0 ref", context =>
+                CrcFull(getBytes(context), poly, reflectedPoly, 0, 0, refIn: true, refOut: true)));
+            rules.Add(new CandidateRule($"{label} CRC16-{polyName} initFF ref", context =>
+                CrcFull(getBytes(context), poly, reflectedPoly, 0xFFFF, 0xFFFF, refIn: true, refOut: true)));
+        }
+    }
+
+    private static void AddSeededCrc16Rules(List<CandidateRule> rules)
+    {
+        // Data-dependent init: seed from key length or truncation boundary bytes.
+        (string Name, ushort Poly)[] seedPolys =
+        [
+            ("CCITT", 0x1021),
+            ("IBM", 0x8005),
+        ];
+
+        foreach ((string polyName, ushort poly) in seedPolys)
+        {
+            ushort reflectedPoly = ReflectU16(poly);
+
+            // Seed = full key length as uint16.
+            rules.Add(new CandidateRule($"full[510..] CRC16-{polyName} seed=len", context =>
+                CrcFull(
+                    SliceOrEmpty(context.FullKey, 510),
+                    poly,
+                    reflectedPoly,
+                    (ushort)context.FullKey.Length,
+                    0,
+                    refIn: false,
+                    refOut: false)));
+            rules.Add(new CandidateRule($"full[510..] CRC16-{polyName} seed=len ref", context =>
+                CrcFull(
+                    SliceOrEmpty(context.FullKey, 510),
+                    poly,
+                    reflectedPoly,
+                    (ushort)context.FullKey.Length,
+                    0,
+                    refIn: true,
+                    refOut: true)));
+
+            // Seed = word at truncation boundary full[508..509].
+            rules.Add(new CandidateRule($"full[510..] CRC16-{polyName} seed=bnd BE", context =>
+            {
+                ushort init = context.FullKey.Length >= 510
+                    ? BinaryPrimitives.ReadUInt16BigEndian(context.FullKey.AsSpan(508, 2))
+                    : (ushort)0;
+                return CrcFull(
+                    SliceOrEmpty(context.FullKey, 510),
+                    poly,
+                    reflectedPoly,
+                    init,
+                    0,
+                    refIn: false,
+                    refOut: false);
+            }));
+            rules.Add(new CandidateRule($"full[510..] CRC16-{polyName} seed=bnd LE", context =>
+            {
+                ushort init = context.FullKey.Length >= 510
+                    ? BinaryPrimitives.ReadUInt16LittleEndian(context.FullKey.AsSpan(508, 2))
+                    : (ushort)0;
+                return CrcFull(
+                    SliceOrEmpty(context.FullKey, 510),
+                    poly,
+                    reflectedPoly,
+                    init,
+                    0,
+                    refIn: false,
+                    refOut: false);
+            }));
+
+            // Seed = key length, input = entire full key.
+            rules.Add(new CandidateRule($"full[0..] CRC16-{polyName} seed=len", context =>
+                CrcFull(
+                    context.FullKey,
+                    poly,
+                    reflectedPoly,
+                    (ushort)context.FullKey.Length,
+                    0,
+                    refIn: false,
+                    refOut: false)));
+            rules.Add(new CandidateRule($"full[0..] CRC16-{polyName} seed=len ref", context =>
+                CrcFull(
+                    context.FullKey,
+                    poly,
+                    reflectedPoly,
+                    (ushort)context.FullKey.Length,
+                    0,
+                    refIn: true,
+                    refOut: true)));
+        }
     }
 
     private static ushort Low16(int value) => unchecked((ushort)value);
@@ -3267,7 +4859,7 @@ internal static class LongRowSuffixProbe
 
         GeneralLegacyTextIndexEncoder.CharHandler[] codes = GeneralCodes.Value;
         GeneralLegacyTextIndexEncoder.CharHandler[] extCodes = GeneralExtCodes.Value;
-        Encoding cp1252 = Encoding.GetEncoding(1252);
+        Encoding cp1252 = Cp1252Encoding;
 
         var constraints = new List<ConstraintSet>();
         var rowToLeaf = new (int RowIndex, int AscLeafIndex)[]
@@ -3385,7 +4977,7 @@ internal static class LongRowSuffixProbe
 
     private static void AppendInputCandidateSummary(List<RowData> rowData, StringBuilder sb)
     {
-        Encoding cp1252 = Encoding.GetEncoding(1252);
+        Encoding cp1252 = Cp1252Encoding;
 
         sb.AppendLine();
         sb.AppendLine("## Input candidate lengths");
@@ -3517,6 +5109,9 @@ internal static class LongRowSuffixProbe
             full.Length >= 508 ? full[..508] : full,
             full.Length >= 508 ? full[1..508] : full,
             selfCheck,
+            full,
+            full.Length >= 1 ? full[1..] : [],
+            full.Length >= 2 ? full[^2..] : [],
         ];
     }
 
@@ -4169,12 +5764,81 @@ internal static class LongRowSuffixProbe
         int ConflictingGroups,
         int ConflictingRows);
 
+    private readonly record struct WindowSweepRow(
+        ushort AccessSuffix,
+        byte[] NormalizedFullKey,
+        string Phase,
+        string AuxSignature);
+
+    private readonly record struct WindowConflictCounts(int Groups, int ConflictingGroups, int ConflictingRows);
+
+    private readonly record struct TruncationWindowKey(
+        string Phase,
+        string? AuxSignature,
+        byte[] Bytes,
+        int Start,
+        int Length);
+
+    private sealed class WindowGroupAccumulator
+    {
+        private readonly ushort firstSuffix;
+
+        public WindowGroupAccumulator(ushort firstSuffix)
+        {
+            this.firstSuffix = firstSuffix;
+            Rows = 1;
+        }
+
+        public int Rows { get; private set; }
+
+        public bool HasConflict { get; private set; }
+
+        public void Add(ushort suffix)
+        {
+            Rows++;
+            if (suffix != firstSuffix)
+            {
+                HasConflict = true;
+            }
+        }
+    }
+
+    private sealed class TruncationWindowKeyComparer : IEqualityComparer<TruncationWindowKey>
+    {
+        public static readonly TruncationWindowKeyComparer Instance = new();
+
+        public bool Equals(TruncationWindowKey x, TruncationWindowKey y) =>
+            x.Length == y.Length
+            && StringComparer.Ordinal.Equals(x.Phase, y.Phase)
+            && StringComparer.Ordinal.Equals(x.AuxSignature, y.AuxSignature)
+            && (x.Length == 0 || x.Bytes.AsSpan(x.Start, x.Length).SequenceEqual(y.Bytes.AsSpan(y.Start, y.Length)));
+
+        public int GetHashCode(TruncationWindowKey obj)
+        {
+            HashCode hash = default;
+            hash.Add(obj.Phase, StringComparer.Ordinal);
+            hash.Add(obj.AuxSignature, StringComparer.Ordinal);
+            if (obj.Length > 0)
+            {
+                ReadOnlySpan<byte> bytes = obj.Bytes.AsSpan(obj.Start, obj.Length);
+                for (int index = 0; index < bytes.Length; index++)
+                {
+                    hash.Add(bytes[index]);
+                }
+            }
+
+            return hash.ToHashCode();
+        }
+    }
+
     private sealed class SuffixCandidateContext
     {
         private Dictionary<LcMapCacheKey, byte[]> lcMapHashBytes = [];
         private Dictionary<LcMapCacheKey, byte[]> lcMapSortKeyBytes = [];
+        private Dictionary<DigestCacheKey, byte[]> digestBytes = [];
         private byte[][]? inputCandidates;
         private byte[][]? normalizedInputCandidates;
+        private byte[][]? byteRuleInputs;
 
         public SuffixCandidateContext(SuffixPatternRow row, bool ascending)
         {
@@ -4204,6 +5868,21 @@ internal static class LongRowSuffixProbe
         public byte[][] GetNormalizedInputCandidates(Encoding cp1252) =>
             normalizedInputCandidates ??= BuildInputCandidates(NormalizedFullKey, Row.Text!, cp1252);
 
+        public byte[] GetByteRuleInput(int inputIndex) =>
+            (byteRuleInputs ??= BuildByteRuleInputs(this))[inputIndex];
+
+        public byte[] GetDigestBytes(string hashName, int byteInputIndex, Func<byte[], byte[]> compute)
+        {
+            var key = new DigestCacheKey(hashName, byteInputIndex);
+            if (!digestBytes.TryGetValue(key, out byte[]? bytes))
+            {
+                bytes = compute(GetByteRuleInput(byteInputIndex));
+                digestBytes.Add(key, bytes);
+            }
+
+            return bytes;
+        }
+
         public byte[] GetLcMapHashBytes(string localeName, uint flags, string value)
         {
             var key = new LcMapCacheKey(localeName, flags, value);
@@ -4230,6 +5909,8 @@ internal static class LongRowSuffixProbe
     }
 
     private readonly record struct LcMapCacheKey(string LocaleName, uint Flags, string Value);
+
+    private readonly record struct DigestCacheKey(string HashName, int ByteInputIndex);
 
     private readonly record struct CandidateRule(string Name, Func<SuffixCandidateContext, ushort?> Compute);
 
@@ -4362,6 +6043,41 @@ internal static class LongRowSuffixProbe
             }
 
             return CompareBytesUnsignedPrefix(left, right);
+        }
+    }
+
+    private sealed class LongRowPrefixEqualityComparer : IEqualityComparer<byte[]>
+    {
+        public static readonly LongRowPrefixEqualityComparer Instance = new();
+
+        public bool Equals(byte[]? left, byte[]? right)
+        {
+            if (ReferenceEquals(left, right))
+            {
+                return true;
+            }
+
+            if (left is null || right is null || left.Length < PrefixMatchLength || right.Length < PrefixMatchLength)
+            {
+                return false;
+            }
+
+            return left.AsSpan(0, PrefixMatchLength).SequenceEqual(right.AsSpan(0, PrefixMatchLength));
+        }
+
+        public int GetHashCode(byte[] bytes)
+        {
+            unchecked
+            {
+                int hash = 17;
+                ReadOnlySpan<byte> prefix = bytes.AsSpan(0, Math.Min(bytes.Length, PrefixMatchLength));
+                for (int index = 0; index < prefix.Length; index++)
+                {
+                    hash = (hash * 31) + prefix[index];
+                }
+
+                return hash;
+            }
         }
     }
 }
