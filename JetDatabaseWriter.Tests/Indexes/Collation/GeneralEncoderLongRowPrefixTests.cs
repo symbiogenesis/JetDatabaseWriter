@@ -20,17 +20,17 @@ using Xunit;
 /// The full byte-exact assertion in <see cref="GeneralEncoderFixtureTests"/>
 /// skips these two tables: the V2010 "General" sort-order long-row encoder
 /// produces 510-byte entries whose first 508 bytes match the on-disk leaves
-/// but whose final 2-byte suffix is computed by an algorithm that has so far
-/// resisted reverse-engineering (see
+/// but whose final 2-byte suffix is computed by ACE contribution tables that
+/// are not yet implemented (see
 /// <c>docs/format-probe/format-probe-long-row-index-encoding.md</c>).
 /// </para>
 /// <para>
 /// This test locks in the partial result we <em>do</em> have: each leaf key
 /// is exactly 510 bytes long and bytes <c>[0..507]</c> agree with the
 /// encoder. This catches regressions in the body of the long-row encoder
-/// (the part we understand) and will trip naturally if the suffix algorithm
-/// is ever discovered — at which point this test should be deleted in favour
-/// of removing <c>Table11</c> / <c>Table11_desc</c> from the
+/// (the implemented part) and will trip naturally when the suffix algorithm
+/// lands — at which point this test should be deleted in favour of removing
+/// <c>Table11</c> / <c>Table11_desc</c> from the
 /// <c>LongRowStressTables</c> skip set in
 /// <see cref="GeneralEncoderFixtureTests"/>.
 /// </para>
@@ -46,7 +46,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
     /// <summary>
     /// Number of bytes at the head of each long-row entry that the V2010
     /// "General" sort-order encoder reproduces byte-exact. The remaining
-    /// <c>510 - PrefixMatchLength</c> bytes carry the unknown suffix.
+    /// <c>510 - PrefixMatchLength</c> bytes carry the proprietary suffix.
     /// </summary>
     private const int PrefixMatchLength = 508;
 
@@ -332,7 +332,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
 
     /// <summary>
     /// Sorts encoder outputs by the prefix that we know matches Access on disk
-    /// (the unknown suffix at <c>[508..509]</c> would otherwise perturb the
+    /// (the proprietary suffix at <c>[508..509]</c> would otherwise perturb the
     /// order). Ties on the prefix fall back to full-length unsigned compare,
     /// keeping the sort total — the on-disk keys break ties identically since
     /// Access's own suffix is a deterministic function of the entry body.
