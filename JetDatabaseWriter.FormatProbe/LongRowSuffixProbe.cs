@@ -54,7 +54,14 @@ internal static class LongRowSuffixProbe
     private const int DaoLabRow12MatrixRowCount = DaoLabAlphabetLength * DaoLabAlphabetLength;
     private const int DaoLabTrailingSpaceMatrixStart = DaoLabRow12MatrixStart + DaoLabRow12MatrixRowCount;
     private const int DaoLabTrailingSpaceMatrixRowCount = DaoLabAlphabetLength * DaoLabAlphabetLength;
-    private const int DaoLabTemplateSampleStart = DaoLabTrailingSpaceMatrixStart + DaoLabTrailingSpaceMatrixRowCount;
+    private const int DaoLabRow10MatrixStart = DaoLabTrailingSpaceMatrixStart + DaoLabTrailingSpaceMatrixRowCount;
+    private const int DaoLabRow10MatrixRowCount = DaoLabAlphabetLength * DaoLabAlphabetLength;
+    private const int DaoLabRow11MatrixStart = DaoLabRow10MatrixStart + DaoLabRow10MatrixRowCount;
+    private const int DaoLabRow11MatrixRowCount = DaoLabAlphabetLength * DaoLabAlphabetLength;
+    private const int DaoLabDoubleSpaceSweepStart = DaoLabRow11MatrixStart + DaoLabRow11MatrixRowCount;
+    private const int DaoLabDoubleSpaceSweepContextCount = 4;
+    private const int DaoLabDoubleSpaceSweepRowCount = DaoLabDoubleSpaceSweepContextCount * DaoLabAlphabetLength;
+    private const int DaoLabTemplateSampleStart = DaoLabDoubleSpaceSweepStart + DaoLabDoubleSpaceSweepRowCount;
     private const int DaoLabTemplateSampleRowCount = 12;
     private const int DaoLabRowCount = DaoLabTemplateSampleStart + DaoLabTemplateSampleRowCount;
     private const string DaoLabAlphabet = " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+";
@@ -251,7 +258,7 @@ internal static class LongRowSuffixProbe
 
         sb.AppendLine("## DAO lab suffix pattern summary");
         sb.AppendLine();
-        sb.AppendLine("Groups are synthetic text families emitted by `New-LabText`: seed 0-63 varies char[253], 64-127 varies char[254], 128-191 varies char[20], 192-255 adds international/unprintable characters plus optional CR/LF, then later ranges form plain, auxiliary, row12-template char[253]/char[254], and trailing-space char[252]/char[253] pair matrices over the DAO lab alphabet plus a small row10/row11/row12 template sample set.");
+        sb.AppendLine("Groups are synthetic text families emitted by `New-LabText`: seed 0-63 varies char[253], 64-127 varies char[254], 128-191 varies char[20], 192-255 adds international/unprintable characters plus optional CR/LF, then later ranges form plain, auxiliary, row12-template char[253]/char[254], trailing-space char[252]/char[253], row10/row11-template char[253]/char[254], and double-trailing-space char[252] sweeps over the DAO lab alphabet plus a small row10/row11/row12 template sample set.");
         sb.AppendLine();
 
         foreach ((string tableName, int seedBase) in new[] { ("Table11", 100000), ("Table11_desc", 101000) })
@@ -416,7 +423,10 @@ internal static class LongRowSuffixProbe
         AppendPairMatrixSummary(sb, table, DaoLabAuxMatrixStart, "Auxiliary pair matrix", includeCrc16: false);
         AppendPairMatrixSummary(sb, table, DaoLabRow12MatrixStart, "Row12 template pair matrix", includeCrc16: false);
         AppendPairMatrixSummary(sb, table, DaoLabTrailingSpaceMatrixStart, "Trailing-space pair matrix", includeCrc16: false);
+        AppendPairMatrixSummary(sb, table, DaoLabRow10MatrixStart, "Row10 template pair matrix", includeCrc16: false);
+        AppendPairMatrixSummary(sb, table, DaoLabRow11MatrixStart, "Row11 template pair matrix", includeCrc16: false);
         AppendBoundarySpaceShiftModelSummary(sb, table);
+        AppendDoubleTrailingSpaceSweepSummary(sb, table);
         AppendGf2CrossMultiplicationSolverSummary(sb, table, DaoLabPairMatrixStart);
         AppendTemplateSampleSummary(sb, table);
     }
@@ -457,6 +467,63 @@ internal static class LongRowSuffixProbe
 
         sb.AppendLine();
     }
+
+    private static void AppendDoubleTrailingSpaceSweepSummary(StringBuilder sb, SuffixPatternTable table)
+    {
+        List<SuffixPatternRow> rows = table.Rows
+            .Where(row => row.Seed is not null && row.Seed.Value >= DaoLabDoubleSpaceSweepStart && row.Seed.Value < DaoLabDoubleSpaceSweepStart + DaoLabDoubleSpaceSweepRowCount)
+            .OrderBy(row => row.Seed)
+            .ToList();
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Double-trailing-space sweep summary for seeds {DaoLabDoubleSpaceSweepStart}-{DaoLabDoubleSpaceSweepStart + DaoLabDoubleSpaceSweepRowCount - 1}:");
+        sb.AppendLine();
+        sb.AppendLine("For each context, varies char[252] while forcing char[253] and char[254] to spaces. This targets the all-space corner left by the pair matrices.");
+        sb.AppendLine();
+        sb.AppendLine("| Context | Rows | Access suffixes | Encoder suffixes | First examples | Last examples |");
+        sb.AppendLine("|---|---:|---:|---:|---|---|");
+
+        for (int contextIndex = 0; contextIndex < DaoLabDoubleSpaceSweepContextCount; contextIndex++)
+        {
+            List<SuffixPatternRow> contextRows = rows
+                .Where(row => GetDoubleSpaceSweepContext(row.Seed!.Value) == contextIndex)
+                .OrderBy(row => row.Seed)
+                .ToList();
+            if (contextRows.Count == 0)
+            {
+                continue;
+            }
+
+            int accessDistinct = contextRows.Select(row => row.AccessSuffix).Distinct().Count();
+            int encoderDistinct = contextRows.Select(row => row.EncoderSuffix).Distinct().Count();
+            sb.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"| `{GetDoubleSpaceSweepContextName(contextIndex)}` | {contextRows.Count} | {accessDistinct} | {encoderDistinct} | {DescribeDoubleSpaceSweepExamples(contextRows.Take(8))} | {DescribeDoubleSpaceSweepExamples(contextRows.TakeLast(8))} |");
+        }
+
+        sb.AppendLine();
+    }
+
+    private static int GetDoubleSpaceSweepContext(int seed)
+        => (seed - DaoLabDoubleSpaceSweepStart) / DaoLabAlphabetLength;
+
+    private static string GetDoubleSpaceSweepContextName(int contextIndex) => contextIndex switch
+    {
+        0 => "plain",
+        1 => "row10",
+        2 => "row11",
+        _ => "row12",
+    };
+
+    private static string DescribeDoubleSpaceSweepExamples(IEnumerable<SuffixPatternRow> rows) =>
+        string.Join(" ", rows.Select(row =>
+        {
+            int charIndex = (row.Seed!.Value - DaoLabDoubleSpaceSweepStart) % DaoLabAlphabetLength;
+            return $"`{FormatMatrixChar(DaoLabAlphabet[charIndex])}:{row.AccessSuffix:X4}`";
+        }));
 
     private static void AppendSuffixOrderSummary(StringBuilder sb, SuffixPatternTable table)
     {
@@ -5122,6 +5189,28 @@ internal static class LongRowSuffixProbe
                 return [string]::new($chars)
             }
 
+            function New-DoubleTrailingSpaceText([int] $seed, [string] $row10Template, [string] $row11Template, [string] $row12Template) {
+                $sample = $seed - {{DaoLabDoubleSpaceSweepStart}}
+                $contextIndex = [int] [Math]::Floor($sample / $alphabet.Length)
+                $variant = [int] ($sample % $alphabet.Length)
+                switch ($contextIndex) {
+                    0 {
+                        $chars = New-Object 'char[]' 360
+                        for ($position = 0; $position -lt $chars.Length; $position++) {
+                            $chars[$position] = 'a'
+                        }
+                    }
+                    1 { $chars = $row10Template.ToCharArray() }
+                    2 { $chars = $row11Template.ToCharArray() }
+                    default { $chars = $row12Template.ToCharArray() }
+                }
+
+                $chars[252] = $alphabet[$variant]
+                $chars[253] = ' '
+                $chars[254] = ' '
+                return [string]::new($chars)
+            }
+
             function New-TemplateSampleText([int] $seed, [string] $row10Template, [string] $row11Template, [string] $row12Template) {
                 $sample = $seed - {{DaoLabTemplateSampleStart}}
                 $templateIndex = [int] [Math]::Floor($sample / 4)
@@ -5145,6 +5234,18 @@ internal static class LongRowSuffixProbe
             function New-LabText([int] $seed, [string] $row10Template, [string] $row11Template, [string] $row12Template) {
                 if ($seed -ge {{DaoLabTemplateSampleStart}}) {
                     return New-TemplateSampleText $seed $row10Template $row11Template $row12Template
+                }
+
+                if ($seed -ge {{DaoLabDoubleSpaceSweepStart}}) {
+                    return New-DoubleTrailingSpaceText $seed $row10Template $row11Template $row12Template
+                }
+
+                if ($seed -ge {{DaoLabRow11MatrixStart}}) {
+                    return New-TemplateMatrixText $seed {{DaoLabRow11MatrixStart}} $row11Template
+                }
+
+                if ($seed -ge {{DaoLabRow10MatrixStart}}) {
+                    return New-TemplateMatrixText $seed {{DaoLabRow10MatrixStart}} $row10Template
                 }
 
                 if ($seed -ge {{DaoLabTrailingSpaceMatrixStart}}) {
