@@ -3,6 +3,8 @@
 // Usage:
 //   dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-suffix
 //   dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-crc-sweep
+//   dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-corpus
+//   dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-dao-lab
 
 namespace JetDatabaseWriter.FormatProbe;
 
@@ -1264,6 +1266,8 @@ internal static class LongRowSuffixProbe
         sb.AppendLine();
         AppendRollingPolynomialSolverSummary(sb, contexts);
         AppendCrcDerivedInitSolverSummary(sb, contexts);
+        AppendCrc32DerivedInitSolverSummary(sb, contexts);
+        AppendLinearTableExtractorSummary(sb, contexts);
         AppendRotlFoldSolverSummary(sb, contexts);
         AppendBitContributionMatrixSummary(sb, contexts);
         AppendAuxSignatureSummary(sb, contexts);
@@ -2019,6 +2023,341 @@ internal static class LongRowSuffixProbe
     }
 
     /// <summary>
+    /// CRC-32 derived-init affine solver. For each (polynomial, refIn, refOut, output-half), solves the
+    /// 16-bit XOR constant from row[0], then validates that crc32(input) projected to the chosen half
+    /// XOR constant equals every other row's target. Tests standard CRC-32 polynomials over the same
+    /// structural slices as the CRC-16 solver. Catches patterns where the suffix is a 16-bit projection
+    /// of a wider 32-bit hash with absorbed init/finalXor.
+    /// </summary>
+    private static void AppendCrc32DerivedInitSolverSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
+    {
+        sb.AppendLine("CRC-32 derived-init solver (standard polys, 16-bit projection):");
+        sb.AppendLine();
+        sb.AppendLine("For each (CRC-32 polynomial, refIn, refOut, half), solves the XOR constant from row[0] then verifies all other rows.");
+        sb.AppendLine("Tests Ethernet/Castagnoli/Koopman/Q/D/Aixm/JAMCRC/MPEG-2 polys across structural slices.");
+        sb.AppendLine();
+
+        if (contexts.Length < 3)
+        {
+            sb.AppendLine("- insufficient rows for solver (need >= 3)");
+            sb.AppendLine();
+            return;
+        }
+
+        (string Name, uint Poly)[] polys =
+        [
+            ("Ethernet",   0x04C11DB7u),
+            ("Castagnoli", 0x1EDC6F41u),
+            ("Koopman",    0x741B8CD7u),
+            ("CRC-32Q",    0x814141ABu),
+            ("CRC-32D",    0xA833982Bu),
+            ("Aixm",       0x814141ABu),
+            ("MPEG-2",     0x04C11DB7u),
+            ("JAMCRC",     0x04C11DB7u),
+            ("BZIP2",      0x04C11DB7u),
+            ("POSIX",      0x04C11DB7u),
+        ];
+
+        var sliceDefs = new List<(string Label, Func<SuffixCandidateContext, byte[]> Extract)>
+        {
+            ("full[0..]",            context => context.FullKey),
+            ("full[1..]",            context => SliceOrEmpty(context.FullKey, 1)),
+            ("full[508..]",          context => SliceOrEmpty(context.FullKey, 508)),
+            ("full[510..]",          context => SliceOrEmpty(context.FullKey, 510)),
+            ("full[..508]",          context => context.FullKey.Length >= 508 ? context.FullKey[..508] : context.FullKey),
+            ("full[..510]",          context => context.FullKey.Length >= 510 ? context.FullKey[..510] : context.FullKey),
+            ("aux-only",             context => BuildByteRuleInputs(context)[24]),
+            ("text-utf16le",         context => EncodeTextOrEmpty(context.Row.Text, Encoding.Unicode)),
+            ("text-cp1252",          context => EncodeTextOrEmpty(context.Row.Text, Cp1252Encoding)),
+            ("text[255..]-utf16le",  context => EncodeTextTailOrEmpty(context.Row.Text, 255, Encoding.Unicode)),
+            ("text[255..]-cp1252",   context => EncodeTextTailOrEmpty(context.Row.Text, 255, Cp1252Encoding)),
+        };
+
+        sb.AppendLine("| Slice | Hits | Details |");
+        sb.AppendLine("|---|---:|---|");
+
+        foreach ((string sliceLabel, Func<SuffixCandidateContext, byte[]> extract) in sliceDefs)
+        {
+            byte[][] inputs = contexts.Select(extract).ToArray();
+            if (inputs.Any(i => i.Length == 0))
+            {
+                sb.AppendLine(CultureInfo.InvariantCulture, $"| {sliceLabel} | 0 | (empty slice) |");
+                continue;
+            }
+
+            ushort[] targets = contexts.Select(c => c.Row.AccessSuffix).ToArray();
+
+            int hitCount = 0;
+            var hitDetails = new List<string>();
+
+            foreach ((string polyName, uint polyVal) in polys)
+            {
+                uint polyRef = ReflectU32(polyVal);
+                for (int mode = 0; mode < 4; mode++)
+                {
+                    bool refIn = (mode & 1) != 0;
+                    bool refOut = (mode & 2) != 0;
+
+                    uint crc0Full = Crc32Generic(inputs[0], polyVal, polyRef, refIn, refOut);
+
+                    for (int half = 0; half < 4; half++)
+                    {
+                        ushort crc0Half = ProjectU16(crc0Full, half);
+                        ushort constant = (ushort)(targets[0] ^ crc0Half);
+
+                        bool allMatch = true;
+                        for (int i = 1; i < inputs.Length; i++)
+                        {
+                            uint crcI = Crc32Generic(inputs[i], polyVal, polyRef, refIn, refOut);
+                            ushort crcHalf = ProjectU16(crcI, half);
+                            if ((ushort)(crcHalf ^ constant) != targets[i])
+                            {
+                                allMatch = false;
+                                break;
+                            }
+                        }
+
+                        if (allMatch)
+                        {
+                            hitCount++;
+                            if (hitDetails.Count < 4)
+                            {
+                                hitDetails.Add($"{polyName} refIn={refIn} refOut={refOut} half={half} C={constant:X4}");
+                            }
+                        }
+                    }
+                }
+            }
+
+            string details = hitCount == 0 ? "-" : "`" + string.Join("; ", hitDetails) + "`";
+            sb.AppendLine(CultureInfo.InvariantCulture, $"| {sliceLabel} | {hitCount} | {details} |");
+        }
+
+        sb.AppendLine();
+    }
+
+    private static uint Crc32Generic(byte[] data, uint poly, uint polyRef, bool refIn, bool refOut)
+    {
+        uint crc = 0;
+        if (refIn)
+        {
+            foreach (byte b in data)
+            {
+                crc ^= b;
+                for (int i = 0; i < 8; i++)
+                {
+                    crc = (crc & 1) != 0 ? (crc >> 1) ^ polyRef : crc >> 1;
+                }
+            }
+        }
+        else
+        {
+            foreach (byte b in data)
+            {
+                crc ^= (uint)b << 24;
+                for (int i = 0; i < 8; i++)
+                {
+                    crc = (crc & 0x80000000u) != 0 ? (crc << 1) ^ poly : crc << 1;
+                }
+            }
+        }
+
+        if (refIn != refOut)
+        {
+            crc = ReflectU32(crc);
+        }
+
+        return crc;
+    }
+
+    private static ushort ProjectU16(uint value, int half)
+    {
+        unchecked
+        {
+            return half switch
+            {
+                0 => (ushort)(value & 0xFFFFu),                       // low16
+                1 => (ushort)((value >> 16) & 0xFFFFu),               // high16
+                2 => ByteSwap((ushort)(value & 0xFFFFu)),             // low16 byte-swapped
+                3 => ByteSwap((ushort)((value >> 16) & 0xFFFFu)),     // high16 byte-swapped
+                _ => (ushort)0,
+            };
+        }
+    }
+
+    private static uint ReflectU32(uint value)
+    {
+        value = ((value & 0x55555555u) << 1) | ((value >> 1) & 0x55555555u);
+        value = ((value & 0x33333333u) << 2) | ((value >> 2) & 0x33333333u);
+        value = ((value & 0x0F0F0F0Fu) << 4) | ((value >> 4) & 0x0F0F0F0Fu);
+        value = ((value & 0x00FF00FFu) << 8) | ((value >> 8) & 0x00FF00FFu);
+        return (value << 16) | (value >> 16);
+    }
+
+    /// <summary>
+    /// Per-position XOR contribution-table extractor. Exploits the established structural finding
+    /// (phase + 9-byte window at absolute positions 503–511 + aux signature uniquely determines
+    /// suffix; pair-matrix XOR decomposition fits 98.5%). Within each aux-signature group, pairs
+    /// of rows that differ in exactly ONE window byte give a direct constraint:
+    /// `T[pos][bA] XOR T[pos][bB] = suffix(A) XOR suffix(B)`. Accumulates these constraints;
+    /// same (pos, {bA,bB}) producing different deltas across rows is hard evidence of
+    /// nonlinearity localized to that position/byte.
+    /// </summary>
+    private static void AppendLinearTableExtractorSummary(StringBuilder sb, SuffixCandidateContext[] contexts)
+    {
+        const int WindowStart = 503;
+        const int WindowLength = 9;
+        const int MaxRowsPerGroupForPairs = 256; // O(n^2) pair enumeration cap.
+
+        sb.AppendLine("Per-position XOR contribution-table extractor (9-byte window at positions 503–511):");
+        sb.AppendLine();
+        sb.AppendLine("Groups rows by aux signature. Within each group, enumerates row pairs (capped at 256 rows per group, ~32k pairs)");
+        sb.AppendLine("that differ in exactly ONE byte of the 9-byte window (positions 503–511), giving direct linear constraint `T[pos][bA] XOR T[pos][bB] = dSuffix`.");
+        sb.AppendLine("Contradictions (same (pos, byte-pair) producing different deltas) are direct evidence of nonlinearity at that position.");
+        sb.AppendLine();
+
+        Encoding cp1252 = Cp1252Encoding;
+        var rows = contexts
+            .Where(c => c.NormalizedFullKey.Length >= WindowStart + WindowLength)
+            .Select(c =>
+            {
+                byte[][] aux = c.GetNormalizedInputCandidates(cp1252);
+                return new
+                {
+                    AuxSig = Convert.ToHexString(aux[AuxInputCandidateIndex]),
+                    Window = c.NormalizedFullKey[WindowStart..(WindowStart + WindowLength)],
+                    Suffix = c.Row.AccessSuffix,
+                };
+            })
+            .GroupBy(r => r.AuxSig, StringComparer.Ordinal)
+            .Where(g => g.Count() >= 2)
+            .OrderByDescending(g => g.Count())
+            .ToArray();
+
+        if (rows.Length == 0)
+        {
+            sb.AppendLine("- no aux-signature groups with >= 2 rows");
+            sb.AppendLine();
+            return;
+        }
+
+        // Observations: (position, low_byte, high_byte) -> distinct observed XOR deltas.
+        var observations = new Dictionary<(int Position, byte ByteLo, byte ByteHi), HashSet<ushort>>();
+        long totalPairsExamined = 0;
+        long singlePosPairs = 0;
+
+        foreach (var group in rows)
+        {
+            var groupRows = group.Take(MaxRowsPerGroupForPairs).ToArray();
+            for (int i = 0; i < groupRows.Length; i++)
+            {
+                byte[] wi = groupRows[i].Window;
+                ushort si = groupRows[i].Suffix;
+                for (int j = i + 1; j < groupRows.Length; j++)
+                {
+                    totalPairsExamined++;
+                    byte[] wj = groupRows[j].Window;
+                    int diffCount = 0;
+                    int diffPos = -1;
+                    for (int p = 0; p < WindowLength; p++)
+                    {
+                        if (wi[p] != wj[p])
+                        {
+                            diffCount++;
+                            diffPos = p;
+                            if (diffCount > 1)
+                            {
+                                break;
+                            }
+                        }
+                    }
+
+                    if (diffCount != 1)
+                    {
+                        continue;
+                    }
+
+                    singlePosPairs++;
+                    ushort delta = (ushort)(si ^ groupRows[j].Suffix);
+                    byte ba = wi[diffPos];
+                    byte bb = wj[diffPos];
+                    var key = ba < bb
+                        ? (diffPos, ba, bb)
+                        : (diffPos, bb, ba);
+                    if (!observations.TryGetValue(key, out HashSet<ushort>? set))
+                    {
+                        set = new HashSet<ushort>();
+                        observations[key] = set;
+                    }
+
+                    set.Add(delta);
+                }
+            }
+        }
+
+        int contradictoryKeys = observations.Count(kv => kv.Value.Count > 1);
+        var positionStats = new int[WindowLength][]; // [pos] -> {distinct keys, total observations, contradictory keys}
+        for (int p = 0; p < WindowLength; p++)
+        {
+            positionStats[p] = new int[3];
+        }
+
+        foreach (var kv in observations)
+        {
+            int pos = kv.Key.Position;
+            positionStats[pos][0]++;
+            positionStats[pos][1] += kv.Value.Count;
+            if (kv.Value.Count > 1)
+            {
+                positionStats[pos][2]++;
+            }
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- aux-signature groups (>=2 rows): {rows.Length}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- row pairs examined (within groups, capped): {totalPairsExamined}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- single-position-diff constraints collected: {singlePosPairs}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- distinct (position, byte-pair) keys: {observations.Count}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- CONTRADICTORY keys (same input → different delta): {contradictoryKeys}");
+        sb.AppendLine();
+        sb.AppendLine("Per-position coverage and contradictions:");
+        sb.AppendLine("| Position | Byte index | Distinct byte-pairs | Distinct deltas observed | Contradictory pairs |");
+        sb.AppendLine("|---:|---:|---:|---:|---:|");
+        for (int i = 0; i < WindowLength; i++)
+        {
+            sb.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"| {i} | byte[{WindowStart + i}] | {positionStats[i][0]} | {positionStats[i][1]} | {positionStats[i][2]} |");
+        }
+
+        sb.AppendLine();
+        if (contradictoryKeys > 0)
+        {
+            sb.AppendLine("Sample contradictions (first 20, sorted by position):");
+            sb.AppendLine("| Pos | ByteLo | ByteHi | Observed deltas |");
+            sb.AppendLine("|---:|:---:|:---:|---|");
+            foreach (var kv in observations
+                .Where(o => o.Value.Count > 1)
+                .OrderBy(o => o.Key.Position)
+                .ThenBy(o => o.Key.ByteLo)
+                .Take(20))
+            {
+                string deltas = string.Join(" ", kv.Value.OrderBy(d => d).Select(d => $"`{d:X4}`"));
+                sb.AppendLine(
+                    CultureInfo.InvariantCulture,
+                    $"| {kv.Key.Position} | `{kv.Key.ByteLo:X2}` | `{kv.Key.ByteHi:X2}` | {deltas} |");
+            }
+
+            sb.AppendLine();
+        }
+        else if (observations.Count > 0)
+        {
+            sb.AppendLine("NO contradictions detected: suffix appears to be a LINEAR function of the 9-byte window (positions 503–511) within each aux-signature group.");
+            sb.AppendLine("Per-position XOR contribution tables can be reconstructed directly.");
+            sb.AppendLine();
+        }
+    }
+
+    /// <summary>
     /// Exhaustively tests rotate-left + add/XOR models: h = rotl16(h, k) OP byte for each byte in full[508..].
     /// Tests all 16 rotation amounts × 65536 init values × 2 operations (add, XOR) plus ESE-style rotl+add.
     /// </summary>
@@ -2755,7 +3094,7 @@ internal static class LongRowSuffixProbe
 
         ushort baseValue = suffixes[(baseIndex * size) + baseIndex];
 
-        // Collect row contributions (pos0 = hash position 0 = tail[8]) and column contributions (pos2 = hash position 2 = tail[10]).
+        // Collect row contributions (varying char[253] at window offsets 2-3) and column contributions (varying char[254] at window offsets 4-5).
         var rowContribs = new List<(int CharIndex, ushort Delta)>();
         var colContribs = new List<(int CharIndex, ushort Delta)>();
         for (int i = 0; i < size; i++)
