@@ -52,7 +52,9 @@ internal static class LongRowSuffixProbe
     private const int DaoLabAuxMatrixRowCount = DaoLabAlphabetLength * DaoLabAlphabetLength;
     private const int DaoLabRow12MatrixStart = DaoLabAuxMatrixStart + DaoLabAuxMatrixRowCount;
     private const int DaoLabRow12MatrixRowCount = DaoLabAlphabetLength * DaoLabAlphabetLength;
-    private const int DaoLabTemplateSampleStart = DaoLabRow12MatrixStart + DaoLabRow12MatrixRowCount;
+    private const int DaoLabTrailingSpaceMatrixStart = DaoLabRow12MatrixStart + DaoLabRow12MatrixRowCount;
+    private const int DaoLabTrailingSpaceMatrixRowCount = DaoLabAlphabetLength * DaoLabAlphabetLength;
+    private const int DaoLabTemplateSampleStart = DaoLabTrailingSpaceMatrixStart + DaoLabTrailingSpaceMatrixRowCount;
     private const int DaoLabTemplateSampleRowCount = 12;
     private const int DaoLabRowCount = DaoLabTemplateSampleStart + DaoLabTemplateSampleRowCount;
     private const string DaoLabAlphabet = " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+";
@@ -203,7 +205,7 @@ internal static class LongRowSuffixProbe
             hostProbe.HostPath,
             BuildDaoLabScript(labPath, DaoLabRowCount),
             scriptPath,
-            TimeSpan.FromMinutes(5));
+            TimeSpan.FromMinutes(15));
 
         sb.AppendLine("## DAO authoring");
         sb.AppendLine();
@@ -249,7 +251,7 @@ internal static class LongRowSuffixProbe
 
         sb.AppendLine("## DAO lab suffix pattern summary");
         sb.AppendLine();
-        sb.AppendLine("Groups are synthetic text families emitted by `New-LabText`: seed 0-63 varies char[253], 64-127 varies char[254], 128-191 varies char[20], 192-255 adds international/unprintable characters plus optional CR/LF, then later ranges form plain, auxiliary, and row12-template char[253]/char[254] pair matrices over the DAO lab alphabet plus a small row10/row11/row12 template sample set.");
+        sb.AppendLine("Groups are synthetic text families emitted by `New-LabText`: seed 0-63 varies char[253], 64-127 varies char[254], 128-191 varies char[20], 192-255 adds international/unprintable characters plus optional CR/LF, then later ranges form plain, auxiliary, row12-template char[253]/char[254], and trailing-space char[252]/char[253] pair matrices over the DAO lab alphabet plus a small row10/row11/row12 template sample set.");
         sb.AppendLine();
 
         foreach ((string tableName, int seedBase) in new[] { ("Table11", 100000), ("Table11_desc", 101000) })
@@ -413,6 +415,8 @@ internal static class LongRowSuffixProbe
         AppendPairMatrixSummary(sb, table, DaoLabPairMatrixStart, "Pair matrix", includeCrc16: false);
         AppendPairMatrixSummary(sb, table, DaoLabAuxMatrixStart, "Auxiliary pair matrix", includeCrc16: false);
         AppendPairMatrixSummary(sb, table, DaoLabRow12MatrixStart, "Row12 template pair matrix", includeCrc16: false);
+        AppendPairMatrixSummary(sb, table, DaoLabTrailingSpaceMatrixStart, "Trailing-space pair matrix", includeCrc16: false);
+        AppendBoundarySpaceShiftModelSummary(sb, table);
         AppendGf2CrossMultiplicationSolverSummary(sb, table, DaoLabPairMatrixStart);
         AppendTemplateSampleSummary(sb, table);
     }
@@ -605,6 +609,7 @@ internal static class LongRowSuffixProbe
         int size = DaoLabAlphabet.Length;
         var suffixes = new ushort[size * size];
         var present = new bool[size * size];
+        var rowByOffset = new SuffixPatternRow?[size * size];
         foreach (SuffixPatternRow row in rows)
         {
             int pair = row.Seed!.Value - matrixStart;
@@ -615,6 +620,7 @@ internal static class LongRowSuffixProbe
                 int index = (first * size) + second;
                 suffixes[index] = row.AccessSuffix;
                 present[index] = true;
+                rowByOffset[index] = row;
             }
         }
 
@@ -633,6 +639,11 @@ internal static class LongRowSuffixProbe
         int lowXorMatches = 0;
         int lowAddMatches = 0;
         int total = 0;
+        int xorSecondSpaceMatches = 0;
+        int xorSecondSpaceTotal = 0;
+        int xorNonSecondSpaceMatches = 0;
+        int xorNonSecondSpaceTotal = 0;
+        var xorFailures = new List<PairMatrixXorFailure>();
 
         for (int first = 0; first < size; first++)
         {
@@ -656,10 +667,39 @@ internal static class LongRowSuffixProbe
                 ushort columnBase = suffixes[columnBaseOffset];
                 ushort xorPredicted = (ushort)(rowBase ^ columnBase ^ baseValue);
                 ushort addPredicted = unchecked((ushort)(rowBase + columnBase - baseValue));
+                bool secondSpace = DaoLabAlphabet[second] == ' ';
 
                 if (xorPredicted == actual)
                 {
                     xorMatches++;
+                    if (secondSpace)
+                    {
+                        xorSecondSpaceMatches++;
+                    }
+                    else
+                    {
+                        xorNonSecondSpaceMatches++;
+                    }
+                }
+                else if (rowByOffset[index] is SuffixPatternRow failedRow)
+                {
+                    xorFailures.Add(new PairMatrixXorFailure(
+                        DaoLabAlphabet[first],
+                        DaoLabAlphabet[second],
+                        failedRow,
+                        actual,
+                        xorPredicted,
+                        ToHexStringOrEmpty(failedRow.FullKey, 508, 5),
+                        ToHexStringOrEmpty(failedRow.TrimmedFullKey, 508, 5)));
+                }
+
+                if (secondSpace)
+                {
+                    xorSecondSpaceTotal++;
+                }
+                else
+                {
+                    xorNonSecondSpaceTotal++;
                 }
 
                 if (addPredicted == actual)
@@ -701,6 +741,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine("Pair matrix model checks:");
         sb.AppendLine();
         sb.AppendLine(CultureInfo.InvariantCulture, $"- XOR row/column decomposition: {xorMatches}/{total}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- XOR split by second char: non-space {xorNonSecondSpaceMatches}/{xorNonSecondSpaceTotal}, space {xorSecondSpaceMatches}/{xorSecondSpaceTotal}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"- Add row/column decomposition: {addMatches}/{total}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"- High-byte XOR/add decomposition: {highXorMatches}/{total}, {highAddMatches}/{total}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"- Low-byte XOR/add decomposition: {lowXorMatches}/{total}, {lowAddMatches}/{total}");
@@ -717,6 +758,7 @@ internal static class LongRowSuffixProbe
         }
 
         AppendPairMatrixAffineBitSummary(sb, table, rows, matrixStart);
+        AppendPairMatrixXorFailureSummary(sb, xorFailures);
         sb.AppendLine();
         sb.AppendLine("Pair contribution examples (`H(x,a) ^ H(a,a)` and `H(a,x) ^ H(a,a)`):");
         sb.AppendLine();
@@ -739,6 +781,232 @@ internal static class LongRowSuffixProbe
         }
 
         sb.AppendLine();
+    }
+
+    private static void AppendPairMatrixXorFailureSummary(StringBuilder sb, List<PairMatrixXorFailure> failures)
+    {
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- XOR row/column failures: {failures.Count}");
+        if (failures.Count == 0)
+        {
+            return;
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("XOR failure breakdown by second char:");
+        sb.AppendLine();
+        sb.AppendLine("| Second char | Failures | First chars | Full tails | Trimmed tails |");
+        sb.AppendLine("|---|---:|---|---|---|");
+        foreach (var group in failures
+            .GroupBy(failure => failure.SecondChar)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key)
+            .Take(8))
+        {
+            string firstChars = string.Join(" ", group
+                .Select(failure => failure.FirstChar)
+                .Distinct()
+                .Take(12)
+                .Select(ch => $"`{FormatMatrixChar(ch)}`"));
+            string fullTails = string.Join(" ", group
+                .Select(failure => failure.FullTail)
+                .Distinct(StringComparer.Ordinal)
+                .Take(4));
+            string trimmedTails = string.Join(" ", group
+                .Select(failure => failure.TrimmedTail)
+                .Distinct(StringComparer.Ordinal)
+                .Take(4));
+
+            sb.AppendLine(CultureInfo.InvariantCulture, $"| `{FormatMatrixChar(group.Key)}` | {group.Count()} | {firstChars} | {fullTails} | {trimmedTails} |");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("Sample XOR failures:");
+        sb.AppendLine();
+        sb.AppendLine("| Pair | Actual | Predicted | Residual | Row | full[508..512] | trimmed[508..512] |");
+        sb.AppendLine("|---|:---:|:---:|:---:|---|---|---|");
+        foreach (PairMatrixXorFailure failure in failures.Take(12))
+        {
+            ushort residual = (ushort)(failure.Actual ^ failure.Predicted);
+            string pair = string.Concat(FormatMatrixChar(failure.FirstChar), FormatMatrixChar(failure.SecondChar));
+            sb.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"| `{pair}` | `{failure.Actual:X4}` | `{failure.Predicted:X4}` | `{residual:X4}` | `{failure.Row.RowLabel}` | {failure.FullTail} | {failure.TrimmedTail} |");
+        }
+    }
+
+    private static string FormatMatrixChar(char value) =>
+        value == ' ' ? "SP" : EscapeMarkdown(value.ToString());
+
+    private static void AppendBoundarySpaceShiftModelSummary(StringBuilder sb, SuffixPatternTable table)
+    {
+        if (!TryBuildMatrix(table, DaoLabPairMatrixStart, out ushort[] normalSuffixes, out bool[] normalPresent)
+            || !TryBuildMatrix(table, DaoLabTrailingSpaceMatrixStart, out ushort[] trailingSuffixes, out bool[] trailingPresent))
+        {
+            return;
+        }
+
+        int size = DaoLabAlphabetLength;
+        int baseIndex = DaoLabAlphabet.IndexOf('a', StringComparison.Ordinal);
+        int spaceIndex = DaoLabAlphabet.IndexOf(' ', StringComparison.Ordinal);
+        int normalBaseOffset = (baseIndex * size) + baseIndex;
+        int trailingBaseOffset = (baseIndex * size) + baseIndex;
+        if (baseIndex < 0
+            || spaceIndex < 0
+            || !normalPresent[normalBaseOffset]
+            || !trailingPresent[trailingBaseOffset])
+        {
+            return;
+        }
+
+        ushort normalBase = normalSuffixes[normalBaseOffset];
+        ushort trailingBase = trailingSuffixes[trailingBaseOffset];
+
+        var rowContributions = new ushort[size];
+        var columnContributions = new ushort[size];
+        var trailingContributions = new ushort[size];
+        var hasRowContribution = new bool[size];
+        var hasColumnContribution = new bool[size];
+        var hasTrailingContribution = new bool[size];
+
+        for (int index = 0; index < size; index++)
+        {
+            int rowOffset = (index * size) + baseIndex;
+            if (normalPresent[rowOffset])
+            {
+                rowContributions[index] = (ushort)(normalSuffixes[rowOffset] ^ normalBase);
+                hasRowContribution[index] = true;
+            }
+
+            int columnOffset = (baseIndex * size) + index;
+            if (normalPresent[columnOffset])
+            {
+                columnContributions[index] = (ushort)(normalSuffixes[columnOffset] ^ normalBase);
+                hasColumnContribution[index] = true;
+            }
+
+            int trailingColumnOffset = (baseIndex * size) + index;
+            if (trailingPresent[trailingColumnOffset])
+            {
+                trailingContributions[index] = (ushort)(trailingSuffixes[trailingColumnOffset] ^ trailingBase);
+                hasTrailingContribution[index] = true;
+            }
+        }
+
+        int normalMatches = 0;
+        int normalTotal = 0;
+        int shiftedMatches = 0;
+        int shiftedTotal = 0;
+        int trailingMatches = 0;
+        int trailingTotal = 0;
+
+        for (int first = 0; first < size; first++)
+        {
+            for (int second = 0; second < size; second++)
+            {
+                int offset = (first * size) + second;
+                if (normalPresent[offset])
+                {
+                    if (second == spaceIndex)
+                    {
+                        if (hasTrailingContribution[first])
+                        {
+                            shiftedTotal++;
+                            ushort predicted = (ushort)(trailingBase ^ trailingContributions[first]);
+                            if (predicted == normalSuffixes[offset])
+                            {
+                                shiftedMatches++;
+                            }
+                        }
+                    }
+                    else if (hasRowContribution[first] && hasColumnContribution[second])
+                    {
+                        normalTotal++;
+                        ushort predicted = (ushort)(normalBase ^ rowContributions[first] ^ columnContributions[second]);
+                        if (predicted == normalSuffixes[offset])
+                        {
+                            normalMatches++;
+                        }
+                    }
+                }
+
+                if (trailingPresent[offset] && hasTrailingContribution[second])
+                {
+                    trailingTotal++;
+                    ushort predicted = (ushort)(trailingBase ^ trailingContributions[second]);
+                    if (predicted == trailingSuffixes[offset])
+                    {
+                        trailingMatches++;
+                    }
+                }
+            }
+        }
+
+        int sharedContributionMatches = 0;
+        int sharedContributionTotal = 0;
+        for (int index = 0; index < size; index++)
+        {
+            if (!hasColumnContribution[index] || !hasTrailingContribution[index])
+            {
+                continue;
+            }
+
+            sharedContributionTotal++;
+            if (columnContributions[index] == trailingContributions[index])
+            {
+                sharedContributionMatches++;
+            }
+        }
+
+        int shiftedRowsPresent = Enumerable.Range(0, size).Count(first => normalPresent[(first * size) + spaceIndex]);
+        int trailingRowsPresent = trailingPresent.Count(present => present);
+
+        sb.AppendLine("Boundary-space shift model:");
+        sb.AppendLine();
+        sb.AppendLine("Trains on the plain pair matrix and the trailing-space matrix. The model treats a non-space byte at the 255-character boundary as a normal two-axis XOR table; when the boundary char is a space, it shifts the column role left to the previous indexed character and ignores the earlier row axis.");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- normal non-space two-axis fit: {normalMatches}/{normalTotal}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- normal second-space rows predicted by shifted model: {shiftedMatches}/{shiftedTotal} (present rows {shiftedRowsPresent}/{size})");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- trailing-space matrix predicted by shifted model: {trailingMatches}/{trailingTotal} (present rows {trailingRowsPresent}/{size * size})");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- shifted deltas equal normal column deltas where both observed: {sharedContributionMatches}/{sharedContributionTotal}");
+        if (hasColumnContribution[spaceIndex] && hasTrailingContribution[spaceIndex])
+        {
+            sb.AppendLine(CultureInfo.InvariantCulture, $"- observed space column delta: normal `{columnContributions[spaceIndex]:X4}`, shifted `{trailingContributions[spaceIndex]:X4}`");
+        }
+
+        sb.AppendLine();
+    }
+
+    private static bool TryBuildMatrix(
+        SuffixPatternTable table,
+        int matrixStart,
+        out ushort[] suffixes,
+        out bool[] present)
+    {
+        int size = DaoLabAlphabetLength;
+        suffixes = new ushort[size * size];
+        present = new bool[size * size];
+
+        foreach (SuffixPatternRow row in table.Rows)
+        {
+            if (row.Seed is not int seed || seed < matrixStart || seed >= matrixStart + DaoLabPairMatrixRowCount)
+            {
+                continue;
+            }
+
+            int pair = seed - matrixStart;
+            int first = pair / size;
+            int second = pair % size;
+            if (first < 0 || first >= size || second < 0 || second >= size)
+            {
+                continue;
+            }
+
+            int offset = (first * size) + second;
+            suffixes[offset] = row.AccessSuffix;
+            present[offset] = true;
+        }
+
+        return present.Any(value => value);
     }
 
     private static List<Crc16AffineHit> FindCrc16AffineHits(
@@ -4839,6 +5107,21 @@ internal static class LongRowSuffixProbe
                 return [string]::new($chars)
             }
 
+            function New-TrailingSpaceMatrixText([int] $seed) {
+                $pair = $seed - {{DaoLabTrailingSpaceMatrixStart}}
+                $first = [int] [Math]::Floor($pair / $alphabet.Length)
+                $second = [int] ($pair % $alphabet.Length)
+                $chars = New-Object 'char[]' 360
+                for ($position = 0; $position -lt $chars.Length; $position++) {
+                    $chars[$position] = 'a'
+                }
+
+                $chars[252] = $alphabet[$first]
+                $chars[253] = $alphabet[$second]
+                $chars[254] = ' '
+                return [string]::new($chars)
+            }
+
             function New-TemplateSampleText([int] $seed, [string] $row10Template, [string] $row11Template, [string] $row12Template) {
                 $sample = $seed - {{DaoLabTemplateSampleStart}}
                 $templateIndex = [int] [Math]::Floor($sample / 4)
@@ -4862,6 +5145,10 @@ internal static class LongRowSuffixProbe
             function New-LabText([int] $seed, [string] $row10Template, [string] $row11Template, [string] $row12Template) {
                 if ($seed -ge {{DaoLabTemplateSampleStart}}) {
                     return New-TemplateSampleText $seed $row10Template $row11Template $row12Template
+                }
+
+                if ($seed -ge {{DaoLabTrailingSpaceMatrixStart}}) {
+                    return New-TrailingSpaceMatrixText $seed
                 }
 
                 if ($seed -ge {{DaoLabRow12MatrixStart}}) {
@@ -5029,14 +5316,19 @@ internal static class LongRowSuffixProbe
 
         using Process process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start PowerShell host '{powerShellPath}'.");
-        string stdout = process.StandardOutput.ReadToEnd();
-        string stderr = process.StandardError.ReadToEnd();
+        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderrTask = process.StandardError.ReadToEndAsync();
         if (!process.WaitForExit((int)timeout.TotalMilliseconds))
         {
             TryKill(process);
-            return (-1, stdout, stderr + $"{Environment.NewLine}[timeout after {timeout.TotalSeconds:N0}s]");
+            process.WaitForExit();
+            string timeoutStdout = stdoutTask.GetAwaiter().GetResult();
+            string timeoutStderr = stderrTask.GetAwaiter().GetResult();
+            return (-1, timeoutStdout, timeoutStderr + $"{Environment.NewLine}[timeout after {timeout.TotalSeconds:N0}s]");
         }
 
+        string stdout = stdoutTask.GetAwaiter().GetResult();
+        string stderr = stderrTask.GetAwaiter().GetResult();
         return (process.ExitCode, stdout, stderr);
     }
 
@@ -6267,6 +6559,15 @@ internal static class LongRowSuffixProbe
     private readonly record struct RollingPolynomialHit(ushort Multiplier, ushort Seed);
 
     private readonly record struct Crc16AffineHit(ushort Polynomial, ushort XorConstant, bool RefIn, bool RefOut);
+
+    private readonly record struct PairMatrixXorFailure(
+        char FirstChar,
+        char SecondChar,
+        SuffixPatternRow Row,
+        ushort Actual,
+        ushort Predicted,
+        string FullTail,
+        string TrimmedTail);
 
     private readonly record struct RawLeafPageSummary(
         long PageNumber,
