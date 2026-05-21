@@ -156,7 +156,7 @@ internal static class LongRowSuffixProbe
         var sb = new StringBuilder();
         AppendHeader(sb, "V2010 long-row corpus scan", "long-row-corpus");
         sb.AppendLine("Scans every Jackcess V2010 fixture for single-column index leaf keys exactly 510 bytes long.");
-        sb.AppendLine("For Text/Memo and Binary columns, the probe re-encodes table values and checks whether the current encoder matches Access through byte 507.");
+        sb.AppendLine("For Text/Memo and Binary columns, the probe re-encodes table values and reports V2010 long-row prefix/suffix parity with Access.");
         sb.AppendLine();
         int summaryInsertOffset = sb.Length;
 

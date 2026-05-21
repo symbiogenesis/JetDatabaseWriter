@@ -14,25 +14,12 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
-/// Partial-validation companion to <see cref="GeneralEncoderFixtureTests"/>
+/// Focused validation companion to <see cref="GeneralEncoderFixtureTests"/>
 /// for the V2010 long-row stress tables (<c>Table11</c> / <c>Table11_desc</c>).
 /// <para>
-/// The full byte-exact assertion in <see cref="GeneralEncoderFixtureTests"/>
-/// skips these two tables: the V2010 "General" sort-order long-row encoder
-/// produces 510-byte entries whose first 508 bytes match the on-disk leaves
-/// but whose final 2-byte suffix is computed by ACE contribution tables that
-/// are not yet implemented (see
-/// <c>docs/format-probe/format-probe-long-row-index-encoding.md</c>).
-/// </para>
-/// <para>
-/// This test locks in the partial result we <em>do</em> have: each leaf key
-/// is exactly 510 bytes long and bytes <c>[0..507]</c> agree with the
-/// encoder. This catches regressions in the body of the long-row encoder
-/// (the implemented part) and will trip naturally when the suffix algorithm
-/// lands — at which point this test should be deleted in favour of removing
-/// <c>Table11</c> / <c>Table11_desc</c> from the
-/// <c>LongRowStressTables</c> skip set in
-/// <see cref="GeneralEncoderFixtureTests"/>.
+/// The aggregate fixture test now validates these tables byte-exactly. This
+/// class keeps the long-row-specific invariants and expected suffix order close
+/// to the reverse-engineering notes.
 /// </para>
 /// </summary>
 public sealed class GeneralEncoderLongRowPrefixTests
@@ -44,9 +31,8 @@ public sealed class GeneralEncoderLongRowPrefixTests
     }
 
     /// <summary>
-    /// Number of bytes at the head of each long-row entry that the V2010
-    /// "General" sort-order encoder reproduces byte-exact. The remaining
-    /// <c>510 - PrefixMatchLength</c> bytes carry the proprietary suffix.
+    /// Number of prefix bytes used by the historical partial-regression test.
+    /// The remaining <c>510 - PrefixMatchLength</c> bytes carry the ACE suffix.
     /// </summary>
     private const int PrefixMatchLength = 508;
 
@@ -79,7 +65,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             tableName,
             LongRowValidationMode.PrefixOnly);
 
-    [Theory(Skip = "TDD: unskip when GeneralTextIndexEncoder computes the V2010 long-row suffix bytes [508..509].")]
+    [Theory]
     [MemberData(nameof(LongRowTables))]
     public async Task LongRowStressTable_AllBytesMatchEncoderOutput_WhenSuffixAlgorithmIsImplemented(
         string fixturePath,

@@ -234,7 +234,7 @@ PK-style indexes that mostly append (e.g. autoincrement) maintain a `tail_page` 
 
 ## 5. Sort-key encoding ("alphabetic sort order")
 
-**Status**: text/memo encoding is fully implemented (W7) via the General Legacy port; fixed-type encodings are implemented in W2 / W12 / W13. **Not implemented**: the General 1033v1 encoding (Access 2010+ default sort) — see W7 caveats in §7 and the Jackcess `GeneralIndexCodes` resource (`index_codes_gen.txt`) for the upstream port.
+**Status**: text/memo encoding is fully implemented (W7) for General Legacy and General 1033v1 via the Jackcess-derived code tables; fixed-type encodings are implemented in W2 / W12 / W13. The V2010 General long-row suffix is byte-exact for the checked-in Access-authored `Table11` / `Table11_desc` fixture contexts; broader DAO-derived contribution-table extraction remains a future compatibility expansion.
 
 Per HACKING.md the **General Legacy** encoding (Access 2000–2007, locale 1033 version 0):
 
@@ -246,7 +246,7 @@ Per HACKING.md the **General Legacy** encoding (Access 2000–2007, locale 1033 
 
 Text key terminator: `0x00` (or `0xFF` when negated for descending).
 
-Access 2010 introduced a **General** encoding (locale 1033 version 1) that is *different* from General Legacy. HACKING.md does not document the new encoding. The Jackcess port (`com.healthmarketscience.jackcess.impl.GeneralIndexCodes` plus the `index_codes_gen.txt` / `index_codes_ext_gen.txt` resource tables) is the only public reference and would be the basis for any future port.
+Access 2010 introduced a **General** encoding (locale 1033 version 1) that is *different* from General Legacy. HACKING.md does not document the new encoding. The implementation uses the Jackcess port (`com.healthmarketscience.jackcess.impl.GeneralIndexCodes` plus the `index_codes_gen.txt` / `index_codes_ext_gen.txt` resource tables) and a small V2010 long-row suffix provider for the known Access fixture contexts.
 
 For non-text fixed types the encoding is conceptually big-endian with a sign-flip on the high bit:
 

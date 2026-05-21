@@ -89,6 +89,8 @@ internal static class GeneralLegacyTextIndexEncoder
     internal static readonly byte[] LongRowSeparatorGeneralLegacy = [0x08, 0x07, 0x08, 0x04];
     internal static readonly byte[] LongRowSeparatorGeneral = [0x07, 0x09, 0x07, 0x06];
 
+    internal delegate ushort? LongRowSuffixProvider(string text, bool ascending, byte[] fullEntry);
+
     private static readonly Lazy<CharHandler[]> Codes = new(
         () => LoadCodes(GenLegResource, FirstChar, LastChar));
 
@@ -128,13 +130,18 @@ internal static class GeneralLegacyTextIndexEncoder
     /// the encoder truncates the produced bytes at this boundary; used by the
     /// V2010 long-row path with <see cref="MaxEntryLengthGeneralV2010"/>.
     /// </param>
+    /// <param name="longRowSuffixProvider">
+    /// Optional callback that can replace the V2010 long-row suffix bytes
+    /// immediately before the hard cap truncation is applied.
+    /// </param>
     internal static byte[] EncodeWithTables(
         string? text,
         bool ascending,
         CharHandler[] codes,
         CharHandler[] extCodes,
         byte[]? longRowSeparator = null,
-        int maxEntryLength = 0)
+        int maxEntryLength = 0,
+        LongRowSuffixProvider? longRowSuffixProvider = null)
     {
         if (text is null)
         {
@@ -155,7 +162,8 @@ internal static class GeneralLegacyTextIndexEncoder
             int v2010PayloadStart = v2010Bout.Count;
             var v2010State = new ChunkEmitState(v2010Chars.Length);
             EmitChunkInline(v2010Chars, codes, extCodes, v2010Bout, v2010State);
-            FinishEntry(v2010Bout, v2010PayloadStart, v2010State, ascending, maxEntryLength);
+            FinishEntry(v2010Bout, v2010PayloadStart, v2010State, ascending, 0);
+            ApplyMaxEntryLength(v2010Bout, text, ascending, maxEntryLength, longRowSuffixProvider);
             return [.. v2010Bout];
         }
 
@@ -374,6 +382,30 @@ internal static class GeneralLegacyTextIndexEncoder
         {
             bout.RemoveRange(maxEntryLength, bout.Count - maxEntryLength);
         }
+    }
+
+    private static void ApplyMaxEntryLength(
+        List<byte> bout,
+        string text,
+        bool ascending,
+        int maxEntryLength,
+        LongRowSuffixProvider? longRowSuffixProvider)
+    {
+        if (maxEntryLength <= 0 || bout.Count <= maxEntryLength)
+        {
+            return;
+        }
+
+        if (longRowSuffixProvider is not null
+            && maxEntryLength == MaxEntryLengthGeneralV2010
+            && maxEntryLength >= 510
+            && longRowSuffixProvider(text, ascending, [.. bout]) is ushort suffix)
+        {
+            bout[508] = (byte)(suffix >> 8);
+            bout[509] = unchecked((byte)suffix);
+        }
+
+        bout.RemoveRange(maxEntryLength, bout.Count - maxEntryLength);
     }
 
     private sealed class ChunkEmitState(int initialCapacity)
