@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Writer;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
@@ -19,7 +20,16 @@ using Xunit;
 /// </summary>
 public sealed class JetTransactionTests
 {
+    private const int AcePageSize = Constants.PageSizes.Jet4;
+
     private static readonly AccessReaderOptions ReaderOptions = new() { UseLockFile = false };
+
+    private static AccessWriterOptions NonLockingWriterOptions() =>
+        new()
+        {
+            UseLockFile = false,
+            UseByteRangeLocks = false,
+        };
 
     private static List<ColumnDefinition> ItemsSchema() =>
     [
@@ -258,6 +268,136 @@ public sealed class JetTransactionTests
     }
 
     [Fact]
+    public async Task Commit_WhenReplayWriteFails_LeavesSuccessfulReplayPrefixOnDisk()
+    {
+        await using var stream = new FaultInjectingStream();
+        await using var writer = await AccessWriter.CreateDatabaseAsync(
+            stream,
+            DatabaseFormat.AceAccdb,
+            NonLockingWriterOptions(),
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
+        byte[] before = stream.ToArray();
+
+        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
+
+        Assert.True(tx.JournaledPageCount > 1);
+
+        stream.ThrowBeforePageWrite(2);
+
+        await Assert.ThrowsAsync<IOException>(async () =>
+            await tx.CommitAsync(TestContext.Current.CancellationToken));
+
+        byte[] after = stream.ToArray();
+
+        Assert.True(tx.IsRolledBack);
+        Assert.False(tx.IsCommitted);
+        Assert.Equal(1, stream.PageWritesAfterArm);
+        Assert.Equal(1, CountChangedPages(before, after));
+        Assert.Equal(CommitLockByte(before), CommitLockByte(after));
+    }
+
+    [Fact]
+    public async Task Commit_WhenCommitLockByteWriteFails_MarksRolledBackWithoutBumpingCommitByte()
+    {
+        await using var stream = new FaultInjectingStream();
+        await using var writer = await AccessWriter.CreateDatabaseAsync(
+            stream,
+            DatabaseFormat.AceAccdb,
+            NonLockingWriterOptions(),
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
+        byte[] before = stream.ToArray();
+
+        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
+
+        stream.ThrowBeforePageWriteAtOffset(0);
+
+        await Assert.ThrowsAsync<IOException>(async () =>
+            await tx.CommitAsync(TestContext.Current.CancellationToken));
+
+        byte[] after = stream.ToArray();
+
+        Assert.True(tx.IsRolledBack);
+        Assert.False(tx.IsCommitted);
+        Assert.Equal(tx.JournaledPageCount, stream.PageWritesAfterArm);
+        Assert.DoesNotContain(0L, stream.SuccessfulPageWriteOffsets);
+        Assert.Equal(CommitLockByte(before), CommitLockByte(after));
+        Assert.True(CountChangedPages(before, after) > 0);
+    }
+
+    [Fact]
+    public async Task Commit_WhenCanceledBeforeCommitLockByteUpdate_MarksRolledBackWithoutBumpingCommitByte()
+    {
+        await using var stream = new FaultInjectingStream();
+        await using var writer = await AccessWriter.CreateDatabaseAsync(
+            stream,
+            DatabaseFormat.AceAccdb,
+            NonLockingWriterOptions(),
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
+        byte[] before = stream.ToArray();
+
+        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
+
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        stream.CancelBeforePageWriteAtOffset(0, cancellation);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await tx.CommitAsync(cancellation.Token));
+
+        byte[] after = stream.ToArray();
+
+        Assert.True(tx.IsRolledBack);
+        Assert.False(tx.IsCommitted);
+        Assert.Equal(tx.JournaledPageCount, stream.PageWritesAfterArm);
+        Assert.Equal(CommitLockByte(before), CommitLockByte(after));
+    }
+
+    [Fact]
+    public async Task Commit_WhenDurableFlushFails_MarksRolledBackAfterBumpingCommitByte()
+    {
+        await using var stream = new FaultInjectingStream();
+        await using var writer = await AccessWriter.CreateDatabaseAsync(
+            stream,
+            DatabaseFormat.AceAccdb,
+            NonLockingWriterOptions(),
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
+        byte[] before = stream.ToArray();
+
+        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
+
+        int durableFlushCall = tx.JournaledPageCount + 2;
+        stream.ThrowOnFlushCall(durableFlushCall);
+
+        await Assert.ThrowsAsync<IOException>(async () =>
+            await tx.CommitAsync(TestContext.Current.CancellationToken));
+
+        byte[] after = stream.ToArray();
+
+        byte expectedCommitLockByte = unchecked((byte)(CommitLockByte(before) + 1));
+
+        Assert.True(tx.IsRolledBack);
+        Assert.False(tx.IsCommitted);
+        Assert.Equal(tx.JournaledPageCount + 1, stream.PageWritesAfterArm);
+        Assert.Equal(durableFlushCall - 1, stream.FlushesAfterArm);
+        Assert.Equal(expectedCommitLockByte, CommitLockByte(after));
+    }
+
+    [Fact]
     public async Task UseTransactionalWrites_RollsBackOnExceptionDuringInsert()
     {
         // With UseTransactionalWrites=true, an exception thrown mid-call must
@@ -329,5 +469,198 @@ public sealed class JetTransactionTests
 
         await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
         await writer.InsertRowAsync("Items", [1, "A"], TestContext.Current.CancellationToken);
+    }
+
+    private static async Task BufferMultiPageInsertAsync(AccessWriter writer, CancellationToken cancellationToken)
+    {
+        var rows = new List<object[]>(100);
+        for (int rowNumber = 1; rowNumber <= 100; rowNumber++)
+        {
+            rows.Add([rowNumber, "Row" + rowNumber]);
+        }
+
+        int inserted = await writer.InsertRowsAsync("Items", rows, cancellationToken);
+        Assert.Equal(100, inserted);
+    }
+
+    private static byte CommitLockByte(byte[] databaseBytes) => databaseBytes[0x14];
+
+    private static int CountChangedPages(byte[] before, byte[] after)
+    {
+        int maxLength = Math.Max(before.Length, after.Length);
+        int pageCount = (maxLength + AcePageSize - 1) / AcePageSize;
+        int changedPages = 0;
+
+        for (int pageNumber = 0; pageNumber < pageCount; pageNumber++)
+        {
+            int pageOffset = pageNumber * AcePageSize;
+            int pageLength = Math.Min(AcePageSize, maxLength - pageOffset);
+            if (!PageBytesEqual(before, after, pageOffset, pageLength))
+            {
+                changedPages++;
+            }
+        }
+
+        return changedPages;
+    }
+
+    private static bool PageBytesEqual(byte[] before, byte[] after, int pageOffset, int pageLength)
+    {
+        for (int byteOffset = 0; byteOffset < pageLength; byteOffset++)
+        {
+            int absoluteOffset = pageOffset + byteOffset;
+            byte beforeByte = absoluteOffset < before.Length ? before[absoluteOffset] : (byte)0;
+            byte afterByte = absoluteOffset < after.Length ? after[absoluteOffset] : (byte)0;
+            if (beforeByte != afterByte)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private sealed class FaultInjectingStream : Stream
+    {
+        private readonly MemoryStream inner = new();
+        private readonly List<long> successfulPageWriteOffsets = [];
+        private CancellationTokenSource? cancelBeforePageWriteAtOffset;
+        private long? cancelPageWriteOffset;
+        private int? throwBeforePageWrite;
+        private long? throwBeforePageWriteAtOffset;
+        private int? throwOnFlushCall;
+        private bool armed;
+
+        public override bool CanRead => inner.CanRead;
+
+        public override bool CanSeek => inner.CanSeek;
+
+        public override bool CanWrite => inner.CanWrite;
+
+        public override long Length => inner.Length;
+
+        public override long Position
+        {
+            get => inner.Position;
+            set => inner.Position = value;
+        }
+
+        public int PageWritesAfterArm { get; private set; }
+
+        public int FlushesAfterArm { get; private set; }
+
+        public IReadOnlyList<long> SuccessfulPageWriteOffsets => successfulPageWriteOffsets;
+
+        public void ThrowBeforePageWrite(int pageWriteNumber)
+        {
+            armed = true;
+            throwBeforePageWrite = pageWriteNumber;
+        }
+
+        public void ThrowBeforePageWriteAtOffset(long offset)
+        {
+            armed = true;
+            throwBeforePageWriteAtOffset = offset;
+        }
+
+        public void CancelBeforePageWriteAtOffset(long offset, CancellationTokenSource cancellation)
+        {
+            armed = true;
+            cancelPageWriteOffset = offset;
+            cancelBeforePageWriteAtOffset = cancellation;
+        }
+
+        public void ThrowOnFlushCall(int flushCallNumber)
+        {
+            armed = true;
+            throwOnFlushCall = flushCallNumber;
+        }
+
+        public byte[] ToArray() => inner.ToArray();
+
+        public override void Flush() => inner.Flush();
+
+        public override Task FlushAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (armed)
+            {
+                int nextFlush = FlushesAfterArm + 1;
+                if (throwOnFlushCall == nextFlush)
+                {
+                    throw new IOException("Injected flush failure.");
+                }
+
+                FlushesAfterArm++;
+            }
+
+            return inner.FlushAsync(cancellationToken);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            inner.ReadAsync(buffer, cancellationToken);
+
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+
+        public override void SetLength(long value) => inner.SetLength(value);
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            MaybeThrowBeforePageWrite(count, CancellationToken.None);
+            inner.Write(buffer, offset, count);
+            RecordPageWrite(count);
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            MaybeThrowBeforePageWrite(buffer.Length, cancellationToken);
+            await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+            RecordPageWrite(buffer.Length);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        private void MaybeThrowBeforePageWrite(int count, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!armed || count != AcePageSize)
+            {
+                return;
+            }
+
+            long writeOffset = inner.Position;
+            if (cancelPageWriteOffset == writeOffset && cancelBeforePageWriteAtOffset is not null)
+            {
+                cancelBeforePageWriteAtOffset.Cancel();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            int nextPageWrite = PageWritesAfterArm + 1;
+            if (throwBeforePageWrite == nextPageWrite || throwBeforePageWriteAtOffset == writeOffset)
+            {
+                throw new IOException("Injected page-write failure.");
+            }
+        }
+
+        private void RecordPageWrite(int count)
+        {
+            if (!armed || count != AcePageSize)
+            {
+                return;
+            }
+
+            successfulPageWriteOffsets.Add(inner.Position - count);
+            PageWritesAfterArm++;
+        }
     }
 }
