@@ -887,15 +887,16 @@ W4-C-8+ caveats:
 
 ## 8. Validation strategy
 
-Every writer phase landing on disk format MUST be validated against:
+The current cross-feature status lives in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md). Update that matrix whenever a writer disk-format feature gains stronger coverage.
 
-1. **Round-trip in this repo:** writer → reader (using the new index parser) → assert structural equivalence.
-2. **Microsoft Access on Windows:** open the produced file in Access, run **Database Tools → Compact and Repair**, re-open, and verify (a) Access does not report corruption, (b) the index is visible in Design View, (c) Access does not silently rebuild the index (compare file bytes before/after compact).
+Every new writer phase landing on disk format should be validated against:
+
+1. **Round-trip in this repo:** writer -> reader (using the relevant parser) -> assert structural equivalence.
+2. **DAO on Windows:** when possible, mutate an Access-authored fixture such as Northwind, run `DAO.DBEngine.120.CompactDatabase`, reopen the compacted file, and verify the feature that motivated the test.
 3. **Cross-tool sanity:** open with [Jackcess](https://jackcess.sourceforge.io) or [mdbtools](https://github.com/mdbtools/mdbtools) (`mdb-schema -E`) and confirm the index metadata matches.
+4. **Manual Access UI verification:** keep manual Compact and Repair notes as supplemental evidence for UI-only workflows, not as the only signal when DAO can automate the same mutation.
 
-A PR that ships with only synthetic round-trip tests and no Access verification note **must not** be merged.
-
-> **Outstanding gap (applies to every shipped phase):** automated Microsoft Access compact-and-repair validation is not yet wired up. Each shipped phase has been round-trip-tested in this repo against the reader path, but no test rig opens the produced files in a real Access install. Phase-specific risk notes are listed in the §7 subsections; do not ship index/PK/FK output to production users until step (2) above has been performed by hand for that phase.
+Automated DAO coverage now exists for the highest-risk PK/FK compact paths, multi-table index/FK stress, encrypted compact, and a representative Northwind-hosted complex-column/LVAL compact path. Older notes in §7 that say "manual Access compact-and-repair validation remains pending" should be read as phase-specific residual risk, not as a blanket statement that no DAO compact rig exists. Promote any remaining high-risk matrix row into [DaoValidationTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoValidationTests.cs) or [AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs).
 
 ## 9. Remaining work (open phases)
 

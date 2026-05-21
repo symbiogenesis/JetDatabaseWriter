@@ -20,12 +20,18 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     internal const int CoreRowCount = 50;
     internal const int CoreTargetId = 25;
     internal const int CoreWriterRowCount = 10;
+    internal const int ComplexAttachmentPayloadLength = 16 * 1024;
+    internal const string ComplexAttachmentFileName = "compact-large.jpg";
     internal const int StressRowsPerTable = 250;
     internal const int StressTableCount = 6;
     internal const string ExpectedMemoWithNuls = "Hello\0World\0End";
 
     private const string AutoNumberTable = "DaoAutoNum";
     private const string ChildTable = "DaoFkChild";
+    private const string ComplexAttachmentColumn = "Files";
+    private const string ComplexSchemaEvolutionColumn = "ReviewNote";
+    private const string ComplexTable = "DaoComplexDocs";
+    private const string ComplexTagsColumn = "Tags";
     private const string CountTable = "DaoCount";
     private const string CreateDatabaseAttributes = ";LANGID=0x0409;CP=1252;COUNTRY=0";
     private const string EncryptedCompactTable = "EncCompact";
@@ -42,6 +48,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
     private readonly object _sync = new();
     private readonly List<AccessRoundTripSession> _sessions = [];
+    private Task<ComplexCompactResult>? _complexCompactResultTask;
     private Task<CoreValidationResult>? _coreResultTask;
     private Task<EncryptedCompactResult>? _encryptedCompactResultTask;
     private Task<StressCompactResult>? _stressCompactResultTask;
@@ -67,6 +74,15 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         {
             _encryptedCompactResultTask ??= BuildEncryptedCompactResultAsync(cancellationToken);
             return _encryptedCompactResultTask;
+        }
+    }
+
+    internal Task<ComplexCompactResult> GetComplexCompactResultAsync(CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            _complexCompactResultTask ??= BuildComplexCompactResultAsync(cancellationToken);
+            return _complexCompactResultTask;
         }
     }
 
@@ -149,6 +165,55 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         }
 
         return new EncryptedCompactResult(File.Exists(compactedPath), tableCount);
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
+    private async Task<ComplexCompactResult> BuildComplexCompactResultAsync(CancellationToken cancellationToken)
+    {
+        AccessRoundTripSession session = await CreateNorthwindSessionAsync(cancellationToken, StressCompactTimeout).ConfigureAwait(false);
+        await PrepareComplexCompactDatabaseAsync(session.SourcePath, cancellationToken).ConfigureAwait(false);
+
+        session.RunDaoCompact();
+
+        await using var postReader = await AccessReader.OpenAsync(
+            session.CompactedPath,
+            new AccessReaderOptions { UseLockFile = false },
+            cancellationToken).ConfigureAwait(false);
+
+        DataTable? parentTable = await postReader.ReadDataTableAsync(
+            ComplexTable,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        int parentRowCount = parentTable?.Rows.Count ?? -1;
+        bool hasSchemaEvolutionColumn = parentTable?.Columns.Contains(ComplexSchemaEvolutionColumn) == true;
+
+        IReadOnlyList<ComplexColumnInfo> complexColumns = await postReader.GetComplexColumnsAsync(
+            ComplexTable,
+            cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<AttachmentRecord> attachments = await postReader.GetAttachmentsAsync(
+            ComplexTable,
+            ComplexAttachmentColumn,
+            cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<(int ConceptualTableId, object? Value)> multiValueItems = await postReader.GetMultiValueItemsAsync(
+            ComplexTable,
+            ComplexTagsColumn,
+            cancellationToken).ConfigureAwait(false);
+
+        AttachmentRecord? attachment = attachments.SingleOrDefault();
+        byte[] expectedPayload = BuildDeterministicPayload(ComplexAttachmentPayloadLength);
+        string[] tagValues = multiValueItems
+            .Select(item => Convert.ToString(item.Value, CultureInfo.InvariantCulture) ?? string.Empty)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+
+        return new ComplexCompactResult(
+            parentRowCount,
+            hasSchemaEvolutionColumn,
+            complexColumns.Count,
+            attachments.Count,
+            attachment?.FileName ?? string.Empty,
+            attachment?.FileData.Length ?? -1,
+            attachment is not null && attachment.FileData.SequenceEqual(expectedPayload),
+            tagValues);
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
@@ -336,6 +401,50 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             Password,
             AccessEncryptionFormat.AccdbAgile,
             new AccessWriterOptions { UseLockFile = false },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task PrepareComplexCompactDatabaseAsync(string dbPath, CancellationToken cancellationToken)
+    {
+        await using var writer = await AccessWriter.OpenAsync(
+            dbPath,
+            new AccessWriterOptions { UseLockFile = false },
+            cancellationToken).ConfigureAwait(false);
+
+        await writer.CreateTableAsync(
+            ComplexTable,
+            [
+                new("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
+                new("Title", typeof(string), maxLength: 100) { IsNullable = false },
+                new(ComplexAttachmentColumn, typeof(byte[])) { IsAttachment = true },
+                new(ComplexTagsColumn, typeof(object), maxLength: 255)
+                {
+                    IsMultiValue = true,
+                    MultiValueElementType = typeof(string),
+                },
+            ],
+            cancellationToken).ConfigureAwait(false);
+
+        await writer.InsertRowAsync(
+            ComplexTable,
+            [1, "Northwind-hosted complex row", DBNull.Value, DBNull.Value],
+            cancellationToken).ConfigureAwait(false);
+
+        var parentKey = new Dictionary<string, object> { ["Id"] = 1 };
+        await writer.AddAttachmentAsync(
+            ComplexTable,
+            ComplexAttachmentColumn,
+            parentKey,
+            new AttachmentInput(ComplexAttachmentFileName, BuildDeterministicPayload(ComplexAttachmentPayloadLength)),
+            cancellationToken).ConfigureAwait(false);
+
+        await writer.AddMultiValueItemAsync(ComplexTable, ComplexTagsColumn, parentKey, "alpha", cancellationToken).ConfigureAwait(false);
+        await writer.AddMultiValueItemAsync(ComplexTable, ComplexTagsColumn, parentKey, "beta", cancellationToken).ConfigureAwait(false);
+        await writer.AddMultiValueItemAsync(ComplexTable, ComplexTagsColumn, parentKey, "gamma", cancellationToken).ConfigureAwait(false);
+
+        await writer.AddColumnAsync(
+            ComplexTable,
+            new ColumnDefinition(ComplexSchemaEvolutionColumn, typeof(string), maxLength: 100),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -580,6 +689,20 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         return string.IsNullOrEmpty(value) ? [] : Convert.FromBase64String(value);
     }
 
+    private static byte[] BuildDeterministicPayload(int length)
+    {
+        var bytes = new byte[length];
+        for (int index = 0; index < bytes.Length; index++)
+        {
+            unchecked
+            {
+                bytes[index] = (byte)((index * 31) ^ (index >> 8));
+            }
+        }
+
+        return bytes;
+    }
+
     private string GetRequired(Dictionary<string, string> values, string key)
     {
         if (!values.TryGetValue(key, out string? value))
@@ -605,6 +728,16 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     internal sealed record DaoMemoResult(string Content);
 
     internal sealed record EncryptedCompactResult(bool CompactedFileExists, int ReopenedTableCount);
+
+    internal sealed record ComplexCompactResult(
+        int ParentRowCount,
+        bool HasSchemaEvolutionColumn,
+        int ComplexColumnCount,
+        int AttachmentCount,
+        string AttachmentFileName,
+        int AttachmentPayloadLength,
+        bool AttachmentPayloadMatchesExpected,
+        IReadOnlyList<string> MultiValueItems);
 
     internal sealed record StressCompactResult(
         int PreCompactTableCount,

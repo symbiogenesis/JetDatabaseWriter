@@ -72,18 +72,18 @@ Suggested work:
 - Add tests proving seek results match a full table scan for supported key types.
 - Keep range scans separate unless there is a clear API design.
 
-### 5. Access Compact and Repair Validation Automation
+### 5. Access Compact and Repair Validation Automation (DONE)
 
-ESE's test culture validates engine behavior through real persisted state. JetDatabaseWriter already has DAO/Access validation hooks, but the design notes still contain standing warnings that several writer phases need Microsoft Access Compact and Repair validation. Examples include [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md) and [complex-columns-format-notes.md](complex-columns-format-notes.md).
+ESE's test culture validates engine behavior through real persisted state. JetDatabaseWriter already has DAO/Access validation hooks, but the design notes still contained standing warnings that several writer phases needed Microsoft Access Compact and Repair validation. Examples included [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md) and [complex-columns-format-notes.md](complex-columns-format-notes.md).
 
-Local DAO validation exists in [DaoValidationTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoValidationTests.cs), [DaoValidationFixture.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoValidationFixture.cs), and FormatProbe modes such as [DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs). The gap is consistency: design notes, test names, and automated coverage should agree on which disk-format phases are validated.
+Implemented coverage (2026-05-20):
 
-Suggested work:
+- Added a single validation matrix for writer-emitted disk-format features: [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
+- Added a Northwind-hosted DAO CompactDatabase test for writer-created attachment and multi-value complex columns, including a chained-LVAL attachment payload and an `AddColumnAsync` rewrite that preserves the complex artifacts.
+- Clarified that the strongest DAO compact tests mutate Access-authored fixtures such as Northwind, so the writer-created bytes under test are isolated from fresh-database bootstrap trust.
+- Updated stale blanket warnings in the index/relationship and complex-column notes to point at the matrix and the remaining phase-specific gaps.
 
-- Create a single validation matrix for writer-emitted disk-format features.
-- Mark each feature as reader-round-trip only, DAO OpenRecordset, DAO CompactDatabase, or manually Access-verified.
-- Convert high-risk manual validation items into DAO-driven tests when the host supports DAO.
-- Update stale design warnings once coverage exists.
+Remaining matrix rows still marked reader-round-trip only should be promoted into DAO-driven tests when they become high-risk release blockers and a reliable Access-authored fixture can host the mutation.
 
 ### 6. Cache and Resource-Manager Behavior
 
@@ -110,11 +110,11 @@ Suggested work:
 
 ### 8. Complex Columns and LVAL Reclamation
 
-ESE has long-value, cleanup, and space-management machinery. JetDatabaseWriter supports complex columns and LVAL chains, but design notes still identify caveats: no old LVAL page reuse on update/delete, Access Compact and Repair validation gaps for some complex-column paths, and flat-table/index artifacts that Access may repair later. See [complex-columns-format-notes.md](complex-columns-format-notes.md).
+ESE has long-value, cleanup, and space-management machinery. JetDatabaseWriter supports complex columns and LVAL chains. DAO CompactDatabase coverage now includes a Northwind-hosted writer-created attachment/multi-value table with a chained-LVAL attachment payload and complex-column schema-evolution preservation. Remaining caveats are narrower: no old LVAL page reuse on update/delete, fresh writer-created complex system-table scaffolding is still reader-round-trip only, and some flat-table/index artifacts may still need broader Access-authored fixture coverage. See [complex-columns-format-notes.md](complex-columns-format-notes.md) and [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 
 Suggested work:
 
-- Expand DAO Compact and Repair tests for attachment and multi-value columns with large LVAL payloads.
+- Expand DAO Compact and Repair tests beyond the current Northwind-hosted attachment/multi-value/LVAL representative case when new complex-column mutations become release blockers.
 - Add byte-level tests documenting old LVAL page retention after update/delete.
 - Decide whether page reuse is out of scope or a future space-management feature.
 
@@ -144,5 +144,5 @@ The following ESE areas do not appear to map directly to this project unless the
 1. Add a shared emitted-page invariant checker and run it from representative writer tests.
 2. Add byte-level data-remanence tests for delete/update and LVAL update/delete.
 3. Promote the internal index seeker into a tested public or internal-experimental row seek surface.
-4. Build a DAO Compact and Repair validation matrix and use it to close stale design warnings.
+4. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
 5. Add integration cache tests around large scans, interleaved table reads, and transaction-local page reads.

@@ -122,4 +122,22 @@ public sealed class DaoValidationTests(DaoValidationFixture fixture) : IClassFix
                 $"Post-compact: {tableName} row count = {rowCount}, expected {DaoValidationFixture.StressRowsPerTable}.");
         }
     }
+
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    public async Task DaoCompact_ComplexColumnsWithLvalPayload_SurviveCompactAndRepair()
+    {
+        var result = await fixture.GetComplexCompactResultAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, result.ParentRowCount);
+        Assert.True(result.HasSchemaEvolutionColumn, "Post-compact parent table is missing the schema-evolution column.");
+        Assert.Equal(2, result.ComplexColumnCount);
+        Assert.Equal(1, result.AttachmentCount);
+        Assert.Equal(DaoValidationFixture.ComplexAttachmentFileName, result.AttachmentFileName);
+        Assert.Equal(DaoValidationFixture.ComplexAttachmentPayloadLength, result.AttachmentPayloadLength);
+        Assert.True(result.AttachmentPayloadMatchesExpected, "Post-compact attachment payload bytes differ from the writer input.");
+        Assert.Equal(["alpha", "beta", "gamma"], result.MultiValueItems);
+    }
 }
