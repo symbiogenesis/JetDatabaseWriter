@@ -111,6 +111,26 @@ public interface IAccessReader : IAccessBase
     ValueTask<IReadOnlyList<IndexMetadata>> ListIndexesAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Seeks rows through the named index using an exact key tuple and returns matching rows
+    /// as typed object arrays in index order.
+    /// </summary>
+    /// <remarks>
+    /// This is an exact-match seek only; range scans remain a separate concern. The number
+    /// and order of <paramref name="keyValues"/> must match the columns returned for the
+    /// index by <see cref="ListIndexesAsync"/>.
+    /// </remarks>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="indexName">Index name (case-insensitive).</param>
+    /// <param name="keyValues">Exact key tuple, one value per indexed column.</param>
+    /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
+    /// <returns>An async sequence of typed object arrays whose key equals <paramref name="keyValues"/>.</returns>
+    IAsyncEnumerable<object[]> SeekRowsAsync(
+        string tableName,
+        string indexName,
+        IReadOnlyList<object?> keyValues,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Returns metadata for every Access 2007+ "complex" column (Attachment,
     /// Multi-value, Version-history) declared on <paramref name="tableName"/>.
     /// </summary>

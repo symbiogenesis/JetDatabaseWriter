@@ -1,6 +1,6 @@
 # ESE-Inspired Coverage Gap Analysis
 
-**Status:** Updated after data-remanence coverage, 2026-05-21.
+**Status:** Updated after public index seek coverage, 2026-05-21.
 **Reference:** [microsoft/Extensible-Storage-Engine](https://github.com/microsoft/Extensible-Storage-Engine).
 
 This note compares JetDatabaseWriter's current reader/writer test surface with themes from Microsoft's Extensible Storage Engine (ESE) repository. ESE is a full database engine, not an Access MDB/ACCDB file-format oracle, so the goal is not feature parity. The useful signal is where ESE's long-lived engine tests expose categories of risk that also matter to a direct JET/ACE page writer.
@@ -62,18 +62,17 @@ Implemented coverage (2026-05-21):
 - Documented the behavior in [README.md](../../README.md): update/delete are logical mutations, not secure erase; old bytes may remain until Compact and Repair or a future rewrite reclaims them.
 - Left an opt-in scrub/reuse mode as a future feature decision. Implementing it would need to handle deleted row bodies, freed row gaps, index rebuild orphan pages, and old LVAL chains consistently.
 
-### 4. Public Index Seek and Cursor Navigation
+### 4. Public Index Seek and Cursor Navigation (DONE)
 
-ESE's public model includes indexed and sequential cursor navigation. JetDatabaseWriter now has substantial index writing, maintenance, and internal seek support through [IndexBTreeSeeker.cs](../../JetDatabaseWriter/Indexes/IndexBTreeSeeker.cs), but [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md) still calls out public `SeekRowsAsync`-style access as unshipped.
+ESE's public model includes indexed and sequential cursor navigation. JetDatabaseWriter now has substantial index writing, maintenance, internal seek support through [IndexBTreeSeeker.cs](../../JetDatabaseWriter/Indexes/IndexBTreeSeeker.cs), and a narrow public exact-seek reader surface.
 
-The local reader still primarily enumerates rows through data-page scans. Internal index seeks support referential-integrity paths, but users cannot yet query rows through an index.
+Implemented coverage (2026-05-21):
 
-Suggested work:
+- Added `IAccessReader.SeekRowsAsync(tableName, indexName, keyValues, CT)` and [AccessReader.cs](../../JetDatabaseWriter/AccessReader.cs) plumbing for exact Jet4/ACE index seeks over an index name and key tuple.
+- Reuses `IndexBTreeSeeker.FindRowLocationsAsync` for root descent, prefix-compressed leaf decoding, non-unique sibling-leaf walks, and tail-page fall-through, then materialises rows through the same typed row decoder used by `Rows(...)`.
+- Added [AccessReaderIndexSeekTests.cs](../../JetDatabaseWriter.Tests/Reader/AccessReaderIndexSeekTests.cs) for unique and non-unique indexes, composite keys, missing keys, sibling-leaf walks, tail-page append fall-through, Jet3 rejection, and seek results matching full table scans for supported key types.
 
-- Add a narrow public or internal-experimental seek API over an index name and key tuple.
-- Test unique and non-unique indexes, composite keys, sibling-leaf walks, tail-page fall-through, missing keys, and row materialization.
-- Add tests proving seek results match a full table scan for supported key types.
-- Keep range scans separate unless there is a clear API design.
+Range scans remain separate until there is a clear API design.
 
 ### 5. Access Compact and Repair Validation Automation (DONE)
 
@@ -146,6 +145,5 @@ The following ESE areas do not appear to map directly to this project unless the
 ## Suggested Next Test Work
 
 1. Decide whether an opt-in scrub/reuse mode belongs in scope for deleted row bodies, freed row gaps, index rebuild orphan pages, and old LVAL chains.
-2. Promote the internal index seeker into a tested public or internal-experimental row seek surface.
-3. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
-4. Add integration cache tests around large scans, interleaved table reads, and transaction-local page reads.
+2. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
+3. Add integration cache tests around large scans, interleaved table reads, and transaction-local page reads.

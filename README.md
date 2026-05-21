@@ -182,7 +182,7 @@ foreach (ColumnMetadata col in meta)
 
 ### Index metadata
 
-`ListIndexesAsync` returns the logical indexes declared on a table — primary keys, foreign-key indexes, and ordinary user indexes — parsed directly from the TDEF page chain. Only schema metadata is surfaced; the index B-tree leaf pages are not traversed.
+`ListIndexesAsync` returns the logical indexes declared on a table — primary keys, foreign-key indexes, and ordinary user indexes — parsed directly from the TDEF page chain.
 
 ```csharp
 IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Companies", cancellationToken);
@@ -194,6 +194,15 @@ foreach (IndexMetadata idx in indexes)
 ```
 
 Multiple logical indexes can share the same physical index — consult `IndexMetadata.RealIndexNumber` to detect that sharing. The `IndexKind` enum distinguishes `Normal`, `PrimaryKey`, and `ForeignKey`. Note: Access does not always set the `IsUnique` flag bit on primary keys (uniqueness is implied by `Kind == PrimaryKey`).
+
+`SeekRowsAsync` performs an exact Jet4/ACE index seek by table name, index name, and key tuple, returning the same typed `object[]` row shape as `Rows(...)`. It supports unique and non-unique indexes, including composite keys; range scans remain out of scope for this API.
+
+```csharp
+await foreach (object[] row in reader.SeekRowsAsync("Companies", "IX_CompanyName", ["Contoso"], cancellationToken))
+{
+    Console.WriteLine(row[0]);
+}
+```
 
 ### Complex (Attachment / Multi-value) column metadata
 

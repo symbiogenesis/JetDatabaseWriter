@@ -973,6 +973,98 @@ public sealed class AccessReader : AccessBase, IAccessReader
     }
 
     /// <inheritdoc/>
+    public async IAsyncEnumerable<object[]> SeekRowsAsync(
+        string tableName,
+        string indexName,
+        IReadOnlyList<object?> keyValues,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        using var operation = EnterOperation();
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNullOrEmpty(indexName, nameof(indexName));
+        Guard.NotNull(keyValues, nameof(keyValues));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            yield break;
+        }
+
+        if (_format == DatabaseFormat.Jet3Mdb)
+        {
+            throw new NotSupportedException("Index seeks are currently supported for Jet4/ACE databases only.");
+        }
+
+        var (entry, td) = resolved.Value;
+        byte[]? tdefBytes = await ReadTDefBytesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        if (tdefBytes == null || tdefBytes.Length < _tdef.BlockEnd)
+        {
+            yield break;
+        }
+
+        List<IndexMetadata> indexes = ParseIndexMetadata(tdefBytes, td.Columns);
+        IndexMetadata? index = indexes.Find(i => string.Equals(i.Name, indexName, StringComparison.OrdinalIgnoreCase));
+        if (index == null)
+        {
+            throw new ArgumentException($"Index '{indexName}' was not found on table '{tableName}'.", nameof(indexName));
+        }
+
+        if (index.FirstDp <= 0 || index.Columns.Count == 0)
+        {
+            yield break;
+        }
+
+        byte[] searchKey = EncodeIndexSeekKey(tableName, index, td, keyValues);
+        List<(long DataPage, int RowIndex)> hits = await IndexBTreeSeeker.FindRowLocationsAsync(
+            (pageNumber, ct) => ReadPageCachedAsync(pageNumber, ct),
+            _pgSz,
+            index.FirstDp,
+            searchKey,
+            cancellationToken).ConfigureAwait(false);
+
+        bool needsComplexPass = td.HasComplexColumns;
+        bool needsHyperlinkPass = td.HasHyperlinkColumns;
+        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
+            ? await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            : null;
+
+        foreach ((long dataPage, int rowIndex) in hits)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageCachedAsync(dataPage, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != entry.TDefPage)
+            {
+                continue;
+            }
+
+            if (!TryFindLiveRowBound(page, dataPage, rowIndex, out RowBound rowBound) || rowBound.RowSize < _rowSz.NumCols)
+            {
+                continue;
+            }
+
+            object?[]? row = await CrackRowTypedAsync(page, rowBound.RowStart, rowBound.RowSize, td, cancellationToken).ConfigureAwait(false);
+            if (row == null)
+            {
+                continue;
+            }
+
+            if (needsComplexPass)
+            {
+                ResolveComplexColumns(row, td.Columns, complexData);
+            }
+
+            if (needsHyperlinkPass)
+            {
+                WrapHyperlinkColumns(row, td.ClrTypes);
+            }
+
+            yield return (object[])row;
+        }
+    }
+
+    /// <inheritdoc/>
     public async ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
@@ -1375,6 +1467,62 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return result;
+    }
+
+    private byte[] EncodeIndexSeekKey(string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues)
+    {
+        if (keyValues.Count != index.Columns.Count)
+        {
+            throw new ArgumentException(
+                $"Index '{index.Name}' on table '{tableName}' expects {index.Columns.Count} key value(s), but {keyValues.Count} were supplied.",
+                nameof(keyValues));
+        }
+
+        bool legacyNumeric = _format == DatabaseFormat.Jet4Mdb;
+        byte[][] perColumn = new byte[index.Columns.Count][];
+        int totalLength = 0;
+
+        for (int i = 0; i < index.Columns.Count; i++)
+        {
+            IndexColumnReference keyColumn = index.Columns[i];
+            ColumnInfo? column = tableDef.Columns.Find(c => c.ColNum == keyColumn.ColumnNumber);
+            if (column == null)
+            {
+                throw new InvalidDataException(
+                    $"Index '{index.Name}' on table '{tableName}' references missing column number {keyColumn.ColumnNumber}.");
+            }
+
+            object? value = keyValues[i];
+            perColumn[i] = column.Type == T_NUMERIC
+                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, keyColumn.IsAscending, column.NumericScale, legacyNumeric)
+                : IndexKeyEncoder.EncodeEntry(column.Type, value, keyColumn.IsAscending);
+            totalLength += perColumn[i].Length;
+        }
+
+        byte[] composite = new byte[totalLength];
+        int offset = 0;
+        for (int i = 0; i < perColumn.Length; i++)
+        {
+            Buffer.BlockCopy(perColumn[i], 0, composite, offset, perColumn[i].Length);
+            offset += perColumn[i].Length;
+        }
+
+        return composite;
+    }
+
+    private bool TryFindLiveRowBound(byte[] page, long pageNumber, int rowIndex, out RowBound rowBound)
+    {
+        foreach (RowBound candidate in GetLiveRowBoundsCached(pageNumber, page))
+        {
+            if (candidate.RowIndex == rowIndex)
+            {
+                rowBound = candidate;
+                return true;
+            }
+        }
+
+        rowBound = default;
+        return false;
     }
 
     private async ValueTask<IReadOnlyList<ComplexColumnInfo>> JoinComplexColumnsAsync(

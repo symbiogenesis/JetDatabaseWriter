@@ -450,6 +450,9 @@ public sealed class ScaffoldRunnerTests : IDisposable
         public ValueTask<IReadOnlyList<IndexMetadata>> ListIndexesAsync(string tableName, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
+        public IAsyncEnumerable<object[]> SeekRowsAsync(string tableName, string indexName, IReadOnlyList<object?> keyValues, CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+
         public ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
