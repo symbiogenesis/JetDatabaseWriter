@@ -60,10 +60,14 @@ internal static class Guard
 
     public static void Positive(int value, string paramName)
     {
+#if NET8_0_OR_GREATER
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value, paramName);
+#else
         if (value <= 0)
         {
             throw new ArgumentOutOfRangeException(paramName, value, "Value must be positive.");
         }
+#endif
     }
 
     /// <summary>

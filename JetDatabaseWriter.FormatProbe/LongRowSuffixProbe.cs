@@ -5725,11 +5725,7 @@ internal static class LongRowSuffixProbe
     {
         try
         {
-#if NETSTANDARD2_1
-            process.Kill();
-#else
             process.Kill(entireProcessTree: true);
-#endif
         }
         catch (InvalidOperationException)
         {

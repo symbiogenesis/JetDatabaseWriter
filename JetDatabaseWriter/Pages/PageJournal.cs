@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
 /// In-memory journal of dirty pages produced inside an explicit
@@ -32,20 +33,8 @@ internal sealed class PageJournal
 
     public PageJournal(long baseFileLengthBytes, int pageSize, int maxPages)
     {
-#if NET8_0_OR_GREATER
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxPages);
-#else
-        if (pageSize <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(pageSize));
-        }
-
-        if (maxPages <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(maxPages));
-        }
-#endif
+        Guard.Positive(pageSize, nameof(pageSize));
+        Guard.Positive(maxPages, nameof(maxPages));
 
         BaseFileLengthBytes = baseFileLengthBytes;
         _pageSize = pageSize;
