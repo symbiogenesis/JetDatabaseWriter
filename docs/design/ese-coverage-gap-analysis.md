@@ -20,18 +20,18 @@ The ESE repo is still useful as a coverage guide because it heavily tests:
 
 ## High-Value Gaps
 
-### 1. Crash Recovery and Commit Durability
+### 1. Crash Recovery and Commit Durability (DONE)
 
 ESE has write-ahead logging, log preread, recovery, checkpoint, revert snapshot, and recovery-cleanup test surfaces. JetDatabaseWriter has page-buffered transactions via [PageJournal.cs](../../JetDatabaseWriter/Pages/PageJournal.cs), [JetTransaction.cs](../../JetDatabaseWriter/JetTransaction.cs), and [TransactionLifecycle.cs](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs), but no durable redo/undo log or recovery pass after process loss.
 
-Local coverage is strong for logical transaction behavior in [JetTransactionTests.cs](../../JetDatabaseWriter.Tests/Writer/JetTransactionTests.cs): begin, commit, rollback, dispose rollback, read-your-writes, page-budget failure, commit-lock byte update, and `UseTransactionalWrites`. The remaining gap is failure injection during commit replay and flush.
+Local coverage is strong for logical transaction behavior in [JetTransactionTests.cs](../../JetDatabaseWriter.Tests/Writer/JetTransactionTests.cs): begin, commit, rollback, dispose rollback, read-your-writes, page-budget failure, commit-lock byte update, `UseTransactionalWrites`, commit replay write failure, commit-lock byte failure/cancellation, and durable-flush failure. The remaining gap is true WAL-style redo/undo recovery after process loss.
 
-Suggested work:
+Implemented coverage (2026-05-20):
 
-- Add a test stream or file adapter that throws after N page writes during `CommitAsync`.
-- Assert the observed partial-commit behavior is documented and stable.
-- Add cancellation/failure tests between page replay, commit-lock byte update, and durable flush.
-- Decide whether WAL-style recovery is explicitly out of scope or a future feature.
+- Added a fault-injecting test stream that throws after N page writes during `CommitAsync`.
+- Pinned current partial-commit behavior: once commit replay starts, successful page writes remain on disk even when the transaction object is marked rolled back after a later failure.
+- Added cancellation/failure coverage around replay, the page-0 commit-lock byte update, and the final durable flush.
+- Documented WAL-style recovery as out of scope for the current file-format writer; it would be a future feature requiring a durable redo/undo log and open-time recovery pass.
 
 ### 2. Page Integrity and Structural Validation
 
@@ -141,9 +141,8 @@ The following ESE areas do not appear to map directly to this project unless the
 
 ## Suggested Next Test Work
 
-1. Add failure-injection tests for transaction commit replay and flush boundaries.
-2. Add a shared emitted-page invariant checker and run it from representative writer tests.
-3. Add byte-level data-remanence tests for delete/update and LVAL update/delete.
-4. Promote the internal index seeker into a tested public or internal-experimental row seek surface.
-5. Build a DAO Compact and Repair validation matrix and use it to close stale design warnings.
-6. Add integration cache tests around large scans, interleaved table reads, and transaction-local page reads.
+1. Add a shared emitted-page invariant checker and run it from representative writer tests.
+2. Add byte-level data-remanence tests for delete/update and LVAL update/delete.
+3. Promote the internal index seeker into a tested public or internal-experimental row seek surface.
+4. Build a DAO Compact and Repair validation matrix and use it to close stale design warnings.
+5. Add integration cache tests around large scans, interleaved table reads, and transaction-local page reads.

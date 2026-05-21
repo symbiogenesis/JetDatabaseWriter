@@ -130,10 +130,17 @@ public sealed class AccessWriterOptions : IAccessOptions
     /// When <see langword="true"/>, each call to <c>CreateTableAsync</c>,
     /// <c>InsertRowsAsync</c>, <c>UpdateRowsAsync</c>, etc. begins a private
     /// transaction at entry, commits it on success, and rolls it back on
-    /// exception &#8212; so a crash mid-call leaves the database in its
-    /// pre-call state instead of in whatever partially-flushed state the
-    /// page-write pipeline had reached. Calls made inside an explicit
-    /// transaction are unaffected.
+    /// exception before commit replay &#8212; so validation and write-preparation
+    /// failures leave the database in its pre-call state instead of in whatever
+    /// partially-flushed state the page-write pipeline had reached. Calls made
+    /// inside an explicit transaction are unaffected.
+    /// <para>
+    /// This is an in-memory page journal, not a durable write-ahead log. If the
+    /// process, stream, device, or cancellation token fails after
+    /// <see cref="JetTransaction.CommitAsync(System.Threading.CancellationToken)"/>
+    /// starts replaying buffered pages, pages already written remain on disk and
+    /// no recovery pass is attempted.
+    /// </para>
     /// <para>
     /// Default: <see langword="false"/> (preserves today's flush-per-page
     /// behaviour). The flag is intentionally opt-in for the first release;

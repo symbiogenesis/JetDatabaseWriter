@@ -10,10 +10,11 @@ using JetDatabaseWriter.Pages;
 /// Represents an explicit, in-memory write transaction against a single
 /// <see cref="AccessWriter"/>. Page mutations performed inside a transaction
 /// are buffered in a <see cref="PageJournal"/> until <see cref="CommitAsync"/>
-/// atomically replays them to the database file. <see cref="RollbackAsync"/>
+/// replays them to the database file. <see cref="RollbackAsync"/>
 /// (and <see cref="DisposeAsync"/> on an uncommitted transaction) discards
 /// the journal — because nothing was written to disk during the transaction,
-/// rollback leaves the file in its pre-transaction state.
+/// rollback leaves the file in its pre-transaction state before commit replay
+/// begins.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -52,9 +53,9 @@ public sealed class JetTransaction : IAsyncDisposable
     internal bool IsTerminated => IsCommitted || IsRolledBack;
 
     /// <summary>
-    /// Atomically writes every buffered page to the database file, applying
-    /// per-page encryption and acquiring cooperative byte-range locks (when
-    /// enabled) just like a non-transactional write would.
+    /// Replays every buffered page to the database file, applying per-page
+    /// encryption and acquiring cooperative byte-range locks (when enabled)
+    /// just like a non-transactional write would.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task representing the asynchronous commit.</returns>

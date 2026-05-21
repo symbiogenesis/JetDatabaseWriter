@@ -53,7 +53,7 @@ internal sealed class TransactionLifecycle(AccessWriter writer)
     /// If <see cref="AccessWriterOptions.UseTransactionalWrites"/> is enabled
     /// and no explicit transaction is currently active, wraps
     /// <paramref name="work"/> in a private <see cref="JetTransaction"/> so a
-    /// crash mid-call leaves the database in its pre-call state.
+    /// exception before commit replay leaves the database in its pre-call state.
     /// </summary>
     internal async ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
     {

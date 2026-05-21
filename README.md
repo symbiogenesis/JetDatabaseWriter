@@ -41,7 +41,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 | ✅ **Complex columns** | Read/write attachments and multi-value columns (ACCDB) |
 | ✅ **Calculated columns** | ACCDB expression-column metadata, cached values, and a row-local expression evaluator |
 | ✅ **Concurrency** | `.ldb` / `.laccdb` lockfile + page-level byte-range locks matching the JET/ACE protocol |
-| ✅ **Transactions** | `BeginTransactionAsync()` → atomic `CommitAsync` / `RollbackAsync` via in-memory page journal |
+| ✅ **Transactions** | `BeginTransactionAsync()` page-buffered `CommitAsync` / `RollbackAsync` via in-memory journal |
 | ✅ **Performance** | Configurable LRU page cache, optional parallel page reads, streams millions of rows without loading the file |
 
 ---
@@ -522,16 +522,18 @@ await writer.CreateRelationshipAsync(new RelationshipDefinition(
 
 ## Transactions
 
-`AccessWriter` supports explicit transactions for atomic multi-row/page operations. All page mutations are buffered in memory until committed or rolled back.
+`AccessWriter` supports explicit page-buffered transactions for multi-row/page operations. All page mutations are buffered in memory until committed or rolled back.
 
 ```csharp
 await using var tx = await writer.BeginTransactionAsync();
 await writer.InsertRowAsync("Contacts", new object[] { 7, "Grace", "grace@example.com", 90.0m });
 await writer.UpdateRowsAsync("Contacts", "ContactID", 2, new Dictionary<string, object> { ["Score"] = 93.5m });
-await tx.CommitAsync(); // Writes all changes atomically
+await tx.CommitAsync(); // Replays all buffered pages and flushes the stream
 ```
 
 If the transaction is disposed without a `CommitAsync` call (for example, because an exception unwound the scope), all buffered changes are discarded automatically. Only one transaction may be active per `AccessWriter` instance.
+
+`CommitAsync` is not a durable write-ahead log. Once commit replay starts, pages are written directly to the target stream in page-number order, then the page-0 commit-lock byte is bumped and the stream is flushed. If the process, stream, device, or cancellation token fails after replay begins, pages already written are left in place and no recovery pass is attempted; the transaction object is marked rolled back and the exception is surfaced. WAL-style crash recovery is out of scope for the current file-format writer.
 
 ---
 
@@ -680,6 +682,9 @@ The items below are either **not yet implemented** or are important behavioral c
 
 ### Thread safety and concurrent access
 - **Do not treat a single `AccessReader` / `AccessWriter` instance as a parallel worker.** Low-level page I/O is funneled through one internal gate, so overlapping calls on the same instance block behind each other rather than running in parallel; `AccessWriter` also allows only one active explicit transaction per instance. **Concurrent writers against the same file will corrupt it.** Open with `UseLockFile = true` and `RespectExistingLockFile = true` (both defaults) to fail fast when another process already holds the database. The page byte-range locks are cooperative/advisory: they help protocol-obeying writers serialize page mutations, but they are not a substitute for external coordination with arbitrary tools.
+
+### Transaction durability
+- **No WAL or crash recovery.** Transactions provide in-memory rollback before commit replay begins. They do not provide ESE-style redo/undo recovery after process loss, storage failure, or cancellation once `CommitAsync` has started writing pages to the target stream.
 
 ### Forms, reports, macros, queries, VBA
 - Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.
