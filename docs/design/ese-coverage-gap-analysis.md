@@ -1,6 +1,6 @@
 # ESE-Inspired Coverage Gap Analysis
 
-**Status:** Updated after complex-column/LVAL scope closure, 2026-05-21.
+**Status:** Updated after page allocator, secure-erase, and tail-shrink implementation, 2026-05-21.
 **Reference:** [microsoft/Extensible-Storage-Engine](https://github.com/microsoft/Extensible-Storage-Engine).
 
 This note compares JetDatabaseWriter's current reader/writer test surface with themes from Microsoft's Extensible Storage Engine (ESE) repository. ESE is a full database engine, not an Access MDB/ACCDB file-format oracle, so the goal is not feature parity. The useful signal is where ESE's long-lived engine tests expose categories of risk that also matter to a direct JET/ACE page writer.
@@ -51,16 +51,16 @@ This is structural validation, not a checksum oracle or byte-for-byte DAO compar
 
 ### 3. Deleted Data Scrubbing and Data Remanence (DONE)
 
-ESE tests `DeleteScrubsData`, `ReplaceScrubsData`, `ReorganizePageScrubsData`, and overwrite-unused-space behavior. JetDatabaseWriter currently marks a deleted row by setting the high bit in the row-offset slot in [AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs); it does not overwrite the old row payload.
+ESE tests `DeleteScrubsData`, `ReplaceScrubsData`, `ReorganizePageScrubsData`, and overwrite-unused-space behavior. JetDatabaseWriter still defaults to normal JET logical delete semantics, but the writer now also has an opt-in secure-erase mode that overwrites deleted row bodies and old MEMO/OLE LVAL chains before returning their pages to the Access global free list.
 
-Local tests already asserted deleted rows are no longer readable through public APIs. The byte-level behavior is now explicit: delete/update preserve old row payload bytes, and old LVAL pages remain allocated until Access Compact and Repair or a future rewrite reclaims them.
+Local tests already asserted deleted rows are no longer readable through public APIs. The byte-level behavior is now explicit for both modes: default delete/update preserve old row payload bytes and old LVAL pages until reuse, while secure erase removes those bytes before free-list reclamation.
 
 Implemented coverage (2026-05-21):
 
 - Added [DataRemanenceTests.cs](../../JetDatabaseWriter.Tests/Writer/DataRemanenceTests.cs) byte-level coverage for Jet3, Jet4, and ACE inline row payloads: `DeleteRowsAsync` flips the deleted-slot bit without overwriting the row body, and `UpdateRowsAsync` leaves the old slot deleted with its original bytes intact while inserting a replacement row.
 - Added Jet4/ACE coverage for oversized OLE values stored on chained LVAL pages: update appends a fresh chain and leaves the old LVAL pages present; delete leaves both old and current LVAL pages present after the live row is removed.
-- Documented the behavior in [README.md](../../README.md): update/delete are logical mutations, not secure erase; old bytes may remain until Compact and Repair or a future rewrite reclaims them.
-- Left an opt-in scrub/reuse mode as a future feature decision. Implementing it would need to handle deleted row bodies, freed row gaps, index rebuild orphan pages, and old LVAL chains consistently.
+- Added secure-erase coverage showing `SecureEraseMode.DeletedRowsAndFreedPages` removes inline row payload markers and old LVAL markers from the file before reclamation.
+- Documented the behavior in [README.md](../../README.md): update/delete are logical mutations by default, while secure erase is an explicit writer option with storage-level caveats.
 
 ### 4. Public Index Seek and Cursor Navigation (DONE)
 
@@ -110,7 +110,7 @@ Implemented coverage (2026-05-21):
 - Added a logical TDEF-chain mutation layer in [RelationshipManager.cs](../../JetDatabaseWriter/Relationships/RelationshipManager.cs): read the full TDEF chain into a stitched buffer, parse and shift FK sections in logical offsets, then materialise the resized buffer back into physical TDEF pages, appending continuation pages when needed.
 - Promoted `RelationshipWriterTests.CreateRelationshipAsync_MultiPageEndpointTDef_EmitsFkLogicalIdxEntries` to a successful round trip for both parent-wide and child-wide endpoints.
 - Added wide-endpoint drop and rename coverage in [RelationshipMutationTests.cs](../../JetDatabaseWriter.Tests/Relationships/RelationshipMutationTests.cs), verifying FK logical-idx entries are removed and renamed through multi-page TDEF chains.
-- Documented the remaining page-lifecycle detail in [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md): if a logical TDEF shrink no longer needs every old continuation page, the unreachable pages are left for Compact and Repair, matching the existing index/LVAL orphan model.
+- Logical TDEF rewrites now deallocate old continuation pages that are no longer reachable after a shrink, so relationship drop/rename does not leave shortened-chain pages behind for Compact and Repair.
 
 ### 8. Complex Columns and LVAL Reclamation (DONE)
 
@@ -124,8 +124,9 @@ Implemented coverage and scope decision (2026-05-21):
 - `AccessWriterOptions.SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages` overwrites deleted row bodies and old MEMO/OLE LVAL chains before freeing their pages. The default remains `None`, preserving normal JET logical-delete behavior and backward-compatible remanence.
 - [DataRemanenceTests.cs](../../JetDatabaseWriter.Tests/Writer/DataRemanenceTests.cs) byte-pins both behaviors: default update/delete leave old inline row bytes and old LVAL pages on disk, while secure erase removes the markers from deleted row bodies and LVAL pages.
 - [PageAllocatorTests.cs](../../JetDatabaseWriter.Tests/Pages/PageAllocatorTests.cs) verifies fresh page-1 map initialization, free-page reuse, and tail shrinking across Jet3, Jet4, and ACE formats.
+- [DaoStorageMaintenanceTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoStorageMaintenanceTests.cs) runs Access DAO CompactDatabase against Northwind-hosted storage-maintenance mutations: secure-erased deleted rows inside otherwise-live pages, secure-erased old OLE/LVAL chains, full index rebuilds that replace old index pages, and relationship TDEF rewrites that shorten continuation chains.
 - Fresh writer-created complex system-table scaffolding remains reader-round-trip only by design. The strongest DAO compact test mutates an Access-authored Northwind fixture so that writer-created complex bytes are isolated from fresh-database bootstrap trust.
-- Broader DAO Compact and Repair coverage should be added when a new complex-column mutation becomes release-critical and a reliable Access-authored fixture can host it. Remaining cleanup gaps include full live-page compaction/renumbering, row-gap scrubbing inside still-live pages, and some orphan classes such as shortened TDEF continuations.
+- Broader DAO Compact and Repair coverage should be added when a new complex-column mutation becomes release-critical and a reliable Access-authored fixture can host it. Remaining cleanup gaps are full Access-style live-page compaction/renumbering and byte-scrubbing of arbitrary unused free-space gaps that were not created by secure delete/update.
 
 ## Documentation Drift Found During Triage (RESOLVED)
 
@@ -144,7 +145,7 @@ The following ESE areas do not appear to map directly to this project unless the
 - SQL parser/query optimizer and general query execution;
 - ODBC linked-source execution;
 - online backup/restore, incremental backup, and VSS integration;
-- database shrink/repair utilities;
+- full Access-style shrink/repair utilities beyond the implemented free-page tail shrinker;
 - multi-instance engine lifecycle and Windows JET API compatibility;
 - snapshot isolation/version-store semantics;
 - ESE-specific page sizes, page hydration/dehydration, and block-cache internals.
@@ -152,4 +153,4 @@ The following ESE areas do not appear to map directly to this project unless the
 ## Suggested Next Test Work
 
 1. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
-2. If opt-in scrub/reuse enters scope, add byte-level and DAO Compact and Repair coverage across deleted row bodies, freed row gaps, index rebuild orphan pages, TDEF continuation orphans, and old LVAL chains.
+2. Add new DAO Compact and Repair scrub/reuse cases only as new storage-mutating features are added; current coverage already includes deleted row gaps, old OLE/LVAL chains, replaced index pages, and shortened TDEF chains hosted in Access-authored Northwind fixtures.

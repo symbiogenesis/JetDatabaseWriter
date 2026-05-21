@@ -293,12 +293,18 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
         bool tdefDirty = false;
         long[][]? rebuiltIndexPageGroups = writer._format == DatabaseFormat.Jet3Mdb ? null : new long[numRealIdx][];
+        long[][]? oldIndexPageGroups = null;
         if (rebuiltIndexPageGroups is not null)
         {
             for (int i = 0; i < rebuiltIndexPageGroups.Length; i++)
             {
                 rebuiltIndexPageGroups[i] = Array.Empty<long>();
             }
+
+            oldIndexPageGroups = await ReadIndexPageGroupsFromUsageMapAsync(
+                ReadTableUsageMapPage(tdefBuffer),
+                numRealIdx,
+                cancellationToken).ConfigureAwait(false);
         }
 
         foreach (var (rieKey, rie) in realIdxByNum)
@@ -417,6 +423,91 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         if (tdefDirty)
         {
             await writer.WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (oldIndexPageGroups is not null && rebuiltIndexPageGroups is not null)
+        {
+            await DeallocateReplacedIndexPagesAsync(oldIndexPageGroups, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask<long[][]?> ReadIndexPageGroupsFromUsageMapAsync(
+        long usageMapPageNumber,
+        int numRealIdx,
+        CancellationToken cancellationToken)
+    {
+        if (usageMapPageNumber <= 0 || usageMapPageNumber >= writer._stream.Length / writer._pgSz)
+        {
+            return null;
+        }
+
+        byte[] page = await writer.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (page[0] != 0x01)
+            {
+                return null;
+            }
+
+            var result = new long[numRealIdx][];
+            for (int i = 0; i < result.Length; i++)
+            {
+                result[i] = Array.Empty<long>();
+            }
+
+            foreach (AccessBase.RowBound rowBound in writer.EnumerateLiveRowBounds(page))
+            {
+                int realIdxNum = rowBound.RowIndex - 2;
+                if (realIdxNum < 0 || realIdxNum >= numRealIdx || rowBound.RowSize < 5 || page[rowBound.RowStart] != 0x00)
+                {
+                    continue;
+                }
+
+                int basePage = AccessBase.Ri32(page, rowBound.RowStart + 1);
+                int bitCapacity = (rowBound.RowSize - 5) * 8;
+                var pageNumbers = new List<long>();
+                for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
+                {
+                    int byteOffset = rowBound.RowStart + 5 + (bitIndex / 8);
+                    byte bitMask = (byte)(1 << (bitIndex % 8));
+                    if ((page[byteOffset] & bitMask) != 0)
+                    {
+                        pageNumbers.Add((long)basePage + bitIndex);
+                    }
+                }
+
+                result[realIdxNum] = pageNumbers.ToArray();
+            }
+
+            return result;
+        }
+        finally
+        {
+            AccessBase.ReturnPage(page);
+        }
+    }
+
+    private async ValueTask DeallocateReplacedIndexPagesAsync(
+        long[][] oldIndexPageGroups,
+        long[][] rebuiltIndexPageGroups,
+        CancellationToken cancellationToken)
+    {
+        int groupCount = Math.Min(oldIndexPageGroups.Length, rebuiltIndexPageGroups.Length);
+        for (int realIdxNum = 0; realIdxNum < groupCount; realIdxNum++)
+        {
+            if (rebuiltIndexPageGroups[realIdxNum].Length == 0 || oldIndexPageGroups[realIdxNum].Length == 0)
+            {
+                continue;
+            }
+
+            var newPages = new HashSet<long>(rebuiltIndexPageGroups[realIdxNum]);
+            foreach (long oldPageNumber in oldIndexPageGroups[realIdxNum])
+            {
+                if (oldPageNumber > 2 && !newPages.Contains(oldPageNumber))
+                {
+                    await writer.DeallocatePageAsync(oldPageNumber, cancellationToken).ConfigureAwait(false);
+                }
+            }
         }
     }
 

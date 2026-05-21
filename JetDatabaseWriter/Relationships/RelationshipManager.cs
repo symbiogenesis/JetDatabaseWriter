@@ -1397,6 +1397,11 @@ internal sealed class RelationshipManager(AccessWriter writer)
         {
             await writer.WritePageAsync(pageNumbers[pageIndex], pages[pageIndex], cancellationToken).ConfigureAwait(false);
         }
+
+        for (int pageIndex = pageCount; pageIndex < existingPageNumbers.Count; pageIndex++)
+        {
+            await writer.DeallocatePageAsync(existingPageNumbers[pageIndex], cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private byte[][] MaterializeLogicalTDefPages(byte[] logicalBytes, int usedLength, long[] pageNumbers)
