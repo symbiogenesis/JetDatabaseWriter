@@ -125,6 +125,7 @@ internal static class FormatProbeApplication
         AddEnvMode(modes, "DIAG_LONG_ROW_BISECT", "long-row-bisect");
         AddEnvMode(modes, "DIAG_LONG_ROW_CORPUS", "long-row-corpus");
         AddEnvMode(modes, "DIAG_LONG_ROW_DAO_LAB", "long-row-dao-lab");
+        AddEnvMode(modes, "DIAG_LONG_ROW_DAO_TABLES", "long-row-dao-tables");
         AddEnvMode(modes, "DIAG_LONG_ROW_SUFFIX", "long-row-suffix");
         AddEnvMode(modes, "DIAG_LONG_ROW_CRC_SWEEP", "long-row-crc-sweep");
         AddEnvMode(modes, "DIAG_MEMO_READBACK", "memo-readback");
@@ -154,6 +155,7 @@ internal static class FormatProbeApplication
         "LONG-ROW-BISECT" or "LONG-ROW-BOUNDARY" => "long-row-bisect",
         "LONG-ROW-CORPUS" or "LONG-ROW-SCAN" or "LONG-ROW-SUFFIX-CORPUS" => "long-row-corpus",
         "LONG-ROW-DAO" or "LONG-ROW-DAO-LAB" or "LONG-ROW-SUFFIX-DAO" => "long-row-dao-lab",
+        "LONG-ROW-DAO-TABLES" or "LONG-ROW-SUFFIX-TABLES" => "long-row-dao-tables",
         "LONG-ROW-SUFFIX" or "LONG-ROW-SUFFIX-ANALYSIS" => "long-row-suffix",
         "LONG-ROW-CRC" or "LONG-ROW-CRC-SWEEP" or "LONG-ROW-SUFFIX-CRC" => "long-row-crc-sweep",
         "MEMO" or "MEMO-READBACK" => "memo-readback",
@@ -173,6 +175,7 @@ internal static class FormatProbeApplication
         "long-row-bisect" or
         "long-row-corpus" or
         "long-row-dao-lab" or
+        "long-row-dao-tables" or
         "long-row-suffix" or
         "long-row-crc-sweep" or
         "memo-readback";
@@ -197,6 +200,7 @@ internal static class FormatProbeApplication
       long-row-bisect     Run long-row chunk-boundary bisection
     long-row-corpus     Scan V2010 fixtures for 510-byte long-row keys
     long-row-dao-lab    Generate fresh DAO-authored V2010 suffix samples
+        long-row-dao-tables Extract compact encoder tables from the latest DAO lab
       long-row-suffix     Dump V2010 long-row suffix source diagnostics
       long-row-crc-sweep  Run the slow V2010 long-row CRC-16 suffix sweep
       memo-readback       Run the memo readback diagnostic
@@ -255,6 +259,10 @@ internal static class FormatProbeApplication
                     fixtures,
                     FormatProbeArtifacts.GetFilePath(probeDir, "long-row-dao-lab.md"),
                     FormatProbeArtifacts.CreateWorkDirectory(probeDir, "long-row-dao-lab"));
+            case "long-row-dao-tables":
+                return await JetDatabaseWriter.FormatProbe.LongRowSuffixProbe.RunDaoTableExportAsync(
+                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-dao-tables.md"),
+                    probeDir);
             case "long-row-suffix":
                 return await JetDatabaseWriter.FormatProbe.LongRowSuffixProbe.RunAnalysisAsync(
                     fixtures,

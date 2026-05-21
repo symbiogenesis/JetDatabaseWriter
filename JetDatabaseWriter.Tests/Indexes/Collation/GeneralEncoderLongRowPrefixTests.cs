@@ -55,6 +55,19 @@ public sealed class GeneralEncoderLongRowPrefixTests
         { "Table11_desc", ["37DD", "C1A1", "9A4E"] },
     };
 
+    public static TheoryData<string, bool, char, char, char, string> DaoDerivedLongRowSuffixSamples => new()
+    {
+        { "plain", true, 'a', 'a', 'd', "77A5" },
+        { "plain", false, 'b', ' ', ' ', "FF00" },
+        { "auxiliary", true, 'a', ' ', ' ', "3404" },
+        { "auxiliary", false, 'a', 'a', ' ', "CAC9" },
+        { "row10", true, 'j', ' ', 'b', "DF46" },
+        { "row10", true, ' ', ' ', ' ', "173E" },
+        { "row11", false, 'j', ' ', 'c', "01F9" },
+        { "row12", true, ' ', ' ', ' ', "1D58" },
+        { "row12", false, 'j', 'a', ' ', "B2B4" },
+    };
+
     [Theory]
     [MemberData(nameof(LongRowTables))]
     public async Task LongRowStressTable_FirstPrefixBytesMatchEncoderOutput(
@@ -111,6 +124,29 @@ public sealed class GeneralEncoderLongRowPrefixTests
             .ToList();
 
         Assert.Equal(expectedSuffixes, actualSuffixes);
+    }
+
+    [Theory]
+    [MemberData(nameof(DaoDerivedLongRowSuffixSamples))]
+    public async Task LongRowSuffix_DaoDerivedContributionTableSamples_MatchAccessSuffix(
+        string context,
+        bool ascending,
+        char precedingBoundaryChar,
+        char previousBoundaryChar,
+        char boundaryChar,
+        string expectedSuffix)
+    {
+        string text = await BuildDaoDerivedSampleTextAsync(
+            context,
+            precedingBoundaryChar,
+            previousBoundaryChar,
+            boundaryChar);
+
+        byte[] key = GeneralTextIndexEncoder.Encode(text, ascending);
+        string actualSuffix = Convert.ToHexString(key.AsSpan(PrefixMatchLength, 2));
+
+        Assert.Equal(LongRowEntryLength, key.Length);
+        Assert.Equal(expectedSuffix, actualSuffix);
     }
 
     private static async Task ValidateLongRowStressTableAsync(
@@ -252,6 +288,52 @@ public sealed class GeneralEncoderLongRowPrefixTests
             + $"(fixture='{fixturePath}'); this test exists to lock in the partial "
             + "long-row encoder result and is meaningless without any.";
         Assert.True(longRowKeysSeen > 0, noLongRowMsg);
+    }
+
+    private static async Task<string> BuildDaoDerivedSampleTextAsync(
+        string context,
+        char precedingBoundaryChar,
+        char previousBoundaryChar,
+        char boundaryChar)
+    {
+        char[] chars = context switch
+        {
+            "plain" => CreateFilledText('a'),
+            "auxiliary" => CreateAuxiliaryText(),
+            _ => (await ReadTemplateTextAsync(context)).ToCharArray(),
+        };
+
+        chars[252] = precedingBoundaryChar;
+        chars[253] = previousBoundaryChar;
+        chars[254] = boundaryChar;
+        return new string(chars);
+    }
+
+    private static char[] CreateFilledText(char value) =>
+        Enumerable.Repeat(value, 360).ToArray();
+
+    private static char[] CreateAuxiliaryText()
+    {
+        char[] chars = CreateFilledText('a');
+        chars[12] = '\u00C1';
+        chars[25] = '\u00ED';
+        chars[86] = '-';
+        chars[102] = '-';
+        return chars;
+    }
+
+    private static async Task<string> ReadTemplateTextAsync(string rowName)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            TestDatabases.TestIndexCodesV2010,
+            new AccessReaderOptions { UseLockFile = false },
+            ct);
+        DataTable dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
+        DataRow row = dataTable.Rows
+            .Cast<DataRow>()
+            .Single(row => string.Equals((string)row["name"], rowName, StringComparison.OrdinalIgnoreCase));
+        return (string)row["data"];
     }
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(

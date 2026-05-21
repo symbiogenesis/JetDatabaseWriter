@@ -5,6 +5,7 @@
 //   dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-crc-sweep
 //   dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-corpus
 //   dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-dao-lab
+//   dotnet run --project JetDatabaseWriter.FormatProbe -- long-row-dao-tables
 
 namespace JetDatabaseWriter.FormatProbe;
 
@@ -248,6 +249,293 @@ internal static class LongRowSuffixProbe
         await WriteOutputAsync(outFile, sb);
         return 0;
     }
+
+    public static async Task<int> RunDaoTableExportAsync(string outFile, string probeDir)
+    {
+        var sb = new StringBuilder();
+        AppendHeader(sb, "V2010 long-row DAO suffix table export", "long-row-dao-tables");
+        sb.AppendLine("Reads the most recent DAO-authored long-row lab database and emits compact contribution tables for the production encoder.");
+        sb.AppendLine();
+
+        string? labPath = FindLatestDaoLabDatabase(probeDir);
+        if (labPath is null)
+        {
+            sb.AppendLine(CultureInfo.InvariantCulture, $"No DAO lab database was found under `{probeDir}`.");
+            await WriteOutputAsync(outFile, sb);
+            return 1;
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Lab database: `{labPath}`");
+        sb.AppendLine();
+
+        await using var reader = await AccessReader.OpenAsync(
+            labPath,
+            new AccessReaderOptions { UseLockFile = false },
+            CancellationToken.None);
+
+        foreach ((string tableName, int seedBase) in new[] { ("Table11", 100000), ("Table11_desc", 101000) })
+        {
+            SuffixPatternTable table = await BuildSuffixPatternTableAsync(
+                reader,
+                tableName,
+                seedBase,
+                CancellationToken.None);
+            AppendDaoSuffixTableExport(sb, table);
+        }
+
+        await WriteOutputAsync(outFile, sb);
+        return 0;
+    }
+
+    private static string? FindLatestDaoLabDatabase(string probeDir)
+    {
+        if (!Directory.Exists(probeDir))
+        {
+            return null;
+        }
+
+        return Directory.EnumerateDirectories(probeDir, FormatProbeArtifacts.FilePrefix + "long-row-dao-lab-*")
+            .Select(directory => new
+            {
+                Directory = directory,
+                LastWriteTime = Directory.GetLastWriteTimeUtc(directory),
+                DatabasePath = Path.Combine(directory, FormatProbeArtifacts.FilePrefix + "long-row-dao-lab.accdb"),
+            })
+            .Where(candidate => File.Exists(candidate.DatabasePath))
+            .OrderByDescending(candidate => candidate.LastWriteTime)
+            .Select(candidate => candidate.DatabasePath)
+            .FirstOrDefault();
+    }
+
+    private static void AppendDaoSuffixTableExport(StringBuilder sb, SuffixPatternTable table)
+    {
+        sb.AppendLine(CultureInfo.InvariantCulture, $"## {table.TableName}");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- ascending: {table.Ascending}");
+        sb.AppendLine();
+
+        foreach ((string contextName, int matrixStart, int doubleSpaceContext) in new[]
+        {
+            ("Plain", DaoLabPairMatrixStart, 0),
+            ("Auxiliary", DaoLabAuxMatrixStart, -1),
+            ("Row12", DaoLabRow12MatrixStart, 3),
+            ("Row10", DaoLabRow10MatrixStart, 1),
+            ("Row11", DaoLabRow11MatrixStart, 2),
+        })
+        {
+            AppendDaoSuffixTableContextExport(sb, table, contextName, matrixStart, doubleSpaceContext);
+        }
+    }
+
+    private static void AppendDaoSuffixTableContextExport(
+        StringBuilder sb,
+        SuffixPatternTable table,
+        string contextName,
+        int matrixStart,
+        int doubleSpaceContext)
+    {
+        List<SuffixPatternRow> matrixRows = table.Rows
+            .Where(row => row.Seed is not null && row.Seed.Value >= matrixStart && row.Seed.Value < matrixStart + DaoLabPairMatrixRowCount)
+            .OrderBy(row => row.Seed)
+            .ToList();
+        if (!TryBuildMatrix(table, matrixStart, out ushort[] suffixes, out bool[] present))
+        {
+            return;
+        }
+
+        int size = DaoLabAlphabetLength;
+        int baseIndex = DaoLabAlphabet.IndexOf('a', StringComparison.Ordinal);
+        int spaceIndex = DaoLabAlphabet.IndexOf(' ', StringComparison.Ordinal);
+        int baseOffset = (baseIndex * size) + baseIndex;
+        if (baseIndex < 0 || spaceIndex < 0 || !present[baseOffset])
+        {
+            return;
+        }
+
+        ushort baseValue = suffixes[baseOffset];
+        var rowContributions = new ushort[size];
+        var columnContributions = new ushort[size];
+        var shiftedSuffixes = new ushort[size];
+        var rowPresent = new bool[size];
+        var columnPresent = new bool[size];
+        var shiftedPresent = new bool[size];
+
+        for (int index = 0; index < size; index++)
+        {
+            int rowOffset = (index * size) + baseIndex;
+            if (present[rowOffset])
+            {
+                rowContributions[index] = (ushort)(suffixes[rowOffset] ^ baseValue);
+                rowPresent[index] = true;
+            }
+
+            int columnOffset = (baseIndex * size) + index;
+            if (present[columnOffset])
+            {
+                columnContributions[index] = (ushort)(suffixes[columnOffset] ^ baseValue);
+                columnPresent[index] = true;
+            }
+
+            int shiftedOffset = (index * size) + spaceIndex;
+            if (present[shiftedOffset])
+            {
+                shiftedSuffixes[index] = suffixes[shiftedOffset];
+                shiftedPresent[index] = true;
+            }
+        }
+
+        int normalMatches = 0;
+        int normalTotal = 0;
+        int shiftedMatches = 0;
+        int shiftedTotal = 0;
+        for (int first = 0; first < size; first++)
+        {
+            for (int second = 0; second < size; second++)
+            {
+                int offset = (first * size) + second;
+                if (!present[offset])
+                {
+                    continue;
+                }
+
+                if (second == spaceIndex)
+                {
+                    if (shiftedPresent[first])
+                    {
+                        shiftedTotal++;
+                        if (shiftedSuffixes[first] == suffixes[offset])
+                        {
+                            shiftedMatches++;
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (!rowPresent[first] || !columnPresent[second])
+                {
+                    continue;
+                }
+
+                normalTotal++;
+                ushort predicted = (ushort)(baseValue ^ rowContributions[first] ^ columnContributions[second]);
+                if (predicted == suffixes[offset])
+                {
+                    normalMatches++;
+                }
+            }
+        }
+
+        ushort? tripleSpaceSuffix = TryGetDoubleSpaceSuffix(table, doubleSpaceContext, spaceIndex);
+        int matrixMismatches = matrixRows.Count(row => row.AccessSuffix != row.EncoderSuffix);
+        List<SuffixPatternRow> doubleSpaceRows = GetDoubleSpaceRows(table, doubleSpaceContext);
+        int doubleSpaceMismatches = doubleSpaceRows.Count(row => row.AccessSuffix != row.EncoderSuffix);
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"### {contextName}");
+        sb.AppendLine();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- matrix seeds: {matrixStart}-{matrixStart + DaoLabPairMatrixRowCount - 1}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- present rows: {present.Count(value => value)}/{present.Length}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- normal fit: {normalMatches}/{normalTotal}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- boundary-space fit: {shiftedMatches}/{shiftedTotal}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- production encoder matrix mismatches: {matrixMismatches}/{matrixRows.Count}");
+        if (doubleSpaceContext >= 0)
+        {
+            sb.AppendLine(CultureInfo.InvariantCulture, $"- production encoder double-space mismatches: {doubleSpaceMismatches}/{doubleSpaceRows.Count}");
+        }
+
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- base suffix: `{baseValue:X4}`");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- shifted `SP` suffix present: {shiftedPresent[spaceIndex]}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"- triple-space suffix: `{FormatNullableHex(tripleSpaceSuffix)}`");
+        sb.AppendLine();
+        AppendDaoRemainderSummary(sb, matrixRows, matrixStart);
+        sb.AppendLine();
+        sb.AppendLine("```csharp");
+        string prefix = table.Ascending ? "Ascending" : "Descending";
+        sb.AppendLine(CultureInfo.InvariantCulture, $"// {prefix} {contextName}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Base = 0x{baseValue:X4}, TripleSpace = {FormatNullableCSharpHex(tripleSpaceSuffix)}");
+        AppendCSharpUShortArray(sb, "Row", rowContributions);
+        AppendCSharpUShortArray(sb, "Column", columnContributions);
+        AppendCSharpUShortArray(sb, "BoundarySpace", shiftedSuffixes);
+        sb.AppendLine("```");
+        sb.AppendLine();
+    }
+
+    private static ushort? TryGetDoubleSpaceSuffix(
+        SuffixPatternTable table,
+        int doubleSpaceContext,
+        int alphabetIndex)
+    {
+        if (doubleSpaceContext < 0)
+        {
+            return null;
+        }
+
+        int seed = DaoLabDoubleSpaceSweepStart + (doubleSpaceContext * DaoLabAlphabetLength) + alphabetIndex;
+        return table.Rows.FirstOrDefault(row => row.Seed == seed) is { Seed: not null } row
+            ? row.AccessSuffix
+            : null;
+    }
+
+    private static List<SuffixPatternRow> GetDoubleSpaceRows(SuffixPatternTable table, int doubleSpaceContext)
+    {
+        if (doubleSpaceContext < 0)
+        {
+            return [];
+        }
+
+        int firstSeed = DaoLabDoubleSpaceSweepStart + (doubleSpaceContext * DaoLabAlphabetLength);
+        return table.Rows
+            .Where(row => row.Seed is not null && row.Seed.Value >= firstSeed && row.Seed.Value < firstSeed + DaoLabAlphabetLength)
+            .OrderBy(row => row.Seed)
+            .ToList();
+    }
+
+    private static void AppendDaoRemainderSummary(StringBuilder sb, List<SuffixPatternRow> rows, int matrixStart)
+    {
+        sb.AppendLine("Full-entry remainder signatures after byte 510:");
+        sb.AppendLine();
+        sb.AppendLine("| Full length | Remainder | Rows | Examples | First suffixes |");
+        sb.AppendLine("|---:|---|---:|---|---|");
+
+        foreach (IGrouping<string, SuffixPatternRow> group in rows
+            .GroupBy(row => string.Concat(
+                row.FullLength?.ToString(CultureInfo.InvariantCulture) ?? "-",
+                ":",
+                ToHexStringOrEmpty(row.FullKey, LongRowEntryLength, row.FullKey.Length - LongRowEntryLength)))
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Take(12))
+        {
+            string[] keyParts = group.Key.Split(':', 2);
+            string examples = string.Join(" ", group.Take(6).Select(row => $"`{EscapeMarkdown(GetMatrixPairText(row, matrixStart))}`"));
+            string suffixes = string.Join(" ", group.Take(6).Select(row => $"`{row.AccessSuffix:X4}`"));
+            sb.AppendLine(CultureInfo.InvariantCulture, $"| {keyParts[0]} | `{keyParts[1]}` | {group.Count()} | {examples} | {suffixes} |");
+        }
+    }
+
+    private static void AppendCSharpUShortArray(StringBuilder sb, string name, ushort[] values)
+    {
+        sb.AppendLine(CultureInfo.InvariantCulture, $"{name} = [");
+        for (int offset = 0; offset < values.Length; offset += 13)
+        {
+            ushort[] row = values.Skip(offset).Take(13).ToArray();
+            sb.Append("    ");
+            sb.Append(string.Join(", ", row.Select(value => string.Create(CultureInfo.InvariantCulture, $"0x{value:X4}"))));
+            sb.AppendLine(offset + row.Length < values.Length ? "," : string.Empty);
+        }
+
+        sb.AppendLine("]; ");
+    }
+
+    private static string FormatNullableHex(ushort? value) =>
+        value is ushort concreteValue
+            ? concreteValue.ToString("X4", CultureInfo.InvariantCulture)
+            : "null";
+
+    private static string FormatNullableCSharpHex(ushort? value) =>
+        value is ushort concreteValue
+            ? string.Create(CultureInfo.InvariantCulture, $"0x{concreteValue:X4}")
+            : "null";
 
     private static async Task AppendDaoLabPatternSummaryAsync(string labPath, StringBuilder sb, CancellationToken ct)
     {
