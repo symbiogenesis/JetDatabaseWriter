@@ -70,104 +70,142 @@ internal static class General97TextIndexEncoder
         // Per Jackcess GeneralLegacyIndexCodes.toIndexCharSequence — same
         // truncation/trim rule used for all sort orders (TEXT_FIELD_MAX_LENGTH
         // / TEXT_FIELD_UNIT_SIZE = 127 chars).
-        var chars = text.AsSpan(0, Math.Min(text.Length, MaxTextIndexCharLength)).TrimEnd(' ');
+        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, MaxTextIndexCharLength)).TrimEnd(' ');
+        int extraByteCapacity = GetExtraByteCapacity(chars.Length);
 
-        var bout = new List<byte>(chars.Length + 4)
+        var bytes = new List<byte>(chars.Length + extraByteCapacity + 2)
         {
             ascending
                 ? GeneralLegacyTextIndexEncoder.FlagAscendingNonNull
                 : GeneralLegacyTextIndexEncoder.FlagDescendingNonNull,
         };
 
-        // Position immediately AFTER the start flag — never bit-flipped.
-        int payloadStart = bout.Count;
-
-        NibbleStream? extraCodes = null;
-        int sigCharCount = 0;
+        Span<byte> extraBytes = stackalloc byte[extraByteCapacity];
+        int extraNibbleCount = 0;
+        int significantCharCount = 0;
         GeneralLegacyTextIndexEncoder.CharHandler[] codes = Codes.Value;
-        short[] extMappings = ExtMappings.Value;
+        short[]? extMappings = null;
 
-        foreach (char c in chars)
+        foreach (char currentChar in chars)
         {
-            GeneralLegacyTextIndexEncoder.CharHandler ch = GetCharHandler(c, codes, extMappings);
+            GeneralLegacyTextIndexEncoder.CharHandler handler = GetCharHandler(currentChar, codes, ref extMappings);
 
-            byte[]? inline = ch.GetInlineBytes(c);
+            byte[]? inline = handler.GetInlineBytes(currentChar);
             if (inline is not null)
             {
-                bout.AddRange(inline);
+                bytes.AddRange(inline);
             }
 
-            if (ch.Type == GeneralLegacyTextIndexEncoder.CharHandlerType.Simple)
+            if (handler.Type == GeneralLegacyTextIndexEncoder.CharHandlerType.Simple)
             {
                 continue;
             }
 
-            if (ch.Type == GeneralLegacyTextIndexEncoder.CharHandlerType.Significant)
+            if (handler.Type == GeneralLegacyTextIndexEncoder.CharHandlerType.Significant)
             {
-                sigCharCount++;
+                significantCharCount++;
                 continue;
             }
 
-            byte[]? extra = ch.ExtraBytes;
+            byte[]? extra = handler.ExtraBytes;
             if (extra is not null && extra.Length > 0)
             {
-                if (extraCodes is null)
+                if (extraNibbleCount == 0)
                 {
-                    extraCodes = new NibbleStream(chars.Length);
-                    extraCodes.WriteNibble(ExtCodesBoundsNibble);
+                    WriteNibble(extraBytes, ref extraNibbleCount, ExtCodesBoundsNibble);
                 }
 
-                if (sigCharCount > 0)
+                if (significantCharCount > 0)
                 {
-                    extraCodes.WriteFillNibbles(sigCharCount, InternationalExtraPlaceholder);
-                    sigCharCount = 0;
+                    WriteFillNibbles(
+                        extraBytes,
+                        ref extraNibbleCount,
+                        significantCharCount,
+                        InternationalExtraPlaceholder);
+                    significantCharCount = 0;
                 }
 
                 // General 97 only consumes the first extra-byte (low nibble).
-                extraCodes.WriteNibble(extra[0]);
+                WriteNibble(extraBytes, ref extraNibbleCount, extra[0]);
             }
         }
 
-        if (extraCodes is not null)
+        if (extraNibbleCount > 0)
         {
-            extraCodes.WriteNibble(ExtCodesBoundsNibble);
-            extraCodes.WriteTo(bout);
+            WriteNibble(extraBytes, ref extraNibbleCount, ExtCodesBoundsNibble);
+            AppendBytes(bytes, extraBytes[..GetByteLength(extraNibbleCount)]);
         }
         else
         {
-            bout.Add(GeneralLegacyTextIndexEncoder.EndExtraText);
+            bytes.Add(GeneralLegacyTextIndexEncoder.EndExtraText);
         }
 
         if (!ascending)
         {
-            for (int j = payloadStart; j < bout.Count; j++)
+            for (int byteIndex = 1; byteIndex < bytes.Count; byteIndex++)
             {
-                bout[j] = unchecked((byte)~bout[j]);
+                bytes[byteIndex] = unchecked((byte)~bytes[byteIndex]);
             }
         }
 
-        return [.. bout];
+        return [.. bytes];
     }
 
     private static GeneralLegacyTextIndexEncoder.CharHandler GetCharHandler(
-        char c,
+        char currentChar,
         GeneralLegacyTextIndexEncoder.CharHandler[] codes,
-        short[] extMappings)
+        ref short[]? extMappings)
     {
-        if (c <= LastChar)
+        if (currentChar <= LastChar)
         {
-            return codes[c];
+            return codes[currentChar];
         }
 
-        if (c < FirstMapChar || c > LastMapChar)
+        if (currentChar < FirstMapChar || currentChar > LastMapChar)
         {
             return GeneralLegacyTextIndexEncoder.IgnoredHandlerInstance;
         }
 
         // Some extended chars are equivalent to single-byte chars; the rest
         // map to 0 (which itself is an "ignored" char in the BMP table).
-        int extOffset = c - FirstMapChar;
+        extMappings ??= ExtMappings.Value;
+        int extOffset = currentChar - FirstMapChar;
         return codes[extMappings[extOffset]];
+    }
+
+    private static int GetExtraByteCapacity(int charCount) => (charCount + 3) / 2;
+
+    private static int GetByteLength(int nibbleCount) => (nibbleCount + 1) / 2;
+
+    private static void WriteNibble(Span<byte> bytes, ref int nibbleCount, int value)
+    {
+        int byteIndex = nibbleCount / 2;
+        if (nibbleCount % 2 == 0)
+        {
+            bytes[byteIndex] = unchecked((byte)((value << 4) & 0xF0));
+        }
+        else
+        {
+            bytes[byteIndex] = unchecked((byte)(bytes[byteIndex] | (value & 0x0F)));
+        }
+
+        nibbleCount++;
+    }
+
+    private static void WriteFillNibbles(Span<byte> bytes, ref int nibbleCount, int length, byte value)
+    {
+        for (int fillIndex = 0; fillIndex < length; fillIndex++)
+        {
+            WriteNibble(bytes, ref nibbleCount, value);
+        }
+    }
+
+    private static void AppendBytes(List<byte> sink, ReadOnlySpan<byte> bytes)
+    {
+        foreach (byte value in bytes)
+        {
+            sink.Add(value);
+        }
     }
 
     private static short[] LoadMappings(string resourceName, char firstChar, char lastChar)
@@ -186,80 +224,18 @@ internal static class General97TextIndexEncoder
         string? line;
         while ((line = reader.ReadLine()) is not null)
         {
-            line = line.Trim();
-            if (line.Length == 0)
+            ReadOnlySpan<char> trimmedLine = line.AsSpan().Trim();
+            if (trimmedLine.IsEmpty)
             {
                 continue;
             }
 
-            int comma = line.IndexOf(',', StringComparison.Ordinal);
-            int fromCode = int.Parse(line.AsSpan(0, comma), NumberStyles.Integer, CultureInfo.InvariantCulture);
-            int toCode = int.Parse(line.AsSpan(comma + 1), NumberStyles.Integer, CultureInfo.InvariantCulture);
+            int comma = trimmedLine.IndexOf(',');
+            int fromCode = int.Parse(trimmedLine[..comma], NumberStyles.Integer, CultureInfo.InvariantCulture);
+            int toCode = int.Parse(trimmedLine[(comma + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture);
             values[fromCode - firstChar] = (short)toCode;
         }
 
         return values;
-    }
-
-    /// <summary>
-    /// Bit-stream that accepts 4-bit nibbles, packing two per byte with the
-    /// first nibble in the high four bits. Mirrors Jackcess's
-    /// <c>NibbleStream</c> helper used by <c>General97IndexCodes</c>.
-    /// </summary>
-    private sealed class NibbleStream(int initialCapacity)
-    {
-        private readonly List<byte> _bytes = new(Math.Max(1, (initialCapacity + 1) / 2));
-        private int _nibbleLen;
-
-        public void WriteNibble(int b)
-        {
-            if (_nibbleLen % 2 == 0)
-            {
-                _bytes.Add(unchecked((byte)((b << 4) & 0xF0)));
-            }
-            else
-            {
-                int idx = _bytes.Count - 1;
-                _bytes[idx] = unchecked((byte)(_bytes[idx] | (b & 0x0F)));
-            }
-
-            _nibbleLen++;
-        }
-
-        public void WriteFillNibbles(int length, byte b)
-        {
-            // Faithful port of Jackcess writeFillNibbles — emits a single
-            // mid-byte half-nibble if the stream is currently mid-byte, then
-            // bulk-emits double-nibble bytes, then a trailing half-nibble.
-            int newNibbleLen = _nibbleLen + length;
-            int remaining = length;
-
-            if (_nibbleLen % 2 != 0)
-            {
-                int idx = _bytes.Count - 1;
-                _bytes[idx] = unchecked((byte)(_bytes[idx] | (b & 0x0F)));
-                remaining--;
-            }
-
-            if (remaining > 1)
-            {
-                byte doubleB = unchecked((byte)(((b << 4) & 0xF0) | (b & 0x0F)));
-                do
-                {
-                    _bytes.Add(doubleB);
-                    remaining -= 2;
-                }
-                while (remaining > 1);
-            }
-
-            if (remaining == 1)
-            {
-                _bytes.Add(unchecked((byte)((b << 4) & 0xF0)));
-            }
-
-            _nibbleLen = newNibbleLen;
-        }
-
-        public void WriteTo(List<byte> sink) => sink.AddRange(_bytes);
     }
 }

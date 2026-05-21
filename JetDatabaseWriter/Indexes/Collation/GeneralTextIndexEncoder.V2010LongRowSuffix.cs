@@ -4,7 +4,6 @@ using System;
 
 internal static partial class GeneralTextIndexEncoder
 {
-    private const string V2010SuffixAlphabet = " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+";
     private const int V2010SuffixAlphabetLength = 65;
     private const int V2010SuffixSpaceIndex = 0;
     private const int V2010SuffixBoundaryPreviousIndex = 253;
@@ -217,6 +216,22 @@ internal static partial class GeneralTextIndexEncoder
         tripleSpaceSuffix: 0xC303,
         hasBoundarySpaceForPreviousSpace: true);
 
+    private static readonly (byte[] Remainder, V2010LongRowSuffixTable Table)[] AscendingRemainderTables =
+    [
+        (AscendingAuxiliaryRemainder, AscendingAuxiliarySuffixTable),
+        (AscendingRow10Remainder, AscendingRow10SuffixTable),
+        (AscendingRow11Remainder, AscendingRow11SuffixTable),
+        (AscendingRow12Remainder, AscendingRow12SuffixTable),
+    ];
+
+    private static readonly (byte[] Remainder, V2010LongRowSuffixTable Table)[] DescendingRemainderTables =
+    [
+        (DescendingAuxiliaryRemainder, DescendingAuxiliarySuffixTable),
+        (DescendingRow10Remainder, DescendingRow10SuffixTable),
+        (DescendingRow11Remainder, DescendingRow11SuffixTable),
+        (DescendingRow12Remainder, DescendingRow12SuffixTable),
+    ];
+
     private static ushort? TryComputeV2010LongRowSuffix(string text, bool ascending, byte[] fullEntry)
     {
         if (text.Length < V2010SuffixMinimumTextLength
@@ -225,20 +240,26 @@ internal static partial class GeneralTextIndexEncoder
             return null;
         }
 
-        V2010LongRowSuffixContext? context = TryGetV2010LongRowContext(text, fullEntry, ascending);
-        if (context is null)
-        {
-            return null;
-        }
-
-        int previousBoundaryIndex = GetV2010SuffixAlphabetIndex(text[V2010SuffixBoundaryPreviousIndex]);
-        int boundaryIndex = GetV2010SuffixAlphabetIndex(text[V2010SuffixBoundaryIndex]);
+        char previousBoundaryChar = text[V2010SuffixBoundaryPreviousIndex];
+        char boundaryChar = text[V2010SuffixBoundaryIndex];
+        int previousBoundaryIndex = GetV2010SuffixAlphabetIndex(previousBoundaryChar);
+        int boundaryIndex = GetV2010SuffixAlphabetIndex(boundaryChar);
         if (previousBoundaryIndex < 0 || boundaryIndex < 0)
         {
             return null;
         }
 
-        V2010LongRowSuffixTable table = GetV2010LongRowSuffixTable(context.Value, ascending);
+        V2010LongRowSuffixTable? table = TryGetV2010LongRowSuffixTable(
+            text,
+            fullEntry,
+            ascending,
+            previousBoundaryChar,
+            boundaryChar);
+        if (table is null)
+        {
+            return null;
+        }
+
         return TryLookupV2010LongRowSuffix(
             table,
             text[V2010SuffixBoundaryPreviousIndex - 1],
@@ -246,57 +267,26 @@ internal static partial class GeneralTextIndexEncoder
             boundaryIndex);
     }
 
-    private static V2010LongRowSuffixContext? TryGetV2010LongRowContext(
+    private static V2010LongRowSuffixTable? TryGetV2010LongRowSuffixTable(
         string text,
         byte[] fullEntry,
-        bool ascending)
+        bool ascending,
+        char previousBoundaryChar,
+        char boundaryChar)
     {
-        if (ascending)
+        foreach ((byte[] remainder, V2010LongRowSuffixTable table) in ascending
+                     ? AscendingRemainderTables
+                     : DescendingRemainderTables)
         {
-            if (MatchesRemainder(fullEntry, AscendingAuxiliaryRemainder))
+            if (MatchesRemainder(fullEntry, remainder))
             {
-                return V2010LongRowSuffixContext.Auxiliary;
+                return table;
             }
-
-            if (MatchesRemainder(fullEntry, AscendingRow10Remainder))
-            {
-                return V2010LongRowSuffixContext.Row10;
-            }
-
-            if (MatchesRemainder(fullEntry, AscendingRow11Remainder))
-            {
-                return V2010LongRowSuffixContext.Row11;
-            }
-
-            if (MatchesRemainder(fullEntry, AscendingRow12Remainder))
-            {
-                return V2010LongRowSuffixContext.Row12;
-            }
-
-            return IsPlainV2010DaoContext(text) ? V2010LongRowSuffixContext.Plain : null;
         }
 
-        if (MatchesRemainder(fullEntry, DescendingAuxiliaryRemainder))
-        {
-            return V2010LongRowSuffixContext.Auxiliary;
-        }
-
-        if (MatchesRemainder(fullEntry, DescendingRow10Remainder))
-        {
-            return V2010LongRowSuffixContext.Row10;
-        }
-
-        if (MatchesRemainder(fullEntry, DescendingRow11Remainder))
-        {
-            return V2010LongRowSuffixContext.Row11;
-        }
-
-        if (MatchesRemainder(fullEntry, DescendingRow12Remainder))
-        {
-            return V2010LongRowSuffixContext.Row12;
-        }
-
-        return IsPlainV2010DaoContext(text) ? V2010LongRowSuffixContext.Plain : null;
+        return IsPlainV2010DaoContext(text, previousBoundaryChar, boundaryChar)
+            ? ascending ? AscendingPlainSuffixTable : DescendingPlainSuffixTable
+            : null;
     }
 
     private static ushort? TryLookupV2010LongRowSuffix(
@@ -328,27 +318,6 @@ internal static partial class GeneralTextIndexEncoder
             ^ table.ColumnContributions[boundaryIndex]);
     }
 
-    private static V2010LongRowSuffixTable GetV2010LongRowSuffixTable(
-        V2010LongRowSuffixContext context,
-        bool ascending)
-        => ascending
-            ? context switch
-            {
-                V2010LongRowSuffixContext.Plain => AscendingPlainSuffixTable,
-                V2010LongRowSuffixContext.Auxiliary => AscendingAuxiliarySuffixTable,
-                V2010LongRowSuffixContext.Row10 => AscendingRow10SuffixTable,
-                V2010LongRowSuffixContext.Row11 => AscendingRow11SuffixTable,
-                _ => AscendingRow12SuffixTable,
-            }
-            : context switch
-            {
-                V2010LongRowSuffixContext.Plain => DescendingPlainSuffixTable,
-                V2010LongRowSuffixContext.Auxiliary => DescendingAuxiliarySuffixTable,
-                V2010LongRowSuffixContext.Row10 => DescendingRow10SuffixTable,
-                V2010LongRowSuffixContext.Row11 => DescendingRow11SuffixTable,
-                _ => DescendingRow12SuffixTable,
-            };
-
     private static bool MatchesRemainder(byte[] fullEntry, ReadOnlySpan<byte> remainder)
     {
         const int remainderStart = GeneralLegacyTextIndexEncoder.MaxEntryLengthGeneralV2010;
@@ -356,7 +325,10 @@ internal static partial class GeneralTextIndexEncoder
             && fullEntry.AsSpan(remainderStart, remainder.Length).SequenceEqual(remainder);
     }
 
-    private static bool IsPlainV2010DaoContext(string text)
+    private static bool IsPlainV2010DaoContext(
+        string text,
+        char previousBoundaryChar,
+        char boundaryChar)
     {
         for (int index = 0; index < text.Length; index++)
         {
@@ -366,8 +338,8 @@ internal static partial class GeneralTextIndexEncoder
             }
 
             if (index == V2010SuffixBoundaryPreviousIndex - 1
-                && text[V2010SuffixBoundaryPreviousIndex] == ' '
-                && text[V2010SuffixBoundaryIndex] == ' '
+                && previousBoundaryChar == ' '
+                && boundaryChar == ' '
                 && text[index] != ' '
                 && GetV2010SuffixAlphabetIndex(text[index]) >= 0)
             {
@@ -384,23 +356,24 @@ internal static partial class GeneralTextIndexEncoder
     }
 
     private static int GetV2010SuffixAlphabetIndex(char value)
-        => V2010SuffixAlphabet.AsSpan().IndexOf(value);
+        => value switch
+        {
+            ' ' => 0,
+            >= 'a' and <= 'z' => value - 'a' + 1,
+            >= 'A' and <= 'Z' => value - 'A' + 27,
+            >= '0' and <= '9' => value - '0' + 53,
+            '_' => 63,
+            '+' => 64,
+            _ => -1,
+        };
 
-    private static ushort[] CreateSpaceOnlyTable(ushort spaceValue)
-    {
-        ushort[] values = new ushort[V2010SuffixAlphabetLength];
-        values[V2010SuffixSpaceIndex] = spaceValue;
-        return values;
-    }
+    private static ushort[] CreateSpaceOnlyTable(ushort spaceValue) => CreateSpaceAndOtherTable(spaceValue, 0);
 
     private static ushort[] CreateSpaceAndOtherTable(ushort spaceValue, ushort otherValue)
     {
         ushort[] values = new ushort[V2010SuffixAlphabetLength];
+        Array.Fill(values, otherValue);
         values[V2010SuffixSpaceIndex] = spaceValue;
-        for (int index = 1; index < values.Length; index++)
-        {
-            values[index] = otherValue;
-        }
 
         return values;
     }
@@ -434,14 +407,5 @@ internal static partial class GeneralTextIndexEncoder
         public ushort? TripleSpaceSuffix { get; }
 
         public bool HasBoundarySpaceForPreviousSpace { get; }
-    }
-
-    private enum V2010LongRowSuffixContext
-    {
-        Plain,
-        Auxiliary,
-        Row10,
-        Row11,
-        Row12,
     }
 }

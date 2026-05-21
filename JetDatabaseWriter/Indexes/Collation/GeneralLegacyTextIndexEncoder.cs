@@ -35,7 +35,9 @@ using System.Text;
 internal static class GeneralLegacyTextIndexEncoder
 {
     // Per JetFormat.TEXT_FIELD_MAX_LENGTH (255 bytes) / TEXT_FIELD_UNIT_SIZE (2 bytes/char in Jet4/ACE).
-    internal const int MaxTextIndexCharLength = 255 / 2;
+    private const int MaxTextIndexByteLength = 255;
+
+    internal const int MaxTextIndexCharLength = MaxTextIndexByteLength / 2;
 
     internal const byte EndText = 0x01;
     internal const byte EndExtraText = 0x00;
@@ -151,20 +153,16 @@ internal static class GeneralLegacyTextIndexEncoder
         if (maxEntryLength > 0)
         {
             // V2010 / ACE: continuous encoding of up to 255 characters with
-            // no chunk split. The FinishEntry truncation at maxEntryLength
-            // handles the byte cap.
-            ReadOnlySpan<char> v2010Chars = text.AsSpan(0, Math.Min(text.Length, 255));
-
-            var v2010Bout = new List<byte>(v2010Chars.Length + 4)
-            {
-                ascending ? FlagAscendingNonNull : FlagDescendingNonNull,
-            };
-            int v2010PayloadStart = v2010Bout.Count;
-            var v2010State = new ChunkEmitState(v2010Chars.Length);
-            EmitChunkInline(v2010Chars, codes, extCodes, v2010Bout, v2010State);
-            FinishEntry(v2010Bout, v2010PayloadStart, v2010State, ascending, 0);
-            ApplyMaxEntryLength(v2010Bout, text, ascending, maxEntryLength, longRowSuffixProvider);
-            return [.. v2010Bout];
+            // no chunk split. ApplyMaxEntryLength handles the byte cap.
+            ReadOnlySpan<char> v2010Chars = text.AsSpan(0, Math.Min(text.Length, MaxTextIndexByteLength));
+            return EncodeSingleChunk(
+                text,
+                v2010Chars,
+                ascending,
+                codes,
+                extCodes,
+                maxEntryLength,
+                longRowSuffixProvider);
         }
 
         if (text.Length > MaxTextIndexCharLength)
@@ -187,26 +185,32 @@ internal static class GeneralLegacyTextIndexEncoder
                     ascending,
                     codes,
                     extCodes,
-                    longRowSeparator ?? LongRowSeparatorGeneralLegacy,
-                    0);
+                    longRowSeparator ?? LongRowSeparatorGeneralLegacy);
             }
         }
 
         ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, MaxTextIndexCharLength)).TrimEnd(' ');
 
-        var bout = new List<byte>(chars.Length + 4)
-        {
-            ascending ? FlagAscendingNonNull : FlagDescendingNonNull,
-        };
+        return EncodeSingleChunk(text, chars, ascending, codes, extCodes, 0, null);
+    }
 
-        // Position immediately AFTER the start flag — the start flag is never
-        // bit-flipped by the descending pass.
+    private static byte[] EncodeSingleChunk(
+        string text,
+        ReadOnlySpan<char> chars,
+        bool ascending,
+        CharHandler[] codes,
+        CharHandler[] extCodes,
+        int maxEntryLength,
+        LongRowSuffixProvider? longRowSuffixProvider)
+    {
+        var bout = CreateEntryBuffer(chars.Length, ascending);
         int payloadStart = bout.Count;
 
         var state = new ChunkEmitState(chars.Length);
         EmitChunkInline(chars, codes, extCodes, bout, state);
+        FinishEntry(bout, payloadStart, state, ascending);
+        ApplyMaxEntryLength(bout, text, ascending, maxEntryLength, longRowSuffixProvider);
 
-        FinishEntry(bout, payloadStart, state, ascending, maxEntryLength);
         return [.. bout];
     }
 
@@ -217,26 +221,18 @@ internal static class GeneralLegacyTextIndexEncoder
         bool ascending,
         CharHandler[] codes,
         CharHandler[] extCodes,
-        byte[] separator,
-        int maxEntryLength)
+        byte[] separator)
     {
         var chunk1 = text.AsSpan(0, splitAt);
 
-        int chunk2Cap = maxEntryLength > 0
-            ? Math.Min(text.Length, 256)
-            : Math.Min(text.Length, 255);
+        int chunk2Cap = Math.Min(text.Length, MaxTextIndexByteLength);
         int chunk2Take = chunk2Cap - resumeAt;
 
         var chunk2 = chunk2Take > 0
-            ? (maxEntryLength > 0
-                ? text.AsSpan(resumeAt, chunk2Take)
-                : text.AsSpan(resumeAt, chunk2Take).TrimEnd(' '))
+            ? text.AsSpan(resumeAt, chunk2Take).TrimEnd(' ')
             : ReadOnlySpan<char>.Empty;
 
-        var bout = new List<byte>(chunk1.Length + chunk2.Length + separator.Length + 8)
-        {
-            ascending ? FlagAscendingNonNull : FlagDescendingNonNull,
-        };
+        var bout = CreateEntryBuffer(chunk1.Length + chunk2.Length + separator.Length, ascending);
         int payloadStart = bout.Count;
 
         var state = new ChunkEmitState(chunk1.Length + chunk2.Length);
@@ -244,9 +240,15 @@ internal static class GeneralLegacyTextIndexEncoder
         bout.AddRange(separator);
         EmitChunkInline(chunk2, codes, extCodes, bout, state);
 
-        FinishEntry(bout, payloadStart, state, ascending, maxEntryLength);
+        FinishEntry(bout, payloadStart, state, ascending);
         return [.. bout];
     }
+
+    private static List<byte> CreateEntryBuffer(int payloadCapacity, bool ascending)
+        => new(payloadCapacity + 4)
+        {
+            ascending ? FlagAscendingNonNull : FlagDescendingNonNull,
+        };
 
 #if NET8_0_OR_GREATER
     private static int FindFirstLineBreak(string text) => text.AsSpan().IndexOfAny(LineBreakChars);
@@ -279,7 +281,7 @@ internal static class GeneralLegacyTextIndexEncoder
                 state.CharOffset++;
             }
 
-            if (ch.Type == CharHandlerType.Simple)
+            if (!ch.HasTrailingBytes)
             {
                 continue;
             }
@@ -288,8 +290,7 @@ internal static class GeneralLegacyTextIndexEncoder
             byte extraCodeModifier = ch.ExtraByteModifier;
             if (extra is not null || extraCodeModifier != 0)
             {
-                state.ExtraCodes ??= new ExtraCodesStream(chars.Length);
-                WriteExtraCodes(curCharOffset, extra, extraCodeModifier, state.ExtraCodes);
+                WriteExtraCodes(curCharOffset, extra, extraCodeModifier, state.GetOrCreateExtraCodes());
             }
 
             byte[]? unprint = ch.UnprintableBytes;
@@ -312,20 +313,12 @@ internal static class GeneralLegacyTextIndexEncoder
     /// crazy block, and END_EXTRA_TEXT terminator (with the descending
     /// one's-complement pass) to <paramref name="bout"/>. Shared between the
     /// single-chunk and two-chunk paths.
-    /// <para>
-    /// When <paramref name="maxEntryLength"/> is greater than zero and the
-    /// fully-built entry exceeds that byte cap (V2010 / ACE long rows), the
-    /// buffer is hard-truncated mid-stream after the descending complement
-    /// pass and any trailing unflipped sentinel is dropped. This matches the
-    /// observed Microsoft Access behaviour for ACE long-row index leaves.
-    /// </para>
     /// </summary>
     private static void FinishEntry(
         List<byte> bout,
         int payloadStart,
         ChunkEmitState state,
-        bool ascending,
-        int maxEntryLength)
+        bool ascending)
     {
         bout.Add(EndText);
 
@@ -372,16 +365,6 @@ internal static class GeneralLegacyTextIndexEncoder
         }
 
         bout.Add(EndExtraText);
-
-        // V2010 / ACE long-row hard byte cap: if the fully-built entry
-        // exceeds the cap, truncate. The descending complement pass (above)
-        // has already been applied to bytes [payloadStart..) so the kept
-        // bytes already match the on-disk image. Any END_EXTRA_TEXT,
-        // descending sentinel, or extras bytes past the cap are dropped.
-        if (maxEntryLength > 0 && bout.Count > maxEntryLength)
-        {
-            bout.RemoveRange(maxEntryLength, bout.Count - maxEntryLength);
-        }
     }
 
     private static void ApplyMaxEntryLength(
@@ -418,7 +401,11 @@ internal static class GeneralLegacyTextIndexEncoder
 
         public int CharOffset { get; set; }
 
-        public int InitialCapacity { get; } = initialCapacity;
+        public ExtraCodesStream GetOrCreateExtraCodes()
+        {
+            ExtraCodes ??= new ExtraCodesStream(initialCapacity);
+            return ExtraCodes;
+        }
     }
 
     private static void WriteExtraCodes(
@@ -631,6 +618,8 @@ internal static class GeneralLegacyTextIndexEncoder
     {
         public abstract CharHandlerType Type { get; }
 
+        public virtual bool HasTrailingBytes => false;
+
         public virtual byte[]? GetInlineBytes(char c) => null;
 
         public virtual byte[]? ExtraBytes => null;
@@ -653,6 +642,8 @@ internal static class GeneralLegacyTextIndexEncoder
     {
         public override CharHandlerType Type => CharHandlerType.International;
 
+        public override bool HasTrailingBytes => true;
+
         public override byte[] GetInlineBytes(char c) => bytes;
 
         public override byte[] ExtraBytes => extraBytes;
@@ -662,6 +653,8 @@ internal static class GeneralLegacyTextIndexEncoder
     {
         public override CharHandlerType Type => CharHandlerType.Unprintable;
 
+        public override bool HasTrailingBytes => true;
+
         public override byte[] UnprintableBytes => unprintBytes;
     }
 
@@ -669,12 +662,16 @@ internal static class GeneralLegacyTextIndexEncoder
     {
         public override CharHandlerType Type => CharHandlerType.UnprintableExt;
 
+        public override bool HasTrailingBytes => true;
+
         public override byte ExtraByteModifier => extraByteMod;
     }
 
     private sealed class InternationalExtCharHandler(byte[] bytes, byte[]? extraBytes, byte crazyFlag) : CharHandler
     {
         public override CharHandlerType Type => CharHandlerType.InternationalExt;
+
+        public override bool HasTrailingBytes => true;
 
         public override byte[] GetInlineBytes(char c) => bytes;
 
@@ -711,6 +708,8 @@ internal static class GeneralLegacyTextIndexEncoder
 
         public override CharHandlerType Type => CharHandlerType.Surrogate;
 
+        public override bool HasTrailingBytes => true;
+
         public override byte[] GetInlineBytes(char c)
         {
             int idxC = c - 10238;
@@ -725,6 +724,8 @@ internal static class GeneralLegacyTextIndexEncoder
         public static readonly LowSurrogateHandler Instance = new();
 
         public override CharHandlerType Type => CharHandlerType.Surrogate;
+
+        public override bool HasTrailingBytes => true;
 
         public override byte[] GetInlineBytes(char c)
         {
@@ -752,17 +753,5 @@ internal static class GeneralLegacyTextIndexEncoder
         public int NumChars { get; set; }
 
         public int UnprintablePrefixLen { get; set; }
-
-        public ExtraCodesStream Clone()
-        {
-            var clone = new ExtraCodesStream(Bytes.Count)
-            {
-                NumChars = NumChars,
-                UnprintablePrefixLen = UnprintablePrefixLen,
-            };
-
-            clone.Bytes.AddRange(Bytes);
-            return clone;
-        }
     }
 }
