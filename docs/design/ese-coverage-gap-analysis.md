@@ -101,15 +101,19 @@ Implemented coverage (2026-05-21):
 
 This is deterministic integration coverage rather than ESE-style trace replay. The remaining ESE resource-manager scenarios around supercold/no-touch pages and dirty/write stats do not currently map to JetDatabaseWriter's direct page-reader charter.
 
-### 7. Relationship Mutation on Multi-Page TDEFs
+### 7. Relationship Mutation on Multi-Page TDEFs (PINNED)
 
 ESE emphasizes wide tables and rich schema evolution. JetDatabaseWriter can emit multi-page TDEFs for wide schemas, but parts of relationship mutation still require single-page TDEF mutation and throw `NotSupportedException` when the TDEF cannot be mutated in place. This is called out in [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md) and implemented in [RelationshipManager.cs](../../JetDatabaseWriter/Relationships/RelationshipManager.cs).
 
-Suggested work:
+Implemented coverage (2026-05-21):
 
-- Add pinning tests for the current multi-page TDEF relationship limitation.
-- Add design notes for lifting it using the same logical-buffer/page-chain split used by TDEF creation.
-- Cover create, drop, and rename relationship paths for wide tables once implemented.
+- Added `RelationshipWriterTests.CreateRelationshipAsync_MultiPageEndpointTDef_ThrowsBeforeFkLogicalIdxEmission`, which forces multi-page endpoint TDEF chains and pins the current `CreateRelationshipAsync` `NotSupportedException` on both parent-wide and child-wide relationships.
+- The test also verifies the failure does not emit FK logical-idx entries into either endpoint TDEF.
+- Expanded [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md) with a lift design: parse and mutate a stitched logical TDEF buffer, materialise it back into a physical page chain, and route create, drop, and rename through the same logical-buffer/page-chain split already used by TDEF creation.
+
+Remaining work:
+
+- Implement the logical-buffer mutation path and promote create, drop, and rename relationship coverage for wide tables from pinned limitation tests to successful round trips.
 
 ### 8. Complex Columns and LVAL Reclamation
 
@@ -146,4 +150,4 @@ The following ESE areas do not appear to map directly to this project unless the
 
 1. Decide whether an opt-in scrub/reuse mode belongs in scope for deleted row bodies, freed row gaps, index rebuild orphan pages, and old LVAL chains.
 2. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
-3. Add pinning and design coverage for relationship mutation on multi-page TDEFs.
+3. Implement multi-page TDEF relationship mutation and cover create, drop, and rename relationship paths for wide tables.

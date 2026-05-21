@@ -460,8 +460,87 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         Assert.NotEqual(fks[0].Name, fks[1].Name);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateRelationshipAsync_MultiPageEndpointTDef_ThrowsBeforeFkLogicalIdxEmission(bool parentIsWide)
+    {
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+
+        string parent = MakeTableName(parentIsWide ? "WParent" : "NParent");
+        string child = MakeTableName(parentIsWide ? "NChild" : "WChild");
+        string relName = $"FK_{child}_{parent}";
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            if (parentIsWide)
+            {
+                await CreateWideTDefTableAsync(
+                    writer,
+                    parent,
+                    [new("Id", typeof(int))],
+                    TestContext.Current.CancellationToken);
+                await writer.CreateTableAsync(
+                    child,
+                    [new("Id", typeof(int)), new("ParentId", typeof(int))],
+                    TestContext.Current.CancellationToken);
+            }
+            else
+            {
+                await writer.CreateTableAsync(
+                    parent,
+                    [new("Id", typeof(int))],
+                    TestContext.Current.CancellationToken);
+                await CreateWideTDefTableAsync(
+                    writer,
+                    child,
+                    [new("Id", typeof(int)), new("ParentId", typeof(int))],
+                    TestContext.Current.CancellationToken);
+            }
+
+            NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+                await writer.CreateRelationshipAsync(
+                    new RelationshipDefinition(relName, parent, "Id", child, "ParentId"),
+                    TestContext.Current.CancellationToken));
+            Assert.Contains("multi-page", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(parentIndexes, index => index.Kind == IndexKind.ForeignKey);
+        Assert.DoesNotContain(childIndexes, index => index.Kind == IndexKind.ForeignKey);
+    }
+
     private static string MakeTableName(string prefix) =>
         $"{prefix}_{Guid.NewGuid():N}".Substring(0, Math.Min(18, prefix.Length + 11));
+
+    private static async ValueTask CreateWideTDefTableAsync(
+        AccessWriter writer,
+        string tableName,
+        IReadOnlyList<ColumnDefinition> leadingColumns,
+        CancellationToken cancellationToken)
+    {
+        const int ColumnCount = 200;
+        const int IndexCount = 30;
+
+        var columns = new List<ColumnDefinition>(ColumnCount);
+        columns.AddRange(leadingColumns);
+        for (int columnOrdinal = columns.Count; columnOrdinal < ColumnCount; columnOrdinal++)
+        {
+            columns.Add(new ColumnDefinition($"C{columnOrdinal:D3}", typeof(int)));
+        }
+
+        var indexes = new List<IndexDefinition>(IndexCount);
+        for (int indexOrdinal = 0; indexOrdinal < IndexCount; indexOrdinal++)
+        {
+            int indexedColumnOrdinal = leadingColumns.Count + indexOrdinal;
+            indexes.Add(new IndexDefinition($"IX_{indexOrdinal:D2}", $"C{indexedColumnOrdinal:D3}"));
+        }
+
+        await writer.CreateTableAsync(tableName, columns, indexes, cancellationToken);
+    }
 
     private static string SafeString(DataRow row, string column)
     {
