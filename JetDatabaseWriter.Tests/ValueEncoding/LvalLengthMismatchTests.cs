@@ -70,8 +70,10 @@ public sealed class LvalLengthMismatchTests
         // Read back — should not throw; returns available data (capped by page content)
         byte[] result = await ReadOleBlobAsync(dbBytes);
 
-        // The reader uses Math.Min(oleLoc.Size, memoLen) so it returns actual page data
-        Assert.True(result.Length <= PayloadSize + 16, $"Expected ≤ {PayloadSize + 16} bytes, got {result.Length}.");
+        // Access-style LVAL pages do not carry a separate single-page payload length,
+        // so a corrupted oversized header is capped by the remaining page capacity.
+        int singlePageCapacity = 4096 - Constants.LongValue.LvalRowStart;
+        Assert.True(result.Length <= singlePageCapacity, $"Expected ≤ {singlePageCapacity} bytes, got {result.Length}.");
         Assert.True(result.Length > 0, "Expected non-empty result.");
     }
 

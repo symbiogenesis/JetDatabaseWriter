@@ -118,6 +118,14 @@ internal sealed class RowEncoder(AccessWriter writer)
                 EncodeNumericValue(Convert.ToDecimal(value, CultureInfo.InvariantCulture), dest);
                 return 17;
 
+            case T_COMPLEX:
+            case T_ATTACHMENT:
+                int complexId = value is ComplexIdRef complexRef
+                    ? complexRef.Id
+                    : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+                BinaryPrimitives.WriteInt32LittleEndian(dest, complexId);
+                return 4;
+
             case T_GUID:
                 {
                     Guid g = value is Guid guid
@@ -422,6 +430,39 @@ internal sealed class RowEncoder(AccessWriter writer)
                 return EncodeMemoValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.IsCompressedUnicode);
             case T_OLE:
                 return EncodeOleValue(value);
+            case T_BYTE:
+            case T_INT:
+            case T_LONG:
+            case T_FLOAT:
+            case T_DOUBLE:
+            case T_DATETIME:
+            case T_MONEY:
+            case T_NUMERIC:
+            case T_GUID:
+            case T_COMPLEX:
+            case T_ATTACHMENT:
+                {
+                    int fixedSize = column.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(column.Type);
+                    if (fixedSize <= 0)
+                    {
+                        return null;
+                    }
+
+                    var payload = new byte[fixedSize];
+                    int written = TryEncodeFixedValue(column, value, payload);
+                    if (written <= 0)
+                    {
+                        return null;
+                    }
+
+                    if (written != payload.Length)
+                    {
+                        Array.Resize(ref payload, written);
+                    }
+
+                    return payload;
+                }
+
             default:
                 return null;
         }

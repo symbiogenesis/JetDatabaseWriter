@@ -1,6 +1,6 @@
 # ESE-Inspired Coverage Gap Analysis
 
-**Status:** Initial triage, 2026-05-20.
+**Status:** Updated after DAO complex/LVAL validation, 2026-05-21.
 **Reference:** [microsoft/Extensible-Storage-Engine](https://github.com/microsoft/Extensible-Storage-Engine).
 
 This note compares JetDatabaseWriter's current reader/writer test surface with themes from Microsoft's Extensible Storage Engine (ESE) repository. ESE is a full database engine, not an Access MDB/ACCDB file-format oracle, so the goal is not feature parity. The useful signal is where ESE's long-lived engine tests expose categories of risk that also matter to a direct JET/ACE page writer.
@@ -76,12 +76,13 @@ Suggested work:
 
 ESE's test culture validates engine behavior through real persisted state. JetDatabaseWriter already has DAO/Access validation hooks, but the design notes still contained standing warnings that several writer phases needed Microsoft Access Compact and Repair validation. Examples included [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md) and [complex-columns-format-notes.md](complex-columns-format-notes.md).
 
-Implemented coverage (2026-05-20):
+Implemented coverage (2026-05-21):
 
 - Added a single validation matrix for writer-emitted disk-format features: [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
-- Added a Northwind-hosted DAO CompactDatabase test for writer-created attachment and multi-value complex columns, including a chained-LVAL attachment payload and an `AddColumnAsync` rewrite that preserves the complex artifacts.
+- Added a Northwind-hosted DAO CompactDatabase test for writer-created attachment and multi-value complex columns, including wrapper-encoded attachment `FileData`, Access-style LVAL pages, a chained-LVAL payload, flat-table index maintenance, and an `AddColumnAsync` rewrite that preserves the complex artifacts.
 - Clarified that the strongest DAO compact tests mutate Access-authored fixtures such as Northwind, so the writer-created bytes under test are isolated from fresh-database bootstrap trust.
 - Updated stale blanket warnings in the index/relationship and complex-column notes to point at the matrix and the remaining phase-specific gaps.
+- Cleaned the README and public XML comments that still described encryption, attachment fields, index maintenance, or relationship enforcement using older caveats.
 
 Remaining matrix rows still marked reader-round-trip only should be promoted into DAO-driven tests when they become high-risk release blockers and a reliable Access-authored fixture can host the mutation.
 
@@ -110,7 +111,7 @@ Suggested work:
 
 ### 8. Complex Columns and LVAL Reclamation
 
-ESE has long-value, cleanup, and space-management machinery. JetDatabaseWriter supports complex columns and LVAL chains. DAO CompactDatabase coverage now includes a Northwind-hosted writer-created attachment/multi-value table with a chained-LVAL attachment payload and complex-column schema-evolution preservation. Remaining caveats are narrower: no old LVAL page reuse on update/delete, fresh writer-created complex system-table scaffolding is still reader-round-trip only, and some flat-table/index artifacts may still need broader Access-authored fixture coverage. See [complex-columns-format-notes.md](complex-columns-format-notes.md) and [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
+ESE has long-value, cleanup, and space-management machinery. JetDatabaseWriter supports complex columns and Access-style LVAL chains. DAO CompactDatabase coverage now includes a Northwind-hosted writer-created attachment/multi-value table with wrapper-encoded attachment `FileData`, a chained-LVAL attachment payload, flat-table indexes, and complex-column schema-evolution preservation. Remaining caveats are narrower: no old LVAL page reuse on update/delete, fresh writer-created complex system-table scaffolding is still reader-round-trip only, and broader complex-column mutation coverage should be added when a new mutation becomes release-critical. See [complex-columns-format-notes.md](complex-columns-format-notes.md) and [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 
 Suggested work:
 
@@ -118,14 +119,15 @@ Suggested work:
 - Add byte-level tests documenting old LVAL page retention after update/delete.
 - Decide whether page reuse is out of scope or a future space-management feature.
 
-## Documentation Drift Found During Triage
+## Documentation Drift Found During Triage (RESOLVED)
 
-The comparison also surfaced comments that appear older than the current implementation:
+The comparison also surfaced comments that were older than the current implementation:
 
-- [AccessReader.cs](../../JetDatabaseWriter/AccessReader.cs) still describes encrypted databases and attachment fields as unsupported in the class XML comment, while README and tests describe encryption and complex-column support.
-- [IAccessSchema.cs](../../JetDatabaseWriter/Interfaces/IAccessSchema.cs) has relationship comments that imply runtime referential integrity is handled by Microsoft Access after Compact and Repair, while README describes library-side enforcement.
+- [AccessReader.cs](../../JetDatabaseWriter/AccessReader.cs) described encrypted databases and attachment fields as unsupported in the class XML comment, while README and tests described encryption and complex-column support.
+- [IAccessSchema.cs](../../JetDatabaseWriter/Interfaces/IAccessSchema.cs) had relationship comments that implied runtime referential integrity is handled only by Microsoft Access after Compact and Repair, while README described library-side enforcement.
+- Several complex-column comments used `ConceptualTableID` for the per-row flat-table join value without distinguishing it from `MSysComplexColumns.ConceptualTableID`, which now refers to the parent table object/TDEF id in the writer path.
 
-These are not missing functionality, but stale public comments can mislead API consumers and should be cleaned up separately.
+These were documentation/comment drift rather than missing functionality and were cleaned up with the complex/LVAL validation work.
 
 ## Likely Out of Scope
 

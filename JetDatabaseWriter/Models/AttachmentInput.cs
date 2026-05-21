@@ -52,7 +52,7 @@ public sealed record AttachmentInput
 
     /// <summary>
     /// Gets the timestamp persisted in the flat-table <c>FileTimeStamp</c> column.
-    /// Defaults to <see cref="DateTime.UtcNow"/> when null.
+    /// Persists null when not supplied.
     /// </summary>
     public DateTime? FileTimeStamp { get; init; }
 }

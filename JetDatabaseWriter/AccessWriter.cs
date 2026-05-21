@@ -109,8 +109,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     internal RelationshipManager Relationships { get; }
 
     /// <summary>Gets the Attachment / MultiValue (complex column) subsystem:
-    /// system-table scaffolding, per-table allocation of ComplexID /
-    /// ConceptualTableID, hidden flat-child-table emission, the row-level
+    /// system-table scaffolding, per-column ComplexID allocation, per-row
+    /// complex-reference allocation, hidden flat-child-table emission, the row-level
     /// Add* APIs, and cascade / drop / rename plumbing for the artifacts.
     /// <see cref="AccessWriter"/> keeps only thin public-API forwarders.
     /// Exposed for sibling managers (e.g. <see cref="Relationships.RelationshipManager"/>)
@@ -489,14 +489,24 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             columns = rewritten;
         }
 
-        long tdefPageNumber = await CreateTableInternalAsync(tableName, columns, indexes, catalogFlags: 0, cancellationToken).ConfigureAwait(false);
+        uint catalogFlags = 0;
+        for (int i = 0; i < columns.Count; i++)
+        {
+            if (columns[i].IsAttachment || columns[i].IsMultiValue)
+            {
+                catalogFlags = 0x00040000U;
+                break;
+            }
+        }
+
+        long tdefPageNumber = await CreateTableInternalAsync(tableName, columns, indexes, catalogFlags, cancellationToken).ConfigureAwait(false);
 
         // Emit the hidden flat child table + MSysComplexColumns row for every
         // user-declared complex column. Done after the parent table is on disk so the
         // catalog cache reflects the parent before flat-table inserts.
         if (complexAllocs is { Count: > 0 })
         {
-            await ComplexColumns.EmitComplexColumnArtifactsAsync(tableName, columns, complexAllocs, cancellationToken).ConfigureAwait(false);
+            await ComplexColumns.EmitComplexColumnArtifactsAsync(tableName, tdefPageNumber, columns, complexAllocs, cancellationToken).ConfigureAwait(false);
         }
 
         _ = tdefPageNumber;
@@ -626,7 +636,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // DAO Compact & Repair requires every user table to have ACE
         // (Access Control Entry) rows in MSysACEs. Without them DAO's
         // security-descriptor pass aborts with err 3011 "MSysDb".
-        if (catalogFlags == 0)
+        if ((catalogFlags & Constants.SystemObjects.SystemTableMask) == 0)
         {
             await _catalogWriter.InsertAceRowsForTableAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
         }
@@ -1315,7 +1325,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         // Cascade flat-child rows for any complex columns on the parent
         // BEFORE we mark the parent rows deleted (we need to read the
-        // parent's ConceptualTableID slots while the rows are still live).
+        // parent's per-row complex-reference slots while the rows are still live).
         if (matchingIndices.Count > 0)
         {
             var parentLocs = new List<RowLocation>(matchingIndices.Count);
@@ -2191,7 +2201,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         await using (reader)
         {
-            return await reader.ReadDataTableAsync(tableName, cancellationToken: cancellationToken).ConfigureAwait(false);
+            return await reader.ReadDataTableForSchemaRewriteAsync(tableName, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -2487,6 +2497,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         byte[]? renamedLvProp = JetExpressionConverter.BuildLvPropBlob(newDefs, _format);
         await DropTableCoreAsync(tableName, dropComplexChildren: false, cancellationToken).ConfigureAwait(false);
         await _catalogWriter.RenameTableInCatalogAsync(tempName, tableName, renamedLvProp, cancellationToken).ConfigureAwait(false);
+
+        foreach (ColumnDefinition survivor in newComplexById.Values)
+        {
+            await ComplexColumns.UpdateComplexColumnParentTableIdAsync(
+                survivor.ComplexId,
+                checked((int)tempEntry.TDefPage),
+                cancellationToken).ConfigureAwait(false);
+        }
 
         foreach ((string colName, int complexId) in droppedComplex)
         {
@@ -2836,6 +2854,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         int deleted = 0;
         List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         var droppedTdefPages = new List<long>();
+        var deletedCatalogRows = new List<(RowLocation Loc, object[] Row)>();
         foreach (CatalogRow row in rows)
         {
             if (!string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
@@ -2858,6 +2877,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 droppedTdefPages.Add(row.TDefPage);
             }
 
+            object[] indexRow = msys.CreateNullValueRow();
+            msys.SetValueByName(indexRow, "Id", checked((int)row.TDefPage));
+            msys.SetValueByName(indexRow, "ParentId", Constants.SystemObjects.TablesParentId);
+            msys.SetValueByName(indexRow, "Name", row.Name);
+            deletedCatalogRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), indexRow));
+
             await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
             deleted++;
         }
@@ -2875,8 +2900,90 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
+        await DeleteAceRowsForObjectIdsAsync(droppedTdefPages, cancellationToken).ConfigureAwait(false);
+        if (deletedCatalogRows.Count > 0)
+        {
+            bool incremental = await TryMaintainIndexesIncrementalAsync(
+                2,
+                msys,
+                null,
+                deletedCatalogRows,
+                cancellationToken).ConfigureAwait(false);
+            if (!incremental)
+            {
+                await MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         Constraints.Unregister(tableName);
         InvalidateCatalogCache();
+    }
+
+    private async ValueTask DeleteAceRowsForObjectIdsAsync(List<long> objectIds, CancellationToken cancellationToken)
+    {
+        if (objectIds.Count == 0)
+        {
+            return;
+        }
+
+        long acesTdefPage = await Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        if (acesTdefPage <= 0)
+        {
+            return;
+        }
+
+        TableDef acesDef = await ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        ColumnInfo? objectIdColumn = acesDef.FindColumn("ObjectId");
+        if (objectIdColumn is null)
+        {
+            return;
+        }
+
+        var ids = new HashSet<int>();
+        foreach (long id in objectIds)
+        {
+            ids.Add(checked((int)id));
+        }
+
+        var deletedRows = new List<RowLocation>();
+        long total = _stream.Length / _pgSz;
+        for (long pageNumber = 3; pageNumber < total; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != acesTdefPage)
+                {
+                    continue;
+                }
+
+                foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
+                {
+                    string objectIdText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, objectIdColumn);
+                    if (int.TryParse(objectIdText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int objectId)
+                        && ids.Contains(objectId))
+                    {
+                        deletedRows.Add(row);
+                    }
+                }
+            }
+            finally
+            {
+                ReturnPage(page);
+            }
+        }
+
+        foreach (RowLocation row in deletedRows)
+        {
+            await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (deletedRows.Count > 0)
+        {
+            await MaintainIndexesAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -2940,6 +3047,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         var hint = new List<(RowLocation Loc, object[] Row)>(1) { (loc, values) };
         try
         {
+            if (string.Equals(tableName, Constants.SystemTableNames.ComplexColumns, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(tableName, Constants.SystemTableNames.Aces, StringComparison.OrdinalIgnoreCase))
+            {
+                await MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             bool incremental = await _indexMaintainer.TryMaintainIndexesIncrementalAsync(
                 tdefPage,
                 tableDef,
@@ -3040,7 +3154,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // before serializing the row. The pre-encode pass appends LVAL pages to
         // the file and rewrites the matching slot in `values` with a
         // PreEncodedLongValue sentinel carrying the finished 12-byte header.
-        values = await _longValueEncoder.PreEncodeLongValuesAsync(tableDef, values, cancellationToken).ConfigureAwait(false);
+        values = await _longValueEncoder.PreEncodeLongValuesAsync(tdefPage, tableDef, values, cancellationToken).ConfigureAwait(false);
 
         byte[] rowBytes = _rowEncoder.SerializeRow(tableDef, values);
         PageInsertTarget target = await _dataPageInserter.FindInsertTargetAsync(tdefPage, rowBytes.Length, cancellationToken).ConfigureAwait(false);
@@ -3360,6 +3474,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     internal ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
         => _indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken);
+
+    internal ValueTask MarkPageInOwnedMapAsync(long tdefPageNumber, long dataPageNumber, CancellationToken cancellationToken)
+        => _dataPageInserter.MarkPageInOwnedMapAsync(tdefPageNumber, dataPageNumber, cancellationToken);
+
+    internal ValueTask<bool> TryMaintainIndexesIncrementalAsync(
+        long tdefPage,
+        TableDef tableDef,
+        List<(RowLocation Loc, object[] Row)>? insertedRows,
+        List<(RowLocation Loc, object[] Row)>? deletedRows,
+        CancellationToken cancellationToken)
+        => _indexMaintainer.TryMaintainIndexesIncrementalAsync(tdefPage, tableDef, insertedRows, deletedRows, cancellationToken);
 
     internal ValueTask<bool> TrySpliceCatalogIndexEntryAsync(
         long tdefPage,

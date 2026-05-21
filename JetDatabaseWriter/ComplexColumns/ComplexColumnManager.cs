@@ -25,7 +25,7 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// Owns the Attachment / MultiValue (complex column) subsystem for
 /// <see cref="AccessWriter"/>: ACCDB system-table scaffolding
 /// (<c>MSysComplexColumns</c>, <c>MSysComplexType_*</c>), per-table
-/// allocation of <c>ComplexID</c> / <c>ConceptualTableID</c>, hidden
+/// allocation of per-column <c>ComplexID</c> values and per-row complex references, hidden
 /// flat-child-table emission, the row-level Add* APIs that backfill
 /// flat tables, and cascade / drop / rename plumbing for the artifacts
 /// when the parent column or table changes shape. See
@@ -59,7 +59,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     /// per-kind <c>MSysComplexType_*</c> template tables. Each entry maps
     /// the canonical Access template name to the column schema Access emits for that
     /// template (verified against <c>ComplexFields.accdb</c> in
-    /// <c>docs/design/format-probe-appendix-complex.md</c> §<c>MSysComplexType_*</c>).
+    /// <c>docs/format-probe/format-probe-appendix-complex.md</c> §<c>MSysComplexType_*</c>).
     /// All templates are zero-row, zero-index tables; their <c>MSysObjects.Id</c>
     /// (= TDEF page) is what <c>MSysComplexColumns.ComplexTypeObjectID</c> points at.
     /// </summary>
@@ -94,7 +94,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     /// <c>MSysObjects.Flags = 0x80030000</c> (system + the 0x30000 marker Access uses
     /// for type-template tables) so the templates are excluded from
     /// <c>ListTablesAsync</c>. Schema verified against <c>ComplexFields.accdb</c> —
-    /// see <c>docs/design/format-probe-appendix-complex.md</c>.
+    /// see <c>docs/format-probe/format-probe-appendix-complex.md</c>.
     /// </summary>
     private async ValueTask CreateMSysComplexTypeTemplatesAsync(CancellationToken cancellationToken)
     {
@@ -184,7 +184,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     /// <summary>
     /// Creates the empty <c>MSysComplexColumns</c> system table.
     /// Schema verified against <c>ComplexFields.accdb</c> (see
-    /// <c>docs/design/format-probe-appendix-complex.md</c> and
+    /// <c>docs/format-probe/format-probe-appendix-complex.md</c> and
     /// <c>docs/design/complex-columns-format-notes.md</c> §2.2): four
     /// <c>T_LONG</c> columns (<c>ComplexTypeObjectID</c>, <c>FlatTableID</c>,
     /// <c>ConceptualTableID</c>, <c>ComplexID</c>) plus a <c>ColumnName</c>
@@ -221,14 +221,14 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     /// Per-column scratch state captured by <see cref="PrepareComplexColumnAllocationsAsync"/>
     /// and consumed by <see cref="EmitComplexColumnArtifactsAsync"/>.
     /// </summary>
-    internal readonly record struct ComplexColumnAllocation(int ColumnIndex, int ComplexId, int ConceptualTableId);
+    internal readonly record struct ComplexColumnAllocation(int ColumnIndex, int ComplexId);
 
     /// <summary>
     /// pre-flight for table creation. Walks <paramref name="columns"/> for
     /// user-declared complex columns
     /// (<see cref="ColumnDefinition.IsAttachment"/> / <see cref="ColumnDefinition.IsMultiValue"/>
     /// where <c>ComplexId == 0</c>), validates the format, and allocates a
-    /// fresh per-database <c>ComplexID</c> + <c>ConceptualTableID</c> for each.
+    /// fresh per-database <c>ComplexID</c> for each.
     /// Returns <see langword="null"/> when no allocation is needed.
     /// </summary>
     public async ValueTask<IReadOnlyList<ComplexColumnAllocation>?> PrepareComplexColumnAllocationsAsync(
@@ -278,7 +278,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         for (int i = 0; i < indices.Count; i++)
         {
             int id = nextId++;
-            allocations[i] = new ComplexColumnAllocation(indices[i], id, id);
+            allocations[i] = new ComplexColumnAllocation(indices[i], id);
         }
 
         return allocations;
@@ -286,16 +286,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
     /// <summary>
     /// Returns one greater than the largest <c>ComplexID</c> currently stored in
-    /// <c>MSysComplexColumns</c>, or <c>1</c> when the table is empty. ConceptualTableIDs
-    /// are allocated from the same monotonically-increasing pool to keep the per-database
-    /// space simple — Access uses two independent counters but neither value is exposed
-    /// through any external API and there is no documented scenario where they must differ.
+    /// <c>MSysComplexColumns</c>, or <c>1</c> when the table is empty.
     /// </summary>
     private async ValueTask<int> GetNextComplexIdAsync(long msysComplexPg, CancellationToken cancellationToken)
     {
         TableDef msysComplex = await _writer.ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? idCol = msysComplex.FindColumn("ComplexID");
-        ColumnInfo? ctIdCol = msysComplex.FindColumn("ConceptualTableID");
 
         int maxId = 0;
         long total = _writer._stream.Length / _writer._pgSz;
@@ -326,15 +322,6 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
                             maxId = v;
                         }
                     }
-
-                    if (ctIdCol != null)
-                    {
-                        string ctText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, ctIdCol);
-                        if (int.TryParse(ctText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int cv) && cv > maxId)
-                        {
-                            maxId = cv;
-                        }
-                    }
                 }
             }
             finally
@@ -363,6 +350,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     /// </remarks>
     public async ValueTask EmitComplexColumnArtifactsAsync(
         string parentTableName,
+        long parentTdefPage,
         IReadOnlyList<ColumnDefinition> columns,
         IReadOnlyList<ComplexColumnAllocation> allocations,
         CancellationToken cancellationToken)
@@ -398,7 +386,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
             await InsertMSysComplexColumnsRowAsync(
                 col.Name,
                 complexId: alloc.ComplexId,
-                conceptualTableId: alloc.ConceptualTableId,
+                conceptualTableId: checked((int)parentTdefPage),
                 flatTableId: (int)flatTdefPage,
                 complexTypeObjectId: templateId,
                 cancellationToken).ConfigureAwait(false);
@@ -427,19 +415,17 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     /// Two LONG columns participate in the back-reference plumbing:
     /// </para>
     /// <list type="bullet">
-    ///   <item><description><c>_&lt;userColumnName&gt;</c> — FK back-reference holding the parent row's <c>ConceptualTableID</c>.</description></item>
+    ///   <item><description><c>_&lt;userColumnName&gt;</c> — FK back-reference holding the parent row's per-row complex reference value.</description></item>
     ///   <item><description><c>&lt;parentTable&gt;_&lt;userColumnName&gt;</c> — autoincrement scalar PK used by Access internally.</description></item>
     /// </list>
     /// <para>
-    /// Naming and column ordering match
-    /// <c>format-probe-appendix-complex.md</c> for the attachment case
-    /// (<c>f_A3DF50CFC033433899AF0AC1A4CF4171_Attachments</c>): the
-    /// kind-specific value columns first, then the autoincrement scalar PK,
-    /// then the FK back-reference. Three indexes ship with the attachment
-    /// table — primary key on the scalar (<c>MSysComplexPKIndex</c>), a
-    /// normal index on the FK back-reference (named after the FK column),
-    /// and a normal composite index on (FK, FileName) called
-    /// <c>IdxFKPrimaryScalar</c> per the appendix.
+    /// Naming and column ordering match Access-authored attachment flat
+    /// tables in Northwind: FK back-reference first, kind-specific value
+    /// columns in the middle, then the autoincrement scalar PK. Three indexes
+    /// ship with the attachment table — primary key on the scalar
+    /// (<c>MSysComplexPKIndex</c>), a normal index on the FK back-reference
+    /// (named after the FK column), and a normal composite index on (FK,
+    /// FileName) called <c>IdxFKPrimaryScalar</c>.
     /// </para>
     /// <para>
     /// The multi-value variant has no empirical fixture; the conservative
@@ -454,21 +440,56 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     {
         string fkName = $"_{parentColumn.Name}";
         string scalarName = $"{parentTableName}_{parentColumn.Name}";
-        var fk = new ColumnDefinition(fkName, typeof(int));
-        var scalar = new ColumnDefinition(scalarName, typeof(int)) { IsAutoIncrement = true };
+        var fk = new ColumnDefinition(fkName, typeof(int))
+        {
+            ForceVariableLengthStorage = true,
+            DescriptorFlagsOverride = 0x02,
+            DescriptorExtraFlagsOverride = 0x08,
+        };
+        var scalar = new ColumnDefinition(scalarName, typeof(int))
+        {
+            IsAutoIncrement = true,
+            ForceVariableLengthStorage = true,
+            DescriptorFlagsOverride = 0x06,
+            DescriptorExtraFlagsOverride = 0x04,
+        };
 
         if (parentColumn.IsAttachment)
         {
             ColumnDefinition[] cols =
             [
-                new ColumnDefinition("FileData", typeof(byte[])),
-                new ColumnDefinition("FileFlags", typeof(int)),
-                new ColumnDefinition("FileName", typeof(string), maxLength: 255),
-                new ColumnDefinition("FileTimeStamp", typeof(DateTime)),
-                new ColumnDefinition("FileType", typeof(string), maxLength: 255),
-                new ColumnDefinition("FileURL", typeof(string)) /* MEMO via no maxLength */,
-                scalar,
                 fk,
+                new ColumnDefinition("FileData", typeof(byte[]))
+                {
+                    DescriptorExtraFlagsOverride = 0x10,
+                    DescriptorMiscOverride = 0x00000409,
+                },
+                new ColumnDefinition("FileFlags", typeof(int))
+                {
+                    DescriptorExtraFlagsOverride = 0x10,
+                    DescriptorMiscOverride = 0x00000409,
+                },
+                new ColumnDefinition("FileName", typeof(string), maxLength: 255)
+                {
+                    IsCompressedUnicode = false,
+                    DescriptorExtraFlagsOverride = 0x10,
+                },
+                new ColumnDefinition("FileTimeStamp", typeof(DateTime))
+                {
+                    DescriptorExtraFlagsOverride = 0x10,
+                    DescriptorMiscOverride = 0x00000409,
+                },
+                new ColumnDefinition("FileType", typeof(string), maxLength: 255)
+                {
+                    IsCompressedUnicode = false,
+                    DescriptorExtraFlagsOverride = 0x10,
+                },
+                new ColumnDefinition("FileURL", typeof(string))
+                {
+                    IsCompressedUnicode = false,
+                    DescriptorExtraFlagsOverride = 0x10,
+                },
+                scalar,
             ];
 
             IndexDefinition[] indexes =
@@ -484,8 +505,12 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         // MultiValue: a single `value` column whose CLR type is the user-declared element type.
         Type elementType = parentColumn.MultiValueElementType
             ?? throw new InvalidOperationException("MultiValueElementType must be set on a multi-value column.");
-        var valueCol = new ColumnDefinition("value", elementType, maxLength: parentColumn.MaxLength);
-        ColumnDefinition[] mvCols = [valueCol, scalar, fk];
+        var valueCol = new ColumnDefinition("Value", elementType, maxLength: parentColumn.MaxLength)
+        {
+            DescriptorExtraFlagsOverride = 0x10,
+            DescriptorMiscOverride = 0x00000409,
+        };
+        ColumnDefinition[] mvCols = [fk, valueCol, scalar];
         IndexDefinition[] mvIndexes =
         [
             new IndexDefinition("MSysComplexPKIndex", scalarName) { IsPrimaryKey = true },
@@ -645,6 +670,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         await _writer.Constraints.ApplyAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
 
         await _writer.InsertRowDataAsync(flatTdefPage, flatDef, flatValues, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await _writer.MaintainIndexesAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);
     }
 
     private static ComplexColumnKind ClassifyComplexColumnKind(byte parentType, TableDef flatDef)
@@ -972,14 +998,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         values[flatDef.Columns.IndexOf(fkCol)] = conceptualTableId;
 
         string ext = input.FileType ?? DeriveExtension(input.FileName);
-        byte[] wrapped = AttachmentWrapper.Encode(ext, input.FileData);
 
         flatDef.SetValueByName(values, "FileURL", (object?)input.FileURL ?? DBNull.Value);
         flatDef.SetValueByName(values, "FileName", input.FileName);
         flatDef.SetValueByName(values, "FileType", ext);
         flatDef.SetValueByName(values, "FileFlags", DBNull.Value);
-        flatDef.SetValueByName(values, "FileTimeStamp", input.FileTimeStamp ?? DateTime.UtcNow);
-        flatDef.SetValueByName(values, "FileData", wrapped);
+        flatDef.SetValueByName(values, "FileTimeStamp", input.FileTimeStamp.HasValue ? input.FileTimeStamp.Value : DBNull.Value);
+        flatDef.SetValueByName(values, "FileData", AttachmentWrapper.Encode(ext, input.FileData));
         return values;
     }
 
@@ -1014,7 +1039,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     //
     // Whenever a parent row containing a complex column slot is deleted, the
     // associated rows in the hidden flat child table (joined via the parent's
-    // 4-byte ConceptualTableID slot) must also be deleted. Without this pass
+    // 4-byte per-row complex reference slot) must also be deleted. Without this pass
     // the flat table accumulates orphaned rows, breaks referential integrity
     // expected by Microsoft Access, and may cause Compact &amp; Repair to flag
     // the file.
@@ -1024,14 +1049,14 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     /// rows in <paramref name="parentDef"/> to the hidden flat child tables
     /// of every Attachment / MultiValue column on the parent. Must be called
     /// BEFORE the parent rows are marked deleted, since the per-row
-    /// <c>ConceptualTableID</c> slot value is needed to identify which flat
+    /// complex-reference slot value is needed to identify which flat
     /// rows to delete.
     /// </summary>
     /// <remarks>
     /// Per-flat-table cost is O(P) where P is the database page count
     /// (full sequential scan, no index seek). Multiple complex columns on
     /// the same parent perform one scan each. This matches the existing
-    /// cascade-delete cost profile and the ConceptualTableID allocator
+    /// cascade-delete cost profile and the complex-reference allocator
     /// used by the row-add path.
     /// </remarks>
     public async ValueTask CascadeDeleteComplexChildrenAsync(
@@ -1077,7 +1102,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
             return;
         }
 
-        // Read each parent row to collect the live ConceptualTableID per
+        // Read each parent row to collect the live per-row complex reference per
         // complex column. Rows whose complex slot is null contribute
         // nothing to cascade.
         var idsByCol = new Dictionary<int, HashSet<int>>(complexCols.Count);
@@ -1406,7 +1431,89 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
         foreach ((long _, int _, object[] values) in matched)
         {
-            _ = await _writer.InsertRowDataLocAsync(msysCxPg, msysCxDef, values, updateTDefRowCount: false, cancellationToken).ConfigureAwait(false);
+            await _writer.InsertSystemRowAndMaintainAsync(
+                msysCxPg,
+                msysCxDef,
+                Constants.SystemTableNames.ComplexColumns,
+                values,
+                updateTDefRowCount: false,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask UpdateComplexColumnParentTableIdAsync(int complexId, int parentTdefPage, CancellationToken cancellationToken)
+    {
+        long msysCxPg = await _writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        if (msysCxPg == 0)
+        {
+            return;
+        }
+
+        TableDef msysCxDef = await _writer.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
+        if (cxIdCol == null)
+        {
+            return;
+        }
+
+        var matched = new List<(long PageNumber, int RowIndex, object[] Values)>();
+        long total = _writer._stream.Length / _writer._pgSz;
+        for (long pageNumber = 3; pageNumber < total; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await _writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != 0x01)
+                {
+                    continue;
+                }
+
+                if (AccessBase.Ri32(page, _writer._dataPage.TDefOff) != msysCxPg)
+                {
+                    continue;
+                }
+
+                foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
+                {
+                    string idText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
+                    if (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid) || rid != complexId)
+                    {
+                        continue;
+                    }
+
+                    var values = new object[msysCxDef.Columns.Count];
+                    for (int i = 0; i < values.Length; i++)
+                    {
+                        string text = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, msysCxDef.Columns[i]);
+                        values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
+                    }
+
+                    msysCxDef.SetValueByName(values, "ConceptualTableID", parentTdefPage);
+                    matched.Add((row.PageNumber, row.RowIndex, values));
+                }
+            }
+            finally
+            {
+                AccessBase.ReturnPage(page);
+            }
+        }
+
+        foreach ((long pg, int ri, object[] _) in matched)
+        {
+            await _writer.MarkRowDeletedAsync(pg, ri, cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach ((long _, int _, object[] values) in matched)
+        {
+            await _writer.InsertSystemRowAndMaintainAsync(
+                msysCxPg,
+                msysCxDef,
+                Constants.SystemTableNames.ComplexColumns,
+                values,
+                updateTDefRowCount: false,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
 

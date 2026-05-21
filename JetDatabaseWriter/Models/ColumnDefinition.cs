@@ -208,6 +208,14 @@ public sealed record ColumnDefinition
     /// </summary>
     internal int ComplexId { get; init; }
 
+    internal bool ForceVariableLengthStorage { get; init; }
+
+    internal byte? DescriptorFlagsOverride { get; init; }
+
+    internal byte? DescriptorExtraFlagsOverride { get; init; }
+
+    internal int? DescriptorMiscOverride { get; init; }
+
     /// <summary>
     /// Gets the declared precision (1..28, total significant digits) for a
     /// <c>decimal</c> / <c>T_NUMERIC</c> column. Default <c>18</c> matches

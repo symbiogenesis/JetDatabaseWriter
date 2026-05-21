@@ -44,6 +44,34 @@ internal sealed class LongValueEncoder(AccessWriter writer)
         return buffer;
     }
 
+    private static void WriteLvalPageHeader(byte[] page, uint lvalToken)
+    {
+        page[4] = (byte)'L';
+        page[5] = (byte)'V';
+        page[6] = (byte)'A';
+        page[7] = (byte)'L';
+        AccessBase.Wi32(page, 8, unchecked((int)lvalToken));
+        AccessBase.Wu16(page, 12, 1);
+        AccessBase.Wu16(page, 14, Constants.LongValue.LvalRowStart);
+    }
+
+    private static uint ComputeLvalToken(byte[] data)
+    {
+        unchecked
+        {
+            uint hash = 2166136261;
+            for (int i = 0; i < data.Length; i++)
+            {
+                hash ^= data[i];
+                hash *= 16777619;
+            }
+
+            hash ^= (uint)data.Length;
+            hash *= 16777619;
+            return hash == 0 ? 1u : hash;
+        }
+    }
+
     /// <summary>
     /// Pre-encode pass for row insert: any MEMO / OLE value whose payload
     /// exceeds the inline cap is written to one or more freshly-appended LVAL
@@ -53,8 +81,9 @@ internal sealed class LongValueEncoder(AccessWriter writer)
     /// found and a defensively-cloned array otherwise so the caller's original
     /// <c>values</c> stays untouched.
     /// </summary>
-    internal async ValueTask<object[]> PreEncodeLongValuesAsync(TableDef tableDef, object[] values, CancellationToken cancellationToken)
+    internal async ValueTask<object[]> PreEncodeLongValuesAsync(long ownerTdefPage, TableDef tableDef, object[] values, CancellationToken cancellationToken)
     {
+        _ = ownerTdefPage;
         object[]? result = null;
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
@@ -134,19 +163,22 @@ internal sealed class LongValueEncoder(AccessWriter writer)
                 $"Long value is {data.Length} bytes, which exceeds the JET 24-bit LVAL length limit of {Constants.LongValue.MaxPayloadBytes} bytes.");
         }
 
-        DataPageLayout dataPage = writer._dataPage;
         int pgSz = writer._pgSz;
+        uint lvalToken = ComputeLvalToken(data);
 
-        // One row per LVAL page. The row table costs 2 bytes for a single offset.
-        int singleRowMax = pgSz - dataPage.RowsStart - 2;
-        int chainRowMax = singleRowMax - 4; // first 4 bytes of each chained row are the next-pointer
+        // One row per LVAL page. Access-authored Jet4/ACE LVAL pages use a
+        // 20-byte LVAL header area; chained rows reserve their first four bytes
+        // for the next-page pointer.
+        int singleRowMax = pgSz - Constants.LongValue.LvalRowStart;
+        int chainRowMax = singleRowMax - 4;
 
         var header = new byte[12];
         AccessBase.WriteUInt24(header, 0, data.Length);
+        AccessBase.Wi32(header, 8, unchecked((int)lvalToken));
 
         if (data.Length <= singleRowMax)
         {
-            byte[] page = BuildSingleLvalPageBuffer(data);
+            byte[] page = BuildSingleLvalPageBuffer(data, lvalToken);
             try
             {
                 long pageNumber = await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
@@ -171,7 +203,7 @@ internal sealed class LongValueEncoder(AccessWriter writer)
             cancellationToken.ThrowIfCancellationRequested();
             int chunkStart = i * chainRowMax;
             int chunkLen = Math.Min(chainRowMax, data.Length - chunkStart);
-            byte[] page = BuildChainLvalPageBuffer(data, chunkStart, chunkLen, nextDp);
+            byte[] page = BuildChainLvalPageBuffer(data, chunkStart, chunkLen, nextDp, lvalToken);
             try
             {
                 long pageNumber = await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
@@ -192,24 +224,18 @@ internal sealed class LongValueEncoder(AccessWriter writer)
     /// Builds a single-row LVAL data page (bitmask <c>0x40</c> form): the row
     /// body is the entire payload with no next-pointer prefix.
     /// </summary>
-    private byte[] BuildSingleLvalPageBuffer(byte[] payload)
+    private byte[] BuildSingleLvalPageBuffer(byte[] payload, uint lvalToken)
     {
-        DataPageLayout dataPage = writer._dataPage;
         int pgSz = writer._pgSz;
 
         byte[] page = ArrayPool<byte>.Shared.Rent(pgSz);
         Array.Clear(page, 0, pgSz);
-        page[0] = 0x01; // page_type = data page
+        page[0] = 0x01; // page_type = data page / long-value page
         page[1] = 0x01;
-        AccessBase.Wi32(page, dataPage.TDefOff, 0);
-        AccessBase.Wu16(page, dataPage.NumRows, 1);
-
-        int rowStart = pgSz - payload.Length;
+        page[2] = 0x04;
+        WriteLvalPageHeader(page, lvalToken);
+        int rowStart = Constants.LongValue.LvalRowStart;
         Buffer.BlockCopy(payload, 0, page, rowStart, payload.Length);
-        AccessBase.Wu16(page, dataPage.RowsStart, rowStart);
-
-        int freeSpace = rowStart - (dataPage.RowsStart + 2);
-        AccessBase.Wu16(page, 2, freeSpace);
         return page;
     }
 
@@ -218,26 +244,20 @@ internal sealed class LongValueEncoder(AccessWriter writer)
     /// the first 4 bytes of the row are the next-row pointer (<c>page&lt;&lt;8 | row</c>,
     /// little-endian; <c>0</c> on the terminal page) and the remainder is the chunk payload.
     /// </summary>
-    private byte[] BuildChainLvalPageBuffer(byte[] data, int offset, int length, uint nextDp)
+    private byte[] BuildChainLvalPageBuffer(byte[] data, int offset, int length, uint nextDp, uint lvalToken)
     {
-        DataPageLayout dataPage = writer._dataPage;
         int pgSz = writer._pgSz;
 
         byte[] page = ArrayPool<byte>.Shared.Rent(pgSz);
         Array.Clear(page, 0, pgSz);
         page[0] = 0x01;
         page[1] = 0x01;
-        AccessBase.Wi32(page, dataPage.TDefOff, 0);
-        AccessBase.Wu16(page, dataPage.NumRows, 1);
+        page[2] = 0x04;
+        WriteLvalPageHeader(page, lvalToken);
 
-        int rowLen = 4 + length;
-        int rowStart = pgSz - rowLen;
+        int rowStart = Constants.LongValue.LvalRowStart;
         AccessBase.Wi32(page, rowStart, (int)nextDp);
         Buffer.BlockCopy(data, offset, page, rowStart + 4, length);
-        AccessBase.Wu16(page, dataPage.RowsStart, rowStart);
-
-        int freeSpace = rowStart - (dataPage.RowsStart + 2);
-        AccessBase.Wu16(page, 2, freeSpace);
         return page;
     }
 }

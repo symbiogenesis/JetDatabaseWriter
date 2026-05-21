@@ -843,6 +843,9 @@ internal static class Constants
         /// of the chosen storage form (inline / single-page / chained).
         /// </summary>
         public const int MaxPayloadBytes = (1 << 24) - 1;
+
+        /// <summary>First payload-row byte on Access-authored Jet4/ACE LVAL pages.</summary>
+        public const int LvalRowStart = 20;
     }
 
     /// <summary>

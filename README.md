@@ -23,7 +23,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 
 - Best fit for .NET applications and tools that need direct file-level access to Access databases.
 - Not a fit if you need a SQL engine, an ODBC driver, or full Access application features like forms, reports, macros, or VBA.
-- Access compatibility: writer-created tables, relationships, encrypted ACCDB output, and Compact & Repair round-trips are covered by DAO validation tests on Access-equipped Windows hosts.
+- Access compatibility: writer-created tables, relationships, encrypted ACCDB output, complex columns, LVAL payloads, and Compact & Repair round-trips are covered by DAO validation tests on Access-equipped Windows hosts.
 
 ## Features
 
@@ -61,7 +61,7 @@ Beyond functional tests, the codebase is validated by:
 - **Strict compiler settings** — nullable reference types, warnings-as-errors, `WarningLevel 9999`, `AnalysisLevel latest-all`, and arithmetic overflow checking enabled globally
 - **Static analysis** — Roslyn .NET analyzers, Roslynator, StyleCop, and `dotnet format` enforced in CI
 - **Reproducible builds** — deterministic compilation via [DotNet.ReproducibleBuilds](https://github.com/dotnet/reproducible-builds); identical source always produces identical binaries
-- **Access Compact & Repair round-trips** — writer-created tables, indexes, relationships, and password-protected ACCDB output are validated on Access-equipped Windows hosts.
+- **Access Compact & Repair round-trips** — writer-created tables, indexes, relationships, password-protected ACCDB output, and Northwind-hosted attachment/multi-value complex columns with chained-LVAL payloads are validated on Access-equipped Windows hosts.
 - **Index key fixture parity** — long text/MEMO index keys with embedded line breaks are validated against Access-authored fixtures: Jet4 (V2000 / V2003 / V2007) is byte-exact, and V2010 ACE is byte-exact for the checked-in Access-authored `Table11` / `Table11_desc` long rows. The V2010 encoder also includes the DAO-derived 65-character contribution tables for the plain, auxiliary, row10, row11, and row12 long-row suffix contexts, with probe validation showing zero mismatches across the exported matrices and observed double-space sweeps. See [GeneralLegacyEncoderFixtureTests.cs](JetDatabaseWriter.Tests/Indexes/Collation/GeneralLegacyEncoderFixtureTests.cs), [GeneralEncoderFixtureTests.cs](JetDatabaseWriter.Tests/Indexes/Collation/GeneralEncoderFixtureTests.cs), and [format-probe notes](docs/format-probe/format-probe-long-row-index-encoding.md).
 - **Fuzz testing** — random byte mutations and truncation matrices at every page boundary
 - **Memory safety analysis** — control-flow and resource-leak detection via [InferSharp](https://github.com/microsoft/infersharp)
@@ -197,7 +197,7 @@ Multiple logical indexes can share the same physical index — consult `IndexMet
 
 ### Complex (Attachment / Multi-value) column metadata
 
-`GetComplexColumnsAsync` joins the parent TDEF column descriptors with `MSysComplexColumns` to expose the per-column `ComplexID`, the hidden flat child-table name, and the column subtype (Attachment, MultiValue, or VersionHistory).
+`GetComplexColumnsAsync` joins the parent TDEF column descriptors with `MSysComplexColumns` to expose the per-column `ComplexID`, the parent table object/TDEF id, the hidden flat child-table name, and the column subtype (Attachment, MultiValue, or VersionHistory).
 
 ```csharp
 IReadOnlyList<ComplexColumnInfo> complex = await reader.GetComplexColumnsAsync("Documents", cancellationToken);
@@ -230,7 +230,7 @@ IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("
 IReadOnlyList<(int ConceptualTableId, object? Value)> tags = await reader.GetMultiValueItemsAsync("Tags", "Items", cancellationToken);
 ```
 
-The parent-row predicate must match exactly one row (zero or multiple matches throw `InvalidOperationException`). Attachment payloads are wrapped per MS-ACCDB §3.1 (4-byte typeFlag + dataLen + extension + payload, with raw-deflate compression skipped for already-compressed extensions). Payloads larger than the 256-byte inline-OLE cap are pushed onto freshly-allocated LVAL data pages (single-page or chained form) and reassembled by the reader; the upper limit is the 24-bit on-disk LVAL length field (~16 MB per file).
+The parent-row predicate must match exactly one row (zero or multiple matches throw `InvalidOperationException`). Attachment payloads are wrapper-encoded on disk (4-byte typeFlag + dataLen + extension + payload, with raw-deflate compression skipped for already-compressed extensions). Payloads larger than the 256-byte inline-OLE cap are pushed onto freshly allocated Access-style LVAL pages (single-page or chained form with the `LVAL` page signature) and reassembled by the reader; the upper limit is the 24-bit on-disk LVAL length field (~16 MB per file).
 
 ### Hyperlink columns
 
@@ -702,7 +702,7 @@ The library parses JET pages directly, based on the [mdbtools format specificati
 2. **Page 2** — `MSysObjects` catalog: table names → TDEF page numbers
 3. **TDEF pages** — table definition chains: column descriptors + names
 4. **Data pages** — row slot arrays → null mask + fixed/variable fields
-5. **LVAL pages** — long-value chains for MEMO and OLE fields
+5. **LVAL pages** — long-value chains for MEMO, OLE, and attachment payloads
 
 ---
 

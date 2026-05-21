@@ -49,10 +49,9 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 ///   ✓ Page cache — 256-page LRU cache (default 1 MB) for 50%+ performance boost
 ///   ✓ Catalog caching — single MSysObjects scan, reused across calls
 ///   ✓ Non-Western text — auto-detects code page from database header (Cyrillic, Japanese, etc.)
-///   ✓ Encryption detection — throws clear UnauthorizedAccessException for password-protected DBs
+///   ✓ Password-protected databases — supports the implemented Jet/ACE encryption formats
 ///
 /// Limitations:
-///   ✗ Encrypted (password-protected) databases — remove password in Access first
 ///   ✓ Attachment and multi-value complex fields — decoded via hidden flat tables
 ///   ✗ Linked tables — only local tables returned
 ///   ✗ Overflow rows (span multiple pages) — silently skipped (rare edge case)
@@ -1492,7 +1491,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
-    public async ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
+    public ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
+        => ReadDataTableCoreAsync(tableName, maxRows, progress, preserveComplexReferences: false, cancellationToken);
+
+    internal ValueTask<DataTable> ReadDataTableForSchemaRewriteAsync(string tableName, CancellationToken cancellationToken = default)
+        => ReadDataTableCoreAsync(tableName, maxRows: null, progress: null, preserveComplexReferences: true, cancellationToken);
+
+    private async ValueTask<DataTable> ReadDataTableCoreAsync(
+        string? tableName,
+        uint? maxRows,
+        IProgress<long>? progress,
+        bool preserveComplexReferences,
+        CancellationToken cancellationToken)
     {
         using var operation = EnterOperation();
         cancellationToken.ThrowIfCancellationRequested();
@@ -1515,7 +1525,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             if (link != null)
             {
                 await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
-                return await source.ReadDataTableAsync(link.ForeignName, maxRows, progress, cancellationToken).ConfigureAwait(false);
+                return await source.ReadDataTableCoreAsync(link.ForeignName, maxRows, progress, preserveComplexReferences, cancellationToken).ConfigureAwait(false);
             }
 
             return new DataTable(tableName);
@@ -1528,10 +1538,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
             dt = new DataTable(tableName);
             foreach (ColumnInfo col in td.Columns)
             {
-                _ = dt.Columns.Add(col.Name, JetTypeInfo.ResolveClrType(col));
+                Type clrType = preserveComplexReferences && (col.Type == T_COMPLEX || col.Type == T_ATTACHMENT)
+                    ? typeof(object)
+                    : JetTypeInfo.ResolveClrType(col);
+                _ = dt.Columns.Add(col.Name, clrType);
             }
 
-            Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
+            Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns && !preserveComplexReferences
                 ? await BuildComplexColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
                 : null;
             IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
@@ -1563,7 +1576,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                             continue;
                         }
 
-                        if (td.HasComplexColumns)
+                        if (td.HasComplexColumns && !preserveComplexReferences)
                         {
                             ResolveComplexColumns(rowBuffer, td.Columns, complexData);
                         }
@@ -2590,7 +2603,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             // Complex slot with no resolvable child data (e.g. multi-value
             // columns whose flat-table loader is not wired through, or
-            // attachment slots whose ConceptualTableID has no live flat
+            // attachment slots whose per-row complex reference has no live flat
             // rows). Surface as DBNull rather than leaving the
             // ComplexIdRef sentinel visible.
             typedRow[i] = DBNull.Value;
@@ -4152,8 +4165,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
             n => n != null && n.EndsWith(nameSuffix, StringComparison.OrdinalIgnoreCase),
             cancellationToken);
 
-    // [memo_len: 3 bytes][bitmask: 1 byte][lval_dp: 4 bytes][unknown: 4 bytes]
+    // [memo_len: 3 bytes][bitmask: 1 byte][lval_dp: 4 bytes][LVAL token: 4 bytes]
     // 0x80 = inline data immediately after the 12-byte header
     // 0x40 = single LVAL page:  lval_dp = (page << 8) | row_index
-    // 0x00 = chained LVAL pages (not decoded; placeholder returned)
+    // 0x00 = chained LVAL pages
 }

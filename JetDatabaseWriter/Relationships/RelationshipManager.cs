@@ -2400,7 +2400,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
 
             // Cascade complex flat-child rows for the child rows we are
             // about to delete. Must precede _writer.MarkRowDeletedAsync so the
-            // ConceptualTableID slots are still readable.
+            // per-row complex-reference slots are still readable.
             var cascadeLocs = new List<RowLocation>(matchingRowIndices.Count);
             foreach (int rIdx in matchingRowIndices)
             {

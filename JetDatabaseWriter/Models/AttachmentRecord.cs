@@ -10,7 +10,7 @@ using JetDatabaseWriter.Interfaces;
 /// <see cref="IAccessReader.GetAttachmentsAsync(string, string, System.Threading.CancellationToken)"/>.
 /// </summary>
 /// <remarks>
-/// The wrapper format (1 byte vs 4-byte type-flag, optional deflate compression)
+/// The wrapper format (4-byte type flag plus optional deflate compression)
 /// is decoded by the reader; <see cref="FileData"/> is the raw payload bytes
 /// after wrapper / deflate removal. See
 /// <c>docs/design/complex-columns-format-notes.md</c> §3.
@@ -18,7 +18,7 @@ using JetDatabaseWriter.Interfaces;
 public sealed record AttachmentRecord
 {
     /// <summary>
-    /// Gets the per-parent-row <c>ConceptualTableID</c> joining this flat-table
+    /// Gets the per-parent-row complex reference joining this flat-table
     /// row back to its parent. Equal to the 4-byte value stored in the parent
     /// row's complex column slot.
     /// </summary>

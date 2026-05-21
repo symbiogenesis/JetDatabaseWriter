@@ -32,7 +32,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             AccessWriter.ValidateCalculatedColumn(definition, format);
             byte type = AccessWriter.TypeCodeFromDefinition(definition);
             bool isCalculated = definition.IsCalculated;
-            bool variable = isCalculated || AccessWriter.IsVariableType(type);
+            bool variable = isCalculated || definition.ForceVariableLengthStorage || AccessWriter.IsVariableType(type);
             int declaredSize = GetDeclaredSize(type, definition.MaxLength, format);
             int size = isCalculated ? GetCalculatedDeclaredSize(type, declaredSize) : declaredSize;
 
@@ -79,6 +79,8 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 }
             }
 
+            flags = definition.DescriptorFlagsOverride ?? flags;
+
             var column = new ColumnInfo
             {
                 Name = definition.Name,
@@ -88,10 +90,10 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 FixedOff = variable ? 0 : fixedOffset,
                 Size = size,
                 Flags = flags,
-                Misc = isComplex ? definition.ComplexId : 0,
+                Misc = isComplex ? definition.ComplexId : definition.DescriptorMiscOverride ?? 0,
                 NumericPrecision = type == T_NUMERIC ? AccessWriter.ResolveNumericPrecision(definition) : (byte)0,
                 NumericScale = type == T_NUMERIC ? AccessWriter.ResolveNumericScale(definition) : (byte)0,
-                ExtraFlags = GetExtraFlags(definition, type, format),
+                ExtraFlags = definition.DescriptorExtraFlagsOverride ?? GetExtraFlags(definition, type, format),
             };
 
             result.Columns.Add(column);
@@ -225,6 +227,18 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             else if (jet4 && col.IsCalculated)
             {
                 page[o + writer._colDesc.FlagsOff + 1] = col.ExtraFlags;
+            }
+            else if (jet4)
+            {
+                if (col.Misc != 0)
+                {
+                    AccessBase.Wi32(page, o + writer._colDesc.MiscOff, col.Misc);
+                }
+
+                if (col.ExtraFlags != 0)
+                {
+                    page[o + writer._colDesc.FlagsOff + 1] = col.ExtraFlags;
+                }
             }
 
             byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : writer.AnsiEncoding.GetBytes(col.Name);

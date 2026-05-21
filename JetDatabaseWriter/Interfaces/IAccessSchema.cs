@@ -51,10 +51,9 @@ public interface IAccessSchema : IAccessBase
     /// <param name="indexes">
     /// Logical-index schema entries to write into the new table's TDEF page chain.
     /// See <see cref="IndexDefinition"/> for the constraints in force today (single
-    /// column, non-unique, ascending, Jet4/ACE only). One empty B-tree leaf page is
-    /// allocated per index at table-creation time, but the leaf is not maintained
-    /// by subsequent insert / update / delete calls and goes stale until Microsoft
-    /// Access rebuilds it on the next Compact &amp; Repair pass.
+    /// column, non-unique, ascending, Jet4/ACE only). Index leaves are emitted at
+    /// table-creation time and maintained by supported writer insert / update /
+    /// delete paths.
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
@@ -133,9 +132,9 @@ public interface IAccessSchema : IAccessBase
     /// <summary>
     /// Asynchronously creates a foreign-key relationship between two existing user tables
     /// by appending one row per FK column to the <c>MSysRelationships</c> system table.
-    /// The relationship is visible in the Microsoft Access Relationships designer; runtime
-    /// enforcement of referential integrity is performed by Microsoft Access (after
-    /// Compact &amp; Repair regenerates the per-TDEF FK index entries), not by this library.
+    /// The relationship is visible in the Microsoft Access Relationships designer.
+    /// The writer also enforces the declared referential-integrity rules on supported
+    /// row mutations, and Microsoft Access can compact/rebuild the persisted metadata.
     /// </summary>
     /// <param name="relationship">The relationship to create. Both referenced tables and
     /// every named column must already exist; <see cref="RelationshipDefinition.Name"/>

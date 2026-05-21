@@ -1315,6 +1315,20 @@ public abstract class AccessBase : IAccessBase
                             : _ansiEncoding.GetString(page, rowStart + slice.DataStart, slice.DataLen);
                     case T_BINARY:
                         return JetTypeInfo.ToHexStringNoSeparator(page.AsSpan(rowStart + slice.DataStart, slice.DataLen));
+                    case T_BYTE:
+                    case T_INT:
+                    case T_LONG:
+                    case T_FLOAT:
+                    case T_DOUBLE:
+                    case T_DATETIME:
+                    case T_MONEY:
+                    case T_GUID:
+                    case T_COMPLEX:
+                    case T_ATTACHMENT:
+                        int required = column.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(column.Type);
+                        return required > 0 && slice.DataLen >= required
+                            ? JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column.Type, required)
+                            : string.Empty;
                     default:
                         return string.Empty;
                 }

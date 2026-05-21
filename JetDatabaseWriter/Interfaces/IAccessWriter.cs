@@ -102,7 +102,7 @@ public interface IAccessWriter : IAccessBase
     /// <summary>
     /// Asynchronously appends one file to a parent row's Access 2007+ Attachment
     /// column. Locates the parent row by composite primary-key tuple, lazily
-    /// allocates a per-row <c>ConceptualTableID</c>, patches the parent row's
+    /// allocates a per-row complex reference value, patches the parent row's
     /// complex-column slot with that ID, and inserts a row into the hidden flat
     /// child table carrying the wrapper-encoded payload (per
     /// <c>docs/design/complex-columns-format-notes.md</c> §3).
@@ -130,7 +130,7 @@ public interface IAccessWriter : IAccessBase
     /// <summary>
     /// Asynchronously appends one value to a parent row's Access 2007+ Multi-Value
     /// column. Locates the parent row by composite primary-key tuple, lazily
-    /// allocates a per-row <c>ConceptualTableID</c>, patches the parent row's
+    /// allocates a per-row complex reference value, patches the parent row's
     /// complex-column slot with that ID, and inserts a row into the hidden flat
     /// child table whose <c>value</c> column carries <paramref name="value"/>.
     /// </summary>

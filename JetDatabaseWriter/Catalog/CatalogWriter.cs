@@ -209,6 +209,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
         List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
 
         long? tdefPage = null;
+        uint catalogFlags = 0;
         foreach (CatalogRow row in rows)
         {
             if (row.ObjectType != Constants.SystemObjects.UserTableType)
@@ -222,7 +223,18 @@ internal sealed class CatalogWriter(AccessWriter writer)
             }
 
             tdefPage = row.TDefPage;
+            catalogFlags = unchecked((uint)row.Flags);
+            object[] deletedIndexRow = msys.CreateNullValueRow();
+            msys.SetValueByName(deletedIndexRow, "Id", checked((int)row.TDefPage));
+            msys.SetValueByName(deletedIndexRow, "ParentId", Constants.SystemObjects.TablesParentId);
+            msys.SetValueByName(deletedIndexRow, "Name", row.Name);
             await writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
+            _ = await writer.TryMaintainIndexesIncrementalAsync(
+                2,
+                msys,
+                null,
+                [(new RowLocation(row.PageNumber, row.RowIndex, 0, 0), deletedIndexRow)],
+                cancellationToken).ConfigureAwait(false);
             break;
         }
 
@@ -231,7 +243,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
             throw new InvalidOperationException($"Catalog row for '{oldName}' was not found during rename.");
         }
 
-        await InsertCatalogEntryAsync(newName, tdefPage.Value, lvProp, cancellationToken).ConfigureAwait(false);
+        await InsertCatalogEntryAsync(newName, tdefPage.Value, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
         writer.Constraints.Rename(oldName, newName);
         writer.InvalidateCatalogCache();
     }

@@ -152,7 +152,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
     public async Task DeleteRowsAsync_OnParentWithNullComplexSlot_DoesNothingExtra()
     {
         // Parent has a complex column but never received an attachment, so its
-        // ConceptualTableID slot is null. Delete must succeed without touching
+        // per-row complex-reference slot is null. Delete must succeed without touching
         // (or even inspecting beyond the null bit) the flat table.
         await using var ms = new MemoryStream();
 

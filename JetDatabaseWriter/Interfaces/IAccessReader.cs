@@ -141,8 +141,8 @@ public interface IAccessReader : IAccessBase
     /// <summary>
     /// Returns every value stored in the hidden flat child table backing the
     /// Access 2007+ Multi-Value column <paramref name="columnName"/> on
-    /// <paramref name="tableName"/>, paired with the parent row's
-    /// <c>ConceptualTableID</c> so callers can group items by parent.
+    /// <paramref name="tableName"/>, paired with the parent row's per-row
+    /// complex reference value so callers can group items by parent.
     /// </summary>
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Multi-Value column name (case-insensitive).</param>

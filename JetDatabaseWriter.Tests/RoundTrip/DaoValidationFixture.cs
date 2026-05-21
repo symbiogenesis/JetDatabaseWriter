@@ -417,11 +417,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
                 new("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
                 new("Title", typeof(string), maxLength: 100) { IsNullable = false },
                 new(ComplexAttachmentColumn, typeof(byte[])) { IsAttachment = true },
-                new(ComplexTagsColumn, typeof(object), maxLength: 255)
-                {
-                    IsMultiValue = true,
-                    MultiValueElementType = typeof(string),
-                },
+                new(ComplexTagsColumn, typeof(object), maxLength: 255) { IsMultiValue = true, MultiValueElementType = typeof(string) },
             ],
             cancellationToken).ConfigureAwait(false);
 
