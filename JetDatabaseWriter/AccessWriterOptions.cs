@@ -124,6 +124,17 @@ public sealed class AccessWriterOptions : IAccessOptions
     public int MaxTransactionPageBudget { get; init; } = 16_384;
 
     /// <summary>
+    /// Gets the secure-erase behavior used by destructive writer operations.
+    /// The default preserves normal JET behavior: deleted rows are marked
+    /// deleted but their old payload bytes may remain in the file until Access
+    /// or the writer reuses the space. When set to
+    /// <see cref="SecureEraseMode.DeletedRowsAndFreedPages"/>, deleted row
+    /// bodies and freed page payloads are overwritten before the storage is
+    /// returned to the global page free list.
+    /// </summary>
+    public SecureEraseMode SecureEraseMode { get; init; } = SecureEraseMode.None;
+
+    /// <summary>
     /// Gets a value indicating whether every public mutation method on
     /// <see cref="AccessWriter"/> is wrapped in an implicit
     /// <see cref="JetTransaction"/> when no explicit transaction is active.

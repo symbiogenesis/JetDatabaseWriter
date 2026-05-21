@@ -262,14 +262,14 @@ internal sealed class RelationshipManager(AccessWriter writer)
         if (pkPlan.AllocatesNewRealIdx)
         {
             byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(writer._pgSz, primaryTdefPage, []);
-            long lp = await writer.AppendPageAsync(leaf, cancellationToken).ConfigureAwait(false);
+            long lp = await writer.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
             pkPlan = pkPlan.WithLeafPage(lp);
         }
 
         if (fkPlan.AllocatesNewRealIdx)
         {
             byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(writer._pgSz, foreignTdefPage, []);
-            long lp = await writer.AppendPageAsync(leaf, cancellationToken).ConfigureAwait(false);
+            long lp = await writer.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
             fkPlan = fkPlan.WithLeafPage(lp);
         }
 
@@ -1383,7 +1383,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
 
         for (int pageIndex = retainedCount; pageIndex < pageCount; pageIndex++)
         {
-            pageNumbers[pageIndex] = await writer.AppendPageAsync(new byte[writer._pgSz], cancellationToken).ConfigureAwait(false);
+            pageNumbers[pageIndex] = await writer.AllocatePageAsync(new byte[writer._pgSz], cancellationToken).ConfigureAwait(false);
         }
 
         logicalBytes[0] = 0x02;

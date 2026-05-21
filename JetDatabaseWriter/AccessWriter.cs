@@ -100,6 +100,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>Owns data-page allocation and row insertion mechanics.</summary>
     private readonly DataPageInserter _dataPageInserter;
 
+    /// <summary>Owns the global page free-list allocator and maintenance operations.</summary>
+    private readonly PageAllocator _pageAllocator;
+
     /// <summary>Gets the foreign-key / relationship subsystem. The bulk of
     /// FK code (catalog rows, per-TDEF logical-index entries, runtime
     /// referential-integrity enforcement) lives there; <see cref="AccessWriter"/>
@@ -166,6 +169,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         _catalogWriter = new CatalogWriter(this);
         _rowEncoder = new RowEncoder(this);
         _dataPageInserter = new DataPageInserter(this);
+        _pageAllocator = new PageAllocator(this);
         Constraints = new ConstraintRegistry(
             async (tableName, ct) => await ReadTableSnapshotAsync(tableName, ct).ConfigureAwait(false),
             async (tableName, ct) =>
@@ -530,17 +534,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
         (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
 
-        // Append all TDEF pages first (sequential page numbers). The first
+        // Reserve all TDEF pages first (sequential page numbers). The first
         // page's number is the table's catalog ID; subsequent pages are
         // chained via the next-page pointer at offset 4 of each non-last
-        // page. Leaf pages and the usage-map page are appended AFTER, so
+        // page. Leaf pages and the usage-map page are allocated AFTER, so
         // they don't interleave with the TDEF chain and the page numbers
         // stay contiguous (tdefPages[i] lives at file page tdefPageNumber + i).
-        long tdefPageNumber = await AppendPageAsync(tdefPages[0], cancellationToken).ConfigureAwait(false);
-        for (int p = 1; p < tdefPages.Length; p++)
-        {
-            _ = await AppendPageAsync(tdefPages[p], cancellationToken).ConfigureAwait(false);
-        }
+        long tdefPageNumber = await ReserveContiguousPagesAsync(tdefPages.Length, cancellationToken).ConfigureAwait(false);
 
         // Stamp the next-page pointer at offset 4 of every non-last TDEF page.
         for (int p = 0; p < tdefPages.Length - 1; p++)
@@ -548,7 +548,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             Wi32(tdefPages[p], 4, checked((int)(tdefPageNumber + p + 1)));
         }
 
-        bool tdefDirty = tdefPages.Length > 1;
+        for (int p = 0; p < tdefPages.Length; p++)
+        {
+            await WritePageAsync(tdefPageNumber + p, tdefPages[p], cancellationToken).ConfigureAwait(false);
+        }
+
+        bool tdefDirty = false;
 
         long[]? leafPageNumbers = null;
 
@@ -574,7 +579,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     nextPage: 0,
                     tailPage: 0,
                     enablePrefixCompression: false);
-                long leafPageNumber = await AppendPageAsync(leafPage, cancellationToken).ConfigureAwait(false);
+                long leafPageNumber = await AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
                 leafPageNumbers[i] = leafPageNumber;
                 WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
             }
@@ -649,6 +654,34 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <inheritdoc/>
     public ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default)
         => RunAutoCommitAsync(_ => DropTableEntryAsync(tableName, cancellationToken), cancellationToken);
+
+    /// <summary>
+    /// Overwrites every page currently marked free in the Access global page
+    /// allocation map. This is a maintenance operation; it does not move live
+    /// pages or change table contents.
+    /// </summary>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The number of free pages scrubbed.</returns>
+    public ValueTask<int> ScrubFreePagesAsync(CancellationToken cancellationToken = default)
+    {
+        Guard.ThrowIfDisposed(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+        return _pageAllocator.ScrubFreePagesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Truncates globally-free pages from the physical end of the database file.
+    /// This is a tail shrinker, not a full Microsoft Access Compact &amp; Repair
+    /// rebuild: live pages keep their existing page numbers.
+    /// </summary>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The number of pages removed from the end of the file.</returns>
+    public ValueTask<long> ShrinkDatabaseAsync(CancellationToken cancellationToken = default)
+    {
+        Guard.ThrowIfDisposed(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+        return _pageAllocator.ShrinkDatabaseAsync(cancellationToken);
+    }
 
     private async ValueTask DropTableEntryAsync(string tableName, CancellationToken cancellationToken)
     {
@@ -1235,7 +1268,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             cancellationToken.ThrowIfCancellationRequested();
             object[] oldRow = snapshot.Rows[i].ItemArray!;
-            await MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, cancellationToken).ConfigureAwait(false);
+            await MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
             updateDeletedHints.Add((locations[i], oldRow));
             RowLocation newLoc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
             updateInsertedHints.Add((newLoc, rowValues));
@@ -1343,7 +1376,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             cancellationToken.ThrowIfCancellationRequested();
             object[] oldRow = snapshot.Rows[i].ItemArray!;
-            await MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, cancellationToken).ConfigureAwait(false);
+            await MarkRowDeletedAsync(locations[i].PageNumber, locations[i].RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
             deleteHints.Add((locations[i], oldRow));
             deleted++;
         }
@@ -2731,7 +2764,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         int freeSpace = rowStart - (_dataPage.RowsStart + (rowCount * 2));
         Wu16(page, 2, freeSpace);
 
-        return await AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+        return await AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
     }
 
     internal async ValueTask UpdateTableIndexUsageMapRowsAsync(long usageMapPageNumber, IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
@@ -2915,9 +2948,146 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
+        foreach (long tdefPage in droppedTdefPages)
+        {
+            await ReclaimDroppedTablePagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        }
+
         Constraints.Unregister(tableName);
         InvalidateCatalogCache();
     }
+
+    private async ValueTask ReclaimDroppedTablePagesAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        var pagesToFree = new SortedSet<long>();
+        var longValueRoots = new List<LongValueRoot>();
+
+        TableDef? tableDef = await ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        long totalPages = _stream.Length / _pgSz;
+        if (tableDef is not null)
+        {
+            for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != tdefPage)
+                    {
+                        continue;
+                    }
+
+                    _ = pagesToFree.Add(pageNumber);
+                    foreach (RowBound rowBound in EnumerateLiveRowBounds(page))
+                    {
+                        longValueRoots.AddRange(CollectLongValueRoots(page, rowBound, tableDef));
+                    }
+                }
+                finally
+                {
+                    ReturnPage(page);
+                }
+            }
+        }
+
+        byte[]? firstTdefPage = null;
+        var seenTdefPages = new HashSet<long>();
+        long currentTdefPage = tdefPage;
+        while (currentTdefPage > 0 && currentTdefPage < totalPages && seenTdefPages.Add(currentTdefPage))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            byte[] page = await ReadPageAsync(currentTdefPage, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != 0x02)
+                {
+                    break;
+                }
+
+                _ = pagesToFree.Add(currentTdefPage);
+                firstTdefPage ??= (byte[])page.Clone();
+                currentTdefPage = Ri32(page, 4);
+            }
+            finally
+            {
+                ReturnPage(page);
+            }
+        }
+
+        if (firstTdefPage is not null && _format != DatabaseFormat.Jet3Mdb)
+        {
+            int usageMapPage = ReadUInt24(firstTdefPage, 0x38);
+            if (usageMapPage > 0)
+            {
+                _ = pagesToFree.Add(usageMapPage);
+                await CollectIndexPagesFromUsageMapAsync(usageMapPage, pagesToFree, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        foreach (LongValueRoot root in longValueRoots)
+        {
+            await DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (long pageNumber in pagesToFree)
+        {
+            if (pageNumber > 2)
+            {
+                await DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async ValueTask CollectIndexPagesFromUsageMapAsync(long usageMapPageNumber, SortedSet<long> pagesToFree, CancellationToken cancellationToken)
+    {
+        long totalPages = _stream.Length / _pgSz;
+        if (usageMapPageNumber <= 0 || usageMapPageNumber >= totalPages)
+        {
+            return;
+        }
+
+        byte[] page = await ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (page[0] != 0x01)
+            {
+                return;
+            }
+
+            foreach (RowBound rowBound in EnumerateLiveRowBounds(page))
+            {
+                if (rowBound.RowIndex < 2 || rowBound.RowSize < 5 || page[rowBound.RowStart] != 0x00)
+                {
+                    continue;
+                }
+
+                int basePage = Ri32(page, rowBound.RowStart + 1);
+                int bitCapacity = (rowBound.RowSize - 5) * 8;
+                for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
+                {
+                    int byteOffset = rowBound.RowStart + 5 + (bitIndex / 8);
+                    byte bitMask = (byte)(1 << (bitIndex % 8));
+                    if ((page[byteOffset] & bitMask) == 0)
+                    {
+                        continue;
+                    }
+
+                    long pageNumber = (long)basePage + bitIndex;
+                    if (pageNumber > 2 && pageNumber < totalPages)
+                    {
+                        _ = pagesToFree.Add(pageNumber);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            ReturnPage(page);
+        }
+    }
+
+    private static int ReadUInt24(byte[] page, int offset)
+        => page[offset] | (page[offset + 1] << 8) | (page[offset + 2] << 16);
 
     private async ValueTask DeleteAceRowsForObjectIdsAsync(List<long> objectIds, CancellationToken cancellationToken)
     {
@@ -3475,6 +3645,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     internal ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
         => _indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken);
 
+    internal ValueTask<long> AllocatePageAsync(byte[] page, CancellationToken cancellationToken)
+        => _pageAllocator.AllocatePageAsync(page, cancellationToken);
+
+    internal ValueTask<long> ReserveContiguousPagesAsync(int pageCount, CancellationToken cancellationToken)
+        => _pageAllocator.ReserveContiguousPagesAsync(pageCount, cancellationToken);
+
+    internal ValueTask DeallocatePageAsync(long pageNumber, CancellationToken cancellationToken)
+        => _pageAllocator.DeallocatePageAsync(pageNumber, cancellationToken);
+
     internal ValueTask MarkPageInOwnedMapAsync(long tdefPageNumber, long dataPageNumber, CancellationToken cancellationToken)
         => _dataPageInserter.MarkPageInOwnedMapAsync(tdefPageNumber, dataPageNumber, cancellationToken);
 
@@ -3494,9 +3673,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken)
         => _indexMaintainer.TrySpliceCatalogIndexEntryAsync(tdefPage, tableDef, newRowLoc, newRowValues, cancellationToken);
 
-    internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
+    internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
+        => MarkRowDeletedAsync(pageNumber, rowIndex, tableDef: null, cancellationToken);
+
+    internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef? tableDef, CancellationToken cancellationToken)
     {
         byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        List<LongValueRoot>? longValueRoots = null;
         int offsetPos = _dataPage.RowsStart + (rowIndex * 2);
         int raw = Ru16(page, offsetPos);
         if ((raw & 0x8000) != 0)
@@ -3505,8 +3688,136 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return;
         }
 
+        if (_options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
+        {
+            foreach (RowBound rowBound in EnumerateLiveRowBounds(page))
+            {
+                if (rowBound.RowIndex != rowIndex)
+                {
+                    continue;
+                }
+
+                if (tableDef is not null)
+                {
+                    longValueRoots = CollectLongValueRoots(page, rowBound, tableDef);
+                }
+
+                Array.Clear(page, rowBound.RowStart, rowBound.RowSize);
+                break;
+            }
+        }
+
         Wu16(page, offsetPos, raw | 0x8000);
         await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         ReturnPage(page);
+
+        if (longValueRoots is null)
+        {
+            return;
+        }
+
+        foreach (LongValueRoot root in longValueRoots)
+        {
+            await DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
+        }
     }
+
+    private List<LongValueRoot> CollectLongValueRoots(byte[] page, RowBound rowBound, TableDef tableDef)
+    {
+        var roots = new List<LongValueRoot>();
+        bool hasVarColumns = false;
+        foreach (ColumnInfo column in tableDef.Columns)
+        {
+            if (!column.IsFixed)
+            {
+                hasVarColumns = true;
+                break;
+            }
+        }
+
+        if (!TryParseRowLayout(page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
+        {
+            return roots;
+        }
+
+        foreach (ColumnInfo column in tableDef.Columns)
+        {
+            if (column.Type != T_MEMO && column.Type != T_OLE)
+            {
+                continue;
+            }
+
+            ColumnSlice slice = ResolveColumnSlice(page, rowBound.RowStart, rowBound.RowSize, layout, column);
+            if (slice.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var) || slice.DataLen < 12)
+            {
+                continue;
+            }
+
+            int valueStart = rowBound.RowStart + slice.DataStart;
+            byte storageMode = (byte)(page[valueStart + 3] & 0xC0);
+            if (storageMode == 0x80)
+            {
+                continue;
+            }
+
+            uint firstDp = Ru32(page, valueStart + 4);
+            if (firstDp == 0)
+            {
+                continue;
+            }
+
+            roots.Add(new LongValueRoot(firstDp, IsChained: storageMode != 0x40));
+        }
+
+        return roots;
+    }
+
+    private async ValueTask DeallocateLongValueAsync(LongValueRoot root, CancellationToken cancellationToken)
+    {
+        if (!root.IsChained)
+        {
+            long singlePageNumber = root.FirstDp >> 8;
+            await DeallocatePageAsync(singlePageNumber, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        uint currentDp = root.FirstDp;
+        var seen = new HashSet<uint>();
+        while (currentDp != 0 && seen.Add(currentDp))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            long pageNumber = currentDp >> 8;
+            int rowIndex = (int)(currentDp & 0xFF);
+            if (pageNumber <= 0)
+            {
+                return;
+            }
+
+            uint nextDp = 0;
+            byte[] lvalPage = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (lvalPage[0] == 0x01)
+                {
+                    foreach (RowBound rowBound in EnumerateLiveRowBounds(lvalPage))
+                    {
+                        if (rowBound.RowIndex == rowIndex && rowBound.RowSize >= 4)
+                        {
+                            nextDp = Ru32(lvalPage, rowBound.RowStart);
+                            break;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                ReturnPage(lvalPage);
+            }
+
+            await DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            currentDp = nextDp;
+        }
+    }
+
+    private readonly record struct LongValueRoot(uint FirstDp, bool IsChained);
 }

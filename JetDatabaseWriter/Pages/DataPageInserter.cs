@@ -68,7 +68,7 @@ internal sealed class DataPageInserter(AccessWriter writer)
         // O(1) and the marginal file-size cost is negligible — Access
         // itself uses usage-map bitmaps for the same purpose, but we don't
         // yet maintain writable usage maps for existing tables.
-        long newPageNumber = await writer.AppendPageAsync(CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
+        long newPageNumber = await writer.AllocatePageAsync(CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
         writer.SetCachedInsertPageNumber(tdefPage, newPageNumber);
 
         // Mark the newly-appended data page in the per-table owned-pages
@@ -273,7 +273,7 @@ internal sealed class DataPageInserter(AccessWriter writer)
         int freeSpace = row1Off - (writer._dataPage.RowsStart + 4);
         Wu16(page, 2, freeSpace);
 
-        return await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+        return await writer.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
     }
 
     internal void WriteRowToPage(long pageNumber, byte[] page, byte[] rowBytes)

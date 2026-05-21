@@ -1,6 +1,6 @@
 # ESE-Inspired Coverage Gap Analysis
 
-**Status:** Updated after multi-page relationship mutation coverage, 2026-05-21.
+**Status:** Updated after complex-column/LVAL scope closure, 2026-05-21.
 **Reference:** [microsoft/Extensible-Storage-Engine](https://github.com/microsoft/Extensible-Storage-Engine).
 
 This note compares JetDatabaseWriter's current reader/writer test surface with themes from Microsoft's Extensible Storage Engine (ESE) repository. ESE is a full database engine, not an Access MDB/ACCDB file-format oracle, so the goal is not feature parity. The useful signal is where ESE's long-lived engine tests expose categories of risk that also matter to a direct JET/ACE page writer.
@@ -112,14 +112,20 @@ Implemented coverage (2026-05-21):
 - Added wide-endpoint drop and rename coverage in [RelationshipMutationTests.cs](../../JetDatabaseWriter.Tests/Relationships/RelationshipMutationTests.cs), verifying FK logical-idx entries are removed and renamed through multi-page TDEF chains.
 - Documented the remaining page-lifecycle detail in [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md): if a logical TDEF shrink no longer needs every old continuation page, the unreachable pages are left for Compact and Repair, matching the existing index/LVAL orphan model.
 
-### 8. Complex Columns and LVAL Reclamation
+### 8. Complex Columns and LVAL Reclamation (DONE)
 
-ESE has long-value, cleanup, and space-management machinery. JetDatabaseWriter supports complex columns and Access-style LVAL chains. DAO CompactDatabase coverage now includes a Northwind-hosted writer-created attachment/multi-value table with wrapper-encoded attachment `FileData`, a chained-LVAL attachment payload, flat-table indexes, and complex-column schema-evolution preservation. Remaining caveats are narrower: no old LVAL page reuse on update/delete (now byte-pinned by [DataRemanenceTests.cs](../../JetDatabaseWriter.Tests/Writer/DataRemanenceTests.cs)), fresh writer-created complex system-table scaffolding is still reader-round-trip only, and broader complex-column mutation coverage should be added when a new mutation becomes release-critical. See [complex-columns-format-notes.md](complex-columns-format-notes.md) and [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
+ESE has long-value, cleanup, and space-management machinery. JetDatabaseWriter now has Access-aware page reuse, tail shrinking, and opt-in secure erase for the writer path, while still avoiding a misleading promise of full Microsoft Access Compact & Repair page renumbering. The implementation follows the online Jackcess model for page 1 as the global usage map (`PAGE_GLOBAL_USAGE_MAP = 1`, inline/reference map rows, and allocation removing pages from the free map) plus local DAO probes that identify Access's type-`0x09` freed-page sentinel. Secure erase follows the same intent as ESE scrub coverage: overwrite deleted row bodies and freed-page payloads before those bytes become reusable.
 
-Suggested work:
+Implemented coverage and scope decision (2026-05-21):
 
-- Expand DAO Compact and Repair tests beyond the current Northwind-hosted attachment/multi-value/LVAL representative case when new complex-column mutations become release blockers.
-- Decide whether page reuse or opt-in scrubbing is out of scope or a future space-management/security feature.
+- DAO CompactDatabase coverage includes a Northwind-hosted writer-created attachment/multi-value table with wrapper-encoded attachment `FileData`, a chained-LVAL attachment payload, flat-table indexes, and complex-column schema-evolution preservation.
+- [PageAllocator.cs](../../JetDatabaseWriter/Pages/PageAllocator.cs) owns the page-1 global free-list allocator. It reuses pages only when both the global map and the physical page header agree the page is free/invalid, which avoids over-trusting stale Access-authored map bits. It supports inline global maps, reference-map backing pages, contiguous reservations for TDEF/index rebuilds, and Access-style deallocation through a type-`0x09` free-page header.
+- [AccessWriter.ShrinkDatabaseAsync](../../JetDatabaseWriter/AccessWriter.cs) truncates trailing globally-free pages without renumbering live pages. This is a tail shrinker, not a full Compact & Repair clone.
+- `AccessWriterOptions.SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages` overwrites deleted row bodies and old MEMO/OLE LVAL chains before freeing their pages. The default remains `None`, preserving normal JET logical-delete behavior and backward-compatible remanence.
+- [DataRemanenceTests.cs](../../JetDatabaseWriter.Tests/Writer/DataRemanenceTests.cs) byte-pins both behaviors: default update/delete leave old inline row bytes and old LVAL pages on disk, while secure erase removes the markers from deleted row bodies and LVAL pages.
+- [PageAllocatorTests.cs](../../JetDatabaseWriter.Tests/Pages/PageAllocatorTests.cs) verifies fresh page-1 map initialization, free-page reuse, and tail shrinking across Jet3, Jet4, and ACE formats.
+- Fresh writer-created complex system-table scaffolding remains reader-round-trip only by design. The strongest DAO compact test mutates an Access-authored Northwind fixture so that writer-created complex bytes are isolated from fresh-database bootstrap trust.
+- Broader DAO Compact and Repair coverage should be added when a new complex-column mutation becomes release-critical and a reliable Access-authored fixture can host it. Remaining cleanup gaps include full live-page compaction/renumbering, row-gap scrubbing inside still-live pages, and some orphan classes such as shortened TDEF continuations.
 
 ## Documentation Drift Found During Triage (RESOLVED)
 
@@ -145,5 +151,5 @@ The following ESE areas do not appear to map directly to this project unless the
 
 ## Suggested Next Test Work
 
-1. Decide whether an opt-in scrub/reuse mode belongs in scope for deleted row bodies, freed row gaps, index rebuild orphan pages, and old LVAL chains.
-2. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
+1. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
+2. If opt-in scrub/reuse enters scope, add byte-level and DAO Compact and Repair coverage across deleted row bodies, freed row gaps, index rebuild orphan pages, TDEF continuation orphans, and old LVAL chains.

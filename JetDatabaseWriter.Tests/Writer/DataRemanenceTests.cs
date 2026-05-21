@@ -190,6 +190,112 @@ public sealed class DataRemanenceTests
         }
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task DeleteRows_SecureEraseMode_ScrubsDeletedRowPayload(DatabaseFormat format)
+    {
+        byte[] deletedPayload = BuildPayload(64, 0x51);
+        byte[] deletedMarker = MarkerOf(deletedPayload);
+        await using var stream = await CreateFreshStreamAsync(format);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await CreateInlinePayloadTableAsync(writer, "SecureDeleteRows", TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(
+                "SecureDeleteRows",
+                [1, deletedPayload],
+                TestContext.Current.CancellationToken);
+        }
+
+        byte[] beforeDelete = stream.ToArray();
+        RowSnapshot originalSlot = AssertSingleLiveRowContaining(beforeDelete, format, deletedMarker);
+
+        await using (AccessWriter writer = await OpenWriterAsync(
+            stream,
+            new AccessWriterOptions
+            {
+                UseLockFile = false,
+                SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages,
+            }))
+        {
+            int deleted = await writer.DeleteRowsAsync(
+                "SecureDeleteRows",
+                "Id",
+                1,
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, deleted);
+        }
+
+        byte[] afterDelete = stream.ToArray();
+        RowSnapshot deletedSlot = ReadRowSnapshot(afterDelete, format, originalSlot.PageNumber, originalSlot.RowIndex);
+
+        Assert.True(deletedSlot.IsDeleted);
+        Assert.False(ContainsSequence(deletedSlot.Bytes, deletedMarker));
+        Assert.False(ContainsSequence(afterDelete, deletedMarker));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task DeleteRows_SecureEraseMode_ScrubsAndFreesLongOlePages(DatabaseFormat format)
+    {
+        byte[] payload = BuildPayload(9000, 0x33);
+        byte[] marker = MarkerOf(payload);
+        await using var stream = await CreateFreshStreamAsync(format);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "SecureLongValues",
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Blob", typeof(byte[])),
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                "SecureLongValues",
+                [1, payload],
+                TestContext.Current.CancellationToken);
+        }
+
+        byte[] afterInsert = stream.ToArray();
+        Assert.True(CountLvalPages(afterInsert, format) >= 2);
+        Assert.True(ContainsSequence(afterInsert, marker));
+
+        await using (AccessWriter writer = await OpenWriterAsync(
+            stream,
+            new AccessWriterOptions
+            {
+                UseLockFile = false,
+                SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages,
+            }))
+        {
+            int deleted = await writer.DeleteRowsAsync(
+                "SecureLongValues",
+                "Id",
+                1,
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, deleted);
+        }
+
+        byte[] afterDelete = stream.ToArray();
+        Assert.Equal(0, CountLvalPages(afterDelete, format));
+        Assert.False(ContainsSequence(afterDelete, marker));
+
+        await using (AccessReader reader = await OpenReaderAsync(stream))
+        {
+            DataTable table = await reader.ReadDataTableAsync(
+                "SecureLongValues",
+                cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Equal(0, table.Rows.Count);
+        }
+    }
+
     private static async ValueTask CreateInlinePayloadTableAsync(AccessWriter writer, string tableName, System.Threading.CancellationToken cancellationToken)
     {
         await writer.CreateTableAsync(
@@ -217,12 +323,12 @@ public sealed class DataRemanenceTests
         return stream;
     }
 
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, AccessWriterOptions? options = null)
     {
         stream.Position = 0;
         return AccessWriter.OpenAsync(
             stream,
-            new AccessWriterOptions { UseLockFile = false },
+            options ?? new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
     }

@@ -63,6 +63,12 @@ internal static class EmittedPageInvariantAssert
                     indexPagesChecked++;
                     break;
 
+                case 0x05:
+                    break;
+
+                case 0x09:
+                    break;
+
                 default:
                     Assert.Fail(Message(pageNumber, $"Unexpected non-empty page type 0x{page[0]:X2}."));
                     break;

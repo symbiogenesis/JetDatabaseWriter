@@ -367,10 +367,18 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             }
             else
             {
+                long reservedFirstPage = await writer.ReserveContiguousPagesAsync(build.Pages.Count, cancellationToken).ConfigureAwait(false);
+                if (reservedFirstPage != firstPageNumber)
+                {
+                    firstPageNumber = reservedFirstPage;
+                    build = IndexBTreeBuilder.Build(leafLayout, writer._pgSz, tdefPage, leafEntries, firstPageNumber);
+                    rootPageNumber = build.RootPageNumber;
+                }
+
                 pageNumbers = new long[build.Pages.Count];
                 for (int i = 0; i < build.Pages.Count; i++)
                 {
-                    await writer.AppendPageAsync(build.Pages[i], cancellationToken).ConfigureAwait(false);
+                    await writer.WritePageAsync(firstPageNumber + i, build.Pages[i], cancellationToken).ConfigureAwait(false);
                     pageNumbers[i] = firstPageNumber + i;
                 }
             }

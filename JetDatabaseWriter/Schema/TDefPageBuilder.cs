@@ -8,6 +8,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
@@ -446,8 +447,26 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             _ => 0x01,
         };
 
+        BuildGlobalUsageMapPage(db, pgSz, format);
         BuildMSysObjectsTDef(db, pgSz * 2, format, fullCatalogSchema);
         return db;
+    }
+
+    private static void BuildGlobalUsageMapPage(byte[] db, int pgSz, DatabaseFormat format)
+    {
+        DataPageLayout dataPage = DataPageLayout.For(format);
+        int pageOffset = pgSz;
+        int rowStart = pgSz - 69;
+        int slotTableEnd = dataPage.RowsStart + 2;
+
+        db[pageOffset] = 0x01;
+        db[pageOffset + 1] = 0x01;
+        AccessBase.Wu16(db, pageOffset + 2, rowStart - slotTableEnd);
+        AccessBase.Wi32(db, pageOffset + dataPage.TDefOff, 0);
+        AccessBase.Wu16(db, pageOffset + dataPage.NumRows, 1);
+        AccessBase.Wu16(db, pageOffset + dataPage.RowsStart, rowStart);
+        db[pageOffset + rowStart] = 0x00;
+        AccessBase.Wi32(db, pageOffset + rowStart + 1, 0);
     }
 
     private static int GetDeclaredSize(byte type, int maxLength, DatabaseFormat format)

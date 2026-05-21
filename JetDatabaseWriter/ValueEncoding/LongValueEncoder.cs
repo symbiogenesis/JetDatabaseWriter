@@ -181,7 +181,7 @@ internal sealed class LongValueEncoder(AccessWriter writer)
             byte[] page = BuildSingleLvalPageBuffer(data, lvalToken);
             try
             {
-                long pageNumber = await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+                long pageNumber = await writer.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
                 header[3] = 0x40;
                 uint lvalDp = unchecked((uint)((pageNumber << 8) | 0));
                 AccessBase.Wi32(header, 4, (int)lvalDp);
@@ -206,7 +206,7 @@ internal sealed class LongValueEncoder(AccessWriter writer)
             byte[] page = BuildChainLvalPageBuffer(data, chunkStart, chunkLen, nextDp, lvalToken);
             try
             {
-                long pageNumber = await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+                long pageNumber = await writer.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
                 nextDp = unchecked((uint)((pageNumber << 8) | 0));
             }
             finally

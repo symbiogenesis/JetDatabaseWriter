@@ -42,6 +42,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 | ✅ **Calculated columns** | ACCDB expression-column metadata, cached values, and a row-local expression evaluator |
 | ✅ **Concurrency** | `.ldb` / `.laccdb` lockfile + page-level byte-range locks matching the JET/ACE protocol |
 | ✅ **Transactions** | `BeginTransactionAsync()` page-buffered `CommitAsync` / `RollbackAsync` via in-memory journal |
+| ✅ **Storage maintenance** | Access-style free-page reuse, free-page scrubbing, opt-in secure erase, and tail shrinking |
 | ✅ **Performance** | Configurable LRU page cache, optional parallel page reads, streams millions of rows without loading the file |
 
 ---
@@ -460,7 +461,24 @@ int updated = await writer.UpdateRowsAsync("Contacts", "ContactID", 1,
 int deleted = await writer.DeleteRowsAsync("Contacts", "ContactID", 3);
 ```
 
-> Update and delete are logical row mutations, not secure erase operations. Old row payload bytes and old LVAL pages can remain in the file until a future rewrite or Microsoft Access Compact & Repair reclaims them; see [Data remanence](#data-remanence).
+> By default, update and delete are logical row mutations, not secure erase operations. Old row payload bytes and old LVAL pages can remain in the file until reused or reclaimed; see [Data remanence](#data-remanence).
+
+### Storage maintenance and secure erase
+
+```csharp
+await using var writer = await AccessWriter.OpenAsync(
+    "database.accdb",
+    new AccessWriterOptions
+    {
+        SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages,
+    });
+
+await writer.DeleteRowsAsync("Contacts", "ContactID", 3);
+int scrubbed = await writer.ScrubFreePagesAsync();
+long truncated = await writer.ShrinkDatabaseAsync();
+```
+
+`SecureEraseMode.DeletedRowsAndFreedPages` overwrites deleted row bodies and old MEMO/OLE LVAL pages before returning their pages to the Access global free list. `ScrubFreePagesAsync` overwrites pages already on the free list. `ShrinkDatabaseAsync` truncates free pages from the physical end of the file; it does not renumber live pages or perform a full Access Compact & Repair rebuild.
 
 ### Add, drop, and rename columns
 
@@ -698,7 +716,8 @@ The items below are either **not yet implemented** or are important behavioral c
 - **No WAL or crash recovery.** Transactions provide in-memory rollback before commit replay begins. They do not provide ESE-style redo/undo recovery after process loss, storage failure, or cancellation once `CommitAsync` has started writing pages to the target stream.
 
 ### Data remanence
-- **Delete/update do not scrub old payload bytes.** `DeleteRowsAsync` marks matching row slots deleted, and `UpdateRowsAsync` marks old rows deleted before inserting replacements. The old row bodies remain on disk, and updated or deleted MEMO/OLE/attachment values leave their previous LVAL pages in place for Microsoft Access Compact & Repair or a future rewrite to reclaim. Do not treat these APIs as secure deletion of sensitive data.
+- **Delete/update scrub old payload bytes only when secure erase is enabled.** The default `SecureEraseMode.None` preserves normal JET behavior: `DeleteRowsAsync` marks matching row slots deleted, and `UpdateRowsAsync` marks old rows deleted before inserting replacements. Old row bodies and old MEMO/OLE LVAL pages can remain on disk until reused. Set `AccessWriterOptions.SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages` to overwrite deleted row bodies and old LVAL pages before they are returned to the free list. Storage hardware, filesystem journaling, snapshots, backups, and prior copies can still retain data outside the database file.
+- **`ShrinkDatabaseAsync` is a tail shrinker, not full Compact & Repair.** It truncates free pages from the physical end of the file but does not move live pages, renumber page references, rebuild all tables into a new file, or scrub every unused byte gap inside otherwise-live pages.
 
 ### Forms, reports, macros, queries, VBA
 - Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.

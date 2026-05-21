@@ -102,7 +102,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         {
             TableDef tableDef = AccessWriter.BuildTableDefinition(cols, _writer._format);
             (byte[] tdefPage, _) = _writer.BuildTDefPageWithIndexOffsets(tableDef, []);
-            long tdefPageNumber = await _writer.AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+            long tdefPageNumber = await _writer.AllocatePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
             await _writer.InsertCatalogEntryAsync(
                 name,
@@ -205,7 +205,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
         TableDef tableDef = AccessWriter.BuildTableDefinition(columns, _writer._format);
         (byte[] tdefPage, _) = _writer.BuildTDefPageWithIndexOffsets(tableDef, []);
-        long tdefPageNumber = await _writer.AppendPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        long tdefPageNumber = await _writer.AllocatePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         await _writer.InsertCatalogEntryAsync(
             Constants.SystemTableNames.ComplexColumns,
