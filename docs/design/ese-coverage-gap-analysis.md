@@ -1,6 +1,6 @@
 # ESE-Inspired Coverage Gap Analysis
 
-**Status:** Updated after public index seek coverage, 2026-05-21.
+**Status:** Updated after reader cache integration coverage, 2026-05-21.
 **Reference:** [microsoft/Extensible-Storage-Engine](https://github.com/microsoft/Extensible-Storage-Engine).
 
 This note compares JetDatabaseWriter's current reader/writer test surface with themes from Microsoft's Extensible Storage Engine (ESE) repository. ESE is a full database engine, not an Access MDB/ACCDB file-format oracle, so the goal is not feature parity. The useful signal is where ESE's long-lived engine tests expose categories of risk that also matter to a direct JET/ACE page writer.
@@ -88,18 +88,18 @@ Implemented coverage (2026-05-21):
 
 Remaining matrix rows still marked reader-round-trip only should be promoted into DAO-driven tests when they become high-risk release blockers and a reliable Access-authored fixture can host the mutation.
 
-### 6. Cache and Resource-Manager Behavior
+### 6. Cache and Resource-Manager Behavior (DONE)
 
 ESE has trace-driven resource-manager tests for LRU/LRU-K, supercold pages, no-touch traces, DB-scan replay, dirty/write stats, and abrupt cycles. JetDatabaseWriter has focused LRU unit coverage in [LruCacheTests.cs](../../JetDatabaseWriter.Tests/Infrastructure/LruCacheTests.cs), plus small reader cache allocation tests in [AccessReaderCacheTests.cs](../../JetDatabaseWriter.Tests/Reader/AccessReaderCacheTests.cs).
 
-The remaining local risk is integration behavior rather than the basic LRU data structure.
+Implemented coverage (2026-05-21):
 
-Suggested work:
+- Added reader integration tests in [AccessReaderCacheTests.cs](../../JetDatabaseWriter.Tests/Reader/AccessReaderCacheTests.cs) that force page-cache and row-bounds-cache eviction during a large synthetic ACE table scan with a tiny cache.
+- Covered interleaved reads across multiple tables, including repeated `ListTablesAsync` calls that reuse the catalog cache and repeated table scans that hit row-bounds/page caches without new row-bounds misses.
+- Expanded uncached-reader coverage to compare cached and uncached readers over the same multi-table stream while verifying `OpenUncachedAsync` does not allocate page or row-bounds caches.
+- Pinned the transaction-local edge case where an active `PageJournal` must override already-cached reader page bytes; `ReadPageCachedAsync` and row-bounds lookup now bypass reader caches while a journal is active.
 
-- Add reader integration tests that exercise page-cache eviction during large table scans.
-- Cover interleaved reads across multiple tables and repeated calls that reuse catalog and row-bounds caches.
-- Verify uncached readers do not allocate page caches and still return equivalent data.
-- Verify active transaction journals override cached page bytes for read-your-writes paths.
+This is deterministic integration coverage rather than ESE-style trace replay. The remaining ESE resource-manager scenarios around supercold/no-touch pages and dirty/write stats do not currently map to JetDatabaseWriter's direct page-reader charter.
 
 ### 7. Relationship Mutation on Multi-Page TDEFs
 
@@ -146,4 +146,4 @@ The following ESE areas do not appear to map directly to this project unless the
 
 1. Decide whether an opt-in scrub/reuse mode belongs in scope for deleted row bodies, freed row gaps, index rebuild orphan pages, and old LVAL chains.
 2. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
-3. Add integration cache tests around large scans, interleaved table reads, and transaction-local page reads.
+3. Add pinning and design coverage for relationship mutation on multi-page TDEFs.
