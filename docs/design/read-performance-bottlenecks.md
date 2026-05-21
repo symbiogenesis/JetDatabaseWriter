@@ -54,9 +54,11 @@ This is the largest measured hotspot. The MEMO fixture has only 5,000 rows, but
 all MEMO variants are around 157-179 ms and allocate about 146-147 MB. That is
 an order of magnitude slower than fixed-width row scans.
 
-Status: partially addressed. Chained-value assembly and short-chain cycle
-detection have been optimized; the section remains open pending focused
-benchmarks and further work on page I/O and final text/OLE materialization.
+Status: local implementation addressed, pending benchmark refresh. Avoidable
+per-value overhead in chained assembly, cycle detection, row-bound parsing,
+cached-page continuation setup, and chained OLE fallback copying has been
+reduced. Remaining cold page I/O and final value materialization are inherent to
+the storage format or tracked by the later text/allocation and prefetch sections.
 
 Primary code path:
 
@@ -67,22 +69,28 @@ Primary code path:
 - `LongValueDecoder.LocateLvalRowAsync`
 - `LongValueDecoder.DecodeLongValue`
 
-Completed in the first optimization slice:
+Completed LVAL work:
 
 - `ReadLvalChainAsync` now fills the final declared payload buffer directly for
   valid chains; corrupt or short chains still trim to the actual byte count.
 - Short chained values now use inline cycle detection; a `HashSet<uint>` is
   allocated only after the inline visited-page capacity is exceeded.
+- LVAL row location now reuses the reader's cached live-row bounds instead of
+  re-parsing the row-offset trailer for every located LVAL row.
+- Cached LVAL page hits now return a completed `ValueTask` from
+  `LocateLvalRowAsync` without entering the async slow path.
+- Chained OLE byte fallback can reuse the owned chain buffer when no package
+  extraction or payload slicing is needed; page-backed inline and single-page
+  values still return copied `byte[]` instances.
 
-Remaining likely cost centers:
+Closed or handed-off cost centers:
 
-- Chained LVAL values read one or more additional pages per cell.
-- Repeated LVAL page location may still re-parse row bounds; benchmark before
-  adding page/row-location caching.
-- Text MEMO values eventually allocate the decoded `string`; OLE values may scan
-  and copy payload ranges as `byte[]`.
-- The async slow path is required for non-inline LVAL references, so per-value
-  page I/O and continuation overhead matter more than on ordinary rows.
+- Chained LVAL values still read one or more additional pages per cold cell; this
+  is inherent to non-inline storage. Broader cold-scan prefetch remains tracked
+  under `ParallelPageReadsEnabled` / table-scan read-ahead.
+- Text MEMO values must allocate the returned `string`, and OLE callers must
+  receive a stable `byte[]`. Transient text decode allocation is tracked in the
+  text-heavy row allocation section.
 
 ### 2. `DataTable` materialization
 
@@ -214,17 +222,24 @@ Acceptance criteria:
 
 Start with the top measured bottleneck.
 
-Candidate changes:
+Completed changes:
 
-- Change chained LVAL assembly to allocate the final payload buffer once when
-  `memoLen` is known, then fill it directly from chunks. This removes the second
+- Chained LVAL assembly allocates the final payload buffer once when
+  `memoLen` is known, then fills it directly from chunks. This removes the second
   copy from rented buffer to final array on valid chains.
-- Avoid allocating `HashSet<uint>` for the common short, well-formed chain. Use a
-  small fixed probe list first, then allocate a set only past a threshold.
-- Split `LocateLvalRowAsync` into an explicit sync fast path returning a completed
+- Short, well-formed chains use inline cycle detection and allocate a
+  `HashSet<uint>` only after the inline visited-page capacity is exceeded.
+- `LocateLvalRowAsync` has an explicit sync fast path returning a completed
   `ValueTask` when the LVAL page is already cached.
-- Benchmark whether repeated LVAL page location should cache parsed single-row
-  bounds by page number, similar to normal data pages.
+- LVAL row location reuses cached live-row bounds by page number, matching normal
+  data-page row scans.
+- Chained OLE byte fallback reuses the owned chain buffer when no package
+  extraction or payload slicing is needed.
+
+Remaining measurement:
+
+- Refresh LVAL submode benchmarks to quantify allocation and elapsed-time deltas
+  after the implementation changes.
 
 Risks and constraints:
 

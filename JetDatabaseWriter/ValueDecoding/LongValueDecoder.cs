@@ -15,13 +15,18 @@ using static JetDatabaseWriter.AccessBase;
 /// </summary>
 internal sealed class LongValueDecoder(AccessReader reader)
 {
-    internal async ValueTask<LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
+    internal ValueTask<LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
     {
         if (TryLocateLvalRowSync(lvalDp, out LvalRowLocation cached))
         {
-            return cached;
+            return new ValueTask<LvalRowLocation>(cached);
         }
 
+        return LocateLvalRowSlowAsync(lvalDp, cancellationToken);
+    }
+
+    private async ValueTask<LvalRowLocation> LocateLvalRowSlowAsync(uint lvalDp, CancellationToken cancellationToken)
+    {
         int lvalPage = (int)(lvalDp >> 8);
         int lvalRow = (int)(lvalDp & 0xFF);
         if (lvalPage <= 0)
@@ -66,29 +71,22 @@ internal sealed class LongValueDecoder(AccessReader reader)
             return new(page, 0, 0, $"row {lvalRow} >= numRows {numRows}");
         }
 
-        int rawOff = Ru16(page, reader._dataPage.RowsStart + (lvalRow * 2));
-        if ((rawOff & 0xC000) != 0)
+        foreach (AccessBase.RowBound rowBound in reader.GetLiveRowBoundsCached(lvalPage, page))
         {
-            return new(page, 0, 0, "deleted/overflow row");
-        }
-
-        int rowStart = rawOff & 0x1FFF;
-        if (rowStart == 0 || rowStart >= reader._pgSz)
-        {
-            return new(page, 0, 0, $"invalid rowStart {rowStart}");
-        }
-
-        int rowEnd = reader._pgSz - 1;
-        for (int r = 0; r < numRows; r++)
-        {
-            int ofs = Ru16(page, reader._dataPage.RowsStart + (r * 2)) & 0x1FFF;
-            if (ofs > rowStart && ofs < rowEnd)
+            if (rowBound.RowIndex != lvalRow)
             {
-                rowEnd = ofs - 1;
+                continue;
             }
+
+            if (rowBound.RowStart == 0 || rowBound.RowStart >= reader._pgSz)
+            {
+                return new(page, 0, 0, $"invalid rowStart {rowBound.RowStart}");
+            }
+
+            return new(page, rowBound.RowStart, rowBound.RowSize, null);
         }
 
-        return new(page, rowStart, rowEnd - rowStart + 1, null);
+        return new(page, 0, 0, "deleted/overflow row");
     }
 
     internal async ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)
@@ -253,7 +251,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
             default:
                 LvalChainResult chain = await ReadLvalChainAsync(Ru32(row, start + 4), memoLen, cancellationToken).ConfigureAwait(false);
                 return chain.Data != null
-                    ? AccessReader.DecodeOleValueBytes(chain.Data, 0, chain.Data.Length)
+                    ? AccessReader.DecodeOleValueBytes(chain.Data, 0, chain.Data.Length, allowInputReuse: true)
                     : [];
         }
     }

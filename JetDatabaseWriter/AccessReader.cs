@@ -2726,7 +2726,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return Encoding.UTF8.GetBytes(value);
     }
 
-    internal static byte[] DecodeOleValueBytes(byte[] buffer, int offset, int length)
+    internal static byte[] DecodeOleValueBytes(byte[] buffer, int offset, int length, bool allowInputReuse = false)
     {
         if (buffer == null || length <= 0 || offset < 0 || offset >= buffer.Length)
         {
@@ -2735,16 +2735,23 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         if (TryExtractEmbeddedOlePackagePayload(buffer, offset, length, out int payloadStart, out int payloadLength))
         {
-            return buffer.AsSpan(payloadStart, payloadLength).ToArray();
+            return CreateOlePayloadBytes(buffer, payloadStart, payloadLength, allowInputReuse);
         }
 
         if (TryFindOlePayloadRange(buffer, offset, length, out payloadStart, out payloadLength, out _))
         {
-            return buffer.AsSpan(payloadStart, payloadLength).ToArray();
+            return CreateOlePayloadBytes(buffer, payloadStart, payloadLength, allowInputReuse);
         }
 
         int boundedLength = Math.Min(length, buffer.Length - offset);
-        return boundedLength <= 0 ? [] : buffer.AsSpan(offset, boundedLength).ToArray();
+        return boundedLength <= 0 ? [] : CreateOlePayloadBytes(buffer, offset, boundedLength, allowInputReuse);
+    }
+
+    private static byte[] CreateOlePayloadBytes(byte[] buffer, int offset, int length, bool allowInputReuse)
+    {
+        return allowInputReuse && offset == 0 && length == buffer.Length
+            ? buffer
+            : buffer.AsSpan(offset, length).ToArray();
     }
 
     private async ValueTask<IReadOnlyList<long>> GetOwnedDataPagesAsync(long tdefPage, CancellationToken cancellationToken)
@@ -2971,7 +2978,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// callers must not mutate it. Used by the typed/untyped scan paths to avoid
     /// re-parsing the row-offset trailer on repeated scans of the same table.
     /// </summary>
-    private RowBound[] GetLiveRowBoundsCached(long pageNumber, byte[] page)
+    internal RowBound[] GetLiveRowBoundsCached(long pageNumber, byte[] page)
     {
         if (_rowBoundsCache is not null && _rowBoundsCache.TryGetValue(pageNumber, out RowBound[] cached))
         {
