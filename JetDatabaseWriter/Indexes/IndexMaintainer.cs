@@ -427,8 +427,45 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
         if (oldIndexPageGroups is not null && rebuiltIndexPageGroups is not null)
         {
-            await DeallocateReplacedIndexPagesAsync(oldIndexPageGroups, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
+            if (!HasLongOrComplexStorageColumns(tableDef)
+                && !IsGeneratedComplexFlatTableName(tableName)
+                && !tableName.StartsWith("MSys", StringComparison.OrdinalIgnoreCase))
+            {
+                await DeallocateReplacedIndexPagesAsync(tdefPage, oldIndexPageGroups, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
+            }
         }
+    }
+
+    private static bool HasLongOrComplexStorageColumns(TableDef tableDef)
+    {
+        foreach (ColumnInfo column in tableDef.Columns)
+        {
+            if (column.Type is T_MEMO or T_OLE or T_ATTACHMENT or T_COMPLEX)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsGeneratedComplexFlatTableName(string tableName)
+    {
+        if (tableName.Length <= 35 || tableName[0] != 'f' || tableName[1] != '_' || tableName[34] != '_')
+        {
+            return false;
+        }
+
+        for (int i = 2; i < 34; i++)
+        {
+            char ch = tableName[i];
+            if (!((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F')))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private async ValueTask<long[][]?> ReadIndexPageGroupsFromUsageMapAsync(
@@ -488,10 +525,21 @@ internal sealed class IndexMaintainer(AccessWriter writer)
     }
 
     private async ValueTask DeallocateReplacedIndexPagesAsync(
+        long tdefPage,
         long[][] oldIndexPageGroups,
         long[][] rebuiltIndexPageGroups,
         CancellationToken cancellationToken)
     {
+        var newPages = new HashSet<long>();
+        for (int realIdxNum = 0; realIdxNum < rebuiltIndexPageGroups.Length; realIdxNum++)
+        {
+            foreach (long pageNumber in rebuiltIndexPageGroups[realIdxNum])
+            {
+                _ = newPages.Add(pageNumber);
+            }
+        }
+
+        var deallocatedPages = new HashSet<long>();
         int groupCount = Math.Min(oldIndexPageGroups.Length, rebuiltIndexPageGroups.Length);
         for (int realIdxNum = 0; realIdxNum < groupCount; realIdxNum++)
         {
@@ -500,14 +548,34 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 continue;
             }
 
-            var newPages = new HashSet<long>(rebuiltIndexPageGroups[realIdxNum]);
             foreach (long oldPageNumber in oldIndexPageGroups[realIdxNum])
             {
-                if (oldPageNumber > 2 && !newPages.Contains(oldPageNumber))
+                if (oldPageNumber > 2
+                    && !newPages.Contains(oldPageNumber)
+                    && deallocatedPages.Add(oldPageNumber)
+                    && await IsReplacedIndexPageAsync(oldPageNumber, tdefPage, cancellationToken).ConfigureAwait(false))
                 {
                     await writer.DeallocatePageAsync(oldPageNumber, cancellationToken).ConfigureAwait(false);
                 }
             }
+        }
+    }
+
+    private async ValueTask<bool> IsReplacedIndexPageAsync(long pageNumber, long tdefPage, CancellationToken cancellationToken)
+    {
+        if (pageNumber <= 0 || pageNumber >= writer._stream.Length / writer._pgSz)
+        {
+            return false;
+        }
+
+        byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return page[0] is 0x03 or 0x04 && AccessBase.Ri32(page, 4) == tdefPage;
+        }
+        finally
+        {
+            AccessBase.ReturnPage(page);
         }
     }
 

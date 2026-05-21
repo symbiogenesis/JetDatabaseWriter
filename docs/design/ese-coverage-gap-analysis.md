@@ -124,9 +124,10 @@ Implemented coverage and scope decision (2026-05-21):
 - `AccessWriterOptions.SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages` overwrites deleted row bodies and old MEMO/OLE LVAL chains before freeing their pages. The default remains `None`, preserving normal JET logical-delete behavior and backward-compatible remanence.
 - [DataRemanenceTests.cs](../../JetDatabaseWriter.Tests/Writer/DataRemanenceTests.cs) byte-pins both behaviors: default update/delete leave old inline row bytes and old LVAL pages on disk, while secure erase removes the markers from deleted row bodies and LVAL pages.
 - [PageAllocatorTests.cs](../../JetDatabaseWriter.Tests/Pages/PageAllocatorTests.cs) verifies fresh page-1 map initialization, free-page reuse, and tail shrinking across Jet3, Jet4, and ACE formats.
-- [DaoStorageMaintenanceTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoStorageMaintenanceTests.cs) runs Access DAO CompactDatabase against Northwind-hosted storage-maintenance mutations: secure-erased deleted rows inside otherwise-live pages, secure-erased old OLE/LVAL chains, full index rebuilds that replace old index pages, and relationship TDEF rewrites that shorten continuation chains.
+- [DaoStorageMaintenanceTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoStorageMaintenanceTests.cs) runs Access DAO CompactDatabase against Northwind-hosted storage-maintenance mutations: secure-erased deleted rows inside otherwise-live pages, secure-erased old OLE/LVAL chains, ordinary user-table full index rebuilds that replace old index pages, relationship TDEF rewrites that shorten continuation chains, and relationship rename on a multi-page child TDEF.
 - Fresh writer-created complex system-table scaffolding remains reader-round-trip only by design. The strongest DAO compact test mutates an Access-authored Northwind fixture so that writer-created complex bytes are isolated from fresh-database bootstrap trust.
-- Broader DAO Compact and Repair coverage should be added when a new complex-column mutation becomes release-critical and a reliable Access-authored fixture can host it. Remaining cleanup gaps are full Access-style live-page compaction/renumbering and byte-scrubbing of arbitrary unused free-space gaps that were not created by secure delete/update.
+- Broader DAO Compact and Repair coverage should be added when a new complex-column mutation becomes release-critical and a reliable Access-authored fixture can host it. Remaining cleanup gaps are full Access-style live-page compaction/renumbering, byte-scrubbing of arbitrary unused free-space gaps that were not created by secure delete/update, and conservative non-reclamation of replaced index pages for Access system tables and generated complex flat child tables.
+- Future storage-mutating features should add matching DAO CompactDatabase scrub/reuse coverage as part of the feature work rather than keeping a separate standing backlog item.
 
 ## Documentation Drift Found During Triage (RESOLVED)
 
@@ -150,7 +151,6 @@ The following ESE areas do not appear to map directly to this project unless the
 - snapshot isolation/version-store semantics;
 - ESE-specific page sizes, page hydration/dehydration, and block-cache internals.
 
-## Suggested Next Test Work
+## Next Work Ownership
 
-1. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
-2. Add new DAO Compact and Repair scrub/reuse cases only as new storage-mutating features are added; current coverage already includes deleted row gaps, old OLE/LVAL chains, replaced index pages, and shortened TDEF chains hosted in Access-authored Northwind fixtures.
+No standalone ESE-inspired backlog remains in this note. Residual validation work is owned by the rows in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md); keep future DAO promotions there unless a new ESE-derived risk category appears.

@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.RoundTrip;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -101,9 +102,88 @@ public sealed class DaoStorageMaintenanceTests
         DataTable table = await reader.ReadDataTableAsync("SM_SecureErase", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, table.Rows.Count);
 
-        DataRow replacementRow = table.AsEnumerable().Single(row => Convert.ToInt32(row["Id"]) == 2);
+        DataRow replacementRow = table.AsEnumerable().Single(row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 2);
         byte[] actualReplacement = Assert.IsType<byte[]>(replacementRow["Blob"]);
         Assert.Equal(replacementLargePayload, actualReplacement);
+    }
+
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    public async Task RelationshipRenameOnMultiPageTDef_SurvivesCompactAndRepair()
+    {
+        await using AccessRoundTripSession session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+            TestContext.Current.CancellationToken,
+            compactTimeout: CompactTimeout);
+
+        const string Parent = "SM_RenameParent";
+        const string WideChild = "SM_RenameWideChild";
+        const string OldRelationship = "SM_FK_RenameWide_Old";
+        const string NewRelationship = "SM_FK_RenameWide_New";
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            session.SourcePath,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                Parent,
+                [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false }],
+                TestContext.Current.CancellationToken);
+            await CreateWideTDefTableAsync(
+                writer,
+                WideChild,
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
+                    new ColumnDefinition("ParentId", typeof(int)) { IsNullable = false },
+                ],
+                columnCount: 40,
+                indexCount: 30,
+                cancellationToken: TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(Parent, [1], TestContext.Current.CancellationToken);
+
+            object[] wideChildRow = Enumerable.Range(0, 40).Select(value => (object)value).ToArray();
+            wideChildRow[0] = 1;
+            wideChildRow[1] = 1;
+            await writer.InsertRowAsync(WideChild, wideChildRow, TestContext.Current.CancellationToken);
+
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition(OldRelationship, Parent, "Id", WideChild, "ParentId")
+                {
+                    EnforceReferentialIntegrity = true,
+                },
+                TestContext.Current.CancellationToken);
+
+            await writer.RenameRelationshipAsync(OldRelationship, NewRelationship, TestContext.Current.CancellationToken);
+        }
+
+        int widePagesAfterRename = await CountTDefChainPagesAsync(WideChild, session.SourcePath, TestContext.Current.CancellationToken);
+        Assert.True(widePagesAfterRename > 1, $"Expected {WideChild} to exercise a multi-page TDEF chain before DAO compact.");
+
+        session.RunDaoCompact();
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            session.CompactedPath,
+            new AccessReaderOptions { UseLockFile = false },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        DataTable wideChildRows = await reader.ReadDataTableAsync(WideChild, cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(WideChild, TestContext.Current.CancellationToken);
+        DataTable relationships = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
+        string indexSummary = string.Join(", ", childIndexes.Select(index => $"{index.Name}:{index.Kind}"));
+        string relationshipSummary = string.Join(", ", relationships.AsEnumerable()
+            .Select(row => SafeString(row, "szRelationship"))
+            .Where(name => string.Equals(name, OldRelationship, StringComparison.Ordinal) || string.Equals(name, NewRelationship, StringComparison.Ordinal)));
+
+        Assert.Equal(1, wideChildRows.Rows.Count);
+        Assert.True(
+            childIndexes.Any(index => index.Kind == IndexKind.ForeignKey && index.Name == NewRelationship),
+            $"Expected compacted {WideChild} to retain renamed FK index {NewRelationship}. Indexes=[{indexSummary}], relationships=[{relationshipSummary}].");
+        Assert.DoesNotContain(childIndexes, index => index.Name == OldRelationship);
+        Assert.Contains(relationships.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), NewRelationship, StringComparison.Ordinal));
+        Assert.DoesNotContain(relationships.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), OldRelationship, StringComparison.Ordinal));
     }
 
     [Fact(
@@ -155,13 +235,33 @@ public sealed class DaoStorageMaintenanceTests
                 },
                 TestContext.Current.CancellationToken);
 
-            await CreateWideTDefTableAsync(writer, WideParent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await CreateWideTDefTableAsync(
+                writer,
+                WideParent,
+                [new("Id", typeof(int))],
+                columnCount: 115,
+                indexCount: 0,
+                cancellationToken: TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(WideChild, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateRelationshipAsync(
                 new RelationshipDefinition(WideRelationship, WideParent, "Id", WideChild, "ParentId"),
                 TestContext.Current.CancellationToken);
+        }
+
+        int widePagesWithRelationship = await CountTDefChainPagesAsync(WideParent, session.SourcePath, TestContext.Current.CancellationToken);
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            session.SourcePath,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
             await writer.DropRelationshipAsync(WideRelationship, TestContext.Current.CancellationToken);
         }
+
+        int widePagesAfterDrop = await CountTDefChainPagesAsync(WideParent, session.SourcePath, TestContext.Current.CancellationToken);
+        Assert.True(
+            widePagesAfterDrop < widePagesWithRelationship,
+            $"Expected {WideParent} TDEF chain to shorten after dropping {WideRelationship}; before={widePagesWithRelationship}, after={widePagesAfterDrop}.");
 
         session.RunDaoCompact();
 
@@ -212,20 +312,19 @@ public sealed class DaoStorageMaintenanceTests
         AccessWriter writer,
         string tableName,
         IReadOnlyList<ColumnDefinition> leadingColumns,
+        int columnCount,
+        int indexCount,
         CancellationToken cancellationToken)
     {
-        const int ColumnCount = 200;
-        const int IndexCount = 30;
-
-        var columns = new List<ColumnDefinition>(ColumnCount);
+        var columns = new List<ColumnDefinition>(columnCount);
         columns.AddRange(leadingColumns);
-        for (int columnOrdinal = columns.Count; columnOrdinal < ColumnCount; columnOrdinal++)
+        for (int columnOrdinal = columns.Count; columnOrdinal < columnCount; columnOrdinal++)
         {
             columns.Add(new ColumnDefinition($"C{columnOrdinal:D3}", typeof(int)));
         }
 
-        var indexes = new List<IndexDefinition>(IndexCount);
-        for (int indexOrdinal = 0; indexOrdinal < IndexCount; indexOrdinal++)
+        var indexes = new List<IndexDefinition>(indexCount);
+        for (int indexOrdinal = 0; indexOrdinal < indexCount; indexOrdinal++)
         {
             int indexedColumnOrdinal = leadingColumns.Count + indexOrdinal;
             indexes.Add(new IndexDefinition($"IX_{indexOrdinal:D2}", $"C{indexedColumnOrdinal:D3}"));
@@ -255,6 +354,40 @@ public sealed class DaoStorageMaintenanceTests
 
     private static bool ContainsSequence(byte[] bytes, byte[] marker)
         => bytes.AsSpan().IndexOf(marker) >= 0;
+
+    private static async ValueTask<int> CountTDefChainPagesAsync(string tableName, string databasePath, CancellationToken cancellationToken)
+    {
+        const int PageSize = 4096;
+
+        int tdefPageNumber;
+        await using (AccessReader reader = await AccessReader.OpenAsync(
+            databasePath,
+            new AccessReaderOptions { UseLockFile = false },
+            cancellationToken: cancellationToken))
+        {
+            DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
+            DataRow row = objects.AsEnumerable().Single(r => string.Equals(SafeString(r, "Name"), tableName, StringComparison.Ordinal));
+            tdefPageNumber = Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture);
+        }
+
+        byte[] bytes = await File.ReadAllBytesAsync(databasePath, cancellationToken);
+        var seen = new HashSet<int>();
+        int count = 0;
+        int pageNumber = tdefPageNumber;
+        while (pageNumber > 0 && seen.Add(pageNumber))
+        {
+            int offset = checked(pageNumber * PageSize);
+            if (offset < 0 || offset + PageSize > bytes.Length || bytes[offset] != 0x02)
+            {
+                break;
+            }
+
+            count++;
+            pageNumber = BitConverter.ToInt32(bytes, offset + 4);
+        }
+
+        return count;
+    }
 
     private static string SafeString(DataRow row, string column)
     {
