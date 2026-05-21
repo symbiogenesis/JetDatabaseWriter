@@ -463,7 +463,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task CreateRelationshipAsync_MultiPageEndpointTDef_ThrowsBeforeFkLogicalIdxEmission(bool parentIsWide)
+    public async Task CreateRelationshipAsync_MultiPageEndpointTDef_EmitsFkLogicalIdxEntries(bool parentIsWide)
     {
         var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
@@ -498,19 +498,22 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                     TestContext.Current.CancellationToken);
             }
 
-            NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
-                await writer.CreateRelationshipAsync(
-                    new RelationshipDefinition(relName, parent, "Id", child, "ParentId"),
-                    TestContext.Current.CancellationToken));
-            Assert.Contains("multi-page", exception.Message, StringComparison.OrdinalIgnoreCase);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition(relName, parent, "Id", child, "ParentId"),
+                TestContext.Current.CancellationToken);
         }
 
         await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
 
-        Assert.DoesNotContain(parentIndexes, index => index.Kind == IndexKind.ForeignKey);
-        Assert.DoesNotContain(childIndexes, index => index.Kind == IndexKind.ForeignKey);
+        IndexMetadata parentFk = Assert.Single(parentIndexes, index => index.Kind == IndexKind.ForeignKey);
+        IndexMetadata childFk = Assert.Single(childIndexes, index => index.Kind == IndexKind.ForeignKey);
+
+        Assert.Equal("Id", Assert.Single(parentFk.Columns).Name);
+        Assert.Equal("ParentId", Assert.Single(childFk.Columns).Name);
+        Assert.NotEqual(0, parentFk.RelatedTablePage);
+        Assert.NotEqual(0, childFk.RelatedTablePage);
     }
 
     private static string MakeTableName(string prefix) =>

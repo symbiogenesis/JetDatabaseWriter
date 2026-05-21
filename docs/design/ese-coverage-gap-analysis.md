@@ -1,6 +1,6 @@
 # ESE-Inspired Coverage Gap Analysis
 
-**Status:** Updated after reader cache integration coverage, 2026-05-21.
+**Status:** Updated after multi-page relationship mutation coverage, 2026-05-21.
 **Reference:** [microsoft/Extensible-Storage-Engine](https://github.com/microsoft/Extensible-Storage-Engine).
 
 This note compares JetDatabaseWriter's current reader/writer test surface with themes from Microsoft's Extensible Storage Engine (ESE) repository. ESE is a full database engine, not an Access MDB/ACCDB file-format oracle, so the goal is not feature parity. The useful signal is where ESE's long-lived engine tests expose categories of risk that also matter to a direct JET/ACE page writer.
@@ -101,19 +101,16 @@ Implemented coverage (2026-05-21):
 
 This is deterministic integration coverage rather than ESE-style trace replay. The remaining ESE resource-manager scenarios around supercold/no-touch pages and dirty/write stats do not currently map to JetDatabaseWriter's direct page-reader charter.
 
-### 7. Relationship Mutation on Multi-Page TDEFs (PINNED)
+### 7. Relationship Mutation on Multi-Page TDEFs (DONE)
 
-ESE emphasizes wide tables and rich schema evolution. JetDatabaseWriter can emit multi-page TDEFs for wide schemas, but parts of relationship mutation still require single-page TDEF mutation and throw `NotSupportedException` when the TDEF cannot be mutated in place. This is called out in [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md) and implemented in [RelationshipManager.cs](../../JetDatabaseWriter/Relationships/RelationshipManager.cs).
+ESE emphasizes wide tables and rich schema evolution. JetDatabaseWriter can emit multi-page TDEFs for wide schemas, and relationship mutation now uses the same stitched-logical-buffer model instead of requiring the endpoint TDEF to fit on one physical page. This is called out in [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md) and implemented in [RelationshipManager.cs](../../JetDatabaseWriter/Relationships/RelationshipManager.cs).
 
 Implemented coverage (2026-05-21):
 
-- Added `RelationshipWriterTests.CreateRelationshipAsync_MultiPageEndpointTDef_ThrowsBeforeFkLogicalIdxEmission`, which forces multi-page endpoint TDEF chains and pins the current `CreateRelationshipAsync` `NotSupportedException` on both parent-wide and child-wide relationships.
-- The test also verifies the failure does not emit FK logical-idx entries into either endpoint TDEF.
-- Expanded [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md) with a lift design: parse and mutate a stitched logical TDEF buffer, materialise it back into a physical page chain, and route create, drop, and rename through the same logical-buffer/page-chain split already used by TDEF creation.
-
-Remaining work:
-
-- Implement the logical-buffer mutation path and promote create, drop, and rename relationship coverage for wide tables from pinned limitation tests to successful round trips.
+- Added a logical TDEF-chain mutation layer in [RelationshipManager.cs](../../JetDatabaseWriter/Relationships/RelationshipManager.cs): read the full TDEF chain into a stitched buffer, parse and shift FK sections in logical offsets, then materialise the resized buffer back into physical TDEF pages, appending continuation pages when needed.
+- Promoted `RelationshipWriterTests.CreateRelationshipAsync_MultiPageEndpointTDef_EmitsFkLogicalIdxEntries` to a successful round trip for both parent-wide and child-wide endpoints.
+- Added wide-endpoint drop and rename coverage in [RelationshipMutationTests.cs](../../JetDatabaseWriter.Tests/Relationships/RelationshipMutationTests.cs), verifying FK logical-idx entries are removed and renamed through multi-page TDEF chains.
+- Documented the remaining page-lifecycle detail in [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md): if a logical TDEF shrink no longer needs every old continuation page, the unreachable pages are left for Compact and Repair, matching the existing index/LVAL orphan model.
 
 ### 8. Complex Columns and LVAL Reclamation
 
@@ -150,4 +147,3 @@ The following ESE areas do not appear to map directly to this project unless the
 
 1. Decide whether an opt-in scrub/reuse mode belongs in scope for deleted row bodies, freed row gaps, index rebuild orphan pages, and old LVAL chains.
 2. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
-3. Implement multi-page TDEF relationship mutation and cover create, drop, and rename relationship paths for wide tables.

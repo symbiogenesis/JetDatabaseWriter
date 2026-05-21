@@ -329,29 +329,23 @@ internal sealed class RelationshipManager(AccessWriter writer)
         int[] columnNumbers,
         CancellationToken cancellationToken)
     {
-        byte[] page = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        try
+        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = chain.Bytes;
+        if (!TryParseFkTDefLayout(page, out FkTDefLayout layout))
         {
-            if (!TryParseFkTDefLayout(page, out FkTDefLayout layout))
-            {
-                throw new NotSupportedException(
-                    $"TDEF at page {tdefPage} cannot be mutated in place (multi-page chain, malformed counts, or not a TDEF).");
-            }
-
-            int sharedSlot = FindCoveringRealIdx(page, columnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
-            List<string> existingNames = ReadLogicalIdxNames(page, layout.LogIdxNamesStart, layout.NumIdx);
-
-            int logicalIdxNum = NextLogicalIdxNumber(page, in layout);
-            FkSidePlan plan = sharedSlot >= 0
-                ? new FkSidePlan(sharedSlot, logicalIdxNum, false, 0)
-                : new FkSidePlan(layout.NumRealIdx, logicalIdxNum, true, 0);
-
-            return (plan, existingNames);
+            throw new NotSupportedException(
+                $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
         }
-        finally
-        {
-            AccessBase.ReturnPage(page);
-        }
+
+        int sharedSlot = FindCoveringRealIdx(page, columnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
+        List<string> existingNames = ReadLogicalIdxNames(page, layout.LogIdxNamesStart, layout.NumIdx);
+
+        int logicalIdxNum = NextLogicalIdxNumber(page, in layout);
+        FkSidePlan plan = sharedSlot >= 0
+            ? new FkSidePlan(sharedSlot, logicalIdxNum, false, 0)
+            : new FkSidePlan(layout.NumRealIdx, logicalIdxNum, true, 0);
+
+        return (plan, existingNames);
     }
 
     /// <summary>
@@ -366,53 +360,47 @@ internal sealed class RelationshipManager(AccessWriter writer)
         int[] fkColumnNumbers,
         CancellationToken cancellationToken)
     {
-        byte[] page = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        try
+        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = chain.Bytes;
+        if (!TryParseFkTDefLayout(page, out FkTDefLayout layout))
         {
-            if (!TryParseFkTDefLayout(page, out FkTDefLayout layout))
-            {
-                throw new NotSupportedException(
-                    $"TDEF at page {tdefPage} cannot be mutated in place (multi-page chain, malformed counts, or not a TDEF).");
-            }
-
-            int pkSharedSlot = FindCoveringRealIdx(page, pkColumnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
-            int fkSharedSlot = FindCoveringRealIdx(page, fkColumnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
-            int nextRealIdxNum = layout.NumRealIdx;
-
-            bool pkAllocates = pkSharedSlot < 0;
-            int pkRealIdxNum = pkAllocates ? nextRealIdxNum++ : pkSharedSlot;
-
-            bool fkAllocates;
-            int fkRealIdxNum;
-            if (fkSharedSlot >= 0)
-            {
-                fkAllocates = false;
-                fkRealIdxNum = fkSharedSlot;
-            }
-            else if (pkAllocates && ColumnNumbersEqual(pkColumnNumbers, fkColumnNumbers))
-            {
-                fkAllocates = false;
-                fkRealIdxNum = pkRealIdxNum;
-            }
-            else
-            {
-                fkAllocates = true;
-                fkRealIdxNum = nextRealIdxNum;
-            }
-
-            int pkLogicalIdxNum = NextLogicalIdxNumber(page, in layout);
-            int fkLogicalIdxNum = pkLogicalIdxNum + 1;
-            List<string> existingNames = ReadLogicalIdxNames(page, layout.LogIdxNamesStart, layout.NumIdx);
-
-            return (
-                new FkSidePlan(pkRealIdxNum, pkLogicalIdxNum, pkAllocates, 0),
-                new FkSidePlan(fkRealIdxNum, fkLogicalIdxNum, fkAllocates, 0),
-                existingNames);
+            throw new NotSupportedException(
+                $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
         }
-        finally
+
+        int pkSharedSlot = FindCoveringRealIdx(page, pkColumnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
+        int fkSharedSlot = FindCoveringRealIdx(page, fkColumnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
+        int nextRealIdxNum = layout.NumRealIdx;
+
+        bool pkAllocates = pkSharedSlot < 0;
+        int pkRealIdxNum = pkAllocates ? nextRealIdxNum++ : pkSharedSlot;
+
+        bool fkAllocates;
+        int fkRealIdxNum;
+        if (fkSharedSlot >= 0)
         {
-            AccessBase.ReturnPage(page);
+            fkAllocates = false;
+            fkRealIdxNum = fkSharedSlot;
         }
+        else if (pkAllocates && ColumnNumbersEqual(pkColumnNumbers, fkColumnNumbers))
+        {
+            fkAllocates = false;
+            fkRealIdxNum = pkRealIdxNum;
+        }
+        else
+        {
+            fkAllocates = true;
+            fkRealIdxNum = nextRealIdxNum;
+        }
+
+        int pkLogicalIdxNum = NextLogicalIdxNumber(page, in layout);
+        int fkLogicalIdxNum = pkLogicalIdxNum + 1;
+        List<string> existingNames = ReadLogicalIdxNames(page, layout.LogIdxNamesStart, layout.NumIdx);
+
+        return (
+            new FkSidePlan(pkRealIdxNum, pkLogicalIdxNum, pkAllocates, 0),
+            new FkSidePlan(fkRealIdxNum, fkLogicalIdxNum, fkAllocates, 0),
+            existingNames);
     }
 
     /// <summary>
@@ -435,12 +423,13 @@ internal sealed class RelationshipManager(AccessWriter writer)
         byte cascadeDels,
         CancellationToken cancellationToken)
     {
-        byte[] td = await ReadPageOwnedAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] td = chain.Bytes;
 
         if (!TryParseFkTDefLayout(td, out FkTDefLayout layout))
         {
             throw new NotSupportedException(
-                $"cannot mutate the TDEF at page {tdefPage} (multi-page chain, malformed counts, or not a TDEF).");
+                $"cannot mutate the TDEF at page {tdefPage} (malformed counts or not a TDEF).");
         }
 
         int numCols = layout.NumCols;
@@ -461,15 +450,8 @@ internal sealed class RelationshipManager(AccessWriter writer)
         int deltaRealIdxPhys = allocateNewRealIdx ? Constants.TableDefinition.Jet4.RealIdx.PhysSize : 0;
         int totalGrowth = deltaRealIdxSkip + deltaRealIdxPhys + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize + nameRecordSize;
 
-        if (currentEnd + totalGrowth > writer._pgSz)
-        {
-            throw new NotSupportedException(
-                "TDEF would exceed a single page after adding a foreign-key index entry. " +
-                "Multi-page TDEF growth is not supported.");
-        }
-
         // Build the rewritten page.
-        var newTd = new byte[writer._pgSz];
+        var newTd = new byte[GetLogicalTDefCapacity(currentEnd + totalGrowth)];
         Buffer.BlockCopy(td, 0, newTd, 0, writer._tdef.BlockEnd);
 
         // Real-idx skip block (existing slots, unchanged content).
@@ -588,7 +570,11 @@ internal sealed class RelationshipManager(AccessWriter writer)
         // not counted in tdef_len, matching BuildTDefPageWithIndexOffsets.
         AccessBase.Wi32(newTd, 8, newTrailingStart + trailingLen - 8);
 
-        await writer.WritePageAsync(tdefPage, newTd, cancellationToken).ConfigureAwait(false);
+        await WriteLogicalTDefChainAsync(
+            chain.PageNumbers,
+            newTd,
+            newTrailingStart + trailingLen,
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -946,21 +932,15 @@ internal sealed class RelationshipManager(AccessWriter writer)
         string baseName,
         CancellationToken cancellationToken)
     {
-        byte[] pageBytes = await writer.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        try
+        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] pageBytes = chain.Bytes;
+        if (!TryParseFkTDefLayout(pageBytes, out FkTDefLayout layout) || layout.NumIdx <= 0)
         {
-            if (!TryParseFkTDefLayout(pageBytes, out FkTDefLayout layout) || layout.NumIdx <= 0)
-            {
-                return baseName;
-            }
+            return baseName;
+        }
 
-            List<string> existing = ReadLogicalIdxNames(pageBytes, layout.LogIdxNamesStart, layout.NumIdx);
-            return IndexHelpers.MakeUniqueLogicalIdxName(baseName, existing);
-        }
-        finally
-        {
-            AccessBase.ReturnPage(pageBytes);
-        }
+        List<string> existing = ReadLogicalIdxNames(pageBytes, layout.LogIdxNamesStart, layout.NumIdx);
+        return IndexHelpers.MakeUniqueLogicalIdxName(baseName, existing);
     }
 
     /// <summary>
@@ -1070,7 +1050,8 @@ internal sealed class RelationshipManager(AccessWriter writer)
         long otherTdefPage,
         CancellationToken cancellationToken)
     {
-        byte[] td = await ReadPageOwnedAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] td = chain.Bytes;
         if (!TryParseFkTDefLayout(td, out FkTDefLayout layout) || layout.NumIdx <= 0 || layout.NumRealIdx <= 0)
         {
             return -1;
@@ -1114,7 +1095,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
         AccessBase.Wi32(td, writer._tdef.NumCols + 2, layout.NumIdx - 1);
         AccessBase.Wi32(td, 8, finalEnd - 8);
 
-        await writer.WritePageAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
+        await WriteLogicalTDefChainAsync(chain.PageNumbers, td, finalEnd, cancellationToken).ConfigureAwait(false);
         return releasedRealIdxNum;
     }
 
@@ -1148,7 +1129,8 @@ internal sealed class RelationshipManager(AccessWriter writer)
         long tdefPage,
         CancellationToken cancellationToken)
     {
-        byte[] td = await ReadPageOwnedAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] td = chain.Bytes;
         if (!TryParseFkTDefLayout(td, out FkTDefLayout layout) || layout.NumRealIdx <= 0)
         {
             return;
@@ -1211,7 +1193,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
         AccessBase.Wi32(td, writer._tdef.NumRealIdx, layout.NumRealIdx - reclaim);
         AccessBase.Wi32(td, 8, finalEnd - 8);
 
-        await writer.WritePageAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
+        await WriteLogicalTDefChainAsync(chain.PageNumbers, td, finalEnd, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1232,7 +1214,8 @@ internal sealed class RelationshipManager(AccessWriter writer)
         string newName,
         CancellationToken cancellationToken)
     {
-        byte[] td = await ReadPageOwnedAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        LogicalTDefChain chain = await ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] td = chain.Bytes;
         if (!TryParseFkTDefLayout(td, out FkTDefLayout layout) || layout.NumIdx <= 0 || layout.NumRealIdx <= 0)
         {
             return false;
@@ -1259,10 +1242,12 @@ internal sealed class RelationshipManager(AccessWriter writer)
         int delta = newNameRecordSize - oldNameLen;
 
         int finalEnd = layout.CurrentEnd + delta;
-        if (finalEnd > writer._pgSz || finalEnd < layout.TrailingStart)
+        if (finalEnd < layout.TrailingStart)
         {
             return false;
         }
+
+        EnsureLogicalTDefCapacity(ref td, finalEnd);
 
         // Shift the bytes between (oldNameStart + oldNameLen) and currentEnd
         // by delta. This covers the rest of the names section + the variable
@@ -1289,16 +1274,164 @@ internal sealed class RelationshipManager(AccessWriter writer)
         // Update tdef_len.
         AccessBase.Wi32(td, 8, finalEnd - 8);
 
-        await writer.WritePageAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
+        await WriteLogicalTDefChainAsync(chain.PageNumbers, td, finalEnd, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
     /// <summary>
-    /// Parsed layout of a single-page Jet4/ACE TDEF, used by the FK
+    /// Stitched TDEF bytes plus the physical page numbers that currently
+    /// back the chain. The first page contributes all <c>_pgSz</c> bytes;
+    /// continuation pages contribute only their body bytes after offset 8.
+    /// </summary>
+    private sealed record LogicalTDefChain(byte[] Bytes, List<long> PageNumbers);
+
+    /// <summary>
+    /// Reads and stitches a TDEF chain using the same logical layout as
+    /// <c>AccessBase.ReadTDefBytesAsync</c>, while retaining the physical
+    /// page numbers so mutations can be materialised back to disk.
+    /// </summary>
+    private async ValueTask<LogicalTDefChain> ReadRequiredLogicalTDefChainAsync(
+        long startPage,
+        CancellationToken cancellationToken)
+    {
+        var parts = new List<byte[]>();
+        var pageNumbers = new List<long>();
+        var seen = new HashSet<long>();
+        long pageNumber = startPage;
+
+        while (pageNumber != 0 && seen.Add(pageNumber))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            if (page[0] != 0x02)
+            {
+                AccessBase.ReturnPage(page);
+                break;
+            }
+
+            parts.Add(page);
+            pageNumbers.Add(pageNumber);
+            pageNumber = AccessBase.Ru32(page, 4);
+        }
+
+        if (parts.Count == 0)
+        {
+            throw new NotSupportedException($"TDEF at page {startPage} could not be read.");
+        }
+
+        int total = writer._pgSz + ((parts.Count - 1) * (writer._pgSz - 8));
+        var logical = new byte[total];
+        Buffer.BlockCopy(parts[0], 0, logical, 0, writer._pgSz);
+
+        int logicalOffset = writer._pgSz;
+        for (int partIndex = 1; partIndex < parts.Count; partIndex++)
+        {
+            Buffer.BlockCopy(parts[partIndex], 8, logical, logicalOffset, writer._pgSz - 8);
+            logicalOffset += writer._pgSz - 8;
+        }
+
+        for (int partIndex = 0; partIndex < parts.Count; partIndex++)
+        {
+            AccessBase.ReturnPage(parts[partIndex]);
+        }
+
+        return new LogicalTDefChain(logical, pageNumbers);
+    }
+
+    private int GetLogicalTDefPageCount(int usedLength)
+    {
+        if (usedLength <= writer._pgSz)
+        {
+            return 1;
+        }
+
+        int bodyPerContinuation = writer._pgSz - 8;
+        int continuationBytes = usedLength - writer._pgSz;
+        return 1 + ((continuationBytes + bodyPerContinuation - 1) / bodyPerContinuation);
+    }
+
+    private int GetLogicalTDefCapacity(int usedLength)
+    {
+        int pageCount = GetLogicalTDefPageCount(usedLength);
+        return writer._pgSz + ((pageCount - 1) * (writer._pgSz - 8));
+    }
+
+    private void EnsureLogicalTDefCapacity(ref byte[] logicalBytes, int usedLength)
+    {
+        int capacity = GetLogicalTDefCapacity(usedLength);
+        if (logicalBytes.Length < capacity)
+        {
+            Array.Resize(ref logicalBytes, capacity);
+        }
+    }
+
+    private async ValueTask WriteLogicalTDefChainAsync(
+        List<long> existingPageNumbers,
+        byte[] logicalBytes,
+        int usedLength,
+        CancellationToken cancellationToken)
+    {
+        EnsureLogicalTDefCapacity(ref logicalBytes, usedLength);
+        int pageCount = GetLogicalTDefPageCount(usedLength);
+        var pageNumbers = new long[pageCount];
+        int retainedCount = Math.Min(existingPageNumbers.Count, pageCount);
+        for (int pageIndex = 0; pageIndex < retainedCount; pageIndex++)
+        {
+            pageNumbers[pageIndex] = existingPageNumbers[pageIndex];
+        }
+
+        for (int pageIndex = retainedCount; pageIndex < pageCount; pageIndex++)
+        {
+            pageNumbers[pageIndex] = await writer.AppendPageAsync(new byte[writer._pgSz], cancellationToken).ConfigureAwait(false);
+        }
+
+        logicalBytes[0] = 0x02;
+        logicalBytes[1] = 0x01;
+        int tdefLen = Math.Max(0, usedLength - 8);
+        AccessBase.Wi32(logicalBytes, 8, tdefLen);
+        AccessBase.Wu16(logicalBytes, 2, Math.Max(0, writer._pgSz - tdefLen - 8));
+
+        byte[][] pages = MaterializeLogicalTDefPages(logicalBytes, usedLength, pageNumbers);
+        for (int pageIndex = 0; pageIndex < pages.Length; pageIndex++)
+        {
+            await writer.WritePageAsync(pageNumbers[pageIndex], pages[pageIndex], cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private byte[][] MaterializeLogicalTDefPages(byte[] logicalBytes, int usedLength, long[] pageNumbers)
+    {
+        var pages = new byte[pageNumbers.Length][];
+
+        pages[0] = new byte[writer._pgSz];
+        Buffer.BlockCopy(logicalBytes, 0, pages[0], 0, Math.Min(writer._pgSz, logicalBytes.Length));
+        AccessBase.Wi32(pages[0], 4, pageNumbers.Length > 1 ? checked((int)pageNumbers[1]) : 0);
+
+        int bodyPerContinuation = writer._pgSz - 8;
+        for (int pageIndex = 1; pageIndex < pageNumbers.Length; pageIndex++)
+        {
+            byte[] page = new byte[writer._pgSz];
+            page[0] = 0x02;
+            page[1] = 0x01;
+            AccessBase.Wi32(page, 4, pageIndex + 1 < pageNumbers.Length ? checked((int)pageNumbers[pageIndex + 1]) : 0);
+
+            int sourceOffset = writer._pgSz + ((pageIndex - 1) * bodyPerContinuation);
+            int copyLength = Math.Min(bodyPerContinuation, Math.Max(0, usedLength - sourceOffset));
+            if (copyLength > 0)
+            {
+                Buffer.BlockCopy(logicalBytes, sourceOffset, page, 8, copyLength);
+            }
+
+            pages[pageIndex] = page;
+        }
+
+        return pages;
+    }
+
+    /// <summary>
+    /// Parsed layout of a stitched Jet4/ACE TDEF, used by the FK
     /// logical-idx mutation helpers (rename / remove / reclaim) to share the
-    /// header validation and offset-computation boilerplate. Returns
-    /// <see langword="false"/> from <see cref="TryParseFkTDefLayout"/> for
-    /// multi-page TDEFs, malformed counts, or a column-name walk failure.
+    /// header validation and offset-computation boilerplate.
     /// </summary>
     private readonly record struct FkTDefLayout(
         int NumCols,
@@ -1313,18 +1446,17 @@ internal sealed class RelationshipManager(AccessWriter writer)
         int TrailingLen);
 
     /// <summary>
-    /// Validates that <paramref name="td"/> is a single-page Jet4/ACE TDEF
+    /// Validates that <paramref name="td"/> is a stitched Jet4/ACE TDEF
     /// with sane counts and computes every offset required by the FK
     /// mutation helpers in one pass. Returns <see langword="false"/> when
-    /// the buffer is not a TDEF, is multi-page, has out-of-range counts, or
-    /// the column-name / idx-name walk fails.
+    /// the buffer is not a TDEF, has out-of-range counts, or the column-name
+    /// / idx-name walk fails.
     /// </summary>
     private bool TryParseFkTDefLayout(byte[] td, out FkTDefLayout layout)
     {
         layout = default;
-        if (td[0] != 0x02 || AccessBase.Ru32(td, 4) != 0)
+        if (td.Length < writer._tdef.BlockEnd || td[0] != 0x02)
         {
-            // Multi-page TDEF — out of scope for in-place mutation.
             return false;
         }
 

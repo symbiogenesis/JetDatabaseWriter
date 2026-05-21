@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Relationships;
 
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
@@ -268,8 +269,116 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DropRelationshipAsync_MultiPageEndpointTDef_RemovesFkLogicalIdxEntries(bool parentIsWide)
+    {
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+
+        string parent = MakeTableName(parentIsWide ? "WDP" : "NDP");
+        string child = MakeTableName(parentIsWide ? "NDC" : "WDC");
+        string relName = $"FK_{child}_{parent}";
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await CreateRelationshipEndpointTablesAsync(writer, parent, child, parentIsWide, TestContext.Current.CancellationToken);
+
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition(relName, parent, "Id", child, "ParentId"),
+                TestContext.Current.CancellationToken);
+
+            await writer.DropRelationshipAsync(relName, TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken), index => index.Kind == IndexKind.ForeignKey);
+        Assert.DoesNotContain(await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken), index => index.Kind == IndexKind.ForeignKey);
+
+        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.DoesNotContain(rels.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), relName, StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RenameRelationshipAsync_MultiPageEndpointTDef_UpdatesTDefLogicalIdxNameCookies(bool parentIsWide)
+    {
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+
+        string parent = MakeTableName(parentIsWide ? "WRP" : "NRP");
+        string child = MakeTableName(parentIsWide ? "NRC" : "WRC");
+        string oldName = $"FK_{child}_{parent}";
+        string newName = $"FK2_{child}_{parent}";
+
+        await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
+        {
+            await CreateRelationshipEndpointTablesAsync(writer, parent, child, parentIsWide, TestContext.Current.CancellationToken);
+
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition(oldName, parent, "Id", child, "ParentId"),
+                TestContext.Current.CancellationToken);
+
+            await writer.RenameRelationshipAsync(oldName, newName, TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
+
+        Assert.Single(parentIndexes, index => index.Kind == IndexKind.ForeignKey && index.Name == newName);
+        Assert.Single(childIndexes, index => index.Kind == IndexKind.ForeignKey && index.Name == newName);
+        Assert.DoesNotContain(parentIndexes, index => index.Name == oldName);
+        Assert.DoesNotContain(childIndexes, index => index.Name == oldName);
+    }
+
     private static string MakeTableName(string prefix) =>
         $"{prefix}_{Guid.NewGuid():N}".Substring(0, Math.Min(18, prefix.Length + 11));
+
+    private static async ValueTask CreateRelationshipEndpointTablesAsync(
+        AccessWriter writer,
+        string parent,
+        string child,
+        bool parentIsWide,
+        CancellationToken cancellationToken)
+    {
+        if (parentIsWide)
+        {
+            await CreateWideTDefTableAsync(writer, parent, [new("Id", typeof(int))], cancellationToken);
+            await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], cancellationToken);
+        }
+        else
+        {
+            await writer.CreateTableAsync(parent, [new("Id", typeof(int))], cancellationToken);
+            await CreateWideTDefTableAsync(writer, child, [new("Id", typeof(int)), new("ParentId", typeof(int))], cancellationToken);
+        }
+    }
+
+    private static async ValueTask CreateWideTDefTableAsync(
+        AccessWriter writer,
+        string tableName,
+        IReadOnlyList<ColumnDefinition> leadingColumns,
+        CancellationToken cancellationToken)
+    {
+        const int ColumnCount = 200;
+        const int IndexCount = 30;
+
+        var columns = new List<ColumnDefinition>(ColumnCount);
+        columns.AddRange(leadingColumns);
+        for (int columnOrdinal = columns.Count; columnOrdinal < ColumnCount; columnOrdinal++)
+        {
+            columns.Add(new ColumnDefinition($"C{columnOrdinal:D3}", typeof(int)));
+        }
+
+        var indexes = new List<IndexDefinition>(IndexCount);
+        for (int indexOrdinal = 0; indexOrdinal < IndexCount; indexOrdinal++)
+        {
+            int indexedColumnOrdinal = leadingColumns.Count + indexOrdinal;
+            indexes.Add(new IndexDefinition($"IX_{indexOrdinal:D2}", $"C{indexedColumnOrdinal:D3}"));
+        }
+
+        await writer.CreateTableAsync(tableName, columns, indexes, cancellationToken);
+    }
 
     private static string SafeString(DataRow row, string column)
     {
