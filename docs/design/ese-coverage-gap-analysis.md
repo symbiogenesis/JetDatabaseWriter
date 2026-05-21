@@ -33,18 +33,21 @@ Implemented coverage (2026-05-20):
 - Added cancellation/failure coverage around replay, the page-0 commit-lock byte update, and the final durable flush.
 - Documented WAL-style recovery as out of scope for the current file-format writer; it would be a future feature requiring a durable redo/undo log and open-time recovery pass.
 
-### 2. Page Integrity and Structural Validation
+### 2. Page Integrity and Structural Validation (DONE)
 
 ESE has explicit checksum/page validation tests such as checksum set/fix/fail cases, bad page validation callbacks, CPAGE insert/replace/delete tests, tag-boundary corruption, and logged-data checksum stability.
 
-JetDatabaseWriter has many targeted byte-format tests, especially for TDEFs, index pages, catalog rows, and fuzz/corruption robustness. It does not appear to have a reusable page-invariant checker that validates every emitted page shape after writes.
+JetDatabaseWriter has many targeted byte-format tests, especially for TDEFs, index pages, catalog rows, and fuzz/corruption robustness. It now also has a reusable emitted-page invariant checker for writer-created streams.
 
-Suggested work:
+Implemented coverage (2026-05-21):
 
-- Add page invariant helpers for data, TDEF, LVAL, usage-map, leaf-index, and intermediate-index pages.
-- Validate slot offsets are in range, sorted into coherent row bounds, non-overlapping, and do not point through deleted/overflow markers incorrectly.
-- Validate free-space hints and row counts against decoded live rows where the format exposes them.
-- Run the invariant helper after representative create/insert/update/delete/index-maintenance operations.
+- Added `EmittedPageInvariantAssert` in [EmittedPageInvariantAssert.cs](../../JetDatabaseWriter.Tests/Infrastructure/EmittedPageInvariantAssert.cs) for data, TDEF, LVAL, usage-map, leaf-index, and intermediate-index pages.
+- Validates data-page row slot directories: slot offsets are in range, unique after sorting into row bounds, non-overlapping, and marked deleted/overflow rows still point at coherent payload bounds.
+- Validates free-space hints for data, usage-map, LVAL, TDEF, leaf-index, and intermediate-index pages, including the index entry-start sentinel bit.
+- Aggregates decoded live data rows by parent TDEF and compares them with each TDEF `row_count`; also keeps the per-real-idx `num_idx_rows` counters in the same sweep.
+- Added [EmittedPageInvariantTests.cs](../../JetDatabaseWriter.Tests/Pages/EmittedPageInvariantTests.cs), which runs the helper after representative create, insert, update, delete, leaf-index maintenance, multi-level intermediate-index maintenance, usage-map emission, and chained-LVAL writes across Jet3/Jet4/ACE where applicable.
+
+This is structural validation, not a checksum oracle or byte-for-byte DAO comparison. DAO CompactDatabase coverage remains the stronger compatibility check for high-risk disk-format changes.
 
 ### 3. Deleted Data Scrubbing and Data Remanence
 
@@ -143,8 +146,7 @@ The following ESE areas do not appear to map directly to this project unless the
 
 ## Suggested Next Test Work
 
-1. Add a shared emitted-page invariant checker and run it from representative writer tests.
-2. Add byte-level data-remanence tests for delete/update and LVAL update/delete.
-3. Promote the internal index seeker into a tested public or internal-experimental row seek surface.
-4. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
-5. Add integration cache tests around large scans, interleaved table reads, and transaction-local page reads.
+1. Add byte-level data-remanence tests for delete/update and LVAL update/delete.
+2. Promote the internal index seeker into a tested public or internal-experimental row seek surface.
+3. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
+4. Add integration cache tests around large scans, interleaved table reads, and transaction-local page reads.
