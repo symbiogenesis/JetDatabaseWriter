@@ -54,6 +54,10 @@ This is the largest measured hotspot. The MEMO fixture has only 5,000 rows, but
 all MEMO variants are around 157-179 ms and allocate about 146-147 MB. That is
 an order of magnitude slower than fixed-width row scans.
 
+Status: partially addressed. Chained-value assembly and short-chain cycle
+detection have been optimized; the section remains open pending focused
+benchmarks and further work on page I/O and final text/OLE materialization.
+
 Primary code path:
 
 - `LongValueDecoder.ReadLongValueAsync`
@@ -63,13 +67,18 @@ Primary code path:
 - `LongValueDecoder.LocateLvalRowAsync`
 - `LongValueDecoder.DecodeLongValue`
 
-Likely cost centers:
+Completed in the first optimization slice:
+
+- `ReadLvalChainAsync` now fills the final declared payload buffer directly for
+  valid chains; corrupt or short chains still trim to the actual byte count.
+- Short chained values now use inline cycle detection; a `HashSet<uint>` is
+  allocated only after the inline visited-page capacity is exceeded.
+
+Remaining likely cost centers:
 
 - Chained LVAL values read one or more additional pages per cell.
-- `ReadLvalChainAsync` rents a buffer, copies every chunk into it, then copies
-  again into the final result array.
-- Every chained value allocates a `HashSet<uint>` for cycle detection even when
-  chains are short and well-formed.
+- Repeated LVAL page location may still re-parse row bounds; benchmark before
+  adding page/row-location caching.
 - Text MEMO values eventually allocate the decoded `string`; OLE values may scan
   and copy payload ranges as `byte[]`.
 - The async slow path is required for non-inline LVAL references, so per-value

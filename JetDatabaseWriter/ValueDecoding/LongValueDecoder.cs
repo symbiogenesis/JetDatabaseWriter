@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -99,10 +98,10 @@ internal sealed class LongValueDecoder(AccessReader reader)
             return LvalChainResult.Failure("no chunks read");
         }
 
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(maxLen);
+        byte[]? buffer = null;
         int totalLen = 0;
         uint currentDp = firstLvalDp;
-        var seen = new HashSet<uint>();
+        SmallLvalDpSet seen = default;
 
         try
         {
@@ -127,6 +126,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
 
                 if (wantData > 0 && loc.Start + 4 + wantData <= reader._pgSz)
                 {
+                    buffer ??= new byte[maxLen];
                     Buffer.BlockCopy(loc.Page, loc.Start + 4, buffer, totalLen, wantData);
                     totalLen += wantData;
                 }
@@ -135,6 +135,11 @@ internal sealed class LongValueDecoder(AccessReader reader)
             if (totalLen == 0)
             {
                 return LvalChainResult.Failure("no chunks read");
+            }
+
+            if (totalLen == buffer!.Length)
+            {
+                return LvalChainResult.Success(buffer);
             }
 
             var result = new byte[totalLen];
@@ -148,10 +153,6 @@ internal sealed class LongValueDecoder(AccessReader reader)
         catch (OverflowException ex)
         {
             return LvalChainResult.Failure(ex.Message);
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 
@@ -276,5 +277,112 @@ internal sealed class LongValueDecoder(AccessReader reader)
     internal readonly record struct LvalRowLocation(byte[] Page, int Start, int Size, string? Error)
     {
         public bool Failed => Error is not null;
+    }
+
+    private struct SmallLvalDpSet
+    {
+        private const int InlineCapacity = 8;
+
+        private uint value0;
+        private uint value1;
+        private uint value2;
+        private uint value3;
+        private uint value4;
+        private uint value5;
+        private uint value6;
+        private uint value7;
+        private int count;
+        private HashSet<uint>? overflow;
+
+        public bool Add(uint value)
+        {
+            if (overflow is not null)
+            {
+                return overflow.Add(value);
+            }
+
+            for (int index = 0; index < count; index++)
+            {
+                if (GetValue(index) == value)
+                {
+                    return false;
+                }
+            }
+
+            if (count < InlineCapacity)
+            {
+                SetValue(count, value);
+                count++;
+                return true;
+            }
+
+            overflow = new HashSet<uint>(InlineCapacity + 1)
+            {
+                value0,
+                value1,
+                value2,
+                value3,
+                value4,
+                value5,
+                value6,
+                value7,
+            };
+
+            return overflow.Add(value);
+        }
+
+        private readonly uint GetValue(int index) => index switch
+        {
+            0 => value0,
+            1 => value1,
+            2 => value2,
+            3 => value3,
+            4 => value4,
+            5 => value5,
+            6 => value6,
+            7 => value7,
+            _ => throw new ArgumentOutOfRangeException(nameof(index)),
+        };
+
+        private void SetValue(int index, uint value)
+        {
+            switch (index)
+            {
+                case 0:
+                    value0 = value;
+                    break;
+
+                case 1:
+                    value1 = value;
+                    break;
+
+                case 2:
+                    value2 = value;
+                    break;
+
+                case 3:
+                    value3 = value;
+                    break;
+
+                case 4:
+                    value4 = value;
+                    break;
+
+                case 5:
+                    value5 = value;
+                    break;
+
+                case 6:
+                    value6 = value;
+                    break;
+
+                case 7:
+                    value7 = value;
+                    break;
+
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(index));
+            }
+        }
     }
 }
