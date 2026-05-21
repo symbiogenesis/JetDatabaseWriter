@@ -53,7 +53,7 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 ///
 /// Limitations:
 ///   ✗ Encrypted (password-protected) databases — remove password in Access first
-///   ✗ Attachment fields (Type 0x11) — not supported (rare, added in Access 2007)
+///   ✓ Attachment and multi-value complex fields — decoded via hidden flat tables
 ///   ✗ Linked tables — only local tables returned
 ///   ✗ Overflow rows (span multiple pages) — silently skipped (rare edge case)
 ///

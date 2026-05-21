@@ -560,24 +560,11 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         ColumnInfo complexCol = parentDef.FindColumn(columnName)
             ?? throw new ArgumentException($"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName));
 
-        bool isAttachmentCol = complexCol.Type == T_ATTACHMENT;
-        bool isMultiValueCol = complexCol.Type == T_COMPLEX;
-        if (!isAttachmentCol && !isMultiValueCol)
+        bool isComplexCol = complexCol.Type == T_ATTACHMENT || complexCol.Type == T_COMPLEX;
+        if (!isComplexCol)
         {
             throw new NotSupportedException(
                 $"Column '{tableName}.{columnName}' is not a complex (Attachment / MultiValue) column (type=0x{complexCol.Type:X2}).");
-        }
-
-        if (expectAttachment && !isAttachmentCol)
-        {
-            throw new NotSupportedException(
-                $"Column '{tableName}.{columnName}' is a MultiValue column; call AddMultiValueItemAsync instead.");
-        }
-
-        if (!expectAttachment && !isMultiValueCol)
-        {
-            throw new NotSupportedException(
-                $"Column '{tableName}.{columnName}' is an Attachment column; call AddAttachmentAsync instead.");
         }
 
         // Resolve the hidden flat child table via MSysComplexColumns.
@@ -589,6 +576,24 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         }
 
         TableDef flatDef = await _writer.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
+        ComplexColumnKind kind = ClassifyComplexColumnKind(complexCol.Type, flatDef);
+        if (kind == ComplexColumnKind.Unknown)
+        {
+            throw new NotSupportedException(
+                $"Column '{tableName}.{columnName}' is a complex column, but its subtype could not be determined from the flat child table.");
+        }
+
+        if (expectAttachment && kind != ComplexColumnKind.Attachment)
+        {
+            throw new NotSupportedException(
+                $"Column '{tableName}.{columnName}' is a MultiValue column; call AddMultiValueItemAsync instead.");
+        }
+
+        if (!expectAttachment && kind != ComplexColumnKind.MultiValue)
+        {
+            throw new NotSupportedException(
+                $"Column '{tableName}.{columnName}' is an Attachment column; call AddAttachmentAsync instead.");
+        }
 
         // Resolve predicate column ordinals + decode parent key (string-form for comparison).
         var predIndexes = new int[parentRowKey.Count];
@@ -640,6 +645,26 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         await _writer.Constraints.ApplyAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
 
         await _writer.InsertRowDataAsync(flatTdefPage, flatDef, flatValues, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private static ComplexColumnKind ClassifyComplexColumnKind(byte parentType, TableDef flatDef)
+    {
+        if (parentType == T_ATTACHMENT)
+        {
+            return ComplexColumnKind.Attachment;
+        }
+
+        if (flatDef.FindColumn("FileData") != null && flatDef.FindColumn("FileName") != null)
+        {
+            return ComplexColumnKind.Attachment;
+        }
+
+        if (flatDef.FindColumn("Value") != null)
+        {
+            return ComplexColumnKind.MultiValue;
+        }
+
+        return ComplexColumnKind.Unknown;
     }
 
     /// <summary>

@@ -59,10 +59,10 @@ internal static class Constants
         /// <summary>mdbtools <c>MDB_NUMERIC</c> (0x10): 17-byte scaled decimal (precision + scale + 16-byte mantissa).</summary>
         public const byte T_NUMERIC = 0x10;
 
-        /// <summary>mdbtools <c>MDB_COMPLEX</c> attachment subtype (0x11): Access 2007+ attachment column (complex flat-table backing).</summary>
+        /// <summary>Legacy/private attachment alias (0x11). Access-authored ACCDB complex columns use <see cref="T_COMPLEX"/> and classify attachments via <c>MSysComplexColumns</c>.</summary>
         public const byte T_ATTACHMENT = 0x11;
 
-        /// <summary>mdbtools <c>MDB_COMPLEX</c> (0x12): Access 2007+ multi-value / version-history column (complex flat-table backing).</summary>
+        /// <summary>Access 2007+ complex parent column (0x12): attachment, multi-value, or version-history with hidden flat-table backing.</summary>
         public const byte T_COMPLEX = 0x12;
 
         /// <summary>Access 2019+ extended Date/Time (0x14): 42-byte fixed string. No mdbtools symbol — post-dates mdbtools.</summary>

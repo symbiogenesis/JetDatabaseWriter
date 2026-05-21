@@ -31,7 +31,7 @@ internal static class TestDatabases
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "Jet3Test.mdb");
 
     /// <summary>
-    /// ACCDB with a table "Documents" that has an Attachment column (type 0x11)
+    /// ACCDB with a table "Documents" that has an Attachment column (type 0x12)
     /// containing two rows, each with one attachment file attached.
     /// Created by Access 16 COM automation.
     /// Password: none. Tables: Documents, Tags.

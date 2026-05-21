@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 using Xunit;
 
 /// <summary>
@@ -150,10 +151,19 @@ public sealed class ComplexColumnsWriterTests
         var info = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
         var attachment = Assert.Single(info);
         Assert.Equal("Files", attachment.ColumnName);
+        Assert.Equal(ComplexColumnKind.Attachment, attachment.Kind);
         Assert.True(attachment.ComplexId > 0);
         Assert.True(attachment.FlatTableId > 0);
         Assert.StartsWith("f_", attachment.FlatTableName, StringComparison.Ordinal);
         Assert.EndsWith("_Files", attachment.FlatTableName, StringComparison.Ordinal);
+
+        var entry = await reader.GetCatalogEntryAsync("Documents", TestContext.Current.CancellationToken);
+        Assert.NotNull(entry);
+        TableDef? tableDef = await reader.ReadTableDefAsync(entry!.TDefPage, TestContext.Current.CancellationToken);
+        Assert.NotNull(tableDef);
+        ColumnInfo? files = tableDef!.FindColumn("Files");
+        Assert.NotNull(files);
+        Assert.Equal(Constants.ColumnTypes.T_COMPLEX, files!.Type);
     }
 
     [Fact]

@@ -773,9 +773,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     Description = src.Description,
 
                     // Forward complex-column flags so the rebuilt TDEF re-emits
-                    // T_ATTACHMENT / T_COMPLEX with the original ComplexId in
-                    // the misc slot. RewriteTableAsync uses the preserved
-                    // ComplexId to update MSysComplexColumns.ColumnName.
+                    // a complex descriptor with the original ComplexId in the
+                    // misc slot. RewriteTableAsync uses the preserved ComplexId
+                    // to update MSysComplexColumns.ColumnName.
                     IsAttachment = src.IsAttachment,
                     IsMultiValue = src.IsMultiValue,
                     MultiValueElementType = src.MultiValueElementType,
@@ -1998,10 +1998,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return column.CalculatedResultType;
         }
 
-        // Complex columns: Attachment and Multi-value have dedicated
-        // type codes and override the CLR-driven mapping. The user picks one
-        // explicitly via IsAttachment / IsMultiValue; declaring both is rejected
-        // here so the writer never emits ambiguous descriptors.
+        // Complex columns override the CLR-driven mapping. Access writes the
+        // generic complex type byte for both Attachment and MultiValue parent
+        // descriptors; the subtype lives in MSysComplexColumns.
         if (column.IsAttachment && column.IsMultiValue)
         {
             throw new ArgumentException($"Column '{column.Name}' cannot be both Attachment and MultiValue.", nameof(column));
@@ -2009,7 +2008,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         if (column.IsAttachment)
         {
-            return T_ATTACHMENT;
+            return T_COMPLEX;
         }
 
         if (column.IsMultiValue)
@@ -2534,10 +2533,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     ComplexId = column.Misc,
                 };
             case T_COMPLEX:
-                // Multi-value column. MultiValueElementType is left unset because
-                // PrepareComplexColumnAllocationsAsync only validates it for
-                // freshly-allocated columns (ComplexId == 0); preserved columns
-                // bypass that check entirely.
+                // Access stores all complex parent descriptors as the generic
+                // 0x12 type; the subtype lives in MSysComplexColumns. This
+                // rewrite path only needs a generic complex marker and the
+                // preserved ComplexId, so the existing flat child table remains
+                // attached without allocating a new one.
                 return new ColumnDefinition(column.Name, typeof(byte[]))
                 {
                     IsMultiValue = true,

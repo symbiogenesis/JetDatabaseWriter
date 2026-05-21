@@ -156,14 +156,14 @@ public sealed record ColumnDefinition
 
     /// <summary>
     /// Gets a value indicating whether this column is an Access 2007+ Attachment
-    /// column (JET <c>T_ATTACHMENT = 0x11</c>). Backed on disk by a hidden flat
-    /// child table containing one row per attached file. ACE (.accdb) only.
+    /// column. Backed on disk by a hidden flat child table containing one row
+    /// per attached file. ACE (.accdb) only.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Declaring an attachment column emits the parent TDEF column descriptor
-    /// (<c>col_type = 0x11</c>, <c>col_len = 4</c>, bitmask <c>0x07</c>, 4-byte
-    /// <c>misc</c> slot for the <c>ComplexID</c>), allocates a fresh
+    /// Declaring an attachment column emits an Access-style generic complex
+    /// parent TDEF column descriptor (<c>col_type = 0x12</c>, <c>col_len = 4</c>,
+    /// bitmask <c>0x07</c>, 4-byte <c>misc</c> slot for the <c>ComplexID</c>), allocates a fresh
     /// per-database <c>ComplexID</c>, and emits the hidden flat child table
     /// plus the <c>MSysComplexColumns</c> catalog row.
     /// </para>
