@@ -1,6 +1,6 @@
 # ESE-Inspired Coverage Gap Analysis
 
-**Status:** Updated after DAO complex/LVAL validation, 2026-05-21.
+**Status:** Updated after data-remanence coverage, 2026-05-21.
 **Reference:** [microsoft/Extensible-Storage-Engine](https://github.com/microsoft/Extensible-Storage-Engine).
 
 This note compares JetDatabaseWriter's current reader/writer test surface with themes from Microsoft's Extensible Storage Engine (ESE) repository. ESE is a full database engine, not an Access MDB/ACCDB file-format oracle, so the goal is not feature parity. The useful signal is where ESE's long-lived engine tests expose categories of risk that also matter to a direct JET/ACE page writer.
@@ -49,18 +49,18 @@ Implemented coverage (2026-05-21):
 
 This is structural validation, not a checksum oracle or byte-for-byte DAO comparison. DAO CompactDatabase coverage remains the stronger compatibility check for high-risk disk-format changes.
 
-### 3. Deleted Data Scrubbing and Data Remanence
+### 3. Deleted Data Scrubbing and Data Remanence (DONE)
 
 ESE tests `DeleteScrubsData`, `ReplaceScrubsData`, `ReorganizePageScrubsData`, and overwrite-unused-space behavior. JetDatabaseWriter currently marks a deleted row by setting the high bit in the row-offset slot in [AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs); it does not overwrite the old row payload.
 
-Local tests assert deleted rows are no longer readable through public APIs, but do not assert whether the old bytes remain on disk. This is probably format-compatible behavior, but it is worth making explicit.
+Local tests already asserted deleted rows are no longer readable through public APIs. The byte-level behavior is now explicit: delete/update preserve old row payload bytes, and old LVAL pages remain allocated until Access Compact and Repair or a future rewrite reclaims them.
 
-Suggested work:
+Implemented coverage (2026-05-21):
 
-- Add a byte-level test proving current delete/update behavior either preserves or removes old row payload bytes.
-- Document the data-remanence behavior in README if preservation is intentional.
-- Consider an opt-in scrub mode that overwrites deleted row payloads and freed row gaps.
-- Include LVAL chains in the decision: updated/deleted long values leave old LVAL pages for Access Compact and Repair to reclaim.
+- Added [DataRemanenceTests.cs](../../JetDatabaseWriter.Tests/Writer/DataRemanenceTests.cs) byte-level coverage for Jet3, Jet4, and ACE inline row payloads: `DeleteRowsAsync` flips the deleted-slot bit without overwriting the row body, and `UpdateRowsAsync` leaves the old slot deleted with its original bytes intact while inserting a replacement row.
+- Added Jet4/ACE coverage for oversized OLE values stored on chained LVAL pages: update appends a fresh chain and leaves the old LVAL pages present; delete leaves both old and current LVAL pages present after the live row is removed.
+- Documented the behavior in [README.md](../../README.md): update/delete are logical mutations, not secure erase; old bytes may remain until Compact and Repair or a future rewrite reclaims them.
+- Left an opt-in scrub/reuse mode as a future feature decision. Implementing it would need to handle deleted row bodies, freed row gaps, index rebuild orphan pages, and old LVAL chains consistently.
 
 ### 4. Public Index Seek and Cursor Navigation
 
@@ -114,13 +114,12 @@ Suggested work:
 
 ### 8. Complex Columns and LVAL Reclamation
 
-ESE has long-value, cleanup, and space-management machinery. JetDatabaseWriter supports complex columns and Access-style LVAL chains. DAO CompactDatabase coverage now includes a Northwind-hosted writer-created attachment/multi-value table with wrapper-encoded attachment `FileData`, a chained-LVAL attachment payload, flat-table indexes, and complex-column schema-evolution preservation. Remaining caveats are narrower: no old LVAL page reuse on update/delete, fresh writer-created complex system-table scaffolding is still reader-round-trip only, and broader complex-column mutation coverage should be added when a new mutation becomes release-critical. See [complex-columns-format-notes.md](complex-columns-format-notes.md) and [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
+ESE has long-value, cleanup, and space-management machinery. JetDatabaseWriter supports complex columns and Access-style LVAL chains. DAO CompactDatabase coverage now includes a Northwind-hosted writer-created attachment/multi-value table with wrapper-encoded attachment `FileData`, a chained-LVAL attachment payload, flat-table indexes, and complex-column schema-evolution preservation. Remaining caveats are narrower: no old LVAL page reuse on update/delete (now byte-pinned by [DataRemanenceTests.cs](../../JetDatabaseWriter.Tests/Writer/DataRemanenceTests.cs)), fresh writer-created complex system-table scaffolding is still reader-round-trip only, and broader complex-column mutation coverage should be added when a new mutation becomes release-critical. See [complex-columns-format-notes.md](complex-columns-format-notes.md) and [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 
 Suggested work:
 
 - Expand DAO Compact and Repair tests beyond the current Northwind-hosted attachment/multi-value/LVAL representative case when new complex-column mutations become release blockers.
-- Add byte-level tests documenting old LVAL page retention after update/delete.
-- Decide whether page reuse is out of scope or a future space-management feature.
+- Decide whether page reuse or opt-in scrubbing is out of scope or a future space-management/security feature.
 
 ## Documentation Drift Found During Triage (RESOLVED)
 
@@ -146,7 +145,7 @@ The following ESE areas do not appear to map directly to this project unless the
 
 ## Suggested Next Test Work
 
-1. Add byte-level data-remanence tests for delete/update and LVAL update/delete.
+1. Decide whether an opt-in scrub/reuse mode belongs in scope for deleted row bodies, freed row gaps, index rebuild orphan pages, and old LVAL chains.
 2. Promote the internal index seeker into a tested public or internal-experimental row seek surface.
 3. Promote remaining reader-only rows from the writer disk-format validation matrix into DAO tests as risk warrants.
 4. Add integration cache tests around large scans, interleaved table reads, and transaction-local page reads.

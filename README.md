@@ -451,6 +451,8 @@ int updated = await writer.UpdateRowsAsync("Contacts", "ContactID", 1,
 int deleted = await writer.DeleteRowsAsync("Contacts", "ContactID", 3);
 ```
 
+> Update and delete are logical row mutations, not secure erase operations. Old row payload bytes and old LVAL pages can remain in the file until a future rewrite or Microsoft Access Compact & Repair reclaims them; see [Data remanence](#data-remanence).
+
 ### Add, drop, and rename columns
 
 ```csharp
@@ -685,6 +687,9 @@ The items below are either **not yet implemented** or are important behavioral c
 
 ### Transaction durability
 - **No WAL or crash recovery.** Transactions provide in-memory rollback before commit replay begins. They do not provide ESE-style redo/undo recovery after process loss, storage failure, or cancellation once `CommitAsync` has started writing pages to the target stream.
+
+### Data remanence
+- **Delete/update do not scrub old payload bytes.** `DeleteRowsAsync` marks matching row slots deleted, and `UpdateRowsAsync` marks old rows deleted before inserting replacements. The old row bodies remain on disk, and updated or deleted MEMO/OLE/attachment values leave their previous LVAL pages in place for Microsoft Access Compact & Repair or a future rewrite to reclaim. Do not treat these APIs as secure deletion of sensitive data.
 
 ### Forms, reports, macros, queries, VBA
 - Out of scope. The library targets the JET storage layer only. `MSysObjects` entries of type Form, Report, Macro, Module, or Query are preserved on disk but are neither parsed nor editable.
