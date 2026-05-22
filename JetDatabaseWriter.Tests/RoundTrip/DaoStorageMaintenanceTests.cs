@@ -78,6 +78,97 @@ public sealed class DaoStorageMaintenanceTests
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
         SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
+    public async Task FreshWriterCreatedComplexColumns_SurviveCompactAndRepair()
+    {
+        await using AccessRoundTripSession session = AccessRoundTripSession.CreateEmpty(compactTimeout: CompactTimeout);
+
+        const string TableName = "SM_FreshComplex";
+        byte[] attachmentPayload = BuildPayload(12 * 1024, 0x6A);
+
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            session.SourcePath,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                TableName,
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
+                    new ColumnDefinition("Title", typeof(string), maxLength: 80),
+                    new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+                    new ColumnDefinition("Tags", typeof(object), maxLength: 80)
+                    {
+                        IsMultiValue = true,
+                        MultiValueElementType = typeof(string),
+                    },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                TableName,
+                [1, "fresh-complex", DBNull.Value, DBNull.Value],
+                TestContext.Current.CancellationToken);
+
+            var parentKey = new Dictionary<string, object> { ["Id"] = 1 };
+            await writer.AddAttachmentAsync(
+                TableName,
+                "Files",
+                parentKey,
+                new AttachmentInput("fresh-complex.jpg", attachmentPayload),
+                TestContext.Current.CancellationToken);
+
+            await writer.AddMultiValueItemAsync(TableName, "Tags", parentKey, "alpha", TestContext.Current.CancellationToken);
+            await writer.AddMultiValueItemAsync(TableName, "Tags", parentKey, "beta", TestContext.Current.CancellationToken);
+            await writer.AddMultiValueItemAsync(TableName, "Tags", parentKey, "gamma", TestContext.Current.CancellationToken);
+        }
+
+        session.RunDaoCompact();
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            session.CompactedPath,
+            new AccessReaderOptions { UseLockFile = false },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        DataTable parent = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(1, parent.Rows.Count);
+        Assert.Equal("fresh-complex", SafeString(parent.Rows[0], "Title"));
+
+        IReadOnlyList<ComplexColumnInfo> complexColumns = await reader.GetComplexColumnsAsync(TableName, TestContext.Current.CancellationToken);
+        Assert.Equal(2, complexColumns.Count);
+
+        ComplexColumnInfo attachmentInfo = Assert.Single(complexColumns, column => string.Equals(column.ColumnName, "Files", StringComparison.Ordinal));
+        Assert.Equal(ComplexColumnKind.Attachment, attachmentInfo.Kind);
+        Assert.False(string.IsNullOrEmpty(attachmentInfo.FlatTableName));
+
+        ComplexColumnInfo tagsInfo = Assert.Single(complexColumns, column => string.Equals(column.ColumnName, "Tags", StringComparison.Ordinal));
+        Assert.Equal(ComplexColumnKind.MultiValue, tagsInfo.Kind);
+        Assert.False(string.IsNullOrEmpty(tagsInfo.FlatTableName));
+
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync(TableName, "Files", TestContext.Current.CancellationToken);
+        AttachmentRecord attachment = Assert.Single(attachments);
+        Assert.Equal("fresh-complex.jpg", attachment.FileName);
+        Assert.Equal(attachmentPayload, attachment.FileData);
+
+        IReadOnlyList<(int ConceptualTableId, object? Value)> tagItems = await reader.GetMultiValueItemsAsync(TableName, "Tags", TestContext.Current.CancellationToken);
+        Assert.Equal(["alpha", "beta", "gamma"], tagItems.Select(item => Assert.IsType<string>(item.Value)).Order(StringComparer.Ordinal).ToArray());
+
+        IReadOnlyList<IndexMetadata> attachmentIndexes = await reader.ListIndexesAsync(attachmentInfo.FlatTableName, TestContext.Current.CancellationToken);
+        Assert.Equal(3, attachmentIndexes.Count);
+        Assert.Contains(attachmentIndexes, index => index.Kind == IndexKind.PrimaryKey && string.Equals(index.Name, "MSysComplexPKIndex", StringComparison.Ordinal));
+        Assert.Contains(attachmentIndexes, index => index.Kind == IndexKind.Normal && string.Equals(index.Name, "_Files", StringComparison.Ordinal));
+        Assert.Contains(attachmentIndexes, index => index.Kind == IndexKind.Normal && string.Equals(index.Name, "IdxFKPrimaryScalar", StringComparison.Ordinal));
+
+        IReadOnlyList<IndexMetadata> tagsIndexes = await reader.ListIndexesAsync(tagsInfo.FlatTableName, TestContext.Current.CancellationToken);
+        Assert.Equal(2, tagsIndexes.Count);
+        Assert.Contains(tagsIndexes, index => index.Kind == IndexKind.PrimaryKey && string.Equals(index.Name, "MSysComplexPKIndex", StringComparison.Ordinal));
+        Assert.Contains(tagsIndexes, index => index.Kind == IndexKind.Normal && string.Equals(index.Name, "_Tags", StringComparison.Ordinal));
+    }
+
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task SecureErase_RowGapAndOldLvalChain_SurviveCompactAndRepair()
     {
         await using AccessRoundTripSession session = await AccessRoundTripSession.CreateFromNorthwindAsync(
