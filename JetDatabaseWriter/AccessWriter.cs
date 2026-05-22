@@ -3654,8 +3654,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                         result[i] = null;
                         break;
 
-                    // Fixed and Var share the decoder; types it can't decode (T_NUMERIC, T_MEMO/OLE/COMPLEX/ATTACHMENT)
-                    // return null and force the caller to the snapshot path.
+                    // Fixed and Var share the decoder; types it can't decode
+                    // here (T_NUMERIC, T_MEMO/OLE/COMPLEX/ATTACHMENT) return
+                    // null and force the caller to the snapshot path.
                     case ColumnSliceKind.Fixed:
                     case ColumnSliceKind.Var:
                         if (col.IsCalculated)
@@ -3689,9 +3690,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// CLR object the public InsertRow API accepts back. Returns
     /// <see langword="null"/> on unsupported / malformed types so callers
     /// fall back to the snapshot path. T_NUMERIC always returns null here
-    /// (canonical-scale resolution requires column metadata); T_MEMO / T_OLE /
-    /// T_COMPLEX / T_ATTACHMENT also return null since they require LVAL
-    /// chain traversal.
+    /// because descriptor-scale decoding requires column metadata; T_MEMO /
+    /// T_OLE / T_COMPLEX / T_ATTACHMENT also return null since they require
+    /// LVAL chain traversal.
     /// </summary>
     private object? TryDecodeColumnSlice(byte[] page, int start, byte type, int size)
     {
@@ -3746,8 +3747,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             case T_BINARY:
                 return page.AsSpan(start, size).ToArray();
 
-            // T_MEMO / T_OLE / T_COMPLEX / T_ATTACHMENT / T_NUMERIC — not
-            // index-keyable in any case, fall back to snapshot.
+            // T_MEMO / T_OLE / T_COMPLEX / T_ATTACHMENT / T_NUMERIC need
+            // metadata or LVAL traversal this inline helper does not have.
             default:
                 return null;
         }

@@ -56,7 +56,7 @@ internal static class Constants
         /// <summary>mdbtools <c>MDB_REPID</c> (0x0F): 16-byte GUID (replication identifier).</summary>
         public const byte T_GUID = 0x0F;
 
-        /// <summary>mdbtools <c>MDB_NUMERIC</c> (0x10): 17-byte scaled decimal (precision + scale + 16-byte mantissa).</summary>
+        /// <summary>mdbtools <c>MDB_NUMERIC</c> (0x10): 17-byte scaled decimal cell (sign + 16-byte magnitude; descriptor carries scale).</summary>
         public const byte T_NUMERIC = 0x10;
 
         /// <summary>Legacy/private attachment alias (0x11). Access-authored ACCDB complex columns use <see cref="T_COMPLEX"/> and classify attachments via <c>MSysComplexColumns</c>.</summary>
@@ -79,7 +79,6 @@ internal static class Constants
         public const string ValidationText = "ValidationText";
         public const string Description = "Description";
         public const string Format = "Format";
-        public const string DecimalPlaces = "DecimalPlaces";
         public const string InputMask = "InputMask";
         public const string Caption = "Caption";
         public const string Required = "Required";

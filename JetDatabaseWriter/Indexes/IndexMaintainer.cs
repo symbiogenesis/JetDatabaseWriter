@@ -622,6 +622,117 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         tdefBuffer[usedPagesOffset + 3] = (byte)((pageNumber >> 16) & 0xFF);
     }
 
+    private async ValueTask<bool> RefreshIncrementalIndexUsageMapsAsync(
+        long tdefPage,
+        byte[] tdefBuffer,
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        List<(int RealIdxNum, RealIdxEntry Entry)> slots,
+        int numRealIdx,
+        CancellationToken cancellationToken)
+    {
+        if (writer._format == DatabaseFormat.Jet3Mdb || slots.Count == 0)
+        {
+            return true;
+        }
+
+        long usageMapPage = ReadTableUsageMapPage(tdefBuffer);
+        if (usageMapPage <= 0 || usageMapPage >= writer._stream.Length / writer._pgSz)
+        {
+            return false;
+        }
+
+        var indexPageGroups = new long[numRealIdx][];
+        for (int i = 0; i < indexPageGroups.Length; i++)
+        {
+            indexPageGroups[i] = Array.Empty<long>();
+        }
+
+        foreach ((int realIdxNum, RealIdxEntry entry) in slots)
+        {
+            if (realIdxNum < 0 || realIdxNum >= numRealIdx)
+            {
+                return false;
+            }
+
+            long rootPage = (uint)AccessBase.Ri32(tdefBuffer, entry.FirstDpOffset);
+            if (rootPage <= 0)
+            {
+                continue;
+            }
+
+            long[]? pageGroup = await TryCollectIndexTreePagesAsync(layout, tdefPage, rootPage, cancellationToken).ConfigureAwait(false);
+            if (pageGroup is null)
+            {
+                return false;
+            }
+
+            indexPageGroups[realIdxNum] = pageGroup;
+            WriteIndexUsageMapPointer(tdefBuffer, entry.FirstDpOffset - 4, realIdxNum + 2, usageMapPage);
+        }
+
+        await writer.UpdateTableIndexUsageMapRowsAsync(usageMapPage, indexPageGroups, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private async ValueTask<long[]?> TryCollectIndexTreePagesAsync(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long tdefPage,
+        long rootPage,
+        CancellationToken cancellationToken)
+    {
+        long pageCount = writer._stream.Length / writer._pgSz;
+        var pages = new List<long>();
+        var seen = new HashSet<long>();
+        var stack = new Stack<long>();
+        stack.Push(rootPage);
+
+        while (stack.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            long pageNumber = stack.Pop();
+            if (pageNumber <= 2 || pageNumber >= pageCount)
+            {
+                return null;
+            }
+
+            if (!seen.Add(pageNumber))
+            {
+                continue;
+            }
+
+            byte[] page = await ReadAndClonePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            if (AccessBase.Ri32(page, 4) != tdefPage)
+            {
+                return null;
+            }
+
+            pages.Add(pageNumber);
+            if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                continue;
+            }
+
+            if (page[0] != Constants.IndexLeafPage.PageTypeIntermediate)
+            {
+                return null;
+            }
+
+            List<DecodedIntermediateEntry> entries = IndexLeafIncremental.DecodeIntermediateEntries(layout, page, writer._pgSz);
+            if (entries.Count == 0)
+            {
+                return null;
+            }
+
+            for (int i = entries.Count - 1; i >= 0; i--)
+            {
+                stack.Push(entries[i].ChildPage);
+            }
+        }
+
+        pages.Sort();
+        return pages.ToArray();
+    }
+
     /// <summary>
     /// Incremental fast path: when the change since the previous index
     /// state is a small set of inserted and/or deleted rows AND every real-idx
@@ -656,13 +767,11 @@ internal sealed class IndexMaintainer(AccessWriter writer)
     ///   correctly through any number of intermediate levels.</item>
     /// </list>
     /// <para>
-    /// Falls back when: format is Jet3 (no index emission); no indexes are
-    /// declared; any index has a multi-page TDEF; any key column is
-    /// <c>T_NUMERIC</c> (the canonical-scale pre-pass needs a full
-    /// snapshot); the encoder rejects any value (text outside General
-    /// Legacy, etc.); the index page chain is malformed; or the spliced
-    /// entry list cannot be repacked (e.g. a single entry exceeds the
-    /// payload area).
+    /// Falls back when: no indexes are declared; any index has a multi-page
+    /// TDEF; the encoder rejects any value (text outside General Legacy,
+    /// oversized numeric mantissa, etc.); the index page chain is malformed;
+    /// or the spliced entry list cannot be repacked (e.g. a single entry
+    /// exceeds the payload area).
     /// </para>
     /// <para>
     /// Pre-write unique-index enforcement is handled separately
@@ -744,7 +853,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         }
 
         // Decode every real-idx slot's key columns + first_dp offset.
-        var slots = new List<RealIdxEntry>(numRealIdx);
+        var slots = new List<(int RealIdxNum, RealIdxEntry Entry)>(numRealIdx);
         for (int ri = 0; ri < numRealIdx; ri++)
         {
             if (!idxLayout.TryReadRealIdxSlotWithKeyColumns(tdefBuffer, realIdxDescStart, ri, out IndexLayout.RealIdxSlot slot, out List<IndexLayout.KeyColumn> keyCols))
@@ -758,7 +867,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 continue;
             }
 
-            slots.Add(slot.ToEntry(keyCols, overrideUnique: false));
+            slots.Add((ri, slot.ToEntry(keyCols, overrideUnique: false)));
         }
 
         if (slots.Count == 0)
@@ -769,7 +878,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
 
         bool tdefDirty = false;
-        foreach (RealIdxEntry rie in slots)
+        foreach ((_, RealIdxEntry rie) in slots)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -894,6 +1003,12 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 // mutate each leaf in place, aggregating per-parent summary
                 // updates. Bails on underflow or parent overflow,
                 // in which case the bulk path below resnaps the tree.
+                if (tdefDirty)
+                {
+                    await writer.WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
+                    tdefDirty = false;
+                }
+
                 bool crossLeafHandled = await TrySurgicalCrossLeafMaintainAsync(
                     layout,
                     tdefPage,
@@ -904,6 +1019,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                     cancellationToken).ConfigureAwait(false);
                 if (crossLeafHandled)
                 {
+                    tdefBuffer = await ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -983,6 +1099,17 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             }
 
             await writer.WritePageAsync(firstDp, newLeaf, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!await RefreshIncrementalIndexUsageMapsAsync(tdefPage, tdefBuffer, layout, slots, numRealIdx, cancellationToken).ConfigureAwait(false))
+        {
+            LastIncrementalBail = "C14 usage-map refresh failed";
+            return false;
+        }
+
+        if (writer._format != DatabaseFormat.Jet3Mdb)
+        {
+            tdefDirty = true;
         }
 
         if (tdefDirty)

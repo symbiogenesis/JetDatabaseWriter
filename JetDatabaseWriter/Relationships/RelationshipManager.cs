@@ -2222,12 +2222,12 @@ internal sealed class RelationshipManager(AccessWriter writer)
             }
 
             // col_map matched; capture per-column ascending flags from the
-            // 10-slot {col_num(2), col_order(1)} map (col_order: 0x01 = asc,
-            // 0x02 = desc).
+            // 10-slot {col_num(2), col_order(1)} map. Jackcess models
+            // col_order bit 0x01 as the ascending flag; clear means descending.
             var ascending = new bool[targetColNums.Length];
             for (int slot = 0; slot < targetColNums.Length; slot++)
             {
-                ascending[slot] = td[phys + 4 + (slot * 3) + 2] != 0x02;
+                ascending[slot] = (td[phys + 4 + (slot * 3) + 2] & 0x01) != 0;
             }
 
             int firstDp = AccessBase.Ri32(td, phys + 38);

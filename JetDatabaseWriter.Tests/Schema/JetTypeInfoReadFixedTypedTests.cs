@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Globalization;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
@@ -206,43 +207,33 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [InlineData(12345u, 0u, 0u, false, (byte)4, "1.2345")]
     public void Numeric_InRange_RoundTripsThroughParseValue(uint lo, uint mid, uint hi, bool negative, byte scale, string expectedDecimal)
     {
-        byte[] row = BuildNumericRow(lo, mid, hi, negative, scale);
+        byte[] row = BuildNumericRow(lo, mid, hi, negative);
         var expected = decimal.Parse(expectedDecimal, CultureInfo.InvariantCulture);
 
-        AssertParity(row, start: 0, T_NUMERIC, size: 17, expected: expected, strictNumeric: true);
+        AssertNumericParity(row, scale, expected, strictNumeric: true);
     }
 
     /// <summary>
-    /// Decimal values whose mantissa words have the high bit set (e.g.
-    /// <see cref="decimal.MaxValue"/> with all-ones lo/mid/hi) trip the
-    /// <c>(int)uint</c> bit-pattern cast inside <see cref="JetTypeInfo.ReadFixedString"/>'s
-    /// <c>ReadNumericString</c> under <c>&lt;CheckForOverflowUnderflow&gt;true&lt;/CheckForOverflowUnderflow&gt;</c>:
-    /// the legacy path catches and surfaces an empty string (non-strict) or a
-    /// <see cref="JetLimitationException"/> (strict). The typed path uses
-    /// <c>unchecked((int)lo)</c> to preserve the bit pattern and returns the
-    /// correct decimal.
+    /// Decimal values whose mantissa words have the high bit set (for example
+    /// <see cref="decimal.MaxValue"/> with all-ones lo/mid/hi) must preserve the
+    /// raw 96-bit bit pattern through both the typed and string decode paths.
     /// </summary>
     [Fact]
-    public void Numeric_DecimalMaxValue_TypedKeepsValue_RoundTripDropsToDBNull()
+    public void Numeric_DecimalMaxValue_RoundTripsThroughParseValue()
     {
-        byte[] row = BuildNumericRow(lo: 0xFFFFFFFFu, mid: 0xFFFFFFFFu, hi: 0xFFFFFFFFu, negative: false, scale: 0);
+        byte[] row = BuildNumericRow(lo: 0xFFFFFFFFu, mid: 0xFFFFFFFFu, hi: 0xFFFFFFFFu, negative: false);
 
-        object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, T_NUMERIC, size: 17);
-        Assert.Equal(decimal.MaxValue, typed);
-
-        string formatted = JetTypeInfo.ReadFixedString(row, start: 0, T_NUMERIC, size: 17);
-        Assert.Equal(string.Empty, formatted);
-        object viaRoundTrip = TypedValueParser.ParseValue(formatted, typeof(decimal));
-        Assert.Equal(DBNull.Value, viaRoundTrip);
+        AssertNumericParity(row, scale: 0, decimal.MaxValue);
     }
 
     [Fact]
     public void Numeric_StrictMode_ScaleOver28_Throws()
     {
-        byte[] row = BuildNumericRow(lo: 1, mid: 0, hi: 0, negative: false, scale: 29);
+        byte[] row = BuildNumericRow(lo: 1, mid: 0, hi: 0, negative: false);
+        ColumnInfo column = NumericColumn(scale: 29);
 
         _ = Assert.Throws<JetLimitationException>(() =>
-            JetTypeInfo.ReadFixedTyped(row, start: 0, T_NUMERIC, size: 17, strictNumeric: true));
+            JetTypeInfo.ReadFixedTyped(row, start: 0, column, size: 17, strictNumeric: true));
     }
 
     [Fact]
@@ -257,9 +248,10 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [Fact]
     public void Numeric_NonStrict_ScaleOver28_ReturnsDBNull()
     {
-        byte[] row = BuildNumericRow(lo: 1, mid: 0, hi: 0, negative: false, scale: 29);
+        byte[] row = BuildNumericRow(lo: 1, mid: 0, hi: 0, negative: false);
+        ColumnInfo column = NumericColumn(scale: 29);
 
-        object result = JetTypeInfo.ReadFixedTyped(row, start: 0, T_NUMERIC, size: 17, strictNumeric: false);
+        object result = JetTypeInfo.ReadFixedTyped(row, start: 0, column, size: 17, strictNumeric: false);
 
         Assert.Equal(DBNull.Value, result);
     }
@@ -306,20 +298,47 @@ public sealed class JetTypeInfoReadFixedTypedTests
         Assert.Equal(DBNull.Value, result);
     }
 
-    private static byte[] BuildNumericRow(uint lo, uint mid, uint hi, bool negative, byte scale)
+    private static byte[] BuildNumericRow(uint lo, uint mid, uint hi, bool negative)
     {
-        // Layout: [precision][scale][sign][pad][lo:4][mid:4][hi:4] (16 bytes
-        // worth of useful data; the on-disk slot is 17 bytes including the
-        // unused leading precision byte).
+        // Access stores T_NUMERIC cells as [sign][16-byte unsigned magnitude].
+        // The descriptor supplies scale; each 4-byte magnitude segment is
+        // byte-swapped on page, matching Jackcess' fixNumericByteOrder helper.
         byte[] row = new byte[17];
-        row[0] = 0;
-        row[1] = scale;
-        row[2] = (byte)(negative ? 1 : 0);
-        row[3] = 0;
-        BinaryPrimitives.WriteUInt32LittleEndian(row.AsSpan(4, 4), lo);
-        BinaryPrimitives.WriteUInt32LittleEndian(row.AsSpan(8, 4), mid);
-        BinaryPrimitives.WriteUInt32LittleEndian(row.AsSpan(12, 4), hi);
+        row[0] = negative ? (byte)0x80 : (byte)0x00;
+
+        Span<byte> magnitudeLe = stackalloc byte[16];
+        BinaryPrimitives.WriteUInt32LittleEndian(magnitudeLe.Slice(0, 4), lo);
+        BinaryPrimitives.WriteUInt32LittleEndian(magnitudeLe.Slice(4, 4), mid);
+        BinaryPrimitives.WriteUInt32LittleEndian(magnitudeLe.Slice(8, 4), hi);
+
+        Span<byte> magnitudeBe = stackalloc byte[16];
+        for (int i = 0; i < magnitudeBe.Length; i++)
+        {
+            magnitudeBe[i] = magnitudeLe[15 - i];
+        }
+
+        JetTypeInfo.FixNumericByteOrder(magnitudeBe);
+        magnitudeBe.CopyTo(row.AsSpan(1, 16));
         return row;
+    }
+
+    private static ColumnInfo NumericColumn(byte scale) => new()
+    {
+        Type = T_NUMERIC,
+        Size = 17,
+        NumericPrecision = 28,
+        NumericScale = scale,
+    };
+
+    private static void AssertNumericParity(byte[] row, byte scale, object expected, bool strictNumeric = false)
+    {
+        ColumnInfo column = NumericColumn(scale);
+        object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, column, size: 17, strictNumeric);
+        Assert.Equal(expected, typed);
+
+        string formatted = JetTypeInfo.ReadFixedString(row, start: 0, column, size: 17, strictNumeric);
+        object viaRoundTrip = TypedValueParser.ParseValue(formatted, typeof(decimal));
+        Assert.Equal(expected, viaRoundTrip);
     }
 
     private static void AssertParity(byte[] row, int start, byte type, int size, object expected, bool strictNumeric = false)

@@ -206,7 +206,7 @@ internal static class JetTypeInfo
                 case T_GUID:
                     return new Guid(row.Slice(start, 16)).ToString("B");
                 case T_NUMERIC:
-                    return ReadNumericString(row, start, strictNumeric);
+                    return ReadNumericString(row, start, scale: 0, strictNumeric);
                 case T_COMPLEX:
                 case T_ATTACHMENT:
                     return size >= 4 ? $"__CX:{BinaryPrimitives.ReadInt32LittleEndian(row.Slice(start, 4))}__" : string.Empty;
@@ -228,9 +228,14 @@ internal static class JetTypeInfo
         }
     }
 
+    internal static string ReadFixedString(ReadOnlySpan<byte> row, int start, ColumnInfo column, int size, bool strictNumeric = false)
+        => column.Type == T_NUMERIC
+            ? ReadNumericString(row, start, column.NumericScale, strictNumeric)
+            : ReadFixedString(row, start, column.Type, size, strictNumeric);
+
     /// <summary>
     /// Decodes a fixed-width JET column value directly to its boxed CLR primitive,
-    /// bypassing the lossy <see cref="ReadFixedString"/> +
+    /// bypassing the lossy <c>ReadFixedString</c> +
     /// <c>TypedValueParser.ParseValue</c> round-trip used by the diagnostics path.
     /// The typed-reader hot path uses this to avoid per-column culture-invariant
     /// string formatting and re-parsing.
@@ -238,16 +243,16 @@ internal static class JetTypeInfo
     /// Type mapping mirrors <see cref="GetClrType(byte)"/>:
     /// <c>T_BYTE → byte</c>, <c>T_INT → short</c>, <c>T_LONG → int</c>,
     /// <c>T_FLOAT → float</c>, <c>T_DOUBLE → double</c>,
-    /// <c>T_DATETIME → DateTime</c> (un-truncated; <see cref="ReadFixedString"/>
+    /// <c>T_DATETIME → DateTime</c> (un-truncated; <c>ReadFixedString</c>
     /// formats with <c>"yyyy-MM-dd HH:mm:ss"</c> and loses sub-second precision —
     /// the typed path keeps full precision),
     /// <c>T_MONEY → decimal</c>, <c>T_GUID → Guid</c>,
     /// <c>T_NUMERIC → decimal</c>,
     /// <c>T_COMPLEX</c>/<c>T_ATTACHMENT → <see cref="ComplexIdRef"/></c> typed
     /// sentinel carrying the row's complex_id directly (the legacy
-    /// <c>"__CX:N__"</c> string round-trip used by <see cref="ReadFixedString"/>
+    /// <c>"__CX:N__"</c> string round-trip used by <c>ReadFixedString</c>
     /// is avoided on the typed hot path), and unknown types fall through to
-    /// the same hex-string representation <see cref="ReadFixedString"/> emits.
+    /// the same hex-string representation <c>ReadFixedString</c> emits.
     /// </para>
     /// <para>
     /// Returns <see cref="DBNull.Value"/> when the underlying byte access throws
@@ -287,7 +292,7 @@ internal static class JetTypeInfo
                 case T_GUID:
                     return new Guid(row.Slice(start, 16));
                 case T_NUMERIC:
-                    return ReadNumericTyped(row, start, strictNumeric);
+                    return ReadNumericTyped(row, start, scale: 0, strictNumeric);
                 case T_COMPLEX:
                 case T_ATTACHMENT:
                     return size >= 4
@@ -311,60 +316,27 @@ internal static class JetTypeInfo
         }
     }
 
+    internal static object ReadFixedTyped(ReadOnlySpan<byte> row, int start, ColumnInfo column, int size, bool strictNumeric = false)
+        => column.Type == T_NUMERIC
+            ? ReadNumericTyped(row, start, column.NumericScale, strictNumeric)
+            : ReadFixedTyped(row, start, column.Type, size, strictNumeric);
+
     /// <summary>
-    /// Reads a Jet T_NUMERIC value (17 bytes:
-    /// <c>[precision][scale][sign][pad][lo:4][mid:4][hi:4]</c>). When <paramref name="strict"/>
+    /// Reads a Jet T_NUMERIC value (17-byte slot:
+    /// <c>[sign][16-byte unsigned magnitude]</c>; scale comes from the descriptor). When <paramref name="strict"/>
     /// is <see langword="false"/> (the default, used by lossy diagnostics paths) returns the
     /// empty string for scale > 28, OLE-decimal overflow, or insufficient bytes. When
     /// <see langword="true"/> (the typed-reader path) those conditions throw
     /// <see cref="JetLimitationException"/> so the caller can surface the schema mismatch.
     /// </summary>
-    private static string ReadNumericString(ReadOnlySpan<byte> b, int start, bool strict)
+    private static string ReadNumericString(ReadOnlySpan<byte> b, int start, int scale, bool strict)
     {
-        // Need bytes [start, start+15] — 16 total — even though the on-disk
-        // T_NUMERIC slot is 17 bytes (the precision byte at offset 0 is currently unused).
-        if (start + 16 > b.Length)
+        if (!TryReadNumericDecimal(b, start, scale, strict, out decimal value))
         {
-            if (strict)
-            {
-                throw new JetLimitationException(
-                    $"T_NUMERIC slot at offset {start} extends past the row buffer (need 16 bytes, have {Math.Max(0, b.Length - start)}).");
-            }
-
             return string.Empty;
         }
 
-        byte scale = b[start + 1];
-        bool negative = b[start + 2] != 0;
-        uint lo = BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(start + 4, 4));
-        uint mid = BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(start + 8, 4));
-        uint hi = BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(start + 12, 4));
-
-        if (scale > 28)
-        {
-            if (strict)
-            {
-                throw new JetLimitationException(
-                    $"T_NUMERIC scale {scale} exceeds the .NET decimal maximum of 28.");
-            }
-
-            return string.Empty;
-        }
-
-        try
-        {
-            return new decimal((int)lo, (int)mid, (int)hi, negative, scale).ToString("G", CultureInfo.InvariantCulture);
-        }
-        catch (OverflowException ex)
-        {
-            if (strict)
-            {
-                throw new JetLimitationException(
-                    $"T_NUMERIC value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})", ex);
-            }
-
-            return string.Empty;
-        }
+        return value.ToString("G", CultureInfo.InvariantCulture);
     }
 
     /// <summary>
@@ -375,24 +347,27 @@ internal static class JetTypeInfo
     /// collapse to <see cref="DBNull.Value"/> (the typed analogue of
     /// <see cref="ReadNumericString"/>'s empty-string return).
     /// </summary>
-    private static object ReadNumericTyped(ReadOnlySpan<byte> b, int start, bool strict)
+    private static object ReadNumericTyped(ReadOnlySpan<byte> b, int start, int scale, bool strict)
     {
-        if (start + 16 > b.Length)
+        return TryReadNumericDecimal(b, start, scale, strict, out decimal value)
+            ? value
+            : DBNull.Value;
+    }
+
+    private static bool TryReadNumericDecimal(ReadOnlySpan<byte> b, int start, int scale, bool strict, out decimal value)
+    {
+        value = default;
+
+        if (start + 17 > b.Length)
         {
             if (strict)
             {
                 throw new JetLimitationException(
-                    $"T_NUMERIC slot at offset {start} extends past the row buffer (need 16 bytes, have {Math.Max(0, b.Length - start)}).");
+                    $"T_NUMERIC slot at offset {start} extends past the row buffer (need 17 bytes, have {Math.Max(0, b.Length - start)}).");
             }
 
-            return DBNull.Value;
+            return false;
         }
-
-        byte scale = b[start + 1];
-        bool negative = b[start + 2] != 0;
-        uint lo = BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(start + 4, 4));
-        uint mid = BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(start + 8, 4));
-        uint hi = BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(start + 12, 4));
 
         if (scale > 28)
         {
@@ -402,28 +377,56 @@ internal static class JetTypeInfo
                     $"T_NUMERIC scale {scale} exceeds the .NET decimal maximum of 28.");
             }
 
-            return DBNull.Value;
+            return false;
+        }
+
+        bool negative = b[start] != 0;
+        Span<byte> magnitudeBe = stackalloc byte[16];
+        b.Slice(start + 1, 16).CopyTo(magnitudeBe);
+        FixNumericByteOrder(magnitudeBe);
+
+        Span<byte> magnitudeLe = stackalloc byte[16];
+        for (int i = 0; i < 16; i++)
+        {
+            magnitudeLe[i] = magnitudeBe[15 - i];
+        }
+
+        if (magnitudeLe[12] != 0 || magnitudeLe[13] != 0 || magnitudeLe[14] != 0 || magnitudeLe[15] != 0)
+        {
+            if (strict)
+            {
+                throw new JetLimitationException("T_NUMERIC value exceeds the .NET decimal 96-bit mantissa range.");
+            }
+
+            return false;
         }
 
         try
         {
-            // Bit-pattern reinterpretation: uint → int must be unchecked because
-            // the project sets <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>
-            // and the high-bit-set forms (e.g. decimal.MaxValue's 0xFFFFFFFF lo/mid/hi)
-            // would otherwise throw. The legacy ReadNumericString trips this same
-            // checked-cast and silently collapses to string.Empty → DBNull; the
-            // typed path keeps the value.
-            return new decimal(unchecked((int)lo), unchecked((int)mid), unchecked((int)hi), negative, scale);
+            uint lo = BinaryPrimitives.ReadUInt32LittleEndian(magnitudeLe.Slice(0, 4));
+            uint mid = BinaryPrimitives.ReadUInt32LittleEndian(magnitudeLe.Slice(4, 4));
+            uint hi = BinaryPrimitives.ReadUInt32LittleEndian(magnitudeLe.Slice(8, 4));
+            value = new decimal(unchecked((int)lo), unchecked((int)mid), unchecked((int)hi), negative, (byte)scale);
+            return true;
         }
         catch (OverflowException ex)
         {
             if (strict)
             {
                 throw new JetLimitationException(
-                    $"T_NUMERIC value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})", ex);
+                    $"T_NUMERIC value overflow (scale={scale})", ex);
             }
 
-            return DBNull.Value;
+            return false;
+        }
+    }
+
+    internal static void FixNumericByteOrder(Span<byte> bytes)
+    {
+        for (int i = 0; i + 3 < bytes.Length; i += 4)
+        {
+            (bytes[i], bytes[i + 3]) = (bytes[i + 3], bytes[i]);
+            (bytes[i + 1], bytes[i + 2]) = (bytes[i + 2], bytes[i + 1]);
         }
     }
 
@@ -560,29 +563,21 @@ internal static class JetTypeInfo
     /// <summary>
     /// Reads a T_NUMERIC value at <paramref name="start"/> as a typed
     /// <see cref="decimal"/>, skipping the boxing the
-    /// <see cref="ReadFixedTyped"/> path performs. Throws
+    /// <c>ReadFixedTyped</c> path performs. Throws
     /// <see cref="OverflowException"/> / <see cref="ArgumentException"/> on
     /// invalid scale or out-of-range values; the direct decoder
     /// catches these and leaves the property at its default.
     /// </summary>
-    internal static decimal ReadDecimalLE(byte[] page, int start)
+    internal static decimal ReadDecimalLE(byte[] page, int start, int scale)
     {
-        byte scale = page[start + 1];
-        bool negative = page[start + 2] != 0;
-        uint lo = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(start + 4, 4));
-        uint mid = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(start + 8, 4));
-        uint hi = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(start + 12, 4));
-
-        // Bit-pattern reinterpretation: uint → int must be unchecked because
-        // the project sets <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>;
-        // mirrors ReadNumericTyped's well-trodden path.
-        return new decimal(unchecked((int)lo), unchecked((int)mid), unchecked((int)hi), negative, scale);
+        _ = TryReadNumericDecimal(page, start, scale, strict: true, out decimal value);
+        return value;
     }
 }
 
 /// <summary>
 /// Typed-row sentinel for <c>T_COMPLEX</c>/<c>T_ATTACHMENT</c> slots emitted
-/// by <see cref="JetTypeInfo.ReadFixedTyped"/>. Carries the parent row's
+/// by <c>JetTypeInfo.ReadFixedTyped</c>. Carries the parent row's
 /// complex_id directly so the post-processing pass can resolve attachment
 /// bytes without parsing the legacy <c>"__CX:N__"</c> string format.
 /// </summary>

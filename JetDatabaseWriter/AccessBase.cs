@@ -1299,7 +1299,7 @@ public abstract class AccessBase : IAccessBase
                 return string.Empty;
 
             case ColumnSliceKind.Fixed:
-                return JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column.Type, slice.DataLen);
+                return JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, slice.DataLen);
 
             case ColumnSliceKind.Var:
                 if (slice.DataLen <= 0)
@@ -1327,7 +1327,7 @@ public abstract class AccessBase : IAccessBase
                     case T_ATTACHMENT:
                         int required = column.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(column.Type);
                         return required > 0 && slice.DataLen >= required
-                            ? JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column.Type, required)
+                            ? JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, required)
                             : string.Empty;
                     default:
                         return string.Empty;

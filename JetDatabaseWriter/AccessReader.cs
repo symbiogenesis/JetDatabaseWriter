@@ -2040,7 +2040,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
                 ColumnSliceKind.Null => string.Empty,
                 ColumnSliceKind.Empty => string.Empty,
-                ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true),
+                ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true),
                 ColumnSliceKind.Var => await ReadVarAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
                 _ => string.Empty,
             };
@@ -2063,7 +2063,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             ColumnSliceKind.Bool => slice.BoolValue,
             ColumnSliceKind.Null => DBNull.Value,
             ColumnSliceKind.Empty => DBNull.Value,
-            ColumnSliceKind.Fixed => ParseColumnValue(JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true), col),
+            ColumnSliceKind.Fixed => ParseColumnValue(JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true), col),
             ColumnSliceKind.Var => await ReadVarValueAsync(page, rowStart + slice.DataStart, slice.DataLen, col, cancellationToken).ConfigureAwait(false),
             _ => DBNull.Value,
         };
@@ -3303,7 +3303,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     break;
 
                 case ColumnSliceKind.Fixed:
-                    result[i] = JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col.Type, slice.DataLen, strictNumeric: true);
+                    result[i] = JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, col, slice.DataLen, strictNumeric: true);
                     break;
 
                 case ColumnSliceKind.Var:
@@ -3367,7 +3367,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                         // 4 bytes for COMPLEX/ATTACHMENT (the complex-id int32)
                         // since they have no fixed-area size of their own.
                         int required = col.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(col.Type);
-                        return len >= required ? JetTypeInfo.ReadFixedString(row, start, col.Type, required, strictNumeric: true) : string.Empty;
+                        return len >= required ? JetTypeInfo.ReadFixedString(row, start, col, required, strictNumeric: true) : string.Empty;
                     }
 
                 default:
@@ -3672,7 +3672,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                     break;
 
                 case ColumnSliceKind.Fixed:
-                    buffer[i] = JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, col.Type, slice.DataLen, _strictParsing);
+                    buffer[i] = JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, col, slice.DataLen, _strictParsing);
                     break;
 
                 case ColumnSliceKind.Var:
@@ -3760,7 +3760,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <see cref="LongValueRef"/> sentinel (async resolution required —
     /// flips <paramref name="needsLongValue"/>). Fixed-type columns living
     /// in the variable area (numeric/datetime/etc. with FLAG_FIXED cleared)
-    /// route through <see cref="JetTypeInfo.ReadFixedTyped"/>.
+    /// route through <c>JetTypeInfo.ReadFixedTyped</c>.
     /// </summary>
     private object? ReadVarTypedSync(byte[] page, int start, int len, ColumnInfo col, ref bool needsLongValue)
     {
@@ -3835,7 +3835,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                         // to DBNull.
                         int required = col.Type is T_COMPLEX or T_ATTACHMENT ? 4 : JetTypeInfo.GetFixedSize(col.Type);
                         return len >= required
-                            ? JetTypeInfo.ReadFixedTyped(page, start, col.Type, required, _strictParsing)
+                            ? JetTypeInfo.ReadFixedTyped(page, start, col, required, _strictParsing)
                             : DBNull.Value;
                     }
 

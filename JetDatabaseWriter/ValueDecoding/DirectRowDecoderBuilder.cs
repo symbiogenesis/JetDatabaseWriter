@@ -183,7 +183,7 @@ internal static class DirectRowDecoderBuilder
             var offsetExpr = Expression.Add(rowStartParam, dataStartExpr);
 
             Expression readExpr = BuildReadExpression(
-                col.Type,
+                col,
                 pageParam,
                 offsetExpr,
                 dataLenExpr,
@@ -251,14 +251,14 @@ internal static class DirectRowDecoderBuilder
     }
 
     private static Expression BuildReadExpression(
-        byte colType,
+        ColumnInfo column,
         ParameterExpression pageParam,
         Expression offsetExpr,
         Expression dataLenExpr,
         Expression boolValueExpr,
         ParameterExpression readerParam)
     {
-        return colType switch
+        return column.Type switch
         {
             T_BOOL => boolValueExpr,
             T_BYTE => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadByteAt), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
@@ -269,9 +269,9 @@ internal static class DirectRowDecoderBuilder
             T_DOUBLE => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDoubleLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
             T_DATETIME => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDateTimeLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
             T_GUID => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadGuidAt), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
-            T_NUMERIC => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDecimalLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr),
+            T_NUMERIC => Expression.Call(typeof(JetTypeInfo).GetMethod(nameof(JetTypeInfo.ReadDecimalLE), BindingFlags.Static | BindingFlags.NonPublic)!, pageParam, offsetExpr, Expression.Constant((int)column.NumericScale)),
             T_TEXT => Expression.Call(readerParam, DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
-            _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type 0x{colType:X2}."),
+            _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type 0x{column.Type:X2}."),
         };
     }
 

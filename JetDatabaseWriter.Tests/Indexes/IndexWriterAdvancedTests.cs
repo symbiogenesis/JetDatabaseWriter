@@ -17,7 +17,7 @@ using Xunit;
 /// <list type="bullet">
 ///   <item><description>Multi-column non-PK indexes round-trip through <see cref="IAccessReader.ListIndexesAsync"/>.</description></item>
 ///   <item><description><see cref="IndexDefinition.IsUnique"/> emits the real-idx <c>flags</c> bit <c>0x01</c> (§3.1) and is surfaced as <see cref="IndexMetadata.IsUnique"/>.</description></item>
-///   <item><description><see cref="IndexDefinition.DescendingColumns"/> emits <c>col_order = 0x02</c> in the matching col_map slots and is surfaced as <see cref="IndexColumnReference.IsAscending"/> = <see langword="false"/>.</description></item>
+///   <item><description><see cref="IndexDefinition.DescendingColumns"/> clears the col_map ascending flag and is surfaced as <see cref="IndexColumnReference.IsAscending"/> = <see langword="false"/>.</description></item>
 ///   <item><description>The bulk-rebuild path concatenates per-column encoded keys (and respects per-column direction) for multi-column indexes.</description></item>
 ///   <item><description>Inserting a duplicate row into a unique index throws <see cref="InvalidOperationException"/>.</description></item>
 /// </list>
@@ -80,7 +80,7 @@ public sealed class IndexWriterAdvancedTests
     }
 
     [Fact]
-    public async Task CreateTable_WithDescendingSingleColumnIndex_EmitsColOrder0x02()
+    public async Task CreateTable_WithDescendingSingleColumnIndex_RoundTripsDescendingFlag()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
         const string TableName = "Idx_Desc";
@@ -189,7 +189,7 @@ public sealed class IndexWriterAdvancedTests
                 ct);
         }
 
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+        await AssertLeafEntryCountAsync(stream, "T", "UQ_Id", expectedCount: 3);
     }
 
     [Fact]
@@ -221,7 +221,7 @@ public sealed class IndexWriterAdvancedTests
 
         // Multi-column composite key concatenation through the maintenance
         // path should rebuild a single leaf with 4 entries.
-        Assert.Equal(4, FindMaxLeafEntryCount(stream.ToArray()));
+        await AssertLeafEntryCountAsync(stream, "T", "IX_AB", expectedCount: 4);
     }
 
     [Fact]
@@ -322,7 +322,7 @@ public sealed class IndexWriterAdvancedTests
         }
 
         // GUID-keyed index participates in the bulk-rebuild path.
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray()));
+        await AssertLeafEntryCountAsync(stream, "T", "IX_Id", expectedCount: 3);
     }
 
     [Fact]
@@ -372,7 +372,7 @@ public sealed class IndexWriterAdvancedTests
         }
 
         // Decimal-keyed index participates in the bulk-rebuild path.
-        Assert.Equal(5, FindMaxLeafEntryCount(stream.ToArray()));
+        await AssertLeafEntryCountAsync(stream, "T", "IX_Amount", expectedCount: 5);
     }
 
     [Fact]
@@ -420,23 +420,18 @@ public sealed class IndexWriterAdvancedTests
         return count < 1 ? 0 : count - 1;
     }
 
-    private static int FindMaxLeafEntryCount(byte[] fileBytes)
+    private static async Task AssertLeafEntryCountAsync(MemoryStream stream, string tableName, string indexName, int expectedCount)
     {
-        int max = 0;
-        for (int p = 0; p < fileBytes.Length / Constants.PageSizes.Jet4; p++)
-        {
-            int o = p * Constants.PageSizes.Jet4;
-            if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
-            {
-                int n = CountLeafEntries(fileBytes, o);
-                if (n > max)
-                {
-                    max = n;
-                }
-            }
-        }
+        await using var reader = await OpenReaderAsync(stream);
+        IndexMetadata index = Assert.Single(
+            await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken),
+            candidate => candidate.Name == indexName);
 
-        return max;
+        byte[] fileBytes = stream.ToArray();
+        int leafOffset = checked(index.FirstDp * Constants.PageSizes.Jet4);
+        Assert.Equal(0x04, fileBytes[leafOffset]);
+        Assert.Equal(0x01, fileBytes[leafOffset + 1]);
+        Assert.Equal(expectedCount, CountLeafEntries(fileBytes, leafOffset));
     }
 
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()

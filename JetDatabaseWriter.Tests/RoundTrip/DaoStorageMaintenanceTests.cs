@@ -20,6 +20,7 @@ using Xunit;
 [Trait("Category", "RequiresMicrosoftAccess")]
 public sealed class DaoStorageMaintenanceTests
 {
+    private const int AdvancedIndexRows = 300;
     private const int MarkerLength = 16;
     private const int IndexRows = 800;
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(3);
@@ -154,6 +155,128 @@ public sealed class DaoStorageMaintenanceTests
         DataRow replacementRow = table.AsEnumerable().Single(row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 2);
         byte[] actualReplacement = Assert.IsType<byte[]>(replacementRow["Blob"]);
         Assert.Equal(replacementLargePayload, actualReplacement);
+    }
+
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    public async Task AdvancedIndexKeysAndBTreeMaintenance_SurviveCompactAndRepair()
+    {
+        await using AccessRoundTripSession session = await AccessRoundTripSession.CreateFromNorthwindAsync(
+            TestContext.Current.CancellationToken,
+            compactTimeout: CompactTimeout);
+
+        const string TableName = "SM_AdvancedIndex";
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            session.SourcePath,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                TableName,
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
+                    new ColumnDefinition("Code", typeof(string), maxLength: 80) { IsNullable = false },
+                    new ColumnDefinition("GuidKey", typeof(Guid)) { IsNullable = false },
+                    new ColumnDefinition("Amount", typeof(decimal)) { IsNullable = false, NumericPrecision = 18, NumericScale = 2 },
+                    new ColumnDefinition("BinKey", typeof(byte[]), maxLength: 16) { IsNullable = false },
+                    new ColumnDefinition("Score", typeof(int)) { IsNullable = false },
+                ],
+                [
+                    new IndexDefinition("IX_CodeScore", ["Code", "Score"]) { IsUnique = true, DescendingColumns = ["Score"] },
+                    new IndexDefinition("IX_GuidKey", "GuidKey"),
+                    new IndexDefinition("IX_Amount", "Amount"),
+                    new IndexDefinition("IX_BinKey", "BinKey") { DescendingColumns = ["BinKey"] },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowsAsync(TableName, BuildAdvancedIndexRows(), TestContext.Current.CancellationToken);
+
+            int updated = await writer.UpdateRowsAsync(
+                TableName,
+                "Id",
+                42,
+                new Dictionary<string, object>
+                {
+                    ["Code"] = "Code_42_UPDATED",
+                    ["GuidKey"] = BuildAdvancedGuid(4200),
+                    ["Amount"] = -42.42m,
+                    ["BinKey"] = BuildAdvancedBinaryKey(4200),
+                    ["Score"] = -4200,
+                },
+                TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
+
+            int deleted = await writer.DeleteRowsAsync(TableName, "Id", 17, TestContext.Current.CancellationToken);
+            Assert.Equal(1, deleted);
+
+            await writer.InsertRowsAsync(TableName, [BuildAdvancedIndexRow(301)], TestContext.Current.CancellationToken);
+        }
+
+        AccessRoundTripEnvironment.CompactResult preCompactDao = session.RunDaoDatabaseScript(
+            session.SourcePath,
+            """
+            $rs = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [SM_AdvancedIndex]', 4)
+            try {
+                Write-Output "ROWCOUNT=$($rs.Fields('Cnt').Value)"
+            } finally {
+                $rs.Close()
+            }
+            """,
+            CompactTimeout);
+        Assert.Equal(0, preCompactDao.ExitCode);
+        Assert.Contains($"ROWCOUNT={AdvancedIndexRows}", preCompactDao.StdOut, StringComparison.Ordinal);
+
+        session.RunDaoCompact();
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            session.CompactedPath,
+            new AccessReaderOptions { UseLockFile = false },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(AdvancedIndexRows, rows.Rows.Count);
+        Assert.DoesNotContain(rows.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 17);
+        Assert.Contains(rows.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 301);
+
+        DataRow updatedRow = rows.AsEnumerable().Single(row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 42);
+        Assert.Equal("Code_42_UPDATED", SafeString(updatedRow, "Code"));
+        Assert.Equal(BuildAdvancedGuid(4200), Assert.IsType<Guid>(updatedRow["GuidKey"]));
+        Assert.Equal(-42.42m, Assert.IsType<decimal>(updatedRow["Amount"]));
+        Assert.Equal(BuildAdvancedBinaryKey(4200), Assert.IsType<byte[]>(updatedRow["BinKey"]));
+        Assert.Equal(-4200, Convert.ToInt32(updatedRow["Score"], CultureInfo.InvariantCulture));
+
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        Assert.Single(indexes, index => index.Kind == IndexKind.PrimaryKey);
+
+        IndexMetadata codeScoreIndex = Assert.Single(indexes, index => index.Name == "IX_CodeScore");
+        Assert.Equal(IndexKind.Normal, codeScoreIndex.Kind);
+        Assert.True(codeScoreIndex.IsUnique);
+        Assert.Collection(
+            codeScoreIndex.Columns,
+            column =>
+            {
+                Assert.Equal("Code", column.Name);
+                Assert.True(column.IsAscending);
+            },
+            column =>
+            {
+                Assert.Equal("Score", column.Name);
+                Assert.False(column.IsAscending);
+            });
+
+        IndexMetadata guidIndex = Assert.Single(indexes, index => index.Name == "IX_GuidKey");
+        Assert.Equal("GuidKey", Assert.Single(guidIndex.Columns).Name);
+
+        IndexMetadata amountIndex = Assert.Single(indexes, index => index.Name == "IX_Amount");
+        Assert.Equal("Amount", Assert.Single(amountIndex.Columns).Name);
+
+        IndexMetadata binaryIndex = Assert.Single(indexes, index => index.Name == "IX_BinKey");
+        IndexColumnReference binaryColumn = Assert.Single(binaryIndex.Columns);
+        Assert.Equal("BinKey", binaryColumn.Name);
+        Assert.False(binaryColumn.IsAscending);
     }
 
     [Fact(
@@ -355,6 +478,57 @@ public sealed class DaoStorageMaintenanceTests
         }
 
         return rows;
+    }
+
+    private static object[][] BuildAdvancedIndexRows()
+    {
+        var rows = new object[AdvancedIndexRows][];
+        for (int rowOrdinal = 0; rowOrdinal < rows.Length; rowOrdinal++)
+        {
+            rows[rowOrdinal] = BuildAdvancedIndexRow(rowOrdinal + 1);
+        }
+
+        return rows;
+    }
+
+    private static object[] BuildAdvancedIndexRow(int id) =>
+        [
+            id,
+            $"Code_{id % 47:D2}_{(char)('A' + (id % 26))}",
+            BuildAdvancedGuid(id),
+            BuildAdvancedAmount(id),
+            BuildAdvancedBinaryKey(id),
+            10000 - id,
+        ];
+
+    private static Guid BuildAdvancedGuid(int id)
+    {
+        byte[] bytes = new byte[16];
+        BitConverter.GetBytes(id).CopyTo(bytes, 0);
+        BitConverter.GetBytes(id * 17).CopyTo(bytes, 4);
+        bytes[8] = unchecked((byte)id);
+        bytes[9] = unchecked((byte)(id >> 8));
+        bytes[10] = unchecked((byte)(id * 29));
+        bytes[11] = unchecked((byte)(id * 31));
+        bytes[12] = unchecked((byte)(id * 37));
+        bytes[13] = unchecked((byte)(id * 41));
+        bytes[14] = unchecked((byte)(id * 43));
+        bytes[15] = unchecked((byte)(id * 47));
+        return new Guid(bytes);
+    }
+
+    private static decimal BuildAdvancedAmount(int id) =>
+        ((id * 3713m) / 100m) - 5000m;
+
+    private static byte[] BuildAdvancedBinaryKey(int id)
+    {
+        var payload = new byte[16];
+        for (int byteIndex = 0; byteIndex < payload.Length; byteIndex++)
+        {
+            payload[byteIndex] = unchecked((byte)((id * 29) + (byteIndex * 17)));
+        }
+
+        return payload;
     }
 
     private static async ValueTask CreateWideTDefTableAsync(

@@ -160,8 +160,8 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
 
         // Fast path: read only the key columns directly from data pages via
         // TryReadColumnValuesTypedAsync. Falls back to the full-table
-        // snapshot only when a key column uses T_NUMERIC (which requires
-        // canonical-scale resolution not available in the fast decoder).
+        // snapshot when a key column uses T_NUMERIC because that narrow
+        // inline decoder does not yet have a ColumnInfo-aware numeric branch.
         bool needsSnapshot = false;
         foreach (UniqueIndexDescriptor desc in descriptors)
         {

@@ -34,8 +34,8 @@ using JetDatabaseWriter.Interfaces;
 /// <para>
 /// <see cref="IsUnique"/> emits the real-idx <c>flags</c> bit <c>0x01</c>
 /// (index maintenance also throws on duplicate keys after the bulk B-tree
-/// rebuild), <see cref="DescendingColumns"/> emits <c>col_order = 0x02</c>
-/// in the matching col_map slots, and multi-column non-PK indexes are
+/// rebuild), <see cref="DescendingColumns"/> clears the col_map ascending
+/// flag (<c>col_order = 0x00</c>), and multi-column non-PK indexes are
 /// supported and maintained live.
 /// </para>
 /// </remarks>
@@ -115,16 +115,13 @@ public sealed record IndexDefinition
     /// Gets the subset of <see cref="Columns"/> that should be sorted
     /// descending in the index. Each entry must match a name in
     /// <see cref="Columns"/> case-insensitively. Columns not listed here are
-    /// emitted with <c>col_order = 0x01</c> (ascending); listed columns are
-    /// emitted with <c>col_order = 0x02</c>. Defaults to an empty list.
+    /// emitted with <c>col_order = 0x01</c> (ascending); listed columns clear
+    /// the ascending flag with <c>col_order = 0x00</c>. Defaults to an empty list.
     /// </summary>
     /// <remarks>
-    /// The descending byte value (<c>0x02</c>) follows Jackcess
-    /// (<c>com.healthmarketscience.jackcess.impl.IndexImpl</c>); the
-    /// in-repo format-probe corpus contains no descending fixtures, so the
-    /// value has not been independently re-verified against an
-    /// Access-authored database. Defer production use until that round-trip
-    /// has been performed by hand (see design doc §8).
+    /// Jackcess models this byte as an ascending flag
+    /// (<c>ASCENDING_COLUMN_FLAG = 0x01</c>); Microsoft Access and DAO compact
+    /// preserve descending columns when the bit is clear.
     /// </remarks>
     public IReadOnlyList<string> DescendingColumns { get; init; } = [];
 

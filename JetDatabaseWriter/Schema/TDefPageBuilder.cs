@@ -296,7 +296,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     if (slot < ri.ColumnNumbers.Count)
                     {
                         AccessBase.Wu16(page, so, ri.ColumnNumbers[slot]);
-                        page[so + 2] = ri.Ascending[slot] ? (byte)0x01 : (byte)0x02;
+                        page[so + 2] = ri.Ascending[slot] ? (byte)0x01 : (byte)0x00;
                     }
                     else
                     {

@@ -112,7 +112,6 @@ internal static class JetExpressionConverter
         // column flag and DAO does not emit a Required property for them.
         bool emitAllowZeroLength = IsTextLikeColumn(col);
         bool emitRequired = !col.IsAutoIncrement && (!col.IsNullable || emitAllowZeroLength);
-
         bool any = emitRequired
             || emitAllowZeroLength
             || defaultExpr is not null

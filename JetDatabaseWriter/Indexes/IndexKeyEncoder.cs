@@ -694,9 +694,9 @@ internal static class IndexKeyEncoder
     /// Returns <see langword="true"/> when <paramref name="columnType"/> is
     /// supported by <see cref="EncodeEntry(byte, object?, bool)"/> in the
     /// fixed-width single-call form used by the parent-seek RI enforcement
-    /// path. Excludes <c>T_NUMERIC</c> (requires a per-batch canonical scale
-    /// computed from the snapshot) and <c>T_BOOL</c> (BOOL is in the row
-    /// null mask, never in the index key bytes).
+    /// path. Excludes <c>T_NUMERIC</c> (the descriptor-scale encoder needs
+    /// column metadata, not just a type byte) and <c>T_BOOL</c> (BOOL is in
+    /// the row null mask, never in the index key bytes).
     /// </summary>
     internal static bool IsColumnTypeSeekable(byte columnType) => columnType switch
     {

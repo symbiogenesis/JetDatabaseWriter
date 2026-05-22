@@ -4,6 +4,7 @@ using System;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Globalization;
+using System.Numerics;
 using System.Text;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
@@ -115,7 +116,7 @@ internal sealed class RowEncoder(AccessWriter writer)
                 return 8;
 
             case T_NUMERIC:
-                EncodeNumericValue(Convert.ToDecimal(value, CultureInfo.InvariantCulture), dest);
+                EncodeNumericValue(column, Convert.ToDecimal(value, CultureInfo.InvariantCulture), dest);
                 return 17;
 
             case T_COMPLEX:
@@ -144,15 +145,57 @@ internal sealed class RowEncoder(AccessWriter writer)
         }
     }
 
-    private static void EncodeNumericValue(decimal value, Span<byte> dest)
+    private static void EncodeNumericValue(ColumnInfo column, decimal value, Span<byte> dest)
     {
-        Span<byte> mantissa = dest.Slice(4, 12);
-        NumericEncoder.Decompose(value, mantissa, out bool negative, out int scale);
+        byte precision = column.NumericPrecision == 0 ? (byte)18 : column.NumericPrecision;
+        byte declaredScale = column.NumericScale;
+        decimal scaled = decimal.Round(value, declaredScale, MidpointRounding.ToEven);
+        if (scaled < 0)
+        {
+            scaled = decimal.Negate(scaled);
+            dest[0] = 0x80;
+        }
+        else
+        {
+            dest[0] = 0x00;
+        }
 
-        dest[0] = NumericEncoder.ComputePrecision(mantissa);
-        dest[1] = (byte)scale;
-        dest[2] = negative ? (byte)1 : (byte)0;
-        dest[3] = 0;
+        byte[] leMantissa = new byte[13];
+        NumericEncoder.Decompose(scaled, leMantissa.AsSpan(0, 12), out _, out int naturalScale);
+        var magnitude = new BigInteger(leMantissa);
+        if (declaredScale > naturalScale)
+        {
+            magnitude *= BigInteger.Pow(10, declaredScale - naturalScale);
+        }
+
+        int digits = magnitude.IsZero ? 1 : magnitude.ToString(CultureInfo.InvariantCulture).Length;
+        if (digits > precision)
+        {
+            throw new JetLimitationException(
+                $"Numeric value '{value}' exceeds NUMERIC({precision},{declaredScale}) precision after rounding.");
+        }
+
+        byte[] magnitudeLe = magnitude.ToByteArray();
+        int magnitudeLength = magnitudeLe.Length;
+        while (magnitudeLength > 0 && magnitudeLe[magnitudeLength - 1] == 0)
+        {
+            magnitudeLength--;
+        }
+
+        if (magnitudeLength > 16)
+        {
+            throw new JetLimitationException(
+                $"Numeric value '{value}' requires {magnitudeLength} bytes, exceeding the 16-byte NUMERIC mantissa.");
+        }
+
+        Span<byte> magnitudeBe = stackalloc byte[16];
+        for (int i = 0; i < magnitudeLength; i++)
+        {
+            magnitudeBe[16 - 1 - i] = magnitudeLe[i];
+        }
+
+        JetTypeInfo.FixNumericByteOrder(magnitudeBe);
+        magnitudeBe.CopyTo(dest.Slice(1, 16));
     }
 
     private static byte[]? EncodeCalculatedFixedPayload(ColumnInfo column, object value)
