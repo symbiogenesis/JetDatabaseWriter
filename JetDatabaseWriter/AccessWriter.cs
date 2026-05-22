@@ -77,6 +77,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// incremental fast paths, and the catalog-index single-leaf splice. AccessWriter
     /// keeps only thin instance forwarders.</summary>
     private readonly IndexMaintainer _indexMaintainer;
+    private readonly HashSet<long> _ownedMapWritableTdefs = [];
 
     /// <summary>Owns TDEF emission and empty-database bootstrap builders.
     /// AccessWriter keeps thin compatibility forwarders for existing callers.</summary>
@@ -364,7 +365,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         try
         {
             AccessWriter writer = await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
-            await writer.ComplexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+            long coreSystemTableStartPage = await writer.ReserveFreshCoreSystemTablePagesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+            await writer.InitializeFreshCatalogIndexesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+            await writer.ComplexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
             return writer;
         }
         catch
@@ -426,8 +429,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         AccessWriter writer = await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
         try
         {
+            long coreSystemTableStartPage = await writer.ReserveFreshCoreSystemTablePagesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
             await writer.InitializeFreshCatalogIndexesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
-            await writer.ComplexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+            await writer.ComplexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
             return writer;
         }
         catch
@@ -529,7 +533,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         var indexes = new IndexDefinition[]
         {
             new("Id", "Id") { IsPrimaryKey = true },
-            new("ParentIdName", ["ParentId", "Name"]),
+            new("ParentIdName", ["ParentId", "Name"]) { IsUnique = true },
         };
 
         List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
@@ -574,8 +578,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         DataPageInserter.PatchUsageMapPointers(tdefPages[0], checked((int)usageMapPageNumber));
         DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
         await WritePageAsync(2, tdefPages[0], cancellationToken).ConfigureAwait(false);
+        RegisterOwnedMapWritableTdef(2);
         InvalidateCatalogCache();
     }
+
+    private ValueTask<long> ReserveFreshCoreSystemTablePagesAsync(DatabaseFormat format, bool fullCatalogSchema, CancellationToken cancellationToken)
+        => format == DatabaseFormat.AceAccdb && fullCatalogSchema
+            ? ReserveContiguousPagesAsync(3, cancellationToken)
+            : new ValueTask<long>(0L);
 
     private static IReadOnlyList<ColumnDefinition> BuildFullCatalogColumnDefinitions()
         =>
@@ -611,12 +621,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         IReadOnlyList<ColumnDefinition> columns,
         IReadOnlyList<IndexDefinition> indexes,
         uint catalogFlags,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long reservedTdefPageNumber = 0,
+        bool emitLvProp = true,
+        bool markSystemTableTdef = true)
     {
         TableDef tableDef = TDefPageBuilder.BuildTableDefinition(columns, _format);
         List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
         (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
-        if ((catalogFlags & Constants.SystemObjects.SystemTableMask) != 0)
+        if (reservedTdefPageNumber > 0 && tdefPages.Length != 1)
+        {
+            throw new InvalidDataException("Reserved fresh system-table TDEF slots support only single-page TDEFs.");
+        }
+
+        if (markSystemTableTdef && (catalogFlags & Constants.SystemObjects.SystemTableMask) != 0)
         {
             tdefPages[0][_tdef.NumCols - 5] = 0x53;
         }
@@ -627,7 +645,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // page. Leaf pages and the usage-map page are allocated AFTER, so
         // they don't interleave with the TDEF chain and the page numbers
         // stay contiguous (tdefPages[i] lives at file page tdefPageNumber + i).
-        long tdefPageNumber = await ReserveContiguousPagesAsync(tdefPages.Length, cancellationToken).ConfigureAwait(false);
+        long tdefPageNumber = reservedTdefPageNumber > 0
+            ? reservedTdefPageNumber
+            : await ReserveContiguousPagesAsync(tdefPages.Length, cancellationToken).ConfigureAwait(false);
 
         // Stamp the next-page pointer at offset 4 of every non-last TDEF page.
         for (int p = 0; p < tdefPages.Length - 1; p++)
@@ -709,6 +729,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             // the first physical page.
             DataPageInserter.PatchUsageMapPointers(tdefPages[0], checked((int)usageMapPageNumber));
             DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
+            RegisterOwnedMapWritableTdef(tdefPageNumber);
             tdefDirty = true;
         }
 
@@ -722,7 +743,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        byte[]? lvProp = JetExpressionConverter.BuildLvPropBlob(columns, _format);
+        byte[]? lvProp = emitLvProp ? JetExpressionConverter.BuildLvPropBlob(columns, _format) : null;
         await InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
 
         // DAO Compact & Repair requires every user table to have ACE
@@ -3748,6 +3769,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     internal ValueTask<long> ReserveContiguousPagesAsync(int pageCount, CancellationToken cancellationToken)
         => _pageAllocator.ReserveContiguousPagesAsync(pageCount, cancellationToken);
+
+    internal bool IsOwnedMapWritableTdef(long tdefPageNumber) => _ownedMapWritableTdefs.Contains(tdefPageNumber);
+
+    internal void RegisterOwnedMapWritableTdef(long tdefPageNumber) => _ownedMapWritableTdefs.Add(tdefPageNumber);
 
     internal ValueTask DeallocatePageAsync(long pageNumber, CancellationToken cancellationToken)
         => _pageAllocator.DeallocatePageAsync(pageNumber, cancellationToken);

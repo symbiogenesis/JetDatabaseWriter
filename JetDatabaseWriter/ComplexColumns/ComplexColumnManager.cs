@@ -45,64 +45,87 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     /// because that mode targets backward-compatible byte hashing and
     /// must not introduce additional pages.
     /// </summary>
-    public async ValueTask ScaffoldSystemTablesAsync(DatabaseFormat format, bool fullCatalogSchema, CancellationToken cancellationToken)
+    public async ValueTask ScaffoldSystemTablesAsync(DatabaseFormat format, bool fullCatalogSchema, long coreSystemTableStartPage, CancellationToken cancellationToken)
     {
         if (format != DatabaseFormat.AceAccdb || !fullCatalogSchema)
         {
             return;
         }
 
-        await CreateCoreSystemTablesAsync(cancellationToken).ConfigureAwait(false);
+        await CreateCoreSystemTablesAsync(coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
         await CreateMSysComplexColumnsAsync(cancellationToken).ConfigureAwait(false);
         await CreateMSysComplexTypeTemplatesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask CreateCoreSystemTablesAsync(CancellationToken cancellationToken)
+    private async ValueTask CreateCoreSystemTablesAsync(long coreSystemTableStartPage, CancellationToken cancellationToken)
     {
         long acesTdefPage = await CreateSystemTableAsync(
             Constants.SystemTableNames.Aces,
             [
                 new ColumnDefinition("ObjectId", typeof(int)),
-                new ColumnDefinition("ACM", typeof(int)),
                 new ColumnDefinition("SID", typeof(byte[]), maxLength: 255),
+                new ColumnDefinition("ACM", typeof(int)),
                 new ColumnDefinition("FInheritable", typeof(bool)),
             ],
+            [new IndexDefinition("ObjectId", "ObjectId") { IsRequired = true }],
+            reservedTdefPageNumber: coreSystemTableStartPage,
             cancellationToken).ConfigureAwait(false);
 
         long queriesTdefPage = await CreateSystemTableAsync(
             Constants.SystemTableNames.Queries,
             [
+                new ColumnDefinition("ObjectId", typeof(int)),
                 new ColumnDefinition("Attribute", typeof(byte)),
+                new ColumnDefinition("Order", typeof(byte[]), maxLength: 255),
+                new ColumnDefinition("Name1", typeof(string), maxLength: 255),
+                new ColumnDefinition("Name2", typeof(string), maxLength: 255),
                 new ColumnDefinition("Expression", typeof(string)),
                 new ColumnDefinition("Flag", typeof(short)),
                 new ColumnDefinition("LvExtra", typeof(int)),
-                new ColumnDefinition("Name1", typeof(string), maxLength: 255),
-                new ColumnDefinition("Name2", typeof(string), maxLength: 255),
-                new ColumnDefinition("ObjectId", typeof(int)),
-                new ColumnDefinition("Order", typeof(byte[]), maxLength: 255),
             ],
+            [new IndexDefinition("ObjectIdAttribute", ["ObjectId", "Attribute", "Order"]) { IsPrimaryKey = true }],
+            reservedTdefPageNumber: coreSystemTableStartPage > 0 ? coreSystemTableStartPage + 1 : 0,
             cancellationToken).ConfigureAwait(false);
 
         long relationshipsTdefPage = await CreateSystemTableAsync(
             Constants.SystemTableNames.Relationships,
             [
-                new ColumnDefinition("ccolumn", typeof(int)),
-                new ColumnDefinition("grbit", typeof(int)),
-                new ColumnDefinition("icolumn", typeof(int)),
-                new ColumnDefinition("szColumn", typeof(string), maxLength: 255),
-                new ColumnDefinition("szObject", typeof(string), maxLength: 255),
-                new ColumnDefinition("szReferencedColumn", typeof(string), maxLength: 255),
-                new ColumnDefinition("szReferencedObject", typeof(string), maxLength: 255),
                 new ColumnDefinition("szRelationship", typeof(string), maxLength: 255),
+                new ColumnDefinition("grbit", typeof(int)),
+                new ColumnDefinition("ccolumn", typeof(int)),
+                new ColumnDefinition("icolumn", typeof(int)),
+                new ColumnDefinition("szObject", typeof(string), maxLength: 255),
+                new ColumnDefinition("szColumn", typeof(string), maxLength: 255),
+                new ColumnDefinition("szReferencedObject", typeof(string), maxLength: 255),
+                new ColumnDefinition("szReferencedColumn", typeof(string), maxLength: 255),
             ],
+            [
+                new IndexDefinition("szRelationship", "szRelationship") { IgnoreNulls = true },
+                new IndexDefinition("szObject", "szObject") { IgnoreNulls = true },
+                new IndexDefinition("szReferencedObject", "szReferencedObject") { IgnoreNulls = true },
+            ],
+            reservedTdefPageNumber: coreSystemTableStartPage > 0 ? coreSystemTableStartPage + 2 : 0,
             cancellationToken).ConfigureAwait(false);
 
         await InsertCoreCatalogRowsAsync(cancellationToken).ConfigureAwait(false);
         await PatchHeaderSystemTablePagesAsync(acesTdefPage, queriesTdefPage, relationshipsTdefPage, cancellationToken).ConfigureAwait(false);
     }
 
-    private ValueTask<long> CreateSystemTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, CancellationToken cancellationToken)
-        => _writer.CreateTableInternalAsync(tableName, columns, [], Constants.SystemObjects.SystemTableMask & 0x80000000U, cancellationToken);
+    private ValueTask<long> CreateSystemTableAsync(
+        string tableName,
+        IReadOnlyList<ColumnDefinition> columns,
+        IReadOnlyList<IndexDefinition> indexes,
+        long reservedTdefPageNumber,
+        CancellationToken cancellationToken)
+        => _writer.CreateTableInternalAsync(
+            tableName,
+            columns,
+            indexes,
+            Constants.SystemObjects.SystemTableMask & 0x80000000U,
+            cancellationToken,
+            reservedTdefPageNumber,
+            emitLvProp: false,
+            markSystemTableTdef: true);
 
     private async ValueTask InsertCoreCatalogRowsAsync(CancellationToken cancellationToken)
     {
@@ -119,7 +142,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
         await _writer.InsertCatalogObjectAsync(
             Constants.SystemObjects.TablesParentId,
-            0,
+            Constants.SystemObjects.RootParentId,
             "Tables",
             objectType: 3,
             systemFlags,
@@ -129,7 +152,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
         await _writer.InsertCatalogObjectAsync(
             Constants.SystemObjects.DatabasesParentId,
-            0,
+            Constants.SystemObjects.RootParentId,
             "Databases",
             objectType: 3,
             systemFlags,
@@ -139,7 +162,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
         await _writer.InsertCatalogObjectAsync(
             Constants.SystemObjects.RelationshipsParentId,
-            0,
+            Constants.SystemObjects.RootParentId,
             "Relationships",
             objectType: 3,
             systemFlags,
@@ -322,23 +345,29 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     {
         var columns = new[]
         {
-            new ColumnDefinition("ColumnName", typeof(string), maxLength: 255),
-            new ColumnDefinition("ComplexTypeObjectID", typeof(int)),
-            new ColumnDefinition("FlatTableID", typeof(int)),
-            new ColumnDefinition("ConceptualTableID", typeof(int)),
-            new ColumnDefinition("ComplexID", typeof(int)),
+            new ColumnDefinition("ColumnName", typeof(string), maxLength: 255) { DescriptorFlagsOverride = 0x12 },
+            new ColumnDefinition("ComplexID", typeof(int)) { DescriptorFlagsOverride = 0x17 },
+            new ColumnDefinition("ComplexTypeObjectID", typeof(int)) { DescriptorFlagsOverride = 0x13 },
+            new ColumnDefinition("ConceptualTableID", typeof(int)) { DescriptorFlagsOverride = 0x13 },
+            new ColumnDefinition("FlatTableID", typeof(int)) { DescriptorFlagsOverride = 0x13 },
         };
 
-        TableDef tableDef = AccessWriter.BuildTableDefinition(columns, _writer._format);
-        (byte[] tdefPage, _) = _writer.BuildTDefPageWithIndexOffsets(tableDef, []);
-        long tdefPageNumber = await _writer.AllocatePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var indexes = new[]
+        {
+            new IndexDefinition("IdxConceptualTableID", "ConceptualTableID"),
+            new IndexDefinition("IdxFlatTableID", "FlatTableID"),
+            new IndexDefinition("IdxID", "ComplexID") { IsPrimaryKey = true },
+        };
 
-        await _writer.InsertCatalogEntryAsync(
+        _ = await _writer.CreateTableInternalAsync(
             Constants.SystemTableNames.ComplexColumns,
-            tdefPageNumber,
-            lvProp: null,
+            columns,
+            indexes,
             catalogFlags: 0x80000000U,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            reservedTdefPageNumber: 0,
+            emitLvProp: false,
+            markSystemTableTdef: false).ConfigureAwait(false);
 
         _writer.InvalidateCatalogCache();
     }

@@ -221,6 +221,9 @@ internal static class Constants
         /// <summary>MSysObjects.Type value DAO uses for a relationship object row.</summary>
         public const int RelationshipType = 8;
 
+        /// <summary>Well-known root pseudo-object that owns the Tables / Databases / Relationships containers.</summary>
+        public const int RootParentId = 0x0F00_0000;
+
         /// <summary>
         /// Well-known <c>MSysObjects.Id</c> of the <c>"Tables"</c>
         /// pseudo-object (Type = 3) that owns every user table. New

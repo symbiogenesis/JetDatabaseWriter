@@ -78,8 +78,10 @@ internal sealed class DataPageInserter(AccessWriter writer)
         // the data page's parent_tdef back-pointer is correct.
         // Skip the small set of pre-existing system-table TDEFs whose
         // usage maps are already populated and managed by DAO; modifying
-        // them surfaces "Invalid argument" from DAO.OpenDatabase.
-        if (tdefPage > 1024)
+        // them surfaces "Invalid argument" from DAO.OpenDatabase. Freshly
+        // created databases have low page numbers too, so the writer records
+        // the TDEFs whose owned-page maps it created and can safely maintain.
+        if (tdefPage > 1024 || writer.IsOwnedMapWritableTdef(tdefPage))
         {
             await MarkPageInOwnedMapAsync(tdefPage, newPageNumber, cancellationToken).ConfigureAwait(false);
         }

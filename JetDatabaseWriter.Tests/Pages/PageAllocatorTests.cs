@@ -32,12 +32,17 @@ public sealed class PageAllocatorTests
         DataPageLayout layout = DataPageLayout.For(format);
         ReadOnlySpan<byte> globalMap = bytes.AsSpan(pageSize, pageSize);
         int rowStart = ReadUInt16(globalMap, layout.RowsStart) & 0x1FFF;
+        int row1Start = ReadUInt16(globalMap, layout.RowsStart + 2) & 0x1FFF;
 
         Assert.Equal(0x01, globalMap[0]);
         Assert.Equal(0x01, globalMap[1]);
-        Assert.Equal(1, ReadUInt16(globalMap, layout.NumRows));
+        Assert.Equal(1, BinaryPrimitives.ReadInt32LittleEndian(globalMap.Slice(layout.TDefOff, 4)));
+        Assert.Equal(2, ReadUInt16(globalMap, layout.NumRows));
+        Assert.True(row1Start < rowStart);
         Assert.Equal(0x00, globalMap[rowStart]);
         Assert.Equal(0, BinaryPrimitives.ReadInt32LittleEndian(globalMap.Slice(rowStart + 1, 4)));
+        Assert.Equal(0x00, globalMap[row1Start]);
+        Assert.Equal(0, BinaryPrimitives.ReadInt32LittleEndian(globalMap.Slice(row1Start + 1, 4)));
         Assert.False(IsInlineGlobalMapBitSet(bytes, format, 0));
         Assert.False(IsInlineGlobalMapBitSet(bytes, format, 1));
         Assert.False(IsInlineGlobalMapBitSet(bytes, format, 2));

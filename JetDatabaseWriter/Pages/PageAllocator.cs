@@ -628,14 +628,18 @@ internal sealed class PageAllocator(AccessWriter writer)
         page[0] = DataPageType;
         page[1] = 0x01;
         int rowStart = writer._pgSz - InlineUsageMapRowSize;
-        int slotTableEnd = writer._dataPage.RowsStart + 2;
-        int freeSpace = rowStart - slotTableEnd;
+        int row1Start = rowStart - InlineUsageMapRowSize;
+        int slotTableEnd = writer._dataPage.RowsStart + 4;
+        int freeSpace = row1Start - slotTableEnd;
         Wu16(page, 2, freeSpace);
-        Wi32(page, writer._dataPage.TDefOff, 0);
-        Wu16(page, writer._dataPage.NumRows, 1);
+        Wi32(page, writer._dataPage.TDefOff, 1);
+        Wu16(page, writer._dataPage.NumRows, 2);
         Wu16(page, writer._dataPage.RowsStart, rowStart);
+        Wu16(page, writer._dataPage.RowsStart + 2, row1Start);
         page[rowStart] = InlineMapType;
         Wi32(page, rowStart + 1, 0);
+        page[row1Start] = InlineMapType;
+        Wi32(page, row1Start + 1, 0);
     }
 
     private bool TryGetUsageMapRow(byte[] page, out int rowStart, out int rowSize)

@@ -24,7 +24,10 @@ public sealed class DaoStorageMaintenanceTests
     private const int IndexRows = 800;
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(3);
 
-    [Fact(Skip = "Known fresh ACCDB bootstrap gap: DAO CompactDatabase still rejects writer-created files as an unrecognized database format.")]
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task FreshWriterCreatedDatabase_SurvivesCompactAndRepair()
     {
         await using AccessRoundTripSession session = AccessRoundTripSession.CreateEmpty(compactTimeout: CompactTimeout);
