@@ -581,7 +581,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         db[offset] = 0x02;
         db[offset + 1] = 0x01;
         AccessBase.Wi32(db, offset + 4, 0);
-        db[offset + tdNumCols - 5] = 0x4E;
+        db[offset + tdNumCols - 5] = 0x53;
         AccessBase.Wu16(db, offset + tdNumCols - 4, numCols);
         AccessBase.Wu16(db, offset + tdNumCols - 2, numVarCols);
         AccessBase.Wu16(db, offset + tdNumCols, numCols);

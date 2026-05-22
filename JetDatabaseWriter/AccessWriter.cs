@@ -426,6 +426,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         AccessWriter writer = await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
         try
         {
+            await writer.InitializeFreshCatalogIndexesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
             await writer.ComplexColumns.ScaffoldSystemTablesAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
             return writer;
         }
@@ -516,6 +517,88 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         _ = tdefPageNumber;
     }
 
+    private async ValueTask InitializeFreshCatalogIndexesAsync(DatabaseFormat format, bool fullCatalogSchema, CancellationToken cancellationToken)
+    {
+        if (format == DatabaseFormat.Jet3Mdb || !fullCatalogSchema)
+        {
+            return;
+        }
+
+        IReadOnlyList<ColumnDefinition> columns = BuildFullCatalogColumnDefinitions();
+        TableDef tableDef = TDefPageBuilder.BuildTableDefinition(columns, _format);
+        var indexes = new IndexDefinition[]
+        {
+            new("Id", "Id") { IsPrimaryKey = true },
+            new("ParentIdName", ["ParentId", "Name"]),
+        };
+
+        List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
+        (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
+        if (tdefPages.Length != 1)
+        {
+            throw new InvalidDataException("Fresh MSysObjects bootstrap unexpectedly produced a multi-page TDEF.");
+        }
+
+        tdefPages[0][_tdef.NumCols - 5] = 0x53;
+        var layout = IndexLeafPageBuilder.GetLayout(_format);
+        long[] leafPageNumbers = new long[resolvedIndexes.Count];
+        for (int i = 0; i < resolvedIndexes.Count; i++)
+        {
+            byte[] leafPage = IndexLeafPageBuilder.BuildLeafPage(
+                layout,
+                _pgSz,
+                parentTdefPage: 2,
+                entries: [],
+                prevPage: 0,
+                nextPage: 0,
+                tailPage: 0,
+                enablePrefixCompression: false);
+            long leafPageNumber = await AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
+            leafPageNumbers[i] = leafPageNumber;
+            WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
+        }
+
+        long usageMapPageNumber = await _dataPageInserter.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
+        await UpdateTableIndexUsageMapRowsAsync(
+            usageMapPageNumber,
+            ToSinglePageGroups(leafPageNumbers),
+            cancellationToken).ConfigureAwait(false);
+
+        for (int i = 0; i < usedPagesLogicalOffsets.Length; i++)
+        {
+            int usedPagesOffset = usedPagesLogicalOffsets[i];
+            tdefPages[usedPagesOffset / _pgSz][usedPagesOffset % _pgSz] = checked((byte)(i + 2));
+            WriteLogicalTDefUInt24(tdefPages, usedPagesOffset + 1, checked((int)usageMapPageNumber));
+        }
+
+        DataPageInserter.PatchUsageMapPointers(tdefPages[0], checked((int)usageMapPageNumber));
+        DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
+        await WritePageAsync(2, tdefPages[0], cancellationToken).ConfigureAwait(false);
+        InvalidateCatalogCache();
+    }
+
+    private static IReadOnlyList<ColumnDefinition> BuildFullCatalogColumnDefinitions()
+        =>
+        [
+            new("Id", typeof(int)) { IsNullable = false, DescriptorFlagsOverride = 0x13 },
+            new("ParentId", typeof(int)) { IsNullable = false, DescriptorFlagsOverride = 0x13 },
+            new("Name", typeof(string), maxLength: 255) { DescriptorFlagsOverride = 0x12 },
+            new("Type", typeof(short)) { IsNullable = false, DescriptorFlagsOverride = 0x13 },
+            new("DateCreate", typeof(DateTime)) { DescriptorFlagsOverride = 0x13 },
+            new("DateUpdate", typeof(DateTime)) { DescriptorFlagsOverride = 0x13 },
+            new("Owner", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 0x32 },
+            new("Flags", typeof(int)) { DescriptorFlagsOverride = 0x13 },
+            new("Database", typeof(string)) { DescriptorFlagsOverride = 0x12 },
+            new("Connect", typeof(string)) { DescriptorFlagsOverride = 0x12 },
+            new("ForeignName", typeof(string), maxLength: 255) { DescriptorFlagsOverride = 0x12 },
+            new("RmtInfoShort", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 0x12 },
+            new("RmtInfoLong", typeof(byte[])) { DescriptorFlagsOverride = 0x12 },
+            new("Lv", typeof(byte[])) { DescriptorFlagsOverride = 0x12 },
+            new("LvProp", typeof(byte[])) { DescriptorFlagsOverride = 0x12 },
+            new("LvModule", typeof(byte[])) { DescriptorFlagsOverride = 0x12 },
+            new("LvExtra", typeof(byte[])) { DescriptorFlagsOverride = 0x12 },
+        ];
+
     /// <summary>
     /// Internal table-creation helper that drives the same TDEF + leaf + catalog-row
     /// pipeline as <see cref="CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, CancellationToken)"/>
@@ -533,6 +616,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         TableDef tableDef = TDefPageBuilder.BuildTableDefinition(columns, _format);
         List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(indexes, tableDef);
         (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
+        if ((catalogFlags & Constants.SystemObjects.SystemTableMask) != 0)
+        {
+            tdefPages[0][_tdef.NumCols - 5] = 0x53;
+        }
 
         // Reserve all TDEF pages first (sequential page numbers). The first
         // page's number is the table's catalog ID; subsequent pages are
