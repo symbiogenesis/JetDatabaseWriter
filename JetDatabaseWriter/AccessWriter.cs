@@ -3655,8 +3655,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                         break;
 
                     // Fixed and Var share the decoder; types it can't decode
-                    // here (T_NUMERIC, T_MEMO/OLE/COMPLEX/ATTACHMENT) return
-                    // null and force the caller to the snapshot path.
+                    // here (T_MEMO/OLE/COMPLEX/ATTACHMENT) return null and
+                    // force the caller to the snapshot path.
                     case ColumnSliceKind.Fixed:
                     case ColumnSliceKind.Var:
                         if (col.IsCalculated)
@@ -3664,7 +3664,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                             return null;
                         }
 
-                        result[i] = TryDecodeColumnSlice(pageBytes, loc.RowStart + slice.DataStart, col.Type, slice.DataLen);
+                        result[i] = TryDecodeColumnSlice(pageBytes, loc.RowStart + slice.DataStart, col, slice.DataLen);
                         if (result[i] is null)
                         {
                             return null;
@@ -3689,19 +3689,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// Decodes a fixed-area or var-inline column slice into the canonical
     /// CLR object the public InsertRow API accepts back. Returns
     /// <see langword="null"/> on unsupported / malformed types so callers
-    /// fall back to the snapshot path. T_NUMERIC always returns null here
-    /// because descriptor-scale decoding requires column metadata; T_MEMO /
-    /// T_OLE / T_COMPLEX / T_ATTACHMENT also return null since they require
-    /// LVAL chain traversal.
+    /// fall back to the snapshot path. T_NUMERIC uses the descriptor scale
+    /// carried on <paramref name="column"/>; T_MEMO / T_OLE / T_COMPLEX /
+    /// T_ATTACHMENT return null since they require LVAL chain traversal.
     /// </summary>
-    private object? TryDecodeColumnSlice(byte[] page, int start, byte type, int size)
+    private object? TryDecodeColumnSlice(byte[] page, int start, ColumnInfo column, int size)
     {
         if (size <= 0)
         {
             return null;
         }
 
-        switch (type)
+        switch (column.Type)
         {
             case T_BYTE:
                 return page[start];
@@ -3739,6 +3738,22 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
                 return new Guid(page.AsSpan(start, 16));
 
+            case T_NUMERIC:
+                if (size < 17)
+                {
+                    return null;
+                }
+
+                try
+                {
+                    object decoded = JetTypeInfo.ReadFixedTyped(page, start, column, size, strictNumeric: true);
+                    return decoded is DBNull ? null : decoded;
+                }
+                catch (JetLimitationException)
+                {
+                    return null;
+                }
+
             case T_TEXT:
                 return _format != DatabaseFormat.Jet3Mdb
                     ? DecodeJet4Text(page, start, size)
@@ -3747,8 +3762,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             case T_BINARY:
                 return page.AsSpan(start, size).ToArray();
 
-            // T_MEMO / T_OLE / T_COMPLEX / T_ATTACHMENT / T_NUMERIC need
-            // metadata or LVAL traversal this inline helper does not have.
+            // T_MEMO / T_OLE / T_COMPLEX / T_ATTACHMENT need LVAL or
+            // complex-table traversal this inline helper does not have.
             default:
                 return null;
         }

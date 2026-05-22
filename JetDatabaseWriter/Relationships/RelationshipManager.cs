@@ -2049,16 +2049,21 @@ internal sealed class RelationshipManager(AccessWriter writer)
     /// resolved column types in declaration order. Used by both the
     /// parent-side and child-side resolvers.
     /// </summary>
-    private readonly record struct SeekIndexCore(long FirstDp, byte[] ColTypes, IReadOnlyList<bool> Ascending);
+    private readonly record struct SeekIndexCore(
+        long FirstDp,
+        byte[] ColTypes,
+        byte[] NumericScales,
+        IReadOnlyList<bool> Ascending,
+        bool LegacyNumeric);
 
     /// <summary>
     /// Shared resolution: looks up the catalog entry for
     /// <paramref name="tableName"/>, maps <paramref name="columnNames"/> to
-    /// (ColNum, Type) on that table, locates the covering real-idx via
-    /// <see cref="TryFindCoveringRealIdxAsync"/>, and probes every key
-    /// column type with the encoder. Returns <see langword="null"/> if any
-    /// step fails (Jet3, missing table/column, no covering index, or an
-    /// un-seekable column type).
+    /// (ColNum, Type, NumericScale) on that table, locates the covering
+    /// real-idx via <see cref="TryFindCoveringRealIdxAsync"/>, and probes
+    /// every key column type with the encoder. Returns
+    /// <see langword="null"/> if any step fails (Jet3, missing
+    /// table/column, no covering index, or an un-seekable column type).
     /// </summary>
     private async ValueTask<SeekIndexCore?> TryResolveSeekIndexCoreAsync(
         string tableName,
@@ -2080,6 +2085,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
 
         var colNums = new int[columnNames.Count];
         var colTypes = new byte[columnNames.Count];
+        var numericScales = new byte[columnNames.Count];
         for (int i = 0; i < columnNames.Count; i++)
         {
             int idx = def.FindColumnIndex(columnNames[i]);
@@ -2090,6 +2096,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
 
             colNums[i] = def.Columns[idx].ColNum;
             colTypes[i] = def.Columns[idx].Type;
+            numericScales[i] = def.Columns[idx].NumericScale;
         }
 
         (long FirstDp, IReadOnlyList<bool> AscendingFlags)? hit = await TryFindCoveringRealIdxAsync(
@@ -2111,7 +2118,12 @@ internal sealed class RelationshipManager(AccessWriter writer)
             }
         }
 
-        return new SeekIndexCore(hit.Value.FirstDp, colTypes, hit.Value.AscendingFlags);
+        return new SeekIndexCore(
+            hit.Value.FirstDp,
+            colTypes,
+            numericScales,
+            hit.Value.AscendingFlags,
+            writer._format == DatabaseFormat.Jet4Mdb);
     }
 
     /// <summary>
@@ -2166,7 +2178,12 @@ internal sealed class RelationshipManager(AccessWriter writer)
             var keyColumns = new ParentSeekKeyColumn[core.Value.ColTypes.Length];
             for (int i = 0; i < keyColumns.Length; i++)
             {
-                keyColumns[i] = new ParentSeekKeyColumn(core.Value.ColTypes[i], core.Value.Ascending[i], foreignRowIdx[i]);
+                keyColumns[i] = new ParentSeekKeyColumn(
+                    core.Value.ColTypes[i],
+                    core.Value.Ascending[i],
+                    foreignRowIdx[i],
+                    core.Value.NumericScales[i],
+                    core.Value.LegacyNumeric);
             }
 
             resolved = new ParentSeekIndex(core.Value.FirstDp, keyColumns);
@@ -2276,7 +2293,11 @@ internal sealed class RelationshipManager(AccessWriter writer)
             var keyColumns = new ChildSeekKeyColumn[core.Value.ColTypes.Length];
             for (int i = 0; i < keyColumns.Length; i++)
             {
-                keyColumns[i] = new ChildSeekKeyColumn(core.Value.ColTypes[i], core.Value.Ascending[i]);
+                keyColumns[i] = new ChildSeekKeyColumn(
+                    core.Value.ColTypes[i],
+                    core.Value.Ascending[i],
+                    core.Value.NumericScales[i],
+                    core.Value.LegacyNumeric);
             }
 
             resolved = new ChildSeekIndex(core.Value.FirstDp, keyColumns);

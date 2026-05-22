@@ -17,4 +17,6 @@ internal sealed record ChildSeekIndex(
 /// <summary>One column of a child (FK-side) seek composite key.</summary>
 internal readonly record struct ChildSeekKeyColumn(
     byte ColumnType,
-    bool Ascending);
+    bool Ascending,
+    byte NumericScale,
+    bool LegacyNumeric);

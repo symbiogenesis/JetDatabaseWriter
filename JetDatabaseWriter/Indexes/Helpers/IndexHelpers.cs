@@ -491,11 +491,21 @@ internal static class IndexHelpers
                     // BuildCompositeKey already rejected partial-null tuples,
                     // but be defensive — encoding a null key entry still
                     // produces a well-formed flag-only block.
-                    pieces[i] = IndexKeyEncoder.EncodeEntry(col.ColumnType, null, col.Ascending);
+                    pieces[i] = EncodeSeekKeyColumn(
+                        col.ColumnType,
+                        null,
+                        col.Ascending,
+                        col.NumericScale,
+                        col.LegacyNumeric);
                 }
                 else
                 {
-                    pieces[i] = IndexKeyEncoder.EncodeEntry(col.ColumnType, v, col.Ascending);
+                    pieces[i] = EncodeSeekKeyColumn(
+                        col.ColumnType,
+                        v,
+                        col.Ascending,
+                        col.NumericScale,
+                        col.LegacyNumeric);
                 }
 
                 total += pieces[i].Length;
@@ -549,7 +559,12 @@ internal static class IndexHelpers
                     return null;
                 }
 
-                pieces[i] = IndexKeyEncoder.EncodeEntry(col.ColumnType, v, col.Ascending);
+                pieces[i] = EncodeSeekKeyColumn(
+                    col.ColumnType,
+                    v,
+                    col.Ascending,
+                    col.NumericScale,
+                    col.LegacyNumeric);
                 total += pieces[i].Length;
             }
         }
@@ -568,6 +583,16 @@ internal static class IndexHelpers
 
         return composite;
     }
+
+    private static byte[] EncodeSeekKeyColumn(
+        byte columnType,
+        object? value,
+        bool ascending,
+        byte numericScale,
+        bool legacyNumeric)
+        => columnType == T_NUMERIC
+            ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, numericScale, legacyNumeric)
+            : IndexKeyEncoder.EncodeEntry(columnType, value, ascending);
 
     /// <summary>
     /// Lexicographic byte-array compare matching the JET index-key sort order

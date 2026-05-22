@@ -6,7 +6,10 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -715,6 +718,90 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         }
 
         Assert.Equal(4, repointed);
+    }
+
+    [Fact]
+    public async Task Update_PkSide_WithCascade_NumericKey_DecodesChildRowsOnSeekPath()
+    {
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        string parent = MakeTableName("NP");
+        string child = MakeTableName("NC");
+
+        await using (var writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(
+                parent,
+                [new("Amount", typeof(decimal)) { NumericScale = 2 }, new("Label", typeof(string), maxLength: 32)],
+                TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(
+                child,
+                [
+                    new("Id", typeof(int)),
+                    new("ParentAmount", typeof(decimal)) { NumericScale = 2 },
+                    new("PayloadAmount", typeof(decimal)) { NumericScale = 3 },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowsAsync(
+                parent,
+                [[1.25m, "one"], [2.50m, "two"]],
+                TestContext.Current.CancellationToken);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_NumericSeek", parent, "Amount", child, "ParentAmount")
+                {
+                    CascadeUpdates = true,
+                },
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowsAsync(
+                child,
+                [[1, 1.25m, 10.125m], [2, 1.25m, 20.250m], [3, 2.50m, 30.375m]],
+                TestContext.Current.CancellationToken);
+
+            int updated = await writer.UpdateRowsAsync(
+                parent,
+                "Amount",
+                1.25m,
+                new Dictionary<string, object> { ["Amount"] = 3.75m },
+                TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
+        }
+
+        await using var reader = await OpenReaderAsync(temp);
+        DataTable t = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Equal(3, t.Rows.Count);
+
+        DataRow[] moved = t.AsEnumerable()
+            .Where(static row => Convert.ToDecimal(row["ParentAmount"], System.Globalization.CultureInfo.InvariantCulture) == 3.75m)
+            .ToArray();
+        Assert.Equal(2, moved.Length);
+        Assert.Contains(moved, row => Convert.ToDecimal(row["PayloadAmount"], System.Globalization.CultureInfo.InvariantCulture) == 10.125m);
+        Assert.Contains(moved, row => Convert.ToDecimal(row["PayloadAmount"], System.Globalization.CultureInfo.InvariantCulture) == 20.250m);
+    }
+
+    [Fact]
+    public async Task TryReadColumnValuesTyped_DecodesDescriptorScaleNumericColumns()
+    {
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        string table = MakeTableName("NR");
+
+        await using var writer = await OpenWriterAsync(temp);
+        await writer.CreateTableAsync(
+            table,
+            [new("Id", typeof(int)), new("Amount", typeof(decimal)) { NumericScale = 3 }],
+            TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync(table, [1, 12.345m], TestContext.Current.CancellationToken);
+
+        CatalogEntry entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+        TableDef def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        RowLocation loc = Assert.Single(locations);
+
+        object?[]? values = await writer.TryReadColumnValuesTypedAsync(loc, def, [0, 1], TestContext.Current.CancellationToken);
+
+        Assert.NotNull(values);
+        Assert.Equal(1, values![0]);
+        Assert.Equal(12.345m, values[1]);
     }
 
     /// <summary>

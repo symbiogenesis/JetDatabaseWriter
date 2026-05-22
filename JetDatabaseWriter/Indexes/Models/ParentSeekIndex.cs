@@ -17,4 +17,6 @@ internal sealed record ParentSeekIndex(
 internal readonly record struct ParentSeekKeyColumn(
     byte ColumnType,
     bool Ascending,
-    int ForeignColumnIndex);
+    int ForeignColumnIndex,
+    byte NumericScale,
+    bool LegacyNumeric);
