@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
@@ -449,7 +450,43 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
         BuildGlobalUsageMapPage(db, pgSz, format);
         BuildMSysObjectsTDef(db, pgSz * 2, format, fullCatalogSchema);
+
+        if (format != DatabaseFormat.Jet3Mdb)
+        {
+            WriteJet4AceHeaderDefaults(db);
+            EncryptionManager.TransformHeaderMask(db);
+        }
+
         return db;
+    }
+
+    private static void WriteJet4AceHeaderDefaults(byte[] db)
+    {
+        db[0x19] = 0x01;
+        db[0x1C] = 0x01;
+        db[0x1D] = 0x01;
+        AccessBase.Wi32(db, 0x20, 2);
+        AccessBase.Wi32(db, 0x24, 3);
+        AccessBase.Wi32(db, 0x28, 4);
+        AccessBase.Wi32(db, 0x2C, 5);
+        AccessBase.Wu16(db, 0x3C, 1252);
+
+        for (int offset = 0x42; offset < 0x6A; offset += 4)
+        {
+            db[offset] = 0x53;
+            db[offset + 1] = 0xB4;
+        }
+
+        AccessBase.Wu16(db, 0x6A, 0x11A6);
+        AccessBase.Wu16(db, 0x6E, 0x0409);
+
+        ReadOnlySpan<byte> creationDate = [0x08, 0x6E, 0x41, 0x1D, 0x7C, 0x8A, 0xE6, 0x40];
+        creationDate.CopyTo(db.AsSpan(0x72));
+
+        AccessBase.Wi32(db, 0x98, 0x0654);
+        db[0x9C] = (byte)'4';
+        db[0x9D] = (byte)'.';
+        db[0x9E] = (byte)'0';
     }
 
     private static void BuildGlobalUsageMapPage(byte[] db, int pgSz, DatabaseFormat format)

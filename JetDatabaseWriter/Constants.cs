@@ -234,8 +234,14 @@ internal static class Constants
         /// </summary>
         public const int TablesParentId = 0x0F00_0001;
 
+        /// <summary>Well-known <c>MSysObjects.Id</c> of the databases pseudo-object.</summary>
+        public const int DatabasesParentId = 0x0F00_0002;
+
         /// <summary>Well-known <c>MSysObjects.Id</c> of the relationships pseudo-object that owns Type=8 rows.</summary>
         public const int RelationshipsParentId = 0x0F00_0003;
+
+        /// <summary>Well-known <c>MSysObjects.Id</c> of the database object row.</summary>
+        public const int DatabaseObjectId = 0x1000_0000;
 
         /// <summary>MSysObjects.Type value for a linked ODBC table (Jackcess <c>TYPE_LINKED_ODBC_TABLE</c>).</summary>
         public const int LinkedOdbcType = 4;

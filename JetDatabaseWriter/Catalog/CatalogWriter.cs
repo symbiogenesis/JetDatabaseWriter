@@ -49,6 +49,46 @@ internal sealed class CatalogWriter(AccessWriter writer)
     }
 
     /// <summary>
+    /// Inserts a caller-shaped row into <c>MSysObjects</c> for Access bootstrap
+    /// containers whose <c>Id</c> is not a physical TDEF page number.
+    /// </summary>
+    internal async ValueTask InsertCatalogObjectAsync(
+        int objectId,
+        int parentId,
+        string objectName,
+        short objectType,
+        uint catalogFlags,
+        byte[]? owner,
+        byte[]? lvProp,
+        CancellationToken cancellationToken = default)
+    {
+        TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        object[] values = msys.CreateNullValueRow();
+        DateTime now = DateTime.UtcNow;
+
+        msys.SetValueByName(values, "Id", objectId);
+        msys.SetValueByName(values, "ParentId", parentId);
+        msys.SetValueByName(values, "Name", objectName);
+        msys.SetValueByName(values, "Type", objectType);
+        msys.SetValueByName(values, "DateCreate", now);
+        msys.SetValueByName(values, "DateUpdate", now);
+        msys.SetValueByName(values, "Flags", unchecked((int)catalogFlags));
+
+        if (owner is not null && msys.FindColumn("Owner") is not null)
+        {
+            msys.SetValueByName(values, "Owner", owner);
+        }
+
+        if (lvProp is not null && msys.FindColumn("LvProp") is not null)
+        {
+            msys.SetValueByName(values, "LvProp", lvProp);
+        }
+
+        RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
+        _ = await writer.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Inserts the Type=8 <c>MSysObjects</c> row DAO creates for a relationship.
     /// </summary>
     internal async ValueTask<int> InsertRelationshipCatalogEntryAsync(string relationshipName, CancellationToken cancellationToken = default)

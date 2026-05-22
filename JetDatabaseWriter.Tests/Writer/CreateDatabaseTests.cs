@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
@@ -73,6 +74,32 @@ public sealed class CreateDatabaseTests
         var tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(tables);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateDatabaseAsync_Stream_MasksJet4AceHeaderRegion(DatabaseFormat format)
+    {
+        await using var ms = new MemoryStream();
+
+        await using (await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+        }
+
+        byte[] bytes = ms.ToArray();
+        Assert.NotEqual(0, bytes[0x62]);
+        Assert.NotEqual(0x07, bytes[0x62]);
+        Assert.NotEqual(0xE4, bytes[0x3C]);
+
+        EncryptionManager.TransformHeaderMask(bytes);
+        Assert.Equal(0xE4, bytes[0x3C]);
+        Assert.Equal(0x04, bytes[0x3D]);
+        Assert.Equal(0x09, bytes[0x6E]);
+        Assert.Equal(0x04, bytes[0x6F]);
+        Assert.Equal((byte)'4', bytes[0x9C]);
+        Assert.Equal((byte)'.', bytes[0x9D]);
+        Assert.Equal((byte)'0', bytes[0x9E]);
     }
 
     // ── Round-trip: create → create table → verify columns ────────────

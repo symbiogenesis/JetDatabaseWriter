@@ -28,6 +28,55 @@ public sealed class DaoStorageMaintenanceTests
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
         SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
+    public async Task FreshWriterCreatedDatabase_SurvivesCompactAndRepair()
+    {
+        await using AccessRoundTripSession session = AccessRoundTripSession.CreateEmpty(compactTimeout: CompactTimeout);
+
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            session.SourcePath,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "SM_FreshBootstrap",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
+                    new ColumnDefinition("Label", typeof(string), maxLength: 80),
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowsAsync(
+                "SM_FreshBootstrap",
+                new[]
+                {
+                    new object[] { 1, "fresh-one" },
+                    new object[] { 2, "fresh-two" },
+                },
+                TestContext.Current.CancellationToken);
+        }
+
+        session.RunDaoCompact();
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            session.CompactedPath,
+            new AccessReaderOptions { UseLockFile = false },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("SM_FreshBootstrap", tables);
+
+        DataTable table = await reader.ReadDataTableAsync("SM_FreshBootstrap", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(2, table.Rows.Count);
+        Assert.Contains(
+            table.AsEnumerable(),
+            row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 2 && string.Equals(SafeString(row, "Label"), "fresh-two", StringComparison.Ordinal));
+    }
+
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
     public async Task SecureErase_RowGapAndOldLvalChain_SurviveCompactAndRepair()
     {
         await using AccessRoundTripSession session = await AccessRoundTripSession.CreateFromNorthwindAsync(

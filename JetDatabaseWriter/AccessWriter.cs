@@ -2377,6 +2377,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     internal ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
         => _catalogWriter.InsertCatalogEntryAsync(tableName, tdefPageNumber, lvProp, catalogFlags, cancellationToken);
 
+    internal ValueTask InsertCatalogObjectAsync(
+        int objectId,
+        int parentId,
+        string objectName,
+        short objectType,
+        uint catalogFlags,
+        byte[]? owner,
+        byte[]? lvProp,
+        CancellationToken cancellationToken = default)
+        => _catalogWriter.InsertCatalogObjectAsync(objectId, parentId, objectName, objectType, catalogFlags, owner, lvProp, cancellationToken);
+
     internal ValueTask<int> InsertRelationshipCatalogEntryAsync(string relationshipName, CancellationToken cancellationToken = default)
         => _catalogWriter.InsertRelationshipCatalogEntryAsync(relationshipName, cancellationToken);
 

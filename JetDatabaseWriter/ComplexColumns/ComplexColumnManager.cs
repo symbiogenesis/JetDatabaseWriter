@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns.Models;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
@@ -51,8 +52,133 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
             return;
         }
 
+        await CreateCoreSystemTablesAsync(cancellationToken).ConfigureAwait(false);
         await CreateMSysComplexColumnsAsync(cancellationToken).ConfigureAwait(false);
         await CreateMSysComplexTypeTemplatesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask CreateCoreSystemTablesAsync(CancellationToken cancellationToken)
+    {
+        long acesTdefPage = await CreateSystemTableAsync(
+            Constants.SystemTableNames.Aces,
+            [
+                new ColumnDefinition("ObjectId", typeof(int)),
+                new ColumnDefinition("ACM", typeof(int)),
+                new ColumnDefinition("SID", typeof(byte[]), maxLength: 255),
+                new ColumnDefinition("FInheritable", typeof(bool)),
+            ],
+            cancellationToken).ConfigureAwait(false);
+
+        long queriesTdefPage = await CreateSystemTableAsync(
+            Constants.SystemTableNames.Queries,
+            [
+                new ColumnDefinition("Attribute", typeof(byte)),
+                new ColumnDefinition("Expression", typeof(string)),
+                new ColumnDefinition("Flag", typeof(short)),
+                new ColumnDefinition("LvExtra", typeof(int)),
+                new ColumnDefinition("Name1", typeof(string), maxLength: 255),
+                new ColumnDefinition("Name2", typeof(string), maxLength: 255),
+                new ColumnDefinition("ObjectId", typeof(int)),
+                new ColumnDefinition("Order", typeof(byte[]), maxLength: 255),
+            ],
+            cancellationToken).ConfigureAwait(false);
+
+        long relationshipsTdefPage = await CreateSystemTableAsync(
+            Constants.SystemTableNames.Relationships,
+            [
+                new ColumnDefinition("ccolumn", typeof(int)),
+                new ColumnDefinition("grbit", typeof(int)),
+                new ColumnDefinition("icolumn", typeof(int)),
+                new ColumnDefinition("szColumn", typeof(string), maxLength: 255),
+                new ColumnDefinition("szObject", typeof(string), maxLength: 255),
+                new ColumnDefinition("szReferencedColumn", typeof(string), maxLength: 255),
+                new ColumnDefinition("szReferencedObject", typeof(string), maxLength: 255),
+                new ColumnDefinition("szRelationship", typeof(string), maxLength: 255),
+            ],
+            cancellationToken).ConfigureAwait(false);
+
+        await InsertCoreCatalogRowsAsync(cancellationToken).ConfigureAwait(false);
+        await PatchHeaderSystemTablePagesAsync(acesTdefPage, queriesTdefPage, relationshipsTdefPage, cancellationToken).ConfigureAwait(false);
+    }
+
+    private ValueTask<long> CreateSystemTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, CancellationToken cancellationToken)
+        => _writer.CreateTableInternalAsync(tableName, columns, [], Constants.SystemObjects.SystemTableMask & 0x80000000U, cancellationToken);
+
+    private async ValueTask InsertCoreCatalogRowsAsync(CancellationToken cancellationToken)
+    {
+        const uint systemFlags = 0x80000000U;
+        await _writer.InsertCatalogObjectAsync(
+            2,
+            Constants.SystemObjects.TablesParentId,
+            Constants.SystemTableNames.Objects,
+            Constants.SystemObjects.UserTableType,
+            systemFlags,
+            owner: null,
+            lvProp: null,
+            cancellationToken).ConfigureAwait(false);
+
+        await _writer.InsertCatalogObjectAsync(
+            Constants.SystemObjects.TablesParentId,
+            0,
+            "Tables",
+            objectType: 3,
+            systemFlags,
+            owner: null,
+            lvProp: null,
+            cancellationToken).ConfigureAwait(false);
+
+        await _writer.InsertCatalogObjectAsync(
+            Constants.SystemObjects.DatabasesParentId,
+            0,
+            "Databases",
+            objectType: 3,
+            systemFlags,
+            owner: null,
+            lvProp: null,
+            cancellationToken).ConfigureAwait(false);
+
+        await _writer.InsertCatalogObjectAsync(
+            Constants.SystemObjects.RelationshipsParentId,
+            0,
+            "Relationships",
+            objectType: 3,
+            systemFlags,
+            owner: null,
+            lvProp: null,
+            cancellationToken).ConfigureAwait(false);
+
+        await _writer.InsertCatalogObjectAsync(
+            Constants.SystemObjects.DatabaseObjectId,
+            Constants.SystemObjects.DatabasesParentId,
+            "MSysDb",
+            objectType: 2,
+            systemFlags,
+            owner: null,
+            lvProp: null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask PatchHeaderSystemTablePagesAsync(
+        long acesTdefPage,
+        long queriesTdefPage,
+        long relationshipsTdefPage,
+        CancellationToken cancellationToken)
+    {
+        byte[] header = await _writer.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            EncryptionManager.TransformHeaderMask(header);
+            AccessBase.Wi32(header, 0x20, 2);
+            AccessBase.Wi32(header, 0x24, checked((int)acesTdefPage));
+            AccessBase.Wi32(header, 0x28, checked((int)queriesTdefPage));
+            AccessBase.Wi32(header, 0x2C, checked((int)relationshipsTdefPage));
+            EncryptionManager.TransformHeaderMask(header);
+            await _writer.WritePageAsync(0, header, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            AccessBase.ReturnPage(header);
+        }
     }
 
     /// <summary>
