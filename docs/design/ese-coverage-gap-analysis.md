@@ -76,7 +76,7 @@ Range scans remain separate until there is a clear API design.
 
 ### 5. Access Compact and Repair Validation Automation (DONE)
 
-ESE's test culture validates engine behavior through real persisted state. JetDatabaseWriter already has DAO/Access validation hooks, but the design notes still contained standing warnings that several writer phases needed Microsoft Access Compact and Repair validation. Examples included [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md) and [complex-columns-format-notes.md](complex-columns-format-notes.md).
+ESE's test culture validates engine behavior through real persisted state. JetDatabaseWriter already has DAO/Access validation hooks; earlier design notes had standing warnings that several writer phases needed Microsoft Access Compact and Repair validation. Those blanket warnings now point at the active matrix or a feature-specific residual gap. Examples included [index-and-relationship-format-notes.md](index-and-relationship-format-notes.md) and [complex-columns-format-notes.md](complex-columns-format-notes.md).
 
 Implemented coverage (2026-05-21):
 

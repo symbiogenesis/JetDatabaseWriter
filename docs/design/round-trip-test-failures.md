@@ -45,6 +45,22 @@ Compact & Repair to normalize from `MSysRelationships`. This avoids the DAO
 enumeration/compact failures caused by relationship tombstones or manual Type=8
 row mutation.
 
+**Catalog-index maintenance hardening: REGRESSION-GUARDED.** Incremental index
+maintenance now bails to the bulk path when an indexed TDEF decodes no usable
+real-index key columns, instead of silently reporting success. Jet4/ACE
+`MSysObjects` catalog inserts also fail fast and roll back when catalog splicing
+reports `false`, rather than leaving stale catalog B-trees for DAO Compact &
+Repair to discover later. Jet3 catalog splicing remains unresolved and tracked
+in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
+
+**Linked-table catalog routing: REGRESSION-GUARDED; DAO VALIDATION OPEN.**
+Writer-created linked Access/ODBC/text rows now allocate catalog-only negative
+object ids without low-24 collisions; route Type 4/6 `MSysObjects` rows through
+catalog-index splicing; and stamp fixture-aligned flags, non-null placeholder
+`LvProp`, and linked-object ACE rows. DAO OpenRecordset/CompactDatabase
+validation for writer-created links remains open until the writer emits Access's
+cached linked-table schema payload in `MSysObjects.LvProp`.
+
 **Data remanence semantics: REGRESSION-GUARDED.** Default delete/update behavior
 preserves normal JET logical-delete semantics: user-row slots are marked deleted
 with the `0x8000` row-offset bit and old row/LVAL payload bytes may remain until
@@ -60,7 +76,8 @@ mutation coverage.
 ## Previous status (2026-05-10, superseded)
 
 The notes below are historical. The 2026-05-23 status above supersedes the
-OpenRecordset, FK compact, and encrypted compact blockers.
+OpenRecordset, FK compact, encrypted compact, catalog-maintenance, and
+linked-table catalog-routing blockers it names.
 
 **LvProp inline-marker hypothesis: DISCONFIRMED.** Tested the theory that the
 all-zero 12-byte `LvProp` placeholder was being interpreted by DAO as a

@@ -787,7 +787,7 @@ W4-C-6-v2 caveats:
 
 - **Single-child parent collapse still bails.** When the surviving leaf would be the parent's only entry AFTER the dead leaf is removed (i.e. the parent had exactly 2 entries before) the parent's `Entries.Count < 2` check now refers to the PRE-mutation count, so this code path engages and produces a single-entry root. Genuine "parent had only one child to begin with" inputs are rejected up-front by the `mergeParent.Entries.Count < 2` bail and fall through to W4-D (which itself also leaves the now-empty subtree as orphan pages).
 - **Recursive ancestor empties.** ✅ **Shipped (W4-C-8+, 2026-04-27).** Multi-group delete batches that empty a parent intermediate entirely now cascade a `Remove` op upward to the grandparent rather than bailing to W4-D. See §7.18.
-- **Validation gap (§8):** the byte sequences emitted by the merge path are produced by `IndexBTreeBuilder.TryBuildIntermediatePage` with the new `tail_page` value spliced in via the same path it was already taking for the W4-C-7-v1 root-split case. Microsoft Access compact-and-repair on Windows still pending.
+- **Validation gap (§8):** the byte sequences emitted by the merge path are produced by `IndexBTreeBuilder.TryBuildIntermediatePage` with the new `tail_page` value spliced in via the same path it was already taking for the W4-C-7-v1 root-split case. Representative DAO CompactDatabase coverage now exercises advanced-index maintenance in `AdvancedIndexKeysAndBTreeMaintenance_SurviveCompactAndRepair`; remaining W4-C risk is byte-level parity for individual sub-phases.
 
 ### 7.15 W4-C-7-v2 — what shipped (2026-04-27)
 

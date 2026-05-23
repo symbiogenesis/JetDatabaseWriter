@@ -37,7 +37,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 | ✅ **Async-first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
 | ✅ **Stream-based I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
 | ✅ **Encryption** | Jet3 XOR, Jet4 RC4, ACCDB legacy / AES-128 / Standard (Office 2007) / Agile (Office 2010+) — all read/write |
-| ✅ **Schema features** | Indexes, primary & foreign keys with referential integrity (cascade update/delete), linked tables (Access + ODBC catalog entries) |
+| ✅ **Schema features** | Indexes, primary & foreign keys with referential integrity (cascade update/delete), linked tables (Access-file read-through plus ODBC/text catalog entries) |
 | ✅ **Complex columns** | Read/write attachments and multi-value columns (ACCDB) |
 | ✅ **Calculated columns** | ACCDB expression-column metadata, cached values, and a row-local expression evaluator |
 | ✅ **Concurrency** | `.ldb` / `.laccdb` lockfile + page-level byte-range locks matching the JET/ACE protocol |
@@ -497,16 +497,16 @@ await writer.DropColumnAsync("Contacts", "Phone");
 
 ### Linked tables
 
-Linked tables are catalog-only entries that point at data living in another database. The library writes the `MSysObjects` row; readers (this library, Microsoft Access, etc.) follow the entry to fetch the data on demand.
+Linked tables are catalog-only entries that point at data living in another source. The library can create and enumerate Access, ODBC, and text linked-table entries. Managed reads follow Access-file links through the linked-source path policy; ODBC and text links are metadata-only. Writer-created links are regression-tested for negative catalog ids, flags, placeholder `LvProp`, ACE rows, and catalog-index entries, but Access/DAO OpenRecordset and CompactDatabase validation remains open until the cached linked-table schema payload in `MSysObjects.LvProp` is implemented.
 
 ```csharp
-// Linked Access table (MSysObjects type 4) — references a table in another .mdb / .accdb file.
+// Linked Access table (MSysObjects type 6) — references a table in another .mdb / .accdb file.
 await writer.CreateLinkedTableAsync(
     linkedTableName:    "RemoteOrders",
     sourceDatabasePath: @"C:\Data\Backend.accdb",
     foreignTableName:   "Orders");
 
-// Linked ODBC table (MSysObjects type 6) — references a table over an ODBC connection.
+// Linked ODBC table (MSysObjects type 4) — references a table over an ODBC connection.
 // The "ODBC;" prefix is added automatically when omitted.
 await writer.CreateLinkedOdbcTableAsync(
     linkedTableName:  "LinkedSalesOrders",
@@ -514,7 +514,7 @@ await writer.CreateLinkedOdbcTableAsync(
     foreignTableName: "dbo.Orders");
 ```
 
-> The library only writes the catalog metadata. It does not open the ODBC source itself — reading an ODBC-linked table from this library is not supported. Use `ListLinkedTablesAsync()` to enumerate linked entries.
+> The library does not open ODBC or text-file sources itself. Use `ListLinkedTablesAsync()` to enumerate those linked entries and inspect their `ConnectionString`, `SourceDatabasePath`, and `ForeignName` metadata.
 
 ### Foreign-key relationships
 

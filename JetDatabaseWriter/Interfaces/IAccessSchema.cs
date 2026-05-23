@@ -104,7 +104,7 @@ public interface IAccessSchema : IAccessBase
     ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Asynchronously creates a linked-table entry (MSysObjects type 4) that references a
+    /// Asynchronously creates a linked-table entry (MSysObjects type 6) that references a
     /// table in another Access database. The entry is metadata only — no rows are stored
     /// locally; readers follow <paramref name="sourceDatabasePath"/> /
     /// <paramref name="foreignTableName"/> to retrieve data on demand.
@@ -117,10 +117,11 @@ public interface IAccessSchema : IAccessBase
     ValueTask CreateLinkedTableAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 6) that references
+    /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
     /// a table accessible via an ODBC connection. The entry is metadata only — no rows are
-    /// stored locally. The connection string must use the Access ODBC link format and is
-    /// expected to begin with the literal prefix <c>"ODBC;"</c>.
+    /// stored locally. Managed readers expose the catalog metadata but do not open the ODBC
+    /// source. The connection string must use the Access ODBC link format and is expected
+    /// to begin with the literal prefix <c>"ODBC;"</c>.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="connectionString">ODBC connection string (e.g. <c>"ODBC;DSN=Sales;UID=app;..."</c> or <c>"ODBC;DRIVER={SQL Server};SERVER=...;..."</c>). The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>

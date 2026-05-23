@@ -53,7 +53,8 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 ///
 /// Limitations:
 ///   ✓ Attachment and multi-value complex fields — decoded via hidden flat tables
-///   ✗ Linked tables — only local tables returned
+///   ✓ Access-file linked tables — read-through via trusted source paths
+///   ✗ ODBC/text linked tables — metadata only
 ///   ✗ Overflow rows (span multiple pages) — silently skipped (rare edge case)
 ///
 /// Based on the mdbtools format specification:

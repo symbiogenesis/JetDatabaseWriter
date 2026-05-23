@@ -8,8 +8,8 @@ Companion: [round-trip-test-failures.md](round-trip-test-failures.md)
 |---|---|
 | Original issue | DAO `OpenRecordset` rejected writer-created user tables with `"Unrecognized database format ''."` even though `OpenDatabase` succeeded. |
 | Original issue status | Resolved on 2026-05-10. |
-| Follow-up status | Resolved and refreshed on 2026-05-23. OpenRecordset, MEMO fidelity, AutoNumber continuation, DAO FK enforcement, FK Compact & Repair, encrypted compact, fresh ACCDB DAO compact, complex-column compact, and relationship rename/drop compact now pass on Access-equipped hosts. |
-| Remaining known compatibility gaps from this investigation | None. |
+| Follow-up status | Resolved and refreshed on 2026-05-23. The original OpenRecordset, MEMO, AutoNumber, FK, encrypted, fresh ACCDB, complex-column, and relationship rename/drop coverage passes. Adjacent regression coverage now includes catalog zero-slot bails, Jet4/ACE catalog-splice false-return rollback, and linked-table catalog row routing. |
+| Remaining known compatibility gaps from this investigation | None for the original OpenRecordset/FK/encrypted/complex scope. Writer-created linked-table DAO validation is tracked separately in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md) because links still need Access's cached linked-table schema payload in `MSysObjects.LvProp`. |
 | Current date of this log | 2026-05-23. |
 
 ## 2. Test Matrix
@@ -90,6 +90,9 @@ Do not re-test these for the original `OpenRecordset` failure unless a new fixtu
 | DAO FK enforcement | Resolved by DAO-shaped FK logical cross-references, non-zero real-index usage-map pointers, and `dbFailOnError` DAO harness usage. |
 | Plaintext FK Compact & Repair | Resolved by system-table page reuse, Type=8 relationship catalog objects, relationship ACEs, shared table/index usage-map rows, and in-place single-leaf reuse. |
 | Encrypted DAO CompactDatabase | Resolved by flat Access-native Agile encryption, masked encoding-key handling, one-based flat-page IV derivation, full-header detection, and the five-argument DAO `CompactDatabase` source-password form. |
+| Catalog incremental zero-slot success | Resolved by returning `false` when an indexed TDEF decodes no usable real-index key columns, allowing callers to fall back to bulk rebuild. |
+| Jet4/ACE catalog-splice false return | Resolved by failing and rolling back catalog inserts when `MSysObjects` splicing cannot maintain every required index. |
+| Linked-table catalog row routing | Resolved for catalog-shape regression coverage by allocating catalog-only negative object ids without low-24 collisions, routing Type 4/6 rows through `MSysObjects` index splicing, and stamping fixture-aligned flags, non-null placeholder `LvProp`, and linked-object ACE rows. DAO validation remains open for the cached linked-table schema payload. |
 
 ## 7. Verification Commands
 

@@ -34,4 +34,6 @@ If a design note says Microsoft Access Compact and Repair validation is pending,
 
 Access-equipped hosts currently cover DAO OpenRecordset row counts, DAO primary-key seeks, AutoNumber continuation, MEMO/OLE/LVAL fidelity, FK enforcement, FK CompactDatabase, encrypted CompactDatabase, fresh ACCDB bootstrap compact, complex-column compact, storage-maintenance compact, advanced ACE/Jet4 index compact, and conditional Jet3 index compact when the installed DAO engine can open Access 97 `.mdb` files.
 
+Reader/regression coverage also guards writer-created linked Access/ODBC/text catalog rows: catalog-only negative object-id allocation, low-24 collision avoidance, Type 4/6 `MSysObjects` catalog-index splicing, fixture-aligned flags, non-null placeholder `LvProp`, and linked-object ACE rows. DAO validation for writer-created links remains open until the writer emits Access's cached linked-table schema payload in `MSysObjects.LvProp`.
+
 Use [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md) as the active todo list for remaining validation promotions and residual byte-comparison gaps.

@@ -27,8 +27,8 @@ public sealed class LinkedTableTests : IDisposable
     // 1. API SHAPE — ListTables / ListLinkedTables
     // ═══════════════════════════════════════════════════════════════════
     //
-    // ListTables returns only local tables (objType == 1). Linked Access
-    // tables (type 4) and linked ODBC tables (type 6) are available via
+    // ListTables returns only local tables (objType == 1). Linked Access/text
+    // tables (type 6) and linked ODBC tables (type 4) are available via
     // ListLinkedTables() only.
 
     [Fact]
@@ -130,7 +130,7 @@ public sealed class LinkedTableTests : IDisposable
     }
 
     [Fact]
-    public async Task LinkedTables_CreateLinkedOdbcTableAsync_PersistsType6EntryWithConnectionString()
+    public async Task LinkedTables_CreateLinkedOdbcTableAsync_PersistsType4EntryWithConnectionString()
     {
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcFE");
         const string connect = "ODBC;DRIVER={SQL Server};SERVER=db.example.com;DATABASE=Sales;Trusted_Connection=Yes";
@@ -220,7 +220,7 @@ public sealed class LinkedTableTests : IDisposable
     [Fact]
     public async Task LinkedTables_ReadLinkedTable_FollowsReferenceToSourceDb()
     {
-        // When a linked Access table (type 4) is encountered, the reader
+        // When a linked Access table (type 6) is encountered, the reader
         // opens the referenced database and reads the foreign table.
         string sourcePath = await CreateTempAccdbDatabaseAsync("LinkSrc2");
 
@@ -250,13 +250,8 @@ public sealed class LinkedTableTests : IDisposable
     // ═══════════════════════════════════════════════════════════════════
     //
     // Current state: ListLinkedTables() returns metadata (name, source path,
-    // foreign name), but ReadTable on a linked table does not follow the
-    // reference to the source database.
-    // When implemented, the reader should:
-    //   - Detect that the requested table is linked (MSysObjects type 4/6)
-    //   - Open the source database at SourceDatabasePath
-    //   - Read the ForeignName table from the source database
-    //   - Return the data transparently to the caller
+    // foreign name), and Access-file linked tables are read through by opening
+    // SourceDatabasePath and reading ForeignName from the source database.
 
     [Fact]
     public async Task LinkedTable_ReadLinkedTable_ReturnsSourceData()
@@ -573,7 +568,7 @@ public sealed class LinkedTableTests : IDisposable
     }
 
     /// <summary>
-    /// Asynchronously injects a linked table entry (MSysObjects type 4) into a database's catalog.
+    /// Asynchronously injects a linked table entry (MSysObjects type 6) into a database's catalog.
     /// </summary>
     private static async ValueTask InjectLinkedTableEntryAsync(
         string dbPath,

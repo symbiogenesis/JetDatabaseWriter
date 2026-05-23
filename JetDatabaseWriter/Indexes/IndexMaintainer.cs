@@ -25,7 +25,7 @@ using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
 /// Index B-tree maintenance for <see cref="AccessWriter"/>: bulk rebuild
 /// (<see cref="MaintainIndexesAsync"/>), incremental fast-path
 /// (<see cref="TryMaintainIndexesIncrementalAsync"/>), and the
-/// catalog-index single-leaf splice (<see cref="TrySpliceCatalogIndexEntryAsync"/>).
+/// catalog-index splice (<see cref="TrySpliceCatalogIndexEntryAsync"/>).
 /// Owned by an <see cref="AccessWriter"/> via a private field; the writer
 /// exposes thin instance forwarders.
 /// </summary>
@@ -2935,18 +2935,17 @@ internal sealed class IndexMaintainer(AccessWriter writer)
     }
 
     /// <summary>
-    /// Splices a single new catalog row's index entry into the rightmost
-    /// (tail) leaf of every real-idx slot on a system table's index B-tree
-    /// without re-encoding any pre-existing entries.
+    /// Splices a single new catalog row's index entry into every real-idx
+    /// slot on a system table's index B-tree without re-encoding any
+    /// pre-existing entries.
     /// </summary>
     /// <remarks>
     /// <para>
     /// Used by <c>InsertCatalogEntryAsync</c> for MSysObjects to keep
-    /// Microsoft Access's PK Id index consistent with the new TDEF row, while
-    /// preserving the byte-for-byte content of every other leaf page on the
-    /// index — including Access-authored leaves that hold special rows
-    /// (e.g. the <c>Databases</c> properties row) whose Lv/LvProp blobs the
-    /// writer cannot losslessly re-encode. See
+    /// Microsoft Access's catalog indexes consistent with new table,
+    /// relationship, and linked-table rows, while preserving the byte-for-byte
+    /// content of existing catalog row payloads the writer cannot losslessly
+    /// re-encode. See
     /// <c>docs/design/catalog-index-maintenance-notes.md</c>.
     /// </para>
     /// <para>
@@ -2965,9 +2964,10 @@ internal sealed class IndexMaintainer(AccessWriter writer)
     ///   overflow, or a split after an overshoot path that cannot be safely
     ///   propagated).</item>
     /// </list>
-    /// On <see langword="false"/> the caller should treat the catalog index
-    /// as un-maintained for this row (the row is still present on disk;
-    /// downstream Compact &amp; Repair may report JET <c>-1601</c>).
+    /// On <see langword="false"/>, Jet4/ACE catalog callers must fail the
+    /// surrounding mutation so the transaction rolls back instead of leaving
+    /// unmaintained catalog indexes that DAO Compact &amp; Repair could later
+    /// report as JET <c>-1601</c>. Jet3 catalog splicing remains unsupported.
     /// </para>
     /// </remarks>
     public async ValueTask<bool> TrySpliceCatalogIndexEntryAsync(

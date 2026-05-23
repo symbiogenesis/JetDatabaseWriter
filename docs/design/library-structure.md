@@ -147,7 +147,7 @@ JetDatabaseWriter/
 │
 ├── Relationships/                         (foreign keys, cascade rules, linked tables)
 │   ├── RelationshipManager.cs             (create/drop/rename relationships, cascade logic)
-│   └── LinkedTableManager.cs              (ODBC and Access-linked table operations)
+│   └── LinkedTableManager.cs              (Access/text/ODBC linked-table metadata and Access-file read-through)
 │
 ├── ComplexColumns/                        (multi-value fields, attachments, versioned columns)
 │   ├── ComplexColumnManager.cs            (read/write complex column data)

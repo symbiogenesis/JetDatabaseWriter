@@ -74,8 +74,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     private readonly bool _isAgileEncryptedRewrap;
 
     /// <summary>The single instance owning index B-tree maintenance: bulk rebuild,
-    /// incremental fast paths, and the catalog-index single-leaf splice. AccessWriter
-    /// keeps only thin instance forwarders.</summary>
+    /// incremental fast paths, and the catalog-index splice. AccessWriter keeps only
+    /// thin instance forwarders.</summary>
     private readonly IndexMaintainer _indexMaintainer;
     private readonly HashSet<long> _ownedMapWritableTdefs = [];
 
@@ -1539,9 +1539,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
-    /// a table accessible via an ODBC connection. No row data is stored locally; readers
-    /// follow the entry to <paramref name="connectionString"/> /
-    /// <paramref name="foreignTableName"/> on demand.
+    /// a table accessible via an ODBC connection. No row data is stored locally; managed
+    /// readers expose the catalog metadata but do not open the ODBC source.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>

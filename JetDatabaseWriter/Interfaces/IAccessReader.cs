@@ -39,7 +39,7 @@ public interface IAccessReader : IAccessBase
     ValueTask<List<string>> ListTablesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Returns metadata about linked tables (Access-linked type 4 and ODBC-linked type 6)
+    /// Returns metadata about linked tables (Access/text-linked type 6 and ODBC-linked type 4)
     /// found in the database catalog asynchronously.
     /// </summary>
     /// <returns>A list of <see cref="LinkedTableInfo"/> with metadata for each linked table.</returns>
