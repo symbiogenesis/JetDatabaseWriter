@@ -142,10 +142,10 @@ public interface IAccessSchema : IAccessBase
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="System.NotSupportedException">
-    /// Thrown when the database does not contain a <c>MSysRelationships</c> table —
-    /// e.g. databases freshly created by <c>AccessWriter.CreateDatabaseAsync</c> do not
-    /// include this catalog table. Open an Access-authored fixture or copy one before
-    /// declaring relationships.
+    /// Thrown when the database does not contain a <c>MSysRelationships</c> table.
+    /// Full-catalog ACCDB databases created by <c>AccessWriter.CreateDatabaseAsync</c>
+    /// include this table; Jet/MDB outputs and slim-catalog databases may require
+    /// an Access-authored source before declaring relationships.
     /// </exception>
     /// <exception cref="System.InvalidOperationException">
     /// Thrown when a referenced table does not exist or when a relationship with the
@@ -177,11 +177,11 @@ public interface IAccessSchema : IAccessBase
     /// Thrown when no relationship named <paramref name="relationshipName"/> exists.
     /// </exception>
     /// <remarks>
-    /// Limitations: the orphaned real-index slot whose backing leaf was created
-    /// for the FK is left in place on the TDEF; Microsoft Access reclaims the
-    /// disconnected slot during Compact &amp; Repair. The library does not roll back
-    /// runtime cascade-update / cascade-delete enforcement that ran inside the
-    /// same call before the drop.
+    /// Limitations: trailing FK real-index slots are reclaimed when doing so does
+    /// not require renumbering other TDEF references; non-trailing orphaned slots
+    /// are left for Microsoft Access Compact &amp; Repair. The library does not roll
+    /// back runtime cascade-update / cascade-delete enforcement that ran inside
+    /// the same call before the drop.
     /// </remarks>
     ValueTask DropRelationshipAsync(string relationshipName, CancellationToken cancellationToken = default);
 
@@ -190,10 +190,9 @@ public interface IAccessSchema : IAccessBase
     /// <see cref="CreateRelationshipAsync(RelationshipDefinition, CancellationToken)"/>.
     /// Updates the <c>szRelationship</c> column of every matching row in
     /// <c>MSysRelationships</c> (case-insensitive lookup on
-    /// <paramref name="oldName"/>). The per-TDEF foreign-key logical-index name
-    /// cookies are left at their original value; Microsoft Access reads the
-    /// canonical name from the catalog and regenerates the cookies on the next
-    /// Compact &amp; Repair pass.
+    /// <paramref name="oldName"/>). On Jet4 / ACE databases, the matching
+    /// per-TDEF foreign-key logical-index name cookies are rewritten through the
+    /// logical TDEF-chain writer so reopened readers see the new name immediately.
     /// </summary>
     /// <param name="oldName">Case-insensitive existing relationship name.</param>
     /// <param name="newName">New relationship name. Must not match any existing

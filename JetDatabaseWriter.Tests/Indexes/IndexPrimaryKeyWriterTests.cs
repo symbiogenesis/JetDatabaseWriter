@@ -224,7 +224,7 @@ public sealed class IndexPrimaryKeyWriterTests
 
         // PK leaf was rebuilt in bulk → most-recent leaf reports 3 entries
         // (maintenance applies to single-column PKs the same as normal IXes).
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
+        Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
     }
 
     [Theory]
@@ -255,7 +255,7 @@ public sealed class IndexPrimaryKeyWriterTests
         }
 
         // Multi-column PK leaf is now maintained on bulk insert.
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
+        Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
     }
 
     [Theory]
@@ -298,7 +298,7 @@ public sealed class IndexPrimaryKeyWriterTests
         // After delete the latest (highest-page-number) leaf is the current
         // root and reports a single remaining entry; older leaves are
         // orphaned for Compact & Repair.
-        Assert.Equal(1, FindLatestLeafEntryCount(stream.ToArray(), format));
+        Assert.Equal(1, await FindLatestLeafEntryCountAsync(stream, format, "T"));
     }
 
     [Theory]
@@ -334,7 +334,7 @@ public sealed class IndexPrimaryKeyWriterTests
 
         // RewriteTableAsync forwards the composite PK and rebuilds the leaf
         // for the rewritten table.
-        Assert.Equal(2, FindLatestLeafEntryCount(stream.ToArray(), format));
+        Assert.Equal(2, await FindLatestLeafEntryCountAsync(stream, format, "T"));
     }
 
     [Fact]
@@ -497,14 +497,21 @@ public sealed class IndexPrimaryKeyWriterTests
         return count < 1 ? 0 : count - 1;
     }
 
-    private static int FindMaxLeafEntryCount(byte[] fileBytes, DatabaseFormat format)
+    private static async ValueTask<int> FindMaxLeafEntryCountAsync(MemoryStream stream, DatabaseFormat format, string tableName)
+    {
+        long tdefPage = await GetTDefPageNumberAsync(stream, tableName);
+        return FindMaxLeafEntryCount(stream.ToArray(), format, tdefPage);
+    }
+
+    private static int FindMaxLeafEntryCount(byte[] fileBytes, DatabaseFormat format, long parentTdefPage)
     {
         int pageSize = PageSizeOf(format);
         int max = 0;
         for (int p = 0; p < fileBytes.Length / pageSize; p++)
         {
             int o = p * pageSize;
-            if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
+            int parentTdef = fileBytes[o + 4] | (fileBytes[o + 5] << 8) | (fileBytes[o + 6] << 16) | (fileBytes[o + 7] << 24);
+            if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01 && parentTdef == parentTdefPage)
             {
                 int n = CountLeafEntries(fileBytes, o, format);
                 if (n > max)
@@ -517,14 +524,21 @@ public sealed class IndexPrimaryKeyWriterTests
         return max;
     }
 
-    private static int FindLatestLeafEntryCount(byte[] fileBytes, DatabaseFormat format)
+    private static async ValueTask<int> FindLatestLeafEntryCountAsync(MemoryStream stream, DatabaseFormat format, string tableName)
+    {
+        long tdefPage = await GetTDefPageNumberAsync(stream, tableName);
+        return FindLatestLeafEntryCount(stream.ToArray(), format, tdefPage);
+    }
+
+    private static int FindLatestLeafEntryCount(byte[] fileBytes, DatabaseFormat format, long parentTdefPage)
     {
         int pageSize = PageSizeOf(format);
         int latest = -1;
         for (int p = 0; p < fileBytes.Length / pageSize; p++)
         {
             int o = p * pageSize;
-            if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
+            int parentTdef = fileBytes[o + 4] | (fileBytes[o + 5] << 8) | (fileBytes[o + 6] << 16) | (fileBytes[o + 7] << 24);
+            if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01 && parentTdef == parentTdefPage)
             {
                 latest = p;
             }
@@ -541,6 +555,18 @@ public sealed class IndexPrimaryKeyWriterTests
 
     private static int FirstEntryOffset(DatabaseFormat fmt) =>
         fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3.FirstEntryOffset : Constants.IndexLeafPage.Jet4.FirstEntryOffset;
+
+    private static async ValueTask<long> GetTDefPageNumberAsync(MemoryStream stream, string tableName)
+    {
+        await using var reader = await OpenReaderAsync(stream);
+        var entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+        if (entry is null)
+        {
+            throw new InvalidOperationException($"Table '{tableName}' not found in catalog.");
+        }
+
+        return entry.TDefPage;
+    }
 
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {

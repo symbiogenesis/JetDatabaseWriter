@@ -190,7 +190,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     }
 
     [Fact]
-    public async Task CreateRelationshipAsync_FreshDatabaseWithoutMSysRelationships_Throws()
+    public async Task CreateRelationshipAsync_FreshDatabaseWithScaffoldedMSysRelationships_Succeeds()
     {
         var ms = new MemoryStream();
         await using (var w = await AccessWriter.CreateDatabaseAsync(
@@ -200,7 +200,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
             leaveOpen: true,
             TestContext.Current.CancellationToken))
         {
-            // Empty fresh DB — has no MSysRelationships catalog table.
+            // Fresh ACCDBs scaffold the relationship catalog tables.
         }
 
         ms.Position = 0;
@@ -208,10 +208,16 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         await writer.CreateTableAsync("P", [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync("C", [new("Id", typeof(int)), new("PId", typeof(int))], TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
-            await writer.CreateRelationshipAsync(
-                new RelationshipDefinition("FK_C_P", "P", "Id", "C", "PId"),
-                TestContext.Current.CancellationToken));
+        await writer.CreateRelationshipAsync(
+            new RelationshipDefinition("FK_C_P", "P", "Id", "C", "PId"),
+            TestContext.Current.CancellationToken);
+
+        ms.Position = 0;
+        await using var reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
+        DataTable rels = (await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Contains(
+            rels.AsEnumerable(),
+            row => string.Equals(SafeString(row, "szRelationship"), "FK_C_P", StringComparison.Ordinal));
     }
 
     [Fact]

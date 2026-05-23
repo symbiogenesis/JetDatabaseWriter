@@ -268,7 +268,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
             msys.SetValueByName(deletedIndexRow, "Id", checked((int)row.TDefPage));
             msys.SetValueByName(deletedIndexRow, "ParentId", Constants.SystemObjects.TablesParentId);
             msys.SetValueByName(deletedIndexRow, "Name", row.Name);
-            await writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
+            await writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
             _ = await writer.TryMaintainIndexesIncrementalAsync(
                 2,
                 msys,

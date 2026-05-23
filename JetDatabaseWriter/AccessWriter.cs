@@ -113,7 +113,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     internal RelationshipManager Relationships { get; }
 
     /// <summary>Gets the Attachment / MultiValue (complex column) subsystem:
-    /// system-table scaffolding, per-column ComplexID allocation, per-row
+    /// ACCDB system-table scaffolding, per-column ComplexID allocation, per-row
     /// complex-reference allocation, hidden flat-child-table emission, the row-level
     /// Add* APIs, and cascade / drop / rename plumbing for the artifacts.
     /// <see cref="AccessWriter"/> keeps only thin public-API forwarders.
@@ -2502,6 +2502,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     internal ValueTask InsertAceRowsForRelationshipAsync(int objectId, CancellationToken cancellationToken = default)
         => _catalogWriter.InsertAceRowsForRelationshipAsync(objectId, cancellationToken);
 
+    internal ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken = default)
+        => _catalogWriter.InsertAceRowsForTableAsync(tdefPageNumber, cancellationToken);
+
     private async ValueTask RewriteTableAsync(
         string tableName,
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
@@ -2615,9 +2618,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // BEFORE the cascade-skipping drop runs. Surviving complex columns (matched by
         // ComplexId between the existing and projected schemas) are preserved as-is —
         // their flat child tables and MSysComplexColumns rows stay attached to the
-        // rebuilt parent. Dropped complex columns get their flat child + catalog row
-        // removed surgically; renamed complex columns get their MSysComplexColumns row
-        // rewritten with the new ColumnName.
+        // rebuilt parent. If no complex column is dropped or renamed, the temp table
+        // is transplanted onto the original TDEF page so MSysComplexColumns keeps the
+        // same parent object id; otherwise surviving rows are patched to the temp
+        // TDEF page after the copy/swap. Dropped complex columns get their flat child
+        // + catalog row removed surgically; renamed complex columns get their
+        // MSysComplexColumns row rewritten with the new ColumnName.
         Dictionary<int, ColumnDefinition> newComplexById = [];
         foreach (ColumnDefinition c in newDefs)
         {
@@ -2647,6 +2653,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         byte[]? renamedLvProp = JetExpressionConverter.BuildLvPropBlob(newDefs, _format);
+        if (newComplexById.Count > 0 && droppedComplex.Count == 0 && renamedComplex.Count == 0)
+        {
+            await TransplantTempTableToOriginalAsync(
+                tableName,
+                entry.TDefPage,
+                tempName,
+                tempEntry.TDefPage,
+                renamedLvProp,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         await DropTableCoreAsync(tableName, dropComplexChildren: false, cancellationToken).ConfigureAwait(false);
         await _catalogWriter.RenameTableInCatalogAsync(tempName, tableName, renamedLvProp, cancellationToken).ConfigureAwait(false);
 
@@ -2666,6 +2684,156 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         foreach ((string oldColName, string newColName, int complexId) in renamedComplex)
         {
             await ComplexColumns.RenameComplexColumnArtifactsAsync(oldColName, newColName, complexId, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask TransplantTempTableToOriginalAsync(
+        string tableName,
+        long originalTdefPage,
+        string tempName,
+        long tempTdefPage,
+        byte[]? lvProp,
+        CancellationToken cancellationToken)
+    {
+        byte[] tempTdef = await ReadPageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (tempTdef[0] != 0x02 || Ri32(tempTdef, 4) != 0)
+            {
+                throw new NotSupportedException("Complex table schema rewrite currently requires a single-page rebuilt TDEF.");
+            }
+
+            await ReclaimTableStoragePagesAsync(originalTdefPage, includeTDefRoot: false, cancellationToken).ConfigureAwait(false);
+            await PatchTablePageOwnersAsync(tempTdefPage, originalTdefPage, cancellationToken).ConfigureAwait(false);
+            await WritePageAsync(originalTdefPage, tempTdef, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReturnPage(tempTdef);
+        }
+
+        await ReplaceCatalogEntryAsync(tableName, originalTdefPage, lvProp, cancellationToken).ConfigureAwait(false);
+        await DeleteCatalogRowsForTDefPageAsync(tempName, tempTdefPage, cancellationToken).ConfigureAwait(false);
+        await DeleteAceRowsForObjectIdsAsync([tempTdefPage], cancellationToken).ConfigureAwait(false);
+        await DeallocatePageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
+        InvalidateCatalogCache();
+    }
+
+    private async ValueTask PatchTablePageOwnersAsync(long fromTdefPage, long toTdefPage, CancellationToken cancellationToken)
+    {
+        long totalPages = _stream.Length / _pgSz;
+        for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                bool patchDataPage = page[0] == 0x01 && Ri32(page, _dataPage.TDefOff) == fromTdefPage;
+                bool patchIndexPage = page[0] is 0x03 or 0x04 && Ri32(page, 4) == fromTdefPage;
+                if (!patchDataPage && !patchIndexPage)
+                {
+                    continue;
+                }
+
+                int ownerOffset = patchDataPage ? _dataPage.TDefOff : 4;
+                Wi32(page, ownerOffset, checked((int)toTdefPage));
+                await WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                ReturnPage(page);
+            }
+        }
+    }
+
+    private async ValueTask ReplaceCatalogEntryAsync(string tableName, long tdefPage, byte[]? lvProp, CancellationToken cancellationToken)
+    {
+        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        uint catalogFlags = 0;
+        bool replaced = false;
+        var deletedRows = new List<(RowLocation Loc, object[] Row)>();
+        foreach (CatalogRow row in rows)
+        {
+            if (row.ObjectType != Constants.SystemObjects.UserTableType
+                || row.TDefPage != tdefPage
+                || !string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            catalogFlags = unchecked((uint)row.Flags);
+            object[] deletedIndexRow = msys.CreateNullValueRow();
+            msys.SetValueByName(deletedIndexRow, "Id", checked((int)row.TDefPage));
+            msys.SetValueByName(deletedIndexRow, "ParentId", Constants.SystemObjects.TablesParentId);
+            msys.SetValueByName(deletedIndexRow, "Name", row.Name);
+            deletedRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), deletedIndexRow));
+            await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
+            replaced = true;
+            break;
+        }
+
+        if (!replaced)
+        {
+            throw new InvalidOperationException($"Catalog row for '{tableName}' was not found during schema rewrite.");
+        }
+
+        await AdjustTDefRowCountAsync(2, -1, cancellationToken).ConfigureAwait(false);
+        if (deletedRows.Count > 0)
+        {
+            bool incremental = await TryMaintainIndexesIncrementalAsync(
+                2,
+                msys,
+                null,
+                deletedRows,
+                cancellationToken).ConfigureAwait(false);
+            if (!incremental)
+            {
+                await MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        await _catalogWriter.InsertCatalogEntryAsync(tableName, tdefPage, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask DeleteCatalogRowsForTDefPageAsync(string tableName, long tdefPage, CancellationToken cancellationToken)
+    {
+        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        var deletedRows = new List<(RowLocation Loc, object[] Row)>();
+        foreach (CatalogRow row in rows)
+        {
+            if (row.ObjectType != Constants.SystemObjects.UserTableType
+                || row.TDefPage != tdefPage
+                || !string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            object[] deletedIndexRow = msys.CreateNullValueRow();
+            msys.SetValueByName(deletedIndexRow, "Id", checked((int)row.TDefPage));
+            msys.SetValueByName(deletedIndexRow, "ParentId", Constants.SystemObjects.TablesParentId);
+            msys.SetValueByName(deletedIndexRow, "Name", row.Name);
+            deletedRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), deletedIndexRow));
+            await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (deletedRows.Count == 0)
+        {
+            return;
+        }
+
+        await AdjustTDefRowCountAsync(2, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
+        bool incremental = await TryMaintainIndexesIncrementalAsync(
+            2,
+            msys,
+            null,
+            deletedRows,
+            cancellationToken).ConfigureAwait(false);
+        if (!incremental)
+        {
+            await MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -3035,7 +3203,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             msys.SetValueByName(indexRow, "Name", row.Name);
             deletedCatalogRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), indexRow));
 
-            await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
+            await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
             deleted++;
         }
 
@@ -3043,6 +3211,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             throw new InvalidOperationException($"Table '{tableName}' does not exist.");
         }
+
+        await AdjustTDefRowCountAsync(2, -deleted, cancellationToken).ConfigureAwait(false);
 
         if (dropComplexChildren)
         {
@@ -3076,7 +3246,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         InvalidateCatalogCache();
     }
 
-    private async ValueTask ReclaimDroppedTablePagesAsync(long tdefPage, CancellationToken cancellationToken)
+    private ValueTask ReclaimDroppedTablePagesAsync(long tdefPage, CancellationToken cancellationToken)
+        => ReclaimTableStoragePagesAsync(tdefPage, includeTDefRoot: true, cancellationToken);
+
+    private async ValueTask ReclaimTableStoragePagesAsync(long tdefPage, bool includeTDefRoot, CancellationToken cancellationToken)
     {
         var pagesToFree = new SortedSet<long>();
         var longValueRoots = new List<LongValueRoot>();
@@ -3123,7 +3296,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     break;
                 }
 
-                _ = pagesToFree.Add(currentTdefPage);
+                if (includeTDefRoot || currentTdefPage != tdefPage)
+                {
+                    _ = pagesToFree.Add(currentTdefPage);
+                }
+
                 firstTdefPage ??= (byte[])page.Clone();
                 currentTdefPage = Ri32(page, 4);
             }
@@ -3266,19 +3443,23 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         foreach (RowLocation row in deletedRows)
         {
-            await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
+            await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
 
         if (deletedRows.Count > 0)
         {
+            await AdjustTDefRowCountAsync(acesTdefPage, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
             await MaintainIndexesAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         }
     }
 
     /// <summary>
     /// Builds a minimal, empty JET database as a byte array.
-    /// The database contains three pages (page size varies by format):
-    /// page 0 (header), page 1 (unused placeholder), and page 2 (MSysObjects TDEF).
+    /// The bootstrap image contains three pages (page size varies by format):
+    /// page 0 (header), page 1 (global usage map), and page 2 (MSysObjects TDEF).
+    /// <see cref="CreateDatabaseAsync(string, DatabaseFormat, AccessWriterOptions?, CancellationToken)"/>
+    /// and its stream overload add full-catalog ACCDB system tables after opening
+    /// this minimal image.
     /// </summary>
     /// <param name="format">Target on-disk format.</param>
     /// <param name="fullCatalogSchema">
@@ -3515,6 +3696,64 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             ReturnPage(page);
         }
+    }
+
+    /// <summary>
+    /// Rewrites all data pages for a small system table with the supplied live rows.
+    /// Used when tombstones themselves are not DAO-compatible, such as
+    /// <c>MSysRelationships</c> rename/drop mutations.
+    /// </summary>
+    internal async ValueTask RewriteSystemTableRowsAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string tableName,
+        IReadOnlyList<object[]> rows,
+        CancellationToken cancellationToken)
+    {
+        var dataPages = new List<long>();
+        long totalPages = _stream.Length / _pgSz;
+        for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] == 0x01 && Ri32(page, _dataPage.TDefOff) == tdefPage)
+                {
+                    dataPages.Add(pageNumber);
+                }
+            }
+            finally
+            {
+                ReturnPage(page);
+            }
+        }
+
+        if (dataPages.Count == 0 && rows.Count > 0)
+        {
+            throw new InvalidDataException($"System table '{tableName}' has no data pages to rewrite.");
+        }
+
+        foreach (long pageNumber in dataPages)
+        {
+            await WritePageAsync(pageNumber, _dataPageInserter.CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (dataPages.Count > 0)
+        {
+            SetCachedInsertPageNumber(tdefPage, dataPages[0]);
+        }
+
+        foreach (object[] row in rows)
+        {
+            object[] rowValues = (object[])row.Clone();
+            await InsertRowDataLocAsync(tdefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken).ConfigureAwait(false);
+        }
+
+        await AdjustTDefRowCountAsync(tdefPage, rows.Count - tableDef.RowCount, cancellationToken).ConfigureAwait(false);
+        tableDef.RowCount = rows.Count;
+        await MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
     }
 
     internal bool TryGetCachedInsertPageNumber(long tdefPage, out long pageNumber)
@@ -3813,21 +4052,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => _indexMaintainer.TrySpliceCatalogIndexEntryAsync(tdefPage, tableDef, newRowLoc, newRowValues, cancellationToken);
 
     internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
-        => MarkRowDeletedAsync(pageNumber, rowIndex, tableDef: null, cancellationToken);
+        => MarkRowDeletedAsync(pageNumber, rowIndex, tableDef: null, clearRowData: false, cancellationToken);
+
+    internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, bool clearRowData, CancellationToken cancellationToken)
+        => MarkRowDeletedAsync(pageNumber, rowIndex, tableDef: null, clearRowData, cancellationToken);
 
     internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef? tableDef, CancellationToken cancellationToken)
+        => await MarkRowDeletedAsync(pageNumber, rowIndex, tableDef, clearRowData: false, cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef? tableDef, bool clearRowData, CancellationToken cancellationToken)
     {
         byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         List<LongValueRoot>? longValueRoots = null;
         int offsetPos = _dataPage.RowsStart + (rowIndex * 2);
         int raw = Ru16(page, offsetPos);
-        if ((raw & 0x8000) != 0)
+        if ((raw & 0xC000) != 0)
         {
             ReturnPage(page);
             return;
         }
 
-        if (_options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
+        if (clearRowData || _options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
         {
             foreach (RowBound rowBound in EnumerateLiveRowBounds(page))
             {
@@ -3836,7 +4081,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     continue;
                 }
 
-                if (tableDef is not null)
+                if (tableDef is not null && _options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
                 {
                     longValueRoots = CollectLongValueRoots(page, rowBound, tableDef);
                 }

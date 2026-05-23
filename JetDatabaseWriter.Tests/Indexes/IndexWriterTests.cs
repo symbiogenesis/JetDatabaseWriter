@@ -281,6 +281,12 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
+            long tdefPage;
+            await using (var reader = await OpenReaderAsync(stream))
+            {
+                tdefPage = await GetTDefPageNumberAsync(reader, "Idx_Leaf_Single");
+            }
+
         byte[] bytes = stream.ToArray();
         int pageSize = PageSizeOf(format);
         int firstEntryOffset = FirstEntryOffset(format);
@@ -292,11 +298,12 @@ public sealed class IndexWriterTests
         for (int p = 0; p < totalPages; p++)
         {
             int o = p * pageSize;
-            if (bytes[o] == 0x04 && bytes[o + 1] == 0x01)
+            int parentTdef = bytes[o + 4] | (bytes[o + 5] << 8) | (bytes[o + 6] << 16) | (bytes[o + 7] << 24);
+            if (bytes[o] == 0x04 && bytes[o + 1] == 0x01 && parentTdef == tdefPage)
             {
                 leafCount++;
                 observedFreeSpace = bytes[o + 2] | (bytes[o + 3] << 8);
-                observedParent = bytes[o + 4] | (bytes[o + 5] << 8) | (bytes[o + 6] << 16) | (bytes[o + 7] << 24);
+                observedParent = parentTdef;
             }
         }
 
@@ -329,13 +336,20 @@ public sealed class IndexWriterTests
                 TestContext.Current.CancellationToken);
         }
 
+        long tdefPage;
+        await using (var reader = await OpenReaderAsync(stream))
+        {
+            tdefPage = await GetTDefPageNumberAsync(reader, "Idx_Leaf_Multi");
+        }
+
         byte[] bytes = stream.ToArray();
         int pageSize = PageSizeOf(format);
         int leafCount = 0;
         for (int p = 0; p < bytes.Length / pageSize; p++)
         {
             int o = p * pageSize;
-            if (bytes[o] == 0x04 && bytes[o + 1] == 0x01)
+            int parentTdef = bytes[o + 4] | (bytes[o + 5] << 8) | (bytes[o + 6] << 16) | (bytes[o + 7] << 24);
+            if (bytes[o] == 0x04 && bytes[o + 1] == 0x01 && parentTdef == tdefPage)
             {
                 leafCount++;
             }

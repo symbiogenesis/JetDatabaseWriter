@@ -520,6 +520,8 @@ await writer.CreateLinkedOdbcTableAsync(
 
 Declare a relationship between two existing tables. The library appends one row per FK column to the `MSysRelationships` catalog (which Microsoft Access reads to populate the Relationships designer) and, on Jet4 / ACE databases, emits the matching per-TDEF foreign-key logical-index entries on both sides so the relationship is visible to readers immediately. Jet3 `.mdb` files get only the catalog rows.
 
+`DropRelationshipAsync` and `RenameRelationshipAsync` rewrite `MSysRelationships` as live rows, update or remove the Jet4 / ACE TDEF entries, and leave Type=8 relationship rows in `MSysObjects` for Microsoft Access Compact & Repair to normalize from the canonical relationship rows.
+
 **Runtime referential integrity is enforced on `InsertRowAsync` / `UpdateRowsAsync` / `DeleteRowsAsync`** for any relationship created with `EnforceReferentialIntegrity = true` (the default); `CascadeUpdates` and `CascadeDeletes` honour the cascade flags. See the Limitations section for caveats.
 
 ```csharp
@@ -545,7 +547,7 @@ await writer.CreateRelationshipAsync(new RelationshipDefinition(
     foreignColumns: new[] { "OrderID", "Region" }));
 ```
 
-> Requires a database that already contains the `MSysRelationships` catalog table — every Access-authored `.mdb` / `.accdb` does, but databases freshly created by `AccessWriter.CreateDatabaseAsync` do not. Open or copy an Access-authored fixture first, or `CreateRelationshipAsync` throws `NotSupportedException`.
+> Requires a database that already contains the `MSysRelationships` catalog table. Full-catalog ACCDB databases created by `AccessWriter.CreateDatabaseAsync` include it; Access-authored `.mdb` / `.accdb` files do as well. Jet/MDB writer-created outputs and slim-catalog ACCDB outputs may not, and `CreateRelationshipAsync` throws `NotSupportedException` when the table is absent.
 
 ---
 
@@ -716,7 +718,7 @@ The items below are either **not yet implemented** or are important behavioral c
 - **No WAL or crash recovery.** Transactions provide in-memory rollback before commit replay begins. They do not provide ESE-style redo/undo recovery after process loss, storage failure, or cancellation once `CommitAsync` has started writing pages to the target stream.
 
 ### Data remanence
-- **Delete/update scrub old payload bytes only when secure erase is enabled.** The default `SecureEraseMode.None` preserves normal JET behavior: `DeleteRowsAsync` marks matching row slots deleted, and `UpdateRowsAsync` marks old rows deleted before inserting replacements. Old row bodies and old MEMO/OLE LVAL pages can remain on disk until reused. Set `AccessWriterOptions.SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages` to overwrite deleted row bodies and old LVAL pages before they are returned to the free list. Storage hardware, filesystem journaling, snapshots, backups, and prior copies can still retain data outside the database file.
+- **Delete/update scrub old payload bytes only when secure erase is enabled.** The default `SecureEraseMode.None` preserves normal JET behavior: `DeleteRowsAsync` marks matching user-row slots deleted, and `UpdateRowsAsync` marks old rows deleted before inserting replacements. Old row bodies and old MEMO/OLE LVAL pages can remain on disk until reused. Set `AccessWriterOptions.SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages` to overwrite deleted row bodies and old LVAL pages before they are returned to the free list. Storage hardware, filesystem journaling, snapshots, backups, and prior copies can still retain data outside the database file.
 - **`ShrinkDatabaseAsync` is a tail shrinker, not full Compact & Repair.** It truncates free pages from the physical end of the file but does not move live pages, renumber page references, rebuild all tables into a new file, or scrub every unused byte gap inside otherwise-live pages.
 
 ### Forms, reports, macros, queries, VBA

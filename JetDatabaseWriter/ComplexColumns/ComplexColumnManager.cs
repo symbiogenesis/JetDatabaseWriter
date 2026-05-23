@@ -25,7 +25,8 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// <summary>
 /// Owns the Attachment / MultiValue (complex column) subsystem for
 /// <see cref="AccessWriter"/>: ACCDB system-table scaffolding
-/// (<c>MSysComplexColumns</c>, <c>MSysComplexType_*</c>), per-table
+/// (<c>MSysACEs</c>, <c>MSysQueries</c>, <c>MSysRelationships</c>,
+/// <c>MSysComplexColumns</c>, <c>MSysComplexType_*</c>), per-table
 /// allocation of per-column <c>ComplexID</c> values and per-row complex references, hidden
 /// flat-child-table emission, the row-level Add* APIs that backfill
 /// flat tables, and cascade / drop / rename plumbing for the artifacts
@@ -37,13 +38,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     private readonly AccessWriter _writer = writer;
 
     /// <summary>
-    /// scaffold mandatory ACCDB system tables (currently
-    /// <c>MSysComplexColumns</c> and the per-kind <c>MSysComplexType_*</c>
-    /// templates) into a freshly-created database. ACCDB only — complex
-    /// columns are an Access 2007+ feature absent from Jet3/Jet4
-    /// <c>.mdb</c>. Skipped on the slim 9-column legacy catalog schema
-    /// because that mode targets backward-compatible byte hashing and
-    /// must not introduce additional pages.
+    /// scaffold mandatory full-catalog ACCDB system tables: the core
+    /// <c>MSysACEs</c>, <c>MSysQueries</c>, and <c>MSysRelationships</c>
+    /// tables, plus <c>MSysComplexColumns</c> and the per-kind
+    /// <c>MSysComplexType_*</c> templates. ACCDB only — Jet3/Jet4
+    /// <c>.mdb</c> scaffolds skip these tables. Skipped on the slim
+    /// 9-column legacy catalog schema because that mode targets
+    /// backward-compatible byte hashing and must not introduce additional pages.
     /// </summary>
     public async ValueTask ScaffoldSystemTablesAsync(DatabaseFormat format, bool fullCatalogSchema, long coreSystemTableStartPage, CancellationToken cancellationToken)
     {
@@ -525,6 +526,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
                 indexes: flatIndexes,
                 catalogFlags: 0x800A0000U,
                 cancellationToken).ConfigureAwait(false);
+            await _writer.InsertAceRowsForTableAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
 
             // resolve the matching MSysComplexType_* template id so the
             // MSysComplexColumns row points at the canonical type-template table
@@ -1467,7 +1469,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
         foreach ((long pg, int ri) in deletedRows)
         {
-            await _writer.MarkRowDeletedAsync(pg, ri, cancellationToken).ConfigureAwait(false);
+            await _writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
 
         if (deletedRows.Count > 0)
@@ -1499,7 +1501,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
             if (row.TDefPage == flatTdefPage)
             {
-                await _writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
+                await _writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -1581,7 +1583,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
         foreach ((long pg, int ri, object[] _) in matched)
         {
-            await _writer.MarkRowDeletedAsync(pg, ri, cancellationToken).ConfigureAwait(false);
+            await _writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((long _, int _, object[] values) in matched)
@@ -1657,7 +1659,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
         foreach ((long pg, int ri, object[] _) in matched)
         {
-            await _writer.MarkRowDeletedAsync(pg, ri, cancellationToken).ConfigureAwait(false);
+            await _writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((long _, int _, object[] values) in matched)
@@ -1782,7 +1784,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
         foreach ((long pg, int ri) in cxRowsToDelete)
         {
-            await _writer.MarkRowDeletedAsync(pg, ri, cancellationToken).ConfigureAwait(false);
+            await _writer.MarkRowDeletedAsync(pg, ri, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
 
         if (cxRowsToDelete.Count > 0)
@@ -1813,7 +1815,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
             if (flatTdefPages.Contains(row.TDefPage))
             {
-                await _writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
+                await _writer.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
             }
         }
     }

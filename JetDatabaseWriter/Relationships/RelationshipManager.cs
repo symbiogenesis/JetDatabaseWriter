@@ -100,9 +100,9 @@ internal sealed class RelationshipManager(AccessWriter writer)
         if (msysRelTdefPage <= 0)
         {
             throw new NotSupportedException(
-                "The database does not contain a 'MSysRelationships' table. Databases freshly created by " +
-                "AccessWriter.CreateDatabaseAsync do not include this catalog table; open or copy an " +
-                "Access-authored database before calling CreateRelationshipAsync.");
+                "The database does not contain a 'MSysRelationships' table. Full-catalog ACCDB databases " +
+                "created by AccessWriter.CreateDatabaseAsync include it, but Jet/MDB outputs and slim " +
+                "catalog databases may require an Access-authored source before calling CreateRelationshipAsync.");
         }
 
         TableDef msysRelDef = await writer.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
@@ -719,9 +719,10 @@ internal sealed class RelationshipManager(AccessWriter writer)
     // ════════════════════════════════════════════════════════════════
     //
     // Reverses CreateRelationshipAsync:
-    //   • DropRelationshipAsync removes every MSysRelationships row whose
-    //     szRelationship matches and (Jet4/ACE) removes the matching FK
-    //     logical-idx entry from each side's TDEF, then conservatively
+    //   • DropRelationshipAsync rewrites MSysRelationships as the remaining
+    //     live rows, excluding rows whose szRelationship matches, and
+    //     (Jet4/ACE) removes the matching FK logical-idx entry from each
+    //     side's TDEF, then conservatively
     //     reclaims any trailing real-idx physical-descriptor slots that the
     //     removal left unreferenced (common case: FK got the last slot on
     //     its TDEF and the slot is reclaimed cleanly; non-trailing orphans
@@ -730,21 +731,18 @@ internal sealed class RelationshipManager(AccessWriter writer)
     //     every other table that points at the slot).
     //     ListIndexesAsync iterates by num_idx so the FK stops surfacing
     //     immediately regardless of whether the real-idx slot was reclaimed.
-    //   • RenameRelationshipAsync rewrites the szRelationship column on
-    //     every matching MSysRelationships row (read all 8 columns, mark
-    //     deleted, re-insert with the new name and updateTDefRowCount=false)
-    //     and (Jet4/ACE) updates the matching FK logical-idx name cookie on
-    //     each side's TDEF in place. Variable-length name records:
-    //     shrink/grow shifts the trailing variable-column block; a grow
-    //     that would push the TDEF past one page leaves the cookie
-    //     unchanged (Access regenerates it from the catalog row on the
-    //     next Compact & Repair pass).
+    //   • RenameRelationshipAsync rewrites MSysRelationships as live rows
+    //     with szRelationship replaced on every match and (Jet4/ACE) updates
+    //     the matching FK logical-idx name cookie on each side's TDEF through
+    //     the logical-chain writer. Relationship Type=8 MSysObjects rows are
+    //     deliberately not renamed or deleted here; DAO Compact & Repair
+    //     normalizes them from MSysRelationships, while manual mutation of
+    //     those rows has proven less compact-safe.
 
     /// <summary>
     /// Snapshot of one MSysRelationships row. <c>RowValues</c> mirrors the
-    /// MSysRelationships column order so it can be passed directly to
-    /// <see cref="AccessWriter.InsertRowDataAsync"/> on the re-insert path used by
-    /// <see cref="RenameRelationshipAsync"/>.
+    /// MSysRelationships column order so drop/rename can build the live-only row
+    /// set passed to <see cref="AccessWriter.RewriteSystemTableRowsAsync"/>.
     /// </summary>
     private sealed record RelationshipRowSnapshot(
         RowLocation Location,
@@ -776,11 +774,20 @@ internal sealed class RelationshipManager(AccessWriter writer)
         }
 
         TableDef msysRelDef = await writer.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
-        List<RelationshipRowSnapshot> matches = await CollectRelationshipRowsAsync(
+        List<RelationshipRowSnapshot> allRows = await CollectRelationshipRowsAsync(
             msysRelTdefPage,
             msysRelDef,
-            r => string.Equals(r, relationshipName, StringComparison.OrdinalIgnoreCase),
+            _ => true,
             cancellationToken).ConfigureAwait(false);
+
+        var matches = new List<RelationshipRowSnapshot>();
+        foreach (RelationshipRowSnapshot row in allRows)
+        {
+            if (string.Equals(row.SzRelationship, relationshipName, StringComparison.OrdinalIgnoreCase))
+            {
+                matches.Add(row);
+            }
+        }
 
         if (matches.Count == 0)
         {
@@ -822,14 +829,16 @@ internal sealed class RelationshipManager(AccessWriter writer)
                 cancellationToken).ConfigureAwait(false);
         }
 
-        // Mark catalog rows deleted and adjust the row count.
-        foreach (RelationshipRowSnapshot row in matches)
+        var remainingRows = new List<object[]>(allRows.Count - matches.Count);
+        foreach (RelationshipRowSnapshot row in allRows)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            await writer.MarkRowDeletedAsync(row.Location.PageNumber, row.Location.RowIndex, cancellationToken).ConfigureAwait(false);
+            if (!string.Equals(row.SzRelationship, relationshipName, StringComparison.OrdinalIgnoreCase))
+            {
+                remainingRows.Add(row.RowValues);
+            }
         }
 
-        await writer.AdjustTDefRowCountAsync(msysRelTdefPage, -matches.Count, cancellationToken).ConfigureAwait(false);
+        await writer.RewriteSystemTableRowsAsync(msysRelTdefPage, msysRelDef, Constants.SystemTableNames.Relationships, remainingRows, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -864,11 +873,20 @@ internal sealed class RelationshipManager(AccessWriter writer)
             throw new InvalidOperationException($"A relationship named '{newName}' already exists.");
         }
 
-        List<RelationshipRowSnapshot> matches = await CollectRelationshipRowsAsync(
+        List<RelationshipRowSnapshot> allRows = await CollectRelationshipRowsAsync(
             msysRelTdefPage,
             msysRelDef,
-            r => string.Equals(r, oldName, StringComparison.OrdinalIgnoreCase),
+            _ => true,
             cancellationToken).ConfigureAwait(false);
+
+        var matches = new List<RelationshipRowSnapshot>();
+        foreach (RelationshipRowSnapshot row in allRows)
+        {
+            if (string.Equals(row.SzRelationship, oldName, StringComparison.OrdinalIgnoreCase))
+            {
+                matches.Add(row);
+            }
+        }
 
         if (matches.Count == 0)
         {
@@ -881,16 +899,21 @@ internal sealed class RelationshipManager(AccessWriter writer)
             throw new InvalidOperationException("MSysRelationships does not expose a 'szRelationship' column.");
         }
 
-        foreach (RelationshipRowSnapshot row in matches)
+        var replacementRows = new List<object[]>(allRows.Count);
+        foreach (RelationshipRowSnapshot row in allRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             object[] rowValues = (object[])row.RowValues.Clone();
-            rowValues[szRelIdx] = newName;
+            if (string.Equals(row.SzRelationship, oldName, StringComparison.OrdinalIgnoreCase))
+            {
+                rowValues[szRelIdx] = newName;
+            }
 
-            await writer.MarkRowDeletedAsync(row.Location.PageNumber, row.Location.RowIndex, cancellationToken).ConfigureAwait(false);
-            await writer.InsertSystemRowAndMaintainAsync(msysRelTdefPage, msysRelDef, Constants.SystemTableNames.Relationships, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            replacementRows.Add(rowValues);
         }
+
+        await writer.RewriteSystemTableRowsAsync(msysRelTdefPage, msysRelDef, Constants.SystemTableNames.Relationships, replacementRows, cancellationToken).ConfigureAwait(false);
 
         // Update the TDEF logical-idx name cookies on both sides so the
         // on-disk index name matches the catalog row. Jet3 never received
@@ -1202,10 +1225,10 @@ internal sealed class RelationshipManager(AccessWriter writer)
     /// <paramref name="columnNumbers"/> AND whose <c>rel_tbl_page</c> equals
     /// <paramref name="otherTdefPage"/>. Returns <see langword="true"/> when
     /// an entry was found and renamed; <see langword="false"/> otherwise
-    /// (already renamed, never created — Jet3, multi-page TDEF, or out-of-band
-    /// catalog). Variable-length name records: shrink/grow is handled by
-    /// shifting the trailing variable-column block; growth that would push the
-    /// TDEF past one page returns <see langword="false"/>.
+    /// (already renamed, never created — Jet3 or out-of-band catalog).
+    /// Variable-length name records: shrink/grow is handled by shifting the
+    /// trailing variable-column block; growth can spill into a continuation page
+    /// through the logical TDEF-chain writer.
     /// </summary>
     private async ValueTask<bool> TryRenameFkLogicalIdxNameAsync(
         long tdefPage,

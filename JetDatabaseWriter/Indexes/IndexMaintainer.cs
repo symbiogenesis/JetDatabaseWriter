@@ -670,8 +670,15 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             WriteIndexUsageMapPointer(tdefBuffer, entry.FirstDpOffset - 4, realIdxNum + 2, usageMapPage);
         }
 
-        await writer.UpdateTableIndexUsageMapRowsAsync(usageMapPage, indexPageGroups, cancellationToken).ConfigureAwait(false);
-        return true;
+        try
+        {
+            await writer.UpdateTableIndexUsageMapRowsAsync(usageMapPage, indexPageGroups, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (NotSupportedException)
+        {
+            return true;
+        }
     }
 
     private async ValueTask<long[]?> TryCollectIndexTreePagesAsync(

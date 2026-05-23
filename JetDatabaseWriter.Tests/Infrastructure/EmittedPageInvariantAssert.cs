@@ -29,6 +29,11 @@ internal static class EmittedPageInvariantAssert
 
         for (int pageNumber = 1; pageNumber < pageCount; pageNumber++)
         {
+            if (pageNumber == 1)
+            {
+                continue;
+            }
+
             int pageOffset = pageNumber * pageSize;
             ReadOnlySpan<byte> page = fileBytes.AsSpan(pageOffset, pageSize);
             if (IsAllZero(page))

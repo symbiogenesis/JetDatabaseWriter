@@ -63,7 +63,7 @@ public sealed class IndexMaintenanceTests
         // The most-recent rebuild produced a leaf with 3 entries; orphaned
         // earlier leafs still show 1 (implicit empty), so MAX is the right
         // signal for the post-grow state.
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
+        Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
     }
 
     [Theory]
@@ -85,7 +85,7 @@ public sealed class IndexMaintenanceTests
             await writer.InsertRowAsync("T", [7], ct);
         }
 
-        Assert.Equal(2, FindMaxLeafEntryCount(stream.ToArray(), format));
+        Assert.Equal(2, await FindMaxLeafEntryCountAsync(stream, format, "T"));
     }
 
     [Theory]
@@ -127,7 +127,7 @@ public sealed class IndexMaintenanceTests
         }
 
         // Row count unchanged; the rebuilt leaf still has 3 entries.
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
+        Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
     }
 
     [Theory]
@@ -161,7 +161,7 @@ public sealed class IndexMaintenanceTests
 
         // The latest leaf (highest page number) is the post-delete rebuild
         // and must report the reduced row count of 3.
-        Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
+        Assert.Equal(3, await GetLatestLeafEntryCountAsync(stream, format, "T"));
     }
 
     [Theory]
@@ -274,7 +274,7 @@ public sealed class IndexMaintenanceTests
                 ct);
         }
 
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
+        Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
     }
 
     [Theory]
@@ -306,7 +306,7 @@ public sealed class IndexMaintenanceTests
                 ct);
         }
 
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
+        Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
     }
 
     [Theory]
@@ -338,7 +338,7 @@ public sealed class IndexMaintenanceTests
                 ct);
         }
 
-        Assert.Equal(3, FindMaxLeafEntryCount(stream.ToArray(), format));
+        Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
     }
 
     [Theory]
@@ -505,7 +505,7 @@ public sealed class IndexMaintenanceTests
         }
 
         // 3 original + 1 insert − 1 delete = 3 remaining.
-        Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
+        Assert.Equal(3, await GetLatestLeafEntryCountAsync(stream, format, "T"));
     }
 
     [Theory]
@@ -597,14 +597,21 @@ public sealed class IndexMaintenanceTests
         return count < 1 ? 0 : count - 1;
     }
 
-    private static int FindMaxLeafEntryCount(byte[] fileBytes, DatabaseFormat format)
+    private static async ValueTask<int> FindMaxLeafEntryCountAsync(MemoryStream stream, DatabaseFormat format, string tableName)
+    {
+        long tdefPage = await GetTDefPageNumberAsync(stream, tableName);
+        return FindMaxLeafEntryCount(stream.ToArray(), format, tdefPage);
+    }
+
+    private static int FindMaxLeafEntryCount(byte[] fileBytes, DatabaseFormat format, long parentTdefPage)
     {
         int pageSize = PageSizeOf(format);
         int max = 0;
         for (int p = 0; p < fileBytes.Length / pageSize; p++)
         {
             int o = p * pageSize;
-            if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
+            int parentTdef = fileBytes[o + 4] | (fileBytes[o + 5] << 8) | (fileBytes[o + 6] << 16) | (fileBytes[o + 7] << 24);
+            if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01 && parentTdef == parentTdefPage)
             {
                 int n = CountLeafEntries(fileBytes, o, format);
                 if (n > max)
@@ -617,7 +624,13 @@ public sealed class IndexMaintenanceTests
         return max;
     }
 
-    private static int GetLatestLeafEntryCount(byte[] fileBytes, DatabaseFormat format)
+    private static async ValueTask<int> GetLatestLeafEntryCountAsync(MemoryStream stream, DatabaseFormat format, string tableName)
+    {
+        long tdefPage = await GetTDefPageNumberAsync(stream, tableName);
+        return GetLatestLeafEntryCount(stream.ToArray(), format, tdefPage);
+    }
+
+    private static int GetLatestLeafEntryCount(byte[] fileBytes, DatabaseFormat format, long parentTdefPage)
     {
         // The most-recently-written leaf is the one with the highest page number
         // — maintenance always appends new index pages to the end of the file.
@@ -626,7 +639,8 @@ public sealed class IndexMaintenanceTests
         for (int p = 0; p < fileBytes.Length / pageSize; p++)
         {
             int o = p * pageSize;
-            if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01)
+            int parentTdef = fileBytes[o + 4] | (fileBytes[o + 5] << 8) | (fileBytes[o + 6] << 16) | (fileBytes[o + 7] << 24);
+            if (fileBytes[o] == 0x04 && fileBytes[o + 1] == 0x01 && parentTdef == parentTdefPage)
             {
                 latest = p;
             }
@@ -644,6 +658,18 @@ public sealed class IndexMaintenanceTests
 
     private static int FirstEntryOffset(DatabaseFormat fmt) =>
         fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3.FirstEntryOffset : Constants.IndexLeafPage.Jet4.FirstEntryOffset;
+
+    private static async ValueTask<long> GetTDefPageNumberAsync(MemoryStream stream, string tableName)
+    {
+        await using var reader = await OpenReaderAsync(stream);
+        var entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+        if (entry is null)
+        {
+            throw new InvalidOperationException($"Table '{tableName}' not found in catalog.");
+        }
+
+        return entry.TDefPage;
+    }
 
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {

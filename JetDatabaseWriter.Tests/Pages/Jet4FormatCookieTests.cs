@@ -445,9 +445,10 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
             Assert.Equal(0x01, fileBytes[umOff]); // page_type = 0x01 (data page)
             Assert.Equal(0x01, fileBytes[umOff + 1]); // second byte = 0x01
 
-            // Row count should be 2 (used_pages + free_pages).
+            // Row count includes at least used_pages + free_pages. Tables with
+            // indexes also carry per-real-index usage-map rows after those two.
             int numRows = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(umOff + 12, 2));
-            Assert.Equal(2, numRows);
+            Assert.True(numRows >= 2, $"Expected at least used_pages/free_pages rows; found {numRows}.");
 
             // Each row is 69 bytes: 1-byte type-0 marker + 4-byte start page + 64 bitmap bytes.
             int row0Off = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(umOff + 14, 2));
