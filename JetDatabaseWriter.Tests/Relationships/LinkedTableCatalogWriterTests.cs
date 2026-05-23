@@ -10,6 +10,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -116,6 +117,20 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             writer.CreateLinkedOdbcTableAsync("LinkedData", "ODBC;DSN=Other", "dbo.Data", ct).AsTask());
     }
 
+    [Fact]
+    public async Task CreateLinkedTableAsync_Throws_WhenMsysObjectsCatalogSpliceCannotMaintainIndexes()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedSpliceFail");
+
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
+
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            writer.CreateLinkedTableAsync("LinkedData", @"C:\Data\source.accdb", "Data", ct).AsTask());
+        Assert.Contains("Could not maintain MSysObjects catalog indexes", ex.Message, StringComparison.Ordinal);
+    }
+
     public void Dispose()
     {
         foreach (string path in tempFiles)
@@ -129,21 +144,6 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                 // Best-effort cleanup.
             }
         }
-    }
-
-    private async ValueTask<string> CreateTempAccdbDatabaseAsync(string prefix)
-    {
-        string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.accdb");
-        await using (await AccessWriter.CreateDatabaseAsync(
-            temp,
-            DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false },
-            TestContext.Current.CancellationToken))
-        {
-        }
-
-        tempFiles.Add(temp);
-        return temp;
     }
 
     private static async ValueTask<CatalogObjectSnapshot> GetCatalogObjectAsync(string dbPath, string objectName, CancellationToken cancellationToken)
@@ -172,6 +172,49 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             row["LvProp"] is byte[] lvProp ? lvProp.Length : 0,
             aceCount,
             low24CollisionCount);
+    }
+
+    private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(AccessWriter writer, CancellationToken cancellationToken)
+    {
+        byte[] tdef = await writer.ReadPageAsync(2, cancellationToken);
+        try
+        {
+            int numCols = AccessBase.Ru16(tdef, writer._tdef.NumCols);
+            int numRealIdx = AccessBase.Ri32(tdef, writer._tdef.NumRealIdx);
+            Assert.True(numRealIdx > 0, "Expected MSysObjects to declare at least one real index.");
+
+            int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * writer._colDesc.Size);
+            for (int i = 0; i < numCols; i++)
+            {
+                int nameLength = writer.ReadColumnName(tdef, ref namePos, out _);
+                Assert.True(nameLength >= 0, $"Failed to walk MSysObjects column name {i}.");
+            }
+
+            int realIdxDescStart = namePos;
+            IndexLayout layout = writer._indexLayout;
+            int physStart = layout.RealIdxPhysOffset(realIdxDescStart, 0);
+            int firstDp = AccessBase.Ri32(tdef, layout.FirstDpAbsoluteOffset(physStart));
+            Assert.True(firstDp > 0, "Expected MSysObjects first real-index root page to be allocated.");
+
+            byte[] root = await writer.ReadPageAsync(firstDp, cancellationToken);
+            try
+            {
+                Assert.True(
+                    root[0] == Constants.IndexLeafPage.PageTypeLeaf || root[0] == Constants.IndexLeafPage.PageTypeIntermediate,
+                    $"Expected MSysObjects index root page {firstDp} to be an index page, got 0x{root[0]:X2}.");
+                root[0] = 0x01;
+                await writer.WritePageAsync(firstDp, root, cancellationToken);
+            }
+            finally
+            {
+                AccessBase.ReturnPage(root);
+            }
+        }
+        finally
+        {
+            AccessBase.ReturnPage(tdef);
+        }
     }
 
     private static async ValueTask<int> CountMsysObjectsLeafEntriesAsync(string dbPath, CancellationToken cancellationToken)
@@ -208,6 +251,21 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         }
 
         return Math.Max(0, count - 1);
+    }
+
+    private async ValueTask<string> CreateTempAccdbDatabaseAsync(string prefix)
+    {
+        string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.accdb");
+        await using (await AccessWriter.CreateDatabaseAsync(
+            temp,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+        }
+
+        tempFiles.Add(temp);
+        return temp;
     }
 
     private sealed record CatalogObjectSnapshot(int Id, int Flags, int LvPropLength, int AceCount, int Low24CollisionCount);

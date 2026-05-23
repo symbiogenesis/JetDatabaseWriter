@@ -1,13 +1,13 @@
 # Writer Disk-Format Validation Todo List
 
-**Status:** Recast as a checklist after adding conditional Jet3 index DAO compact coverage; blanket Compact and Repair warning sweep, DAO compact reopen/assert sweep, catalog incremental zero-slot bail, and linked-table catalog object-id/index/metadata routing closed; linked-table DAO validation remains open, 2026-05-23.
+**Status:** Recast as a checklist after adding conditional Jet3 index DAO compact coverage; blanket Compact and Repair warning sweep, DAO compact reopen/assert sweep, catalog incremental zero-slot bail, linked-table catalog object-id/index/metadata routing, and Jet4/ACE catalog-splice false-return escalation closed; linked-table DAO validation remains open, 2026-05-23.
 
 This file is intentionally a todo list. General validation rules live in [dao-validation-strategy.md](dao-validation-strategy.md); detailed compatibility history lives in [round-trip-openrecordset-hypothesis.md](round-trip-openrecordset-hypothesis.md) and [ese-coverage-gap-analysis.md](ese-coverage-gap-analysis.md).
 
 ## 🚧 Loud Unresolved Items
 
 - 🚧 **Linked-table catalog rows still need Access/DAO compact-safe validation.** Linked writers now allocate catalog-only object ids without low-24 catalog-id collisions, splice Type 4/6 `MSysObjects` rows into catalog indexes, and stamp fixture-aligned flags, `LvProp`, and ACE rows. DAO validation remains open because DAO OpenRecordset/CompactDatabase still needs Access's cached linked-table schema payload in `MSysObjects.LvProp` before writer-created links can be treated as Access-compatible output.
-- 🚧 **Catalog-index maintenance still has technical-debt follow-ups.** The MSysObjects splice path is validated for the FK/table compact surface, and the incremental-maintenance zero-slot success case is now covered, but system-table full-rebuild fallback and Jet3 catalog splicing remain unresolved; see [catalog-index-maintenance-notes.md](catalog-index-maintenance-notes.md).
+- 🚧 **Catalog-index maintenance still has technical-debt follow-ups.** The MSysObjects splice path is validated for the FK/table compact surface, the incremental-maintenance zero-slot success case is covered, and Jet4/ACE catalog writes now fail fast when splicing reports `false`, but system-table full-rebuild fallback and Jet3 catalog splicing remain unresolved; see [catalog-index-maintenance-notes.md](catalog-index-maintenance-notes.md).
 
 ## Always Do
 
@@ -46,4 +46,5 @@ This file is intentionally a todo list. General validation rules live in [dao-va
 - [x] Advanced ACE/Jet4 GUID, descriptor-scale NUMERIC, BINARY, mixed-direction composite indexes, descending col-map flag preservation, and post-insert update/delete/insert B-tree maintenance survive DAO compact.
 - [x] Incremental index maintenance bails to the bulk path when an indexed TDEF decodes no usable real-index key columns instead of silently reporting success.
 - [x] Writer-created linked Access/ODBC/text catalog rows allocate nonzero, low-24-noncolliding catalog object ids; stamp fixture-aligned flags, non-null `LvProp`, and ACE rows; and route Type 4/6 `MSysObjects` rows through catalog-index splicing instead of direct unindexed row writes.
+- [x] Jet4/ACE catalog-row inserts throw when `MSysObjects` catalog splicing cannot maintain indexes, instead of silently leaving catalog B-trees stale.
 - [x] Historical DAO baseline findings for OpenRecordset, FK enforcement, FK CompactDatabase, Jet4/ACE TDEF magic, real-index descriptor magic, `Owner`/`LvProp`, `MSysACEs.FInheritable`, text-column `AllowZeroLength`/`Required`, and FK logical cross-references are promoted into normal regression tests.

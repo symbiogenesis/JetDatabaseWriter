@@ -45,7 +45,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
         msys.SetValueByName(values, "LvProp", lvProp ?? Constants.SystemObjects.DefaultLvPropPlaceholder);
 
         RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
-        _ = await writer.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
+        await RequireCatalogIndexSpliceAsync(msys, loc, values, tableName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -85,7 +85,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
         }
 
         RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
-        _ = await writer.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
+        await RequireCatalogIndexSpliceAsync(msys, loc, values, objectName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -109,7 +109,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
         msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
 
         RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
-        _ = await writer.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
+        await RequireCatalogIndexSpliceAsync(msys, loc, values, relationshipName, cancellationToken).ConfigureAwait(false);
 
         return objectId;
     }
@@ -159,7 +159,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
         }
 
         RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
-        _ = await writer.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
+        await RequireCatalogIndexSpliceAsync(msys, loc, values, linkedTableName, cancellationToken).ConfigureAwait(false);
         await InsertAceRowsForCatalogObjectAsync(objectId, useRelationshipAcm: false, cancellationToken).ConfigureAwait(false);
         writer.InvalidateCatalogCache();
 
@@ -255,6 +255,20 @@ internal sealed class CatalogWriter(AccessWriter writer)
             acesDef.SetValueByName(row, "FInheritable", false);
             acesDef.SetValueByName(row, "SID", sids[i]);
             await writer.InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, row, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask RequireCatalogIndexSpliceAsync(
+        TableDef msys,
+        RowLocation loc,
+        object[] values,
+        string objectName,
+        CancellationToken cancellationToken)
+    {
+        bool spliced = await writer.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
+        if (!spliced && writer.DatabaseFormat != Enums.DatabaseFormat.Jet3Mdb)
+        {
+            throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes for '{objectName}'.");
         }
     }
 

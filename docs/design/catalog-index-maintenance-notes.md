@@ -1,11 +1,11 @@
 # Design notes: MSysObjects catalog index maintenance for round-trip-safe writes
 
-**Status:** Phase C0 + C1 shipped, and the later DAO round-trip blockers are closed. All three catalog index fixes landed: **prefix compression cap** (2026-05-03), **entry-start bitmask sentinel** (2026-05-04), and **split-path `maxPrefixLength` cap** (2026-05-04). Later work fixed the separate user-table/FK compact failures by preserving system-table rows on mapped system pages, emitting relationship catalog/ACE metadata, sharing table/index usage-map rows, and reusing single-leaf index pages in place. DAO Compact & Repair now passes for the FK round-trip tests and encrypted compact test on Access-equipped hosts. Updated 2026-05-23: generic index maintenance has grown beyond this note's original C3 wording, C4's zero-slot success case is regression-guarded, and C5's linked-table object-id/index/metadata-routing path is shipped; C2 and linked-table DAO validation remain unresolved. See [`round-trip-openrecordset-hypothesis.md`](round-trip-openrecordset-hypothesis.md) for the closed-out compatibility record and [`writer-disk-format-validation-matrix.md`](writer-disk-format-validation-matrix.md) for the current validation backlog.
+**Status:** Phase C0 + C1 shipped, and the later DAO round-trip blockers are closed. All three catalog index fixes landed: **prefix compression cap** (2026-05-03), **entry-start bitmask sentinel** (2026-05-04), and **split-path `maxPrefixLength` cap** (2026-05-04). Later work fixed the separate user-table/FK compact failures by preserving system-table rows on mapped system pages, emitting relationship catalog/ACE metadata, sharing table/index usage-map rows, and reusing single-leaf index pages in place. DAO Compact & Repair now passes for the FK round-trip tests and encrypted compact test on Access-equipped hosts. Updated 2026-05-23: generic index maintenance has grown beyond this note's original C3 wording, C4's zero-slot success case is regression-guarded, C5's linked-table object-id/index/metadata-routing path is shipped, and Jet4/ACE catalog callers now throw when the MSysObjects splice path reports `false`; C2, Jet3 catalog splicing, and linked-table DAO validation remain unresolved. See [`round-trip-openrecordset-hypothesis.md`](round-trip-openrecordset-hypothesis.md) for the closed-out compatibility record and [`writer-disk-format-validation-matrix.md`](writer-disk-format-validation-matrix.md) for the current validation backlog.
 
 ## 🚧 Still Unresolved
 
 - 🚧 **C2 is only partially complete.** `InsertSystemRowAndMaintainAsync` now tries incremental maintenance for some system-table inserts, but `MSysComplexColumns` and `MSysACEs` still force `MaintainIndexesAsync`, and fallback to the full rebuild path remains.
-- 🚧 **Catalog splicing is not a universal system-table B-tree mutator.** `TrySpliceCatalogIndexEntryAsync` remains Jet4/ACE-only, can still return `false` on malformed or unsupported split/ancestor cases, and current catalog callers do not escalate a `false` return.
+- 🚧 **Catalog splicing is not a universal system-table B-tree mutator.** `TrySpliceCatalogIndexEntryAsync` remains Jet4/ACE-only and can still return `false` on malformed or unsupported split/ancestor cases. Jet4/ACE catalog callers now fail fast on that return instead of leaving unmaintained catalog indexes, but no proven fallback exists yet and Jet3 catalog splicing remains unresolved.
 - 🚧 **Linked-table DAO validation is still open.** Linked writers now route Type 4/6 `MSysObjects` rows through catalog-only object-id allocation, catalog-index splicing, fixture-aligned row flags, non-null `LvProp`, and linked-object ACE rows. DAO validation still requires Access's cached linked-table schema payload in `MSysObjects.LvProp`; that work remains tracked in [`writer-disk-format-validation-matrix.md`](writer-disk-format-validation-matrix.md).
 
 **Driver:** Two pinned round-trip tests in [JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs):
@@ -98,7 +98,7 @@ A **system-table-specialized leaf-splice path** invoked by `InsertCatalogEntryAs
 
 No public API changes. The splicer lives on `IndexMaintainer`:
 
-- `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` — per-real-idx splice. It returns `false` when Jet3, malformed pages, encoder rejection, or an unsupported split/ancestor case prevents a safe splice. **🚧 Current callers ignore a `false` return**, so hardening should either throw/rollback or route to a proven fallback rather than leaving the catalog index unmaintained.
+- `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` — per-real-idx splice. It returns `false` when Jet3, malformed pages, encoder rejection, or an unsupported split/ancestor case prevents a safe splice. Jet4/ACE catalog callers require success and throw on `false`; Jet3 remains the intentional unresolved exception until a Jet3 catalog splice path exists.
 - `AccessWriter.TrySpliceCatalogIndexEntryAsync` — thin forwarding wrapper, called from `InsertCatalogEntryAsync` immediately after `InsertRowDataLocAsync`.
 
 Append-only tail-leaf maintenance for ordinary index paths is handled by `IndexMaintainer.TryAppendToTailLeafAsync`; the catalog splice path has its own key-based leaf selection and split handling.
@@ -123,7 +123,7 @@ We never re-encode rows we did not insert. The "Databases" row (and any other ro
 
 ### 4.5 Transactional behaviour
 
-`AccessWriter.CreateTableAsync` runs under the writer's outer page-write batching; the leaf-splice writes participate in that batch. If any per-index splice throws, the surrounding `JetTransaction` rolls back the catalog-row insert too. **🚧 A non-throwing `false` return is still unresolved hardening work** because current catalog callers discard the result.
+`AccessWriter.CreateTableAsync` runs under the writer's outer page-write batching; the leaf-splice writes participate in that batch. If any per-index splice throws, or if the Jet4/ACE catalog splice path returns `false`, the surrounding `JetTransaction` rolls back the catalog-row insert too. Jet3 catalog splicing remains unresolved and still avoids the Jet4/ACE fail-fast requirement.
 
 ## 5. Phasing
 
