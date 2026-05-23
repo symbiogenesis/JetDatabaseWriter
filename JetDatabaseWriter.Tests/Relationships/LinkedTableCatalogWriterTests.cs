@@ -48,8 +48,12 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             catalogLeafEntriesAfter > catalogLeafEntriesBefore,
             $"Expected MSysObjects index leaves to gain entries for the linked-table catalog row. Before={catalogLeafEntriesBefore}, after={catalogLeafEntriesAfter}.");
 
-        int catalogId = await GetCatalogIdAsync(frontEndPath, "LinkedProducts", ct);
-        Assert.True(catalogId < 0, $"Expected linked-table MSysObjects.Id to be a non-table catalog object id, got {catalogId}.");
+        CatalogObjectSnapshot catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedProducts", ct);
+        Assert.True(catalogObject.Id < 0, $"Expected linked-table MSysObjects.Id to be a non-table catalog object id, got {catalogObject.Id}.");
+        Assert.Equal(Constants.SystemObjects.LinkedTableFlags, catalogObject.Flags);
+        Assert.True(catalogObject.LvPropLength > 0, "Expected linked-table MSysObjects.LvProp to be non-null.");
+        Assert.True(catalogObject.AceCount >= 2, $"Expected linked-table object ACE rows, got {catalogObject.AceCount}.");
+        Assert.Equal(0, catalogObject.Low24CollisionCount);
     }
 
     [Fact]
@@ -67,8 +71,12 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                 ct);
         }
 
-        int catalogId = await GetCatalogIdAsync(frontEndPath, "LinkedOrders", ct);
-        Assert.True(catalogId < 0, $"Expected ODBC-linked MSysObjects.Id to be a non-table catalog object id, got {catalogId}.");
+        CatalogObjectSnapshot catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedOrders", ct);
+        Assert.True(catalogObject.Id < 0, $"Expected ODBC-linked MSysObjects.Id to be a non-table catalog object id, got {catalogObject.Id}.");
+        Assert.Equal(Constants.SystemObjects.LinkedOdbcFlags, catalogObject.Flags);
+        Assert.True(catalogObject.LvPropLength > 0, "Expected ODBC-linked MSysObjects.LvProp to be non-null.");
+        Assert.True(catalogObject.AceCount >= 2, $"Expected ODBC-linked object ACE rows, got {catalogObject.AceCount}.");
+        Assert.Equal(0, catalogObject.Low24CollisionCount);
     }
 
     [Fact]
@@ -87,8 +95,12 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                 ct);
         }
 
-        int catalogId = await GetCatalogIdAsync(frontEndPath, "LinkedCsv", ct);
-        Assert.True(catalogId < 0, $"Expected text-linked MSysObjects.Id to be a non-table catalog object id, got {catalogId}.");
+        CatalogObjectSnapshot catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedCsv", ct);
+        Assert.True(catalogObject.Id < 0, $"Expected text-linked MSysObjects.Id to be a non-table catalog object id, got {catalogObject.Id}.");
+        Assert.Equal(Constants.SystemObjects.LinkedTableFlags, catalogObject.Flags);
+        Assert.True(catalogObject.LvPropLength > 0, "Expected text-linked MSysObjects.LvProp to be non-null.");
+        Assert.True(catalogObject.AceCount >= 2, $"Expected text-linked object ACE rows, got {catalogObject.AceCount}.");
+        Assert.Equal(0, catalogObject.Low24CollisionCount);
     }
 
     [Fact]
@@ -134,7 +146,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         return temp;
     }
 
-    private static async ValueTask<int> GetCatalogIdAsync(string dbPath, string objectName, CancellationToken cancellationToken)
+    private static async ValueTask<CatalogObjectSnapshot> GetCatalogObjectAsync(string dbPath, string objectName, CancellationToken cancellationToken)
     {
         await using AccessReader reader = await AccessReader.OpenAsync(dbPath, cancellationToken: cancellationToken);
         DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
@@ -143,7 +155,23 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             objectName,
             StringComparison.OrdinalIgnoreCase));
 
-        return Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture);
+        int objectId = Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture);
+        int objectLow24 = objectId & 0x00FFFFFF;
+        int low24CollisionCount = objects.AsEnumerable().Count(r =>
+        {
+            int id = Convert.ToInt32(r["Id"], CultureInfo.InvariantCulture);
+            return id != objectId && id != 0 && (id & 0x00FFFFFF) == objectLow24;
+        });
+
+        DataTable aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: cancellationToken);
+        int aceCount = aces.AsEnumerable().Count(r => Convert.ToInt32(r["ObjectId"], CultureInfo.InvariantCulture) == objectId);
+
+        return new CatalogObjectSnapshot(
+            objectId,
+            Convert.ToInt32(row["Flags"], CultureInfo.InvariantCulture),
+            row["LvProp"] is byte[] lvProp ? lvProp.Length : 0,
+            aceCount,
+            low24CollisionCount);
     }
 
     private static async ValueTask<int> CountMsysObjectsLeafEntriesAsync(string dbPath, CancellationToken cancellationToken)
@@ -181,4 +209,6 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
         return Math.Max(0, count - 1);
     }
+
+    private sealed record CatalogObjectSnapshot(int Id, int Flags, int LvPropLength, int AceCount, int Low24CollisionCount);
 }

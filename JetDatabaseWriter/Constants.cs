@@ -251,6 +251,12 @@ internal static class Constants
         /// <summary>MSysObjects.Type value for a linked Jet/Access table (Jackcess <c>TYPE_LINKED_TABLE</c>).</summary>
         public const int LinkedTableType = 6;
 
+        /// <summary>Observed <c>MSysObjects.Flags</c> value for Access-linked table rows.</summary>
+        public const int LinkedTableFlags = 0x0020_0000;
+
+        /// <summary>Observed <c>MSysObjects.Flags</c> value for ODBC-linked table rows.</summary>
+        public const int LinkedOdbcFlags = 0x2010_0000;
+
         /// <summary>
         /// Bitmask applied to <c>MSysObjects.Flags</c> to detect system tables;
         /// any row whose flags AND this mask is non-zero is treated as a system
