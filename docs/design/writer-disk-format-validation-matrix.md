@@ -1,13 +1,13 @@
 # Writer Disk-Format Validation Todo List
 
-**Status:** Recast as a checklist after adding conditional Jet3 index DAO compact coverage; blanket Compact and Repair warning sweep and DAO compact reopen/assert sweep closed; linked-table catalog caveat added, 2026-05-23.
+**Status:** Recast as a checklist after adding conditional Jet3 index DAO compact coverage; blanket Compact and Repair warning sweep, DAO compact reopen/assert sweep, and catalog incremental zero-slot bail closed; linked-table catalog caveat added, 2026-05-23.
 
 This file is intentionally a todo list. General validation rules live in [dao-validation-strategy.md](dao-validation-strategy.md); detailed compatibility history lives in [round-trip-openrecordset-hypothesis.md](round-trip-openrecordset-hypothesis.md) and [ese-coverage-gap-analysis.md](ese-coverage-gap-analysis.md).
 
 ## 🚧 Loud Unresolved Items
 
 - 🚧 **Linked-table catalog rows are not Access/DAO compact-safe validated.** `CreateLinkedTableAsync`, `CreateLinkedOdbcTableAsync`, and `CreateLinkedTextTableAsync` currently have reader round-trip coverage only. They write Type 4/6 `MSysObjects` rows directly, stamp `Id = 0`, and do not maintain `MSysObjects` catalog indexes.
-- 🚧 **Catalog-index maintenance still has technical-debt follow-ups.** The MSysObjects splice path is validated for the FK/table compact surface, but system-table full-rebuild fallback, Jet3 catalog splicing, and the incremental-maintenance `slots.Count == 0` success case remain unresolved; see [catalog-index-maintenance-notes.md](catalog-index-maintenance-notes.md).
+- 🚧 **Catalog-index maintenance still has technical-debt follow-ups.** The MSysObjects splice path is validated for the FK/table compact surface, and the incremental-maintenance zero-slot success case is now covered, but system-table full-rebuild fallback and Jet3 catalog splicing remain unresolved; see [catalog-index-maintenance-notes.md](catalog-index-maintenance-notes.md).
 
 ## Always Do
 
@@ -44,4 +44,5 @@ This file is intentionally a todo list. General validation rules live in [dao-va
 - [x] Writer-created complex-column flat-table indexes and row APIs survive DAO compact on a fresh ACCDB stream, including decoded attachment payload bytes and flat-table index metadata.
 - [x] Jet3 index emission and maintenance have conditional DAO compact coverage when the installed DAO engine can open Access 97 `.mdb` files; modern hosts that reject Jet3 skip that test and rely on reader round-trips locally.
 - [x] Advanced ACE/Jet4 GUID, descriptor-scale NUMERIC, BINARY, mixed-direction composite indexes, descending col-map flag preservation, and post-insert update/delete/insert B-tree maintenance survive DAO compact.
+- [x] Incremental index maintenance bails to the bulk path when an indexed TDEF decodes no usable real-index key columns instead of silently reporting success.
 - [x] Historical DAO baseline findings for OpenRecordset, FK enforcement, FK CompactDatabase, Jet4/ACE TDEF magic, real-index descriptor magic, `Owner`/`LvProp`, `MSysACEs.FInheritable`, text-column `AllowZeroLength`/`Required`, and FK logical cross-references are promoted into normal regression tests.

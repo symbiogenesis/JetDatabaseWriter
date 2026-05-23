@@ -5,8 +5,11 @@ using System.Data;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using Xunit;
 
 /// <summary>
@@ -292,6 +295,43 @@ public sealed class IndexIncrementalMaintenanceTests
             await writer.InsertRowAsync("T", [1], ct));
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task FastPath_Bails_WhenIndexedTdefDecodesNoRealIndexKeyColumns(DatabaseFormat format)
+    {
+        await using var stream = await CreateFreshStreamAsync(format);
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
+                ct);
+        }
+
+        long tdefPage = await GetTDefPageNumberAsync(stream, "T");
+
+        await using var reopened = await OpenWriterAsync(stream);
+        TableDef tableDef = await reopened.ReadRequiredTableDefAsync(tdefPage, "T", ct);
+        await ClearRealIdxColMapsAsync(reopened, tdefPage, ct);
+
+        var insertedRows = new List<(RowLocation Loc, object[] Row)>
+        {
+            (new RowLocation(10, 0, 0, 0), [1]),
+        };
+
+        bool incremental = await reopened.TryMaintainIndexesIncrementalAsync(
+            tdefPage,
+            tableDef,
+            insertedRows,
+            deletedRows: null,
+            ct);
+
+        Assert.False(incremental);
+    }
+
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset, DatabaseFormat format)
     {
         // Subtract 1 for the sentinel bit at the position one past the last entry.
@@ -352,6 +392,67 @@ public sealed class IndexIncrementalMaintenanceTests
 
     private static int FirstEntryOffset(DatabaseFormat fmt) =>
         fmt == DatabaseFormat.Jet3Mdb ? Constants.IndexLeafPage.Jet3.FirstEntryOffset : Constants.IndexLeafPage.Jet4.FirstEntryOffset;
+
+    private static async ValueTask<long> GetTDefPageNumberAsync(MemoryStream stream, string tableName)
+    {
+        await using var reader = await OpenReaderAsync(stream);
+        var entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+        if (entry is null)
+        {
+            throw new System.InvalidOperationException($"Table '{tableName}' not found in catalog.");
+        }
+
+        return entry.TDefPage;
+    }
+
+    private static async ValueTask ClearRealIdxColMapsAsync(
+        AccessWriter writer,
+        long tdefPage,
+        CancellationToken cancellationToken)
+    {
+        byte[] tdef = await writer.ReadPageAsync(tdefPage, cancellationToken);
+        try
+        {
+            int numCols = AccessBase.Ru16(tdef, writer._tdef.NumCols);
+            int numRealIdx = AccessBase.Ri32(tdef, writer._tdef.NumRealIdx);
+            Assert.True(numRealIdx > 0, "Expected the test fixture to declare at least one real index.");
+
+            int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * writer._colDesc.Size);
+            for (int i = 0; i < numCols; i++)
+            {
+                int nameLength = writer.ReadColumnName(tdef, ref namePos, out _);
+                Assert.True(nameLength >= 0, $"Failed to walk TDEF column name {i}.");
+            }
+
+            int realIdxDescStart = namePos;
+            IndexLayout layout = writer._indexLayout;
+            for (int ri = 0; ri < numRealIdx; ri++)
+            {
+                bool decoded = layout.TryReadRealIdxSlotWithKeyColumns(
+                    tdef,
+                    realIdxDescStart,
+                    ri,
+                    out IndexLayout.RealIdxSlot slot,
+                    out List<IndexLayout.KeyColumn> keyCols);
+                Assert.True(decoded, $"Failed to decode real-idx slot {ri}.");
+                Assert.NotEmpty(keyCols);
+
+                for (int colMapSlot = 0; colMapSlot < IndexLayout.ColMapSlotCount; colMapSlot++)
+                {
+                    int colMapOffset = layout.ColMapSlotOffset(slot.PhysStart, colMapSlot);
+                    AccessBase.Wu16(tdef, colMapOffset, IndexLayout.ColMapPaddingSlot);
+                    tdef[colMapOffset + 2] = 0;
+                }
+            }
+
+            await writer.WritePageAsync(tdefPage, tdef, cancellationToken);
+        }
+        finally
+        {
+            AccessBase.ReturnPage(tdef);
+        }
+    }
 
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {

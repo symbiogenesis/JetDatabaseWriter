@@ -879,7 +879,8 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
         if (slots.Count == 0)
         {
-            return true;
+            LastIncrementalBail = $"C1d no usable real-idx slots numIdx={numIdx} numRealIdx={numRealIdx}";
+            return false;
         }
 
         Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
