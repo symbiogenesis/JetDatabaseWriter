@@ -135,6 +135,7 @@ public sealed class DaoValidationTests(DaoValidationFixture fixture) : IClassFix
         var result = await fixture.GetComplexCompactResultAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(1, result.ParentRowCount);
+        Assert.False(result.HasInitialSchemaEvolutionColumn, "Post-compact parent table still has the pre-rename schema-evolution column.");
         Assert.True(result.HasSchemaEvolutionColumn, "Post-compact parent table is missing the schema-evolution column.");
         Assert.Equal(2, result.ComplexColumnCount);
         Assert.Equal(1, result.AttachmentCount);

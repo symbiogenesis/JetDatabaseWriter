@@ -30,7 +30,8 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     private const string AutoNumberTable = "DaoAutoNum";
     private const string ChildTable = "DaoFkChild";
     private const string ComplexAttachmentColumn = "Files";
-    private const string ComplexSchemaEvolutionColumn = "ReviewNote";
+    private const string ComplexSchemaEvolutionInitialColumn = "ReviewNote";
+    private const string ComplexSchemaEvolutionColumn = "ReviewSummary";
     private const string ComplexTable = "DaoComplexDocs";
     private const string ComplexTagsColumn = "Tags";
     private const string CountTable = "DaoCount";
@@ -207,6 +208,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             ComplexTable,
             cancellationToken: cancellationToken).ConfigureAwait(false);
         int parentRowCount = parentTable?.Rows.Count ?? -1;
+        bool hasInitialSchemaEvolutionColumn = parentTable?.Columns.Contains(ComplexSchemaEvolutionInitialColumn) == true;
         bool hasSchemaEvolutionColumn = parentTable?.Columns.Contains(ComplexSchemaEvolutionColumn) == true;
 
         IReadOnlyList<ComplexColumnInfo> complexColumns = await postReader.GetComplexColumnsAsync(
@@ -230,6 +232,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
         return new ComplexCompactResult(
             parentRowCount,
+            hasInitialSchemaEvolutionColumn,
             hasSchemaEvolutionColumn,
             complexColumns.Count,
             attachments.Count,
@@ -463,7 +466,13 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
         await writer.AddColumnAsync(
             ComplexTable,
-            new ColumnDefinition(ComplexSchemaEvolutionColumn, typeof(string), maxLength: 100),
+            new ColumnDefinition(ComplexSchemaEvolutionInitialColumn, typeof(string), maxLength: 100),
+            cancellationToken).ConfigureAwait(false);
+
+        await writer.RenameColumnAsync(
+            ComplexTable,
+            ComplexSchemaEvolutionInitialColumn,
+            ComplexSchemaEvolutionColumn,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -755,6 +764,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
     internal sealed record ComplexCompactResult(
         int ParentRowCount,
+        bool HasInitialSchemaEvolutionColumn,
         bool HasSchemaEvolutionColumn,
         int ComplexColumnCount,
         int AttachmentCount,
