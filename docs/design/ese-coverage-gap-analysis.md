@@ -80,13 +80,13 @@ ESE's test culture validates engine behavior through real persisted state. JetDa
 
 Implemented coverage (2026-05-21):
 
-- Added a single validation matrix for writer-emitted disk-format features: [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
+- Added a cross-feature validation checklist for writer-emitted disk-format features: [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md), with durable DAO validation rules split into [dao-validation-strategy.md](dao-validation-strategy.md).
 - Added a Northwind-hosted DAO CompactDatabase test for writer-created attachment and multi-value complex columns, including wrapper-encoded attachment `FileData`, Access-style LVAL pages, a chained-LVAL payload, flat-table index maintenance, and an `AddColumnAsync` rewrite that preserves the complex artifacts.
 - Clarified that the strongest DAO compact tests mutate Access-authored fixtures such as Northwind, so the writer-created bytes under test are isolated from fresh-database bootstrap trust.
 - Updated stale blanket warnings in the index/relationship and complex-column notes to point at the matrix and the remaining phase-specific gaps.
 - Cleaned the README and public XML comments that still described encryption, attachment fields, index maintenance, or relationship enforcement using older caveats.
 
-Remaining matrix rows still marked reader-round-trip only should be promoted into DAO-driven tests when they become high-risk release blockers and a reliable Access-authored fixture can host the mutation.
+Remaining checklist items should be promoted into DAO-driven tests when they become high-risk release blockers and a reliable Access-authored fixture can host the mutation.
 
 ### 6. Cache and Resource-Manager Behavior (DONE)
 
@@ -154,4 +154,4 @@ The following ESE areas do not appear to map directly to this project unless the
 
 ## Next Work Ownership
 
-No standalone ESE-inspired backlog remains in this note. Residual validation work is owned by the rows in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md); keep future DAO promotions there unless a new ESE-derived risk category appears.
+No standalone ESE-inspired backlog remains in this note. Residual validation work is owned by the checklist in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md); keep future DAO promotions there unless a new ESE-derived risk category appears.

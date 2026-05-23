@@ -2,7 +2,7 @@
 
 **Status:** All shipped phases listed in §7; outstanding work tracked in the same table.
 **Empirical appendix:** [`format-probe-appendix-index.md`](../format-probe/format-probe-appendix-index.md) — annotated hex dumps of real index TDEFs from `NorthwindTraders.accdb` (Jet4/ACE), [`format-probe-appendix-jet3-index.md`](../format-probe/format-probe-appendix-jet3-index.md) — Jet3 index TDEFs + leaf pages from the Jackcess V1997 corpus (W17a). Regenerate them with `dotnet run --project JetDatabaseWriter.FormatProbe -- index,jet3-index`.
-**Validation requirement:** any PR that lands writer disk-format bytes in this area MUST update the validation matrix and add the strongest feasible Access/DAO coverage: DAO CompactDatabase/OpenRecordset automation for automatable scenarios, with manual Access UI checks kept as supplemental evidence — see §8.
+**Validation requirement:** any PR that lands writer disk-format bytes in this area MUST update the validation checklist and add the strongest feasible Access/DAO coverage: DAO CompactDatabase/OpenRecordset automation for automatable scenarios, with manual Access UI checks kept as supplemental evidence — see §8 and [dao-validation-strategy.md](dao-validation-strategy.md).
 
 > ⚠️ Reverse-engineered notes. The mdbtools spec is partial; many fields are documented as `???`. The empirical appendix has been generated from `NorthwindTraders.accdb` and confirms the §3.1 / §3.2 layouts. DAO CompactDatabase now covers representative ACE/Jet4 advanced key encodings, bitmask/sentinel emission, and B-tree maintenance, but byte-for-byte parity for some sort-key encodings and individual surgical split/merge sub-phases remains a probe gap. Run the probe again against any new fixture before relying on a new offset.
 
@@ -330,7 +330,7 @@ W1 explicit constraints (enforced by `ResolveIndexes`):
 - Duplicate index names (case-insensitive) throw `ArgumentException`.
 - Jet3 (`.mdb` Access 97) with non-empty `indexes` throws `NotSupportedException`. Jet3 logical-idx layout differs (20 bytes vs. 28) and is not exercised by the existing test fixtures.
 
-Validation: round-trip tests in `IndexWriterTests`. This W1 reference predates the broader DAO compact matrix; use [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md) for the current strongest validation level.
+Validation: round-trip tests in `IndexWriterTests`. This W1 reference predates the broader DAO compact checklist; use [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md) for the current strongest validation level.
 
 ### 7.2 W2–W10 — additional notes
 
@@ -889,7 +889,7 @@ W4-C-8+ caveats:
 
 ## 8. Validation strategy
 
-The current cross-feature status lives in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md). Update that matrix whenever a writer disk-format feature gains stronger coverage.
+The current cross-feature backlog lives in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md). General DAO validation rules live in [dao-validation-strategy.md](dao-validation-strategy.md). Update the checklist whenever a writer disk-format feature gains stronger coverage.
 
 Every new writer phase landing on disk format should be validated against:
 
@@ -898,7 +898,7 @@ Every new writer phase landing on disk format should be validated against:
 3. **Cross-tool sanity:** open with [Jackcess](https://jackcess.sourceforge.io) or [mdbtools](https://github.com/mdbtools/mdbtools) (`mdb-schema -E`) and confirm the index metadata matches.
 4. **Manual Access UI verification:** keep manual Compact and Repair notes as supplemental evidence for UI-only workflows, not as the only signal when DAO can automate the same mutation.
 
-Automated DAO coverage now exists for the matrix rows covering the highest-risk PK/FK compact paths, multi-table index/FK stress, storage-maintenance index-page reuse and TDEF-chain reclamation, encrypted compact, fresh ACCDB bootstrap, a representative Northwind-hosted complex-column/LVAL compact path, representative ACE/Jet4 advanced index key encodings plus B-tree maintenance, and conditional Jet3 writer-emitted primary/normal index maintenance in an Access-authored `.mdb` host when the installed DAO engine can open Access 97 files. Treat remaining §7 validation-gap notes as byte-level parity or per-format residual gaps, not as blanket statements that DAO compact coverage is absent. Promote any remaining high-risk matrix row into [DaoValidationTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoValidationTests.cs), [DaoStorageMaintenanceTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoStorageMaintenanceTests.cs), or [AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs).
+Automated DAO coverage now exists for the checklist items covering the highest-risk PK/FK compact paths, multi-table index/FK stress, storage-maintenance index-page reuse and TDEF-chain reclamation, encrypted compact, fresh ACCDB bootstrap, a representative Northwind-hosted complex-column/LVAL compact path, representative ACE/Jet4 advanced index key encodings plus B-tree maintenance, and conditional Jet3 writer-emitted primary/normal index maintenance in an Access-authored `.mdb` host when the installed DAO engine can open Access 97 files. Treat remaining §7 validation-gap notes as byte-level parity or per-format residual gaps, not as blanket statements that DAO compact coverage is absent. Promote any remaining high-risk checklist item into [DaoValidationTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoValidationTests.cs), [DaoStorageMaintenanceTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoStorageMaintenanceTests.cs), or [AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs).
 
 ## 9. Remaining work (open phases)
 

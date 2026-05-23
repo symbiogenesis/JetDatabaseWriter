@@ -289,7 +289,7 @@ C10 caveats:
 
 ## 5. Validation strategy
 
-Same as the index doc, with one addition specific to attachments:
+General DAO validation rules live in [dao-validation-strategy.md](dao-validation-strategy.md), and active cross-feature follow-ups live in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md). Same as the index doc, with one addition specific to attachments:
 
 - Round-trip through this library: read fixtures (`ComplexFields.accdb`) → re-emit → re-read → byte-compare attachment payloads (post-decode).
 - Cross-validate compression: a `.jpg` payload must be stored with `typeFlag=0x00` (raw); a `.txt` payload must be stored with `typeFlag=0x01` (deflate). Open in Access and **save the attachment back to disk via the GUI** — verify the saved file is byte-identical to the input.
