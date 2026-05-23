@@ -183,7 +183,9 @@ public sealed class DaoStorageMaintenanceTests
         await using AccessRoundTripSession session = AccessRoundTripSession.CreateEmpty(compactTimeout: CompactTimeout);
 
         const string TableName = "SM_FreshComplex";
-        byte[] attachmentPayload = BuildPayload(12 * 1024, 0x6A);
+        byte[] largeAttachmentPayload = BuildPayload(12 * 1024, 0x6A);
+        byte[] extraAttachmentPayload = BuildPayload(8 * 1024, 0x2B);
+        byte[] secondParentAttachmentPayload = BuildPayload(10 * 1024, 0x3C);
 
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             session.SourcePath,
@@ -205,22 +207,40 @@ public sealed class DaoStorageMaintenanceTests
                 ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync(
+            await writer.InsertRowsAsync(
                 TableName,
-                [1, "fresh-complex", DBNull.Value, DBNull.Value],
+                new[]
+                {
+                    new object[] { 1, "fresh-complex", DBNull.Value, DBNull.Value },
+                    new object[] { 2, "fresh-complex-second", DBNull.Value, DBNull.Value },
+                },
                 TestContext.Current.CancellationToken);
 
-            var parentKey = new Dictionary<string, object> { ["Id"] = 1 };
+            var firstParentKey = new Dictionary<string, object> { ["Id"] = 1 };
+            var secondParentKey = new Dictionary<string, object> { ["Id"] = 2 };
             await writer.AddAttachmentAsync(
                 TableName,
                 "Files",
-                parentKey,
-                new AttachmentInput("fresh-complex.jpg", attachmentPayload),
+                firstParentKey,
+                new AttachmentInput("fresh-complex.jpg", largeAttachmentPayload),
+                TestContext.Current.CancellationToken);
+            await writer.AddAttachmentAsync(
+                TableName,
+                "Files",
+                firstParentKey,
+                new AttachmentInput("fresh-complex-extra.jpg", extraAttachmentPayload),
+                TestContext.Current.CancellationToken);
+            await writer.AddAttachmentAsync(
+                TableName,
+                "Files",
+                secondParentKey,
+                new AttachmentInput("fresh-second.jpg", secondParentAttachmentPayload),
                 TestContext.Current.CancellationToken);
 
-            await writer.AddMultiValueItemAsync(TableName, "Tags", parentKey, "alpha", TestContext.Current.CancellationToken);
-            await writer.AddMultiValueItemAsync(TableName, "Tags", parentKey, "beta", TestContext.Current.CancellationToken);
-            await writer.AddMultiValueItemAsync(TableName, "Tags", parentKey, "gamma", TestContext.Current.CancellationToken);
+            await writer.AddMultiValueItemAsync(TableName, "Tags", firstParentKey, "alpha", TestContext.Current.CancellationToken);
+            await writer.AddMultiValueItemAsync(TableName, "Tags", firstParentKey, "beta", TestContext.Current.CancellationToken);
+            await writer.AddMultiValueItemAsync(TableName, "Tags", firstParentKey, "gamma", TestContext.Current.CancellationToken);
+            await writer.AddMultiValueItemAsync(TableName, "Tags", secondParentKey, "delta", TestContext.Current.CancellationToken);
         }
 
         session.RunDaoCompact();
@@ -231,8 +251,9 @@ public sealed class DaoStorageMaintenanceTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         DataTable parent = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal(1, parent.Rows.Count);
-        Assert.Equal("fresh-complex", SafeString(parent.Rows[0], "Title"));
+        Assert.Equal(2, parent.Rows.Count);
+        Assert.Contains(parent.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 1 && string.Equals(SafeString(row, "Title"), "fresh-complex", StringComparison.Ordinal));
+        Assert.Contains(parent.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 2 && string.Equals(SafeString(row, "Title"), "fresh-complex-second", StringComparison.Ordinal));
 
         IReadOnlyList<ComplexColumnInfo> complexColumns = await reader.GetComplexColumnsAsync(TableName, TestContext.Current.CancellationToken);
         Assert.Equal(2, complexColumns.Count);
@@ -246,12 +267,26 @@ public sealed class DaoStorageMaintenanceTests
         Assert.False(string.IsNullOrEmpty(tagsInfo.FlatTableName));
 
         IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync(TableName, "Files", TestContext.Current.CancellationToken);
-        AttachmentRecord attachment = Assert.Single(attachments);
-        Assert.Equal("fresh-complex.jpg", attachment.FileName);
-        Assert.Equal(attachmentPayload, attachment.FileData);
+        Assert.Equal(3, attachments.Count);
+        AttachmentRecord largeAttachment = Assert.Single(attachments, attachment => string.Equals(attachment.FileName, "fresh-complex.jpg", StringComparison.Ordinal));
+        AttachmentRecord extraAttachment = Assert.Single(attachments, attachment => string.Equals(attachment.FileName, "fresh-complex-extra.jpg", StringComparison.Ordinal));
+        AttachmentRecord secondParentAttachment = Assert.Single(attachments, attachment => string.Equals(attachment.FileName, "fresh-second.jpg", StringComparison.Ordinal));
+        Assert.Equal(largeAttachmentPayload, largeAttachment.FileData);
+        Assert.Equal(extraAttachmentPayload, extraAttachment.FileData);
+        Assert.Equal(secondParentAttachmentPayload, secondParentAttachment.FileData);
+        Assert.Equal(largeAttachment.ConceptualTableId, extraAttachment.ConceptualTableId);
+        Assert.NotEqual(largeAttachment.ConceptualTableId, secondParentAttachment.ConceptualTableId);
 
         IReadOnlyList<(int ConceptualTableId, object? Value)> tagItems = await reader.GetMultiValueItemsAsync(TableName, "Tags", TestContext.Current.CancellationToken);
-        Assert.Equal(["alpha", "beta", "gamma"], tagItems.Select(item => Assert.IsType<string>(item.Value)).Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(4, tagItems.Count);
+        string[][] tagGroups = tagItems
+            .GroupBy(item => item.ConceptualTableId)
+            .Select(group => group.Select(item => Assert.IsType<string>(item.Value)).Order(StringComparer.Ordinal).ToArray())
+            .OrderBy(group => group.Length)
+            .ToArray();
+        Assert.Equal(2, tagGroups.Length);
+        Assert.Equal(["delta"], tagGroups[0]);
+        Assert.Equal(["alpha", "beta", "gamma"], tagGroups[1]);
 
         IReadOnlyList<IndexMetadata> attachmentIndexes = await reader.ListIndexesAsync(attachmentInfo.FlatTableName, TestContext.Current.CancellationToken);
         Assert.Equal(3, attachmentIndexes.Count);
