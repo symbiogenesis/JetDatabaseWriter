@@ -8,9 +8,9 @@ Companion: [round-trip-test-failures.md](round-trip-test-failures.md)
 |---|---|
 | Original issue | DAO `OpenRecordset` rejected writer-created user tables with `"Unrecognized database format ''."` even though `OpenDatabase` succeeded. |
 | Original issue status | Resolved on 2026-05-10. |
-| Follow-up status | Resolved on 2026-05-12. OpenRecordset, MEMO fidelity, AutoNumber continuation, DAO FK enforcement, FK Compact & Repair, and encrypted compact now pass on Access-equipped hosts. |
-| Remaining known compatibility gaps from this investigation | None. The only skipped tests in the full suite are diagnostic long-row probes that are intentionally not regression tests. |
-| Current date of this log | 2026-05-12. |
+| Follow-up status | Resolved and refreshed on 2026-05-23. OpenRecordset, MEMO fidelity, AutoNumber continuation, DAO FK enforcement, FK Compact & Repair, encrypted compact, fresh ACCDB DAO compact, complex-column compact, and relationship rename/drop compact now pass on Access-equipped hosts. |
+| Remaining known compatibility gaps from this investigation | None. |
+| Current date of this log | 2026-05-23. |
 
 ## 2. Test Matrix
 
@@ -25,7 +25,11 @@ Companion: [round-trip-test-failures.md](round-trip-test-failures.md)
 | Former gap | `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair` | Requires Microsoft Access | Passing |
 | Former gap | `DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds` | Requires Microsoft Access | Passing |
 
-Full-suite verification after these fixes: `dotnet test --project JetDatabaseWriter.Tests` passed with 3234 succeeded, 0 failed, and 2 intentionally skipped diagnostic probes.
+Historical full-suite verification after the 2026-05-12 fixes: `dotnet test --project JetDatabaseWriter.Tests` passed with 3234 succeeded, 0 failed, and 2 intentionally skipped diagnostic probes.
+
+Latest full-suite verification after the 2026-05-23 relationship, complex-column,
+and data-remanence cleanup: `dotnet test --project JetDatabaseWriter.Tests`
+passed with 3342 succeeded and 0 failed.
 
 ## 3. Confirmed Fixes
 

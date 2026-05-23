@@ -227,8 +227,8 @@ internal sealed class IndexMaintainer(AccessWriter writer)
     /// is encoded via <see cref="IndexKeyEncoder"/>, the entries are sorted by
     /// encoded key, and a fresh B-tree is built via <see cref="IndexBTreeBuilder"/>.
     /// The new root page is patched into the real-index <c>first_dp</c> field on
-    /// the TDEF. Old index pages are orphaned (acceptable; Access compact-and-repair
-    /// reclaims them — this library does not maintain a free-page bitmap).
+    /// the TDEF. Old index pages are deliberately left unreferenced in this
+    /// conservative rebuild path; Access compact-and-repair can reclaim them.
     /// </para>
     /// <para>
     /// All key column types accepted by <see cref="IndexHelpers.ResolveIndexes"/> have
@@ -1989,9 +1989,9 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 emptyingLeafSiblings[group.LeafPage] = (leafPrev, leafNext);
 
                 // Stage parent Remove op. ApplyIntermediateOps drops the
-                // entry at OriginalIndex; the dead leaf page is orphaned
-                // (not appended to any free list — Compact & Repair sweeps
-                // it, same as bulk path orphans).
+                // entry at OriginalIndex; the dead leaf page is deliberately
+                // left unreferenced here, matching the conservative bulk
+                // rebuild path that leaves old index pages for Compact & Repair.
                 AddParentOp(parentOps, mergeParent.PageNumber, mergeParent.TakenIndex, IntermediateOpType.Remove, default!);
 
                 continue;

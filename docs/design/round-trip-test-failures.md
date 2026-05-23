@@ -1,6 +1,6 @@
 # Round-Trip Test Failures — Investigation Status
 
-## Current status (2026-05-12)
+## Current status (2026-05-23)
 
 **Original DAO OpenRecordset blocker: RESOLVED.** The row-count, index seek,
 MEMO fidelity, and AutoNumber continuation DAO validation tests now pass on
@@ -27,12 +27,39 @@ header mask, per-page IV derivation uses the unmasked key, and DAO
 Agile CFB output remains available through `AccessEncryptionFormat.AccdbAgileCfb`.
 The encrypted compact test now passes.
 
+**Fresh ACCDB bootstrap and complex-column compact: RESOLVED.** Fresh
+writer-created ACCDB files now scaffold the core DAO-visible system tables
+(`MSysACEs`, `MSysQueries`, and `MSysRelationships`) along with
+`MSysComplexColumns` and the `MSysComplexType_*` templates. Northwind-hosted
+attachment and multi-value complex-column schema rewrites survive DAO Compact &
+Repair after the rewrite path preserves the original parent table object/TDEF
+identity when possible, and patches surviving `MSysComplexColumns` rows on the
+copy/swap fallback.
+
+**Relationship rename/drop compact: RESOLVED.** Relationship create emits the
+canonical `MSysRelationships` row, Type=8 `MSysObjects` row, relationship ACEs,
+and Jet4/ACE FK logical-index TDEF entries. Rename/drop now rewrite
+`MSysRelationships` as live-only rows and update or remove the TDEF metadata;
+they deliberately leave Type=8 relationship `MSysObjects` rows for Access
+Compact & Repair to normalize from `MSysRelationships`. This avoids the DAO
+enumeration/compact failures caused by relationship tombstones or manual Type=8
+row mutation.
+
+**Data remanence semantics: REGRESSION-GUARDED.** Default delete/update behavior
+preserves normal JET logical-delete semantics: user-row slots are marked deleted
+with the `0x8000` row-offset bit and old row/LVAL payload bytes may remain until
+reuse. Secure erase remains opt-in through `SecureEraseMode.DeletedRowsAndFreedPages`.
+The separate `0x4000` row-offset bit is treated as non-live/overflow, not as the
+deletion marker the writer should set.
+
 Full-suite verification: `dotnet test --project JetDatabaseWriter.Tests` passed
-with 3234 succeeded, 0 failed, and 2 intentionally skipped diagnostic probes.
+with 3342 succeeded and 0 failed. Focused post-documentation checks also passed
+for data remanence, DAO storage maintenance, and relationship rename/drop
+mutation coverage.
 
 ## Previous status (2026-05-10, superseded)
 
-The notes below are historical. The 2026-05-12 status above supersedes the
+The notes below are historical. The 2026-05-23 status above supersedes the
 OpenRecordset, FK compact, and encrypted compact blockers.
 
 **LvProp inline-marker hypothesis: DISCONFIRMED.** Tested the theory that the
@@ -65,7 +92,7 @@ blockers are now resolved.
 
 **TDEF column flags / ExtraFlags: PARTIALLY RESOLVED.** Removed the writer-private `0x08` NOT-NULL flag bit and the unconditional `ExtraFlags=0x01` (compressed unicode) on TEXT/MEMO columns. Persistence of `IsNullable` was rewired to read from `MSysObjects.LvProp` `Required` rather than the column flags byte. The DAO baseline probe (`rt-dao-baseline`, legacy `DIAG_RT_DAO_BASELINE`) `OpenDatabase` path now succeeds against writer-created tables.
 
-**Historical blocker at this point: DAO `OpenRecordset` rejected writer-created user tables** with `"Unrecognized database format ''."` — the residual TDEF-layout incompatibility surfaced only when DAO materialized a recordset, not when it opened the database/catalog. Unskipping the three `OpenRecordset` tests in `DaoValidationTests` (and the two `AccessRoundTripTests` compact/repair tests, which depended on the same path) confirmed this: 3 of the 4 unskipped DAO tests failed with the same COM error, even though `DAO.DBEngine.120.OpenDatabase` succeeded and the FormatProbe baseline passed. Later work resolved this original blocker; see the 2026-05-12 status above.
+**Historical blocker at this point: DAO `OpenRecordset` rejected writer-created user tables** with `"Unrecognized database format ''."` — the residual TDEF-layout incompatibility surfaced only when DAO materialized a recordset, not when it opened the database/catalog. Unskipping the three `OpenRecordset` tests in `DaoValidationTests` (and the two `AccessRoundTripTests` compact/repair tests, which depended on the same path) confirmed this: 3 of the 4 unskipped DAO tests failed with the same COM error, even though `DAO.DBEngine.120.OpenDatabase` succeeded and the FormatProbe baseline passed. Later work resolved this original blocker; see the 2026-05-23 status above.
 
 **Historical test-suite state:** green with the 5 DAO tests re-skipped.
 
@@ -90,7 +117,7 @@ Files changed: `AccessBase.cs`, `RowEncoder.cs`, `LongValueEncoder.cs`, `ColumnI
 - ⛔ **GPM (page 1) ruled out for append-only writes**: Page 1's bitmap uses convention "1 = free, 0 = in-use". Pages appended beyond original file size already have bits = 0 (in-use by default).
 - ✅ **TDEF magic stamps (`0x00000659` / `0x00000783`)**: Column descriptors (bytes 1–4) and logical-idx entry descriptors (first 4 bytes) stamped with `0x00000659` (format-wide magic). Real-idx physical descriptors (first 4 bytes) stamped with `0x00000783` (`Jet4.RealIdx.LeadingMagic` — a distinct constant, NOT the format-wide magic). Applied across `BuildTDefPagesWithIndexOffsets`, `BuildMSysObjectsTDef`, and `RelationshipManager.EmitFkLogicalIdxAsync`.
 - ✅ **Real-idx flags byte**: `0x80` bit set at `Constants.TableDefinition.Jet4.RealIdx.FlagsOffset` for FK backing indexes.
-- ⛔ **DB-header modify counter at `0x0E02`**: Manually patched from `0x00` to `0x04` — **RULED OUT** (still fails).
+- ⛔ **DB-header modify counter at `0x0E02`**: Manually patched from `0x00` to `0x04` — **RULED OUT** (did not fix the historical DAO compact failure).
 - ✅ **Prefix compression cap** (2026-05-03): `BuildLeafPage` now accepts optional `maxPrefixLength` parameter. `TrySpliceCatalogIndexEntryAsync` and `TryAppendToTailLeafAsync` read the existing page's `pref_len` before decoding and pass it to `BuildLeafPage`, preventing the writer from increasing prefix compression beyond what was on disk. Result: page 8 `pref_len` stays 0 (was being recomputed to 1), page 2790 `pref_len` stays 1 (was being recomputed to 4). Free-space values now match the DAO baseline.
 - ✅ **Entry-start bitmask sentinel** (2026-05-04): `BuildLeafPage` now writes a sentinel bit at the position one past the last entry in the entry-start bitmask. Access/DAO always writes this sentinel (verified on every leaf page in NorthwindTraders.accdb) and validates it during Compact & Repair. The N1 reproducer (single `CreateTableAsync`) now **passes DAO compact** with this fix. Five test helper `CountLeafEntries` methods updated to subtract 1 from the bitmask popcount to account for the sentinel.
 - ✅ **Split-path `maxPrefixLength` cap** (2026-05-04): `TryBuildSplitLeafPages` now accepts `int maxPrefixLength` and forwards it to every `BuildLeafPage` call. All three call sites (`TrySpliceCatalogIndexEntryAsync`, `TrySurgicalCrossLeafMaintainAsync`, and the incremental splice path) read the original leaf's `pref_len` and pass it through. This prevents split-product pages from getting unrestricted prefix compression (N2 reproducer: page 2790 pref was growing 1→4, page 3019 was getting pref=16). **Combined with #16 and #17, this resolved the N2+ reproducer** — DAO Compact now succeeds for multiple `CreateTableAsync` calls.
@@ -115,7 +142,7 @@ A binary patch experiment on the N1 reproducer (single empty `RT_Customers` tabl
 - Page 2790 still triggers `MSysDb (3011)` despite having only **1 byte** difference vs the DAO baseline (a bitmask bit at offset `0x01DD`: Writer=`0x00`, DAO=`0x40`). This single bitmask bit marks the entry-start position of the spliced entry and is expected to differ (the writer's entry has a different sort key because its table Id = 3008 vs DAO's 2671). Yet DAO rejects the page.
 - Page 2994 also failed when tested with the full round-trip test (which creates 2 tables + relationship, unlike N1 which only creates 1). The error `Object invalid or no longer set` suggested a cascading catalog-consistency issue when multiple catalog rows were present.
 
-The DAO-authored baseline probe (see [DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs)) has produced empirical ground truth: a copy of `NorthwindTraders.accdb` to which the **same** `RT_Customers` table was added via `DAO.DBEngine.120` (the engine path Access UI uses) survives DAO compact ✅, while the writer's copy of the same fixture fails ❌.
+The DAO-authored baseline probe (see [DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs)) produced the empirical ground truth for this historical failure: a copy of `NorthwindTraders.accdb` to which the **same** `RT_Customers` table was added via `DAO.DBEngine.120` (the engine path Access UI uses) survived DAO compact, while the pre-fix writer copy of the same fixture failed.
 
 ## Historical tests in question
 
@@ -143,22 +170,23 @@ The Microsoft Access database engine could not find the object 'MSysDb'.
 
 `'MSysDb'` is **not** a real catalog object. It is the `MSysObjects` row at `Id=268435456 / ParentId=251658242 / Type=2 / Flags=0x80000000` (a Databases-properties entry). DAO names it when its catalog walk fails — symptom, not a missing object.
 
-## Current diff (N1 minimum reproducer)
+## Historical diff (N1 minimum reproducer)
 
-A single empty `RT_Customers` table, no relationship, no inserts:
+At the pre-fix stage, a single empty `RT_Customers` table, no relationship,
+and no inserts produced this minimum repro surface:
 
 ```
 Diff pages (shared range): 2, 3, 8, 2790, 2994, 2998
 Pages added              : new TDEF, new PK leaf, new usage-map page (+3 to +6 depending on rels/ACEs)
 ```
 
-| Page | What's there | Keep-one bisect | Status |
+| Page | What's there | Keep-one bisect | Resolution |
 |---|---|:---:|---|
 | 2 | MSysObjects TDEF | ✅ PASS | Correct (`row_count` +1, per-real-idx entry counts +1) |
 | 3 | MSysACEs TDEF | ✅ PASS | Correct (`row_count` +3, ACE rows inserted with `FInheritable` column name fix) |
-| 8 | MSysObjects PK (`Id`) leaf | 🔴 **FAIL** | Post-pref_len fix: error changed from `MSysDb (3011)` to `search key not found`. 18 byte diffs vs baseline (expected: new entry). `pref_len=0` now matches baseline. `free_space=1456` matches DAO baseline. **Post-sentinel fix: ✅ PASS (N1).** |
-| 2790 | MSysObjects `ParentIdName` composite leaf | 🔴 **FAIL** | Post-pref_len fix: still `MSysDb (3011)`. Only **1 byte** diff vs DAO baseline (bitmask bit at `0x01DD`). `pref_len=1` matches baseline. `free_space=10` matches DAO baseline. ~1479 byte diffs vs baseline (expected: entries shift after sorted insertion). **Post-sentinel fix: ✅ PASS (N1).** |
-| 2994 | MSysObjects data page hosting the new row | 🔴 **FAIL** | `Object invalid or no longer set` when tested with full 2-table+rel test. N1 (single table) bisection was ✅ PASS. |
+| 8 | MSysObjects PK (`Id`) leaf | Pre-fix failure | Error changed from `MSysDb (3011)` to `search key not found` after the prefix-length cap. The entry-start sentinel fix completed the N1 repair. |
+| 2790 | MSysObjects `ParentIdName` composite leaf | Pre-fix failure | The prefix-length cap made `pref_len=1` and `free_space=10` match the DAO baseline; the entry-start sentinel fix completed the N1 repair. |
+| 2994 | MSysObjects data page hosting the new row | Pre-fix N2+ failure | `Object invalid or no longer set` was a cascading failure from corrupted split-product index pages and was resolved by the split-path `maxPrefixLength` cap. |
 | 2998 | MSysACEs data page | ✅ PASS | ACE rows correctly inserted |
 | New TDEF page (3008) | RT_Customers TDEF | ✅ (appended pages all pass) | Header + magic stamps + usage-map pointers all correct |
 | New PK leaf (3009) | RT_Customers PK leaf (page_type=0x04, parent=3008) | ✅ | Empty leaf, well-formed |
@@ -190,7 +218,7 @@ Supporting fixes (each was a real defect; each is regression-guarded):
 
 - Per-real-idx `num_idx_rows` mirrors `row_count` delta (`UpdateRowCountAsync`). Guarded by [TdefRowCountSyncTests.cs](../../JetDatabaseWriter.Tests/Pages/TdefRowCountSyncTests.cs).
 - Real-idx `flags` byte at Jet4 phys+46 (was previously offset 42) with the `0x80` UNKNOWN bit always set. Guarded by [IndexFlagCombinationsTests.cs](../../JetDatabaseWriter.Tests/Indexes/IndexFlagCombinationsTests.cs).
-- Jet4 leaf-page header offsets: `prev` @ 12, `next` @ 16, `tail` @ 20, `pref_len` @ 24, bitmask @ 0x1B, first-entry @ 0x1E0 — constants in `Constants.IndexLeafPage.{Jet3,Jet4}`. Hard-coded `AsSpan(8/12/16/20, ...)` reads in Jet4 paths are a bug; use `IndexLeafPageBuilder.LeafPageLayout`.
+- Jet4 leaf-page header offsets: `prev` @ 12, `next` @ 16, `tail` @ 20, `pref_len` @ 24, bitmask @ 0x1B, first-entry @ 0x1E0 — constants in `Constants.IndexLeafPage.{Jet3,Jet4}`. Regression-sensitive index paths should continue to use `IndexLeafPageBuilder.LeafPageLayout` or the format constants instead of raw `AsSpan(8/12/16/20, ...)` offsets.
 - Intermediate index pages use 4-byte **big-endian** child pointers (despite other 32-bit fields on the page being LE). `IndexBTreeBuilder` writes BE; `IndexBTreeSeeker.SelectChildPage` and `IndexLeafIncremental.DecodeIntermediateChildPointer` read BE.
 - **Prefix compression cap (2026-05-03):** `BuildLeafPage` now accepts optional `maxPrefixLength` parameter. When splicing into an existing leaf, the caller reads the page's original `pref_len` and passes it to cap the recomputed prefix. This prevents the writer from increasing prefix compression beyond what was on disk — DAO rejects pages whose `pref_len` grows (entries shift position, bitmask becomes inconsistent with what DAO expects). Applied in both `TrySpliceCatalogIndexEntryAsync` and `TryAppendToTailLeafAsync`.
 
@@ -221,7 +249,7 @@ Supporting fixes (each was a real defect; each is regression-guarded):
 
 ### DB-header modify counter — ruled out (2026-05-03)
 
-Manually patching file offset `0x0E02` from `0x00` to `0x04` (matching DAO's bump) on a writer-produced file still fails DAO compact. The modify counter is not validated by DAO's compact path.
+Manually patching file offset `0x0E02` from `0x00` to `0x04` (matching DAO's bump) on a writer-produced file did not fix the historical DAO compact failure. The modify counter is not validated by DAO's compact path.
 
 ### GPM (page 1) — ruled out for append-only (2026-05-03)
 
@@ -312,7 +340,7 @@ Empirical comparison of writer-authored vs DAO-authored `RT_Customers` against t
 
 This section is a pre-fix snapshot. It is preserved as forensic evidence for
 the catalog-splice investigation; current Compact & Repair compatibility is
-summarized in the 2026-05-12 status at the top of this file.
+summarized in the 2026-05-23 status at the top of this file.
 
 **DAO compact verdict: ✅ accepts DAO-authored copy, ❌ rejects writer-authored copy with `MSysDb (3011)` from the same starting fixture.** This isolates the cause to the writer's output, not the test infra or the fixture.
 
@@ -320,11 +348,11 @@ summarized in the 2026-05-12 status at the top of this file.
 
 DAO **adds 0 pages**, **reuses 5 pre-existing free pages** (2671 TDEF, 2997+3003 leaf-idx, 2998+3002 data, 2843 data); writer **always appends 3 new pages** (3008 TDEF, 3009 PK leaf, 3010 usage-map).
 
-The reused pages in the baseline have first 8 bytes `09 01 F0 0F 4C 56 41 4C` — `page_type=0x09`, `freespace=0x0FF0`, ASCII tag `"LVAL"`. **This is Access's "freed page" sentinel** (NOT a usable LVAL — the type-9 marker means "this page is on the free list"). DAO's allocator finds these and overwrites them; the writer has no equivalent free-page-finder.
+The reused pages in the baseline have first 8 bytes `09 01 F0 0F 4C 56 41 4C` — `page_type=0x09`, `freespace=0x0FF0`, ASCII tag `"LVAL"`. **This is Access's "freed page" sentinel** (NOT a usable LVAL — the type-9 marker means "this page is on the free list"). DAO's allocator found and overwrote these pages; at this pre-fix point, the writer's allocator was still append-only.
 
 ### 2. Page 1 is the global page-allocation map (revises 2026-05-03 morning withdrawal of hypothesis #7)
 
-DAO modifies page 1 at offsets `0x0FD5` (`80 → 00`, clearing one bit) and `0x0FFF` (`7C → 70`). Page 1's first byte is `01 01` (type-0x01 data page). **Page 1 IS the global page-allocation map** — Jet/ACE does have one, just on page 1 rather than page 5 as the original (since-withdrawn) hypothesis assumed. Bit at `0x0FD5 bit 7` covers a specific page number; DAO clears it when claiming that page off the free list. The writer never updates page 1 — every newly-appended page is invisible to the global allocation map. **This is a concrete protocol gap.**
+DAO modified page 1 at offsets `0x0FD5` (`80 → 00`, clearing one bit) and `0x0FFF` (`7C → 70`). Page 1's first byte is `01 01` (type-0x01 data page). **Page 1 IS the global page-allocation map** — Jet/ACE does have one, just on page 1 rather than page 5 as the original (since-withdrawn) hypothesis assumed. Bit at `0x0FD5 bit 7` covers a specific page number; DAO clears it when claiming that page off the free list. At this pre-fix point, newly appended writer pages were outside the global allocation map. Later storage-maintenance work added page-1 global-map handling for page reuse, scrubbing, and tail shrinking.
 
 ### 3. Page 3 is `MSysACEs` TDEF — DAO adds 3 ACE rows per new table
 
@@ -368,7 +396,7 @@ Inside DAO's TDEF column descriptors, the 4 bytes immediately after the column-t
 
 ### 6. Page 0 (DB header) — modify counter — RULED OUT
 
-DAO bumps a single byte at file offset `0x0E02` from `0x00 → 0x04`. Manually patching this to match DAO's value still fails DAO compact. **Not validated by DAO's compact path.**
+DAO bumps a single byte at file offset `0x0E02` from `0x00 → 0x04`. Manually patching this to match DAO's value did not fix the historical compact failure. **Not validated by DAO's compact path.**
 
 ### 7. DAO uses raw UTF-16 in catalog `Name`; writer uses compressed UCS-2 (cosmetic, already known)
 
@@ -394,7 +422,7 @@ Root cause of N2+ failure (fixed 2026-05-04):
 | 1 | Splice key encoding wrong (text NFC, ParentId byte order, etc.) | ✅ ruled out (N1) | N1 passes DAO compact — key encoding is correct for single-table case. |
 | 2 | Per-real-idx skip-block stale (`num_idx_rows` not bumped with `row_count`) | ✅ fixed | `UpdateRowCountAsync` mirrors row-count delta into `num_idx_rows`. Guarded. |
 | 3 | Real-idx `flags` byte at wrong offset / missing `0x80` UNKNOWN bit | ✅ fixed | Now uses `IndexLayout.FlagsOffsetWithinPhys` and `Constants.TableDefinition` flag constants. Guarded. |
-| 4 | Relationship / row-insert paths break compact | ✅ ruled out | N1 reproducer is a single empty `CreateTableAsync` call and still fails. |
+| 4 | Relationship / row-insert paths break compact | ✅ ruled out | The historical N1 reproducer was a single empty `CreateTableAsync` call, so relationship and row-insert paths were off the critical path. |
 | 5 | New TDEF page malformed | ✅ fixed | All sub-faults landed; TDEF pages individually pass binary bisection. |
 | 6 | New MSysObjects row variable-length area | ✅ fixed | LvProp 12-byte placeholder landed. Data page (2994) individually passes binary bisection (N1 reproducer). |
 | 7 | Global page-allocation map (page 1) | ✅ ruled out | Append-only pages already "in-use". |
@@ -404,7 +432,7 @@ Root cause of N2+ failure (fixed 2026-05-04):
 | 11 | TDEF back-pointer wrong | ✅ ruled out | TDEF pages individually pass binary bisection. |
 | 12 | Catalog `Name` compression (UCS-2 vs UTF-16) | ✅ ruled out | Cosmetic only; bisect proved. |
 | 13 | Col-desc magic `0x00000659` inside TDEF column/index descriptors | ✅ fixed & ruled out | Stamps landed in all three TDEF paths. TDEF pages individually pass binary bisection. |
-| 14 | DB-header modify counter at `0x0E02` | ✅ ruled out | Manual patch still fails. |
+| 14 | DB-header modify counter at `0x0E02` | ✅ ruled out | Manual patch did not fix the historical compact failure. |
 | **15** | **MSysObjects index leaf splice (pages 8 and 2790)** | ✅ **FIXED** | **Binary page-level bisection: pages 8 and 2790 each individually triggered DAO rejection.** Pref_len cap + sentinel fix resolved N1 (single table). Split-path `maxPrefixLength` cap fix resolved N2+ (multiple tables). |
 | **16** | **Prefix compression (`pref_len`) growing beyond original** | ✅ **fixed** | `BuildLeafPage` was recomputing `pref_len` from scratch, increasing it beyond the original page's value (page 8: 0→1, page 2790: 1→4). This shifted entry positions and made the bitmask inconsistent. Fix: cap `pref_len` at the original page's value. Values now match baseline/DAO. |
 | **17** | **Missing entry-start bitmask sentinel** | ✅ **fixed** | Access/DAO writes a one-past-the-end bit in the entry-start bitmask at the position immediately after the last entry. The writer was omitting this sentinel. Fix: `BuildLeafPage` now writes the sentinel after the entry loop. Verified on every leaf page in NorthwindTraders.accdb. |
@@ -413,7 +441,7 @@ Root cause of N2+ failure (fixed 2026-05-04):
 | **20** | **`LvProp` placeholder is a dangling chained-LVAL pointer** | ❌ **disconfirmed (2026-05-10)** | Hypothesis: the 12-byte all-zero `LvProp` placeholder parses as `bitmask=0x00` (chained-LVAL) with `lval_dp=0`, so `OpenRecordset`'s per-column property walk dereferences page 0 and fails with `"Unrecognized database format ''."`. **Tested:** changed byte index 3 from `0x00` to `0x80` (well-formed empty inline long-value: `memo_len=0`, `bitmask=0x80`, no payload). Unskipped all 5 DAO tests. **All 5 still failed with the identical error at the same `OpenRecordset` line.** Inline-marker bit makes no observable difference. Reverted. The defect is not in the catalog row's `LvProp` payload. |
 ## Recommended next steps (priority order)
 
-**All catalog index, OpenRecordset, FK compact, and encrypted compact issues from this investigation are resolved.** The list below is historical and kept as a map of what was tested:
+**All catalog index, OpenRecordset, FK compact, encrypted compact, relationship mutation compact, complex-column compact, and data-remanence marker issues from this investigation are resolved.** The list below is historical and kept as a map of what was tested:
 
 1. ~~**Byte-level diff of pages 8 and 2790**~~ ✅ Done.
 2. ~~**Inspect `pref_len` / prefix compression**~~ ✅ Done. Pref_len cap fix landed.
@@ -422,13 +450,13 @@ Root cause of N2+ failure (fixed 2026-05-04):
 5. ~~**Fix `TryBuildSplitLeafPages` to pass `maxPrefixLength` cap**~~ ✅ Done (2026-05-04). Split-path cap fix landed. N2+ now passes DAO compact.
 6. ~~**Investigate page 2994**~~ ✅ Resolved — was a cascading failure from corrupted split-product index pages; now passes with the split-path fix.
 7. ~~**Investigate user-table TDEF incompatibility**~~ ✅ Resolved for non-FK DAO `OpenRecordset` validation. Keep the historical DAO baseline notes below for context; do not use them as the current next-step list.
-8. ~~**Investigate FK Compact & Repair**~~ ✅ Resolved by system-table page reuse, Type=8 relationship objects, relationship ACEs, shared table/index usage-map rows, and in-place single-leaf reuse.
+8. ~~**Investigate FK Compact & Repair**~~ ✅ Resolved by system-table page reuse, Type=8 relationship objects, relationship ACEs, shared table/index usage-map rows, in-place single-leaf reuse, and live-only `MSysRelationships` rewrites for relationship rename/drop.
 9. ~~**Investigate encrypted compact**~~ ✅ Resolved by Access-native flat Agile output, masked page-0 encoding-key handling, full-header detection, and the DAO five-argument source-password compact form.
 
 ## DAO `OpenRecordset` regression after column-flag fix (2026-05-05, historical)
 
 This section captures the state before the later OpenRecordset fixes. See the
-2026-05-12 current status for the live test state.
+2026-05-23 current status for the live test state.
 
 The `0x08` NOT-NULL flag and unconditional TEXT/MEMO `ExtraFlags=0x01` were the two writer-private bits the DAO baseline diff identified earlier ("CustomerID flags=0x0F vs DAO 0x07; Name flags=0x0A vs DAO 0x02; Name ExtraFlags=0x01 vs DAO 0x00"). Removing them and persisting `Required` via `LvProp` was a necessary correction:
 
@@ -525,14 +553,14 @@ Legacy equivalent: `$env:DIAG_RT_BISECT = "1"; dotnet run --project JetDatabaseW
 
 The bisector stops after the first write or DAO compact failure by default, because later escalating steps are normally downstream of that break. Set `$env:DIAG_RT_RUN_ALL = "1"` for the older exhaustive N0-N4 output.
 
-Copies `NorthwindTraders.accdb` once per step, runs the writer through an escalating action set (`N0` open/close → `N1` one table → `N2` two tables → `N3` add relationship → `N4` insert rows), and shells DAO compact for each. One line per step:
+Copies `NorthwindTraders.accdb` once per step, runs the writer through an escalating action set (`N0` open/close → `N1` one table → `N2` two tables → `N3` add relationship → `N4` insert rows), and shells DAO compact for each. Current runs should continue past N1; a historical failing run looked like:
 
 ```
-[bisect] N0_OpenClose: ✅ OK
-[bisect] N1_CreateOneTable: ❌ MSysDb
+[bisect] N0_OpenClose: OK
+[bisect] N1_CreateOneTable: FAIL MSysDb
 ```
 
-`N1_CreateOneTable` is the smallest writer surface that breaks DAO. If it already fails, the relationship / insert paths are off the critical path.
+During the original investigation, `N1_CreateOneTable` was the smallest writer surface that broke DAO. In current builds, any failure at N1 is a regression; use that result to keep relationship and insert paths off the critical path while triaging.
 
 ### `rt-dao-baseline` — DAO-authored ground-truth comparator
 
@@ -546,7 +574,7 @@ Legacy equivalent: `$env:DIAG_RT_DAO_BASELINE = "1"; dotnet run --project JetDat
 
 Makes two copies of `NorthwindTraders.accdb`. On copy A runs the writer's N1 step (`CreateTableAsync RT_Customers`); on copy B shells `DAO.DBEngine.120` from `SysWOW64\WindowsPowerShell` and creates the same table via `Database.CreateTableDef` / `TableDef.CreateField` / `TableDef.CreateIndex` / `TableDefs.Append` — the API path Microsoft Access UI uses internally. Then runs `DBEngine.CompactDatabase` on both, captures both verdicts, and emits a side-by-side report at `%TEMP%\JetDatabaseWriter.RtDaoBaseline\dao-baseline-diff.md` with:
 
-1. Authoring + DAO-compact outcomes per copy (writer's must fail with `MSysDb`; DAO's must succeed — that's the validity check that the baseline is real).
+1. Authoring + DAO-compact outcomes per copy. During the original investigation the pre-fix writer copy failed with `MSysDb` while the DAO copy succeeded; in current builds both should compact, and a writer-only failure marks a regression.
 2. File-level page-count and shared-range page-diff summaries vs the original NorthwindTraders.
 3. RT_Customers catalog-row metadata in each (Id, ParentId, TDEF page).
 4. A unified table of every changed/added page in either copy, labeled by page-type byte.

@@ -1,7 +1,7 @@
 // Bisection probe for round-trip failures. Runs a sequence of escalating
 // AccessWriter operations on copies of NorthwindTraders.accdb, then invokes
-// DAO compact on each via a bitness-matched PowerShell host, and reports which
-// step first breaks DAO.
+// DAO compact on each via a bitness-matched PowerShell host, and reports the
+// first step that fails DAO compact.
 //
 // USAGE
 //   dotnet run --project JetDatabaseWriter.FormatProbe -- rt-bisect
