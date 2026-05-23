@@ -1508,7 +1508,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     /// <summary>
-    /// Asynchronously creates a linked-table entry (MSysObjects type 4) that references
+    /// Asynchronously creates a linked-table entry (MSysObjects type 6) that references
     /// a table in another Access database. No row data is stored locally; readers follow
     /// the entry to <paramref name="sourceDatabasePath"/> on demand.
     /// </summary>
@@ -1528,31 +1528,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (await GetCatalogEntryAsync(linkedTableName, cancellationToken).ConfigureAwait(false) != null)
-        {
-            throw new InvalidOperationException($"An object named '{linkedTableName}' already exists.");
-        }
-
-        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        object[] values = msys.CreateNullValueRow();
-        DateTime now = DateTime.UtcNow;
-
-        msys.SetValueByName(values, "Id", 0);
-        msys.SetValueByName(values, "ParentId", Constants.SystemObjects.TablesParentId);
-        msys.SetValueByName(values, "Name", linkedTableName);
-        msys.SetValueByName(values, "Type", (short)Constants.SystemObjects.LinkedTableType);
-        msys.SetValueByName(values, "DateCreate", now);
-        msys.SetValueByName(values, "DateUpdate", now);
-        msys.SetValueByName(values, "Flags", 0);
-        msys.SetValueByName(values, "ForeignName", foreignTableName);
-        msys.SetValueByName(values, "Database", sourceDatabasePath);
-
-        await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
-        InvalidateCatalogCache();
+        await _catalogWriter.InsertLinkedTableCatalogEntryAsync(
+            linkedTableName,
+            sourceDatabasePath,
+            foreignTableName,
+            connectString: null,
+            objectType: (short)Constants.SystemObjects.LinkedTableType,
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 6) that references
+    /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
     /// a table accessible via an ODBC connection. No row data is stored locally; readers
     /// follow the entry to <paramref name="connectionString"/> /
     /// <paramref name="foreignTableName"/> on demand.
@@ -1573,31 +1559,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (await GetCatalogEntryAsync(linkedTableName, cancellationToken).ConfigureAwait(false) != null)
-        {
-            throw new InvalidOperationException($"An object named '{linkedTableName}' already exists.");
-        }
-
         string normalizedConnect = connectionString.StartsWith("ODBC;", StringComparison.OrdinalIgnoreCase)
             ? connectionString
             : "ODBC;" + connectionString;
 
-        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        object[] values = msys.CreateNullValueRow();
-        DateTime now = DateTime.UtcNow;
-
-        msys.SetValueByName(values, "Id", 0);
-        msys.SetValueByName(values, "ParentId", Constants.SystemObjects.TablesParentId);
-        msys.SetValueByName(values, "Name", linkedTableName);
-        msys.SetValueByName(values, "Type", (short)Constants.SystemObjects.LinkedOdbcType);
-        msys.SetValueByName(values, "DateCreate", now);
-        msys.SetValueByName(values, "DateUpdate", now);
-        msys.SetValueByName(values, "Flags", 0);
-        msys.SetValueByName(values, "ForeignName", foreignTableName);
-        msys.SetValueByName(values, "Connect", normalizedConnect);
-
-        await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
-        InvalidateCatalogCache();
+        await _catalogWriter.InsertLinkedTableCatalogEntryAsync(
+            linkedTableName,
+            sourceDatabasePath: null,
+            foreignName: foreignTableName,
+            connectString: normalizedConnect,
+            objectType: (short)Constants.SystemObjects.LinkedOdbcType,
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1624,28 +1596,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.ThrowIfDisposed(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (await GetCatalogEntryAsync(linkedTableName, cancellationToken).ConfigureAwait(false) != null)
-        {
-            throw new InvalidOperationException($"An object named '{linkedTableName}' already exists.");
-        }
-
-        TableDef msys = await ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        object[] values = msys.CreateNullValueRow();
-        DateTime now = DateTime.UtcNow;
-
-        msys.SetValueByName(values, "Id", 0);
-        msys.SetValueByName(values, "ParentId", Constants.SystemObjects.TablesParentId);
-        msys.SetValueByName(values, "Name", linkedTableName);
-        msys.SetValueByName(values, "Type", (short)Constants.SystemObjects.LinkedTableType);
-        msys.SetValueByName(values, "DateCreate", now);
-        msys.SetValueByName(values, "DateUpdate", now);
-        msys.SetValueByName(values, "Flags", 0);
-        msys.SetValueByName(values, "ForeignName", foreignFileName);
-        msys.SetValueByName(values, "Database", sourceDirectoryPath);
-        msys.SetValueByName(values, "Connect", connectString);
-
-        await InsertRowDataAsync(2, msys, values, cancellationToken: cancellationToken).ConfigureAwait(false);
-        InvalidateCatalogCache();
+        await _catalogWriter.InsertLinkedTableCatalogEntryAsync(
+            linkedTableName,
+            sourceDirectoryPath,
+            foreignFileName,
+            connectString,
+            objectType: (short)Constants.SystemObjects.LinkedTableType,
+            cancellationToken).ConfigureAwait(false);
     }
 
     // ════════════════════════════════════════════════════════════════

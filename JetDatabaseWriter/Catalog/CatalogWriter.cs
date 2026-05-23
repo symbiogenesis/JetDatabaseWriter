@@ -94,7 +94,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
     internal async ValueTask<int> InsertRelationshipCatalogEntryAsync(string relationshipName, CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        int objectId = await AllocateRelationshipObjectIdAsync(msys, cancellationToken).ConfigureAwait(false);
+        int objectId = await AllocateNonTableObjectIdAsync(msys, cancellationToken).ConfigureAwait(false);
 
         object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
@@ -110,6 +110,52 @@ internal sealed class CatalogWriter(AccessWriter writer)
 
         RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
         _ = await writer.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
+
+        return objectId;
+    }
+
+    /// <summary>
+    /// Inserts a Type=4/6 linked-table row into <c>MSysObjects</c> using a
+    /// catalog-only object id and the MSysObjects splice path.
+    /// </summary>
+    internal async ValueTask<int> InsertLinkedTableCatalogEntryAsync(
+        string linkedTableName,
+        string? sourceDatabasePath,
+        string foreignName,
+        string? connectString,
+        short objectType,
+        CancellationToken cancellationToken = default)
+    {
+        TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        await EnsureTablesContainerNameAvailableAsync(msys, linkedTableName, cancellationToken).ConfigureAwait(false);
+
+        int objectId = await AllocateNonTableObjectIdAsync(msys, cancellationToken).ConfigureAwait(false);
+        object[] values = msys.CreateNullValueRow();
+        DateTime now = DateTime.UtcNow;
+
+        msys.SetValueByName(values, "Id", objectId);
+        msys.SetValueByName(values, "ParentId", Constants.SystemObjects.TablesParentId);
+        msys.SetValueByName(values, "Name", linkedTableName);
+        msys.SetValueByName(values, "Type", objectType);
+        msys.SetValueByName(values, "DateCreate", now);
+        msys.SetValueByName(values, "DateUpdate", now);
+        msys.SetValueByName(values, "Flags", 0);
+        msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
+        msys.SetValueByName(values, "ForeignName", foreignName);
+
+        if (!string.IsNullOrEmpty(sourceDatabasePath))
+        {
+            msys.SetValueByName(values, "Database", sourceDatabasePath);
+        }
+
+        if (!string.IsNullOrEmpty(connectString))
+        {
+            msys.SetValueByName(values, "Connect", connectString);
+        }
+
+        RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
+        _ = await writer.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
+        writer.InvalidateCatalogCache();
 
         return objectId;
     }
@@ -295,6 +341,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
     internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
     {
         ColumnInfo? idColumn = msys.FindColumn("Id");
+        ColumnInfo? parentIdColumn = msys.FindColumn("ParentId");
         ColumnInfo? nameColumn = msys.FindColumn("Name");
         ColumnInfo? typeColumn = msys.FindColumn("Type");
         ColumnInfo? flagsColumn = msys.FindColumn("Flags");
@@ -324,13 +371,22 @@ internal sealed class CatalogWriter(AccessWriter writer)
 
             foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
             {
+                long id = idColumn is null
+                    ? 0
+                    : ParseInt64(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn));
+                long parentId = parentIdColumn is null
+                    ? 0
+                    : ParseInt64(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, parentIdColumn));
+
                 result.Add(new CatalogRow(
                     PageNumber: row.PageNumber,
                     RowIndex: row.RowIndex,
                     Name: writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameColumn),
                     ObjectType: writer.ParseInt32(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, typeColumn)),
                     Flags: ParseInt64(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flagsColumn!)),
-                    TDefPage: ParseInt64(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn!)) & 0x00FFFFFFL));
+                    TDefPage: id & 0x00FFFFFFL,
+                    Id: id,
+                    ParentId: parentId));
             }
 
             AccessBase.ReturnPage(page);
@@ -339,7 +395,20 @@ internal sealed class CatalogWriter(AccessWriter writer)
         return result;
     }
 
-    private async ValueTask<int> AllocateRelationshipObjectIdAsync(TableDef msys, CancellationToken cancellationToken)
+    private async ValueTask EnsureTablesContainerNameAvailableAsync(TableDef msys, string objectName, CancellationToken cancellationToken)
+    {
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in rows)
+        {
+            if ((row.ParentId == Constants.SystemObjects.TablesParentId || row.ParentId == 0)
+                && string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException($"An object named '{objectName}' already exists.");
+            }
+        }
+    }
+
+    private async ValueTask<int> AllocateNonTableObjectIdAsync(TableDef msys, CancellationToken cancellationToken)
     {
         ColumnInfo? idColumn = msys.FindColumn("Id");
         if (idColumn == null)
