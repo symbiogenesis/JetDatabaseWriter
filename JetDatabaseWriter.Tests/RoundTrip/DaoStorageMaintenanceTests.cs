@@ -21,8 +21,9 @@ using Xunit;
 public sealed class DaoStorageMaintenanceTests
 {
     private const int AdvancedIndexRows = 300;
-    private const int MarkerLength = 16;
     private const int IndexRows = 800;
+    private const int Jet3IndexRows = 260;
+    private const int MarkerLength = 16;
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(3);
 
     [Fact(
@@ -72,6 +73,105 @@ public sealed class DaoStorageMaintenanceTests
         Assert.Contains(
             table.AsEnumerable(),
             row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 2 && string.Equals(SafeString(row, "Label"), "fresh-two", StringComparison.Ordinal));
+    }
+
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    public async Task Jet3IndexEmissionAndMaintenance_SurviveCompactAndRepair()
+    {
+        await using AccessRoundTripSession session = AccessRoundTripSession.CreateEmpty(
+            compactTimeout: CompactTimeout,
+            databaseExtension: ".mdb");
+
+        await CopyDatabaseAsync(TestDatabases.IndexTestV1997, session.SourcePath, TestContext.Current.CancellationToken);
+
+        AccessRoundTripEnvironment.CompactResult jet3OpenProbe = session.RunDaoDatabaseScript(
+            session.SourcePath,
+            "Write-Output 'JET3_OPEN_OK'",
+            CompactTimeout);
+        if (IsDaoPreviousVersionFailure(jet3OpenProbe))
+        {
+            Assert.Skip("Installed DAO/Access cannot open Access 97 Jet3 .mdb files; Jet3 DAO CompactDatabase coverage is unavailable on this host.");
+        }
+
+        AssertDaoSuccess(jet3OpenProbe, "DAO Jet3 fixture open probe");
+
+        const string TableName = "SM_Jet3Index";
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            session.SourcePath,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                TableName,
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
+                    new ColumnDefinition("Code", typeof(string), maxLength: 32) { IsNullable = false },
+                    new ColumnDefinition("Score", typeof(int)) { IsNullable = false },
+                ],
+                [
+                    new IndexDefinition("IX_Code", "Code"),
+                    new IndexDefinition("IX_Score", "Score"),
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowsAsync(TableName, BuildJet3IndexRows(), TestContext.Current.CancellationToken);
+
+            int updated = await writer.UpdateRowsAsync(
+                TableName,
+                "Id",
+                42,
+                new Dictionary<string, object>
+                {
+                    ["Code"] = "J3_UPDATED",
+                    ["Score"] = -420,
+                },
+                TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
+
+            int deleted = await writer.DeleteRowsAsync(TableName, "Id", 17, TestContext.Current.CancellationToken);
+            Assert.Equal(1, deleted);
+
+            await writer.InsertRowAsync(TableName, [Jet3IndexRows + 1, "J3_INSERTED", 12345], TestContext.Current.CancellationToken);
+        }
+
+        AccessRoundTripEnvironment.CompactResult preCompactDao = session.RunDaoDatabaseScript(
+            session.SourcePath,
+            """
+            $rs = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [SM_Jet3Index]', 4)
+            try {
+                Write-Output "ROWCOUNT=$($rs.Fields('Cnt').Value)"
+            } finally {
+                $rs.Close()
+            }
+            """,
+            CompactTimeout);
+        AssertDaoSuccess(preCompactDao, "DAO pre-compact OpenRecordset");
+        Assert.Contains($"ROWCOUNT={Jet3IndexRows}", preCompactDao.StdOut, StringComparison.Ordinal);
+
+        session.RunDaoCompact();
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            session.CompactedPath,
+            new AccessReaderOptions { UseLockFile = false },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(Jet3IndexRows, rows.Rows.Count);
+        Assert.DoesNotContain(rows.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 17);
+        Assert.Contains(rows.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == Jet3IndexRows + 1);
+
+        DataRow updatedRow = rows.AsEnumerable().Single(row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 42);
+        Assert.Equal("J3_UPDATED", SafeString(updatedRow, "Code"));
+        Assert.Equal(-420, Convert.ToInt32(updatedRow["Score"], CultureInfo.InvariantCulture));
+
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
+        Assert.Contains(indexes, index => index.Kind == IndexKind.PrimaryKey && HasSingleColumn(index, "Id"));
+        Assert.Contains(indexes, index => index.Kind == IndexKind.Normal && index.Name == "IX_Code" && HasSingleColumn(index, "Code"));
+        Assert.Contains(indexes, index => index.Kind == IndexKind.Normal && index.Name == "IX_Score" && HasSingleColumn(index, "Score"));
     }
 
     [Fact(
@@ -571,6 +671,18 @@ public sealed class DaoStorageMaintenanceTests
         return rows;
     }
 
+    private static object[][] BuildJet3IndexRows()
+    {
+        var rows = new object[Jet3IndexRows][];
+        for (int rowOrdinal = 0; rowOrdinal < rows.Length; rowOrdinal++)
+        {
+            int id = rowOrdinal + 1;
+            rows[rowOrdinal] = [id, $"J3_{id % 37:D2}_{(char)('A' + (id % 26))}", 1000 - id];
+        }
+
+        return rows;
+    }
+
     private static object[][] BuildAdvancedIndexRows()
     {
         var rows = new object[AdvancedIndexRows][];
@@ -668,6 +780,37 @@ public sealed class DaoStorageMaintenanceTests
 
     private static bool ContainsSequence(byte[] bytes, byte[] marker)
         => bytes.AsSpan().IndexOf(marker) >= 0;
+
+    private static void AssertDaoSuccess(AccessRoundTripEnvironment.CompactResult result, string operation)
+    {
+        Assert.True(
+            result.ExitCode == 0,
+            $"""
+            {operation} failed (exit={result.ExitCode}).
+            --- stdout ---
+            {result.StdOut}
+            --- stderr ---
+            {result.StdErr}
+            """);
+    }
+
+    private static async Task CopyDatabaseAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken)
+    {
+        await using (FileStream source = File.OpenRead(sourcePath))
+        await using (FileStream destination = File.Create(destinationPath))
+        {
+            await source.CopyToAsync(destination, cancellationToken);
+        }
+
+        File.SetAttributes(destinationPath, File.GetAttributes(destinationPath) & ~FileAttributes.ReadOnly);
+    }
+
+    private static bool HasSingleColumn(IndexMetadata index, string columnName) =>
+        index.Columns.Count == 1 && string.Equals(index.Columns[0].Name, columnName, StringComparison.Ordinal);
+
+    private static bool IsDaoPreviousVersionFailure(AccessRoundTripEnvironment.CompactResult result) =>
+        result.ExitCode != 0
+        && result.StdErr.Contains("previous version", StringComparison.OrdinalIgnoreCase);
 
     private static async ValueTask<int> CountTDefChainPagesAsync(string tableName, string databasePath, CancellationToken cancellationToken)
     {

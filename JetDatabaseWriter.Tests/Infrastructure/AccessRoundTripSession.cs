@@ -12,13 +12,15 @@ using System.Threading.Tasks;
 internal sealed class AccessRoundTripSession : IAsyncDisposable
 {
     private static readonly TimeSpan DefaultCompactTimeout = TimeSpan.FromMinutes(2);
+    private readonly string _databaseExtension;
     private readonly TimeSpan _compactTimeout;
 
-    private AccessRoundTripSession(string workDir, string sourcePath, string compactedPath, TimeSpan compactTimeout)
+    private AccessRoundTripSession(string workDir, string sourcePath, string compactedPath, TimeSpan compactTimeout, string databaseExtension)
     {
         WorkDir = workDir;
         SourcePath = sourcePath;
         CompactedPath = compactedPath;
+        _databaseExtension = databaseExtension;
         _compactTimeout = compactTimeout;
     }
 
@@ -38,19 +40,23 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
     /// </summary>
     /// <param name="tempDirectoryName">Directory name under the system temp path.</param>
     /// <param name="compactTimeout">Timeout to use for <see cref="RunDaoCompact"/>.</param>
+    /// <param name="databaseExtension">Database file extension for source, compacted, and generated paths.</param>
     /// <returns>Temporary round-trip session.</returns>
     public static AccessRoundTripSession CreateEmpty(
         string tempDirectoryName = "JetDatabaseWriter.Tests.RoundTrip",
-        TimeSpan? compactTimeout = null)
+        TimeSpan? compactTimeout = null,
+        string databaseExtension = ".accdb")
     {
         string workDir = Path.Combine(Path.GetTempPath(), tempDirectoryName, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workDir);
+        string normalizedExtension = NormalizeDatabaseExtension(databaseExtension);
 
         return new AccessRoundTripSession(
             workDir,
-            Path.Combine(workDir, "source.accdb"),
-            Path.Combine(workDir, "compacted.accdb"),
-            compactTimeout ?? DefaultCompactTimeout);
+            Path.Combine(workDir, "source" + normalizedExtension),
+            Path.Combine(workDir, "compacted" + normalizedExtension),
+            compactTimeout ?? DefaultCompactTimeout,
+            normalizedExtension);
     }
 
     /// <summary>
@@ -83,7 +89,7 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
     /// <param name="prefix">Filename prefix.</param>
     /// <returns>Unique ACCDB path.</returns>
     public string CreateDatabasePath(string prefix) =>
-        Path.Combine(WorkDir, $"{prefix}_{Guid.NewGuid():N}.accdb");
+        Path.Combine(WorkDir, $"{prefix}_{Guid.NewGuid():N}{_databaseExtension}");
 
     /// <summary>Copies the Northwind fixture to a unique ACCDB path in the workspace.</summary>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -181,5 +187,15 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
         }
 
         File.SetAttributes(destinationPath, File.GetAttributes(destinationPath) & ~FileAttributes.ReadOnly);
+    }
+
+    private static string NormalizeDatabaseExtension(string databaseExtension)
+    {
+        if (string.IsNullOrWhiteSpace(databaseExtension))
+        {
+            throw new ArgumentException("Database extension must be non-empty.", nameof(databaseExtension));
+        }
+
+        return databaseExtension.StartsWith(".", StringComparison.Ordinal) ? databaseExtension : "." + databaseExtension;
     }
 }
