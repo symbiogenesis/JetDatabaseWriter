@@ -22,6 +22,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     internal const int CoreWriterRowCount = 10;
     internal const int ComplexAttachmentPayloadLength = 16 * 1024;
     internal const string ComplexAttachmentFileName = "compact-large.jpg";
+    internal const int EncryptedCompactRowCount = 20;
     internal const int StressRowsPerTable = 250;
     internal const int StressTableCount = 6;
     internal const string ExpectedMemoWithNuls = "Hello\0World\0End";
@@ -149,6 +150,9 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         EnsureDaoSuccess(result, "DAO CompactDatabase on encrypted file failed.");
 
         int tableCount = 0;
+        bool encryptedTableExists = false;
+        int encryptedRowCount = -1;
+        string encryptedLastValue = string.Empty;
         if (File.Exists(compactedPath))
         {
             await using var reader = await AccessReader.OpenAsync(
@@ -162,9 +166,28 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
             List<string> tables = await reader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
             tableCount = tables.Count;
+            encryptedTableExists = tables.Contains(EncryptedCompactTable, StringComparer.OrdinalIgnoreCase);
+
+            if (encryptedTableExists)
+            {
+                DataTable? table = await reader.ReadDataTableAsync(
+                    EncryptedCompactTable,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                encryptedRowCount = table?.Rows.Count ?? -1;
+                DataRow? lastRow = table?.AsEnumerable()
+                    .SingleOrDefault(row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == EncryptedCompactRowCount);
+                encryptedLastValue = lastRow is null
+                    ? string.Empty
+                    : Convert.ToString(lastRow["Value"], CultureInfo.InvariantCulture) ?? string.Empty;
+            }
         }
 
-        return new EncryptedCompactResult(File.Exists(compactedPath), tableCount);
+        return new EncryptedCompactResult(
+            File.Exists(compactedPath),
+            tableCount,
+            encryptedTableExists,
+            encryptedRowCount,
+            encryptedLastValue);
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The fixture tracks sessions and disposes them during teardown.")]
@@ -387,7 +410,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
                 ],
                 cancellationToken).ConfigureAwait(false);
 
-            var rows = new object[20][];
+            var rows = new object[EncryptedCompactRowCount][];
             for (int i = 0; i < rows.Length; i++)
             {
                 rows[i] = [DBNull.Value, $"EncRow_{i}"];
@@ -723,7 +746,12 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
     internal sealed record DaoMemoResult(string Content);
 
-    internal sealed record EncryptedCompactResult(bool CompactedFileExists, int ReopenedTableCount);
+    internal sealed record EncryptedCompactResult(
+        bool CompactedFileExists,
+        int ReopenedTableCount,
+        bool ReopenedEncryptedTableExists,
+        int ReopenedEncryptedRowCount,
+        string ReopenedEncryptedLastValue);
 
     internal sealed record ComplexCompactResult(
         int ParentRowCount,

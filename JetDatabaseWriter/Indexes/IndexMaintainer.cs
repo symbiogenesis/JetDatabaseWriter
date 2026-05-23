@@ -2949,16 +2949,20 @@ internal sealed class IndexMaintainer(AccessWriter writer)
     /// <c>docs/design/catalog-index-maintenance-notes.md</c>.
     /// </para>
     /// <para>
-    /// Phase C1 scope (tail-leaf-only):
+    /// Current catalog-splice scope:
     /// <list type="bullet">
-    ///   <item>Descends to the rightmost leaf by following each
-    ///   intermediate's LAST child pointer.</item>
-    ///   <item>Splices when the new key sorts strictly greater than every
-    ///   existing entry on the tail leaf and the rewritten leaf still fits
-    ///   on one page.</item>
+    ///   <item>Descends by the encoded catalog key and, when an Access-authored
+    ///   tree has stale right-edge summaries, can follow the rightward sibling
+    ///   chain to the insertion leaf.</item>
+    ///   <item>Rewrites the target leaf in place when the spliced entry set
+    ///   still fits on one page, preserving the existing prefix-length cap.</item>
+    ///   <item>On leaf overflow, greedily splits the leaf, appends right-hand
+    ///   pages, patches sibling pointers, and rewrites ancestor summaries when
+    ///   the descent captured a clean path.</item>
     ///   <item>Returns <see langword="false"/> on any unsupported case
-    ///   (non-Jet4 format, malformed page, key not greater than tail max,
-    ///   tail leaf overflow, or descent encountering a non-tail leaf).</item>
+    ///   (non-Jet4 format, malformed page, encoder rejection, ancestor-summary
+    ///   overflow, or a split after an overshoot path that cannot be safely
+    ///   propagated).</item>
     /// </list>
     /// On <see langword="false"/> the caller should treat the catalog index
     /// as un-maintained for this row (the row is still present on disk;

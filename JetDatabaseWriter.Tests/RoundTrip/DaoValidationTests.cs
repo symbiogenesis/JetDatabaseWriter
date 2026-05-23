@@ -97,6 +97,9 @@ public sealed class DaoValidationTests(DaoValidationFixture fixture) : IClassFix
 
         Assert.True(result.CompactedFileExists, "Compacted output file was not created.");
         Assert.True(result.ReopenedTableCount > 0, "Compacted encrypted database should reopen with tables.");
+        Assert.True(result.ReopenedEncryptedTableExists, "Compacted encrypted database should contain the table written before encryption.");
+        Assert.Equal(DaoValidationFixture.EncryptedCompactRowCount, result.ReopenedEncryptedRowCount);
+        Assert.Equal($"EncRow_{DaoValidationFixture.EncryptedCompactRowCount - 1}", result.ReopenedEncryptedLastValue);
     }
 
     [Fact(

@@ -1,6 +1,13 @@
 # Design notes: MSysObjects catalog index maintenance for round-trip-safe writes
 
-**Status:** Phase C0 + C1 shipped, and the later DAO round-trip blockers are closed. All three catalog index fixes landed: **prefix compression cap** (2026-05-03), **entry-start bitmask sentinel** (2026-05-04), and **split-path `maxPrefixLength` cap** (2026-05-04). Later work fixed the separate user-table/FK compact failures by preserving system-table rows on mapped system pages, emitting relationship catalog/ACE metadata, sharing table/index usage-map rows, and reusing single-leaf index pages in place. DAO Compact & Repair now passes for the FK round-trip tests and encrypted compact test on Access-equipped hosts. See [`round-trip-openrecordset-hypothesis.md`](round-trip-openrecordset-hypothesis.md) for the closed-out compatibility record.
+**Status:** Phase C0 + C1 shipped, and the later DAO round-trip blockers are closed. All three catalog index fixes landed: **prefix compression cap** (2026-05-03), **entry-start bitmask sentinel** (2026-05-04), and **split-path `maxPrefixLength` cap** (2026-05-04). Later work fixed the separate user-table/FK compact failures by preserving system-table rows on mapped system pages, emitting relationship catalog/ACE metadata, sharing table/index usage-map rows, and reusing single-leaf index pages in place. DAO Compact & Repair now passes for the FK round-trip tests and encrypted compact test on Access-equipped hosts. Updated 2026-05-23: generic index maintenance has grown beyond this note's original C3 wording, but C2/C4 and linked-table catalog rows remain unresolved. See [`round-trip-openrecordset-hypothesis.md`](round-trip-openrecordset-hypothesis.md) for the closed-out compatibility record and [`writer-disk-format-validation-matrix.md`](writer-disk-format-validation-matrix.md) for the current validation backlog.
+
+## 🚧 Still Unresolved
+
+- 🚧 **C2 is only partially complete.** `InsertSystemRowAndMaintainAsync` now tries incremental maintenance for some system-table inserts, but `MSysComplexColumns` and `MSysACEs` still force `MaintainIndexesAsync`, and fallback to the full rebuild path remains.
+- 🚧 **C4 is still open.** `TryMaintainIndexesIncrementalAsync` still returns success when it decodes no usable real-index slots (`slots.Count == 0`) even when a table is expected to have indexes.
+- 🚧 **Catalog splicing is not a universal system-table B-tree mutator.** `TrySpliceCatalogIndexEntryAsync` remains Jet4/ACE-only, can still return `false` on malformed or unsupported split/ancestor cases, and current catalog callers do not escalate a `false` return.
+- 🚧 **Linked-table catalog rows are outside the shipped splice path.** `CreateLinkedTableAsync`, `CreateLinkedOdbcTableAsync`, and `CreateLinkedTextTableAsync` write Type 4/6 `MSysObjects` rows directly with `Id = 0` and no catalog-index maintenance. They have reader round-trip coverage only; see the linked-table item in [`writer-disk-format-validation-matrix.md`](writer-disk-format-validation-matrix.md).
 
 **Driver:** Two pinned round-trip tests in [JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs):
 
@@ -9,7 +16,7 @@
 
 Both now run under the normal Microsoft Access guard and pass. They remain the primary Access/DAO acceptance signal for catalog, relationship, usage-map, and B-tree compatibility.
 
-**Validation requirement:** any PR landing this work MUST round-trip through Microsoft Access on Windows (open, compact-and-repair, re-open) — see §7. The two failing tests above are the gating signal.
+**Validation requirement:** any PR touching system-table B-tree writes MUST round-trip through Microsoft Access on Windows (open, compact-and-repair, re-open) or the DAO CompactDatabase tests named below — see §7. The two FK compact tests above are the primary automated gating signal.
 
 > ⚠️ Reverse-engineered. Cross-reference [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §3–§5 for TDEF / leaf / sort-key formats. The MSysObjects-specific facts in §3 below are observed from `NorthwindTraders.accdb` and ought to be re-verified with `JetDatabaseWriter.FormatProbe` against any new fixture before relying on byte offsets.
 
@@ -27,13 +34,19 @@ The original failure mode (pre-Phase C0/C1, fixed) was that step 2 wrote a new M
 
 Phase C0 + C1 (below) closed that path: every `InsertCatalogEntryAsync` call now splices the new row's keys into every real-idx leaf of MSysObjects. Later compact work closed the remaining user-table/FK allocation defects; see [`round-trip-openrecordset-hypothesis.md`](round-trip-openrecordset-hypothesis.md).
 
-## 2. Why existing index-maintenance code did not solve this on its own
+## 2. Why MSysObjects still has a specialized splice
 
-The two pre-existing system-table index entry points each fail to address this end-to-end:
+The historical full-rebuild paths explain why MSysObjects still cannot be treated like an ordinary table even though the general index maintainer has gained stronger incremental and surgical paths.
 
-### 2.1 `InsertSystemRowAndMaintainAsync` (`AccessWriter.cs`)
+### 2.1 `InsertSystemRowAndMaintainAsync` (`AccessWriter.cs`) — current state
 
-Used today by `MSysRelationships` / `MSysComplexColumns` writes. It calls the full `MaintainIndexesAsync` rebuild path, which:
+Used today by `MSysRelationships`, `MSysComplexColumns`, and `MSysACEs` writes. It inserts the row, verifies the system table's real-index roots look maintainable, then:
+
+- Forces `MaintainIndexesAsync` for `MSysComplexColumns` and `MSysACEs`.
+- Tries `TryMaintainIndexesIncrementalAsync` for other system tables such as `MSysRelationships`.
+- Falls back to `MaintainIndexesAsync` when incremental maintenance bails.
+
+The full rebuild path is still unsafe for MSysObjects itself because it:
 
 - Tears down every index leaf for the target system table.
 - Re-encodes every row using the writer's encoder.
@@ -41,11 +54,11 @@ Used today by `MSysRelationships` / `MSysComplexColumns` writes. It calls the fu
 
 This **drops the special MSysObjects rows the writer cannot re-encode** — most visibly the "Databases" properties row (`ParentId=0xF000_0000`, holds workspace-level LvProp blobs that include connection / VBA / nav-pane state). When `MaintainIndexesAsync` re-encodes MSysObjects, that row's `LvProp` content is lost, and Access reports "could not find the object 'Databases'" on next open.
 
-Empirically: routing MSysObjects through this path causes **every** AccessRoundTripTests case to fail, not just the two we are trying to fix.
+Empirically: routing MSysObjects through this path caused **every** AccessRoundTripTests case to fail, not just the two historical FK compact failures. That rejection still holds; MSysObjects must preserve existing catalog row bytes it cannot losslessly re-encode.
 
 ### 2.2 `TryMaintainIndexesIncrementalAsync` / `TrySpliceCatalogIndexEntryAsync`
 
-The targeted Phase C1 splice path (`IndexMaintainer.TrySpliceCatalogIndexEntryAsync`) descends MSysObjects's real-idx tree, decodes the tail leaf, splices the new entry, and writes it back. Both real-idx slots (ri=0 `ParentIdName`, ri=1 `Id` PK) report success with no bail-out.
+The targeted Phase C1 splice path (`IndexMaintainer.TrySpliceCatalogIndexEntryAsync`) descends MSysObjects's real-idx tree, decodes the target leaf, splices the new entry, and writes it back. It now uses key-based descent, rightward sibling-chain walking, prefix-length capping, and a leaf-split path with ancestor-summary rewrites when a clean descent path is available. Both Northwind real-idx slots (ri=0 `ParentIdName`, ri=1 `Id` PK) report success for the covered table/FK compact flows.
 
 A raw-byte decode of the spliced `Id` PK leaf (page 8, orig 239 entries pref=0 → spliced 241 entries pref=0 post-fix) and the spliced `ParentIdName` composite leaf (page 2790, orig 114 entries pref=1 → spliced 116 entries pref=1 post-fix) against the original `NorthwindTraders.accdb` confirms:
 
@@ -86,10 +99,10 @@ A **system-table-specialized leaf-splice path** invoked by `InsertCatalogEntryAs
 
 No public API changes. The splicer lives on `IndexMaintainer`:
 
-- `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` — per-real-idx splice, returns `false` only when the splice cannot be done in place (in which case the caller falls back to the rebuild path; in practice this never fires for current MSysObjects writes).
+- `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` — per-real-idx splice. It returns `false` when Jet3, malformed pages, encoder rejection, or an unsupported split/ancestor case prevents a safe splice. **🚧 Current callers ignore a `false` return**, so hardening should either throw/rollback or route to a proven fallback rather than leaving the catalog index unmaintained.
 - `AccessWriter.TrySpliceCatalogIndexEntryAsync` — thin forwarding wrapper, called from `InsertCatalogEntryAsync` immediately after `InsertRowDataLocAsync`.
 
-Tail-leaf append for monotonic Id inserts is handled by `IndexMaintainer.TryAppendToTailLeafAsync`.
+Append-only tail-leaf maintenance for ordinary index paths is handled by `IndexMaintainer.TryAppendToTailLeafAsync`; the catalog splice path has its own key-based leaf selection and split handling.
 
 ### 4.3 Algorithm (per real-idx slot)
 
@@ -102,16 +115,16 @@ Tail-leaf append for monotonic Id inserts is handled by `IndexMaintainer.TryAppe
    - Account for **page-shared prefix compression** (`pref_len` header field): the new entry's prefix-stripped form depends on the entry immediately before it; recompute the page's `pref_len` to the longest common prefix of the new entry set and re-emit every entry's stripped form.
    - Update the entry-start bitmask and `free_space`.
    - Persist the page.
-   - For overflow today: `TryAppendToTailLeafAsync` walks `next_pg` to the rightmost leaf and splices there. General mid-tree splits / parent rebalancing / underflow merges are deferred (Phase C3).
+   - On leaf overflow, greedily split the leaf, append new right-hand pages, patch sibling pointers, and rewrite ancestor summaries when a clean descent path was captured. Generic user-table incremental maintenance has broader surgical cross-leaf and recursive-intermediate split handling; the MSysObjects catalog splicer is narrower and remains Jet4/ACE-only.
 6. **Repeat for every real-idx slot.** Partial updates leave the catalog inconsistent.
 
 ### 4.4 Why this is safe where the rebuild path isn't
 
-We never touch entries we did not insert. The "Databases" row (and any other rows the writer's encoder would mangle) keeps its existing leaf bytes verbatim. We only **add** one new entry per index per `CreateTableAsync` call.
+We never re-encode rows we did not insert. The "Databases" row (and any other rows the writer's encoder would mangle) keeps its existing row bytes; the splice only adds one new index entry per affected real index for each catalog-row insert.
 
 ### 4.5 Transactional behaviour
 
-`AccessWriter.CreateTableAsync` runs under the writer's outer page-write batching; the leaf-splice writes participate in that batch. If any per-index splice throws, the surrounding `JetTransaction` rolls back the catalog-row insert too — either all index updates plus the row commit, or none of them.
+`AccessWriter.CreateTableAsync` runs under the writer's outer page-write batching; the leaf-splice writes participate in that batch. If any per-index splice throws, the surrounding `JetTransaction` rolls back the catalog-row insert too. **🚧 A non-throwing `false` return is still unresolved hardening work** because current catalog callers discard the result.
 
 ## 5. Phasing
 
@@ -119,11 +132,12 @@ We never touch entries we did not insert. The "Databases" row (and any other row
 |---|---|---|
 | **C0** | Per-format leaf-page header offsets across `Constants.IndexLeafPage`, `IndexLeafPageBuilder.LeafPageLayout`, `IndexBTreeBuilder`, `IndexLeafIncremental`, `IndexBTreeSeeker`, `AccessWriter.MaintainIndexesAsync`. | **Shipped 2026-05-02.** |
 | **C1** | `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` wired into `AccessWriter.InsertCatalogEntryAsync`; tail-leaf append for monotonic Id inserts. | **Shipped.** Splice verified byte-correct against both MSysObjects real-idx slots. Prefix compression cap fix (2026-05-03) + bitmask sentinel fix (2026-05-04) + split-path `maxPrefixLength` cap (2026-05-04) all landed. DAO Compact & Repair succeeds for N1, N2+, FK, and encrypted compact acceptance cases. |
-| **C2** | Re-route `InsertSystemRowAndMaintainAsync` (used by MSysRelationships / MSysComplexColumns) through the same splicer; remove dependency on `MaintainIndexesAsync`'s full-rebuild path for system tables. | Open — non-gating. |
-| **C3** | General mid-tree leaf split + intermediate-page rebalancing for system tables. | Open — non-gating. |
-| **C4** | Harden `TryMaintainIndexesIncrementalAsync`'s slot decoder so it no longer silently returns `true` on `slots.Count == 0` for tables known to have indexes. | Open — internal-only. |
+| **C2** | Re-route `InsertSystemRowAndMaintainAsync` (used by MSysRelationships / MSysComplexColumns / MSysACEs) away from unsafe full system-table rebuilds wherever possible. | 🚧 **Partially complete, unresolved.** `MSysRelationships` insert goes through the incremental path when possible; `MSysComplexColumns` and `MSysACEs` still force `MaintainIndexesAsync`, and generic fallback remains. Non-gating for current DAO compact coverage. |
+| **C3** | General mid-tree leaf split + intermediate-page rebalancing for system tables. | ⚠️ **Partially superseded, not fully closed.** Generic incremental maintenance now includes single-leaf, multi-level, cross-leaf, leaf-split, merge, and recursive intermediate split paths. The MSysObjects catalog splicer has narrower Jet4/ACE leaf-split + ancestor-summary support and still returns `false` for unsupported cases. Non-gating for current DAO compact coverage. |
+| **C4** | Harden `TryMaintainIndexesIncrementalAsync`'s slot decoder so it no longer silently returns `true` on `slots.Count == 0` for tables known to have indexes. | 🚧 **Open — internal-only but real.** |
+| **C5** | Route linked-table Type 4/6 `MSysObjects` rows through Access-shaped object-id allocation and catalog-index maintenance. | 🚧 **Open.** `CreateLinkedTableAsync`, `CreateLinkedOdbcTableAsync`, and `CreateLinkedTextTableAsync` currently write direct catalog rows with `Id = 0` and reader-only validation. |
 
-**C0 + C1 have shipped.** C2/C3/C4 reduce technical debt but are not gating. DAO Compact & Repair now succeeds for the covered writer-created table, relationship, and encrypted-output flows.
+**C0 + C1 have shipped.** C2/C3/C4/C5 reduce technical debt and linked-table compatibility risk but are not gating for the covered writer-created table, relationship, complex-column, and encrypted-output flows. DAO Compact & Repair now succeeds for those covered flows.
 
 ## 6. Verification
 
@@ -147,7 +161,7 @@ Per the policy in `index-and-relationship-format-notes.md` §8, any code that wr
 
 ## 8. Open questions
 
-1. **Are MSysObjects PK Id values truly monotonic in our writes?** `AccessWriter` allocates fresh Ids by walking the existing max + 1. Confirm there is no path (e.g. recycle-after-drop) that would let us emit a non-tail Id; if so, the tail-leaf-only restriction is sound.
-2. **Does the `Name` index need case-insensitive collation?** GeneralLegacy is case-insensitive by default in Jet; the existing encoder handles this. Verify against a fixture where two table names differ only in case.
-3. **MSysObjects `ParentIdName` uniqueness**: is this index unique? If yes, we should reject duplicate `(ParentId, Name)` *before* splicing, with a friendly exception rather than letting DAO discover the corruption later.
-4. **What about Jet3 (.mdb)?** MSysObjects in Jet3 has a different real-idx descriptor size (8 bytes vs Jet4's 12) and different sort-key encoding for Text. The writer currently does not target Jet3 catalog writes; if it ever does, the splice must branch on `DatabaseFormat`.
+1. **Tail-only Id monotonicity is no longer the main constraint.** User-table catalog ids are physical TDEF page numbers and relationship ids are allocated from a negative id range; the current splicer descends by key instead of assuming a strict tail append. Keep testing non-tail catalog inserts when adding new Type values.
+2. **Case-insensitive catalog names remain fixture-sensitive.** The observed Northwind MSysObjects shape has `ParentIdName`, not a standalone `Name` index. GeneralLegacy is case-insensitive and public create paths reject duplicate object names, but a case-only duplicate fixture would still be useful.
+3. 🚧 **MSysObjects `ParentIdName` uniqueness is only partially guarded.** Fresh ACCDB bootstrap emits `ParentIdName` as unique, and public table/relationship create paths perform duplicate-name checks. Low-level catalog helpers and linked-table writes should still reject duplicate `(ParentId, Name)` before splicing/direct insert.
+4. 🚧 **Jet3 catalog splicing is unresolved.** MSysObjects in Jet3 has different real-idx descriptor sizes and text-key encoding. `TrySpliceCatalogIndexEntryAsync` currently returns `false` for Jet3; any future Jet3 catalog-index maintenance must branch on `DatabaseFormat`.

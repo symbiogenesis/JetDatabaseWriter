@@ -1,13 +1,18 @@
 # Writer Disk-Format Validation Todo List
 
-**Status:** Recast as a checklist after adding conditional Jet3 index DAO compact coverage; blanket Compact and Repair warning sweep closed, 2026-05-23.
+**Status:** Recast as a checklist after adding conditional Jet3 index DAO compact coverage; blanket Compact and Repair warning sweep and DAO compact reopen/assert sweep closed; linked-table catalog caveat added, 2026-05-23.
 
 This file is intentionally a todo list. General validation rules live in [dao-validation-strategy.md](dao-validation-strategy.md); detailed compatibility history lives in [round-trip-openrecordset-hypothesis.md](round-trip-openrecordset-hypothesis.md) and [ese-coverage-gap-analysis.md](ese-coverage-gap-analysis.md).
+
+## 🚧 Loud Unresolved Items
+
+- 🚧 **Linked-table catalog rows are not Access/DAO compact-safe validated.** `CreateLinkedTableAsync`, `CreateLinkedOdbcTableAsync`, and `CreateLinkedTextTableAsync` currently have reader round-trip coverage only. They write Type 4/6 `MSysObjects` rows directly, stamp `Id = 0`, and do not maintain `MSysObjects` catalog indexes.
+- 🚧 **Catalog-index maintenance still has technical-debt follow-ups.** The MSysObjects splice path is validated for the FK/table compact surface, but system-table full-rebuild fallback, Jet3 catalog splicing, and the incremental-maintenance `slots.Count == 0` success case remain unresolved; see [catalog-index-maintenance-notes.md](catalog-index-maintenance-notes.md).
 
 ## Always Do
 
 - [ ] When a writer disk-format feature changes, add or update the strongest feasible validation and refresh this checklist.
-- [ ] For every DAO CompactDatabase test, reopen the compacted output and assert the feature that motivated the test.
+- [x] For every DAO CompactDatabase test, reopen the compacted output and assert the feature that motivated the test. Current sweep includes encrypted compact table/row readback, 2026-05-23.
 - [x] Replace blanket "Access Compact and Repair validation pending" warnings with a link to the exact open item here or to the owning feature note. No remaining blanket-warning hits outside this checklist, 2026-05-23.
 - [ ] Keep manual Access UI checks as supplemental notes unless the workflow cannot be automated through DAO.
 - [ ] Promote any new DAO baseline probe invariant into a focused regression test.
@@ -22,6 +27,7 @@ This file is intentionally a todo list. General validation rules live in [dao-va
 - [ ] Access-native Agile encryption: keep CFB Agile compatibility in the separate read/write encryption suite; do not treat a CFB wrapper as an Access-native DAO compact target. Current signal: `DaoCompactDatabase_OnEncryptedOutput_ReopenSucceeds` in [DaoValidationTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoValidationTests.cs).
 - [ ] Complex columns on Access-authored hosts: broaden Northwind-hosted DAO compact coverage when a new schema-evolution or chained-LVAL mutation becomes release-critical. Current signal: `DaoCompact_ComplexColumnsWithLvalPayload_SurviveCompactAndRepair` in [DaoValidationTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoValidationTests.cs).
 - [ ] Complex columns on writer-created ACCDB streams: add broader fresh-database permutations only when reader round-trips stop being enough for the risk. Current signal: `FreshWriterCreatedComplexColumns_SurviveCompactAndRepair` in [DaoStorageMaintenanceTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoStorageMaintenanceTests.cs) plus the `ComplexColumns*Tests` suite.
+- [ ] 🚧 Linked Access/ODBC/text table catalog entries: allocate Access-shaped object ids, route Type 4/6 `MSysObjects` rows through catalog-index maintenance, and add DAO OpenRecordset, DAO CompactDatabase, or manual Access UI validation before treating them as Access-compatible writer output. Current signal: reader-only linked-table tests in [LinkedTableTests.cs](../../JetDatabaseWriter.Tests/Relationships/LinkedTableTests.cs), [LinkedTextTableTests.cs](../../JetDatabaseWriter.Tests/Relationships/LinkedTextTableTests.cs), [LinkedTableTypeTests.cs](../../JetDatabaseWriter.Tests/Relationships/LinkedTableTypeTests.cs), and [LinkedTableFixtureTests.cs](../../JetDatabaseWriter.Tests/Relationships/LinkedTableFixtureTests.cs).
 - [ ] Jet3 index emission and maintenance: add Access-authored byte comparison and broader advanced-index permutations when a reliable Access 97-capable DAO host is available. Current signal: `Jet3IndexEmissionAndMaintenance_SurviveCompactAndRepair` in [DaoStorageMaintenanceTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoStorageMaintenanceTests.cs), Jet3 parameterizations under [JetDatabaseWriter.Tests/Indexes](../../JetDatabaseWriter.Tests/Indexes), and [format-probe-appendix-jet3-index.md](../format-probe/format-probe-appendix-jet3-index.md).
 - [ ] Advanced ACE/Jet4 index encodings and surgical B-tree maintenance: add Access-authored byte comparisons for remaining key encodings and individual maintenance sub-phases when those bytes change. Current signal: `AdvancedIndexKeysAndBTreeMaintenance_SurviveCompactAndRepair` in [DaoStorageMaintenanceTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoStorageMaintenanceTests.cs), index tests under [JetDatabaseWriter.Tests/Indexes](../../JetDatabaseWriter.Tests/Indexes), and appendices under [docs/format-probe](../format-probe).
 - [ ] DAO-authored baseline probes: keep `rt-dao-baseline` and `fk-dao-baseline` available for future byte-diff investigations, but convert any new root-cause finding into normal tests. Current signal: [DaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/DaoBaselineProbe.cs), [FkDaoBaselineProbe.cs](../../JetDatabaseWriter.FormatProbe/FkDaoBaselineProbe.cs), [Jet4FormatCookieTests.cs](../../JetDatabaseWriter.Tests/Pages/Jet4FormatCookieTests.cs), [PersistedColumnPropertiesTests.cs](../../JetDatabaseWriter.Tests/Schema/PersistedColumnPropertiesTests.cs), and [RelationshipWriterTests.cs](../../JetDatabaseWriter.Tests/Relationships/RelationshipWriterTests.cs).
@@ -33,7 +39,7 @@ This file is intentionally a todo list. General validation rules live in [dao-va
 - [x] Single-column and composite primary keys plus enforced foreign-key catalog/TDEF metadata survive DAO compact, including FK runtime enforcement and representative multi-page TDEF rename/drop coverage.
 - [x] Multi-table index/FK/page-allocation stress survives DAO compact and verifies row/table survival after writer inserts.
 - [x] Page free-list reuse, secure erase, ordinary user-table replaced index pages, and shortened TDEF-chain reclamation have DAO compact coverage plus byte-level marker checks.
-- [x] Access-native flat Agile ACCDB output survives DAO compact and reopens with password handling intact.
+- [x] Access-native flat Agile ACCDB output survives DAO compact and reopens with password handling intact, including encrypted table and row readback.
 - [x] Northwind-hosted attachment and multi-value complex columns survive DAO compact with wrapper-encoded `FileData`, Access-style chained-LVAL attachment payloads, flat-table index maintenance, and schema-evolution preservation.
 - [x] Writer-created complex-column flat-table indexes and row APIs survive DAO compact on a fresh ACCDB stream, including decoded attachment payload bytes and flat-table index metadata.
 - [x] Jet3 index emission and maintenance have conditional DAO compact coverage when the installed DAO engine can open Access 97 `.mdb` files; modern hosts that reject Jet3 skip that test and rely on reader round-trips locally.
