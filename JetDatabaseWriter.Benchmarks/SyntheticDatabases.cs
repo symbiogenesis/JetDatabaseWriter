@@ -27,11 +27,33 @@ internal static class SyntheticDatabases
     /// <summary>MEMO-heavy table name (one int + one MEMO column with mixed payload sizes).</summary>
     public const string MemoTable = "Memos";
 
+    /// <summary>MEMO table whose payloads stay inline in the row.</summary>
+    public const string MemoInlineTable = "MemoInline";
+
+    /// <summary>MEMO table whose payloads fit on a single LVAL page.</summary>
+    public const string MemoSinglePageTable = "MemoSinglePage";
+
+    /// <summary>MEMO table whose payloads require chained LVAL pages.</summary>
+    public const string MemoChainedTable = "MemoChained";
+
+    /// <summary>OLE table whose payloads stay inline in the row.</summary>
+    public const string OleInlineTable = "OleInline";
+
+    /// <summary>OLE table whose payloads fit on a single LVAL page.</summary>
+    public const string OleSinglePageTable = "OleSinglePage";
+
+    /// <summary>OLE table whose payloads require chained LVAL pages.</summary>
+    public const string OleChainedTable = "OleChained";
+
     private const int NumericRows = 25_000;
     private const int TextRows = 25_000;
     private const int WideRows = 10_000;
     private const int WideColumnCount = 40;
     private const int MemoRows = 5_000;
+    private const int LongValueSubmodeRows = 2_000;
+    private const int InlineLongValueLength = 32;
+    private const int SinglePageLongValueLength = 2_000;
+    private const int ChainedLongValueLength = 16_000;
 
     private static readonly string TempRoot = Path.Combine(Path.GetTempPath(), "JetBench");
 
@@ -41,7 +63,7 @@ internal static class SyntheticDatabases
 
     public static string WideDbPath => Path.Combine(TempRoot, $"Wide_{WideColumnCount}c_{WideRows}.accdb");
 
-    public static string MemoDbPath => Path.Combine(TempRoot, $"Memo_{MemoRows}.accdb");
+    public static string MemoDbPath => Path.Combine(TempRoot, $"Memo_{MemoRows}_lv2.accdb");
 
     /// <summary>
     /// Ensures all synthetic DBs exist on disk. Skips files that already
@@ -191,51 +213,87 @@ internal static class SyntheticDatabases
             return;
         }
 
-        await using var w = await AccessWriter.CreateDatabaseAsync(MemoDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
-        await w.CreateTableAsync(
+        await using var writer = await AccessWriter.CreateDatabaseAsync(MemoDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
+        await CreateMemoTableAsync(
+            writer,
             MemoTable,
+            MemoRows,
+            static rowIndex => rowIndex % 3 switch
+            {
+                0 => InlineLongValueLength,
+                1 => SinglePageLongValueLength,
+                _ => ChainedLongValueLength,
+            }).ConfigureAwait(false);
+
+        await CreateMemoTableAsync(writer, MemoInlineTable, LongValueSubmodeRows, static rowIndex => InlineLongValueLength).ConfigureAwait(false);
+        await CreateMemoTableAsync(writer, MemoSinglePageTable, LongValueSubmodeRows, static rowIndex => SinglePageLongValueLength).ConfigureAwait(false);
+        await CreateMemoTableAsync(writer, MemoChainedTable, LongValueSubmodeRows, static rowIndex => ChainedLongValueLength).ConfigureAwait(false);
+        await CreateOleTableAsync(writer, OleInlineTable, LongValueSubmodeRows, InlineLongValueLength).ConfigureAwait(false);
+        await CreateOleTableAsync(writer, OleSinglePageTable, LongValueSubmodeRows, SinglePageLongValueLength).ConfigureAwait(false);
+        await CreateOleTableAsync(writer, OleChainedTable, LongValueSubmodeRows, ChainedLongValueLength).ConfigureAwait(false);
+    }
+
+    private static async Task CreateMemoTableAsync(AccessWriter writer, string tableName, int rowCount, Func<int, int> getLength)
+    {
+        await writer.CreateTableAsync(
+            tableName,
             new ColumnDefinition[]
             {
                 new("Id", typeof(int)),
-                new("Body", typeof(string)), // maxLength=0 → MEMO (LVAL)
+                new("Body", typeof(string)),
             }).ConfigureAwait(false);
 
-        // Mix three payload sizes so the reader exercises all three LVAL
-        // branches roughly evenly:
-        //   - small  (~32 B):  inline (bitmask 0x80 — fits in row).
-        //   - medium (~2 KB):  single LVAL page (bitmask 0x40).
-        //   - large  (~16 KB): chained LVAL pages (default branch).
-        var rows = new List<object[]>(MemoRows);
-        for (int i = 0; i < MemoRows; i++)
+        var rows = new List<object[]>(rowCount);
+        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
-            int kind = i % 3;
-            int len = kind switch
-            {
-                0 => 32,
-                1 => 2_000,
-                _ => 16_000,
-            };
-
-            rows.Add(new object[] { i, MakeBody(i, len) });
+            int length = getLength(rowIndex);
+            rows.Add(new object[] { rowIndex, MakeMemoBody(rowIndex, length) });
         }
 
-        await w.InsertRowsAsync(MemoTable, rows).ConfigureAwait(false);
+        await writer.InsertRowsAsync(tableName, rows).ConfigureAwait(false);
+    }
 
-        static string MakeBody(int seed, int length)
-        {
-            // Repeating ASCII pattern with a per-row prefix so values are
-            // distinct (defeats potential page-level dedup) but cheap to
-            // construct.
-            var buf = new char[length];
-            string prefix = "row" + seed + ":";
-            int p = System.Math.Min(prefix.Length, length);
-            prefix.AsSpan(0, p).CopyTo(buf);
-            for (int j = p; j < length; j++)
+    private static async Task CreateOleTableAsync(AccessWriter writer, string tableName, int rowCount, int payloadLength)
+    {
+        await writer.CreateTableAsync(
+            tableName,
+            new ColumnDefinition[]
             {
-                buf[j] = (char)('a' + ((j + seed) % 26));
-            }
+                new("Id", typeof(int)),
+                new("Blob", typeof(byte[])),
+            }).ConfigureAwait(false);
 
-            return new string(buf);
+        var rows = new List<object[]>(rowCount);
+        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        {
+            rows.Add(new object[] { rowIndex, MakeOlePayload(rowIndex, payloadLength) });
         }
+
+        await writer.InsertRowsAsync(tableName, rows).ConfigureAwait(false);
+    }
+
+    private static string MakeMemoBody(int seed, int length)
+    {
+        var buffer = new char[length];
+        string prefix = "row" + seed + ":";
+        int prefixLength = Math.Min(prefix.Length, length);
+        prefix.AsSpan(0, prefixLength).CopyTo(buffer);
+        for (int index = prefixLength; index < length; index++)
+        {
+            buffer[index] = (char)('a' + ((index + seed) % 26));
+        }
+
+        return new string(buffer);
+    }
+
+    private static byte[] MakeOlePayload(int seed, int length)
+    {
+        var payload = new byte[length];
+        for (int index = 0; index < payload.Length; index++)
+        {
+            payload[index] = (byte)(((index + seed) % 251) + 1);
+        }
+
+        return payload;
     }
 }

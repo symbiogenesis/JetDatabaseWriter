@@ -1,7 +1,8 @@
 # Read performance bottlenecks
 
-Status: analysis and implementation plan  
+Status: analysis, first-slice implementation, and measurement plan
 Date: 2026-05-20
+Last updated: 2026-05-24
 
 This note summarizes the slowest known bottlenecks when reading large amounts
 of data through `AccessReader`, based on the checked-in BenchmarkDotNet results
@@ -203,6 +204,11 @@ Primary code path:
 
 Add focused benchmarks before changing behavior:
 
+Status: partially implemented. LVAL submode benchmarks, OLE submode
+benchmarks, cold-open first-scan coverage, and DataTable insertion-strategy
+benchmarks have been added. Page-cache-size and `ParallelPageReadsEnabled`
+scan matrices remain pending.
+
 - Cold first table enumeration versus warm repeat enumeration.
 - LVAL inline, single-page, and chained MEMO separately.
 - OLE byte payloads separately from MEMO text payloads.
@@ -258,12 +264,16 @@ Acceptance criteria:
 
 Text is the broadest ordinary-row cost after LVAL.
 
-Candidate changes:
+Completed changes:
 
-- Replace `CreateFromCompressed`'s `char[]` plus `new string(chars)` path with
-  `string.Create` on target frameworks that support it.
-- Replace `DecompressJet4Slow`'s intermediate `char[]` with `string.Create` after
-  the existing counting pass.
+- Byte-array-backed Jet4 compressed text decode now uses `string.Create` for
+  the all-compressed fast path and the mode-switching slow path, removing the
+  intermediate `char[]` on normal reader/writer hot paths.
+- The existing span-backed decoder remains as a compatibility fallback for any
+  future span-only caller.
+
+Remaining measurement:
+
 - Investigate whether the all-compressed fast path can use a Latin-1 decoding
   helper on newer target frameworks without changing semantics.
 
@@ -283,12 +293,22 @@ Acceptance criteria:
 
 Treat this as API-specific tuning, not a replacement for streaming.
 
-Candidate changes:
+Completed changes:
 
-- Wrap row insertion with `dt.BeginLoadData()` / `dt.EndLoadData()`.
-- Set `dt.MinimumCapacity` when a trustworthy row count or `maxRows` is known.
-- Benchmark `Rows.Add(object?[])` or `LoadDataRow` against `NewRow` plus per-cell
-  assignment, while preserving `DBNull.Value` handling and typed columns.
+- `ReadDataTableAsync` now wraps row insertion in `BeginLoadData()` /
+  `EndLoadData()`.
+- `ReadDataTableAsync` sets `MinimumCapacity` when the table row count and/or
+  `maxRows` provide a bounded capacity.
+- The loader tracks the number of loaded rows directly for progress and
+  `maxRows` instead of polling `DataTable.Rows.Count` after every row.
+
+Remaining measurement:
+
+- Run the new DataTable materialization benchmarks to compare the public path,
+  `NewRow` variants, and `Rows.Add(object?[])` with bulk-load mode and minimum
+  capacity.
+- If `Rows.Add(object?[])` wins materially, decide whether production can use it
+  without adding per-row exact-array allocation or weakening null handling.
 - Add documentation nudging bulk consumers toward `Rows()` / `Rows<T>()` when a
   `DataTable` is not required.
 

@@ -1341,6 +1341,29 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return ComplexColumnKind.Unknown;
     }
 
+    private static void EndDataTableLoad(DataTable table, ref bool dataLoadStarted)
+    {
+        if (!dataLoadStarted)
+        {
+            return;
+        }
+
+        dataLoadStarted = false;
+        table.EndLoadData();
+    }
+
+    private static int ResolveDataTableMinimumCapacity(long rowCount, uint? maxRows)
+    {
+        long capacity = rowCount;
+        if (maxRows.HasValue)
+        {
+            long limit = maxRows.Value;
+            capacity = capacity > 0 ? Math.Min(capacity, limit) : limit;
+        }
+
+        return capacity is > 0 and <= int.MaxValue ? (int)capacity : 0;
+    }
+
     private List<IndexMetadata> ParseIndexMetadata(byte[] td, List<ColumnInfo> columns)
     {
         int numCols = Ru16(td, _tdef.NumCols);
@@ -1695,11 +1718,21 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 : null;
             IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
+            int minimumCapacity = ResolveDataTableMinimumCapacity(td.RowCount, maxRows);
+            if (minimumCapacity > 0)
+            {
+                dt.MinimumCapacity = minimumCapacity;
+            }
+
+            dt.BeginLoadData();
+            dataLoadStarted = true;
+
             // Rent a single object?[] from the shared pool and
             // reuse it across every row. The DataRow ingestion below
             // copies values out via the per-cell setter, so the buffer is
             // never retained by the table.
             int colCount = td.Columns.Count;
+            long loadedRows = 0;
             object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
             try
             {
@@ -1772,29 +1805,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             dt?.Dispose();
         }
-    }
-
-    private static void EndDataTableLoad(DataTable table, ref bool dataLoadStarted)
-    {
-        if (!dataLoadStarted)
-        {
-            return;
-        }
-
-        dataLoadStarted = false;
-        table.EndLoadData();
-    }
-
-    private static int ResolveDataTableMinimumCapacity(long rowCount, uint? maxRows)
-    {
-        long capacity = rowCount;
-        if (maxRows.HasValue)
-        {
-            long limit = maxRows.Value;
-            capacity = capacity > 0 ? Math.Min(capacity, limit) : limit;
-        }
-
-        return capacity is > 0 and <= int.MaxValue ? (int)capacity : 0;
     }
 
     /// <inheritdoc/>

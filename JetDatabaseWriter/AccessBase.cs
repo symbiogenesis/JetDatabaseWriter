@@ -283,7 +283,7 @@ public abstract class AccessBase : IAccessBase
     /// Encodes a string for storage in a Jet4 text/memo column.
     /// When all characters are in the U+0001..U+00FF range, emits the
     /// compressed form (<c>0xFF 0xFE</c> marker + 1 byte per character),
-    /// which the reader decodes via <see cref="DecompressJet4"/>.
+    /// which the reader decodes via <c>DecompressJet4</c>.
     /// Otherwise emits plain UCS-2 LE.
     /// </summary>
     /// <remarks>
@@ -361,21 +361,43 @@ public abstract class AccessBase : IAccessBase
     /// JET4 compressed-string algorithm is applied first.
     /// </summary>
     /// <returns>The decoded string.</returns>
-    internal static string DecodeJet4Text(ReadOnlySpan<byte> b, int start, int len)
+    internal static string DecodeJet4Text(byte[] bytes, int start, int len)
     {
         if (len < 2)
         {
             return string.Empty;
         }
 
-        if (b[start] == 0xFF && b[start + 1] == 0xFE)
+        if (bytes[start] == 0xFF && bytes[start + 1] == 0xFE)
         {
-            return DecompressJet4(b, start + 2, len - 2);
+            return DecompressJet4(bytes, start + 2, len - 2);
         }
 
         // Plain UCS-2 LE — length must be even
         int evenLen = len & ~1;
-        return evenLen > 0 ? JetTypeInfo.DecodeUtf16LE(b.Slice(start, evenLen)) : string.Empty;
+        return evenLen > 0 ? JetTypeInfo.DecodeUtf16LE(bytes.AsSpan(start, evenLen)) : string.Empty;
+    }
+
+    /// <summary>
+    /// Decodes Jet4 text from a span-backed buffer. Array-backed reader hot paths
+    /// use the byte-array overload so compressed strings can be built directly.
+    /// </summary>
+    /// <returns>The decoded string.</returns>
+    internal static string DecodeJet4Text(ReadOnlySpan<byte> bytes, int start, int len)
+    {
+        if (len < 2)
+        {
+            return string.Empty;
+        }
+
+        if (bytes[start] == 0xFF && bytes[start + 1] == 0xFE)
+        {
+            return DecompressJet4(bytes, start + 2, len - 2);
+        }
+
+        // Plain UCS-2 LE — length must be even
+        int evenLen = len & ~1;
+        return evenLen > 0 ? JetTypeInfo.DecodeUtf16LE(bytes.Slice(start, evenLen)) : string.Empty;
     }
 
     /// <summary>
@@ -384,16 +406,16 @@ public abstract class AccessBase : IAccessBase
     /// uncompressed (UCS-2) mode.
     /// </summary>
     /// <returns>The decompressed string.</returns>
-    private protected static string DecompressJet4(ReadOnlySpan<byte> b, int start, int len)
+    private protected static string DecompressJet4(byte[] bytes, int start, int len)
     {
         // Fast path: if no 0x00 byte appears in the data, the entire string
         // is compressed Latin-1 with no mode switches. This is the overwhelming
         // majority of text values in real Jet4 databases.
         int end = start + len;
         bool allCompressed = true;
-        for (int j = start; j < end; j++)
+        for (int index = start; index < end; index++)
         {
-            if (b[j] == 0x00)
+            if (bytes[index] == 0x00)
             {
                 allCompressed = false;
                 break;
@@ -402,33 +424,81 @@ public abstract class AccessBase : IAccessBase
 
         if (allCompressed)
         {
-            return CreateFromCompressed(b, start, len);
+            return CreateFromCompressed(bytes, start, len);
         }
 
-        return DecompressJet4Slow(b, start, len);
+        return DecompressJet4Slow(bytes, start, len);
     }
 
-    private static string CreateFromCompressed(ReadOnlySpan<byte> b, int start, int len)
+    /// <summary>
+    /// Decodes the JET4 "compressed unicode" encoding from a span-backed buffer.
+    /// </summary>
+    /// <returns>The decompressed string.</returns>
+    private protected static string DecompressJet4(ReadOnlySpan<byte> bytes, int start, int len)
+    {
+        int end = start + len;
+        bool allCompressed = true;
+        for (int index = start; index < end; index++)
+        {
+            if (bytes[index] == 0x00)
+            {
+                allCompressed = false;
+                break;
+            }
+        }
+
+        if (allCompressed)
+        {
+            return CreateFromCompressed(bytes, start, len);
+        }
+
+        return DecompressJet4Slow(bytes, start, len);
+    }
+
+    private static string CreateFromCompressed(byte[] bytes, int start, int len)
+    {
+        return string.Create(
+            len,
+            (Bytes: bytes, Start: start),
+            static (chars, state) =>
+            {
+                for (int index = 0; index < chars.Length; index++)
+                {
+                    chars[index] = (char)state.Bytes[state.Start + index];
+                }
+            });
+    }
+
+    private static string CreateFromCompressed(ReadOnlySpan<byte> bytes, int start, int len)
     {
         var chars = new char[len];
-        for (int k = 0; k < len; k++)
+        for (int index = 0; index < len; index++)
         {
-            chars[k] = (char)b[start + k];
+            chars[index] = (char)bytes[start + index];
         }
 
         return new string(chars);
     }
 
-    private static string DecompressJet4Slow(ReadOnlySpan<byte> b, int start, int len)
+    private static string DecompressJet4Slow(byte[] bytes, int start, int len)
+    {
+        int charCount = CountDecompressedChars(bytes, start, len);
+        return string.Create(
+            charCount,
+            (Bytes: bytes, Start: start, Length: len),
+            static (chars, state) => FillDecompressed(state.Bytes, state.Start, state.Length, chars));
+    }
+
+    private static string DecompressJet4Slow(ReadOnlySpan<byte> bytes, int start, int len)
     {
         // Two-pass: count output chars first, then fill directly into char[].
-        int charCount = CountDecompressedChars(b, start, len);
+        int charCount = CountDecompressedChars(bytes, start, len);
         var chars = new char[charCount];
-        FillDecompressed(b, start, len, chars);
+        FillDecompressed(bytes, start, len, chars);
         return new string(chars);
     }
 
-    private static int CountDecompressedChars(ReadOnlySpan<byte> b, int start, int len)
+    private static int CountDecompressedChars(ReadOnlySpan<byte> bytes, int start, int len)
     {
         int count = 0;
         bool compressed = true;
@@ -438,7 +508,7 @@ public abstract class AccessBase : IAccessBase
         {
             if (compressed)
             {
-                if (b[i] == 0x00)
+                if (bytes[i] == 0x00)
                 {
                     compressed = false;
                     i++;
@@ -451,7 +521,7 @@ public abstract class AccessBase : IAccessBase
             else
             {
                 int runStart = i;
-                while (i + 1 < end && !(b[i] == 0x00 && b[i + 1] == 0x00))
+                while (i + 1 < end && !(bytes[i] == 0x00 && bytes[i + 1] == 0x00))
                 {
                     i += 2;
                 }
@@ -471,7 +541,7 @@ public abstract class AccessBase : IAccessBase
         return count;
     }
 
-    private static void FillDecompressed(ReadOnlySpan<byte> b, int start, int len, Span<char> output)
+    private static void FillDecompressed(ReadOnlySpan<byte> bytes, int start, int len, Span<char> output)
     {
         int pos = 0;
         bool compressed = true;
@@ -481,19 +551,19 @@ public abstract class AccessBase : IAccessBase
         {
             if (compressed)
             {
-                if (b[i] == 0x00)
+                if (bytes[i] == 0x00)
                 {
                     compressed = false;
                     i++;
                     continue;
                 }
 
-                output[pos++] = (char)b[i++];
+                output[pos++] = (char)bytes[i++];
             }
             else
             {
                 int runStart = i;
-                while (i + 1 < end && !(b[i] == 0x00 && b[i + 1] == 0x00))
+                while (i + 1 < end && !(bytes[i] == 0x00 && bytes[i + 1] == 0x00))
                 {
                     i += 2;
                 }
@@ -501,7 +571,7 @@ public abstract class AccessBase : IAccessBase
                 int runLen = i - runStart;
                 for (int r = 0; r < runLen; r += 2)
                 {
-                    output[pos++] = (char)(b[runStart + r] | (b[runStart + r + 1] << 8));
+                    output[pos++] = (char)(bytes[runStart + r] | (bytes[runStart + r + 1] << 8));
                 }
 
                 if (i + 1 >= end)

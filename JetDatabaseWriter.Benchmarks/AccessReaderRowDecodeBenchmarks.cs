@@ -193,6 +193,13 @@ public class AccessReaderRowDecodeBenchmarks
         return count;
     }
 
+    [Benchmark]
+    public async Task<int> Decode_Numeric_ColdOpen_FirstScan()
+    {
+        await using AccessReader reader = await AccessReader.OpenAsync(SyntheticDatabases.NumericDbPath).ConfigureAwait(false);
+        return await CountUntypedRowsAsync(reader, SyntheticDatabases.NumericTable).ConfigureAwait(false);
+    }
+
     // ── Memo (LVAL) decode ────────────────────────────────────────────
     // Mixes inline (32 B), single-LVAL-page (~2 KB), and chained-LVAL
     // (~16 KB) payloads so each benchmark op exercises all three branches
@@ -230,5 +237,45 @@ public class AccessReaderRowDecodeBenchmarks
     {
         var dt = await _memoReader.ReadDataTableAsync(SyntheticDatabases.MemoTable).ConfigureAwait(false);
         return dt!.Rows.Count;
+    }
+
+    // Isolated LVAL branches. These keep the mixed benchmark above intact while
+    // making it obvious whether an optimization helped inline, single-page, or
+    // chained long values.
+
+    [Benchmark]
+    public async Task<int> Decode_Memo_Inline_Untyped()
+        => await CountUntypedRowsAsync(_memoReader, SyntheticDatabases.MemoInlineTable).ConfigureAwait(false);
+
+    [Benchmark]
+    public async Task<int> Decode_Memo_SinglePage_Untyped()
+        => await CountUntypedRowsAsync(_memoReader, SyntheticDatabases.MemoSinglePageTable).ConfigureAwait(false);
+
+    [Benchmark]
+    public async Task<int> Decode_Memo_Chained_Untyped()
+        => await CountUntypedRowsAsync(_memoReader, SyntheticDatabases.MemoChainedTable).ConfigureAwait(false);
+
+    [Benchmark]
+    public async Task<int> Decode_Ole_Inline_Untyped()
+        => await CountUntypedRowsAsync(_memoReader, SyntheticDatabases.OleInlineTable).ConfigureAwait(false);
+
+    [Benchmark]
+    public async Task<int> Decode_Ole_SinglePage_Untyped()
+        => await CountUntypedRowsAsync(_memoReader, SyntheticDatabases.OleSinglePageTable).ConfigureAwait(false);
+
+    [Benchmark]
+    public async Task<int> Decode_Ole_Chained_Untyped()
+        => await CountUntypedRowsAsync(_memoReader, SyntheticDatabases.OleChainedTable).ConfigureAwait(false);
+
+    private static async Task<int> CountUntypedRowsAsync(AccessReader reader, string tableName)
+    {
+        int count = 0;
+        await foreach (object[] row in reader.Rows(tableName).ConfigureAwait(false))
+        {
+            _ = row;
+            count++;
+        }
+
+        return count;
     }
 }
