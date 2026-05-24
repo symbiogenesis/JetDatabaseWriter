@@ -50,7 +50,6 @@ internal enum SystemTableIndexMaintenancePath
     None,
     SkippedNoMaintainableIndexes,
     Incremental,
-    FullRebuild,
 }
 
 /// <summary>
@@ -3369,7 +3368,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             ids.Add(checked((int)id));
         }
 
-        var deletedRows = new List<RowLocation>();
+        var deletedRows = new List<(RowLocation Loc, object[] Row)>();
         long total = _stream.Length / _pgSz;
         for (long pageNumber = 3; pageNumber < total; pageNumber++)
         {
@@ -3389,7 +3388,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     if (int.TryParse(objectIdText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int objectId)
                         && ids.Contains(objectId))
                     {
-                        deletedRows.Add(row);
+                        object[] deletedIndexRow = acesDef.CreateNullValueRow();
+                        acesDef.SetValueByName(deletedIndexRow, "ObjectId", objectId);
+                        deletedRows.Add((row, deletedIndexRow));
                     }
                 }
             }
@@ -3399,7 +3400,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        foreach (RowLocation row in deletedRows)
+        foreach ((RowLocation row, _) in deletedRows)
         {
             await MarkRowDeletedAsync(row.PageNumber, row.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
         }
@@ -3407,7 +3408,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         if (deletedRows.Count > 0)
         {
             await AdjustTDefRowCountAsync(acesTdefPage, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
-            await MaintainIndexesAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+            await MaintainSystemTableIndexesIncrementallyAsync(
+                acesTdefPage,
+                acesDef,
+                Constants.SystemTableNames.Aces,
+                insertedRows: null,
+                deletedRows: deletedRows,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -3459,54 +3466,63 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.None;
         RowLocation loc = await InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken).ConfigureAwait(false);
 
-        // Skip maintenance when the system-table TDEF has no allocated index
-        // leaves yet (writer-created blank databases bootstrap MSysObjects
-        // with degenerate / placeholder real-idx slots whose first_dp values
-        // are not valid page numbers; calling MaintainIndexesAsync against
-        // those would attempt to read non-existent pages). Access-authored
-        // databases (Northwind, etc.) always have valid first_dp values, so
-        // the maintenance path runs as expected and external readers / DAO
-        // Compact &amp; Repair see the new system-table rows through the
-        // catalog indexes.
+        var hint = new List<(RowLocation Loc, object[] Row)>(1) { (loc, values) };
+        LastSystemTableIndexMaintenancePath = await MaintainSystemTableIndexesIncrementallyAsync(
+            tdefPage,
+            tableDef,
+            tableName,
+            hint,
+            deletedRows: null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<SystemTableIndexMaintenancePath> MaintainSystemTableIndexesIncrementallyAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string tableName,
+        List<(RowLocation Loc, object[] Row)>? insertedRows,
+        List<(RowLocation Loc, object[] Row)>? deletedRows,
+        CancellationToken cancellationToken)
+    {
         if (!await SystemTableHasMaintainableIndexesAsync(tdefPage, cancellationToken).ConfigureAwait(false))
         {
-            LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.SkippedNoMaintainableIndexes;
-            return;
+            return SystemTableIndexMaintenancePath.SkippedNoMaintainableIndexes;
         }
 
-        var hint = new List<(RowLocation Loc, object[] Row)>(1) { (loc, values) };
         try
         {
             bool incremental = await _indexMaintainer.TryMaintainIndexesIncrementalAsync(
                 tdefPage,
                 tableDef,
-                hint,
-                deletedRows: null,
+                insertedRows,
+                deletedRows,
                 cancellationToken).ConfigureAwait(false);
             if (incremental)
             {
-                LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.Incremental;
-                return;
+                return SystemTableIndexMaintenancePath.Incremental;
             }
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            throw CreateSystemTableIndexMaintenanceException(tableName, ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw CreateSystemTableIndexMaintenanceException(tableName, ex);
+        }
 
-            await MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
-            LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.FullRebuild;
-        }
-        catch (ArgumentOutOfRangeException)
+        throw CreateSystemTableIndexMaintenanceException(tableName);
+    }
+
+    private InvalidOperationException CreateSystemTableIndexMaintenanceException(string tableName, Exception? inner = null)
+    {
+        string message = $"Could not maintain {tableName} system-table indexes incrementally; full rebuild fallback is disabled.";
+        if (!string.IsNullOrWhiteSpace(_indexMaintainer.LastIncrementalBail))
         {
-            // Defensive: writer-bootstrapped system tables may carry index
-            // descriptors that point at unallocated / out-of-range pages
-            // (the writer's blank-database template is intentionally minimal
-            // and never exercises catalog-index reads on its own). Swallow
-            // the page-read failure rather than corrupting an otherwise
-            // healthy mutation — readers that walk data pages directly
-            // (this library's AccessReader) still see the new row.
+            message += $" Bail: {_indexMaintainer.LastIncrementalBail}.";
         }
-        catch (InvalidOperationException)
-        {
-            // Same rationale: malformed real-idx / leaf chain on a
-            // bootstrapped catalog table is not a reason to fail an insert.
-        }
+
+        return inner is null ? new InvalidOperationException(message) : new InvalidOperationException(message, inner);
     }
 
     /// <summary>
