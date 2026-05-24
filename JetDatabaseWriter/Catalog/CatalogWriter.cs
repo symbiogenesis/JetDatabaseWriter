@@ -130,6 +130,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
         string foreignName,
         string? connectString,
         short objectType,
+        byte[]? cachedSchemaLvProp = null,
         CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
@@ -145,18 +146,26 @@ internal sealed class CatalogWriter(AccessWriter writer)
         msys.SetValueByName(values, "Type", objectType);
         msys.SetValueByName(values, "DateCreate", now);
         msys.SetValueByName(values, "DateUpdate", now);
-        msys.SetValueByName(values, "Flags", GetLinkedTableFlags(objectType));
+        bool isTextLinkedTable = IsTextLinkedTable(objectType, connectString);
+        msys.SetValueByName(values, "Flags", GetLinkedTableFlags(objectType, connectString));
         msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
-        if (msys.FindColumn("LvProp") is not null && !IsAccessFileLinkedTable(objectType, connectString))
+        if (msys.FindColumn("LvProp") is not null)
         {
-            msys.SetValueByName(values, "LvProp", Constants.SystemObjects.DefaultLvPropPlaceholder);
+            if (cachedSchemaLvProp is not null)
+            {
+                msys.SetValueByName(values, "LvProp", cachedSchemaLvProp);
+            }
+            else if (objectType == Constants.SystemObjects.LinkedOdbcType)
+            {
+                msys.SetValueByName(values, "LvProp", Constants.SystemObjects.DefaultLvPropPlaceholder);
+            }
         }
 
-        msys.SetValueByName(values, "ForeignName", foreignName);
+        msys.SetValueByName(values, "ForeignName", isTextLinkedTable ? EncodeTextForeignName(foreignName) : foreignName);
 
         if (!string.IsNullOrEmpty(sourceDatabasePath))
         {
-            object databaseValue = IsAccessFileLinkedTable(objectType, connectString)
+            object databaseValue = objectType == Constants.SystemObjects.LinkedTableType
                 ? await EncodeLinkedMemoFieldAsync(sourceDatabasePath, cancellationToken).ConfigureAwait(false)
                 : sourceDatabasePath;
             msys.SetValueByName(values, "Database", databaseValue);
@@ -237,11 +246,16 @@ internal sealed class CatalogWriter(AccessWriter writer)
         return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) ? parsed : 0;
     }
 
-    private static int GetLinkedTableFlags(short objectType) =>
-        objectType == Constants.SystemObjects.LinkedOdbcType ? Constants.SystemObjects.LinkedOdbcFlags : Constants.SystemObjects.LinkedTableFlags;
+    private static int GetLinkedTableFlags(short objectType, string? connectString) =>
+        objectType == Constants.SystemObjects.LinkedOdbcType
+            ? Constants.SystemObjects.LinkedOdbcFlags
+            : IsTextLinkedTable(objectType, connectString) ? Constants.SystemObjects.LinkedTextTableFlags : Constants.SystemObjects.LinkedTableFlags;
 
-    private static bool IsAccessFileLinkedTable(short objectType, string? connectString) =>
-        objectType == Constants.SystemObjects.LinkedTableType && string.IsNullOrEmpty(connectString);
+    private static bool IsTextLinkedTable(short objectType, string? connectString) =>
+        objectType == Constants.SystemObjects.LinkedTableType && !string.IsNullOrEmpty(connectString);
+
+    private static string EncodeTextForeignName(string foreignName) =>
+        foreignName.Replace('.', '#');
 
     private static byte[] ParseHexBytes(string hex)
     {

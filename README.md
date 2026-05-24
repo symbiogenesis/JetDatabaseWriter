@@ -497,7 +497,7 @@ await writer.DropColumnAsync("Contacts", "Phone");
 
 ### Linked tables
 
-Linked tables are catalog-only entries that point at data living in another source. The library can create and enumerate Access, ODBC, and text linked-table entries. Managed reads follow Access-file links through the linked-source path policy; ODBC and text links are metadata-only. Writer-created links are regression-tested for negative catalog ids, flags, placeholder `LvProp`, ACE rows, and catalog-index entries, but Access/DAO OpenRecordset and CompactDatabase validation remains open until the cached linked-table schema payload in `MSysObjects.LvProp` is implemented.
+Linked tables are catalog-only entries that point at data living in another source. The library can create and enumerate Access, ODBC, and text linked-table entries. Managed reads follow Access-file links through the linked-source path policy; ODBC and text links are metadata-only. Writer-created Access-file and text links have DAO CompactDatabase/OpenRecordset coverage. ODBC links can also be created with a caller-supplied Access/DAO cached-schema `LvProp` payload for CompactDatabase-compatible output; the simpler ODBC overload remains metadata-only because it has no source schema to cache.
 
 ```csharp
 // Linked Access table (MSysObjects type 6) — references a table in another .mdb / .accdb file.
@@ -512,6 +512,14 @@ await writer.CreateLinkedOdbcTableAsync(
     linkedTableName:  "LinkedSalesOrders",
     connectionString: "ODBC;DRIVER={SQL Server};SERVER=db.example.com;DATABASE=Sales;Trusted_Connection=Yes",
     foreignTableName: "dbo.Orders");
+
+// Advanced ODBC path: supply an Access/DAO-authored cached-schema LvProp payload
+// when you need Access/DAO-compatible catalog metadata for the linked source.
+await writer.CreateLinkedOdbcTableAsync(
+    linkedTableName:     "LinkedSalesOrdersCached",
+    connectionString:    "ODBC;DRIVER={SQL Server};SERVER=db.example.com;DATABASE=Sales;Trusted_Connection=Yes",
+    foreignTableName:    "dbo.Orders",
+    cachedSchemaLvProp:  cachedSchemaLvPropBytes);
 ```
 
 > The library does not open ODBC or text-file sources itself. Use `ListLinkedTablesAsync()` to enumerate those linked entries and inspect their `ConnectionString`, `SourceDatabasePath`, and `ForeignName` metadata.

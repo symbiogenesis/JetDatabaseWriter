@@ -1547,7 +1547,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             foreignTableName,
             connectString: null,
             objectType: (short)Constants.SystemObjects.LinkedTableType,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1561,9 +1561,52 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public ValueTask CreateLinkedOdbcTableAsync(string linkedTableName, string connectionString, string foreignTableName, CancellationToken cancellationToken = default)
-        => RunAutoCommitAsync(_ => CreateLinkedOdbcTableCoreAsync(linkedTableName, connectionString, foreignTableName, cancellationToken), cancellationToken);
+        => RunAutoCommitAsync(
+            _ => CreateLinkedOdbcTableCoreAsync(
+                linkedTableName,
+                connectionString,
+                foreignTableName,
+                cachedSchemaLvProp: null,
+                cancellationToken),
+            cancellationToken);
 
-    private async ValueTask CreateLinkedOdbcTableCoreAsync(string linkedTableName, string connectionString, string foreignTableName, CancellationToken cancellationToken)
+    /// <summary>
+    /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) using
+    /// a caller-supplied Access/DAO cached-schema payload for <c>MSysObjects.LvProp</c>.
+    /// The payload must come from an Access-compatible ODBC link to the same source
+    /// schema; the writer validates that it is a non-empty <c>MR2\0</c> / <c>KKD\0</c>
+    /// property block and stores it verbatim.
+    /// </summary>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
+    /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
+    /// <param name="cachedSchemaLvProp">Access/DAO-authored cached linked-schema payload for <c>MSysObjects.LvProp</c>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    public ValueTask CreateLinkedOdbcTableAsync(
+        string linkedTableName,
+        string connectionString,
+        string foreignTableName,
+        ReadOnlyMemory<byte> cachedSchemaLvProp,
+        CancellationToken cancellationToken = default)
+    {
+        byte[] validatedLvProp = CopyValidatedCachedSchemaLvProp(cachedSchemaLvProp, nameof(cachedSchemaLvProp));
+        return RunAutoCommitAsync(
+            _ => CreateLinkedOdbcTableCoreAsync(
+                linkedTableName,
+                connectionString,
+                foreignTableName,
+                validatedLvProp,
+                cancellationToken),
+            cancellationToken);
+    }
+
+    private async ValueTask CreateLinkedOdbcTableCoreAsync(
+        string linkedTableName,
+        string connectionString,
+        string foreignTableName,
+        byte[]? cachedSchemaLvProp,
+        CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(linkedTableName, nameof(linkedTableName));
         Guard.NotNullOrEmpty(connectionString, nameof(connectionString));
@@ -1581,7 +1624,36 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             foreignName: foreignTableName,
             connectString: normalizedConnect,
             objectType: (short)Constants.SystemObjects.LinkedOdbcType,
-            cancellationToken).ConfigureAwait(false);
+            cachedSchemaLvProp: cachedSchemaLvProp,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private byte[] CopyValidatedCachedSchemaLvProp(ReadOnlyMemory<byte> cachedSchemaLvProp, string paramName)
+    {
+        if (cachedSchemaLvProp.IsEmpty)
+        {
+            throw new ArgumentException("Cached schema LvProp cannot be empty.", paramName);
+        }
+
+        byte[] copy = cachedSchemaLvProp.ToArray();
+        if (copy.AsSpan().SequenceEqual(Constants.SystemObjects.DefaultLvPropPlaceholder))
+        {
+            throw new ArgumentException("Cached schema LvProp cannot be the default placeholder.", paramName);
+        }
+
+        uint expectedMagic = _format == DatabaseFormat.Jet3Mdb ? 0x00444B4BU : 0x0032524DU;
+        if (copy.Length < sizeof(uint) || BinaryPrimitives.ReadUInt32LittleEndian(copy.AsSpan(0, sizeof(uint))) != expectedMagic)
+        {
+            throw new ArgumentException("Cached schema LvProp must use the property-block magic for this database format.", paramName);
+        }
+
+        ColumnPropertyBlock? block = ColumnPropertyBlock.Parse(copy, _format);
+        if (block is null || block.Targets.Count == 0)
+        {
+            throw new ArgumentException("Cached schema LvProp must contain at least one property target.", paramName);
+        }
+
+        return copy;
     }
 
     /// <summary>
@@ -1614,7 +1686,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             foreignFileName,
             connectString,
             objectType: (short)Constants.SystemObjects.LinkedTableType,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     // ════════════════════════════════════════════════════════════════

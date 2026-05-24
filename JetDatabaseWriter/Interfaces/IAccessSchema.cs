@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Interfaces;
 
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -129,6 +130,26 @@ public interface IAccessSchema : IAccessBase
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     ValueTask CreateLinkedOdbcTableAsync(string linkedTableName, string connectionString, string foreignTableName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) using
+    /// a caller-supplied Access/DAO cached-schema payload for <c>MSysObjects.LvProp</c>.
+    /// The payload must come from an Access-compatible ODBC link to the same source
+    /// schema; the writer validates that it is a non-empty <c>MR2\0</c> / <c>KKD\0</c>
+    /// property block and stores it verbatim.
+    /// </summary>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
+    /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
+    /// <param name="cachedSchemaLvProp">Access/DAO-authored cached linked-schema payload for <c>MSysObjects.LvProp</c>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    ValueTask CreateLinkedOdbcTableAsync(
+        string linkedTableName,
+        string connectionString,
+        string foreignTableName,
+        ReadOnlyMemory<byte> cachedSchemaLvProp,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously creates a foreign-key relationship between two existing user tables

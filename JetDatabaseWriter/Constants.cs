@@ -254,6 +254,9 @@ internal static class Constants
         /// <summary>Observed <c>MSysObjects.Flags</c> value for Access-linked table rows.</summary>
         public const int LinkedTableFlags = 0x0020_0000;
 
+        /// <summary>Observed <c>MSysObjects.Flags</c> value for text/CSV linked table rows.</summary>
+        public const int LinkedTextTableFlags = 0x00A0_0000;
+
         /// <summary>Observed <c>MSysObjects.Flags</c> value for ODBC-linked table rows.</summary>
         public const int LinkedOdbcFlags = 0x2010_0000;
 

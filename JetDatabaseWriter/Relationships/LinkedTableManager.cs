@@ -132,10 +132,12 @@ internal static class LinkedTableManager
 
             bool isOdbc = objType == Constants.SystemObjects.LinkedOdbcType;
             string connectStr = SafeGet(row, idxConnect);
+            string foreignName = SafeGet(row, idxForeignName);
+            bool isText = !isOdbc && !string.IsNullOrEmpty(connectStr);
             result.Add(new LinkedTableInfo
             {
                 Name = nameStr,
-                ForeignName = SafeGet(row, idxForeignName),
+                ForeignName = isText ? DecodeTextForeignName(foreignName) : foreignName,
                 SourceDatabasePath = isOdbc ? null : SafeGet(row, idxDatabase),
                 ConnectionString = string.IsNullOrEmpty(connectStr) ? null : connectStr,
                 IsOdbc = isOdbc,
@@ -272,4 +274,7 @@ internal static class LinkedTableManager
 
     private static string SafeGet(string[] row, int idx) =>
         (idx >= 0 && idx < row.Length) ? row[idx] : string.Empty;
+
+    private static string DecodeTextForeignName(string foreignName) =>
+        foreignName.Replace('#', '.');
 }

@@ -92,7 +92,7 @@ Do not re-test these for the original `OpenRecordset` failure unless a new fixtu
 | Encrypted DAO CompactDatabase | Resolved by flat Access-native Agile encryption, masked encoding-key handling, one-based flat-page IV derivation, full-header detection, and the five-argument DAO `CompactDatabase` source-password form. |
 | Catalog incremental zero-slot success | Resolved by returning `false` when an indexed TDEF decodes no usable real-index key columns, allowing callers to fall back to bulk rebuild. |
 | Jet4/ACE catalog-splice false return | Resolved by failing and rolling back catalog inserts when `MSysObjects` splicing cannot maintain every required index. |
-| Linked-table catalog row routing | Resolved for catalog-shape regression coverage by allocating catalog-only negative object ids without low-24 collisions, routing Type 4/6 rows through `MSysObjects` index splicing, and stamping fixture-aligned flags, non-null placeholder `LvProp`, and linked-object ACE rows. DAO validation remains open for the cached linked-table schema payload. |
+| Linked-table catalog row routing | Resolved for catalog-shape regression coverage by allocating catalog-only negative object ids without low-24 collisions, routing Type 4/6 rows through `MSysObjects` index splicing, and stamping fixture-aligned flags plus linked-object ACE rows. Access-file and text Type 6 links now pass DAO CompactDatabase plus compacted OpenRecordset; ODBC Type 4 links pass DAO CompactDatabase when created with a caller-supplied cached-schema `LvProp`. The legacy ODBC metadata-only overload remains catalog-only. |
 
 ## 7. Verification Commands
 

@@ -54,13 +54,14 @@ Repair to discover later. Jet3 catalog splicing is now regression-guarded on an
 Access-authored Jet3 fixture and tracked in
 [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 
-**Linked-table catalog routing: REGRESSION-GUARDED; DAO VALIDATION OPEN.**
+**Linked-table catalog routing: REGRESSION-GUARDED; DAO VALIDATION PARTIAL.**
 Writer-created linked Access/ODBC/text rows now allocate catalog-only negative
 object ids without low-24 collisions; route Type 4/6 `MSysObjects` rows through
-catalog-index splicing; and stamp fixture-aligned flags, non-null placeholder
-`LvProp`, and linked-object ACE rows. DAO OpenRecordset/CompactDatabase
-validation for writer-created links remains open until the writer emits Access's
-cached linked-table schema payload in `MSysObjects.LvProp`.
+catalog-index splicing; and stamp fixture-aligned flags and linked-object ACE
+rows. Access-file and text Type 6 links pass DAO CompactDatabase followed by
+compacted OpenRecordset. ODBC Type 4 links pass DAO CompactDatabase when the
+caller supplies a real Access/DAO cached-schema `LvProp` payload; the legacy
+metadata-only ODBC overload remains catalog-only and still stamps the placeholder.
 
 **Data remanence semantics: REGRESSION-GUARDED.** Default delete/update behavior
 preserves normal JET logical-delete semantics: user-row slots are marked deleted
