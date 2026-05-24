@@ -277,13 +277,17 @@ Completed changes:
 - Byte-array-backed Jet4 compressed text decode now uses `string.Create` for
   the all-compressed fast path and the mode-switching slow path, removing the
   intermediate `char[]` on normal reader/writer hot paths.
+- On modern target frameworks, the byte-array-backed all-compressed fast path
+  now delegates to `Encoding.Latin1.GetString`, matching Jet4's one-byte
+  U+0001..U+00FF compressed text semantics while keeping the `string.Create`
+  fallback for `netstandard2.1`.
 - The existing span-backed decoder remains as a compatibility fallback for any
   future span-only caller.
 
 Remaining measurement:
 
-- Investigate whether the all-compressed fast path can use a Latin-1 decoding
-  helper on newer target frameworks without changing semantics.
+- Refresh text-heavy benchmarks to quantify the `string.Create` and Latin-1
+  decoder changes together.
 
 Risks and constraints:
 

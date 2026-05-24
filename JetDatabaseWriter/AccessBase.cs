@@ -457,6 +457,9 @@ public abstract class AccessBase : IAccessBase
 
     private static string CreateFromCompressed(byte[] bytes, int start, int len)
     {
+#if NET6_0_OR_GREATER
+        return Encoding.Latin1.GetString(bytes, start, len);
+#else
         return string.Create(
             len,
             (Bytes: bytes, Start: start),
@@ -467,6 +470,7 @@ public abstract class AccessBase : IAccessBase
                     chars[index] = (char)state.Bytes[state.Start + index];
                 }
             });
+#endif
     }
 
     private static string CreateFromCompressed(ReadOnlySpan<byte> bytes, int start, int len)

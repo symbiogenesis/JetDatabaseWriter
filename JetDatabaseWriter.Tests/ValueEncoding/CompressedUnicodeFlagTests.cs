@@ -232,6 +232,7 @@ public sealed class CompressedUnicodeFlagTests
     [InlineData("Hello")]
     [InlineData("TestTable")]
     [InlineData("A longer string with spaces and CAPS 123")]
+    [InlineData("Caf\u00E9\u00FF")]
     public void Reader_DecodeJet4Text_DecompressesMarkedData(string expected)
     {
         byte[] compressed = BuildCompressed(expected);
@@ -389,11 +390,20 @@ public sealed class CompressedUnicodeFlagTests
 
     private static byte[] BuildCompressed(string value)
     {
-        byte[] ascii = Encoding.ASCII.GetBytes(value);
-        byte[] result = new byte[ascii.Length + 2];
+        byte[] result = new byte[value.Length + 2];
         result[0] = 0xFF;
         result[1] = 0xFE;
-        Buffer.BlockCopy(ascii, 0, result, 2, ascii.Length);
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = value[i];
+            if (c == '\0' || c > 0xFF)
+            {
+                throw new InvalidOperationException("Compressed test payload must contain only non-zero Latin-1 characters.");
+            }
+
+            result[i + 2] = (byte)c;
+        }
+
         return result;
     }
 
