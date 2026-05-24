@@ -497,7 +497,7 @@ await writer.DropColumnAsync("Contacts", "Phone");
 
 ### Linked tables
 
-Linked tables are catalog-only entries that point at data living in another source. The library can create and enumerate Access, ODBC, and text linked-table entries. Managed reads follow Access-file links through the linked-source path policy; ODBC and text links are metadata-only. ODBC links write a parseable `MSysObjects.LvProp` property block; supply remote source columns when you want a generated linked-schema cache, or supply an Access/DAO-authored `LvProp` payload when you need byte-for-byte engine-authored metadata.
+Linked tables are catalog-only entries that point at data living in another source. The library can create and enumerate Access, ODBC, and text linked-table entries. Managed reads follow Access-file links and supported delimited text/CSV links through the linked-source path policy; ODBC links are metadata-only. Text links currently materialize delimited fields as string columns and support `HDR=YES/NO`, `FMT=Delimited`, `FMT=CSVDelimited`, `FMT=TabDelimited`, and `FMT=Delimited(<char>)`. ODBC links write a parseable `MSysObjects.LvProp` property block; supply remote source columns when you want a generated linked-schema cache, or supply an Access/DAO-authored `LvProp` payload when you need byte-for-byte engine-authored metadata.
 
 ```csharp
 // Linked Access table (MSysObjects type 6) — references a table in another .mdb / .accdb file.
@@ -533,9 +533,18 @@ await writer.CreateLinkedOdbcTableAsync(
     connectionString:    "ODBC;DRIVER={SQL Server};SERVER=db.example.com;DATABASE=Sales;Trusted_Connection=Yes",
     foreignTableName:    "dbo.Orders",
     cachedSchemaLvProp:  cachedSchemaLvPropBytes);
+
+// Linked CSV table (MSysObjects type 6) — reads rows from the text file on demand.
+await writer.CreateLinkedTextTableAsync(
+    linkedTableName:      "LinkedOrdersCsv",
+    sourceDirectoryPath:  @"C:\Data\Exports",
+    foreignFileName:      "orders.csv",
+    connectString:        "Text;HDR=YES;FMT=Delimited");
+
+DataTable csvRows = await reader.ReadDataTableAsync("LinkedOrdersCsv", cancellationToken: cancellationToken);
 ```
 
-> The library does not open ODBC or text-file sources itself. Use `ListLinkedTablesAsync()` to enumerate linked entries and inspect their `Kind`, `ConnectString`, `SourcePath`, and `SourceObjectName` metadata.
+> ODBC links remain metadata-only. Fixed-width text links and schema.ini type inference are not part of the managed text reader. Use `ListLinkedTablesAsync()` to enumerate linked entries and inspect their `Kind`, `ConnectString`, `SourcePath`, and `SourceObjectName` metadata.
 
 ### Foreign-key relationships
 

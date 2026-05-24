@@ -2,8 +2,11 @@ namespace JetDatabaseWriter.Relationships;
 
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -174,6 +177,8 @@ internal static class LinkedTableManager
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
+        ThrowIfUnsupportedLinkedRead(link);
+
         AccessReaderOptions linkedOptions = reader.LinkedSourceOpenOptions;
         string resolvedPath = ResolveLinkedSourcePath(
             link,
@@ -191,30 +196,154 @@ internal static class LinkedTableManager
         return await AccessReader.OpenAsync(resolvedPath, linkedOptions, cancellationToken).ConfigureAwait(false);
     }
 
+    internal static async ValueTask<long> CountLinkedTextRowsAsync(
+        AccessReader reader,
+        LinkedTableInfo link,
+        CancellationToken cancellationToken)
+    {
+        long count = 0;
+        await foreach (string[] row in RowsLinkedTextAsStringsAsync(reader, link, progress: null, cancellationToken).ConfigureAwait(false))
+        {
+            _ = row;
+            count++;
+        }
+
+        return count;
+    }
+
+    internal static async IAsyncEnumerable<string[]> RowsLinkedTextAsStringsAsync(
+        AccessReader reader,
+        LinkedTableInfo link,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        string resolvedPath = ResolveLinkedTextSourceFilePath(reader, link);
+        if (!File.Exists(resolvedPath))
+        {
+            throw new FileNotFoundException(
+                $"Text source for linked table '{link.Name}' not found: {resolvedPath}",
+                resolvedPath);
+        }
+
+        TextLinkFormat format = ParseTextLinkFormat(link.ConnectString);
+        string[] columnNames = await ReadLinkedTextColumnNamesAsync(resolvedPath, format, cancellationToken).ConfigureAwait(false);
+        long rowCount = 0;
+
+        await foreach (string[] row in EnumerateTextDataRowsAsync(resolvedPath, format, cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            rowCount++;
+            progress?.Report(rowCount);
+            yield return NormalizeStringRow(row, columnNames.Length);
+        }
+    }
+
+    internal static async IAsyncEnumerable<object[]> RowsLinkedTextAsync(
+        AccessReader reader,
+        LinkedTableInfo link,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (string[] row in RowsLinkedTextAsStringsAsync(reader, link, progress, cancellationToken).ConfigureAwait(false))
+        {
+            yield return row;
+        }
+    }
+
+    internal static async ValueTask<List<ColumnMetadata>> GetLinkedTextColumnMetadataAsync(
+        AccessReader reader,
+        LinkedTableInfo link,
+        CancellationToken cancellationToken)
+    {
+        string resolvedPath = ResolveLinkedTextSourceFilePath(reader, link);
+        if (!File.Exists(resolvedPath))
+        {
+            throw new FileNotFoundException(
+                $"Text source for linked table '{link.Name}' not found: {resolvedPath}",
+                resolvedPath);
+        }
+
+        TextLinkFormat format = ParseTextLinkFormat(link.ConnectString);
+        string[] columnNames = await ReadLinkedTextColumnNamesAsync(resolvedPath, format, cancellationToken).ConfigureAwait(false);
+        var metadata = new List<ColumnMetadata>(columnNames.Length);
+        for (int i = 0; i < columnNames.Length; i++)
+        {
+            metadata.Add(new ColumnMetadata
+            {
+                Name = columnNames[i],
+                TypeName = "Text",
+                ClrType = typeof(string),
+                IsNullable = true,
+                IsFixedLength = false,
+                Ordinal = i,
+                Size = ColumnSize.Variable,
+            });
+        }
+
+        return metadata;
+    }
+
+    internal static async ValueTask<DataTable> ReadLinkedTextDataTableAsync(
+        AccessReader reader,
+        LinkedTableInfo link,
+        uint? maxRows,
+        IProgress<long>? progress,
+        CancellationToken cancellationToken)
+    {
+        string resolvedPath = ResolveLinkedTextSourceFilePath(reader, link);
+        if (!File.Exists(resolvedPath))
+        {
+            throw new FileNotFoundException(
+                $"Text source for linked table '{link.Name}' not found: {resolvedPath}",
+                resolvedPath);
+        }
+
+        TextLinkFormat format = ParseTextLinkFormat(link.ConnectString);
+        string[] columnNames = await ReadLinkedTextColumnNamesAsync(resolvedPath, format, cancellationToken).ConfigureAwait(false);
+        DataTable? table = null;
+        try
+        {
+            table = new DataTable(link.Name);
+            foreach (string columnName in columnNames)
+            {
+                _ = table.Columns.Add(columnName, typeof(string));
+            }
+
+            long rowCount = 0;
+            await foreach (string[] row in EnumerateTextDataRowsAsync(resolvedPath, format, cancellationToken).ConfigureAwait(false))
+            {
+                _ = table.Rows.Add(NormalizeStringRow(row, columnNames.Length));
+                rowCount++;
+                progress?.Report(rowCount);
+                if (maxRows.HasValue && rowCount >= maxRows.Value)
+                {
+                    DataTable result = table;
+                    table = null;
+                    return result;
+                }
+            }
+
+            DataTable final = table;
+            table = null;
+            return final;
+        }
+        finally
+        {
+            table?.Dispose();
+        }
+    }
+
     private static string ResolveLinkedSourcePath(
         LinkedTableInfo link,
         string hostDatabasePath,
         IReadOnlyList<string> linkedSourcePathAllowlist,
         Func<LinkedTableInfo, string, bool>? linkedSourcePathValidator)
     {
-        if (link.Kind != LinkedTableKind.Access)
-        {
-            string kindDescription = link.Kind switch
-            {
-                LinkedTableKind.Odbc => "ODBC",
-                LinkedTableKind.Text => "text",
-                _ => "non-Access",
-            };
-
-            throw new NotSupportedException(
-                $"Linked {kindDescription} table '{link.Name}' is metadata-only; JetDatabaseWriter opens only Access-file linked tables.");
-        }
-
         if (string.IsNullOrWhiteSpace(link.SourcePath))
         {
             throw new FileNotFoundException(
-            $"Source database for linked table '{link.Name}' not found: {link.SourcePath}",
-            link.SourcePath);
+                $"Source path for linked table '{link.Name}' not found: {link.SourcePath}",
+                link.SourcePath);
         }
 
         string rawPath = link.SourcePath.Trim();
@@ -256,6 +385,340 @@ internal static class LinkedTableManager
         return resolvedPath;
     }
 
+    private static string ResolveLinkedTextSourceFilePath(AccessReader reader, LinkedTableInfo link)
+    {
+        if (link.Kind != LinkedTableKind.Text)
+        {
+            ThrowIfUnsupportedLinkedRead(link);
+        }
+
+        AccessReaderOptions linkedOptions = reader.LinkedSourceOpenOptions;
+        string resolvedDirectory = ResolveLinkedSourcePath(
+            link,
+            reader.HostDatabasePath,
+            linkedOptions.LinkedSourcePathAllowlist,
+            linkedOptions.LinkedSourcePathValidator);
+
+        if (string.IsNullOrWhiteSpace(link.SourceObjectName))
+        {
+            throw new FileNotFoundException(
+                $"Text source for linked table '{link.Name}' not found: {link.SourceObjectName}",
+                link.SourceObjectName);
+        }
+
+        string resolvedFilePath = ResolvePath(
+            link.SourceObjectName.Trim(),
+            resolvedDirectory,
+            $"linked text table '{link.Name}'");
+        if (!IsPathWithinDirectory(resolvedFilePath, resolvedDirectory))
+        {
+            throw new UnauthorizedAccessException(
+                $"Linked text table '{link.Name}' source file '{link.SourceObjectName}' is outside its source directory.");
+        }
+
+        return resolvedFilePath;
+    }
+
+    private static void ThrowIfUnsupportedLinkedRead(LinkedTableInfo link)
+    {
+        if (link.Kind == LinkedTableKind.Access)
+        {
+            return;
+        }
+
+        string kindDescription = link.Kind switch
+        {
+            LinkedTableKind.Odbc => "ODBC",
+            LinkedTableKind.Text => "text",
+            _ => "non-Access",
+        };
+
+        throw new NotSupportedException(
+            $"Linked {kindDescription} table '{link.Name}' is metadata-only; JetDatabaseWriter opens Access-file linked tables and reads delimited text links.");
+    }
+
+    private static TextLinkFormat ParseTextLinkFormat(string? connectString)
+    {
+        bool hasHeaderRow = false;
+        char delimiter = ',';
+        string? format = null;
+
+        if (!string.IsNullOrWhiteSpace(connectString))
+        {
+            foreach (string rawPart in SplitConnectStringParts(connectString))
+            {
+                string part = rawPart.Trim();
+                int separator = part.IndexOf('=', StringComparison.Ordinal);
+                if (separator < 0)
+                {
+                    continue;
+                }
+
+                string key = part.Substring(0, separator).Trim();
+                string value = part.Substring(separator + 1).Trim();
+                if (key.Equals("HDR", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasHeaderRow = value.Equals("YES", StringComparison.OrdinalIgnoreCase)
+                        || value.Equals("TRUE", StringComparison.OrdinalIgnoreCase)
+                        || value == "1";
+                }
+                else if (key.Equals("FMT", StringComparison.OrdinalIgnoreCase))
+                {
+                    format = value;
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(format))
+        {
+            if (format.Equals("FixedLength", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new NotSupportedException("Linked text tables with FMT=FixedLength are not supported by the managed CSV reader.");
+            }
+
+            if (format.Equals("TabDelimited", StringComparison.OrdinalIgnoreCase))
+            {
+                delimiter = '\t';
+            }
+            else if (format.StartsWith("Delimited(", StringComparison.OrdinalIgnoreCase))
+            {
+                int start = format.IndexOf('(', StringComparison.Ordinal) + 1;
+                int end = format.IndexOf(')', start);
+                if (end > start)
+                {
+                    delimiter = format[start];
+                }
+            }
+            else if (!format.Equals("Delimited", StringComparison.OrdinalIgnoreCase)
+                && !format.Equals("CSVDelimited", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new NotSupportedException($"Linked text tables with FMT={format} are not supported by the managed CSV reader.");
+            }
+        }
+
+        return new TextLinkFormat(hasHeaderRow, delimiter);
+    }
+
+    private static IEnumerable<string> SplitConnectStringParts(string connectString)
+    {
+        int start = 0;
+        int parenthesisDepth = 0;
+        for (int i = 0; i < connectString.Length; i++)
+        {
+            char ch = connectString[i];
+            if (ch == '(')
+            {
+                parenthesisDepth++;
+            }
+            else if (ch == ')' && parenthesisDepth > 0)
+            {
+                parenthesisDepth--;
+            }
+            else if (ch == ';' && parenthesisDepth == 0)
+            {
+                yield return connectString.Substring(start, i - start);
+                start = i + 1;
+            }
+        }
+
+        yield return connectString.Substring(start);
+    }
+
+    private static async ValueTask<string[]> ReadLinkedTextColumnNamesAsync(
+        string filePath,
+        TextLinkFormat format,
+        CancellationToken cancellationToken)
+    {
+        using var reader = new StreamReader(filePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        string[]? firstRecord = await ReadDelimitedRecordAsync(reader, format.Delimiter, cancellationToken).ConfigureAwait(false);
+        if (firstRecord is null)
+        {
+            return [];
+        }
+
+        return format.HasHeaderRow
+            ? NormalizeColumnNames(firstRecord)
+            : CreateGeneratedColumnNames(firstRecord.Length);
+    }
+
+    private static async IAsyncEnumerable<string[]> EnumerateTextDataRowsAsync(
+        string filePath,
+        TextLinkFormat format,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        using var reader = new StreamReader(filePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        bool isFirstRecord = true;
+        while (true)
+        {
+            string[]? record = await ReadDelimitedRecordAsync(reader, format.Delimiter, cancellationToken).ConfigureAwait(false);
+            if (record is null)
+            {
+                yield break;
+            }
+
+            if (isFirstRecord)
+            {
+                isFirstRecord = false;
+                if (format.HasHeaderRow)
+                {
+                    continue;
+                }
+            }
+
+            yield return record;
+        }
+    }
+
+    private static async ValueTask<string[]?> ReadDelimitedRecordAsync(
+        StreamReader reader,
+        char delimiter,
+        CancellationToken cancellationToken)
+    {
+        var fields = new List<string>();
+        var field = new StringBuilder();
+        var singleChar = new char[1];
+        bool inQuotes = false;
+        bool atFieldStart = true;
+        bool sawAnyCharacter = false;
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int value = await ReadCharAsync(reader, singleChar, cancellationToken).ConfigureAwait(false);
+            if (value < 0)
+            {
+                if (!sawAnyCharacter && fields.Count == 0 && field.Length == 0)
+                {
+                    return null;
+                }
+
+                fields.Add(field.ToString());
+                return fields.ToArray();
+            }
+
+            char ch = (char)value;
+            sawAnyCharacter = true;
+
+            if (inQuotes)
+            {
+                if (ch == '"')
+                {
+                    if (reader.Peek() == '"')
+                    {
+                        _ = await ReadCharAsync(reader, singleChar, cancellationToken).ConfigureAwait(false);
+                        field.Append('"');
+                    }
+                    else
+                    {
+                        inQuotes = false;
+                    }
+                }
+                else
+                {
+                    field.Append(ch);
+                }
+
+                continue;
+            }
+
+            if (atFieldStart && ch == '"')
+            {
+                inQuotes = true;
+                atFieldStart = false;
+                continue;
+            }
+
+            if (ch == delimiter)
+            {
+                fields.Add(field.ToString());
+                _ = field.Clear();
+                atFieldStart = true;
+                continue;
+            }
+
+            if (ch == '\r')
+            {
+                if (reader.Peek() == '\n')
+                {
+                    _ = await ReadCharAsync(reader, singleChar, cancellationToken).ConfigureAwait(false);
+                }
+
+                fields.Add(field.ToString());
+                return fields.ToArray();
+            }
+
+            if (ch == '\n')
+            {
+                fields.Add(field.ToString());
+                return fields.ToArray();
+            }
+
+            field.Append(ch);
+            atFieldStart = false;
+        }
+    }
+
+    private static async ValueTask<int> ReadCharAsync(StreamReader reader, char[] buffer, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        int read = await reader.ReadAsync(buffer, 0, 1).ConfigureAwait(false);
+        return read == 0 ? -1 : buffer[0];
+    }
+
+    private static string[] NormalizeColumnNames(string[] rawColumnNames)
+    {
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var columnNames = new string[rawColumnNames.Length];
+        for (int i = 0; i < rawColumnNames.Length; i++)
+        {
+            string baseName = string.IsNullOrWhiteSpace(rawColumnNames[i]) ? $"F{i + 1}" : rawColumnNames[i].Trim();
+            string candidate = baseName;
+            int suffix = 1;
+            while (!usedNames.Add(candidate))
+            {
+                suffix++;
+                candidate = baseName + suffix.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            columnNames[i] = candidate;
+        }
+
+        return columnNames;
+    }
+
+    private static string[] CreateGeneratedColumnNames(int columnCount)
+    {
+        var columnNames = new string[columnCount];
+        for (int i = 0; i < columnNames.Length; i++)
+        {
+            columnNames[i] = $"F{i + 1}";
+        }
+
+        return columnNames;
+    }
+
+    private static string[] NormalizeStringRow(string[] row, int columnCount)
+    {
+        if (row.Length == columnCount)
+        {
+            return row;
+        }
+
+        var normalized = new string[columnCount];
+        int copyCount = Math.Min(row.Length, columnCount);
+        for (int i = 0; i < copyCount; i++)
+        {
+            normalized[i] = row[i];
+        }
+
+        for (int i = copyCount; i < normalized.Length; i++)
+        {
+            normalized[i] = string.Empty;
+        }
+
+        return normalized;
+    }
+
     private static string ResolvePath(string path, string baseDirectory, string context)
     {
         try
@@ -279,7 +742,10 @@ internal static class LinkedTableManager
     {
         string fullPath = Path.GetFullPath(path);
         string fullDirectory = EnsureTrailingDirectorySeparator(Path.GetFullPath(directory));
-        return fullPath.StartsWith(fullDirectory, StringComparison.OrdinalIgnoreCase);
+        string fullDirectoryWithoutTrailingSeparator = fullDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string fullPathWithoutTrailingSeparator = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return string.Equals(fullPathWithoutTrailingSeparator, fullDirectoryWithoutTrailingSeparator, StringComparison.OrdinalIgnoreCase)
+            || fullPath.StartsWith(fullDirectory, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string EnsureTrailingDirectorySeparator(string path)
@@ -303,4 +769,6 @@ internal static class LinkedTableManager
 
     private static string DecodeTextForeignName(string foreignName) =>
         foreignName.Replace('#', '.');
+
+    private readonly record struct TextLinkFormat(bool HasHeaderRow, char Delimiter);
 }

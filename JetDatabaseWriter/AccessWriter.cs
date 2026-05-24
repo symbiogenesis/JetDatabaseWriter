@@ -1704,7 +1704,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// Asynchronously creates a linked-text/CSV table entry (MSysObjects type 6) that references
     /// a text or CSV file in a directory. The entry stores both a <c>Database</c> path (the
     /// directory containing the file) and a <c>Connect</c> string (e.g.
-    /// <c>"Text;HDR=YES;FMT=Delimited"</c>). No row data is stored locally.
+    /// <c>"Text;HDR=YES;FMT=Delimited"</c>). No row data is stored locally; managed
+    /// readers parse supported delimited text sources on demand through the
+    /// linked-source path policy and expose fields as strings.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="sourceDirectoryPath">Path to the directory containing the text/CSV source file.</param>

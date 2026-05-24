@@ -119,10 +119,9 @@ public interface IAccessSchema : IAccessBase
 
     /// <summary>
     /// Asynchronously creates a linked-text/CSV table entry (MSysObjects type 6)
-    /// that references a text or CSV file in a directory. The entry is metadata
-    /// only — no rows are stored locally. Managed readers expose the catalog
-    /// metadata through <see cref="IAccessReader.ListLinkedTablesAsync"/> but do
-    /// not execute the external text driver.
+    /// that references a text or CSV file in a directory. No rows are stored
+    /// locally; managed readers parse supported delimited text sources on demand
+    /// through the linked-source path policy and expose fields as strings.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="sourceDirectoryPath">Path to the directory containing the text/CSV source file.</param>

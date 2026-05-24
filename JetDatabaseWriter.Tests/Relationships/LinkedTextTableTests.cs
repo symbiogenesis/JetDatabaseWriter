@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Relationships;
 
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -152,14 +153,19 @@ public sealed class LinkedTextTableTests : IDisposable
     }
 
     [Fact]
-    public async Task LinkedTextTable_CsvFile_ReturnsTextMetadataAndManagedReadsAreMetadataOnly()
+    public async Task LinkedTextTable_CsvFile_ReadsDelimitedRowsThroughManagedReader()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string sourceDirectory = CreateTempDirectory("TextLinkCsvSource");
-        string csvPath = Path.Combine(sourceDirectory, "orders.csv");
-        await File.WriteAllTextAsync(csvPath, "OrderId,Customer,Total\r\n1,Ada,12.50\r\n2,Grace,18.75\r\n", ct);
-
         string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkCsvFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"orders_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(
+            csvPath,
+            "OrderId,Customer,Note\r\n1,\"Ada, Inc.\",\"He said \"\"hi\"\"\"\r\n2,Grace,\"line\r\nbreak\"\r\n",
+            ct);
+
         const string connect = "Text;HDR=YES;FMT=Delimited";
 
         await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
@@ -167,7 +173,7 @@ public sealed class LinkedTextTableTests : IDisposable
             await writer.CreateLinkedTextTableAsync(
                 "LinkedOrdersCsv",
                 sourceDirectory,
-                "orders.csv",
+                csvFileName,
                 connect,
                 ct);
         }
@@ -178,13 +184,110 @@ public sealed class LinkedTextTableTests : IDisposable
         LinkedTableInfo entry = Assert.Single(linked, table =>
             string.Equals(table.Name, "LinkedOrdersCsv", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(LinkedTableKind.Text, entry.Kind);
-        Assert.Equal("orders.csv", entry.SourceObjectName);
+        Assert.Equal(csvFileName, entry.SourceObjectName);
         Assert.Equal(sourceDirectory, entry.SourcePath);
         Assert.Equal(connect, entry.ConnectString);
 
-        NotSupportedException ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
-            await reader.ReadDataTableAsync("LinkedOrdersCsv", cancellationToken: ct));
-        Assert.Contains("metadata-only", ex.Message, StringComparison.OrdinalIgnoreCase);
+        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedOrdersCsv", ct);
+        Assert.Collection(
+            metadata,
+            column => Assert.Equal("OrderId", column.Name),
+            column => Assert.Equal("Customer", column.Name),
+            column => Assert.Equal("Note", column.Name));
+        Assert.All(metadata, column => Assert.Equal(typeof(string), column.ClrType));
+
+        long realRowCount = await reader.GetRealRowCountAsync("LinkedOrdersCsv", ct);
+        Assert.Equal(2, realRowCount);
+
+        DataTable table = await reader.ReadDataTableAsync("LinkedOrdersCsv", cancellationToken: ct);
+        Assert.Equal(3, table.Columns.Count);
+        Assert.Equal(2, table.Rows.Count);
+        Assert.Equal("Ada, Inc.", table.Rows[0]["Customer"]);
+        Assert.Equal("He said \"hi\"", table.Rows[0]["Note"]);
+        Assert.Equal("line\r\nbreak", table.Rows[1]["Note"]);
+
+        DataTable preview = await reader.ReadTableAsStringsAsync("LinkedOrdersCsv", maxRows: 1, cancellationToken: ct);
+        Assert.Equal(1, preview.Rows.Count);
+        Assert.Equal("Ada, Inc.", preview.Rows[0]["Customer"]);
+
+        var stringRows = new List<string[]>();
+        await foreach (string[] row in reader.RowsAsStrings("LinkedOrdersCsv", cancellationToken: ct))
+        {
+            stringRows.Add(row);
+        }
+
+        Assert.Equal(2, stringRows.Count);
+        Assert.Equal("Grace", stringRows[1][1]);
+
+        var objectRows = new List<object[]>();
+        await foreach (object[] row in reader.Rows("LinkedOrdersCsv", cancellationToken: ct))
+        {
+            objectRows.Add(row);
+        }
+
+        Assert.Equal(2, objectRows.Count);
+        Assert.Equal("Ada, Inc.", objectRows[0][1]);
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_WithoutHeader_UsesGeneratedColumnNames()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkCsvNoHeaderFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"customers_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "1,Ada\r\n2,Grace\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedCustomersCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=NO;FMT=Delimited",
+                ct);
+        }
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        DataTable table = await reader.ReadDataTableAsync("LinkedCustomersCsv", cancellationToken: ct);
+
+        Assert.Equal("F1", table.Columns[0].ColumnName);
+        Assert.Equal("F2", table.Columns[1].ColumnName);
+        Assert.Equal(2, table.Rows.Count);
+        Assert.Equal("1", table.Rows[0]["F1"]);
+        Assert.Equal("Ada", table.Rows[0]["F2"]);
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_CustomDelimiter_ReadsDelimitedRows()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkCsvSemicolonFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"orders_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id;Customer;Note\r\n1;Ada;\"uses;delimiter\"\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedSemicolonCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited(;)",
+                ct);
+        }
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        DataTable table = await reader.ReadDataTableAsync("LinkedSemicolonCsv", cancellationToken: ct);
+
+        Assert.Equal(3, table.Columns.Count);
+        Assert.Equal("Customer", table.Columns[1].ColumnName);
+        Assert.Equal("Ada", table.Rows[0]["Customer"]);
+        Assert.Equal("uses;delimiter", table.Rows[0]["Note"]);
     }
 
     [Fact]
