@@ -92,6 +92,7 @@ Advance: `pos += entryLen`.
 | `0x06` | Single | float32 |
 | `0x07` | Double | float64 |
 | `0x08` | DateTime | OLE date, float64 |
+| `0x09` | Binary | opaque bytes; linked-table property caches use this for `GUID` properties carrying 16-byte GUID payloads |
 | `0x0A` | Text | UTF-16LE (Jet4); used for `DefaultValue`, `ValidationRule`, `ValidationText`, `Description`, `Format`, `Caption`, etc. |
 | `0x0B` | OLE | opaque bytes |
 | `0x0C` | Memo | UTF-16LE (Jet4) |
@@ -122,3 +123,16 @@ Observed DAO `MSysObjects.LvProp` facts:
 - The name pool may contain both `Required` and `AllowZeroLength`; target property order in the observed blobs was `Required` then `AllowZeroLength` for non-null text, and `AllowZeroLength` then `Required` for nullable text. Access appears to tolerate either order when reading, but byte-for-byte DAO parity should preserve the observed order where practical.
 
 These LvProp differences were real DAO deltas, but matching them was not sufficient by itself to make writer-created FK tables survive DAO Compact & Repair. The final compact fix also required system-table row placement, Type=8 relationship catalog objects, relationship ACE rows, shared table/index usage-map rows, and in-place single-leaf reuse. Treat the LvProp shape as a compatibility fact, not as the whole compact root cause.
+
+## 6. Linked-table property-cache facts (2026-05-24)
+
+`linked-odbc-lvprop` compares the Jackcess V2007 ODBC linked-table fixture with the Access-linked-table fixture and writes [format-probe-linked-odbc-lvprop.md](../format-probe/format-probe-linked-odbc-lvprop.md).
+
+Observed linked-table facts:
+
+- The ODBC Type 4 fixture row stores a 6,465-byte `MR2\0` `LvProp` payload with 21 parsed targets, no unknown chunks, and a table-level `NameMap` property. The parser/builder pair is not byte-identical because the builder normalizes opaque inner property-block headers, but parse/build/parse structural parity is true.
+- The linked Access Type 6 comparison fixture also stores a real `MR2\0` cache in this older Access-authored Jackcess corpus, but DAO-authored Access-file and text links are separately observed to tolerate null `Lv`/`LvProp`/`LvModule`/`LvExtra` cache columns.
+- `NameMap` is `dataType = 0x0B` and remains opaque. The probe extracts recognizable UTF-16 string runs for human inspection, but the payload includes GUID-like binary records and should not be synthesized until its record format is understood.
+- Linked-cache `GUID` properties appear as `dataType = 0x09` Binary with 16-byte GUID payloads, not `dataType = 0x0F`.
+
+Upstream check: mdbtools and Jackcess both parse/preserve generic property maps, but neither project appears to generate Type 4 ODBC linked-table schema-cache `LvProp`/`NameMap` payloads from a connection string and remote table name.

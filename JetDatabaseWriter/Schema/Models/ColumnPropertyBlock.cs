@@ -42,6 +42,9 @@ internal sealed class ColumnPropertyBlock
     /// <summary>OLE date (float64).</summary>
     public const byte DataTypeDateTime = 0x08;
 
+    /// <summary>Binary / opaque bytes.</summary>
+    public const byte DataTypeBinary = 0x09;
+
     /// <summary>Text — UTF-16LE in Jet4, codepage in Jet3. Default for property strings.</summary>
     public const byte DataTypeText = 0x0A;
 

@@ -129,6 +129,7 @@ internal static class FormatProbeApplication
         AddEnvMode(modes, "DIAG_LONG_ROW_SUFFIX", "long-row-suffix");
         AddEnvMode(modes, "DIAG_LONG_ROW_CRC_SWEEP", "long-row-crc-sweep");
         AddEnvMode(modes, "DIAG_MEMO_READBACK", "memo-readback");
+        AddEnvMode(modes, "DIAG_LINKED_ODBC_LVPROP", "linked-odbc-lvprop");
         AddEnvMode(modes, "DIAG_RT_DAO_BASELINE", "rt-dao-baseline");
     }
 
@@ -159,6 +160,7 @@ internal static class FormatProbeApplication
         "LONG-ROW-SUFFIX" or "LONG-ROW-SUFFIX-ANALYSIS" => "long-row-suffix",
         "LONG-ROW-CRC" or "LONG-ROW-CRC-SWEEP" or "LONG-ROW-SUFFIX-CRC" => "long-row-crc-sweep",
         "MEMO" or "MEMO-READBACK" => "memo-readback",
+        "ODBC-LVPROP" or "LINKED-ODBC" or "LINKED-ODBC-LVPROP" or "ODBC-LINKED-LVPROP" => "linked-odbc-lvprop",
         _ => mode,
     };
 
@@ -178,6 +180,7 @@ internal static class FormatProbeApplication
         "long-row-dao-tables" or
         "long-row-suffix" or
         "long-row-crc-sweep" or
+        "linked-odbc-lvprop" or
         "memo-readback";
 
     private static Task<int> ShowHelpAsync(RootCommand rootCommand, CancellationToken cancellationToken) =>
@@ -203,6 +206,7 @@ internal static class FormatProbeApplication
         long-row-dao-tables Extract compact encoder tables from the latest DAO lab
       long-row-suffix     Dump V2010 long-row suffix source diagnostics
       long-row-crc-sweep  Run the slow V2010 long-row CRC-16 suffix sweep
+    linked-odbc-lvprop  Dump linked ODBC LvProp schema-cache structure
       memo-readback       Run the memo readback diagnostic
 
     Positional modes and --mode/-m values both accept comma-separated lists.
@@ -273,6 +277,10 @@ internal static class FormatProbeApplication
                     FormatProbeArtifacts.GetFilePath(probeDir, "long-row-crc-sweep.md"));
             case "memo-readback":
                 return await RunMemoReadbackAsync();
+            case "linked-odbc-lvprop":
+                return await JetDatabaseWriter.FormatProbe.LinkedOdbcLvPropProbe.RunAsync(
+                    fixtures,
+                    FormatProbeArtifacts.GetFilePath(probeDir, "linked-odbc-lvprop.md"));
             case "rt-dao-baseline":
                 return await JetDatabaseWriter.FormatProbe.DaoBaselineProbe.RunAsync(
                     GetRoundTripBaseline(fixtures),

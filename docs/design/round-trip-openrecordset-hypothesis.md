@@ -116,6 +116,7 @@ Useful probes remain available for future regressions:
 | Reproduce original H48 baseline diff | `dotnet run --project JetDatabaseWriter.FormatProbe -- rt-dao-baseline` |
 | Inspect preserved memo fixture | `dotnet run --project JetDatabaseWriter.FormatProbe -- memo-readback` |
 | Compare writer-vs-DAO FK metadata | `dotnet run --project JetDatabaseWriter.FormatProbe -- fk-dao-baseline` |
+| Inspect linked ODBC `LvProp` schema-cache shape | `dotnet run --project JetDatabaseWriter.FormatProbe -- linked-odbc-lvprop` |
 
 ## 8. Reference Sources
 
