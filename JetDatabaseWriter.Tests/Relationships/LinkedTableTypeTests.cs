@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -18,13 +19,13 @@ using Xunit;
 public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>
-    /// An Access-linked table entry has <see cref="LinkedTableInfo.IsOdbc"/>
-    /// set to <see langword="false"/> and a populated
-    /// <see cref="LinkedTableInfo.SourceDatabasePath"/>.
+    /// An Access-linked table entry has <see cref="LinkedTableInfo.Kind"/>
+    /// set to <see cref="LinkedTableKind.Access"/> and a populated
+    /// <see cref="LinkedTableInfo.SourcePath"/>.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
-    public async Task AccessLinkedTable_IsNotOdbc()
+    public async Task AccessLinkedTable_IsAccessKind()
     {
         if (!File.Exists(TestDatabases.LinkerTestV2007))
         {
@@ -41,17 +42,17 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
             l => string.Equals(l.Name, "Table2", System.StringComparison.OrdinalIgnoreCase));
 
         Assert.NotNull(table2);
-        Assert.False(table2.IsOdbc);
+        Assert.Equal(LinkedTableKind.Access, table2.Kind);
     }
 
     /// <summary>
     /// An Access-linked table entry carries the source database path in
-    /// <see cref="LinkedTableInfo.SourceDatabasePath"/> and the path
+    /// <see cref="LinkedTableInfo.SourcePath"/> and the path
     /// references the linkee fixture.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
-    public async Task AccessLinkedTable_HasSourceDatabasePath()
+    public async Task AccessLinkedTable_HasSourcePath()
     {
         if (!File.Exists(TestDatabases.LinkerTestV2007))
         {
@@ -67,17 +68,16 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
         LinkedTableInfo table2 = linked.Single(
             l => string.Equals(l.Name, "Table2", System.StringComparison.OrdinalIgnoreCase));
 
-        Assert.False(string.IsNullOrWhiteSpace(table2.SourceDatabasePath));
-        Assert.Contains("linkeeTest", table2.SourceDatabasePath, System.StringComparison.OrdinalIgnoreCase);
+        Assert.False(string.IsNullOrWhiteSpace(table2.SourcePath));
+        Assert.Contains("linkeeTest", table2.SourcePath, System.StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
-    /// An Access-linked table entry does not have a connection string
-    /// (that property is for ODBC-linked tables only).
+    /// An Access-linked table entry does not have a connect string.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
-    public async Task AccessLinkedTable_HasNoConnectionString()
+    public async Task AccessLinkedTable_HasNoConnectString()
     {
         if (!File.Exists(TestDatabases.LinkerTestV2007))
         {
@@ -93,16 +93,16 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
         LinkedTableInfo table2 = linked.Single(
             l => string.Equals(l.Name, "Table2", System.StringComparison.OrdinalIgnoreCase));
 
-        Assert.Null(table2.ConnectionString);
+        Assert.Null(table2.ConnectString);
     }
 
     /// <summary>
-    /// The linked table's <see cref="LinkedTableInfo.ForeignName"/> matches the
+    /// The linked table's <see cref="LinkedTableInfo.SourceObjectName"/> matches the
     /// name of the table in the remote database (Table1 in linkeeTest).
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
-    public async Task AccessLinkedTable_ForeignName_MatchesRemoteTable()
+    public async Task AccessLinkedTable_SourceObjectName_MatchesRemoteTable()
     {
         if (!File.Exists(TestDatabases.LinkerTestV2007))
         {
@@ -118,7 +118,7 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
         LinkedTableInfo table2 = linked.Single(
             l => string.Equals(l.Name, "Table2", System.StringComparison.OrdinalIgnoreCase));
 
-        Assert.Equal("Table1", table2.ForeignName);
+        Assert.Equal("Table1", table2.SourceObjectName);
     }
 
     /// <summary>

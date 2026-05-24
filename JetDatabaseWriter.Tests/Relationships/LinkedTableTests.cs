@@ -125,12 +125,13 @@ public sealed class LinkedTableTests : IDisposable
         var entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedRemoteData", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(entry);
-        Assert.Equal("RemoteData", entry.ForeignName);
-        Assert.Equal(sourcePath, entry.SourceDatabasePath);
+        Assert.Equal(LinkedTableKind.Access, entry.Kind);
+        Assert.Equal("RemoteData", entry.SourceObjectName);
+        Assert.Equal(sourcePath, entry.SourcePath);
     }
 
     [Fact]
-    public async Task LinkedTables_CreateLinkedOdbcTableAsync_PersistsType4EntryWithConnectionString()
+    public async Task LinkedTables_CreateLinkedOdbcTableAsync_PersistsType4EntryWithConnectString()
     {
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcFE");
         const string connect = "ODBC;DRIVER={SQL Server};SERVER=db.example.com;DATABASE=Sales;Trusted_Connection=Yes";
@@ -150,10 +151,10 @@ public sealed class LinkedTableTests : IDisposable
         var entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedSalesOrders", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(entry);
-        Assert.True(entry.IsOdbc);
-        Assert.Equal("dbo.Orders", entry.ForeignName);
-        Assert.Equal(connect, entry.ConnectionString);
-        Assert.True(string.IsNullOrEmpty(entry.SourceDatabasePath));
+        Assert.Equal(LinkedTableKind.Odbc, entry.Kind);
+        Assert.Equal("dbo.Orders", entry.SourceObjectName);
+        Assert.Equal(connect, entry.ConnectString);
+        Assert.Null(entry.SourcePath);
     }
 
     [Fact]
@@ -175,8 +176,8 @@ public sealed class LinkedTableTests : IDisposable
         var entry = (await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken))
             .First(l => string.Equals(l.Name, "LinkedSales", StringComparison.OrdinalIgnoreCase));
 
-        Assert.True(entry.IsOdbc);
-        Assert.Equal("ODBC;" + connect, entry.ConnectionString);
+        Assert.Equal(LinkedTableKind.Odbc, entry.Kind);
+        Assert.Equal("ODBC;" + connect, entry.ConnectString);
     }
 
     [Fact]
@@ -271,8 +272,8 @@ public sealed class LinkedTableTests : IDisposable
     // ═══════════════════════════════════════════════════════════════════
     //
     // Current state: ListLinkedTables() returns metadata (name, source path,
-    // foreign name), and Access-file linked tables are read through by opening
-    // SourceDatabasePath and reading ForeignName from the source database.
+    // source object name), and Access-file linked tables are read through by
+    // opening SourcePath and reading SourceObjectName from the source database.
 
     [Fact]
     public async Task LinkedTable_ReadLinkedTable_ReturnsSourceData()
@@ -315,8 +316,8 @@ public sealed class LinkedTableTests : IDisposable
         var entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedProducts", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(entry);
-        Assert.Equal(sourceTableName, entry.ForeignName);
-        Assert.Equal(sourcePath, entry.SourceDatabasePath);
+        Assert.Equal(sourceTableName, entry.SourceObjectName);
+        Assert.Equal(sourcePath, entry.SourcePath);
 
         // Reading through the link should return source data
         DataTable dt = (await reader.ReadDataTableAsync("LinkedProducts", cancellationToken: TestContext.Current.CancellationToken))!;
@@ -580,9 +581,9 @@ public sealed class LinkedTableTests : IDisposable
         var entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedMeta", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(entry);
-        Assert.Equal("SourceTable", entry.ForeignName);
-        Assert.False(string.IsNullOrEmpty(entry.SourceDatabasePath));
-        Assert.False(entry.IsOdbc);
+        Assert.Equal(LinkedTableKind.Access, entry.Kind);
+        Assert.Equal("SourceTable", entry.SourceObjectName);
+        Assert.False(string.IsNullOrEmpty(entry.SourcePath));
     }
 
     [Fact]

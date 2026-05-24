@@ -123,8 +123,8 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
                 string.IsNullOrWhiteSpace(entry.Name),
                 "Linked table entry has blank Name.");
             Assert.False(
-                string.IsNullOrWhiteSpace(entry.ForeignName),
-                $"Linked table '{entry.Name}' has blank ForeignName.");
+                string.IsNullOrWhiteSpace(entry.SourceObjectName),
+                $"Linked table '{entry.Name}' has blank SourceObjectName.");
         }
     }
 
@@ -152,11 +152,11 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
         List<string> linkeeTables =
             await linkeeReader.ListTablesAsync(TestContext.Current.CancellationToken);
 
-        // At least one linked entry's ForeignName should match a table in linkee.
+        // At least one linked entry's SourceObjectName should match a table in linkee.
         bool foundMatch = false;
         foreach (LinkedTableInfo entry in linked)
         {
-            if (linkeeTables.Contains(entry.ForeignName))
+            if (linkeeTables.Contains(entry.SourceObjectName))
             {
                 foundMatch = true;
                 break;
@@ -165,7 +165,7 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
 
         Assert.True(
             foundMatch,
-            "Expected at least one linked entry whose ForeignName matches a linkee table.");
+            "Expected at least one linked entry whose SourceObjectName matches a linkee table.");
     }
 
     /// <summary>

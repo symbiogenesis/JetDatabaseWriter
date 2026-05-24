@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 
@@ -77,7 +78,7 @@ internal static class LinkedTableManager
     }
 
     /// <summary>
-    /// Enumerates every linked table (Access-native or ODBC) defined in
+    /// Enumerates every linked table (Access-file, ODBC, or text) defined in
     /// MSysObjects on the given <paramref name="reader"/>.
     /// </summary>
     internal static async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(AccessReader reader, CancellationToken cancellationToken)
@@ -134,13 +135,18 @@ internal static class LinkedTableManager
             string connectStr = SafeGet(row, idxConnect);
             string foreignName = SafeGet(row, idxForeignName);
             bool isText = !isOdbc && !string.IsNullOrEmpty(connectStr);
+            string sourcePath = SafeGet(row, idxDatabase);
+            LinkedTableKind kind = isOdbc
+                ? LinkedTableKind.Odbc
+                : isText ? LinkedTableKind.Text : LinkedTableKind.Access;
+
             result.Add(new LinkedTableInfo
             {
                 Name = nameStr,
-                ForeignName = isText ? DecodeTextForeignName(foreignName) : foreignName,
-                SourceDatabasePath = isOdbc ? null : SafeGet(row, idxDatabase),
-                ConnectionString = string.IsNullOrEmpty(connectStr) ? null : connectStr,
-                IsOdbc = isOdbc,
+                Kind = kind,
+                SourceObjectName = isText ? DecodeTextForeignName(foreignName) : foreignName,
+                SourcePath = isOdbc || string.IsNullOrEmpty(sourcePath) ? null : sourcePath,
+                ConnectString = string.IsNullOrEmpty(connectStr) ? null : connectStr,
             });
         }
 
@@ -191,20 +197,27 @@ internal static class LinkedTableManager
         IReadOnlyList<string> linkedSourcePathAllowlist,
         Func<LinkedTableInfo, string, bool>? linkedSourcePathValidator)
     {
-        if (link.IsOdbc)
+        if (link.Kind != LinkedTableKind.Access)
         {
+            string kindDescription = link.Kind switch
+            {
+                LinkedTableKind.Odbc => "ODBC",
+                LinkedTableKind.Text => "text",
+                _ => "non-Access",
+            };
+
             throw new NotSupportedException(
-                $"Linked ODBC table '{link.Name}' is metadata-only; JetDatabaseWriter does not open ODBC connections.");
+                $"Linked {kindDescription} table '{link.Name}' is metadata-only; JetDatabaseWriter opens only Access-file linked tables.");
         }
 
-        if (string.IsNullOrWhiteSpace(link.SourceDatabasePath))
+        if (string.IsNullOrWhiteSpace(link.SourcePath))
         {
             throw new FileNotFoundException(
-                $"Source database for linked table '{link.Name}' not found: {link.SourceDatabasePath}",
-                link.SourceDatabasePath);
+            $"Source database for linked table '{link.Name}' not found: {link.SourcePath}",
+            link.SourcePath);
         }
 
-        string rawPath = link.SourceDatabasePath.Trim();
+        string rawPath = link.SourcePath.Trim();
         bool hasHostDatabasePath = !string.IsNullOrWhiteSpace(hostDatabasePath);
         string baseDirectory = hasHostDatabasePath
             ? Path.GetDirectoryName(hostDatabasePath) ?? Directory.GetCurrentDirectory()
@@ -216,14 +229,14 @@ internal static class LinkedTableManager
         if (!hasHostDatabasePath && linkedSourcePathAllowlist.Count == 0 && !callbackApproved)
         {
             throw new UnauthorizedAccessException(
-                $"Linked table '{link.Name}' source path '{link.SourceDatabasePath}' cannot be resolved safely because the host database was opened from a stream. " +
+                $"Linked table '{link.Name}' source path '{link.SourcePath}' cannot be resolved safely because the host database was opened from a stream. " +
                 "Use AccessReaderOptions.LinkedSourcePathAllowlist or LinkedSourcePathValidator to explicitly allow trusted paths.");
         }
 
         if (!isWithinHostDatabaseDirectory && linkedSourcePathAllowlist.Count == 0 && !callbackApproved)
         {
             throw new UnauthorizedAccessException(
-                $"Linked table '{link.Name}' source path '{link.SourceDatabasePath}' is outside the host database directory. " +
+                $"Linked table '{link.Name}' source path '{link.SourcePath}' is outside the host database directory. " +
                 "Use AccessReaderOptions.LinkedSourcePathValidator to explicitly allow trusted paths.");
         }
 

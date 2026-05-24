@@ -392,7 +392,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         {
             List<LinkedTableInfo> links = await reader.ListLinkedTablesAsync(ct);
             LinkedTableInfo link = Assert.Single(links, table => string.Equals(table.Name, "LinkedCsv", StringComparison.OrdinalIgnoreCase));
-            Assert.Equal("data.csv", link.ForeignName);
+            Assert.Equal("data.csv", link.SourceObjectName);
         }
 
         string workDir = Path.GetDirectoryName(frontEndPath)!;
@@ -402,8 +402,8 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             AccessRoundTripEnvironment.RunDaoCompact(frontEndPath, compactedPath, TimeSpan.FromSeconds(60)),
             "DAO CompactDatabase text linked table");
         AssertDaoSuccess(
-            AccessRoundTripEnvironment.RunDaoDatabaseScript(compactedPath, LinkedTableCountScript("LinkedCsv"), workDir, TimeSpan.FromSeconds(60)),
-            "DAO OpenRecordset compacted text linked table");
+            AccessRoundTripEnvironment.RunDaoDatabaseScript(compactedPath, LinkedCsvDataScript("LinkedCsv"), workDir, TimeSpan.FromSeconds(60)),
+            "DAO OpenRecordset compacted text linked table data");
     }
 
     [Fact]
@@ -695,6 +695,33 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             try {
                 $count = [int]$rs.Fields.Item('Cnt').Value
                 if ($count -lt 0) { throw 'Invalid linked-table count.' }
+            } finally {
+                $rs.Close()
+            }
+            """;
+    }
+
+    private static string LinkedCsvDataScript(string tableName)
+    {
+        string escapedName = tableName.Replace("'", "''", StringComparison.Ordinal);
+        return $$"""
+            $rs = $db.OpenRecordset('SELECT [ID], [Name] FROM [{{escapedName}}]', 4)
+            try {
+                if ($rs.EOF) { throw 'Expected first CSV row.' }
+                $firstId = [int]$rs.Fields.Item('ID').Value
+                $firstName = [string]$rs.Fields.Item('Name').Value
+                if ($firstId -ne 1) { throw "Unexpected first CSV ID: $firstId" }
+                if ($firstName -ne 'Ada') { throw "Unexpected first CSV Name: $firstName" }
+
+                $rs.MoveNext()
+                if ($rs.EOF) { throw 'Expected second CSV row.' }
+                $secondId = [int]$rs.Fields.Item('ID').Value
+                $secondName = [string]$rs.Fields.Item('Name').Value
+                if ($secondId -ne 2) { throw "Unexpected second CSV ID: $secondId" }
+                if ($secondName -ne 'Grace') { throw "Unexpected second CSV Name: $secondName" }
+
+                $rs.MoveNext()
+                if (-not $rs.EOF) { throw 'Expected exactly two CSV rows.' }
             } finally {
                 $rs.Close()
             }

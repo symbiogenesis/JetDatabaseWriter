@@ -105,7 +105,7 @@ public sealed class AccessReaderOptions : IAccessOptions
     public int LockTimeoutMilliseconds { get; init; } = 5_000;
 
     /// <summary>
-    /// Gets an optional allowlist of directories that linked-table source paths must stay under.
+    /// Gets an optional allowlist of directories that Access-file linked-table source paths must stay under.
     /// Paths may be absolute or relative (relative entries are resolved from the opened database directory).
     /// Leave empty to allow only source files under the opened database directory, unless
     /// <see cref="LinkedSourcePathValidator"/> explicitly approves a resolved path.
@@ -113,7 +113,7 @@ public sealed class AccessReaderOptions : IAccessOptions
     public IReadOnlyList<string> LinkedSourcePathAllowlist { get; init; } = [];
 
     /// <summary>
-    /// Gets an optional callback to approve linked-table source paths.
+    /// Gets an optional callback to approve Access-file linked-table source paths.
     /// The callback receives linked-table metadata and the resolved absolute source path.
     /// Return true to allow opening the source; false to block it.
     /// </summary>

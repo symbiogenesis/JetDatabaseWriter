@@ -535,7 +535,7 @@ await writer.CreateLinkedOdbcTableAsync(
     cachedSchemaLvProp:  cachedSchemaLvPropBytes);
 ```
 
-> The library does not open ODBC or text-file sources itself. Use `ListLinkedTablesAsync()` to enumerate those linked entries and inspect their `ConnectionString`, `SourceDatabasePath`, and `ForeignName` metadata.
+> The library does not open ODBC or text-file sources itself. Use `ListLinkedTablesAsync()` to enumerate linked entries and inspect their `Kind`, `ConnectString`, `SourcePath`, and `SourceObjectName` metadata.
 
 ### Foreign-key relationships
 
@@ -681,7 +681,7 @@ var options = new AccessReaderOptions("secretPassword")
     // FileShare             = FileShare.Read,         // tighten to read-only sharing if you don't need that
     UseLockFile              = true,   // create .ldb/.laccdb lockfile (default: true)
     LinkedSourcePathAllowlist = new[] { @"C:\TrustedLinkedDatabases" },
-    LinkedSourcePathValidator = (link, fullPath) => !link.IsOdbc,
+    LinkedSourcePathValidator = (link, fullPath) => link.Kind == LinkedTableKind.Access,
 };
 await using var reader = await AccessReader.OpenAsync("database.mdb", options);
 

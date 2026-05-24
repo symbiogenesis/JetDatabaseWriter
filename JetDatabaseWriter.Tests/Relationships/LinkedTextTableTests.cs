@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
@@ -21,6 +22,7 @@ using Xunit;
 public sealed class LinkedTextTableTests : IDisposable
 {
     private readonly List<string> _tempFiles = [];
+    private readonly List<string> _tempDirectories = [];
 
     [Fact]
     public async Task LinkedTextTable_CreateViaSchemaInterface_ReturnsEntryWithConnectString()
@@ -44,10 +46,10 @@ public sealed class LinkedTextTableTests : IDisposable
 
         LinkedTableInfo entry = Assert.Single(linked, l =>
             string.Equals(l.Name, "LinkedCsvData", StringComparison.OrdinalIgnoreCase));
-        Assert.False(entry.IsOdbc);
-        Assert.Equal("sales.csv", entry.ForeignName);
-        Assert.Equal(@"C:\Data\Exports", entry.SourceDatabasePath);
-        Assert.Equal(connect, entry.ConnectionString);
+        Assert.Equal(LinkedTableKind.Text, entry.Kind);
+        Assert.Equal("sales.csv", entry.SourceObjectName);
+        Assert.Equal(@"C:\Data\Exports", entry.SourcePath);
+        Assert.Equal(connect, entry.ConnectString);
     }
 
     [Fact]
@@ -72,10 +74,10 @@ public sealed class LinkedTextTableTests : IDisposable
         LinkedTableInfo? entry = linked.FirstOrDefault(l =>
             string.Equals(l.Name, "LinkedCsvData", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(entry);
-        Assert.False(entry.IsOdbc);
-        Assert.Equal("sales.csv", entry.ForeignName);
-        Assert.Equal(@"C:\Data\Exports", entry.SourceDatabasePath);
-        Assert.Equal(connect, entry.ConnectionString);
+        Assert.Equal(LinkedTableKind.Text, entry.Kind);
+        Assert.Equal("sales.csv", entry.SourceObjectName);
+        Assert.Equal(@"C:\Data\Exports", entry.SourcePath);
+        Assert.Equal(connect, entry.ConnectString);
     }
 
     [Fact]
@@ -118,14 +120,14 @@ public sealed class LinkedTextTableTests : IDisposable
 
         LinkedTableInfo accessLinked = linked.Single(l =>
             string.Equals(l.Name, "LinkedProducts", StringComparison.OrdinalIgnoreCase));
-        Assert.Null(accessLinked.ConnectionString);
-        Assert.False(accessLinked.IsOdbc);
+        Assert.Equal(LinkedTableKind.Access, accessLinked.Kind);
+        Assert.Null(accessLinked.ConnectString);
 
         LinkedTableInfo textLinked = linked.Single(l =>
             string.Equals(l.Name, "LinkedLogFile", StringComparison.OrdinalIgnoreCase));
-        Assert.Equal(textConnect, textLinked.ConnectionString);
-        Assert.False(textLinked.IsOdbc);
-        Assert.Equal("app.log", textLinked.ForeignName);
+        Assert.Equal(LinkedTableKind.Text, textLinked.Kind);
+        Assert.Equal(textConnect, textLinked.ConnectString);
+        Assert.Equal("app.log", textLinked.SourceObjectName);
     }
 
     [Fact]
@@ -147,6 +149,42 @@ public sealed class LinkedTextTableTests : IDisposable
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain("LinkedCsv", tables);
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_ReturnsTextMetadataAndManagedReadsAreMetadataOnly()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string sourceDirectory = CreateTempDirectory("TextLinkCsvSource");
+        string csvPath = Path.Combine(sourceDirectory, "orders.csv");
+        await File.WriteAllTextAsync(csvPath, "OrderId,Customer,Total\r\n1,Ada,12.50\r\n2,Grace,18.75\r\n", ct);
+
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkCsvFE");
+        const string connect = "Text;HDR=YES;FMT=Delimited";
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedOrdersCsv",
+                sourceDirectory,
+                "orders.csv",
+                connect,
+                ct);
+        }
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(ct);
+
+        LinkedTableInfo entry = Assert.Single(linked, table =>
+            string.Equals(table.Name, "LinkedOrdersCsv", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(LinkedTableKind.Text, entry.Kind);
+        Assert.Equal("orders.csv", entry.SourceObjectName);
+        Assert.Equal(sourceDirectory, entry.SourcePath);
+        Assert.Equal(connect, entry.ConnectString);
+
+        NotSupportedException ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await reader.ReadDataTableAsync("LinkedOrdersCsv", cancellationToken: ct));
+        Assert.Contains("metadata-only", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -182,6 +220,30 @@ public sealed class LinkedTextTableTests : IDisposable
                 // Best-effort cleanup.
             }
         }
+
+        foreach (string path in _tempDirectories)
+        {
+            try
+            {
+                Directory.Delete(path, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Best-effort cleanup.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Best-effort cleanup.
+            }
+        }
+    }
+
+    private string CreateTempDirectory(string prefix)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        _tempDirectories.Add(directory);
+        return directory;
     }
 
     private async ValueTask<string> CreateTempAccdbDatabaseAsync(string prefix)

@@ -1,5 +1,7 @@
 namespace JetDatabaseWriter.Models;
 
+using JetDatabaseWriter.Enums;
+
 /// <summary>
 /// Metadata about a linked table entry in the database catalog.
 /// </summary>
@@ -8,15 +10,15 @@ public sealed record LinkedTableInfo
     /// <summary>Gets or sets the table name as it appears in this database.</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>Gets or sets the name of the table in the source database.</summary>
-    public string ForeignName { get; set; } = string.Empty;
+    /// <summary>Gets or sets the kind of linked-table entry.</summary>
+    public LinkedTableKind Kind { get; set; }
 
-    /// <summary>Gets or sets the path to the source database file (for Access-linked tables).</summary>
-    public string? SourceDatabasePath { get; set; }
+    /// <summary>Gets or sets the source object name, such as a remote table name or text filename.</summary>
+    public string SourceObjectName { get; set; } = string.Empty;
 
-    /// <summary>Gets or sets the ODBC connection string (for ODBC-linked tables).</summary>
-    public string? ConnectionString { get; set; }
+    /// <summary>Gets or sets the source path, such as an Access database file or text source directory.</summary>
+    public string? SourcePath { get; set; }
 
-    /// <summary>Gets or sets a value indicating whether this is an ODBC-linked table (type 4) vs Access-linked (type 6).</summary>
-    public bool IsOdbc { get; set; }
+    /// <summary>Gets or sets the link connect string, when present.</summary>
+    public string? ConnectString { get; set; }
 }
