@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using ClosedXML.Parser;
@@ -65,6 +66,7 @@ internal static class CalculatedExpressionEvaluator
         private readonly Dictionary<string, int> columnIndexes;
         private readonly bool[] evaluating;
         private readonly bool[] evaluated;
+        private double? lastRandomValue;
 
         public EvaluationContext(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, bool force)
         {
@@ -146,6 +148,34 @@ internal static class CalculatedExpressionEvaluator
             ColumnConstraint referenced = constraints[index];
             return referenced.IsCalculated ? EvaluateColumn(index) : values[index] ?? DBNull.Value;
         }
+
+        public double NextRandom(object? seed)
+        {
+            if (IsNull(seed))
+            {
+                return GenerateRandomValue();
+            }
+
+            double seedValue = ToDouble(seed);
+            if (seedValue < 0d)
+            {
+                lastRandomValue = DeterministicRandomValue(seedValue);
+                return lastRandomValue.Value;
+            }
+
+            if (seedValue == 0d && lastRandomValue.HasValue)
+            {
+                return lastRandomValue.Value;
+            }
+
+            return GenerateRandomValue();
+        }
+
+        private double GenerateRandomValue()
+        {
+            lastRandomValue = RandomNumberGenerator.GetInt32(0, int.MaxValue) / (double)int.MaxValue;
+            return lastRandomValue.Value;
+        }
     }
 
     internal abstract class ExpressionNode
@@ -201,7 +231,9 @@ internal static class CalculatedExpressionEvaluator
                 BinaryOperation.GreaterOrEqualThan => CompareValues(leftValue, rightValue, static c => c >= 0),
                 BinaryOperation.LessThan => CompareValues(leftValue, rightValue, static c => c < 0),
                 BinaryOperation.LessOrEqualThan => CompareValues(leftValue, rightValue, static c => c <= 0),
-                _ => throw new NotSupportedException($"Calculated-column binary operation '{operation}' is not supported."),
+                BinaryOperation.Union or BinaryOperation.Intersection or BinaryOperation.Range => throw new NotSupportedException(
+                    $"Calculated-column binary operation '{operation}' is a spreadsheet range operation and is not valid in Access calculated columns."),
+                _ => throw new InvalidOperationException($"ClosedXML.Parser produced unexpected calculated-column binary operation '{operation}'."),
             };
         }
     }
@@ -221,7 +253,9 @@ internal static class CalculatedExpressionEvaluator
                 UnaryOperation.Plus => ToDecimal(value),
                 UnaryOperation.Minus => -ToDecimal(value),
                 UnaryOperation.Percent => ToDecimal(value) / 100m,
-                _ => throw new NotSupportedException($"Calculated-column unary operation '{operation}' is not supported."),
+                UnaryOperation.ImplicitIntersection or UnaryOperation.SpillRange => throw new NotSupportedException(
+                    $"Calculated-column unary operation '{operation}' is a spreadsheet dynamic-array operation and is not valid in Access calculated columns."),
+                _ => throw new InvalidOperationException($"ClosedXML.Parser produced unexpected calculated-column unary operation '{operation}'."),
             };
         }
     }
@@ -395,6 +429,9 @@ internal static class CalculatedExpressionEvaluator
                 case "LOG":
                     RequireArgCount(upperName, args.Count, 1, 1);
                     return Math.Log(ToDouble(Arg(0)));
+                case "RND":
+                    RequireArgCount(upperName, args.Count, 0, 1);
+                    return context.NextRandom(args.Count > 0 ? Arg(0) : DBNull.Value);
                 case "SGN":
                     RequireArgCount(upperName, args.Count, 1, 1);
                     return Math.Sign(ToDecimal(Arg(0)));
@@ -882,6 +919,14 @@ internal static class CalculatedExpressionEvaluator
     }
 
     private static bool IsNull(object? value) => value is null or DBNull;
+
+    private static double DeterministicRandomValue(double seed)
+    {
+        uint state = unchecked((uint)(int)Math.Truncate(seed * 1000000d));
+        state ^= 0x6C8E9CF5u;
+        state = unchecked((state * 1664525u) + 1013904223u);
+        return (state & 0x00FFFFFFu) / 16777216d;
+    }
 
     private static string NormalizeFunctionName(string name)
     {

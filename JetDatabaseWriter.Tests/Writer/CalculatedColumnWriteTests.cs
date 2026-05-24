@@ -353,6 +353,21 @@ public sealed class CalculatedColumnWriteTests
                         IsCalculated = true,
                         CalculationExpression = "StrComp([Label], \"alpha\", vbTextCompare) = 0",
                     },
+                    new("RandomValue", typeof(double))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Rnd()",
+                    },
+                    new("SeededRandom", typeof(double))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Rnd(-7)",
+                    },
+                    new("RepeatedRandom", typeof(double))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Rnd(0)",
+                    },
                 ],
                 TestContext.Current.CancellationToken);
 
@@ -361,6 +376,9 @@ public sealed class CalculatedColumnWriteTests
                 [
                     12,
                     "Alpha",
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
                     DBNull.Value,
                     DBNull.Value,
                     DBNull.Value,
@@ -397,6 +415,11 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal("Al-HA", row["StringAliases"]);
         Assert.Equal("ALPHA", row["CaseConv"]);
         Assert.True(Convert.ToBoolean(row["CompareConstant"], CultureInfo.InvariantCulture));
+        Assert.InRange(Convert.ToDouble(row["RandomValue"], CultureInfo.InvariantCulture), 0d, 1d);
+        Assert.InRange(Convert.ToDouble(row["SeededRandom"], CultureInfo.InvariantCulture), 0d, 1d);
+        Assert.Equal(
+            Convert.ToDouble(row["SeededRandom"], CultureInfo.InvariantCulture),
+            Convert.ToDouble(row["RepeatedRandom"], CultureInfo.InvariantCulture));
     }
 
     [Fact]
