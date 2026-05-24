@@ -118,6 +118,21 @@ public interface IAccessSchema : IAccessBase
     ValueTask CreateLinkedTableAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Asynchronously creates a linked-text/CSV table entry (MSysObjects type 6)
+    /// that references a text or CSV file in a directory. The entry is metadata
+    /// only — no rows are stored locally. Managed readers expose the catalog
+    /// metadata through <see cref="IAccessReader.ListLinkedTablesAsync"/> but do
+    /// not execute the external text driver.
+    /// </summary>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="sourceDirectoryPath">Path to the directory containing the text/CSV source file.</param>
+    /// <param name="foreignFileName">The filename of the text/CSV source, e.g. <c>"data.csv"</c>.</param>
+    /// <param name="connectString">The text-driver connect string, e.g. <c>"Text;HDR=YES;FMT=Delimited"</c>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    ValueTask CreateLinkedTextTableAsync(string linkedTableName, string sourceDirectoryPath, string foreignFileName, string connectString, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
     /// a table accessible via an ODBC connection. The entry is metadata only — no rows are
     /// stored locally. Managed readers expose the catalog metadata but do not open the ODBC

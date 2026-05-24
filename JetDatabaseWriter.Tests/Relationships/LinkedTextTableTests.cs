@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -20,6 +21,34 @@ using Xunit;
 public sealed class LinkedTextTableTests : IDisposable
 {
     private readonly List<string> _tempFiles = [];
+
+    [Fact]
+    public async Task LinkedTextTable_CreateViaSchemaInterface_ReturnsEntryWithConnectString()
+    {
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkSchema");
+        const string connect = "Text;HDR=YES;FMT=Delimited";
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            IAccessSchema schema = writer;
+            await schema.CreateLinkedTextTableAsync(
+                "LinkedCsvData",
+                @"C:\Data\Exports",
+                "sales.csv",
+                connect,
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+
+        LinkedTableInfo entry = Assert.Single(linked, l =>
+            string.Equals(l.Name, "LinkedCsvData", StringComparison.OrdinalIgnoreCase));
+        Assert.False(entry.IsOdbc);
+        Assert.Equal("sales.csv", entry.ForeignName);
+        Assert.Equal(@"C:\Data\Exports", entry.SourceDatabasePath);
+        Assert.Equal(connect, entry.ConnectionString);
+    }
 
     [Fact]
     public async Task LinkedTextTable_ListLinkedTables_ReturnsEntryWithConnectString()
