@@ -43,6 +43,17 @@ using UniqueIndexDescriptor = JetDatabaseWriter.Indexes.IndexLayout.UniqueIndexD
 #pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API
 
 /// <summary>
+/// Last maintenance path used by <see cref="AccessWriter.InsertSystemRowAndMaintainAsync"/>.
+/// </summary>
+internal enum SystemTableIndexMaintenancePath
+{
+    None,
+    SkippedNoMaintainableIndexes,
+    Incremental,
+    FullRebuild,
+}
+
+/// <summary>
 /// Pure-managed writer for Microsoft Access JET databases (.mdb / .accdb).
 /// Supports creating tables, inserting, updating, and deleting rows.
 /// </summary>
@@ -111,6 +122,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// (e.g. <see cref="ComplexColumnManager"/>) that need to delegate FK /
     /// system-table lookups.</summary>
     internal RelationshipManager Relationships { get; }
+
+    /// <summary>Gets the most recent system-table index-maintenance path.</summary>
+    internal SystemTableIndexMaintenancePath LastSystemTableIndexMaintenancePath { get; private set; }
 
     /// <summary>Gets the Attachment / MultiValue (complex column) subsystem:
     /// ACCDB system-table scaffolding, per-column ComplexID allocation, per-row
@@ -3454,6 +3468,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         bool updateTDefRowCount = true,
         CancellationToken cancellationToken = default)
     {
+        LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.None;
         RowLocation loc = await InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken).ConfigureAwait(false);
 
         // Skip maintenance when the system-table TDEF has no allocated index
@@ -3467,29 +3482,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // catalog indexes.
         if (!await SystemTableHasMaintainableIndexesAsync(tdefPage, cancellationToken).ConfigureAwait(false))
         {
+            LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.SkippedNoMaintainableIndexes;
             return;
         }
 
         var hint = new List<(RowLocation Loc, object[] Row)>(1) { (loc, values) };
         try
         {
-            if (string.Equals(tableName, Constants.SystemTableNames.ComplexColumns, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(tableName, Constants.SystemTableNames.Aces, StringComparison.OrdinalIgnoreCase))
-            {
-                await MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
-                return;
-            }
-
             bool incremental = await _indexMaintainer.TryMaintainIndexesIncrementalAsync(
                 tdefPage,
                 tableDef,
                 hint,
                 deletedRows: null,
                 cancellationToken).ConfigureAwait(false);
-            if (!incremental)
+            if (incremental)
             {
-                await MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.Incremental;
+                return;
             }
+
+            await MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+            LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.FullRebuild;
         }
         catch (ArgumentOutOfRangeException)
         {
