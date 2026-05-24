@@ -344,6 +344,73 @@ public sealed class IndexMaintenanceTests
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task MixedDirectionUniqueCompositeIndex_UpdateDeleteInsert_RoundTrips(DatabaseFormat format)
+    {
+        await using var stream = await CreateFreshStreamAsync(format);
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Code", typeof(string), maxLength: 32),
+                    new ColumnDefinition("Score", typeof(int)),
+                ],
+                [
+                    new IndexDefinition("IX_CodeScore", ["Code", "Score"])
+                    {
+                        IsUnique = true,
+                        DescendingColumns = ["Score"],
+                    },
+                ],
+                ct);
+
+            await writer.InsertRowsAsync(
+                "T",
+                [
+                    [1, "A", 10],
+                    [2, "A", 20],
+                    [3, "B", 15],
+                ],
+                ct);
+
+            int updated = await writer.UpdateRowsAsync(
+                "T",
+                "Id",
+                2,
+                new Dictionary<string, object>
+                {
+                    ["Code"] = "C",
+                    ["Score"] = -20,
+                },
+                ct);
+            Assert.Equal(1, updated);
+
+            int deleted = await writer.DeleteRowsAsync("T", "Id", 1, ct);
+            Assert.Equal(1, deleted);
+
+            await writer.InsertRowAsync("T", [4, "D", 40], ct);
+        }
+
+        Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
+
+        await using var reader = await OpenReaderAsync(stream);
+        var rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        Assert.Equal(3, rowsRead.Rows.Count);
+
+        var indexes = await reader.ListIndexesAsync("T", ct);
+        IndexMetadata index = Assert.Single(indexes, candidate => candidate.Name == "IX_CodeScore");
+        Assert.True(index.IsUnique);
+        Assert.Equal("Code", index.Columns[0].Name);
+        Assert.True(index.Columns[0].IsAscending);
+        Assert.Equal("Score", index.Columns[1].Name);
+        Assert.False(index.Columns[1].IsAscending);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task InsertRows_LargeBatch_GrowsToMultiLevelTree_AndStaysEnumerable(DatabaseFormat format)
     {
         // Forces a multi-level B-tree by inserting more entries than fit on a
