@@ -1008,7 +1008,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     {
                         result.Add(new IndexDefinition(idx.Name, remappedCols)
                         {
-                            IsUnique = idx.IsUnique,
+                            IsUnique = idx.HasUniqueFlag,
                             DescendingColumns = descendingCols,
                             IgnoreNulls = idx.IgnoreNulls,
                             IsRequired = idx.IsRequired,

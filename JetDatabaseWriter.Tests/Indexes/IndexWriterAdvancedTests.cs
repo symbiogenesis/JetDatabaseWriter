@@ -16,7 +16,7 @@ using Xunit;
 /// <see cref="IndexDefinition"/> emission:
 /// <list type="bullet">
 ///   <item><description>Multi-column non-PK indexes round-trip through <see cref="IAccessReader.ListIndexesAsync"/>.</description></item>
-///   <item><description><see cref="IndexDefinition.IsUnique"/> emits the real-idx <c>flags</c> bit <c>0x01</c> (§3.1) and is surfaced as <see cref="IndexMetadata.IsUnique"/>.</description></item>
+///   <item><description><see cref="IndexDefinition.IsUnique"/> emits the real-idx <c>flags</c> bit <c>0x01</c> (§3.1), surfaced as <see cref="IndexMetadata.HasUniqueFlag"/>, and contributes to <see cref="IndexMetadata.EnforcesUniqueness"/>.</description></item>
 ///   <item><description><see cref="IndexDefinition.DescendingColumns"/> clears the col_map ascending flag and is surfaced as <see cref="IndexColumnReference.IsAscending"/> = <see langword="false"/>.</description></item>
 ///   <item><description>The bulk-rebuild path concatenates per-column encoded keys (and respects per-column direction) for multi-column indexes.</description></item>
 ///   <item><description>Inserting a duplicate row into a unique index throws <see cref="InvalidOperationException"/>.</description></item>
@@ -31,7 +31,7 @@ public sealed class IndexWriterAdvancedTests
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
     [Fact]
-    public async Task CreateTable_WithUniqueSingleColumnIndex_RoundTripsIsUnique()
+    public async Task CreateTable_WithUniqueSingleColumnIndex_RoundTripsUniquenessMetadata()
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
         const string TableName = "Idx_Unique";
@@ -49,7 +49,8 @@ public sealed class IndexWriterAdvancedTests
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
         IndexMetadata ix = Assert.Single(indexes);
         Assert.Equal(IndexKind.Normal, ix.Kind);
-        Assert.True(ix.IsUnique);
+        Assert.True(ix.EnforcesUniqueness);
+        Assert.True(ix.HasUniqueFlag);
     }
 
     [Fact]
@@ -74,7 +75,8 @@ public sealed class IndexWriterAdvancedTests
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(TableName, TestContext.Current.CancellationToken);
         IndexMetadata ix = Assert.Single(indexes);
         Assert.Equal(IndexKind.Normal, ix.Kind);
-        Assert.False(ix.IsUnique);
+        Assert.False(ix.EnforcesUniqueness);
+        Assert.False(ix.HasUniqueFlag);
         Assert.Equal(CompositeAB, ix.Columns.Select(c => c.Name).ToArray());
         Assert.All(ix.Columns, c => Assert.True(c.IsAscending));
     }
@@ -269,7 +271,8 @@ public sealed class IndexWriterAdvancedTests
 
         await using var reader = await OpenReaderAsync(stream);
         IndexMetadata ix = Assert.Single(await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken));
-        Assert.True(ix.IsUnique);
+        Assert.True(ix.EnforcesUniqueness);
+        Assert.True(ix.HasUniqueFlag);
         Assert.Equal(CompositeAB, ix.Columns.Select(c => c.Name).ToArray());
     }
 

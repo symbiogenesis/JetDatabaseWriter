@@ -64,9 +64,11 @@ public sealed class IndexMetadataTests(DatabaseCache db) : IClassFixture<Databas
         IndexMetadata pk = indexes.Single(i => i.Kind == IndexKind.PrimaryKey);
         Assert.Single(pk.Columns); // Companies.ID is a single-column PK.
 
-        // Note: Access does not always set the IsUnique flag bit on PK entries because
-        // primary keys are implicitly unique. The Kind == PrimaryKey discriminator is
-        // the authoritative signal; IsUnique reflects only the raw real-idx flags byte.
+        Assert.True(pk.EnforcesUniqueness);
+        Assert.False(pk.HasUniqueFlag);
+
+        // Access does not always set the physical unique flag bit on PK entries.
+        // Primary keys are semantically unique through the Kind discriminator.
     }
 
     [Fact]

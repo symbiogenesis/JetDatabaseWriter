@@ -542,7 +542,8 @@ public sealed class DaoStorageMaintenanceTests
 
         IndexMetadata codeScoreIndex = Assert.Single(indexes, index => index.Name == "IX_CodeScore");
         Assert.Equal(IndexKind.Normal, codeScoreIndex.Kind);
-        Assert.True(codeScoreIndex.IsUnique);
+        Assert.True(codeScoreIndex.EnforcesUniqueness);
+        Assert.True(codeScoreIndex.HasUniqueFlag);
         Assert.Collection(
             codeScoreIndex.Columns,
             column =>

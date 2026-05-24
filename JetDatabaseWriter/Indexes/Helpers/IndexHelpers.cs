@@ -379,7 +379,7 @@ internal static class IndexHelpers
             {
                 result.Add(new IndexDefinition(idx.Name, pkCols)
                 {
-                    IsUnique = idx.IsUnique,
+                    IsUnique = idx.HasUniqueFlag,
                     DescendingColumns = descendingCols,
                 });
             }

@@ -62,7 +62,8 @@ public sealed class IndexWriterTests
         IndexMetadata idx = Assert.Single(indexes);
         Assert.Equal(IndexName, idx.Name);
         Assert.Equal(IndexKind.Normal, idx.Kind);
-        Assert.False(idx.IsUnique);
+        Assert.False(idx.EnforcesUniqueness);
+        Assert.False(idx.HasUniqueFlag);
         Assert.False(idx.IsForeignKey);
         Assert.False(idx.CascadeUpdates);
         Assert.False(idx.CascadeDeletes);

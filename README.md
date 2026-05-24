@@ -190,11 +190,11 @@ IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Companies"
 foreach (IndexMetadata idx in indexes)
 {
     string keys = string.Join(", ", idx.Columns.Select(c => c.Name));
-    Console.WriteLine($"{idx.Name}: {idx.Kind} on ({keys})  unique={idx.IsUnique}  fk={idx.IsForeignKey}");
+    Console.WriteLine($"{idx.Name}: {idx.Kind} on ({keys})  unique={idx.EnforcesUniqueness}  rawUniqueFlag={idx.HasUniqueFlag}  fk={idx.IsForeignKey}");
 }
 ```
 
-Multiple logical indexes can share the same physical index — consult `IndexMetadata.RealIndexNumber` to detect that sharing. The `IndexKind` enum distinguishes `Normal`, `PrimaryKey`, and `ForeignKey`. Note: Access does not always set the `IsUnique` flag bit on primary keys (uniqueness is implied by `Kind == PrimaryKey`).
+Multiple logical indexes can share the same physical index — consult `IndexMetadata.RealIndexNumber` to detect that sharing. The `IndexKind` enum distinguishes `Normal`, `PrimaryKey`, and `ForeignKey`. Use `IndexMetadata.EnforcesUniqueness` for semantic uniqueness and `IndexMetadata.HasUniqueFlag` when you need the raw real-index `flags & 0x01` bit. Access does not always set that flag on primary keys because uniqueness is implied by `Kind == PrimaryKey`.
 
 `SeekRowsAsync` performs an exact Jet4/ACE index seek by table name, index name, and key tuple, returning the same typed `object[]` row shape as `Rows(...)`. It supports unique and non-unique indexes, including composite keys; range scans remain out of scope for this API.
 

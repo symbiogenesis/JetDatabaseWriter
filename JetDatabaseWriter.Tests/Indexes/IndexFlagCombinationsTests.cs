@@ -11,7 +11,7 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
-/// Validates that <see cref="IndexMetadata.IsUnique"/>,
+/// Validates that <see cref="IndexMetadata.HasUniqueFlag"/>,
 /// <see cref="IndexMetadata.IgnoreNulls"/>, and
 /// <see cref="IndexMetadata.IsRequired"/> round-trip correctly off the
 /// on-disk index <c>flags</c> byte across the full Cartesian product of
@@ -56,9 +56,9 @@ public sealed class IndexFlagCombinationsTests
                 }
 
                 totalIndexes++;
-                observed.Add((index.IsUnique, index.IgnoreNulls, index.IsRequired));
+                observed.Add((index.HasUniqueFlag, index.IgnoreNulls, index.IsRequired));
                 sb.AppendLine(FormattableString.Invariant(
-                    $"  {tableName}.{index.Name}: unique={index.IsUnique} ignoreNulls={index.IgnoreNulls} required={index.IsRequired} kind={index.Kind}"));
+                    $"  {tableName}.{index.Name}: uniqueFlag={index.HasUniqueFlag} ignoreNulls={index.IgnoreNulls} required={index.IsRequired} kind={index.Kind}"));
             }
         }
 

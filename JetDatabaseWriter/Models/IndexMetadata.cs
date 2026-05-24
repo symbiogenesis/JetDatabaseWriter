@@ -35,8 +35,18 @@ public sealed record IndexMetadata
     /// <summary>Gets the index classification (normal, primary key, or foreign key).</summary>
     public IndexKind Kind { get; init; }
 
-    /// <summary>Gets a value indicating whether the index enforces uniqueness (<c>flags &amp; 0x01</c>).</summary>
-    public bool IsUnique { get; init; }
+    /// <summary>
+    /// Gets a value indicating whether this index semantically enforces
+    /// uniqueness. Primary keys always enforce uniqueness even when Access leaves
+    /// the backing real-index <c>flags &amp; 0x01</c> bit clear.
+    /// </summary>
+    public bool EnforcesUniqueness => HasUniqueFlag || Kind == IndexKind.PrimaryKey;
+
+    /// <summary>
+    /// Gets a value indicating whether the backing real-index descriptor has the
+    /// physical unique flag set (<c>flags &amp; 0x01</c>).
+    /// </summary>
+    public bool HasUniqueFlag { get; init; }
 
     /// <summary>Gets a value indicating whether the index ignores rows whose key is null (<c>flags &amp; 0x02</c>).</summary>
     public bool IgnoreNulls { get; init; }

@@ -401,7 +401,8 @@ public sealed class IndexMaintenanceTests
 
         var indexes = await reader.ListIndexesAsync("T", ct);
         IndexMetadata index = Assert.Single(indexes, candidate => candidate.Name == "IX_CodeScore");
-        Assert.True(index.IsUnique);
+        Assert.True(index.EnforcesUniqueness);
+        Assert.True(index.HasUniqueFlag);
         Assert.Equal("Code", index.Columns[0].Name);
         Assert.True(index.Columns[0].IsAscending);
         Assert.Equal("Score", index.Columns[1].Name);

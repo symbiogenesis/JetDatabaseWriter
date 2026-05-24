@@ -1435,13 +1435,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
             }
 
-            // Per Jackcess `IndexData.isUnique()`: a primary-key logical
-            // index is always unique, regardless of the flag bit (Access
-            // historically writes `flags = 0x00` for PKs and conveys
-            // uniqueness through `index_type = 0x01`). Honour both signals
-            // so PrimaryKey indexes always surface as IsUnique=true.
-            bool isUniqueFlag = (flags & 0x01) != 0;
-            bool isUnique = isUniqueFlag || indexType == IndexKind.PrimaryKey;
+            // Access often leaves the real-index unique flag clear on primary
+            // keys; their semantic uniqueness is conveyed by index_type=0x01.
+            bool hasUniqueFlag = (flags & 0x01) != 0;
 
             result.Add(new IndexMetadata
             {
@@ -1449,7 +1445,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 IndexNumber = indexNum,
                 RealIndexNumber = realIdxNum,
                 Kind = indexType,
-                IsUnique = isUnique,
+                HasUniqueFlag = hasUniqueFlag,
                 IgnoreNulls = (flags & 0x02) != 0,
                 IsRequired = (flags & 0x08) != 0,
                 IsForeignKey = relIdxNum != -1,
@@ -1682,6 +1678,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         var (entry, td) = resolved.Value;
         DataTable? dt = null;
+        bool dataLoadStarted = false;
         try
         {
             dt = new DataTable(tableName);
@@ -1742,16 +1739,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
                         }
 
                         dt.Rows.Add(newRow);
-                        if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
+                        loadedRows++;
+                        if (maxRows.HasValue && loadedRows >= maxRows.Value)
                         {
-                            progress?.Report(dt.Rows.Count);
+                            progress?.Report(loadedRows);
+                            EndDataTableLoad(dt, ref dataLoadStarted);
                             var result = dt;
                             dt = null;
                             return result;
                         }
                     }
 
-                    progress?.Report(dt.Rows.Count);
+                    progress?.Report(loadedRows);
                 }
             }
             finally
@@ -1759,14 +1758,43 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 ArrayPool<object?>.Shared.Return(rowBuffer, clearArray: true);
             }
 
+            EndDataTableLoad(dt, ref dataLoadStarted);
             var final = dt;
             dt = null;
             return final;
         }
         finally
         {
+            if (dt != null && dataLoadStarted)
+            {
+                EndDataTableLoad(dt, ref dataLoadStarted);
+            }
+
             dt?.Dispose();
         }
+    }
+
+    private static void EndDataTableLoad(DataTable table, ref bool dataLoadStarted)
+    {
+        if (!dataLoadStarted)
+        {
+            return;
+        }
+
+        dataLoadStarted = false;
+        table.EndLoadData();
+    }
+
+    private static int ResolveDataTableMinimumCapacity(long rowCount, uint? maxRows)
+    {
+        long capacity = rowCount;
+        if (maxRows.HasValue)
+        {
+            long limit = maxRows.Value;
+            capacity = capacity > 0 ? Math.Min(capacity, limit) : limit;
+        }
+
+        return capacity is > 0 and <= int.MaxValue ? (int)capacity : 0;
     }
 
     /// <inheritdoc/>
