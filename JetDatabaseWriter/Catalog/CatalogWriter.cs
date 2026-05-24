@@ -31,6 +31,8 @@ internal sealed class CatalogWriter(AccessWriter writer)
     internal async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        await EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.TablesParentId, tableName, cancellationToken).ConfigureAwait(false);
+
         object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
 
@@ -63,6 +65,8 @@ internal sealed class CatalogWriter(AccessWriter writer)
         CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        await EnsureCatalogContainerNameAvailableAsync(msys, parentId, objectName, cancellationToken).ConfigureAwait(false);
+
         object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
 
@@ -94,6 +98,8 @@ internal sealed class CatalogWriter(AccessWriter writer)
     internal async ValueTask<int> InsertRelationshipCatalogEntryAsync(string relationshipName, CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        await EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.RelationshipsParentId, relationshipName, cancellationToken).ConfigureAwait(false);
+
         int objectId = await AllocateNonTableObjectIdAsync(msys, cancellationToken).ConfigureAwait(false);
 
         object[] values = msys.CreateNullValueRow();
@@ -127,7 +133,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
         CancellationToken cancellationToken = default)
     {
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        await EnsureTablesContainerNameAvailableAsync(msys, linkedTableName, cancellationToken).ConfigureAwait(false);
+        await EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.TablesParentId, linkedTableName, cancellationToken).ConfigureAwait(false);
 
         int objectId = await AllocateNonTableObjectIdAsync(msys, cancellationToken).ConfigureAwait(false);
         object[] values = msys.CreateNullValueRow();
@@ -424,13 +430,14 @@ internal sealed class CatalogWriter(AccessWriter writer)
         return result;
     }
 
-    private async ValueTask EnsureTablesContainerNameAvailableAsync(TableDef msys, string objectName, CancellationToken cancellationToken)
+    private async ValueTask EnsureCatalogContainerNameAvailableAsync(TableDef msys, int parentId, string objectName, CancellationToken cancellationToken)
     {
         List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in rows)
         {
-            if ((row.ParentId == Constants.SystemObjects.TablesParentId || row.ParentId == 0)
-                && string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase))
+            bool sameParent = row.ParentId == parentId
+                || (parentId == Constants.SystemObjects.TablesParentId && row.ParentId == 0);
+            if (sameParent && string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException($"An object named '{objectName}' already exists.");
             }

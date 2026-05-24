@@ -118,6 +118,40 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     }
 
     [Fact]
+    public async Task InsertCatalogObjectAsync_DuplicateParentIdName_ThrowsBeforeSplice()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("CatalogObjectDup");
+
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        await writer.InsertCatalogObjectAsync(
+            objectId: -500,
+            parentId: Constants.SystemObjects.TablesParentId,
+            objectName: "LowLevelDuplicate",
+            objectType: (short)Constants.SystemObjects.LinkedTableType,
+            catalogFlags: Constants.SystemObjects.LinkedTableFlags,
+            owner: Constants.SystemObjects.DefaultOwnerBlob,
+            lvProp: Constants.SystemObjects.DefaultLvPropPlaceholder,
+            ct);
+
+        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
+
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            writer.InsertCatalogObjectAsync(
+                objectId: -501,
+                parentId: Constants.SystemObjects.TablesParentId,
+                objectName: "lowlevelduplicate",
+                objectType: (short)Constants.SystemObjects.LinkedTableType,
+                catalogFlags: Constants.SystemObjects.LinkedTableFlags,
+                owner: Constants.SystemObjects.DefaultOwnerBlob,
+                lvProp: Constants.SystemObjects.DefaultLvPropPlaceholder,
+                ct).AsTask());
+
+        Assert.Contains("already exists", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Could not maintain MSysObjects catalog indexes", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CreateLinkedTableAsync_Throws_WhenMsysObjectsCatalogSpliceCannotMaintainIndexes()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
