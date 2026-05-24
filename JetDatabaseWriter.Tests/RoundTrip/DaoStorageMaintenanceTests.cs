@@ -68,6 +68,38 @@ public sealed class DaoStorageMaintenanceTests
         List<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains("SM_FreshBootstrap", tables);
 
+        string[] expectedHiddenSystemTables =
+        [
+            "MSysObjects",
+            "MSysACEs",
+            "MSysRelationships",
+            "MSysComplexColumns",
+            "MSysComplexType_Attachment",
+            "MSysComplexType_Text",
+        ];
+        foreach (string systemTable in expectedHiddenSystemTables)
+        {
+            Assert.DoesNotContain(systemTable, tables, StringComparer.OrdinalIgnoreCase);
+        }
+
+        DataTable catalog = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
+        foreach (string systemTable in expectedHiddenSystemTables)
+        {
+            Assert.Contains(catalog.AsEnumerable(), row => string.Equals(SafeString(row, "Name"), systemTable, StringComparison.OrdinalIgnoreCase));
+        }
+
+        DataTable relationships = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Contains("szRelationship", relationships.Columns.Cast<DataColumn>().Select(column => column.ColumnName));
+
+        DataTable complexColumns = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Contains("FlatTableID", complexColumns.Columns.Cast<DataColumn>().Select(column => column.ColumnName));
+
+        IReadOnlyList<string> attachmentTemplateColumns = (await reader.GetColumnMetadataAsync("MSysComplexType_Attachment", TestContext.Current.CancellationToken))
+            .Select(column => column.Name)
+            .ToArray();
+        Assert.Contains("FileData", attachmentTemplateColumns);
+        Assert.Contains("FileName", attachmentTemplateColumns);
+
         DataTable table = await reader.ReadDataTableAsync("SM_FreshBootstrap", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, table.Rows.Count);
         Assert.Contains(
