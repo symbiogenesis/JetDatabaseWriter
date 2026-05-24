@@ -3181,9 +3181,40 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                     ancestorWrites = PrepareAncestorSplitWrites(layout, tdefPage, descentPath, leftSummary, rightSummaries);
                     if (ancestorWrites is null)
                     {
-                        LastIncrementalBail = $"S12c ri={ri} ancestor overflow";
+                        bool rebuilt = await TryRebuildCatalogIndexTreeAsync(
+                            layout,
+                            tdefPage,
+                            firstDp,
+                            tdefBuf,
+                            rie.FirstDpOffset,
+                            addEntries,
+                            cancellationToken).ConfigureAwait(false);
+                        if (!rebuilt)
+                        {
+                            LastIncrementalBail = $"S12c ri={ri} ancestor overflow";
+                            return false;
+                        }
+
+                        continue;
+                    }
+                }
+                else
+                {
+                    bool rebuilt = await TryRebuildCatalogIndexTreeAsync(
+                        layout,
+                        tdefPage,
+                        firstDp,
+                        tdefBuf,
+                        rie.FirstDpOffset,
+                        addEntries,
+                        cancellationToken).ConfigureAwait(false);
+                    if (!rebuilt)
+                    {
+                        LastIncrementalBail = $"S12c ri={ri} no clean ancestor path";
                         return false;
                     }
+
+                    continue;
                 }
 
                 // Commit: append new pages, patch next-leaf's prev pointer,
@@ -3207,12 +3238,9 @@ internal sealed class IndexMaintainer(AccessWriter writer)
 
                 await writer.WritePageAsync(targetLeafPage, pageBytesAll[0], cancellationToken).ConfigureAwait(false);
 
-                if (ancestorWrites is not null)
+                foreach ((long pn, byte[] bytes) in ancestorWrites)
                 {
-                    foreach ((long pn, byte[] bytes) in ancestorWrites)
-                    {
-                        await writer.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
-                    }
+                    await writer.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
                 }
 
                 continue;
@@ -3221,6 +3249,76 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             await writer.WritePageAsync(targetLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
         }
 
+        return true;
+    }
+
+    private async ValueTask<bool> TryRebuildCatalogIndexTreeAsync(
+        IndexLeafPageBuilder.LeafPageLayout layout,
+        long tdefPage,
+        long firstDp,
+        byte[] tdefBuffer,
+        int firstDpOffset,
+        List<IndexEntry> addEntries,
+        CancellationToken cancellationToken)
+    {
+        long leftmostLeaf = await DescendToLeftmostLeafAsync(layout, firstDp, cancellationToken).ConfigureAwait(false);
+        if (leftmostLeaf <= 0)
+        {
+            return false;
+        }
+
+        var allExisting = new List<IndexEntry>();
+        long walkPage = leftmostLeaf;
+        int safetyBudget = 1_000_000;
+        while (walkPage > 0)
+        {
+            if (--safetyBudget <= 0)
+            {
+                return false;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            byte[] leaf = await ReadAndClonePageAsync(walkPage, cancellationToken).ConfigureAwait(false);
+            if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                return false;
+            }
+
+            allExisting.AddRange(IndexLeafIncremental.DecodeEntries(layout, leaf, writer._pgSz));
+            walkPage = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
+        }
+
+        List<IndexEntry>? spliced = IndexLeafIncremental.Splice(allExisting, addEntries, []);
+        if (spliced is null)
+        {
+            return false;
+        }
+
+        long firstNewPage = writer._stream.Length / writer._pgSz;
+        IndexBTreeBuilder.BuildResult build;
+        try
+        {
+            build = IndexBTreeBuilder.Build(layout, writer._pgSz, tdefPage, spliced, firstNewPage);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+
+        long expectedPage = firstNewPage;
+        foreach (byte[] page in build.Pages)
+        {
+            long appended = await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
+            if (appended != expectedPage)
+            {
+                return false;
+            }
+
+            expectedPage++;
+        }
+
+        AccessBase.Wi32(tdefBuffer, firstDpOffset, checked((int)build.RootPageNumber));
+        await writer.WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
         return true;
     }
 }

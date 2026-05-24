@@ -210,6 +210,37 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     }
 
     [Fact]
+    public async Task InsertCatalogObjectAsync_ManyRows_PromotesFreshMsysObjectsIndexesToIntermediateRoots()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("CatalogObjectSplit");
+
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        int intermediateRootsBefore = await CountMsysObjectsIntermediateRootsAsync(writer, ct);
+
+        string lastName = string.Empty;
+        for (int i = 0; i < 180; i++)
+        {
+            lastName = FormattableString.Invariant($"LinkedSplit_{i:D4}_Padding_For_Index_Split");
+            await writer.InsertCatalogObjectAsync(
+                objectId: -20_000 - i,
+                parentId: Constants.SystemObjects.TablesParentId,
+                objectName: lastName,
+                objectType: (short)Constants.SystemObjects.LinkedTableType,
+                catalogFlags: Constants.SystemObjects.LinkedTableFlags,
+                owner: Constants.SystemObjects.DefaultOwnerBlob,
+                lvProp: Constants.SystemObjects.DefaultLvPropPlaceholder,
+                ct);
+        }
+
+        int intermediateRootsAfter = await CountMsysObjectsIntermediateRootsAsync(writer, ct);
+        Assert.True(
+            intermediateRootsAfter > intermediateRootsBefore,
+            $"Expected catalog-only inserts to promote at least one MSysObjects index root to an intermediate page. Before={intermediateRootsBefore}, after={intermediateRootsAfter}.");
+        Assert.True(await CatalogObjectExistsAsync(writer, lastName, ct));
+    }
+
+    [Fact]
     public async Task CreateLinkedTableAsync_Throws_WhenMsysObjectsCatalogSpliceCannotMaintainIndexes()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -292,6 +323,56 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken);
         var rows = await writer.GetCatalogRowsAsync(msys, cancellationToken);
         return rows.Any(row => string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static async ValueTask<int> CountMsysObjectsIntermediateRootsAsync(AccessWriter writer, CancellationToken cancellationToken)
+    {
+        byte[] tdef = await writer.ReadPageAsync(2, cancellationToken);
+        try
+        {
+            int numCols = AccessBase.Ru16(tdef, writer._tdef.NumCols);
+            int numRealIdx = AccessBase.Ri32(tdef, writer._tdef.NumRealIdx);
+
+            int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * writer._colDesc.Size);
+            for (int i = 0; i < numCols; i++)
+            {
+                int nameLength = writer.ReadColumnName(tdef, ref namePos, out _);
+                Assert.True(nameLength >= 0, $"Failed to walk MSysObjects column name {i}.");
+            }
+
+            int realIdxDescStart = namePos;
+            IndexLayout layout = writer._indexLayout;
+            int intermediateRoots = 0;
+            for (int ri = 0; ri < numRealIdx; ri++)
+            {
+                int physStart = layout.RealIdxPhysOffset(realIdxDescStart, ri);
+                int firstDp = AccessBase.Ri32(tdef, layout.FirstDpAbsoluteOffset(physStart));
+                if (firstDp <= 0)
+                {
+                    continue;
+                }
+
+                byte[] root = await writer.ReadPageAsync(firstDp, cancellationToken);
+                try
+                {
+                    if (root[0] == Constants.IndexLeafPage.PageTypeIntermediate)
+                    {
+                        intermediateRoots++;
+                    }
+                }
+                finally
+                {
+                    AccessBase.ReturnPage(root);
+                }
+            }
+
+            return intermediateRoots;
+        }
+        finally
+        {
+            AccessBase.ReturnPage(tdef);
+        }
     }
 
     private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(AccessWriter writer, CancellationToken cancellationToken)
