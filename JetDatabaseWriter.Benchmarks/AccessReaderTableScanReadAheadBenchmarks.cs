@@ -29,6 +29,7 @@ public enum TableScanBenchmarkTemperature
 /// Measures the table-scan read-ahead path across simple table shapes.
 /// Cold runs include open plus first scan; warm runs reuse a primed reader so
 /// they isolate repeat enumeration with the reader and OS caches already hot.
+/// The first-row benchmark separates startup latency from full-scan throughput.
 /// </summary>
 [MemoryDiagnoser]
 public class AccessReaderTableScanReadAheadBenchmarks
@@ -82,6 +83,20 @@ public class AccessReaderTableScanReadAheadBenchmarks
         return await CountRowsAsync(reader, _tableName).ConfigureAwait(false);
     }
 
+    [Benchmark]
+    public async Task<int> FirstRow()
+    {
+        if (Temperature == TableScanBenchmarkTemperature.WarmRepeatScan)
+        {
+            return await CountFirstRowAsync(
+                _warmReader ?? throw new InvalidOperationException("Warm reader was not initialized."),
+                _tableName).ConfigureAwait(false);
+        }
+
+        await using AccessReader reader = await AccessReader.OpenAsync(_databasePath, CreateOptions()).ConfigureAwait(false);
+        return await CountFirstRowAsync(reader, _tableName).ConfigureAwait(false);
+    }
+
     private static async Task<int> CountRowsAsync(AccessReader reader, string tableName)
     {
         int count = 0;
@@ -92,6 +107,17 @@ public class AccessReaderTableScanReadAheadBenchmarks
         }
 
         return count;
+    }
+
+    private static async Task<int> CountFirstRowAsync(AccessReader reader, string tableName)
+    {
+        await foreach (object[] row in reader.Rows(tableName).ConfigureAwait(false))
+        {
+            _ = row;
+            return 1;
+        }
+
+        return 0;
     }
 
     private static (string DatabasePath, string TableName) ResolveShape(TableScanBenchmarkShape shape)
