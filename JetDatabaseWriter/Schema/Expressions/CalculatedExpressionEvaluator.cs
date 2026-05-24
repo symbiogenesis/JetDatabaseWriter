@@ -52,7 +52,7 @@ internal static class CalculatedExpressionEvaluator
             }
             catch (ParsingException ex)
             {
-                throw new NotSupportedException($"Calculated-column expression '{expression}' is not supported by the Phase 2 parser.", ex);
+                throw new ArgumentException($"Calculated-column expression '{expression}' is not valid expression syntax.", nameof(expression), ex);
             }
         }
     }
@@ -162,6 +162,11 @@ internal static class CalculatedExpressionEvaluator
     {
         public override object Evaluate(EvaluationContext context, Plan plan)
         {
+            if (TryGetBuiltinConstant(name, out object constantValue))
+            {
+                return constantValue;
+            }
+
             return name.ToUpperInvariant() switch
             {
                 "TRUE" => true,
@@ -225,7 +230,7 @@ internal static class CalculatedExpressionEvaluator
     {
         public override object Evaluate(EvaluationContext context, Plan plan)
         {
-            string upperName = name.ToUpperInvariant();
+            string upperName = NormalizeFunctionName(name);
             object Arg(int index) => index < args.Count ? args[index].Evaluate(context, plan) : DBNull.Value;
 
             switch (upperName)
@@ -378,6 +383,7 @@ internal static class CalculatedExpressionEvaluator
                     RequireArgCount(upperName, args.Count, 1, 1);
                     return Math.Abs(ToDecimal(Arg(0)));
                 case "ATAN":
+                case "ATN":
                     RequireArgCount(upperName, args.Count, 1, 1);
                     return Math.Atan(ToDouble(Arg(0)));
                 case "COS":
@@ -496,6 +502,7 @@ internal static class CalculatedExpressionEvaluator
                     RequireArgCount(upperName, args.Count, 1, 1);
                     return ToText(Arg(0));
                 case "CDATE":
+                case "CVDATE":
                     RequireArgCount(upperName, args.Count, 1, 1);
                     return ToDateTime(Arg(0));
                 case "CBOOL":
@@ -554,6 +561,9 @@ internal static class CalculatedExpressionEvaluator
                     char[] chars = ToText(Arg(0)).ToCharArray();
                     Array.Reverse(chars);
                     return new string(chars);
+                case "STRCONV":
+                    RequireArgCount(upperName, args.Count, 2, 3);
+                    return IsNull(Arg(0)) ? DBNull.Value : StrConv(ToText(Arg(0)), checked((int)ToDecimal(Arg(1))));
                 case "FORMAT":
                     RequireArgCount(upperName, args.Count, 1, 4);
                     return args.Count == 1 ? ToText(Arg(0)) : FormatValue(Arg(0), ToText(Arg(1)));
@@ -599,6 +609,12 @@ internal static class CalculatedExpressionEvaluator
                 case "RATE":
                     RequireArgCount(upperName, args.Count, 3, 6);
                     return FinancialRate(args, Arg);
+                case "VARTYPE":
+                    RequireArgCount(upperName, args.Count, 1, 1);
+                    return VarType(Arg(0));
+                case "TYPENAME":
+                    RequireArgCount(upperName, args.Count, 1, 1);
+                    return TypeName(Arg(0));
                 case "DLOOKUP":
                 case "DCOUNT":
                 case "DSUM":
@@ -866,6 +882,102 @@ internal static class CalculatedExpressionEvaluator
     }
 
     private static bool IsNull(object? value) => value is null or DBNull;
+
+    private static string NormalizeFunctionName(string name)
+    {
+        string upperName = name.ToUpperInvariant();
+        return upperName.EndsWith('$') ? upperName.Substring(0, upperName.Length - 1) : upperName;
+    }
+
+    private static bool TryGetBuiltinConstant(string name, out object value)
+    {
+        switch (name.ToUpperInvariant())
+        {
+            case "VBEMPTY":
+            case "VBFALSE":
+            case "VBUSESYSTEM":
+            case "VBGENERALDATE":
+            case "VBBINARYCOMPARE":
+                value = 0;
+                return true;
+            case "VBTRUE":
+            case "VBUSECOMPAREOPTION":
+                value = -1;
+                return true;
+            case "VBINTEGER":
+            case "VBMONDAY":
+            case "VBSHORTDATE":
+            case "VBLOWERCASE":
+            case "VBTEXTCOMPARE":
+            case "VBFIRSTFOURDAYS":
+                value = 2;
+                return true;
+            case "VBLONG":
+            case "VBTUESDAY":
+            case "VBLONGTIME":
+            case "VBPROPERCASE":
+            case "VBFIRSTFULLWEEK":
+                value = 3;
+                return true;
+            case "VBSINGLE":
+            case "VBWEDNESDAY":
+            case "VBSHORTTIME":
+                value = 4;
+                return true;
+            case "VBDOUBLE":
+            case "VBTHURSDAY":
+                value = 5;
+                return true;
+            case "VBCURRENCY":
+            case "VBFRIDAY":
+                value = 6;
+                return true;
+            case "VBDATE":
+            case "VBSATURDAY":
+                value = 7;
+                return true;
+            case "VBSTRING":
+                value = 8;
+                return true;
+            case "VBOBJECT":
+                value = 9;
+                return true;
+            case "VBERROR":
+                value = 10;
+                return true;
+            case "VBBOOLEAN":
+                value = 11;
+                return true;
+            case "VBVARIANT":
+                value = 12;
+                return true;
+            case "VBDECIMAL":
+                value = 14;
+                return true;
+            case "VBBYTE":
+                value = 17;
+                return true;
+            case "VBUSEDEFAULT":
+                value = -2;
+                return true;
+            case "VBSUNDAY":
+            case "VBNULL":
+            case "VBLONGDATE":
+            case "VBUPPERCASE":
+            case "VBFIRSTJAN1":
+                value = 1;
+                return true;
+            case "VBUNICODE":
+                value = 64;
+                return true;
+            case "VBDATABASECOMPARE":
+                value = 2;
+                return true;
+            default:
+                value = DBNull.Value;
+                return false;
+        }
+    }
 
     private static string ToText(object? value)
         => IsNull(value) ? string.Empty : Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
@@ -1259,6 +1371,71 @@ internal static class CalculatedExpressionEvaluator
     private static string RepeatChar(int count, string value)
         => count <= 0 ? string.Empty : new string(string.IsNullOrEmpty(value) ? '\0' : value[0], count);
 
+    private static string StrConv(string text, int conversion)
+    {
+        int caseConversion = conversion & 0x03;
+        int characterConversion = conversion & ~0x03;
+        string result = caseConversion switch
+        {
+            0 => text,
+            1 => text.ToUpperInvariant(),
+            2 => CultureInfo.InvariantCulture.TextInfo.ToLower(text),
+            3 => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(CultureInfo.InvariantCulture.TextInfo.ToLower(text)),
+            _ => text,
+        };
+
+        if (characterConversion is not 0 and not 64)
+        {
+            throw new ArgumentException($"Calculated-column StrConv character conversion '{characterConversion}' is not valid in this row-local evaluator.");
+        }
+
+        return result;
+    }
+
+    private static int VarType(object? value)
+    {
+        if (IsNull(value))
+        {
+            return 1;
+        }
+
+        return value switch
+        {
+            bool => 11,
+            byte => 17,
+            short => 2,
+            int or long => 3,
+            float => 4,
+            double => 5,
+            decimal => 14,
+            DateTime => 7,
+            string => 8,
+            _ => 12,
+        };
+    }
+
+    private static string TypeName(object? value)
+    {
+        if (IsNull(value))
+        {
+            return "Null";
+        }
+
+        return value switch
+        {
+            bool => "Boolean",
+            byte => "Byte",
+            short => "Integer",
+            int or long => "Long",
+            float => "Single",
+            double => "Double",
+            decimal => "Decimal",
+            DateTime => "Date",
+            string => "String",
+            _ => "Variant",
+        };
+    }
+
     private static string FormatValue(object value, string format)
     {
         if (IsNull(value))
@@ -1573,7 +1750,7 @@ internal static class CalculatedExpressionEvaluator
         public static string Normalize(string expression)
         {
             List<Token> tokens = Tokenize(expression);
-            if (!tokens.Exists(static token => token.Kind is TokenKind.Word or TokenKind.Backslash))
+            if (!tokens.Exists(static token => token.Kind is TokenKind.Word or TokenKind.Backslash || (token.Kind == TokenKind.Identifier && token.Text.EndsWith('$'))))
             {
                 return expression;
             }
@@ -1625,6 +1802,11 @@ internal static class CalculatedExpressionEvaluator
                     int start = charIndex;
                     charIndex++;
                     while (charIndex < expression.Length && (char.IsLetterOrDigit(expression[charIndex]) || expression[charIndex] == '_' || expression[charIndex] == '.'))
+                    {
+                        charIndex++;
+                    }
+
+                    if (charIndex < expression.Length && expression[charIndex] == '$')
                     {
                         charIndex++;
                     }
@@ -1791,6 +1973,11 @@ internal static class CalculatedExpressionEvaluator
 
         private string ParseFunctionCall(string name)
         {
+            if (name.EndsWith('$'))
+            {
+                name = name.Substring(0, name.Length - 1);
+            }
+
             Expect(TokenKind.OpenParen, "(");
             var arguments = new List<string>();
             if (Peek().Kind != TokenKind.CloseParen)

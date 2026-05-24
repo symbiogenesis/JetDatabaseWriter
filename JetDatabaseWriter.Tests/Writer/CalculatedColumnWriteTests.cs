@@ -323,12 +323,60 @@ public sealed class CalculatedColumnWriteTests
                         IsCalculated = true,
                         CalculationExpression = "Replace(UCase([Label]), \"A\", \"@\") & \"-\" & CStr(DatePart(\"yyyy\", DateSerial(2025, 2, 3)))",
                     },
+                    new("AtnValue", typeof(double))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Atn(1)",
+                    },
+                    new("AliasDate", typeof(DateTime))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "CVDate(\"2025-02-03\")",
+                    },
+                    new("TypeInfo", typeof(string), maxLength: 40)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "TypeName([Label]) & \":\" & CStr(VarType([Score]))",
+                    },
+                    new("StringAliases", typeof(string), maxLength: 40)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Left$([Label], 2) & \"-\" & UCase$(Right$([Label], 2))",
+                    },
+                    new("CaseConv", typeof(string), maxLength: 40)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "StrConv([Label], vbUpperCase)",
+                    },
+                    new("CompareConstant", typeof(bool))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "StrComp([Label], \"alpha\", vbTextCompare) = 0",
+                    },
                 ],
                 TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync(
                 "CalcAccessSyntax",
-                [12, "Alpha", DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value],
+                [
+                    12,
+                    "Alpha",
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                    DBNull.Value,
+                ],
                 TestContext.Current.CancellationToken);
         }
 
@@ -343,6 +391,61 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal("missing", row["NullState"]);
         Assert.Equal(2, Convert.ToInt32(row["IntDiv"], CultureInfo.InvariantCulture));
         Assert.Equal("@LPH@-2025", row["FunctionText"]);
+        Assert.InRange(Math.Abs(Math.Atan(1d) - Convert.ToDouble(row["AtnValue"], CultureInfo.InvariantCulture)), 0d, 0.000000000001d);
+        Assert.Equal(new DateTime(2025, 2, 3), Convert.ToDateTime(row["AliasDate"], CultureInfo.InvariantCulture));
+        Assert.Equal("String:3", row["TypeInfo"]);
+        Assert.Equal("Al-HA", row["StringAliases"]);
+        Assert.Equal("ALPHA", row["CaseConv"]);
+        Assert.True(Convert.ToBoolean(row["CompareConstant"], CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task InsertRow_InvalidCalculatedExpressionSyntax_ThrowsArgumentException()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+
+        await using var writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            "CalcBadSyntax",
+            [
+                new("Score", typeof(int)),
+                new("BadCalc", typeof(int))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "[Score] +",
+                },
+            ],
+            TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.InsertRowAsync(
+                "CalcBadSyntax",
+                [1, DBNull.Value],
+                TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task InsertRow_DomainAggregateCalculatedExpression_ThrowsNotSupportedException()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+
+        await using var writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            "CalcDomain",
+            [
+                new("LookupValue", typeof(string), maxLength: 40)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "DLookup(\"Name\", \"People\")",
+                },
+            ],
+            TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await writer.InsertRowAsync(
+                "CalcDomain",
+                [DBNull.Value],
+                TestContext.Current.CancellationToken));
     }
 
     [Fact]
