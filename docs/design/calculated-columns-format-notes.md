@@ -189,20 +189,23 @@ Supported subset:
   `IPmt`, `PPmt`, `DDB`, `SLN`, `SYD`, `Rate`), `Choose`, and `Switch`.
 
 Still intentionally out of scope: domain aggregate functions (`DLookup`,
-`DCount`, `DSum`, `DAvg`, `DMin`, `DMax`), SQL/query evaluation, cross-record
-or cross-table lookups, and spreadsheet-only parser constructs such as cell,
-sheet, external workbook, array, range, and structured references.
+`DCount`, `DSum`, `DAvg`, `DMin`, `DMax`) because DAO/Access rejects them in
+table calculated columns with "cannot be used in a calculated column" even
+though they are valid in other Access expression contexts; SQL/query evaluation,
+cross-record or cross-table lookups; and spreadsheet-only parser constructs such
+as cell, sheet, external workbook, array, range, and structured references.
 
 Tests: focused insert/update/POCO coverage in
 `JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`, plus the Phase
 1B Access-authored fixture coverage.
 
-### Phase 3 — Non-row-local expression contexts
+### Phase 3 — Non-row-local expression contexts **(DONE)**
 
 - Domain aggregate functions (`DLookup`, `DCount`, `DSum`, `DAvg`, `DMin`,
-  `DMax`), SQL/query evaluation, and cross-record / cross-table lookup context
-  remain outside calculated-column support because Access calculated columns are
-  row-local.
+  `DMax`) remain intentionally rejected for table calculated columns; DAO/Access
+  rejects each with "cannot be used in a calculated column". SQL/query
+  evaluation and cross-record / cross-table lookup context remain outside the
+  row-local evaluator.
 - `Partition` and the long tail of highly specialized VBA functions can be
   added if real Access-authored calculated-column fixtures show they are valid
   in this context.

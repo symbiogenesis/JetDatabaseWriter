@@ -59,7 +59,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
         SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
-    public async Task DaoAuthoredIIfColumn_HasExpectedCachedPayloadBytes_AndSwitchIsRejected()
+    public async Task DaoAuthoredIIfColumn_HasExpectedCachedPayloadBytes_AndUnsupportedExpressionsAreRejected()
     {
         await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.CalculatedColumns");
         string dbPath = session.CreateDatabasePath("calc_builtin_payloads");
@@ -87,6 +87,10 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         Assert.Contains("IIf", iifBand.CalculationExpression, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("IIf", isHigh.CalculationExpression, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("SWITCH_REJECTED=", result.StdOut, StringComparison.Ordinal);
+        foreach (string functionName in new[] { "DLookUp", "DCount", "DSum", "DAvg", "DMin", "DMax" })
+        {
+            Assert.Contains($"DOMAIN_AGGREGATE_REJECTED {functionName}=", result.StdOut, StringComparison.Ordinal);
+        }
 
         DataTable table = await reader.ReadDataTableAsync(
             DaoTableName,
@@ -332,6 +336,10 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         return $$"""
                 $db = $engine.CreateDatabase({{dbLiteral}}, ';LANGID=0x0409;CP=1252;COUNTRY=0')
                 try {
+                    $db.Execute('CREATE TABLE [DomainPeople] ([Id] LONG, [Name] TEXT(40), [Score] LONG)')
+                    $db.Execute('INSERT INTO [DomainPeople] ([Id], [Name], [Score]) VALUES (1, ''Alpha'', 10)')
+                    $db.Execute('INSERT INTO [DomainPeople] ([Id], [Name], [Score]) VALUES (2, ''Beta'', 20)')
+
                     $db.Execute('CREATE TABLE [CalcBuiltins] ([Id] LONG, [Score] LONG)')
 
                     $tdf = $db.TableDefs('CalcBuiltins')
@@ -355,6 +363,30 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
                     }
 
                     if (-not $switchRejected) { throw 'DAO unexpectedly accepted Switch in a calculated column.' }
+
+                    $domainAggregateCases = @(
+                        @('DLookUp', 10, 40, 'DLookUp("Name", "DomainPeople", "Id=1")'),
+                        @('DCount', 4, 0, 'DCount("*", "DomainPeople")'),
+                        @('DSum', 5, 0, 'DSum("Score", "DomainPeople")'),
+                        @('DAvg', 7, 0, 'DAvg("Score", "DomainPeople")'),
+                        @('DMin', 4, 0, 'DMin("Score", "DomainPeople")'),
+                        @('DMax', 4, 0, 'DMax("Score", "DomainPeople")')
+                    )
+
+                    $domainAggregateRejected = 0
+                    foreach ($case in $domainAggregateCases) {
+                        try {
+                            if ($case[2] -gt 0) { $field = $tdf.CreateField("Domain$($case[0])", $case[1], $case[2]) } else { $field = $tdf.CreateField("Domain$($case[0])", $case[1]) }
+                            $field.Expression = $case[3]
+                            $tdf.Fields.Append($field)
+                            Write-Output "DOMAIN_AGGREGATE_ACCEPTED $($case[0])"
+                        } catch {
+                            $domainAggregateRejected++
+                            Write-Output "DOMAIN_AGGREGATE_REJECTED $($case[0])=$($_.Exception.Message)"
+                        }
+                    }
+
+                    if ($domainAggregateRejected -ne $domainAggregateCases.Count) { throw 'DAO unexpectedly accepted a domain aggregate in a calculated column.' }
 
                     $field = $null
                     $tdf = $null

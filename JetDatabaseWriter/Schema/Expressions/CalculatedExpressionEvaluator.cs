@@ -659,7 +659,7 @@ internal static class CalculatedExpressionEvaluator
                 case "DMIN":
                 case "DMAX":
                     throw new NotSupportedException(
-                        $"Calculated-column function '{name}' requires domain/query evaluation, which Access calculated columns do not support.");
+                        $"Access table calculated columns reject domain aggregate function '{name}' because it requires domain/query evaluation.");
                 default:
                     throw new NotSupportedException($"Calculated-column function '{name}' is not supported.");
             }

@@ -447,8 +447,14 @@ public sealed class CalculatedColumnWriteTests
                 TestContext.Current.CancellationToken));
     }
 
-    [Fact]
-    public async Task InsertRow_DomainAggregateCalculatedExpression_ThrowsNotSupportedException()
+    [Theory]
+    [InlineData("DLookup(\"Name\", \"People\")")]
+    [InlineData("DCount(\"*\", \"People\")")]
+    [InlineData("DSum(\"Score\", \"People\")")]
+    [InlineData("DAvg(\"Score\", \"People\")")]
+    [InlineData("DMin(\"Score\", \"People\")")]
+    [InlineData("DMax(\"Score\", \"People\")")]
+    public async Task InsertRow_AccessRejectedDomainAggregateCalculatedExpression_ThrowsNotSupportedException(string expression)
     {
         await using var stream = await CreateFreshAccdbStreamAsync();
 
@@ -459,16 +465,18 @@ public sealed class CalculatedColumnWriteTests
                 new("LookupValue", typeof(string), maxLength: 40)
                 {
                     IsCalculated = true,
-                    CalculationExpression = "DLookup(\"Name\", \"People\")",
+                    CalculationExpression = expression,
                 },
             ],
             TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.InsertRowAsync(
                 "CalcDomain",
                 [DBNull.Value],
                 TestContext.Current.CancellationToken));
+
+        Assert.Contains("Access table calculated columns reject domain aggregate function", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
