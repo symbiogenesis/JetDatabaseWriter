@@ -91,6 +91,39 @@ public sealed class PageAllocatorTests
         Assert.Equal(originalLength, stream.Length);
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task ShrinkDatabaseAsync_DoesNotRemoveInteriorFreePagesWhenTailIsLive(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateDatabaseWithInteriorFreePagesAndLiveTailAsync(format, freePageCount: 2);
+        int pageSize = PageSizeOf(format);
+        int totalPages = (int)(stream.Length / pageSize);
+        int firstInteriorFreePage = totalPages - 3;
+        int liveTailPage = totalPages - 1;
+        long originalLength = stream.Length;
+
+        long removed;
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            removed = await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(0, removed);
+        Assert.Equal(originalLength, stream.Length);
+
+        byte[] bytes = stream.ToArray();
+        for (int pageNumber = firstInteriorFreePage; pageNumber < liveTailPage; pageNumber++)
+        {
+            Assert.Equal(0x09, bytes[pageNumber * pageSize]);
+            Assert.True(IsInlineGlobalMapBitSet(bytes, format, pageNumber));
+        }
+
+        Assert.Equal(0x02, bytes[liveTailPage * pageSize]);
+        Assert.False(IsInlineGlobalMapBitSet(bytes, format, liveTailPage));
+    }
+
     private static async ValueTask<MemoryStream> CreateDatabaseWithTrailingFreePagesAsync(DatabaseFormat format, int freePageCount)
     {
         await using var seed = new MemoryStream();
@@ -121,6 +154,24 @@ public sealed class PageAllocatorTests
         await stream.WriteAsync(bytes.AsMemory(), TestContext.Current.CancellationToken);
         stream.Position = 0;
         return stream;
+    }
+
+    private static async ValueTask<MemoryStream> CreateDatabaseWithInteriorFreePagesAndLiveTailAsync(DatabaseFormat format, int freePageCount)
+    {
+        await using MemoryStream stream = await CreateDatabaseWithTrailingFreePagesAsync(format, freePageCount);
+        int pageSize = PageSizeOf(format);
+        byte[] bytes = stream.ToArray();
+        int liveTailPage = bytes.Length / pageSize;
+        Array.Resize(ref bytes, bytes.Length + pageSize);
+        int byteOffset = liveTailPage * pageSize;
+        bytes[byteOffset] = 0x02;
+        bytes[byteOffset + 1] = 0x01;
+        SetInlineGlobalMapBit(bytes, format, liveTailPage, free: false);
+
+        var result = new MemoryStream();
+        await result.WriteAsync(bytes.AsMemory(), TestContext.Current.CancellationToken);
+        result.Position = 0;
+        return result;
     }
 
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
