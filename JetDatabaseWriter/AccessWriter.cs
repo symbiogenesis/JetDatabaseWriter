@@ -1553,7 +1553,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
     /// a table accessible via an ODBC connection. No row data is stored locally; managed
-    /// readers expose the catalog metadata but do not open the ODBC source.
+    /// readers expose the catalog metadata but do not open the ODBC source. This overload
+    /// is intentionally catalog-only: because it receives no source schema, it writes the
+    /// placeholder <c>MSysObjects.LvProp</c> payload and is not an Access/DAO-compatible
+    /// linked-table cache. Use the overload that accepts <c>cachedSchemaLvProp</c> when
+    /// Access/DAO compatibility is required.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>

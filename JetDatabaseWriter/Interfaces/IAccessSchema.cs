@@ -121,8 +121,12 @@ public interface IAccessSchema : IAccessBase
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
     /// a table accessible via an ODBC connection. The entry is metadata only — no rows are
     /// stored locally. Managed readers expose the catalog metadata but do not open the ODBC
-    /// source. The connection string must use the Access ODBC link format and is expected
-    /// to begin with the literal prefix <c>"ODBC;"</c>.
+    /// source. This overload is intentionally catalog-only: because it receives no source
+    /// schema, it writes the placeholder <c>MSysObjects.LvProp</c> payload and is not an
+    /// Access/DAO-compatible linked-table cache. Use the overload that accepts
+    /// <c>cachedSchemaLvProp</c> when Access/DAO compatibility is required. The connection
+    /// string must use the Access ODBC link format and is expected to begin with the
+    /// literal prefix <c>"ODBC;"</c>.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="connectionString">ODBC connection string (e.g. <c>"ODBC;DSN=Sales;UID=app;..."</c> or <c>"ODBC;DRIVER={SQL Server};SERVER=...;..."</c>). The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>

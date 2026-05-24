@@ -131,7 +131,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateLinkedOdbcTableAsync_AllocatesCatalogId()
+    public async Task CreateLinkedOdbcTableAsync_MetadataOnly_CreatesCatalogOnlyPlaceholderLvProp()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcCatalog");
@@ -149,6 +149,8 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         Assert.True(catalogObject.Id < 0, $"Expected ODBC-linked MSysObjects.Id to be a non-table catalog object id, got {catalogObject.Id}.");
         Assert.Equal(Constants.SystemObjects.LinkedOdbcFlags, catalogObject.Flags);
         Assert.True(catalogObject.LvPropLength > 0, "Expected ODBC-linked MSysObjects.LvProp to be non-null.");
+        Assert.True(Constants.SystemObjects.DefaultLvPropPlaceholder.SequenceEqual(catalogObject.LvProp ?? []));
+        Assert.Null(ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb));
         Assert.True(catalogObject.AceCount >= 2, $"Expected ODBC-linked object ACE rows, got {catalogObject.AceCount}.");
         Assert.Equal(0, catalogObject.Low24CollisionCount);
     }
