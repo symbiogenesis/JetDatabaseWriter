@@ -165,7 +165,16 @@ internal sealed class CatalogWriter(AccessWriter writer)
         }
 
         RowLocation loc = await writer.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
-        await RequireCatalogIndexSpliceAsync(msys, loc, values, linkedTableName, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await RequireCatalogIndexSpliceAsync(msys, loc, values, linkedTableName, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException ex) when (IsCatalogSpliceFailure(ex))
+        {
+            await RemoveUnindexedCatalogRowAsync(loc, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+
         await InsertAceRowsForCatalogObjectAsync(objectId, useRelationshipAcm: false, cancellationToken).ConfigureAwait(false);
         writer.InvalidateCatalogCache();
 
@@ -276,6 +285,15 @@ internal sealed class CatalogWriter(AccessWriter writer)
         {
             throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes for '{objectName}'.");
         }
+    }
+
+    private bool IsCatalogSpliceFailure(InvalidOperationException exception)
+        => exception.Message.StartsWith("Could not maintain MSysObjects catalog indexes", StringComparison.Ordinal);
+
+    private async ValueTask RemoveUnindexedCatalogRowAsync(RowLocation loc, CancellationToken cancellationToken)
+    {
+        await writer.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, clearRowData: true, cancellationToken).ConfigureAwait(false);
+        await writer.AdjustTDefRowCountAsync(2, -1, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

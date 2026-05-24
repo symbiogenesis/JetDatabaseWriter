@@ -9,10 +9,11 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
-using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -220,6 +221,9 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             writer.CreateLinkedTableAsync("LinkedData", @"C:\Data\source.accdb", "Data", ct).AsTask());
         Assert.Contains("Could not maintain MSysObjects catalog indexes", ex.Message, StringComparison.Ordinal);
+        Assert.False(
+            await CatalogObjectExistsAsync(writer, "LinkedData", ct),
+            "The failed catalog splice should roll back the linked-table MSysObjects row.");
     }
 
     [Fact]
@@ -281,6 +285,13 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             row["LvProp"] is byte[] lvProp ? lvProp.Length : 0,
             aceCount,
             low24CollisionCount);
+    }
+
+    private static async ValueTask<bool> CatalogObjectExistsAsync(AccessWriter writer, string objectName, CancellationToken cancellationToken)
+    {
+        TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken);
+        var rows = await writer.GetCatalogRowsAsync(msys, cancellationToken);
+        return rows.Any(row => string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase));
     }
 
     private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(AccessWriter writer, CancellationToken cancellationToken)
