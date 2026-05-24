@@ -858,7 +858,7 @@ internal static class Constants
         /// </summary>
         public const int MaxPayloadBytes = (1 << 24) - 1;
 
-        /// <summary>First payload-row byte on Access-authored Jet4/ACE LVAL pages.</summary>
+        /// <summary>Minimum row-start offset after the 20-byte LVAL page header area.</summary>
         public const int LvalRowStart = 20;
     }
 

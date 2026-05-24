@@ -54,9 +54,78 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         CatalogObjectSnapshot catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedProducts", ct);
         Assert.True(catalogObject.Id < 0, $"Expected linked-table MSysObjects.Id to be a non-table catalog object id, got {catalogObject.Id}.");
         Assert.Equal(Constants.SystemObjects.LinkedTableFlags, catalogObject.Flags);
-        Assert.True(catalogObject.LvPropLength > 0, "Expected linked-table MSysObjects.LvProp to be non-null.");
+        Assert.Equal(0, catalogObject.LvPropLength);
         Assert.True(catalogObject.AceCount >= 2, $"Expected linked-table object ACE rows, got {catalogObject.AceCount}.");
         Assert.Equal(0, catalogObject.Low24CollisionCount);
+    }
+
+    [Fact]
+    public async Task CreateLinkedTableAsync_AccessSourceLeavesDaoCacheColumnsNull()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        if (!File.Exists(TestDatabases.LinkeeTest))
+        {
+            Assert.Skip("Linkee fixture is unavailable on this machine.");
+        }
+
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedCatalogCacheNulls");
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            frontEndPath,
+            new AccessWriterOptions { UseLockFile = false },
+            ct))
+        {
+            await writer.CreateTableAsync(
+                "LocalAnchor",
+                [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false }],
+                ct);
+            await writer.CreateLinkedTableAsync("LinkedTable1", TestDatabases.LinkeeTest, "Table1", ct);
+        }
+
+        LinkedCacheColumnSnapshot cacheColumns = await GetLinkedCacheColumnSnapshotAsync(frontEndPath, "LinkedTable1", ct);
+        Assert.Equal(TestDatabases.LinkeeTest, cacheColumns.Database);
+        Assert.Equal("Table1", cacheColumns.ForeignName);
+        Assert.False(cacheColumns.HasLv);
+        Assert.False(cacheColumns.HasLvProp);
+        Assert.False(cacheColumns.HasLvModule);
+        Assert.False(cacheColumns.HasLvExtra);
+    }
+
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    public async Task CreateLinkedTableAsync_AccessSource_DaoCompactAndOpenRecordsetSucceed()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        if (!File.Exists(TestDatabases.LinkeeTest))
+        {
+            Assert.Skip("Linkee fixture is unavailable on this machine.");
+        }
+
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedCatalogDao");
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            frontEndPath,
+            new AccessWriterOptions { UseLockFile = false },
+            ct))
+        {
+            await writer.CreateTableAsync(
+                "LocalAnchor",
+                [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false }],
+                ct);
+            await writer.InsertRowAsync("LocalAnchor", [1], ct);
+            await writer.CreateLinkedTableAsync("LinkedTable1", TestDatabases.LinkeeTest, "Table1", ct);
+        }
+
+        string workDir = Path.GetDirectoryName(frontEndPath)!;
+        string compactedPath = Path.Combine(Path.GetTempPath(), $"LinkedCatalogDao_{Guid.NewGuid():N}.accdb");
+        tempFiles.Add(compactedPath);
+        AssertDaoSuccess(
+            AccessRoundTripEnvironment.RunDaoCompact(frontEndPath, compactedPath, TimeSpan.FromSeconds(60)),
+            "DAO CompactDatabase linked table");
+        AssertDaoSuccess(
+            AccessRoundTripEnvironment.RunDaoDatabaseScript(compactedPath, LinkedTableCountScript("LinkedTable1"), workDir, TimeSpan.FromSeconds(60)),
+            "DAO OpenRecordset compacted linked table");
     }
 
     [Fact]
@@ -282,6 +351,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             try
             {
                 File.Delete(path);
+                File.Delete(GetLockFilePath(path));
             }
             catch (IOException)
             {
@@ -289,6 +359,11 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             }
         }
     }
+
+    private static string GetLockFilePath(string databasePath) =>
+        string.Equals(Path.GetExtension(databasePath), ".accdb", StringComparison.OrdinalIgnoreCase)
+            ? Path.ChangeExtension(databasePath, ".laccdb")
+            : Path.ChangeExtension(databasePath, ".ldb");
 
     private static async ValueTask<CatalogObjectSnapshot> GetCatalogObjectAsync(string dbPath, string objectName, CancellationToken cancellationToken)
     {
@@ -323,6 +398,45 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken);
         var rows = await writer.GetCatalogRowsAsync(msys, cancellationToken);
         return rows.Any(row => string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static async ValueTask<LinkedCacheColumnSnapshot> GetLinkedCacheColumnSnapshotAsync(string dbPath, string objectName, CancellationToken cancellationToken)
+    {
+        await using AccessReader reader = await AccessReader.OpenAsync(dbPath, cancellationToken: cancellationToken);
+        DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
+        DataRow row = objects.AsEnumerable().Single(r => string.Equals(
+            Convert.ToString(r["Name"], CultureInfo.InvariantCulture),
+            objectName,
+            StringComparison.OrdinalIgnoreCase));
+
+        return new LinkedCacheColumnSnapshot(
+            row["Lv"] is byte[],
+            row["LvProp"] is byte[],
+            row["LvModule"] is byte[],
+            row["LvExtra"] is byte[],
+            Convert.ToString(row["Database"], CultureInfo.InvariantCulture),
+            Convert.ToString(row["ForeignName"], CultureInfo.InvariantCulture));
+    }
+
+    private static string LinkedTableCountScript(string tableName)
+    {
+        string escapedName = tableName.Replace("'", "''", StringComparison.Ordinal);
+        return $$"""
+            $rs = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [{{escapedName}}]', 4)
+            try {
+                $count = [int]$rs.Fields.Item('Cnt').Value
+                if ($count -lt 0) { throw 'Invalid linked-table count.' }
+            } finally {
+                $rs.Close()
+            }
+            """;
+    }
+
+    private static void AssertDaoSuccess(AccessRoundTripEnvironment.CompactResult result, string operation)
+    {
+        Assert.True(
+            result.ExitCode == 0,
+            $"{operation} failed with exit code {result.ExitCode}. StdOut: {result.StdOut} StdErr: {result.StdErr}");
     }
 
     private static async ValueTask<int> CountMsysObjectsIntermediateRootsAsync(AccessWriter writer, CancellationToken cancellationToken)
@@ -499,4 +613,6 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     }
 
     private sealed record CatalogObjectSnapshot(int Id, int Flags, int LvPropLength, int AceCount, int Low24CollisionCount);
+
+    private sealed record LinkedCacheColumnSnapshot(bool HasLv, bool HasLvProp, bool HasLvModule, bool HasLvExtra, string? Database, string? ForeignName);
 }

@@ -611,8 +611,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             new("DateUpdate", typeof(DateTime)) { DescriptorFlagsOverride = 0x13 },
             new("Owner", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 0x32 },
             new("Flags", typeof(int)) { DescriptorFlagsOverride = 0x13 },
-            new("Database", typeof(string)) { DescriptorFlagsOverride = 0x12 },
-            new("Connect", typeof(string)) { DescriptorFlagsOverride = 0x12 },
+            new("Database", typeof(string)) { DescriptorFlagsOverride = 0x12, IsCompressedUnicode = false },
+            new("Connect", typeof(string)) { DescriptorFlagsOverride = 0x12, IsCompressedUnicode = false },
             new("ForeignName", typeof(string), maxLength: 255) { DescriptorFlagsOverride = 0x12 },
             new("RmtInfoShort", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 0x12 },
             new("RmtInfoLong", typeof(byte[])) { DescriptorFlagsOverride = 0x12 },
@@ -3621,6 +3621,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         return new RowLocation(target.PageNumber, rowIndex, rowStart, rowBytes.Length);
     }
+
+    internal ValueTask<PreEncodedLongValue?> ForceEncodeMemoAsLvalAsync(string? text, bool compress, CancellationToken cancellationToken = default)
+        => _longValueEncoder.ForceEncodeMemoAsLvalAsync(text, compress, cancellationToken);
 
     internal async ValueTask AdjustTDefRowCountAsync(long tdefPage, long delta, CancellationToken cancellationToken)
     {

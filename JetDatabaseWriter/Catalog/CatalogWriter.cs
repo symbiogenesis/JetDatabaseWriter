@@ -147,7 +147,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
         msys.SetValueByName(values, "DateUpdate", now);
         msys.SetValueByName(values, "Flags", GetLinkedTableFlags(objectType));
         msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
-        if (msys.FindColumn("LvProp") is not null)
+        if (msys.FindColumn("LvProp") is not null && !IsAccessFileLinkedTable(objectType, connectString))
         {
             msys.SetValueByName(values, "LvProp", Constants.SystemObjects.DefaultLvPropPlaceholder);
         }
@@ -156,7 +156,10 @@ internal sealed class CatalogWriter(AccessWriter writer)
 
         if (!string.IsNullOrEmpty(sourceDatabasePath))
         {
-            msys.SetValueByName(values, "Database", sourceDatabasePath);
+            object databaseValue = IsAccessFileLinkedTable(objectType, connectString)
+                ? await EncodeLinkedMemoFieldAsync(sourceDatabasePath, cancellationToken).ConfigureAwait(false)
+                : sourceDatabasePath;
+            msys.SetValueByName(values, "Database", databaseValue);
         }
 
         if (!string.IsNullOrEmpty(connectString))
@@ -175,7 +178,11 @@ internal sealed class CatalogWriter(AccessWriter writer)
             throw;
         }
 
-        await InsertAceRowsForCatalogObjectAsync(objectId, useRelationshipAcm: false, cancellationToken).ConfigureAwait(false);
+        await InsertAceRowsForCatalogObjectAsync(
+            objectId,
+            useRestrictedOwnerAcm: true,
+            useRelationshipGroupAcm: false,
+            cancellationToken).ConfigureAwait(false);
         writer.InvalidateCatalogCache();
 
         return objectId;
@@ -214,7 +221,11 @@ internal sealed class CatalogWriter(AccessWriter writer)
     /// Inserts DAO-shaped ACE rows for a Type=8 relationship object.
     /// </summary>
     internal async ValueTask InsertAceRowsForRelationshipAsync(int objectId, CancellationToken cancellationToken)
-        => await InsertAceRowsForCatalogObjectAsync(objectId, useRelationshipAcm: true, cancellationToken).ConfigureAwait(false);
+        => await InsertAceRowsForCatalogObjectAsync(
+            objectId,
+            useRestrictedOwnerAcm: true,
+            useRelationshipGroupAcm: true,
+            cancellationToken).ConfigureAwait(false);
 
     private static long ParseInt64(string value)
     {
@@ -228,6 +239,9 @@ internal sealed class CatalogWriter(AccessWriter writer)
 
     private static int GetLinkedTableFlags(short objectType) =>
         objectType == Constants.SystemObjects.LinkedOdbcType ? Constants.SystemObjects.LinkedOdbcFlags : Constants.SystemObjects.LinkedTableFlags;
+
+    private static bool IsAccessFileLinkedTable(short objectType, string? connectString) =>
+        objectType == Constants.SystemObjects.LinkedTableType && string.IsNullOrEmpty(connectString);
 
     private static byte[] ParseHexBytes(string hex)
     {
@@ -244,7 +258,17 @@ internal sealed class CatalogWriter(AccessWriter writer)
 #endif
     }
 
-    private async ValueTask InsertAceRowsForCatalogObjectAsync(int objectId, bool useRelationshipAcm, CancellationToken cancellationToken)
+    private async ValueTask<object> EncodeLinkedMemoFieldAsync(string value, CancellationToken cancellationToken)
+    {
+        object? encoded = await writer.ForceEncodeMemoAsLvalAsync(value, compress: false, cancellationToken).ConfigureAwait(false);
+        return encoded ?? value;
+    }
+
+    private async ValueTask InsertAceRowsForCatalogObjectAsync(
+        int objectId,
+        bool useRestrictedOwnerAcm,
+        bool useRelationshipGroupAcm,
+        CancellationToken cancellationToken)
     {
         long acesTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         if (acesTdefPage <= 0)
@@ -263,9 +287,9 @@ internal sealed class CatalogWriter(AccessWriter writer)
         {
             object[] row = acesDef.CreateNullValueRow();
             acesDef.SetValueByName(row, "ObjectId", objectId);
-            int acm = useRelationshipAcm
-                ? (i == 0 ? Constants.Aces.RelationshipOwnerAcm : Constants.Aces.RelationshipGroupAcm)
-                : Constants.Aces.DefaultAcm;
+            int acm = i == 0 && useRestrictedOwnerAcm
+                ? Constants.Aces.RelationshipOwnerAcm
+                : useRelationshipGroupAcm ? Constants.Aces.RelationshipGroupAcm : Constants.Aces.DefaultAcm;
             acesDef.SetValueByName(row, "ACM", acm);
             acesDef.SetValueByName(row, "FInheritable", false);
             acesDef.SetValueByName(row, "SID", sids[i]);
