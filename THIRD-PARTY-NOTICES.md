@@ -1,6 +1,8 @@
 # Third-Party Notices
 
 JetDatabaseWriter incorporates material from the following third-party sources.
+It also documents reference-only projects used to guide interoperability and
+coverage work where no source code, binaries, or fixtures were copied.
 
 ## Apache Jackcess
 
@@ -49,3 +51,20 @@ Source: https://github.com/openmcdf/openmcdf
 OpenMcdf is licensed under the Mozilla Public License, version 2.0
 (MPL-2.0). The full text is available at
 https://www.mozilla.org/MPL/2.0/.
+
+## Microsoft Extensible Storage Engine (reference only)
+
+The design note `docs/design/ese-coverage-gap-analysis.md` uses Microsoft's
+Extensible Storage Engine repository as a coverage guide for analogous storage
+engine risk categories such as page mutation invariants, delete/replace
+scrubbing behavior, transaction durability, cache behavior, and long-value
+cleanup. JetDatabaseWriter does not incorporate ESE source code, binaries, or
+fixtures, and ESE is not used as an Access MDB/ACCDB file-format oracle.
+
+Source: https://github.com/microsoft/Extensible-Storage-Engine
+
+Microsoft Extensible Storage Engine is licensed under the MIT License. The full
+text is available at
+https://github.com/microsoft/Extensible-Storage-Engine/blob/master/LICENSE.
+
+Copyright (c) Microsoft Corporation.

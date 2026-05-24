@@ -55,7 +55,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 
 ### Correctness
 
-The test suite draws from and extends the coverage of [Jackcess](https://jackcess.sourceforge.io/), [mdbtools](https://github.com/mdbtools/mdbtools), and [OpenMcdf](https://github.com/ironfede/openmcdf), with additional coverage for corner cases, corruption resilience, and format variants.
+The test suite draws from and extends the coverage of [Jackcess](https://jackcess.sourceforge.io/), [mdbtools](https://github.com/mdbtools/mdbtools), [OpenMcdf](https://github.com/ironfede/openmcdf), and Microsoft's [Extensible Storage Engine](https://github.com/microsoft/Extensible-Storage-Engine) for analogous storage-engine risk categories, with additional coverage for corner cases, corruption resilience, and format variants.
 
 Beyond functional tests, the codebase is validated by:
 
