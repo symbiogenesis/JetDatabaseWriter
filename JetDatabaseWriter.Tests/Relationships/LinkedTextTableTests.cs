@@ -291,6 +291,104 @@ public sealed class LinkedTextTableTests : IDisposable
     }
 
     [Fact]
+    public async Task LinkedTextTable_CsvFile_RelativeForeignNameTraversal_IsBlockedByDefault()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string hostDirectory = CreateTempDirectory("TextLinkTraversalHost");
+        string frontEndPath = await CreateTempAccdbDatabaseInDirectoryAsync("TextLinkTraversalFE", hostDirectory);
+        string outsideFileName = $"outside_{Guid.NewGuid():N}.csv";
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedEscapedCsv",
+                hostDirectory,
+                Path.Combine("..", outsideFileName),
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+            await reader.ReadDataTableAsync("LinkedEscapedCsv", cancellationToken: ct));
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_StreamHostWithoutPathPolicy_IsBlockedByDefault()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string sourceDirectory = CreateTempDirectory("TextLinkStreamSource");
+        string csvFileName = $"data_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n", ct);
+
+        await using var stream = new MemoryStream();
+        await using (await AccessWriter.CreateDatabaseAsync(
+            stream,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            ct))
+        {
+        }
+
+        stream.Position = 0;
+        await using (var writer = await AccessWriter.OpenAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedStreamCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        stream.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: true,
+            ct);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+            await reader.ReadDataTableAsync("LinkedStreamCsv", cancellationToken: ct));
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_FixedLengthFormat_ThrowsNotSupported()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkFixedLengthFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"fixed_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "IdName\r\n1 Ada\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedFixedLengthText",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=FixedLength",
+                ct);
+        }
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+
+        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await reader.ReadDataTableAsync("LinkedFixedLengthText", cancellationToken: ct));
+        Assert.Contains("FixedLength", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task LinkedTextTable_CreateLinkedTextTableAsync_DuplicateLocalTableName_Throws()
     {
         string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkDup");
@@ -352,6 +450,21 @@ public sealed class LinkedTextTableTests : IDisposable
     private async ValueTask<string> CreateTempAccdbDatabaseAsync(string prefix)
     {
         string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.accdb");
+        await using (await AccessWriter.CreateDatabaseAsync(
+            temp,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+        }
+
+        _tempFiles.Add(temp);
+        return temp;
+    }
+
+    private async ValueTask<string> CreateTempAccdbDatabaseInDirectoryAsync(string prefix, string directory)
+    {
+        string temp = Path.Combine(directory, $"{prefix}_{Guid.NewGuid():N}.accdb");
         await using (await AccessWriter.CreateDatabaseAsync(
             temp,
             DatabaseFormat.AceAccdb,
