@@ -116,14 +116,14 @@ public sealed record RelationshipDefinition
     public IReadOnlyList<string> ForeignColumns { get; }
 
     /// <summary>
-    /// Gets a value indicating whether the JET engine should enforce referential integrity
+    /// Gets a value indicating whether referential integrity should be enforced
     /// for this relationship. When <see langword="true"/> (the default), the
     /// <c>NO_REFERENTIAL_INTEGRITY</c> flag bit (<c>0x00000002</c>) is left clear on
     /// <c>grbit</c>; when <see langword="false"/>, the bit is set.
     /// </summary>
     /// <remarks>
-    /// does not itself enforce referential integrity at insert/update/delete time —
-    /// this flag controls only what Microsoft Access does when it opens the file.
+    /// This flag controls the persisted relationship metadata used by Microsoft
+    /// Access and by this writer's supported insert/update/delete paths.
     /// </remarks>
     public bool EnforceReferentialIntegrity { get; init; } = true;
 

@@ -51,8 +51,8 @@ public sealed class AccessReaderOptions : IAccessOptions
     public FileAccess FileAccess { get; init; } = FileAccess.Read;
 
     /// <summary>
-    /// Gets the file sharing mode. Default: Read (other processes may read but not write while the database is open).
-    /// Set to <see cref="FileShare.ReadWrite"/> when another application (e.g. Microsoft Access) holds a write lock on the file.
+    /// Gets the file sharing mode. Default: ReadWrite (other processes may read or write while the database is open).
+    /// Set to <see cref="FileShare.Read"/> to block other writers while this reader has the file open.
     /// </summary>
     public FileShare FileShare { get; init; } = FileShare.ReadWrite;
 
