@@ -568,20 +568,13 @@ public sealed class DaoStorageMaintenanceTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         DataTable wideChildRows = await reader.ReadDataTableAsync(WideChild, cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(Parent, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(WideChild, TestContext.Current.CancellationToken);
         DataTable relationships = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
-        string indexSummary = string.Join(", ", childIndexes.Select(index => $"{index.Name}:{index.Kind}"));
-        string relationshipSummary = string.Join(", ", relationships.AsEnumerable()
-            .Select(row => SafeString(row, "szRelationship"))
-            .Where(name => string.Equals(name, OldRelationship, StringComparison.Ordinal) || string.Equals(name, NewRelationship, StringComparison.Ordinal)));
 
         Assert.Equal(1, wideChildRows.Rows.Count);
-        Assert.True(
-            childIndexes.Any(index => index.Kind == IndexKind.ForeignKey && index.Name == NewRelationship),
-            $"Expected compacted {WideChild} to retain renamed FK index {NewRelationship}. Indexes=[{indexSummary}], relationships=[{relationshipSummary}].");
-        Assert.DoesNotContain(childIndexes, index => index.Name == OldRelationship);
-        Assert.Contains(relationships.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), NewRelationship, StringComparison.Ordinal));
-        Assert.DoesNotContain(relationships.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), OldRelationship, StringComparison.Ordinal));
+        AssertRenamedRelationshipSurvived(relationships, Parent, parentIndexes, OldRelationship, NewRelationship, requireNamedIndex: false);
+        AssertRenamedRelationshipSurvived(relationships, WideChild, childIndexes, OldRelationship, NewRelationship, requireNamedIndex: true);
     }
 
     [Fact(
@@ -842,6 +835,31 @@ public sealed class DaoStorageMaintenanceTests
 
     private static bool HasSingleColumn(IndexMetadata index, string columnName) =>
         index.Columns.Count == 1 && string.Equals(index.Columns[0].Name, columnName, StringComparison.Ordinal);
+
+    private static void AssertRenamedRelationshipSurvived(
+        DataTable relationships,
+        string tableName,
+        IReadOnlyList<IndexMetadata> indexes,
+        string oldRelationshipName,
+        string newRelationshipName,
+        bool requireNamedIndex)
+    {
+        string indexSummary = string.Join(", ", indexes.Select(index => $"{index.Name}:{index.Kind}"));
+        string relationshipSummary = string.Join(", ", relationships.AsEnumerable()
+            .Select(row => SafeString(row, "szRelationship"))
+            .Where(name => string.Equals(name, oldRelationshipName, StringComparison.Ordinal) || string.Equals(name, newRelationshipName, StringComparison.Ordinal)));
+
+        bool hasExpectedIndex = requireNamedIndex
+            ? indexes.Any(index => index.Kind == IndexKind.ForeignKey && index.Name == newRelationshipName)
+            : indexes.Any(index => index.Kind == IndexKind.ForeignKey);
+
+        Assert.True(
+            hasExpectedIndex,
+            $"Expected compacted {tableName} to retain FK metadata for {newRelationshipName}. Indexes=[{indexSummary}], relationships=[{relationshipSummary}].");
+        Assert.DoesNotContain(indexes, index => index.Name == oldRelationshipName);
+        Assert.Contains(relationships.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), newRelationshipName, StringComparison.Ordinal));
+        Assert.DoesNotContain(relationships.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), oldRelationshipName, StringComparison.Ordinal));
+    }
 
     private static bool IsDaoPreviousVersionFailure(AccessRoundTripEnvironment.CompactResult result) =>
         result.ExitCode != 0
