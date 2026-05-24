@@ -309,15 +309,15 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
         Assert.Equal(dt.Rows.Count, real);
     }
 
-    // ── ReadFirstTable ────────────────────────────────────────────────
+    // ── ReadFirstTableAsStrings ───────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadFirstTable_ReturnsNonEmptyHeadersAndTableName(string path)
+    public async Task ReadFirstTableAsStrings_ReturnsNonEmptyHeadersAndTableName(string path)
     {
         var reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
 
-        DataTable table = await reader.ReadFirstTableAsync(cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadFirstTableAsStringsAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(table.Columns.Count > 0);
         Assert.False(string.IsNullOrWhiteSpace(table.TableName));

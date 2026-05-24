@@ -200,7 +200,7 @@ Primary code path:
 - `AccessBase.ReadPageAsync`
 - `AccessReader.EnumerateTableScanPagesAsync`
 - Table scan loops in `Rows()`, `Rows<T>()`, `RowsAsStrings`,
-  `ReadDataTableAsync`, `ReadFirstTableAsync`, and list materialization paths
+  `ReadDataTableAsync`, `ReadFirstTableAsStringsAsync`, and list materialization paths
 
 ## Implementation plan
 

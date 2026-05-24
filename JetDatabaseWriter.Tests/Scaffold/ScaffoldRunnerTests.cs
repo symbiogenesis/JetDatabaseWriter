@@ -425,7 +425,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
 
         public ValueTask DisposeAsync() => default;
 
-        public ValueTask<System.Data.DataTable> ReadFirstTableAsync(uint? maxRows = null, CancellationToken cancellationToken = default) =>
+        public ValueTask<System.Data.DataTable> ReadFirstTableAsStringsAsync(uint? maxRows = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
         public ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default) =>

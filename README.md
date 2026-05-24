@@ -596,8 +596,8 @@ If the transaction is disposed without a `CommitAsync` call (for example, becaus
 foreach (TableStat ts in await reader.GetTableStatsAsync(cancellationToken))
     Console.WriteLine($"{ts.Name}: {ts.RowCount:N0} rows, {ts.ColumnCount} cols");
 
-// First table preview as DataTable
-DataTable first = await reader.ReadFirstTableAsync(maxRows: 20, cancellationToken);
+// First table preview as a string-typed DataTable
+DataTable first = await reader.ReadFirstTableAsStringsAsync(maxRows: 20, cancellationToken);
 Console.WriteLine($"First table: {first.TableName}, {first.Rows.Count} rows");
 
 DatabaseStatistics s = await reader.GetStatisticsAsync(cancellationToken);
