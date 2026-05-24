@@ -84,6 +84,14 @@ public class DataTableMaterializationBenchmarks
             _numericRows).ConfigureAwait(false);
 
     [Benchmark]
+    public async Task<int> Numeric_LoadDataRow_BeginLoadData_MinimumCapacity()
+        => await MaterializeWithLoadDataRowAsync(
+            _numericReader,
+            SyntheticDatabases.NumericTable,
+            _numericMetadata,
+            _numericRows).ConfigureAwait(false);
+
+    [Benchmark]
     public async Task<int> Text_PublicReadDataTable()
     {
         using DataTable table = await _textReader.ReadDataTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
@@ -102,6 +110,14 @@ public class DataTableMaterializationBenchmarks
     [Benchmark]
     public async Task<int> Text_RowsAddObjectArray_BeginLoadData_MinimumCapacity()
         => await MaterializeWithRowsAddAsync(
+            _textReader,
+            SyntheticDatabases.TextTable,
+            _textMetadata,
+            _textRows).ConfigureAwait(false);
+
+    [Benchmark]
+    public async Task<int> Text_LoadDataRow_BeginLoadData_MinimumCapacity()
+        => await MaterializeWithLoadDataRowAsync(
             _textReader,
             SyntheticDatabases.TextTable,
             _textMetadata,
@@ -151,6 +167,24 @@ public class DataTableMaterializationBenchmarks
         await foreach (object[] sourceRow in reader.Rows(tableName).ConfigureAwait(false))
         {
             table.Rows.Add(sourceRow);
+        }
+
+        table.EndLoadData();
+        return table.Rows.Count;
+    }
+
+    private static async Task<int> MaterializeWithLoadDataRowAsync(
+        AccessReader reader,
+        string tableName,
+        IReadOnlyList<ColumnMetadata> metadata,
+        int minimumCapacity)
+    {
+        using DataTable table = CreateDataTable(tableName, metadata, minimumCapacity);
+        table.BeginLoadData();
+
+        await foreach (object[] sourceRow in reader.Rows(tableName).ConfigureAwait(false))
+        {
+            _ = table.LoadDataRow(sourceRow, fAcceptChanges: false);
         }
 
         table.EndLoadData();

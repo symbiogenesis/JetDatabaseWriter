@@ -211,11 +211,13 @@ Primary code path:
 
 Add focused benchmarks before changing behavior:
 
-Status: partially implemented. LVAL submode benchmarks, OLE submode
-benchmarks, cold-open first-scan coverage, DataTable insertion-strategy
-benchmarks, and numeric cold-scan variants for disabled/large page caches and
-`ParallelPageReadsEnabled` have been added. Broader table shapes and warm/cold
-parallel scan matrices remain pending.
+Status: benchmark definitions implemented, pending refreshed measurements. LVAL
+submode benchmarks, OLE submode benchmarks, cold-open first-scan coverage,
+DataTable insertion-strategy benchmarks including `NewRow`,
+`Rows.Add(object?[])`, and `LoadDataRow`, numeric cold-scan variants for
+disabled/large page caches, and a simple table-scan read-ahead matrix for
+numeric/text/wide tables with cold/warm and `ParallelPageReadsEnabled` on/off
+have been added.
 
 - Cold first table enumeration versus warm repeat enumeration.
 - LVAL inline, single-page, and chained MEMO separately.
@@ -319,8 +321,8 @@ Completed changes:
 Remaining measurement:
 
 - Run the new DataTable materialization benchmarks to compare the public path,
-  `NewRow` variants, and `Rows.Add(object?[])` with bulk-load mode and minimum
-  capacity.
+  `NewRow` variants, `Rows.Add(object?[])`, and `LoadDataRow` with bulk-load
+  mode and minimum capacity.
 - If `Rows.Add(object?[])` wins materially, decide whether production can use it
   without adding per-row exact-array allocation or weakening null handling.
 
@@ -394,7 +396,8 @@ Completed changes:
 
 Remaining work:
 
-- Benchmark cold and warm simple scans with `ParallelPageReadsEnabled` on/off.
+- Run the table-scan read-ahead benchmark matrix and compare cold/warm simple
+  scans with `ParallelPageReadsEnabled` on/off.
 - Revisit LVAL-heavy read-ahead only if page-buffer leases or a similar
   ownership model are introduced.
 - Consider a tunable read-ahead depth only after one-page lookahead shows a
