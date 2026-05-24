@@ -342,13 +342,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-            foreach (long pageNumber in pageNumbers)
+            await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-
-                await foreach (string[] row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
+                await foreach (string[] row in EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, td, cancellationToken).ConfigureAwait(false))
                 {
                     _ = dt.Rows.Add(row);
                     if (maxRows.HasValue && dt.Rows.Count >= maxRows.Value)
@@ -611,20 +609,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
         object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
         try
         {
-            foreach (long pageNumber in pageNumbers)
+            await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-
-                foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
+                foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
                 {
                     if (rb.RowSize < _rowSz.NumCols)
                     {
                         continue;
                     }
 
-                    bool ok = await CrackRowTypedIntoBufferAsync(page, rb.RowStart, rb.RowSize, td, wantedColumns, rowBuffer, cancellationToken).ConfigureAwait(false);
+                    bool ok = await CrackRowTypedIntoBufferAsync(scanPage.Page, rb.RowStart, rb.RowSize, td, wantedColumns, rowBuffer, cancellationToken).ConfigureAwait(false);
                     if (!ok)
                     {
                         continue;
@@ -704,20 +700,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
             : null;
         IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-        foreach (long pageNumber in pageNumbers)
+        await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-
-            foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
+            foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
             {
                 if (rb.RowSize < _rowSz.NumCols)
                 {
                     continue;
                 }
 
-                object?[]? row = await CrackRowTypedAsync(page, rb.RowStart, rb.RowSize, td, wantedColumns, cancellationToken).ConfigureAwait(false);
+                object?[]? row = await CrackRowTypedAsync(scanPage.Page, rb.RowStart, rb.RowSize, td, wantedColumns, cancellationToken).ConfigureAwait(false);
                 if (row == null)
                 {
                     continue;
@@ -762,13 +756,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
         bool hasVarColumns = td.HasVarColumns;
         IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-        foreach (long pageNumber in pageNumbers)
+        await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-
-            foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
+            foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
             {
                 if (rb.RowSize < _rowSz.NumCols)
                 {
@@ -776,7 +768,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
 
                 T target = new();
-                if (!directDecoder(this, page, rb.RowStart, rb.RowSize, hasVarColumns, target))
+                if (!directDecoder(this, scanPage.Page, rb.RowStart, rb.RowSize, hasVarColumns, target))
                 {
                     continue;
                 }
@@ -787,6 +779,64 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             progress?.Report(rowCount);
         }
+    }
+
+    private async IAsyncEnumerable<TableScanPage> EnumerateTableScanPagesAsync(
+        TableDef tableDef,
+        IReadOnlyList<long> pageNumbers,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if (!ShouldReadAheadTablePages(tableDef, pageNumbers))
+        {
+            foreach (long pageNumber in pageNumbers)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return await ReadTableScanPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            }
+
+            yield break;
+        }
+
+        Task<TableScanPage>? nextPageTask = null;
+        try
+        {
+            for (int pageIndex = 0; pageIndex < pageNumbers.Count; pageIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                Task<TableScanPage> currentPageTask = nextPageTask
+                    ?? ReadTableScanPageAsync(pageNumbers[pageIndex], cancellationToken).AsTask();
+                nextPageTask = pageIndex + 1 < pageNumbers.Count
+                    ? ReadTableScanPageAsync(pageNumbers[pageIndex + 1], cancellationToken).AsTask()
+                    : null;
+
+                yield return await currentPageTask.ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (nextPageTask is not null)
+            {
+                await ObserveAbandonedTableScanReadAsync(nextPageTask).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private bool ShouldReadAheadTablePages(TableDef tableDef, IReadOnlyList<long> pageNumbers)
+    {
+        // The cache returns page buffers to the shared pool on eviction, so read-ahead
+        // needs room for the previous, current, and prefetched data pages.
+        return ParallelPageReadsEnabled
+            && _pageCache is not null
+            && PageCacheSize >= 3
+            && pageNumbers.Count > 1
+            && !HasCacheReentrantScanColumns(tableDef);
+    }
+
+    private async ValueTask<TableScanPage> ReadTableScanPageAsync(long pageNumber, CancellationToken cancellationToken)
+    {
+        byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        return new TableScanPage(pageNumber, page);
     }
 
     /// <inheritdoc/>
@@ -819,13 +869,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
         long rowCount = 0;
         IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-        foreach (long pageNumber in pageNumbers)
+        await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-
-            await foreach (string[] row in EnumerateRowsAsync(pageNumber, page, td, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, td, cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
                 rowCount++;
@@ -1736,20 +1784,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
             object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
             try
             {
-                foreach (long pageNumber in pageNumbers)
+                await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-
-                    foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
+                    foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
                     {
                         if (rb.RowSize < _rowSz.NumCols)
                         {
                             continue;
                         }
 
-                        bool ok = await CrackRowTypedIntoBufferAsync(page, rb.RowStart, rb.RowSize, td, wantedColumns: null, rowBuffer, cancellationToken).ConfigureAwait(false);
+                        bool ok = await CrackRowTypedIntoBufferAsync(scanPage.Page, rb.RowStart, rb.RowSize, td, wantedColumns: null, rowBuffer, cancellationToken).ConfigureAwait(false);
                         if (!ok)
                         {
                             continue;
@@ -1896,17 +1942,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        foreach (long pageNumber in pageNumbers)
+        await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
+            foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 object[]? row = await CrackMappedRowAsync(
-                    page,
+                    scanPage.Page,
                     rb.RowStart,
                     rb.RowSize,
                     td,
@@ -1958,17 +2003,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         IReadOnlyList<long> pageNumbers = await GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        foreach (long pageNumber in pageNumbers)
+        await foreach (TableScanPage scanPage in EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            foreach (RowBound rb in GetLiveRowBoundsCached(pageNumber, page))
+            foreach (RowBound rb in GetLiveRowBoundsCached(scanPage.PageNumber, scanPage.Page))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 object[]? projectedRow = await CrackProjectedRowAsync(
-                    page,
+                    scanPage.Page,
                     rb.RowStart,
                     rb.RowSize,
                     td,
@@ -2727,6 +2771,34 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         return false;
+    }
+
+    private static bool HasCacheReentrantScanColumns(TableDef tableDef)
+    {
+        foreach (ColumnInfo column in tableDef.Columns)
+        {
+            if (column.Type is T_MEMO or T_OLE or T_COMPLEX or T_ATTACHMENT)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async ValueTask ObserveAbandonedTableScanReadAsync(Task<TableScanPage> task)
+    {
+        if (task.IsCompleted)
+        {
+            _ = task.Exception;
+            return;
+        }
+
+        await task.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default).ConfigureAwait(false);
     }
 
     private static void WrapHyperlinkColumns(object?[] typedRow, Type[] clrTypes)
@@ -3947,6 +4019,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private readonly record struct LongValueRef(int Start, int Len, bool IsOle);
 
     private readonly record struct CalculatedLongValueRef(int Start, int Len, bool IsOle);
+
+    private readonly record struct TableScanPage(long PageNumber, byte[] Page);
 
     /// <summary>
     /// Yields rows from every data page whose owning TDEF page equals <paramref name="tdefPage"/>.

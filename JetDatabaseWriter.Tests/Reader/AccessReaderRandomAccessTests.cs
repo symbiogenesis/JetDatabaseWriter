@@ -32,6 +32,32 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
     }
 
     [Fact]
+    public async Task OpenAsync_PathWithParallelPageReads_ReadsMultiPageTableInOrder()
+    {
+        const int RowCount = 2_000;
+        string path = await CreateReadableDatabaseAsync(RowCount);
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions
+            {
+                ParallelPageReadsEnabled = true,
+                PageCacheSize = 4,
+                UseLockFile = false,
+            },
+            TestContext.Current.CancellationToken);
+
+        int count = 0;
+        await foreach (object[] row in reader.Rows("Items", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            count++;
+            Assert.Equal(count, Assert.IsType<int>(row[0]));
+        }
+
+        Assert.Equal(RowCount, count);
+    }
+
+    [Fact]
     public async Task OpenAsync_PathWithoutParallelPageReads_UsesSeekReadPageReads()
     {
         string path = await CreateReadableDatabaseAsync();
@@ -102,7 +128,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
         }
     }
 
-    private async ValueTask<string> CreateReadableDatabaseAsync()
+    private async ValueTask<string> CreateReadableDatabaseAsync(int rowCount = 1)
     {
         string path = Path.Combine(Path.GetTempPath(), $"ReaderRandomAccess_{Guid.NewGuid():N}.mdb");
         _paths.Add(path);
@@ -113,7 +139,21 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             DatabaseFormat.Jet4Mdb,
             cancellationToken: TestContext.Current.CancellationToken);
         await writer.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync("Items", [1], TestContext.Current.CancellationToken);
+        if (rowCount == 1)
+        {
+            await writer.InsertRowAsync("Items", [1], TestContext.Current.CancellationToken);
+        }
+        else
+        {
+            var rows = new List<object[]>(rowCount);
+            for (int id = 1; id <= rowCount; id++)
+            {
+                rows.Add([id]);
+            }
+
+            await writer.InsertRowsAsync("Items", rows, TestContext.Current.CancellationToken);
+        }
+
         return path;
     }
 }

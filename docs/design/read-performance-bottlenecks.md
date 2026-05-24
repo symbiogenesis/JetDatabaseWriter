@@ -1,6 +1,6 @@
 # Read performance bottlenecks
 
-Status: analysis, first-slice implementation, and measurement plan
+Status: analysis, implementation slices, and measurement plan
 Date: 2026-05-20
 Last updated: 2026-05-24
 
@@ -182,12 +182,15 @@ Likely cost centers:
 - This cost is not represented by the `OpenAsync` benchmark because the index is
   lazily initialized.
 
-### 6. `ParallelPageReadsEnabled` does not yet prefetch table scans
+### 6. `ParallelPageReadsEnabled` only prefetches eligible simple table scans
 
-The option currently switches the file stream access pattern and enables
-`RandomAccess`-based page reads, but table enumeration still awaits pages in
-sequence. This may help random page reads, but it does not implement a bounded
-read-ahead pipeline for sequential table scans.
+The option switches the file stream access pattern for path-opened databases and
+now adds a one-page read-ahead pipeline for eligible table scans. The read-ahead
+path preserves row order and reuses the normal page cache, but it is deliberately
+gated to simple table shapes: page cache enabled, cache size of at least three
+pages, more than one data page, and no MEMO/OLE/complex/attachment columns.
+Those exclusions avoid cache re-entrancy and pooled-buffer eviction risks while
+LVAL or complex-column resolution may read additional pages for the current row.
 
 Primary code path:
 
@@ -195,8 +198,9 @@ Primary code path:
 - `AccessReader.CreateStream`
 - `AccessBase.EnableRandomAccessPageReadsIfSupported`
 - `AccessBase.ReadPageAsync`
-- Sequential loops in `EnumerateTypedRowsAsync`, `EnumerateDirectRowsAsync`,
-  `RowsAsStrings`, and `ReadDataTableAsync`
+- `AccessReader.EnumerateTableScanPagesAsync`
+- Table scan loops in `Rows()`, `Rows<T>()`, `RowsAsStrings`,
+  `ReadDataTableAsync`, `ReadFirstTableAsync`, and list materialization paths
 
 ## Implementation plan
 
@@ -355,15 +359,32 @@ Acceptance criteria:
 
 ### Phase 5: make parallel page reads visible to table scans
 
-The option name implies more than the current table enumeration loops perform.
+The option now has a conservative implementation for simple table scans; this
+phase tracks whether and how to extend it beyond that shape.
 
-Candidate changes:
+Status: partially implemented. Simple table scans now use a bounded one-page
+read-ahead path when `ParallelPageReadsEnabled` is set and the page cache can
+hold previous/current/prefetched pages. MEMO/OLE/complex/attachment tables still
+use the sequential path until page-buffer ownership is made explicit enough for
+LVAL-heavy scans.
 
-- Add a bounded read-ahead pipeline for table page numbers, preserving row order.
-- Use `RandomAccess.ReadAsync` when enabled and supported.
-- Keep default behavior conservative until benchmarks show a clear benefit.
-- If read-ahead is not worth the complexity, clarify docs so the option describes
-  random-access page I/O rather than parallel table scan processing.
+Completed changes:
+
+- Added a bounded table-page enumerator that starts the next eligible data-page
+  read before the current page's rows are decoded.
+- Preserved row order by awaiting prefetched pages in original page-number order.
+- Kept the normal sequential path for cache-disabled, tiny-cache, single-page,
+  and LVAL/complex scan shapes.
+- Updated `ParallelPageReadsEnabled` API docs to describe read-ahead eligibility
+  and random-access page reads rather than unconditional parallel processing.
+
+Remaining work:
+
+- Benchmark cold and warm simple scans with `ParallelPageReadsEnabled` on/off.
+- Revisit LVAL-heavy read-ahead only if page-buffer leases or a similar
+  ownership model are introduced.
+- Consider a tunable read-ahead depth only after one-page lookahead shows a
+  measurable benefit and no cache contention regressions.
 
 Risks and constraints:
 
