@@ -270,6 +270,110 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal("Gamma #7", row["CalcLabel"]);
     }
 
+    [Fact]
+    public async Task InsertRow_CalculatedColumns_EvaluatesAccessOperatorsAndBuiltins()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcAccessSyntax",
+                [
+                    new("Score", typeof(int)),
+                    new("Label", typeof(string), maxLength: 40),
+                    new("Code", typeof(string), maxLength: 20),
+                    new("IsEven", typeof(bool))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "[Score] Mod 2 = 0",
+                    },
+                    new("MatchesLabel", typeof(bool))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "[Label] Like \"Al*\"",
+                    },
+                    new("ScoreBand", typeof(string), maxLength: 20)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "IIf([Score] Between 10 And 20, \"Mid\", \"Other\")",
+                    },
+                    new("IsKnown", typeof(bool))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "[Label] In (\"Alpha\", \"Beta\")",
+                    },
+                    new("LogicGate", typeof(bool))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Not ([Score] < 10) And [Label] Like \"A*\"",
+                    },
+                    new("NullState", typeof(string), maxLength: 20)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "IIf([Code] Is Null, \"missing\", [Code])",
+                    },
+                    new("IntDiv", typeof(int))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "[Score] \\ 5",
+                    },
+                    new("FunctionText", typeof(string), maxLength: 80)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "Replace(UCase([Label]), \"A\", \"@\") & \"-\" & CStr(DatePart(\"yyyy\", DateSerial(2025, 2, 3)))",
+                    },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(
+                "CalcAccessSyntax",
+                [12, "Alpha", DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value],
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcAccessSyntax", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+
+        Assert.True(Convert.ToBoolean(row["IsEven"], CultureInfo.InvariantCulture));
+        Assert.True(Convert.ToBoolean(row["MatchesLabel"], CultureInfo.InvariantCulture));
+        Assert.Equal("Mid", row["ScoreBand"]);
+        Assert.True(Convert.ToBoolean(row["IsKnown"], CultureInfo.InvariantCulture));
+        Assert.True(Convert.ToBoolean(row["LogicGate"], CultureInfo.InvariantCulture));
+        Assert.Equal("missing", row["NullState"]);
+        Assert.Equal(2, Convert.ToInt32(row["IntDiv"], CultureInfo.InvariantCulture));
+        Assert.Equal("@LPH@-2025", row["FunctionText"]);
+    }
+
+    [Fact]
+    public async Task InsertRow_CircularCalculatedDependency_ThrowsInvalidOperationException()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+
+        await using var writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            "CalcCycle",
+            [
+                new("A", typeof(int))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "[B] + 1",
+                },
+                new("B", typeof(int))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "[A] + 1",
+                },
+            ],
+            TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await writer.InsertRowAsync(
+                "CalcCycle",
+                [DBNull.Value, DBNull.Value],
+                TestContext.Current.CancellationToken));
+    }
+
     private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
     {
         var stream = new MemoryStream();

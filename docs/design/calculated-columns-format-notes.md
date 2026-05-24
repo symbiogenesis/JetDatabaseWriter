@@ -160,40 +160,51 @@ Delivered:
   already computed the value.
 - Expressions are normalized for common Access syntax: leading `=` is ignored,
   bracketed column references such as `[Column Name]` resolve against the
-  in-flight row, and `#date literal#` becomes `DATEVALUE("date literal")`.
+  in-flight row, `#date literal#` becomes `DATEVALUE("date literal")`, and
+  Access word operators are lowered into evaluator functions before the
+  ClosedXML.Parser pass.
 - Calculated columns may reference earlier or later calculated columns in the
   same row; dependency evaluation is lazy and circular references are rejected.
 
 Supported subset:
 
-- Operators parsed by ClosedXML.Parser and currently evaluated here: arithmetic
-  (`+`, `-`, `*`, `/`, `^`), string concatenation (`&`), comparisons
-  (`=`, `<>`, `>`, `>=`, `<`, `<=`), unary plus/minus, and percent.
-- Constants and nulls: boolean literals, blank/null nodes, and `DBNull` values
-  from the in-flight row.
+- Operators: arithmetic (`+`, `-`, `*`, `/`, `\`, `^`, `Mod`), string
+  concatenation (`&`), comparisons (`=`, `<>`, `>`, `>=`, `<`, `<=`), logical
+  word operators (`Not`, `And`, `Or`, `Xor`, `Eqv`, `Imp`), and Access special
+  comparisons (`Is [Not] Null`, `[Not] Like`, `[Not] Between`, `[Not] In`).
+- Constants and nulls: `True`/`False`, `Yes`/`No`, `On`/`Off`, blank/null
+  nodes, and `DBNull` values from the in-flight row.
 - Built-ins: `IIf`/`IF`, `Nz`, `IsNull`/`IsBlank`, `IsNumeric`/`IsNumber`,
   `IsDate`, `Len`, `Left`, `Right`, `Mid`, `UCase`/`Upper`, `LCase`/`Lower`,
-  `Trim`, `LTrim`, `RTrim`, `Abs`, `Round`, `Int`, `Fix`, `Date`/`Today`,
-  `Now`, `Time`, `DateValue`, `Year`, `Month`, `Day`, `Hour`, `Minute`,
-  `Second`, `CInt`, `CLng`, `CDbl`, `CSng`, `CCur`/`CDec`, `CStr`, `CDate`,
-  `CBool`, and `CByte`.
+  `Trim`, `LTrim`, `RTrim`, `Replace`, `InStr`, `InStrRev`, `Space`,
+  `StrComp`, `String`, `StrReverse`, `Asc`/`AscW`, `Chr`/`ChrW`, `Str`,
+  `Format*` helpers, `Abs`, `Round`, `Int`, `Fix`, `Sgn`, `Sqr`, `Sin`, `Cos`,
+  `Tan`, `Atan`, `Exp`, `Log`, `Date`/`Today`, `Now`, `Time`, `DateValue`,
+  `DateSerial`, `DateAdd`, `DateDiff`, `DatePart`, `Year`, `Month`, `Day`,
+  `Hour`, `Minute`, `Second`, `TimeValue`, `TimeSerial`, `Timer`, `MonthName`,
+  `Weekday`, `WeekdayName`, `CInt`, `CLng`, `CDbl`, `CSng`, `CCur`/`CDec`,
+  `CStr`, `CDate`, `CBool`, `CByte`, `CVar`, `Hex`, `Oct`, `Val`, common
+  financial helpers (`FV`, `PV`, `Pmt`, `NPer`, `IPmt`, `PPmt`, `DDB`, `SLN`,
+  `SYD`, `Rate`), `Choose`, and `Switch`.
 
-Still out of scope for Phase 2: full Jet/VBA grammar, logical word operators,
-`Like`, `Between`, `In`, `Mod`, domain aggregate functions, SQL/query
-evaluation, and cross-table lookups.
+Still intentionally out of scope: domain aggregate functions (`DLookup`,
+`DCount`, `DSum`, `DAvg`, `DMin`, `DMax`), SQL/query evaluation, cross-record
+or cross-table lookups, and spreadsheet-only parser constructs such as cell,
+sheet, external workbook, array, range, and structured references.
 
 Tests: focused insert/update/POCO coverage in
 `JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`, plus the Phase
 1B Access-authored fixture coverage.
 
-### Phase 3 — Full VBA expression library + cross-table lookups
+### Phase 3 — Non-row-local expression contexts
 
-- The remaining VBA functions (`DLookup`, `DCount`, `DSum`, `DAvg`, `DMin`,
-  `DMax`, `Switch`, `Choose`, `Partition`, full `Format` grammar, financial
-  functions, etc.).
-- Cross-record / cross-table evaluation context (only relevant if Microsoft
-  ever extends calc columns beyond the row-local restriction; today this is
-  effectively dead code but worth noting because Jackcess models it).
+- Domain aggregate functions (`DLookup`, `DCount`, `DSum`, `DAvg`, `DMin`,
+  `DMax`), SQL/query evaluation, and cross-record / cross-table lookup context
+  remain outside calculated-column support because Access calculated columns are
+  row-local.
+- `Partition` and the long tail of highly specialized VBA functions can be
+  added if real Access-authored calculated-column fixtures show they are valid
+  in this context.
 
 ## Why phased
 

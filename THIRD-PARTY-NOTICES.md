@@ -20,6 +20,11 @@ The character-handler state machine in
 `com.healthmarketscience.jackcess.impl.GeneralLegacyIndexCodes` from the same
 project.
 
+Calculated-column expression operator and built-in function behavior in
+`JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs` is
+translated and adapted from Jackcess's `Expressionator` and `Default*Functions`
+classes, with storage-specific behavior implemented locally for this library.
+
 ```
 Copyright (c) 2008 Health Market Science, Inc.
 
