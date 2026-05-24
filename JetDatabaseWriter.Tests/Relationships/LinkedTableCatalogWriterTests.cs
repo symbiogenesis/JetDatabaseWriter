@@ -118,6 +118,25 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateLinkedTableApis_Jet3Mdb_ThrowUntilCatalogSplicingIsImplemented()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using AccessWriter writer = await CreateJet3WriterAsync(ct);
+
+        NotSupportedException accessEx = await Assert.ThrowsAsync<NotSupportedException>(() =>
+            writer.CreateLinkedTableAsync("LinkedAccess", @"C:\Data\source.mdb", "Products", ct).AsTask());
+        Assert.Contains("Jet3 catalog splicing is not implemented", accessEx.Message, StringComparison.Ordinal);
+
+        NotSupportedException odbcEx = await Assert.ThrowsAsync<NotSupportedException>(() =>
+            writer.CreateLinkedOdbcTableAsync("LinkedOdbc", "ODBC;DSN=Sales", "dbo.Orders", ct).AsTask());
+        Assert.Contains("Jet3 catalog splicing is not implemented", odbcEx.Message, StringComparison.Ordinal);
+
+        NotSupportedException textEx = await Assert.ThrowsAsync<NotSupportedException>(() =>
+            writer.CreateLinkedTextTableAsync("LinkedCsv", @"C:\Data", "data.csv", "Text;HDR=YES", ct).AsTask());
+        Assert.Contains("Jet3 catalog splicing is not implemented", textEx.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task InsertCatalogObjectAsync_DuplicateParentIdName_ThrowsBeforeSplice()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -300,6 +319,16 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
         tempFiles.Add(temp);
         return temp;
+    }
+
+    private static async ValueTask<AccessWriter> CreateJet3WriterAsync(CancellationToken cancellationToken)
+    {
+        var stream = new MemoryStream();
+        return await AccessWriter.CreateDatabaseAsync(
+            stream,
+            DatabaseFormat.Jet3Mdb,
+            leaveOpen: false,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private sealed record CatalogObjectSnapshot(int Id, int Flags, int LvPropLength, int AceCount, int Low24CollisionCount);
