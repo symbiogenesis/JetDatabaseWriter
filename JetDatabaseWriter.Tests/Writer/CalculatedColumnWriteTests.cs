@@ -447,6 +447,59 @@ public sealed class CalculatedColumnWriteTests
                 TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task InsertRow_OverNestedCalculatedExpression_ThrowsArgumentException()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+        string expression = new string('(', 129) + "1" + new string(')', 129);
+
+        await using var writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            "CalcDeepExpression",
+            [
+                new("DeepCalc", typeof(int))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = expression,
+                },
+            ],
+            TestContext.Current.CancellationToken);
+
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.InsertRowAsync(
+                "CalcDeepExpression",
+                [DBNull.Value],
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("nesting depth", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InsertRow_CalculatedExpressionGeneratedTextTooLarge_ThrowsArgumentException()
+    {
+        await using var stream = await CreateFreshAccdbStreamAsync();
+
+        await using var writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync(
+            "CalcHugeText",
+            [
+                new("HugeText", typeof(string), maxLength: 20)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "Space(32769)",
+                },
+            ],
+            TestContext.Current.CancellationToken);
+
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.InsertRowAsync(
+                "CalcHugeText",
+                [DBNull.Value],
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("generated text length", exception.Message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("DLookup(\"Name\", \"People\")")]
     [InlineData("DCount(\"*\", \"People\")")]

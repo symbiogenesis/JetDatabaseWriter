@@ -107,7 +107,8 @@ public sealed class AccessReaderOptions : IAccessOptions
     /// <summary>
     /// Gets an optional allowlist of directories that linked-table source paths must stay under.
     /// Paths may be absolute or relative (relative entries are resolved from the opened database directory).
-    /// Leave empty to allow any directory.
+    /// Leave empty to allow only source files under the opened database directory, unless
+    /// <see cref="LinkedSourcePathValidator"/> explicitly approves a resolved path.
     /// </summary>
     public IReadOnlyList<string> LinkedSourcePathAllowlist { get; init; } = [];
 

@@ -207,6 +207,27 @@ public sealed class LinkedTableTests : IDisposable
     }
 
     [Fact]
+    public async Task LinkedTable_ReadLinkedOdbcTable_ThrowsNotSupportedWithoutOpeningOdbc()
+    {
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcRead");
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateLinkedOdbcTableAsync(
+                "LinkedSales",
+                "ODBC;DSN=NoSuchDsn;SERVER=example.invalid;DATABASE=Sales",
+                "dbo.Orders",
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+
+        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await reader.ReadDataTableAsync("LinkedSales", cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Contains("ODBC", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task LinkedTables_CreateLinkedTableAsync_WhenCancelled_ThrowsOperationCanceledException()
     {
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedCancel");
@@ -364,11 +385,12 @@ public sealed class LinkedTableTests : IDisposable
         // Reading a linked table whose source database doesn't exist should
         // throw FileNotFoundException, not return garbage.
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkMiss");
+        string missingSourcePath = Path.Combine(Path.GetDirectoryName(frontEndPath)!, "missing-source.accdb");
 
         await InjectLinkedTableEntryAsync(
             frontEndPath,
             "LinkedMissing",
-            @"C:\NonExistent\Database.mdb",
+            missingSourcePath,
             "MissingTable",
             TestContext.Current.CancellationToken);
 
@@ -399,6 +421,72 @@ public sealed class LinkedTableTests : IDisposable
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.ReadDataTableAsync("LinkedTraversal", cancellationToken: TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task LinkedTable_ReadLinkedTable_AbsolutePathOutsideHostDirectory_IsBlockedByDefault()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkAbsSrc");
+        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
+        {
+            await writer.CreateTableAsync("TrustedData", [new("Id", typeof(int))], ct);
+            await writer.InsertRowAsync("TrustedData", [1], ct);
+        }
+
+        string hostDirectory = Path.Combine(Path.GetTempPath(), $"LinkAbsHost_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(hostDirectory);
+        _tempDirectories.Add(hostDirectory);
+
+        string frontEndPath = await CreateTempAccdbDatabaseInDirectoryAsync("LinkAbsFE", hostDirectory);
+        await InjectLinkedTableEntryAsync(frontEndPath, "LinkedAbsolute", sourcePath, "TrustedData", ct);
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+            await reader.ReadDataTableAsync("LinkedAbsolute", cancellationToken: ct));
+    }
+
+    [Fact]
+    public async Task LinkedTable_ReadLinkedTable_StreamHostWithoutPathPolicy_IsBlockedByDefault()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkStreamSrc");
+        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
+        {
+            await writer.CreateTableAsync("TrustedData", [new("Id", typeof(int))], ct);
+            await writer.InsertRowAsync("TrustedData", [1], ct);
+        }
+
+        await using var stream = new MemoryStream();
+        await using (await AccessWriter.CreateDatabaseAsync(
+            stream,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            ct))
+        {
+        }
+
+        stream.Position = 0;
+        await using (var writer = await AccessWriter.OpenAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            ct))
+        {
+            await writer.CreateLinkedTableAsync("LinkedStreamData", sourcePath, "TrustedData", ct);
+        }
+
+        stream.Position = 0;
+        await using var reader = await AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: true,
+            ct);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+            await reader.ReadDataTableAsync("LinkedStreamData", cancellationToken: ct));
     }
 
     [Fact]

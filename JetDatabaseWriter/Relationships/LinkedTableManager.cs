@@ -191,6 +191,12 @@ internal static class LinkedTableManager
         IReadOnlyList<string> linkedSourcePathAllowlist,
         Func<LinkedTableInfo, string, bool>? linkedSourcePathValidator)
     {
+        if (link.IsOdbc)
+        {
+            throw new NotSupportedException(
+                $"Linked ODBC table '{link.Name}' is metadata-only; JetDatabaseWriter does not open ODBC connections.");
+        }
+
         if (string.IsNullOrWhiteSpace(link.SourceDatabasePath))
         {
             throw new FileNotFoundException(
@@ -199,18 +205,25 @@ internal static class LinkedTableManager
         }
 
         string rawPath = link.SourceDatabasePath.Trim();
-        string baseDirectory = Path.GetDirectoryName(hostDatabasePath) ?? Directory.GetCurrentDirectory();
+        bool hasHostDatabasePath = !string.IsNullOrWhiteSpace(hostDatabasePath);
+        string baseDirectory = hasHostDatabasePath
+            ? Path.GetDirectoryName(hostDatabasePath) ?? Directory.GetCurrentDirectory()
+            : Directory.GetCurrentDirectory();
         string resolvedPath = ResolvePath(rawPath, baseDirectory, $"linked table '{link.Name}'");
-        bool escapesHostDatabaseDirectory =
-            !Path.IsPathRooted(rawPath) &&
-            !IsPathWithinDirectory(resolvedPath, baseDirectory);
-
+        bool isWithinHostDatabaseDirectory = hasHostDatabasePath && IsPathWithinDirectory(resolvedPath, baseDirectory);
         bool callbackApproved = linkedSourcePathValidator?.Invoke(link, resolvedPath) ?? false;
 
-        if (escapesHostDatabaseDirectory && !callbackApproved)
+        if (!hasHostDatabasePath && linkedSourcePathAllowlist.Count == 0 && !callbackApproved)
         {
             throw new UnauthorizedAccessException(
-                $"Linked table '{link.Name}' source path '{link.SourceDatabasePath}' escapes the host database directory. " +
+                $"Linked table '{link.Name}' source path '{link.SourceDatabasePath}' cannot be resolved safely because the host database was opened from a stream. " +
+                "Use AccessReaderOptions.LinkedSourcePathAllowlist or LinkedSourcePathValidator to explicitly allow trusted paths.");
+        }
+
+        if (!isWithinHostDatabaseDirectory && linkedSourcePathAllowlist.Count == 0 && !callbackApproved)
+        {
+            throw new UnauthorizedAccessException(
+                $"Linked table '{link.Name}' source path '{link.SourceDatabasePath}' is outside the host database directory. " +
                 "Use AccessReaderOptions.LinkedSourcePathValidator to explicitly allow trusted paths.");
         }
 

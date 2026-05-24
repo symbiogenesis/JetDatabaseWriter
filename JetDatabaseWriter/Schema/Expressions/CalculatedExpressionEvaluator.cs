@@ -13,6 +13,14 @@ using JetDatabaseWriter.Schema.Models;
 internal static class CalculatedExpressionEvaluator
 {
     private const string PlaceholderPrefix = "__JdwCalcCol";
+    private const int MaxExpressionLength = 4096;
+    private const int MaxNormalizedExpressionLength = 8192;
+    private const int MaxExpressionNesting = 128;
+    private const int MaxColumnReferences = 1024;
+    private const int MaxFunctionArguments = 256;
+    private const int MaxGeneratedTextLength = 32768;
+    private const int MaxFormatDecimalDigits = 28;
+    private static readonly TimeSpan LikeRegexTimeout = TimeSpan.FromMilliseconds(100);
 
     public static void Apply(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, bool force)
     {
@@ -41,7 +49,9 @@ internal static class CalculatedExpressionEvaluator
 
         public static Plan Parse(string expression)
         {
+            ValidateExpressionShape(expression, MaxExpressionLength, "Calculated-column expression");
             string normalized = NormalizeExpression(expression, out Dictionary<string, string> placeholderToColumn);
+            ValidateExpressionShape(normalized, MaxNormalizedExpressionLength, "Normalized calculated-column expression");
             var parseContext = new ParseContext(placeholderToColumn);
             try
             {
@@ -219,7 +229,7 @@ internal static class CalculatedExpressionEvaluator
             object rightValue = right.Evaluate(context, plan);
             return operation switch
             {
-                BinaryOperation.Concat => ToText(leftValue) + ToText(rightValue),
+                BinaryOperation.Concat => ConcatText(leftValue, rightValue),
                 BinaryOperation.Addition => EvaluateNumeric(leftValue, rightValue, static (l, r) => l + r),
                 BinaryOperation.Subtraction => EvaluateNumeric(leftValue, rightValue, static (l, r) => l - r),
                 BinaryOperation.Multiplication => EvaluateNumeric(leftValue, rightValue, static (l, r) => l * r),
@@ -265,6 +275,7 @@ internal static class CalculatedExpressionEvaluator
         public override object Evaluate(EvaluationContext context, Plan plan)
         {
             string upperName = NormalizeFunctionName(name);
+            ValidateFunctionArgumentCount(upperName, args.Count);
             object Arg(int index) => index < args.Count ? args[index].Evaluate(context, plan) : DBNull.Value;
 
             switch (upperName)
@@ -586,7 +597,7 @@ internal static class CalculatedExpressionEvaluator
                     return ReplaceText(args, Arg);
                 case "SPACE":
                     RequireArgCount(upperName, args.Count, 1, 1);
-                    return new string(' ', Math.Max(0, checked((int)ToDecimal(Arg(0)))));
+                    return RepeatChar(checked((int)ToDecimal(Arg(0))), " ");
                 case "STRCOMP":
                     RequireArgCount(upperName, args.Count, 2, 3);
                     return Math.Sign(string.Compare(ToText(Arg(0)), ToText(Arg(1)), CompareOptions(args.Count > 2 ? Arg(2) : null)));
@@ -596,6 +607,7 @@ internal static class CalculatedExpressionEvaluator
                 case "STRREVERSE":
                     RequireArgCount(upperName, args.Count, 1, 1);
                     char[] chars = ToText(Arg(0)).ToCharArray();
+                    EnsureGeneratedTextLength(chars.Length);
                     Array.Reverse(chars);
                     return new string(chars);
                 case "STRCONV":
@@ -712,9 +724,9 @@ internal static class CalculatedExpressionEvaluator
 
         public ExpressionNode ExternalReference3D(ParseContext context, SymbolRange range, int workbookIndex, string firstSheet, string lastSheet, ReferenceArea reference) => new UnsupportedNode("Calculated-column external references are not supported.");
 
-        public ExpressionNode Function(ParseContext context, SymbolRange range, ReadOnlySpan<char> functionName, IReadOnlyList<ExpressionNode> args) => new FunctionNode(functionName.ToString(), args);
+        public ExpressionNode Function(ParseContext context, SymbolRange range, ReadOnlySpan<char> functionName, IReadOnlyList<ExpressionNode> args) => CreateFunctionNode(functionName.ToString(), args);
 
-        public ExpressionNode Function(ParseContext context, SymbolRange range, string prefix, ReadOnlySpan<char> functionName, IReadOnlyList<ExpressionNode> args) => new FunctionNode(functionName.ToString(), args);
+        public ExpressionNode Function(ParseContext context, SymbolRange range, string prefix, ReadOnlySpan<char> functionName, IReadOnlyList<ExpressionNode> args) => CreateFunctionNode(functionName.ToString(), args);
 
         public ExpressionNode ExternalFunction(ParseContext context, SymbolRange range, int workbookIndex, string prefix, ReadOnlySpan<char> functionName, IReadOnlyList<ExpressionNode> args) => new UnsupportedNode("Calculated-column external functions are not supported.");
 
@@ -743,6 +755,12 @@ internal static class CalculatedExpressionEvaluator
         public ExpressionNode Unary(ParseContext context, SymbolRange range, UnaryOperation operation, ExpressionNode node) => new UnaryNode(operation, node);
 
         public ExpressionNode Nested(ParseContext context, SymbolRange range, ExpressionNode node) => node;
+
+        private static FunctionNode CreateFunctionNode(string functionName, IReadOnlyList<ExpressionNode> args)
+        {
+            ValidateFunctionArgumentCount(functionName, args.Count);
+            return new FunctionNode(functionName, args);
+        }
     }
 
     private static string NormalizeExpression(string expression, out Dictionary<string, string> placeholderToColumn)
@@ -932,6 +950,121 @@ internal static class CalculatedExpressionEvaluator
     {
         string upperName = name.ToUpperInvariant();
         return upperName.EndsWith('$') ? upperName.Substring(0, upperName.Length - 1) : upperName;
+    }
+
+    private static void ValidateExpressionShape(string expression, int maxLength, string description)
+    {
+        if (expression.Length > maxLength)
+        {
+            throw new ArgumentException(
+                $"{description} length {expression.Length} exceeds the safety limit of {maxLength} characters.",
+                nameof(expression));
+        }
+
+        int nestingDepth = 0;
+        int columnReferences = 0;
+        for (int charIndex = 0; charIndex < expression.Length; charIndex++)
+        {
+            char current = expression[charIndex];
+            if (current == '"')
+            {
+                charIndex = SkipQuotedString(expression, charIndex);
+                continue;
+            }
+
+            if (current == '[')
+            {
+                columnReferences++;
+                if (columnReferences > MaxColumnReferences)
+                {
+                    throw new ArgumentException(
+                        $"{description} references more than {MaxColumnReferences} columns.",
+                        nameof(expression));
+                }
+
+                int endBracket = expression.IndexOf(']', charIndex + 1);
+                if (endBracket >= 0)
+                {
+                    charIndex = endBracket;
+                }
+
+                continue;
+            }
+
+            if (current == '(')
+            {
+                nestingDepth++;
+                if (nestingDepth > MaxExpressionNesting)
+                {
+                    throw new ArgumentException(
+                        $"{description} nesting depth exceeds the safety limit of {MaxExpressionNesting}.",
+                        nameof(expression));
+                }
+            }
+            else if (current == ')' && nestingDepth > 0)
+            {
+                nestingDepth--;
+            }
+        }
+    }
+
+    private static int SkipQuotedString(string expression, int quoteIndex)
+    {
+        for (int charIndex = quoteIndex + 1; charIndex < expression.Length; charIndex++)
+        {
+            if (expression[charIndex] != '"')
+            {
+                continue;
+            }
+
+            if (charIndex + 1 < expression.Length && expression[charIndex + 1] == '"')
+            {
+                charIndex++;
+                continue;
+            }
+
+            return charIndex;
+        }
+
+        return expression.Length - 1;
+    }
+
+    private static void ValidateFunctionArgumentCount(string functionName, int actual)
+    {
+        if (actual > MaxFunctionArguments)
+        {
+            throw new ArgumentException(
+                $"Calculated-column function '{functionName}' has {actual} arguments, exceeding the safety limit of {MaxFunctionArguments}.");
+        }
+    }
+
+    private static void EnsureGeneratedTextLength(long length)
+    {
+        if (length > MaxGeneratedTextLength)
+        {
+            throw new ArgumentException(
+                $"Calculated-column generated text length {length} exceeds the safety limit of {MaxGeneratedTextLength} characters.");
+        }
+    }
+
+    private static string ConcatText(object left, object right)
+    {
+        string leftText = ToText(left);
+        string rightText = ToText(right);
+        EnsureGeneratedTextLength((long)leftText.Length + rightText.Length);
+        return leftText + rightText;
+    }
+
+    private static void AppendGeneratedText(StringBuilder builder, string value)
+    {
+        EnsureGeneratedTextLength((long)builder.Length + value.Length);
+        builder.Append(value);
+    }
+
+    private static void AppendGeneratedText(StringBuilder builder, string value, int startIndex, int count)
+    {
+        EnsureGeneratedTextLength((long)builder.Length + count);
+        builder.Append(value, startIndex, count);
     }
 
     private static bool TryGetBuiltinConstant(string name, out object value)
@@ -1212,9 +1345,17 @@ internal static class CalculatedExpressionEvaluator
         builder.Append('$');
         try
         {
-            return Regex.IsMatch(text, builder.ToString(), RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+            return Regex.IsMatch(
+                text,
+                builder.ToString(),
+                RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant,
+                LikeRegexTimeout);
         }
         catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (RegexMatchTimeoutException)
         {
             return false;
         }
@@ -1381,8 +1522,8 @@ internal static class CalculatedExpressionEvaluator
 
         string prefix = text.Substring(0, start - 1);
         string tail = text.Substring(start - 1);
-        var builder = new StringBuilder(prefix.Length + tail.Length);
-        builder.Append(prefix);
+        var builder = new StringBuilder(Math.Min(MaxGeneratedTextLength, prefix.Length + tail.Length));
+        AppendGeneratedText(builder, prefix);
         int replacements = 0;
         int position = 0;
         while (position < tail.Length)
@@ -1390,12 +1531,12 @@ internal static class CalculatedExpressionEvaluator
             int found = tail.IndexOf(search, position, comparison);
             if (found < 0 || (count >= 0 && replacements >= count))
             {
-                builder.Append(tail, position, tail.Length - position);
+                AppendGeneratedText(builder, tail, position, tail.Length - position);
                 break;
             }
 
-            builder.Append(tail, position, found - position);
-            builder.Append(replacement);
+            AppendGeneratedText(builder, tail, position, found - position);
+            AppendGeneratedText(builder, replacement);
             position = found + search.Length;
             replacements++;
         }
@@ -1414,7 +1555,15 @@ internal static class CalculatedExpressionEvaluator
     }
 
     private static string RepeatChar(int count, string value)
-        => count <= 0 ? string.Empty : new string(string.IsNullOrEmpty(value) ? '\0' : value[0], count);
+    {
+        if (count <= 0)
+        {
+            return string.Empty;
+        }
+
+        EnsureGeneratedTextLength(count);
+        return new string(string.IsNullOrEmpty(value) ? '\0' : value[0], count);
+    }
 
     private static string StrConv(string text, int conversion)
     {
@@ -1524,7 +1673,8 @@ internal static class CalculatedExpressionEvaluator
         decimal displayValue = percent ? value * 100m : value;
         string prefix = currency ? CultureInfo.InvariantCulture.NumberFormat.CurrencySymbol : string.Empty;
         string suffix = percent ? "%" : string.Empty;
-        return prefix + displayValue.ToString("N" + Math.Max(0, decimalDigits).ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture) + suffix;
+        int safeDecimalDigits = Math.Clamp(decimalDigits, 0, MaxFormatDecimalDigits);
+        return prefix + displayValue.ToString("N" + safeDecimalDigits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture) + suffix;
     }
 
     private static string FormatDateTime(DateTime value, int formatType)
@@ -1708,10 +1858,11 @@ internal static class CalculatedExpressionEvaluator
 
     private static void RequireArgCount(string functionName, int actual, int min, int max)
     {
-        if (actual < min || actual > max)
+        int effectiveMax = Math.Min(max, MaxFunctionArguments);
+        if (actual < min || actual > effectiveMax)
         {
             throw new ArgumentException(
-                $"Calculated-column function '{functionName}' expects {min}" + (min == max ? string.Empty : $"..{max}") + $" argument(s), got {actual}.");
+                $"Calculated-column function '{functionName}' expects {min}" + (min == effectiveMax ? string.Empty : $"..{effectiveMax}") + $" argument(s), got {actual}.");
         }
     }
 
@@ -2030,6 +2181,7 @@ internal static class CalculatedExpressionEvaluator
                 do
                 {
                     arguments.Add(ParseExpression(0));
+                    ValidateFunctionArgumentCount(name, arguments.Count);
                     if (Peek().Kind != TokenKind.Comma)
                     {
                         break;
