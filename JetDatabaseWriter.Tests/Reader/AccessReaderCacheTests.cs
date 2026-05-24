@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Reader;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -170,6 +171,38 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
                 (tableName, rowCount, "M"),
             },
             TestContext.Current.CancellationToken);
+        var options = new AccessReaderOptions
+        {
+            PageCacheSize = 16,
+            UseLockFile = false,
+        };
+
+        await using var reader = await AccessReader.OpenAsync(
+            stream,
+            options,
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
+
+        object? ownedDataPageIndex = ReadPrivateField(reader, "_ownedDataPageIndex");
+        Assert.Equal(rowCount, actualRows);
+        Assert.NotNull(ownedDataPageIndex);
+        Assert.Null(ReadPrivateField(ownedDataPageIndex!, "_value"));
+    }
+
+    [Fact]
+    public async Task Rows_WithReferenceOwnedUsageMap_DoesNotBuildWholeFileOwnerIndex()
+    {
+        const string tableName = "ReferenceMappedRows";
+        const int rowCount = 96;
+        await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
+            new List<(string Name, int RowCount, string Prefix)>
+            {
+                (tableName, rowCount, "R"),
+            },
+            TestContext.Current.CancellationToken);
+        await ConvertOwnedUsageMapToReferenceAsync(stream, tableName, TestContext.Current.CancellationToken);
         var options = new AccessReaderOptions
         {
             PageCacheSize = 16,
@@ -362,6 +395,106 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
         return string.Join("|", values);
     }
+
+    private static async ValueTask ConvertOwnedUsageMapToReferenceAsync(MemoryStream stream, string tableName, CancellationToken cancellationToken)
+    {
+        long tdefPage;
+        int pageSize;
+        stream.Position = 0;
+        await using (var reader = await AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken))
+        {
+            pageSize = reader.PageSize;
+            tdefPage = await ResolveTdefPageAsync(reader, tableName, cancellationToken);
+        }
+
+        byte[] patched = ConvertOwnedUsageMapToReference(stream.ToArray(), pageSize, tdefPage);
+        stream.SetLength(0);
+        stream.Write(patched, 0, patched.Length);
+        stream.Position = 0;
+    }
+
+    private static async ValueTask<long> ResolveTdefPageAsync(AccessReader reader, string tableName, CancellationToken cancellationToken)
+    {
+        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("MSysObjects", cancellationToken);
+        int idIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Id", StringComparison.OrdinalIgnoreCase));
+        int nameIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        Assert.True(idIndex >= 0);
+        Assert.True(nameIndex >= 0);
+
+        await foreach (object[] row in reader.Rows("MSysObjects", cancellationToken: cancellationToken))
+        {
+            if (row[nameIndex] is string name && string.Equals(name, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                return Convert.ToInt64(row[idIndex], CultureInfo.InvariantCulture);
+            }
+        }
+
+        throw new InvalidOperationException($"Could not resolve TDEF page for table '{tableName}'.");
+    }
+
+    private static byte[] ConvertOwnedUsageMapToReference(byte[] fileBytes, int pageSize, long tdefPage)
+    {
+        const int DataPageRowsStart = 14;
+        const int OwnedPagesPointerOffset = 0x37;
+        const int InlineBitmapOffset = 5;
+        const int ReferenceMapPointerOffset = 1;
+        const int ReferenceMapBitmapOffset = 4;
+        const int UsageMapRowSize = 69;
+        const byte InlineMapType = 0x00;
+        const byte ReferenceMapType = 0x01;
+        const byte UsageMapPageType = 0x05;
+
+        int tdefOffset = checked((int)(tdefPage * pageSize));
+        int usageMapRow = fileBytes[tdefOffset + OwnedPagesPointerOffset];
+        int usageMapPage = ReadUInt24(fileBytes, tdefOffset + OwnedPagesPointerOffset + 1);
+        int usageMapOffset = checked(usageMapPage * pageSize);
+        int rowOffsetPosition = usageMapOffset + DataPageRowsStart + (usageMapRow * 2);
+        int rowStart = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(rowOffsetPosition, 2)) & 0x1FFF;
+        int rowAbsoluteStart = usageMapOffset + rowStart;
+        Assert.Equal(InlineMapType, fileBytes[rowAbsoluteStart]);
+
+        int basePage = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(rowAbsoluteStart + 1, 4));
+        var dataPages = new List<int>();
+        for (int bitIndex = 0; bitIndex < 512; bitIndex++)
+        {
+            int byteOffset = rowAbsoluteStart + InlineBitmapOffset + (bitIndex / 8);
+            byte bitMask = (byte)(1 << (bitIndex % 8));
+            if ((fileBytes[byteOffset] & bitMask) != 0)
+            {
+                dataPages.Add(basePage + bitIndex);
+            }
+        }
+
+        Assert.NotEmpty(dataPages);
+
+        int referencePageNumber = fileBytes.Length / pageSize;
+        Array.Resize(ref fileBytes, fileBytes.Length + pageSize);
+        int referencePageOffset = referencePageNumber * pageSize;
+        fileBytes[referencePageOffset] = UsageMapPageType;
+
+        int pagesPerReferenceMapPage = (pageSize - ReferenceMapBitmapOffset) * 8;
+        foreach (int dataPage in dataPages)
+        {
+            Assert.InRange(dataPage, 1, pagesPerReferenceMapPage - 1);
+            int bitIndex = dataPage % pagesPerReferenceMapPage;
+            fileBytes[referencePageOffset + ReferenceMapBitmapOffset + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
+        }
+
+        Array.Clear(fileBytes, rowAbsoluteStart, UsageMapRowSize);
+        fileBytes[rowAbsoluteStart] = ReferenceMapType;
+        BinaryPrimitives.WriteInt32LittleEndian(
+            fileBytes.AsSpan(rowAbsoluteStart + ReferenceMapPointerOffset, 4),
+            referencePageNumber);
+
+        return fileBytes;
+    }
+
+    private static int ReadUInt24(byte[] buffer, int offset)
+        => buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16);
 
     private static T ReadRequiredPrivateField<T>(AccessBase instance, string fieldName)
         where T : class =>

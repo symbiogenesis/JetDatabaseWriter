@@ -165,9 +165,10 @@ Likely cost centers:
 
 The current benchmarks isolate warmed row decode, but a real first table scan can
 pay for owned-page discovery before yielding rows. `GetOwnedDataPagesAsync` now
-uses recognized per-table INLINE owned-page maps when possible, but unfamiliar or
-corrupt usage-map shapes still fall back to `_ownedDataPageIndex`, which builds
-by scanning every page from page 3 to EOF and checking data-page ownership.
+uses recognized per-table INLINE and REFERENCE owned-page maps when possible,
+but unfamiliar or corrupt usage-map shapes still fall back to
+`_ownedDataPageIndex`, which builds by scanning every page from page 3 to EOF and
+checking data-page ownership.
 
 Primary code path:
 
@@ -177,9 +178,9 @@ Primary code path:
 
 Remaining cost centers:
 
-- REFERENCE-form or otherwise unfamiliar usage maps still use the whole-file
-  fallback, so their first table read is O(total file pages), not O(table pages).
-- INLINE-map discovery validates mapped data pages before scanning rows, so it
+- Unfamiliar or corrupt usage maps still use the whole-file fallback, so their
+  first table read is O(total file pages), not O(table pages).
+- Usage-map discovery validates mapped data pages before scanning rows, so it
   scales with table pages but still adds a cold verification pass.
 - This cost is not represented by the `OpenAsync` benchmark because the index is
   lazily initialized.
@@ -343,13 +344,16 @@ Completed changes:
   first, parses type-0 INLINE usage-map rows, validates mapped data pages against
   their TDEF back-pointer, and caches successful per-table results without
   initializing the whole-file owner index.
+- REFERENCE-form owned-page maps are also parsed by following type-1 map-page
+  pointers to page-type `0x05` bitmap pages, with the same data-page back-pointer
+  validation and fallback behavior.
 
-Candidate changes:
+Remaining measurement:
 
-- Implement REFERENCE-form per-table usage-map parsing for owned data pages and
-  use it in `GetOwnedDataPagesAsync` when the map shape is recognized.
-- Keep the current whole-file owner scan as a fallback for unusual or corrupt
-  databases.
+- Refresh cold first-scan benchmarks to quantify the difference between
+  recognized usage maps and the whole-file fallback on large files.
+- Keep the current whole-file owner scan available as a safety fallback for
+  unusual or corrupt databases.
 
 Risks and constraints:
 
@@ -360,8 +364,8 @@ Risks and constraints:
 Acceptance criteria:
 
 - Cold first table scan time scales with table pages, not total database pages,
-  for databases with recognized usage maps.
-- Full-file fallback behavior remains available and tested.
+  for databases with recognized INLINE or REFERENCE usage maps.
+- Full-file fallback behavior remains available for unfamiliar or invalid maps.
 
 ### Phase 5: make parallel page reads visible to table scans
 
