@@ -160,6 +160,37 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     }
 
     [Fact]
+    public async Task Rows_WithInlineOwnedUsageMap_DoesNotBuildWholeFileOwnerIndex()
+    {
+        const string tableName = "MappedRows";
+        const int rowCount = 96;
+        await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
+            new List<(string Name, int RowCount, string Prefix)>
+            {
+                (tableName, rowCount, "M"),
+            },
+            TestContext.Current.CancellationToken);
+        var options = new AccessReaderOptions
+        {
+            PageCacheSize = 16,
+            UseLockFile = false,
+        };
+
+        await using var reader = await AccessReader.OpenAsync(
+            stream,
+            options,
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
+
+        object? ownedDataPageIndex = ReadPrivateField(reader, "_ownedDataPageIndex");
+        Assert.Equal(rowCount, actualRows);
+        Assert.NotNull(ownedDataPageIndex);
+        Assert.Null(ReadPrivateField(ownedDataPageIndex!, "_value"));
+    }
+
+    [Fact]
     public async Task OpenUncachedAsync_ReturnsEquivalentRowsWithoutAllocatingPageCaches()
     {
         await using MemoryStream source = await CreateCacheExerciseDatabaseAsync(
@@ -336,7 +367,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         where T : class =>
         Assert.IsType<T>(ReadPrivateField(instance, fieldName));
 
-    private static object? ReadPrivateField(AccessBase instance, string fieldName)
+    private static object? ReadPrivateField(object instance, string fieldName)
     {
         Type? currentType = instance.GetType();
         while (currentType is not null)

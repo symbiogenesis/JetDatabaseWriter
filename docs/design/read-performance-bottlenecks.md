@@ -164,9 +164,10 @@ Likely cost centers:
 ### 5. Cold owned-page discovery on large files
 
 The current benchmarks isolate warmed row decode, but a real first table scan can
-pay for whole-file owner indexing before yielding rows. `GetOwnedDataPagesAsync`
-uses `_ownedDataPageIndex`, which currently builds by scanning every page from
-page 3 to EOF and checking data-page ownership.
+pay for owned-page discovery before yielding rows. `GetOwnedDataPagesAsync` now
+uses recognized per-table INLINE owned-page maps when possible, but unfamiliar or
+corrupt usage-map shapes still fall back to `_ownedDataPageIndex`, which builds
+by scanning every page from page 3 to EOF and checking data-page ownership.
 
 Primary code path:
 
@@ -174,11 +175,12 @@ Primary code path:
 - `AccessReader.BuildOwnedDataPageIndexAsync`
 - `AccessReader.ReadPageCachedAsync`
 
-Likely cost centers:
+Remaining cost centers:
 
-- The first table read is O(total file pages), not O(table pages).
-- The index builder uses the normal page cache, so a large cold scan can churn
-  the cache before actual row enumeration begins.
+- REFERENCE-form or otherwise unfamiliar usage maps still use the whole-file
+  fallback, so their first table read is O(total file pages), not O(table pages).
+- INLINE-map discovery validates mapped data pages before scanning rows, so it
+  scales with table pages but still adds a cold verification pass.
 - This cost is not represented by the `OpenAsync` benchmark because the index is
   lazily initialized.
 
@@ -337,11 +339,15 @@ Completed changes:
 - The full-file owner-index fallback now uses uncached page reads and returns
   each pooled page immediately, so the classification pass no longer fills or
   churns the normal reader LRU before the actual table scan begins.
+- `GetOwnedDataPagesAsync` now attempts to read the TDEF `owned_pages` pointer
+  first, parses type-0 INLINE usage-map rows, validates mapped data pages against
+  their TDEF back-pointer, and caches successful per-table results without
+  initializing the whole-file owner index.
 
 Candidate changes:
 
-- Implement per-table usage-map parsing for owned data pages and use it in
-  `GetOwnedDataPagesAsync` when the map shape is recognized.
+- Implement REFERENCE-form per-table usage-map parsing for owned data pages and
+  use it in `GetOwnedDataPagesAsync` when the map shape is recognized.
 - Keep the current whole-file owner scan as a fallback for unusual or corrupt
   databases.
 

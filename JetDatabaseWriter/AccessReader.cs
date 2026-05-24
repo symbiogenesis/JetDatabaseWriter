@@ -78,6 +78,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     private readonly AsyncReentrantOperationGate _operationGate = new();
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeReaderResourcesAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private readonly AsyncLazyInitializer<Dictionary<long, long[]>> _ownedDataPageIndex;
+    private readonly object _ownedDataPagesCacheLock = new();
+    private readonly Dictionary<long, long[]> _ownedDataPagesByTdef = [];
     private readonly LockFileCoordinator _lockFile;
     private readonly bool _strictParsing;
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync, invoked via LockFileCoordinator.DisposeAfterAsync.")]
@@ -2853,6 +2855,23 @@ public sealed class AccessReader : AccessBase, IAccessReader
         return false;
     }
 
+    private static bool TryReadUsageMapPointer(byte[] tdefPage, int pointerOffset, out int rowIndex, out int usageMapPageNumber)
+    {
+        rowIndex = 0;
+        usageMapPageNumber = 0;
+        if (pointerOffset < 0 || pointerOffset + 3 >= tdefPage.Length)
+        {
+            return false;
+        }
+
+        rowIndex = tdefPage[pointerOffset];
+        usageMapPageNumber = tdefPage[pointerOffset + 1]
+            | (tdefPage[pointerOffset + 2] << 8)
+            | (tdefPage[pointerOffset + 3] << 16);
+
+        return usageMapPageNumber > 0;
+    }
+
     private static async ValueTask ObserveAbandonedTableScanReadAsync(Task<TableScanPage> task)
     {
         if (task.IsCompleted)
@@ -3100,10 +3119,171 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return [];
         }
 
+        if (ActiveJournal is null && TryGetCachedOwnedDataPages(tdefPage, out long[] cachedPages))
+        {
+            return cachedPages;
+        }
+
+        long[]? mappedPages = await TryGetOwnedDataPagesFromUsageMapAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (mappedPages is not null)
+        {
+            if (ActiveJournal is null)
+            {
+                CacheOwnedDataPages(tdefPage, mappedPages);
+            }
+
+            return mappedPages;
+        }
+
         Dictionary<long, long[]> pageIndex = await _ownedDataPageIndex.GetAsync(cancellationToken).ConfigureAwait(false);
         return pageIndex.TryGetValue(tdefPage, out long[]? pageNumbers)
             ? pageNumbers
             : [];
+    }
+
+    private bool TryGetCachedOwnedDataPages(long tdefPage, out long[] pageNumbers)
+    {
+        lock (_ownedDataPagesCacheLock)
+        {
+            return _ownedDataPagesByTdef.TryGetValue(tdefPage, out pageNumbers!);
+        }
+    }
+
+    private void CacheOwnedDataPages(long tdefPage, long[] pageNumbers)
+    {
+        lock (_ownedDataPagesCacheLock)
+        {
+            _ownedDataPagesByTdef[tdefPage] = pageNumbers;
+        }
+    }
+
+    private async ValueTask<long[]?> TryGetOwnedDataPagesFromUsageMapAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        long totalPages = _stream.Length / _pgSz;
+        if (tdefPage <= 0 || tdefPage >= totalPages)
+        {
+            return null;
+        }
+
+        byte[] tdef = await ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            const int OwnedPagesPointerOffset = 0x37;
+            if (tdef[0] != 0x02 || !TryReadUsageMapPointer(tdef, OwnedPagesPointerOffset, out int usageMapRow, out int usageMapPage))
+            {
+                return null;
+            }
+
+            uint declaredRows = tdef.Length > 20 ? Ru32(tdef, 16) : 0;
+            return await TryReadInlineOwnedDataPagesAsync(
+                tdefPage,
+                usageMapPage,
+                usageMapRow,
+                declaredRows,
+                totalPages,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReturnPage(tdef);
+        }
+    }
+
+    private async ValueTask<long[]?> TryReadInlineOwnedDataPagesAsync(
+        long tdefPage,
+        int usageMapPageNumber,
+        int usageMapRow,
+        uint declaredRows,
+        long totalPages,
+        CancellationToken cancellationToken)
+    {
+        if (usageMapPageNumber <= 0 || usageMapPageNumber >= totalPages)
+        {
+            return null;
+        }
+
+        byte[] usageMapPage = await ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (usageMapPage[0] != 0x01 || !TryFindLiveRowBound(usageMapPage, usageMapPageNumber, usageMapRow, out RowBound rowBound))
+            {
+                return null;
+            }
+
+            if (rowBound.RowSize <= 5 || rowBound.RowStart < 0 || rowBound.RowStart + rowBound.RowSize > usageMapPage.Length)
+            {
+                return null;
+            }
+
+            const byte InlineMapType = 0x00;
+            const int InlineBitmapOffset = 5;
+            if (usageMapPage[rowBound.RowStart] != InlineMapType)
+            {
+                return null;
+            }
+
+            int startPage = Ri32(usageMapPage, rowBound.RowStart + 1);
+            if (startPage < 0)
+            {
+                return null;
+            }
+
+            int bitCapacity = (rowBound.RowSize - InlineBitmapOffset) * 8;
+            var mappedPages = new List<long>();
+            for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
+            {
+                int byteOffset = rowBound.RowStart + InlineBitmapOffset + (bitIndex / 8);
+                byte bitMask = (byte)(1 << (bitIndex % 8));
+                if ((usageMapPage[byteOffset] & bitMask) == 0)
+                {
+                    continue;
+                }
+
+                long pageNumber = (long)startPage + bitIndex;
+                if (pageNumber <= 0 || pageNumber >= totalPages)
+                {
+                    return null;
+                }
+
+                mappedPages.Add(pageNumber);
+            }
+
+            if (mappedPages.Count == 0)
+            {
+                return declaredRows == 0 ? [] : null;
+            }
+
+            return await ValidateOwnedDataPagesAsync(tdefPage, mappedPages, cancellationToken).ConfigureAwait(false)
+                ? [.. mappedPages]
+                : null;
+        }
+        finally
+        {
+            ReturnPage(usageMapPage);
+        }
+    }
+
+    private async ValueTask<bool> ValidateOwnedDataPagesAsync(long tdefPage, List<long> pageNumbers, CancellationToken cancellationToken)
+    {
+        foreach (long pageNumber in pageNumbers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != 0x01 || Ri32(page, _dataPage.TDefOff) != tdefPage)
+                {
+                    return false;
+                }
+            }
+            finally
+            {
+                ReturnPage(page);
+            }
+        }
+
+        return true;
     }
 
     private async ValueTask<Dictionary<long, long[]>> BuildOwnedDataPageIndexAsync(CancellationToken cancellationToken)
