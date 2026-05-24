@@ -476,16 +476,47 @@ public sealed class DaoStorageMaintenanceTests
         AccessRoundTripEnvironment.CompactResult preCompactDao = session.RunDaoDatabaseScript(
             session.SourcePath,
             """
-            $rs = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [SM_AdvancedIndex]', 4)
+            $lookup = $null
+            $rs = $null
             try {
+                $lookup = $db.OpenRecordset('SELECT [Code], [Score], [GuidKey] FROM [SM_AdvancedIndex] WHERE [Id] = 42', 4)
+                if ($lookup.EOF) { throw 'Target row 42 was not found before DAO advanced-index seek probes.' }
+                $codeKey = $lookup.Fields('Code').Value
+                $scoreKey = $lookup.Fields('Score').Value
+                $guidKey = $lookup.Fields('GuidKey').Value
+                $lookup.Close()
+                $lookup = $null
+
+                $rs = $db.OpenRecordset('SELECT COUNT(*) AS Cnt FROM [SM_AdvancedIndex]', 4)
                 Write-Output "ROWCOUNT=$($rs.Fields('Cnt').Value)"
-            } finally {
                 $rs.Close()
+                $rs = $null
+
+                $rs = $db.OpenRecordset('SM_AdvancedIndex', 1)
+                $rs.Index = 'IX_CodeScore'
+                $rs.Seek('=', $codeKey, $scoreKey)
+                if ($rs.NoMatch) { throw 'IX_CodeScore seek did not find row 42.' }
+                Write-Output "DAO_SEEK_IX_CodeScore=$($rs.Fields('Id').Value)"
+                $rs.Close()
+                $rs = $null
+
+                $rs = $db.OpenRecordset('SM_AdvancedIndex', 1)
+                $rs.Index = 'IX_GuidKey'
+                $rs.Seek('=', $guidKey)
+                if ($rs.NoMatch) { throw 'IX_GuidKey seek did not find row 42.' }
+                Write-Output "DAO_SEEK_IX_GuidKey=$($rs.Fields('Id').Value)"
+                $rs.Close()
+                $rs = $null
+            } finally {
+                if ($rs -ne $null) { $rs.Close() }
+                if ($lookup -ne $null) { $lookup.Close() }
             }
             """,
             CompactTimeout);
-        Assert.Equal(0, preCompactDao.ExitCode);
+        AssertDaoSuccess(preCompactDao, "DAO pre-compact advanced index seek probe");
         Assert.Contains($"ROWCOUNT={AdvancedIndexRows}", preCompactDao.StdOut, StringComparison.Ordinal);
+        Assert.Contains("DAO_SEEK_IX_CodeScore=42", preCompactDao.StdOut, StringComparison.Ordinal);
+        Assert.Contains("DAO_SEEK_IX_GuidKey=42", preCompactDao.StdOut, StringComparison.Ordinal);
 
         session.RunDaoCompact();
 
