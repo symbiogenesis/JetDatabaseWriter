@@ -13,7 +13,7 @@ using System.Security.Cryptography;
 /// across every page (callers must serialize access — the existing per-reader
 /// I/O gate already provides this).
 /// </summary>
-public sealed class PageDecryptionKeys : IDisposable
+internal sealed class PageDecryptionKeys : IDisposable
 {
     private byte[]? _aesPageKey;
     private Aes? _aes;
