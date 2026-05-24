@@ -52,7 +52,7 @@ internal static class LinkedOdbcLvPropProbe
         _ = sb.AppendLine("- Command: `dotnet run --project JetDatabaseWriter.FormatProbe -- linked-odbc-lvprop`");
         _ = sb.AppendLine("- Optional custom input: set `DIAG_LINKED_ODBC_LVPROP_PATH` to an Access-authored linked-table database.");
         _ = sb.AppendLine();
-        _ = sb.AppendLine("This probe exists because Type 4 ODBC linked tables need a real cached-schema `MSysObjects.LvProp` property block for DAO-compatible output. It keeps Access-authored ODBC caches visible while the writer-generated LvProp path is validated against more source schemas.");
+        _ = sb.AppendLine("This probe keeps Access-authored Type 4 ODBC `MSysObjects.LvProp` caches visible so generated writer output can be compared against real schema-cache shapes.");
         _ = sb.AppendLine();
     }
 
@@ -60,7 +60,7 @@ internal static class LinkedOdbcLvPropProbe
     {
         _ = sb.AppendLine("## Upstream implementation check");
         _ = sb.AppendLine();
-        _ = sb.AppendLine("| Project | Relevant code | Finding | Gap for generated ODBC LvProp | ");
+        _ = sb.AppendLine("| Project | Relevant code | Finding | Upstream generation gap | ");
         _ = sb.AppendLine("|---|---|---|---|");
         _ = sb.AppendLine("| mdbtools | `src/libmdb/props.c`, `src/util/mdb-prop.c`, `src/libmdb/catalog.c` | Parses `KKD\\0`/`MR2\\0` chunks from `MSysObjects.LvProp`, exposes table/column properties, and has a property dumper. | No serializer or linked ODBC schema-cache generator was found; linked-table support is catalog listing level. |");
         _ = sb.AppendLine("| Jackcess | `DatabaseImpl`, `TableMetaData`, `PropertyMaps`, `LinkedODBCTableInfo` | Recognizes Type 4 linked ODBC tables, reads `Connect`/`ForeignName`, and reads/writes generic property maps. | Public linked-table creation targets Type 6 Access links; no Type 4 ODBC link creator or `NameMap`/schema-cache synthesizer was found. |");

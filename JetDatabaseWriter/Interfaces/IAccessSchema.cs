@@ -123,10 +123,11 @@ public interface IAccessSchema : IAccessBase
     /// stored locally. Managed readers expose the catalog metadata but do not open the ODBC
     /// source. Because this overload receives no source columns, it writes a real
     /// table-level <c>MSysObjects.LvProp</c> property block but cannot cache the remote
-    /// column schema. Use the overload that accepts source columns or
-    /// <c>cachedSchemaLvProp</c> when Access/DAO-compatible linked-schema metadata is
-    /// required. The connection string must use the Access ODBC link format and is
-    /// expected to begin with the literal prefix <c>"ODBC;"</c>.
+    /// column schema. Use the source-column overload for generated column-level
+    /// metadata, or the <c>cachedSchemaLvProp</c> overload when byte-for-byte
+    /// Access/DAO-authored metadata is required. The connection string must use the
+    /// Access ODBC link format and is expected to begin with the literal prefix
+    /// <c>"ODBC;"</c>.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="connectionString">ODBC connection string (e.g. <c>"ODBC;DSN=Sales;UID=app;..."</c> or <c>"ODBC;DRIVER={SQL Server};SERVER=...;..."</c>). The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
@@ -137,7 +138,7 @@ public interface IAccessSchema : IAccessBase
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) and
-    /// generates a real cached-schema <c>MSysObjects.LvProp</c> property block from
+    /// generates a cached-schema <c>MSysObjects.LvProp</c> property block from
     /// the supplied remote column definitions.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>

@@ -304,8 +304,8 @@ internal static class Constants
         /// dangling chained-LVAL pointer to page 0 -- did NOT fix the
         /// <c>OpenRecordset "Unrecognized database format ''."</c> error.
         /// All 5 DAO recordset/compact tests still failed with the same COM
-        /// exception. The remaining defect lives elsewhere in the user-table
-        /// TDEF, not in the catalog row's <c>LvProp</c> payload.
+        /// exception. That historical failure was later fixed outside the
+        /// catalog row's <c>LvProp</c> payload.
         /// </para>
         /// </summary>
         public static readonly byte[] DefaultLvPropPlaceholder = new byte[12];

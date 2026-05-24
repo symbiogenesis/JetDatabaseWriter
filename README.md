@@ -497,7 +497,7 @@ await writer.DropColumnAsync("Contacts", "Phone");
 
 ### Linked tables
 
-Linked tables are catalog-only entries that point at data living in another source. The library can create and enumerate Access, ODBC, and text linked-table entries. Managed reads follow Access-file links through the linked-source path policy; ODBC and text links are metadata-only. Writer-created Access-file and text links have DAO CompactDatabase/OpenRecordset coverage. ODBC links write a real `MSysObjects.LvProp` property block; supply remote source columns when you want a generated linked-schema cache, or supply an Access/DAO-authored `LvProp` payload when you need byte-for-byte engine-authored metadata.
+Linked tables are catalog-only entries that point at data living in another source. The library can create and enumerate Access, ODBC, and text linked-table entries. Managed reads follow Access-file links through the linked-source path policy; ODBC and text links are metadata-only. ODBC links write a parseable `MSysObjects.LvProp` property block; supply remote source columns when you want a generated linked-schema cache, or supply an Access/DAO-authored `LvProp` payload when you need byte-for-byte engine-authored metadata.
 
 ```csharp
 // Linked Access table (MSysObjects type 6) — references a table in another .mdb / .accdb file.

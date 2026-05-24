@@ -1554,10 +1554,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
     /// a table accessible via an ODBC connection. No row data is stored locally; managed
     /// readers expose the catalog metadata but do not open the ODBC source. Because this
-    /// overload receives no source columns, it writes a real table-level <c>LvProp</c>
-    /// property block but cannot cache the remote column schema. Use the overload that
-    /// accepts source columns or <c>cachedSchemaLvProp</c> when Access/DAO-compatible
-    /// linked-schema metadata is required.
+    /// overload receives no source columns, it writes a table-level <c>LvProp</c>
+    /// property block but cannot cache the remote column schema. Use the source-column
+    /// overload for generated column-level metadata, or the <c>cachedSchemaLvProp</c>
+    /// overload when byte-for-byte Access/DAO-authored metadata is required.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
@@ -1577,7 +1577,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) and
-    /// generates a real cached-schema <c>MSysObjects.LvProp</c> property block from
+    /// generates a cached-schema <c>MSysObjects.LvProp</c> property block from
     /// the supplied remote column definitions.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
