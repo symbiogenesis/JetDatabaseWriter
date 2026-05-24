@@ -25,6 +25,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     internal const int EncryptedCompactRowCount = 20;
     internal const int StressRowsPerTable = 250;
     internal const int StressTableCount = 6;
+    internal const int StressRelationshipCount = StressTableCount - 1;
     internal const string ExpectedMemoWithNuls = "Hello\0World\0End";
 
     private const string AutoNumberTable = "DaoAutoNum";
@@ -43,6 +44,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     private const string ParentTable = "DaoFkParent";
     private const string Password = "Te$tP@ss!23";
     private const string SeekTable = "DaoSeek";
+    private const string StressParentTable = "Stress_Parent";
     private const string TempDirectoryName = "JetDatabaseWriter.Tests.DaoValidation";
 
     private static readonly TimeSpan DaoTimeout = TimeSpan.FromMinutes(1);
@@ -259,19 +261,34 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
         List<string> postTables = await postReader.ListTablesAsync(cancellationToken).ConfigureAwait(false);
         var rowCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        for (int i = 0; i < 3; i++)
+        var foreignKeyIndexNames = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        for (int tableOrdinal = 0; tableOrdinal < StressTableCount; tableOrdinal++)
         {
-            string tableName = $"Stress_T{i:D2}";
+            string tableName = GetStressTableName(tableOrdinal);
             if (postTables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
             {
                 DataTable? table = await postReader.ReadDataTableAsync(
                     tableName,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 rowCounts[tableName] = table?.Rows.Count ?? -1;
+
+                IReadOnlyList<IndexMetadata> indexes = await postReader.ListIndexesAsync(tableName, cancellationToken).ConfigureAwait(false);
+                foreignKeyIndexNames[tableName] = indexes
+                    .Where(index => index.Kind == IndexKind.ForeignKey)
+                    .Select(index => index.Name)
+                    .OrderBy(name => name, StringComparer.Ordinal)
+                    .ToArray();
             }
         }
 
-        return new StressCompactResult(preCompactTableCount, postTables.Count, rowCounts);
+        DataTable relationships = await postReader.ReadDataTableAsync("MSysRelationships", cancellationToken: cancellationToken).ConfigureAwait(false);
+        string[] relationshipNames = relationships.AsEnumerable()
+            .Select(row => Convert.ToString(row["szRelationship"], CultureInfo.InvariantCulture) ?? string.Empty)
+            .Where(name => name.StartsWith("StressFK_", StringComparison.Ordinal))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        return new StressCompactResult(preCompactTableCount, postTables.Count, rowCounts, foreignKeyIndexNames, relationshipNames);
     }
 
     private async Task<AccessRoundTripSession> CreateNorthwindSessionAsync(
@@ -483,7 +500,6 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             new AccessWriterOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);
 
-        const string StressParentTable = "Stress_Parent";
         await writer.CreateTableAsync(
             StressParentTable,
             [
@@ -502,7 +518,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
         for (int table = 0; table < StressTableCount; table++)
         {
-            string tableName = $"Stress_T{table:D2}";
+            string tableName = GetStressTableName(table);
             await writer.CreateTableAsync(
                 tableName,
                 [
@@ -519,7 +535,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             {
                 await writer.CreateRelationshipAsync(
                     new RelationshipDefinition(
-                        $"StressFK_T{table:D2}_Parent",
+                        GetStressRelationshipName(table),
                         primaryTable: StressParentTable,
                         primaryColumn: "ParentId",
                         foreignTable: tableName,
@@ -731,6 +747,12 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         return bytes;
     }
 
+    private static string GetStressTableName(int tableOrdinal) =>
+        $"Stress_T{tableOrdinal:D2}";
+
+    internal static string GetStressRelationshipName(int tableOrdinal) =>
+        $"StressFK_T{tableOrdinal:D2}_Parent";
+
     private string GetRequired(Dictionary<string, string> values, string key)
     {
         if (!values.TryGetValue(key, out string? value))
@@ -776,5 +798,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     internal sealed record StressCompactResult(
         int PreCompactTableCount,
         int PostCompactTableCount,
-        IReadOnlyDictionary<string, int> PostCompactRowCounts);
+        IReadOnlyDictionary<string, int> PostCompactRowCounts,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> PostCompactForeignKeyIndexNames,
+        IReadOnlyList<string> PostCompactRelationshipNames);
 }

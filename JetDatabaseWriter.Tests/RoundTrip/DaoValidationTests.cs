@@ -1,5 +1,8 @@
 namespace JetDatabaseWriter.Tests.RoundTrip;
 
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -117,12 +120,23 @@ public sealed class DaoValidationTests(DaoValidationFixture fixture) : IClassFix
             result.PostCompactTableCount >= DaoValidationFixture.StressTableCount + 1,
             $"Post-compact: expected at least {DaoValidationFixture.StressTableCount + 1} tables, got {result.PostCompactTableCount}.");
 
-        for (int i = 0; i < 3; i++)
+        for (int tableOrdinal = 0; tableOrdinal < DaoValidationFixture.StressTableCount; tableOrdinal++)
         {
-            string tableName = $"Stress_T{i:D2}";
+            string tableName = $"Stress_T{tableOrdinal:D2}";
             Assert.True(
                 result.PostCompactRowCounts.TryGetValue(tableName, out int rowCount) && rowCount == DaoValidationFixture.StressRowsPerTable,
                 $"Post-compact: {tableName} row count = {rowCount}, expected {DaoValidationFixture.StressRowsPerTable}.");
+        }
+
+        for (int tableOrdinal = 0; tableOrdinal < DaoValidationFixture.StressRelationshipCount; tableOrdinal++)
+        {
+            string tableName = $"Stress_T{tableOrdinal:D2}";
+            string relationshipName = DaoValidationFixture.GetStressRelationshipName(tableOrdinal);
+            Assert.True(
+                result.PostCompactForeignKeyIndexNames.TryGetValue(tableName, out IReadOnlyList<string>? foreignKeyIndexNames)
+                && foreignKeyIndexNames.Contains(relationshipName, StringComparer.Ordinal),
+                $"Post-compact: {tableName} is missing FK index {relationshipName}.");
+            Assert.Contains(relationshipName, result.PostCompactRelationshipNames);
         }
     }
 
