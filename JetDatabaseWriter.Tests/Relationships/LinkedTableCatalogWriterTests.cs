@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -37,14 +38,14 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                 ct);
         }
 
-        int catalogLeafEntriesBefore = await CountMsysObjectsLeafEntriesAsync(frontEndPath, ct);
+        int catalogLeafEntriesBefore = await CountMsysObjectsLeafEntriesAsync(frontEndPath, DatabaseFormat.AceAccdb, ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
         {
             await writer.CreateLinkedTableAsync("LinkedProducts", sourcePath, "Products", ct);
         }
 
-        int catalogLeafEntriesAfter = await CountMsysObjectsLeafEntriesAsync(frontEndPath, ct);
+        int catalogLeafEntriesAfter = await CountMsysObjectsLeafEntriesAsync(frontEndPath, DatabaseFormat.AceAccdb, ct);
         Assert.True(
             catalogLeafEntriesAfter > catalogLeafEntriesBefore,
             $"Expected MSysObjects index leaves to gain entries for the linked-table catalog row. Before={catalogLeafEntriesBefore}, after={catalogLeafEntriesAfter}.");
@@ -118,22 +119,59 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateLinkedTableApis_Jet3Mdb_ThrowUntilCatalogSplicingIsImplemented()
+    public async Task CreateTableAsync_AccessAuthoredJet3Mdb_SplicesMsysObjectsIndexes()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessWriter writer = await CreateJet3WriterAsync(ct);
+        if (!File.Exists(TestDatabases.IndexTestV1997))
+        {
+            Assert.Skip("Jet3 index fixture is unavailable on this machine.");
+        }
 
-        NotSupportedException accessEx = await Assert.ThrowsAsync<NotSupportedException>(() =>
-            writer.CreateLinkedTableAsync("LinkedAccess", @"C:\Data\source.mdb", "Products", ct).AsTask());
-        Assert.Contains("Jet3 catalog splicing is not implemented", accessEx.Message, StringComparison.Ordinal);
+        string frontEndPath = await CopyTempDatabaseAsync(TestDatabases.IndexTestV1997, "Jet3CatalogSplice", ".mdb", ct);
+        int catalogLeafEntriesBefore = await CountMsysObjectsLeafEntriesAsync(frontEndPath, DatabaseFormat.Jet3Mdb, ct);
+        Assert.True(catalogLeafEntriesBefore > 0, "Expected the Access-authored Jet3 fixture to have indexed MSysObjects leaves.");
 
-        NotSupportedException odbcEx = await Assert.ThrowsAsync<NotSupportedException>(() =>
-            writer.CreateLinkedOdbcTableAsync("LinkedOdbc", "ODBC;DSN=Sales", "dbo.Orders", ct).AsTask());
-        Assert.Contains("Jet3 catalog splicing is not implemented", odbcEx.Message, StringComparison.Ordinal);
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            frontEndPath,
+            new AccessWriterOptions { UseLockFile = false },
+            ct))
+        {
+            await writer.CreateTableAsync(
+                "SplicedJet3Catalog",
+                [new ColumnDefinition("Id", typeof(int))],
+                ct);
+        }
 
-        NotSupportedException textEx = await Assert.ThrowsAsync<NotSupportedException>(() =>
-            writer.CreateLinkedTextTableAsync("LinkedCsv", @"C:\Data", "data.csv", "Text;HDR=YES", ct).AsTask());
-        Assert.Contains("Jet3 catalog splicing is not implemented", textEx.Message, StringComparison.Ordinal);
+        int catalogLeafEntriesAfter = await CountMsysObjectsLeafEntriesAsync(frontEndPath, DatabaseFormat.Jet3Mdb, ct);
+        Assert.True(
+            catalogLeafEntriesAfter > catalogLeafEntriesBefore,
+            $"Expected Jet3 MSysObjects index leaves to gain entries for the new catalog row. Before={catalogLeafEntriesBefore}, after={catalogLeafEntriesAfter}.");
+
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        Assert.Contains("SplicedJet3Catalog", await reader.ListTablesAsync(ct));
+    }
+
+    [Fact]
+    public async Task CreateLinkedTableApis_Jet3Mdb_CreateCatalogRows()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempMdbDatabaseAsync("Jet3LinkedCatalog");
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            frontEndPath,
+            new AccessWriterOptions { UseLockFile = false },
+            ct))
+        {
+            await writer.CreateLinkedTableAsync("LinkedAccess", @"C:\Data\source.mdb", "Products", ct);
+            await writer.CreateLinkedOdbcTableAsync("LinkedOdbc", "ODBC;DSN=Sales", "dbo.Orders", ct);
+            await writer.CreateLinkedTextTableAsync("LinkedCsv", @"C:\Data", "data.csv", "Text;HDR=YES", ct);
+        }
+
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        List<LinkedTableInfo> linkedTables = await reader.ListLinkedTablesAsync(ct);
+        Assert.Contains(linkedTables, table => string.Equals(table.Name, "LinkedAccess", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(linkedTables, table => string.Equals(table.Name, "LinkedOdbc", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(linkedTables, table => string.Equals(table.Name, "LinkedCsv", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -288,10 +326,11 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         }
     }
 
-    private static async ValueTask<int> CountMsysObjectsLeafEntriesAsync(string dbPath, CancellationToken cancellationToken)
+    private static async ValueTask<int> CountMsysObjectsLeafEntriesAsync(string dbPath, DatabaseFormat format, CancellationToken cancellationToken)
     {
         byte[] fileBytes = await File.ReadAllBytesAsync(dbPath, cancellationToken);
-        int pageSize = Constants.PageSizes.Jet4;
+        int pageSize = format == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(format);
         int count = 0;
         for (int pageNumber = 0; pageNumber < fileBytes.Length / pageSize; pageNumber++)
         {
@@ -299,17 +338,17 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             if (fileBytes[pageOffset] == Constants.IndexLeafPage.PageTypeLeaf
                 && BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(pageOffset + 4, 4)) == 2)
             {
-                count += CountLeafEntries(fileBytes, pageOffset);
+                count += CountLeafEntries(fileBytes, pageOffset, layout);
             }
         }
 
         return count;
     }
 
-    private static int CountLeafEntries(byte[] fileBytes, int leafOffset)
+    private static int CountLeafEntries(byte[] fileBytes, int leafOffset, IndexLeafPageBuilder.LeafPageLayout layout)
     {
         int count = 1;
-        for (int i = Constants.IndexLeafPage.Jet4.BitmaskOffset; i < Constants.IndexLeafPage.Jet4.FirstEntryOffset; i++)
+        for (int i = layout.BitmaskOffset; i < layout.FirstEntryOffset; i++)
         {
             byte value = fileBytes[leafOffset + i];
             for (int bit = 0; bit < 8; bit++)
@@ -339,14 +378,32 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         return temp;
     }
 
-    private static async ValueTask<AccessWriter> CreateJet3WriterAsync(CancellationToken cancellationToken)
+    private async ValueTask<string> CreateTempMdbDatabaseAsync(string prefix)
     {
-        var stream = new MemoryStream();
-        return await AccessWriter.CreateDatabaseAsync(
-            stream,
+        string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.mdb");
+        await using (await AccessWriter.CreateDatabaseAsync(
+            temp,
             DatabaseFormat.Jet3Mdb,
-            leaveOpen: false,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+        }
+
+        tempFiles.Add(temp);
+        return temp;
+    }
+
+    private async ValueTask<string> CopyTempDatabaseAsync(string sourcePath, string prefix, string extension, CancellationToken cancellationToken)
+    {
+        string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}{extension}");
+        await using (FileStream source = File.OpenRead(sourcePath))
+        await using (FileStream destination = File.Create(temp))
+        {
+            await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+        }
+
+        tempFiles.Add(temp);
+        return temp;
     }
 
     private sealed record CatalogObjectSnapshot(int Id, int Flags, int LvPropLength, int AceCount, int Low24CollisionCount);

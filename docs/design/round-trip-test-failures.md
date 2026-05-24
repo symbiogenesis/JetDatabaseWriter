@@ -50,8 +50,9 @@ maintenance now bails to the bulk path when an indexed TDEF decodes no usable
 real-index key columns, instead of silently reporting success. Jet4/ACE
 `MSysObjects` catalog inserts also fail fast and roll back when catalog splicing
 reports `false`, rather than leaving stale catalog B-trees for DAO Compact &
-Repair to discover later. Jet3 catalog splicing remains unresolved and tracked
-in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
+Repair to discover later. Jet3 catalog splicing is now regression-guarded on an
+Access-authored Jet3 fixture and tracked in
+[writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 
 **Linked-table catalog routing: REGRESSION-GUARDED; DAO VALIDATION OPEN.**
 Writer-created linked Access/ODBC/text rows now allocate catalog-only negative

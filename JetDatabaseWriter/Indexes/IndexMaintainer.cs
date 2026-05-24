@@ -2960,14 +2960,14 @@ internal sealed class IndexMaintainer(AccessWriter writer)
     ///   pages, patches sibling pointers, and rewrites ancestor summaries when
     ///   the descent captured a clean path.</item>
     ///   <item>Returns <see langword="false"/> on any unsupported case
-    ///   (non-Jet4 format, malformed page, encoder rejection, ancestor-summary
+    ///   (malformed page, encoder rejection, ancestor-summary
     ///   overflow, or a split after an overshoot path that cannot be safely
     ///   propagated).</item>
     /// </list>
     /// On <see langword="false"/>, Jet4/ACE catalog callers must fail the
     /// surrounding mutation so the transaction rolls back instead of leaving
     /// unmaintained catalog indexes that DAO Compact &amp; Repair could later
-    /// report as JET <c>-1601</c>. Jet3 catalog splicing remains unsupported.
+    /// report as JET <c>-1601</c>.
     /// </para>
     /// </remarks>
     public async ValueTask<bool> TrySpliceCatalogIndexEntryAsync(
@@ -2977,15 +2977,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         object[] newRowValues,
         CancellationToken cancellationToken)
     {
-        // Phase C1 targets ACCDB / Jet4 only. Jet3 catalog index format
-        // differs (39-byte real-idx descriptor, different sort-key encoding)
-        // and is left to a future phase.
-        if (writer._format == DatabaseFormat.Jet3Mdb)
-        {
-            return false;
-        }
-
-        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.LeafPageLayout.Jet4;
+        IndexLeafPageBuilder.LeafPageLayout layout = IndexLeafPageBuilder.GetLayout(writer._format);
 
         LastIncrementalBail = null;
 

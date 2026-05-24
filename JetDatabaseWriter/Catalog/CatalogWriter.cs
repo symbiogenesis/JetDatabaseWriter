@@ -132,11 +132,6 @@ internal sealed class CatalogWriter(AccessWriter writer)
         short objectType,
         CancellationToken cancellationToken = default)
     {
-        if (writer.DatabaseFormat == Enums.DatabaseFormat.Jet3Mdb)
-        {
-            throw new NotSupportedException("Writer-created linked tables require MSysObjects catalog-index splicing; Jet3 catalog splicing is not implemented.");
-        }
-
         TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         await EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.TablesParentId, linkedTableName, cancellationToken).ConfigureAwait(false);
 
@@ -277,7 +272,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
         CancellationToken cancellationToken)
     {
         bool spliced = await writer.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
-        if (!spliced && writer.DatabaseFormat != Enums.DatabaseFormat.Jet3Mdb)
+        if (!spliced)
         {
             throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes for '{objectName}'.");
         }
