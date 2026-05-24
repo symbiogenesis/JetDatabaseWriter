@@ -1553,11 +1553,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
     /// a table accessible via an ODBC connection. No row data is stored locally; managed
-    /// readers expose the catalog metadata but do not open the ODBC source. This overload
-    /// is intentionally catalog-only: because it receives no source schema, it writes the
-    /// placeholder <c>MSysObjects.LvProp</c> payload and is not an Access/DAO-compatible
-    /// linked-table cache. Use the overload that accepts <c>cachedSchemaLvProp</c> when
-    /// Access/DAO compatibility is required.
+    /// readers expose the catalog metadata but do not open the ODBC source. Because this
+    /// overload receives no source columns, it writes a real table-level <c>LvProp</c>
+    /// property block but cannot cache the remote column schema. Use the overload that
+    /// accepts source columns or <c>cachedSchemaLvProp</c> when Access/DAO-compatible
+    /// linked-schema metadata is required.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
@@ -1571,8 +1571,38 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 connectionString,
                 foreignTableName,
                 cachedSchemaLvProp: null,
+                sourceColumns: null,
                 cancellationToken),
             cancellationToken);
+
+    /// <summary>
+    /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) and
+    /// generates a real cached-schema <c>MSysObjects.LvProp</c> property block from
+    /// the supplied remote column definitions.
+    /// </summary>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
+    /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
+    /// <param name="sourceColumns">Column definitions for the remote source table.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    public ValueTask CreateLinkedOdbcTableAsync(
+        string linkedTableName,
+        string connectionString,
+        string foreignTableName,
+        IReadOnlyList<ColumnDefinition> sourceColumns,
+        CancellationToken cancellationToken = default)
+    {
+        return RunAutoCommitAsync(
+            _ => CreateLinkedOdbcTableCoreAsync(
+                linkedTableName,
+                connectionString,
+                foreignTableName,
+                cachedSchemaLvProp: null,
+                sourceColumns,
+                cancellationToken),
+            cancellationToken);
+    }
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) using
@@ -1600,7 +1630,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 linkedTableName,
                 connectionString,
                 foreignTableName,
-                validatedLvProp,
+                cachedSchemaLvProp: validatedLvProp,
+                sourceColumns: null,
                 cancellationToken),
             cancellationToken);
     }
@@ -1610,6 +1641,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         string connectionString,
         string foreignTableName,
         byte[]? cachedSchemaLvProp,
+        IReadOnlyList<ColumnDefinition>? sourceColumns,
         CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(linkedTableName, nameof(linkedTableName));
@@ -1622,13 +1654,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             ? connectionString
             : "ODBC;" + connectionString;
 
+        if (sourceColumns is not null)
+        {
+            LinkedOdbcLvPropBuilder.ValidateSourceColumns(sourceColumns, nameof(sourceColumns));
+        }
+
+        byte[] lvProp = cachedSchemaLvProp ?? LinkedOdbcLvPropBuilder.Build(foreignTableName, sourceColumns, _format);
+
         await _catalogWriter.InsertLinkedTableCatalogEntryAsync(
             linkedTableName,
             sourceDatabasePath: null,
             foreignName: foreignTableName,
             connectString: normalizedConnect,
             objectType: (short)Constants.SystemObjects.LinkedOdbcType,
-            cachedSchemaLvProp: cachedSchemaLvProp,
+            cachedSchemaLvProp: lvProp,
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 

@@ -52,7 +52,7 @@ internal static class LinkedOdbcLvPropProbe
         _ = sb.AppendLine("- Command: `dotnet run --project JetDatabaseWriter.FormatProbe -- linked-odbc-lvprop`");
         _ = sb.AppendLine("- Optional custom input: set `DIAG_LINKED_ODBC_LVPROP_PATH` to an Access-authored linked-table database.");
         _ = sb.AppendLine();
-        _ = sb.AppendLine("This probe exists because Type 4 ODBC linked tables need a real cached-schema `MSysObjects.LvProp` property block for DAO-compatible output. The legacy metadata-only writer overload does not have enough source-column metadata to synthesize that cache, so the next useful artifact is a structured dump of an Access-authored cache.");
+        _ = sb.AppendLine("This probe exists because Type 4 ODBC linked tables need a real cached-schema `MSysObjects.LvProp` property block for DAO-compatible output. It keeps Access-authored ODBC caches visible while the writer-generated LvProp path is validated against more source schemas.");
         _ = sb.AppendLine();
     }
 

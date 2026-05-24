@@ -7,6 +7,7 @@ using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -131,7 +132,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateLinkedOdbcTableAsync_MetadataOnly_CreatesCatalogOnlyPlaceholderLvProp()
+    public async Task CreateLinkedOdbcTableAsync_MetadataOnly_GeneratesRealTableLvProp()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcCatalog");
@@ -149,10 +150,83 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         Assert.True(catalogObject.Id < 0, $"Expected ODBC-linked MSysObjects.Id to be a non-table catalog object id, got {catalogObject.Id}.");
         Assert.Equal(Constants.SystemObjects.LinkedOdbcFlags, catalogObject.Flags);
         Assert.True(catalogObject.LvPropLength > 0, "Expected ODBC-linked MSysObjects.LvProp to be non-null.");
-        Assert.True(Constants.SystemObjects.DefaultLvPropPlaceholder.SequenceEqual(catalogObject.LvProp ?? []));
-        Assert.Null(ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb));
+        Assert.False(Constants.SystemObjects.DefaultLvPropPlaceholder.SequenceEqual(catalogObject.LvProp ?? []));
+        ColumnPropertyBlock? block = ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb);
+        Assert.NotNull(block);
+        ColumnPropertyTarget tableTarget = Assert.Single(block.Targets);
+        Assert.Equal(string.Empty, tableTarget.Name);
+        ColumnPropertyEntry nameMap = Assert.Single(tableTarget.Entries, entry => string.Equals(entry.Name, "NameMap", StringComparison.Ordinal));
+        Assert.Equal(ColumnPropertyBlock.DataTypeOle, nameMap.DataType);
+        Assert.True(ContainsBytes(nameMap.Value, Encoding.Unicode.GetBytes("Orders")));
         Assert.True(catalogObject.AceCount >= 2, $"Expected ODBC-linked object ACE rows, got {catalogObject.AceCount}.");
         Assert.Equal(0, catalogObject.Low24CollisionCount);
+    }
+
+    [Fact]
+    public async Task CreateLinkedOdbcTableAsync_SourceColumnsGeneratesRealSchemaLvProp()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcGeneratedSchema");
+        ColumnDefinition[] sourceColumns =
+        [
+            new("OrderId", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
+            new("CustomerName", typeof(string), maxLength: 100),
+            new("Total", typeof(decimal)) { NumericPrecision = 18, NumericScale = 2 },
+        ];
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedOdbcTableAsync(
+                "LinkedOrders",
+                "ODBC;DSN=Sales",
+                "dbo.Orders",
+                sourceColumns,
+                ct);
+        }
+
+        CatalogObjectSnapshot catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedOrders", ct);
+        Assert.Equal(Constants.SystemObjects.LinkedOdbcFlags, catalogObject.Flags);
+        Assert.False(Constants.SystemObjects.DefaultLvPropPlaceholder.SequenceEqual(catalogObject.LvProp ?? []));
+
+        ColumnPropertyBlock? block = ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb);
+        Assert.NotNull(block);
+        Assert.Equal(sourceColumns.Length + 1, block.Targets.Count);
+
+        ColumnPropertyTarget tableTarget = Assert.Single(block.Targets, target => target.Name.Length == 0);
+        ColumnPropertyEntry nameMap = Assert.Single(tableTarget.Entries, entry => string.Equals(entry.Name, "NameMap", StringComparison.Ordinal));
+        Assert.Equal(ColumnPropertyBlock.DataTypeOle, nameMap.DataType);
+        Assert.True(ContainsBytes(nameMap.Value, Encoding.Unicode.GetBytes("Orders")));
+        Assert.True(ContainsBytes(nameMap.Value, Encoding.Unicode.GetBytes("CustomerName")));
+
+        ColumnPropertyTarget orderId = block.FindTarget("OrderId")!;
+        Assert.NotNull(orderId.Find("GUID"));
+        Assert.True(orderId.GetBooleanValue(Constants.ColumnPropertyNames.Required));
+
+        ColumnPropertyTarget customerName = block.FindTarget("CustomerName")!;
+        Assert.NotNull(customerName.Find("GUID"));
+        Assert.True(customerName.GetBooleanValue(Constants.ColumnPropertyNames.AllowZeroLength));
+
+        ColumnPropertyTarget total = block.FindTarget("Total")!;
+        Assert.NotNull(total.Find("GUID"));
+        Assert.NotNull(total.Find("CurrencyLCID"));
+    }
+
+    [Fact]
+    public async Task CreateLinkedOdbcTableAsync_SourceColumnsRejectsEmptySchema()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcGeneratedSchemaReject");
+
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            writer.CreateLinkedOdbcTableAsync(
+                "LinkedOrders",
+                "ODBC;DSN=Sales",
+                "dbo.Orders",
+                Array.Empty<ColumnDefinition>(),
+                ct).AsTask());
+
+        Assert.Contains("source column", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -632,6 +706,19 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         Assert.True(
             result.ExitCode == 0,
             $"{operation} failed with exit code {result.ExitCode}. StdOut: {result.StdOut} StdErr: {result.StdErr}");
+    }
+
+    private static bool ContainsBytes(byte[] source, byte[] sequence)
+    {
+        for (int offset = 0; offset <= source.Length - sequence.Length; offset++)
+        {
+            if (source.AsSpan(offset, sequence.Length).SequenceEqual(sequence))
+            {
+                return true;
+            }
+        }
+
+        return sequence.Length == 0;
     }
 
     private static async ValueTask<int> CountMsysObjectsIntermediateRootsAsync(AccessWriter writer, CancellationToken cancellationToken)

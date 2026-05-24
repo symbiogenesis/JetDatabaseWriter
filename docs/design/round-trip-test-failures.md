@@ -60,8 +60,9 @@ object ids without low-24 collisions; route Type 4/6 `MSysObjects` rows through
 catalog-index splicing; and stamp fixture-aligned flags and linked-object ACE
 rows. Access-file and text Type 6 links pass DAO CompactDatabase followed by
 compacted OpenRecordset. ODBC Type 4 links pass DAO CompactDatabase when the
-caller supplies a real Access/DAO cached-schema `LvProp` payload; the legacy
-metadata-only ODBC overload remains catalog-only and still stamps the placeholder.
+caller supplies a real Access/DAO cached-schema `LvProp` payload; generated
+ODBC links now write parseable table-level `LvProp`, and the source-column
+overload adds generated schema-cache targets.
 
 **Data remanence semantics: REGRESSION-GUARDED.** Default delete/update behavior
 preserves normal JET logical-delete semantics: user-row slots are marked deleted

@@ -121,12 +121,12 @@ public interface IAccessSchema : IAccessBase
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
     /// a table accessible via an ODBC connection. The entry is metadata only — no rows are
     /// stored locally. Managed readers expose the catalog metadata but do not open the ODBC
-    /// source. This overload is intentionally catalog-only: because it receives no source
-    /// schema, it writes the placeholder <c>MSysObjects.LvProp</c> payload and is not an
-    /// Access/DAO-compatible linked-table cache. Use the overload that accepts
-    /// <c>cachedSchemaLvProp</c> when Access/DAO compatibility is required. The connection
-    /// string must use the Access ODBC link format and is expected to begin with the
-    /// literal prefix <c>"ODBC;"</c>.
+    /// source. Because this overload receives no source columns, it writes a real
+    /// table-level <c>MSysObjects.LvProp</c> property block but cannot cache the remote
+    /// column schema. Use the overload that accepts source columns or
+    /// <c>cachedSchemaLvProp</c> when Access/DAO-compatible linked-schema metadata is
+    /// required. The connection string must use the Access ODBC link format and is
+    /// expected to begin with the literal prefix <c>"ODBC;"</c>.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="connectionString">ODBC connection string (e.g. <c>"ODBC;DSN=Sales;UID=app;..."</c> or <c>"ODBC;DRIVER={SQL Server};SERVER=...;..."</c>). The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
@@ -134,6 +134,24 @@ public interface IAccessSchema : IAccessBase
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     ValueTask CreateLinkedOdbcTableAsync(string linkedTableName, string connectionString, string foreignTableName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) and
+    /// generates a real cached-schema <c>MSysObjects.LvProp</c> property block from
+    /// the supplied remote column definitions.
+    /// </summary>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
+    /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
+    /// <param name="sourceColumns">Column definitions for the remote source table.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    ValueTask CreateLinkedOdbcTableAsync(
+        string linkedTableName,
+        string connectionString,
+        string foreignTableName,
+        IReadOnlyList<ColumnDefinition> sourceColumns,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) using

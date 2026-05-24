@@ -497,7 +497,7 @@ await writer.DropColumnAsync("Contacts", "Phone");
 
 ### Linked tables
 
-Linked tables are catalog-only entries that point at data living in another source. The library can create and enumerate Access, ODBC, and text linked-table entries. Managed reads follow Access-file links through the linked-source path policy; ODBC and text links are metadata-only. Writer-created Access-file and text links have DAO CompactDatabase/OpenRecordset coverage. ODBC links can also be created with a caller-supplied Access/DAO cached-schema `LvProp` payload for CompactDatabase-compatible output; the simpler ODBC overload remains metadata-only because it has no source schema to cache.
+Linked tables are catalog-only entries that point at data living in another source. The library can create and enumerate Access, ODBC, and text linked-table entries. Managed reads follow Access-file links through the linked-source path policy; ODBC and text links are metadata-only. Writer-created Access-file and text links have DAO CompactDatabase/OpenRecordset coverage. ODBC links write a real `MSysObjects.LvProp` property block; supply remote source columns when you want a generated linked-schema cache, or supply an Access/DAO-authored `LvProp` payload when you need byte-for-byte engine-authored metadata.
 
 ```csharp
 // Linked Access table (MSysObjects type 6) — references a table in another .mdb / .accdb file.
@@ -512,6 +512,19 @@ await writer.CreateLinkedOdbcTableAsync(
     linkedTableName:  "LinkedSalesOrders",
     connectionString: "ODBC;DRIVER={SQL Server};SERVER=db.example.com;DATABASE=Sales;Trusted_Connection=Yes",
     foreignTableName: "dbo.Orders");
+
+// Generated ODBC schema cache: provide the source table shape so the writer can
+// create table and column property targets in MSysObjects.LvProp.
+await writer.CreateLinkedOdbcTableAsync(
+    linkedTableName:  "LinkedSalesOrdersWithCache",
+    connectionString: "ODBC;DRIVER={SQL Server};SERVER=db.example.com;DATABASE=Sales;Trusted_Connection=Yes",
+    foreignTableName: "dbo.Orders",
+    sourceColumns:
+    [
+        new ColumnDefinition("OrderId", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
+        new ColumnDefinition("CustomerName", typeof(string), maxLength: 100),
+        new ColumnDefinition("Total", typeof(decimal)) { NumericPrecision = 18, NumericScale = 2 },
+    ]);
 
 // Advanced ODBC path: supply an Access/DAO-authored cached-schema LvProp payload
 // when you need Access/DAO-compatible catalog metadata for the linked source.
