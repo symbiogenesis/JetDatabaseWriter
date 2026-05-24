@@ -1,8 +1,10 @@
 namespace JetDatabaseWriter.Tests.Relationships;
 
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -193,5 +195,42 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
                 cancellationToken: TestContext.Current.CancellationToken);
             Assert.NotNull(dt);
         }
+    }
+
+    [Theory]
+    [MemberData(nameof(LinkedTableFixtures))]
+    public async Task AccessAuthoredLinkedRows_HaveNonPlaceholderLvProp(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        Assert.NotEmpty(linked);
+
+        DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
+        foreach (LinkedTableInfo table in linked)
+        {
+            DataRow row = objects.AsEnumerable().Single(r => string.Equals(
+                Convert.ToString(r["Name"], System.Globalization.CultureInfo.InvariantCulture),
+                table.Name,
+                StringComparison.OrdinalIgnoreCase));
+
+            int type = Convert.ToInt32(row["Type"], System.Globalization.CultureInfo.InvariantCulture);
+            Assert.True(type is Constants.SystemObjects.LinkedTableType or Constants.SystemObjects.LinkedOdbcType);
+
+            byte[] lvProp = Assert.IsType<byte[]>(row["LvProp"]);
+            Assert.True(lvProp.Length > 0, $"Access-authored linked row '{table.Name}' has empty LvProp.");
+            Assert.NotEqual(Constants.SystemObjects.DefaultLvPropPlaceholder, lvProp);
+            Assert.Contains(lvProp, b => b != 0);
+        }
+    }
+
+    public static IEnumerable<object[]> LinkedTableFixtures()
+    {
+        yield return [TestDatabases.LinkerTestV2007];
+        yield return [TestDatabases.OdbcLinkerTestV2007];
     }
 }
