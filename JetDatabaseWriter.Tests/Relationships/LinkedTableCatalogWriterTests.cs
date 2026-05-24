@@ -184,6 +184,24 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         Assert.Contains("Could not maintain MSysObjects catalog indexes", ex.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task DropTableAsync_Throws_WhenMsysObjectsCatalogDeleteCannotMaintainIndexes()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("CatalogDeleteSpliceFail");
+
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        await writer.CreateTableAsync(
+            "Victim",
+            [new ColumnDefinition("Id", typeof(int))],
+            ct);
+        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
+
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            writer.DropTableAsync("Victim", ct).AsTask());
+        Assert.Contains("Could not maintain MSysObjects catalog indexes while dropping table 'Victim'", ex.Message, StringComparison.Ordinal);
+    }
+
     public void Dispose()
     {
         foreach (string path in tempFiles)

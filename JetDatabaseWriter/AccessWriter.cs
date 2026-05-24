@@ -2752,16 +2752,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         await AdjustTDefRowCountAsync(2, -1, cancellationToken).ConfigureAwait(false);
         if (deletedRows.Count > 0)
         {
-            bool incremental = await TryMaintainIndexesIncrementalAsync(
-                2,
+            await RequireMsysObjectsIndexMaintenanceAsync(
                 msys,
-                null,
-                deletedRows,
+                insertedRows: null,
+                deletedRows: deletedRows,
+                operation: $"replacing catalog row for '{tableName}'",
                 cancellationToken).ConfigureAwait(false);
-            if (!incremental)
-            {
-                await MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-            }
         }
 
         await _catalogWriter.InsertCatalogEntryAsync(tableName, tdefPage, lvProp, catalogFlags, cancellationToken).ConfigureAwait(false);
@@ -2795,16 +2791,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         await AdjustTDefRowCountAsync(2, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
-        bool incremental = await TryMaintainIndexesIncrementalAsync(
-            2,
+        await RequireMsysObjectsIndexMaintenanceAsync(
             msys,
-            null,
-            deletedRows,
+            insertedRows: null,
+            deletedRows: deletedRows,
+            operation: $"deleting catalog row for '{tableName}'",
             cancellationToken).ConfigureAwait(false);
-        if (!incremental)
-        {
-            await MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        }
     }
 
     private ColumnDefinition BuildColumnDefinitionFromInfo(ColumnInfo column, ColumnPropertyBlock? properties = null)
@@ -3195,16 +3187,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         await DeleteAceRowsForObjectIdsAsync(droppedTdefPages, cancellationToken).ConfigureAwait(false);
         if (deletedCatalogRows.Count > 0)
         {
-            bool incremental = await TryMaintainIndexesIncrementalAsync(
-                2,
+            await RequireMsysObjectsIndexMaintenanceAsync(
                 msys,
-                null,
-                deletedCatalogRows,
+                insertedRows: null,
+                deletedRows: deletedCatalogRows,
+                operation: $"dropping table '{tableName}'",
                 cancellationToken).ConfigureAwait(false);
-            if (!incremental)
-            {
-                await MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-            }
         }
 
         foreach (long tdefPage in droppedTdefPages)
@@ -4011,6 +3999,32 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         List<(RowLocation Loc, object[] Row)>? deletedRows,
         CancellationToken cancellationToken)
         => _indexMaintainer.TryMaintainIndexesIncrementalAsync(tdefPage, tableDef, insertedRows, deletedRows, cancellationToken);
+
+    internal async ValueTask RequireMsysObjectsIndexMaintenanceAsync(
+        TableDef msys,
+        List<(RowLocation Loc, object[] Row)>? insertedRows,
+        List<(RowLocation Loc, object[] Row)>? deletedRows,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        bool incremental = await TryMaintainIndexesIncrementalAsync(
+            2,
+            msys,
+            insertedRows,
+            deletedRows,
+            cancellationToken).ConfigureAwait(false);
+        if (incremental)
+        {
+            return;
+        }
+
+        if (DatabaseFormat != Enums.DatabaseFormat.Jet3Mdb)
+        {
+            throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes while {operation}.");
+        }
+
+        await MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+    }
 
     internal ValueTask<bool> TrySpliceCatalogIndexEntryAsync(
         long tdefPage,
