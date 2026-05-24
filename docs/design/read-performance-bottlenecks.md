@@ -205,9 +205,10 @@ Primary code path:
 Add focused benchmarks before changing behavior:
 
 Status: partially implemented. LVAL submode benchmarks, OLE submode
-benchmarks, cold-open first-scan coverage, and DataTable insertion-strategy
-benchmarks have been added. Page-cache-size and `ParallelPageReadsEnabled`
-scan matrices remain pending.
+benchmarks, cold-open first-scan coverage, DataTable insertion-strategy
+benchmarks, and numeric cold-scan variants for disabled/large page caches and
+`ParallelPageReadsEnabled` have been added. Broader table shapes and warm/cold
+parallel scan matrices remain pending.
 
 - Cold first table enumeration versus warm repeat enumeration.
 - LVAL inline, single-page, and chained MEMO separately.
@@ -327,15 +328,18 @@ Acceptance criteria:
 
 This targets cold reads of large databases.
 
+Completed changes:
+
+- The full-file owner-index fallback now uses uncached page reads and returns
+  each pooled page immediately, so the classification pass no longer fills or
+  churns the normal reader LRU before the actual table scan begins.
+
 Candidate changes:
 
 - Implement per-table usage-map parsing for owned data pages and use it in
   `GetOwnedDataPagesAsync` when the map shape is recognized.
 - Keep the current whole-file owner scan as a fallback for unusual or corrupt
   databases.
-- When falling back, consider bypassing the normal page LRU or using a dedicated
-  uncached read path so the classification pass does not evict pages needed by
-  the actual table scan.
 
 Risks and constraints:
 

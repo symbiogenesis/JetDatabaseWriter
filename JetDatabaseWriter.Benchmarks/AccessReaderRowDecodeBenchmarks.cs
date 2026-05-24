@@ -196,8 +196,37 @@ public class AccessReaderRowDecodeBenchmarks
     [Benchmark]
     public async Task<int> Decode_Numeric_ColdOpen_FirstScan()
     {
-        await using AccessReader reader = await AccessReader.OpenAsync(SyntheticDatabases.NumericDbPath).ConfigureAwait(false);
-        return await CountUntypedRowsAsync(reader, SyntheticDatabases.NumericTable).ConfigureAwait(false);
+        return await CountColdUntypedRowsAsync(
+            SyntheticDatabases.NumericDbPath,
+            SyntheticDatabases.NumericTable,
+            options: null).ConfigureAwait(false);
+    }
+
+    [Benchmark]
+    public async Task<int> Decode_Numeric_ColdOpen_FirstScan_CacheDisabled()
+    {
+        return await CountColdUntypedRowsAsync(
+            SyntheticDatabases.NumericDbPath,
+            SyntheticDatabases.NumericTable,
+            new AccessReaderOptions { PageCacheSize = 0 }).ConfigureAwait(false);
+    }
+
+    [Benchmark]
+    public async Task<int> Decode_Numeric_ColdOpen_FirstScan_LargeCache()
+    {
+        return await CountColdUntypedRowsAsync(
+            SyntheticDatabases.NumericDbPath,
+            SyntheticDatabases.NumericTable,
+            new AccessReaderOptions { PageCacheSize = 2048 }).ConfigureAwait(false);
+    }
+
+    [Benchmark]
+    public async Task<int> Decode_Numeric_ColdOpen_FirstScan_ParallelReads()
+    {
+        return await CountColdUntypedRowsAsync(
+            SyntheticDatabases.NumericDbPath,
+            SyntheticDatabases.NumericTable,
+            new AccessReaderOptions { ParallelPageReadsEnabled = true }).ConfigureAwait(false);
     }
 
     // ── Memo (LVAL) decode ────────────────────────────────────────────
@@ -277,5 +306,11 @@ public class AccessReaderRowDecodeBenchmarks
         }
 
         return count;
+    }
+
+    private static async Task<int> CountColdUntypedRowsAsync(string databasePath, string tableName, AccessReaderOptions? options)
+    {
+        await using AccessReader reader = await AccessReader.OpenAsync(databasePath, options).ConfigureAwait(false);
+        return await CountUntypedRowsAsync(reader, tableName).ConfigureAwait(false);
     }
 }

@@ -2976,25 +2976,32 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await ReadPageCachedAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01)
+            byte[] page = await ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
             {
-                continue;
-            }
+                if (page[0] != 0x01)
+                {
+                    continue;
+                }
 
-            long owner = Ri32(page, _dataPage.TDefOff);
-            if (owner <= 0)
+                long owner = Ri32(page, _dataPage.TDefOff);
+                if (owner <= 0)
+                {
+                    continue;
+                }
+
+                if (!pagesByOwner.TryGetValue(owner, out List<long>? ownedPages))
+                {
+                    ownedPages = [];
+                    pagesByOwner.Add(owner, ownedPages);
+                }
+
+                ownedPages.Add(pageNumber);
+            }
+            finally
             {
-                continue;
+                ReturnPage(page);
             }
-
-            if (!pagesByOwner.TryGetValue(owner, out List<long>? ownedPages))
-            {
-                ownedPages = [];
-                pagesByOwner.Add(owner, ownedPages);
-            }
-
-            ownedPages.Add(pageNumber);
         }
 
         var result = new Dictionary<long, long[]>(pagesByOwner.Count);
