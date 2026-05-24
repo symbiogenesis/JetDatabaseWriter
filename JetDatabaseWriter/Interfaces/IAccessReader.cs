@@ -173,6 +173,9 @@ public interface IAccessReader : IAccessBase
     /// <summary>
     /// Reads the entire table into a DataTable with properly typed columns asynchronously.
     /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
+    /// Prefer <see cref="Rows(string, IProgress{long}?, CancellationToken)"/> or
+    /// <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/> for bulk processing
+    /// when a fully materialized <see cref="DataTable"/> is not required.
     /// </summary>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns. Returns an empty DataTable if the table is not found.</returns>
     ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
@@ -186,6 +189,8 @@ public interface IAccessReader : IAccessBase
     /// <summary>
     /// Reads all tables into a dictionary of DataTables with properly typed columns asynchronously.
     /// Each table's columns use their native CLR types (int, DateTime, decimal, etc.).
+    /// This fully materializes every user table; prefer table-by-table streaming for large databases
+    /// unless callers specifically need <see cref="DataTable"/> instances.
     /// </summary>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
     ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);
@@ -193,6 +198,8 @@ public interface IAccessReader : IAccessBase
     /// <summary>
     /// Reads all tables into a dictionary of DataTables with all columns typed as strings asynchronously.
     /// Use this for compatibility scenarios.
+    /// This fully materializes every user table; prefer <see cref="RowsAsStrings(string, IProgress{long}?, CancellationToken)"/>
+    /// when streaming string rows is sufficient.
     /// </summary>
     /// <returns>A <see cref="ValueTask{TResult}"/> representing the asynchronous operation.</returns>
     ValueTask<Dictionary<string, DataTable>> ReadAllTablesAsStringsAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default);

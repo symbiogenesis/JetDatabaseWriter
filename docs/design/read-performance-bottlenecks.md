@@ -313,6 +313,8 @@ Completed changes:
   `maxRows` provide a bounded capacity.
 - The loader tracks the number of loaded rows directly for progress and
   `maxRows` instead of polling `DataTable.Rows.Count` after every row.
+- README and public reader XML docs now nudge bulk consumers toward `Rows()` /
+  `Rows<T>()` when `DataTable` materialization is not required.
 
 Remaining measurement:
 
@@ -321,8 +323,6 @@ Remaining measurement:
   capacity.
 - If `Rows.Add(object?[])` wins materially, decide whether production can use it
   without adding per-row exact-array allocation or weakening null handling.
-- Add documentation nudging bulk consumers toward `Rows()` / `Rows<T>()` when a
-  `DataTable` is not required.
 
 Risks and constraints:
 
