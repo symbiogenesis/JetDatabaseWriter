@@ -2959,12 +2959,16 @@ internal sealed class IndexMaintainer(AccessWriter writer)
     ///   <item>On leaf overflow, greedily splits the leaf, appends right-hand
     ///   pages, patches sibling pointers, and rewrites ancestor summaries when
     ///   the descent captured a clean path.</item>
-    ///   <item>Returns <see langword="false"/> on any unsupported case
-    ///   (malformed page, encoder rejection, ancestor-summary
-    ///   overflow, or a split after an overshoot path that cannot be safely
-    ///   propagated).</item>
+    ///   <item>When a clean ancestor rewrite is not available or would overflow,
+    ///   rebuilds only the affected catalog index from existing index entries
+    ///   plus the inserted row pointer, then patches the real-index root.
+    ///   Existing catalog rows are not re-encoded.</item>
+    ///   <item>Returns <see langword="false"/> only when the existing index
+    ///   tree or the new catalog key cannot be trusted or staged safely, such
+    ///   as malformed pages, impossible key encoding, a single entry too large
+    ///   to pack, or an unexpected append-position mismatch.</item>
     /// </list>
-    /// On <see langword="false"/>, Jet4/ACE catalog callers must fail the
+    /// On <see langword="false"/>, catalog callers must fail the
     /// surrounding mutation so the transaction rolls back instead of leaving
     /// unmaintained catalog indexes that DAO Compact &amp; Repair could later
     /// report as JET <c>-1601</c>.
