@@ -69,14 +69,15 @@ public sealed class DaoValidationTests(DaoValidationFixture fixture) : IClassFix
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
         SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
-    public async Task DaoMemoFidelity_EmbeddedNulsAndCjk_RoundTripExactly()
+    public async Task DaoMemoAndOleLvalFidelity_EmbeddedNulsCjkAndBinary_RoundTripExactly()
     {
         var result = await fixture.GetCoreResultAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(DaoValidationFixture.ExpectedMemoWithNuls, result.MemoNuls);
         Assert.Equal("\u4F60\u597D\u4E16\u754C", result.MemoCjk);
         Assert.Equal("Start\0\u00E9\u00FC\u2603\0End", result.MemoMixed);
-        Assert.Equal([0x00, 0x01, 0xFF, 0xFE, 0x42, 0x4C, 0x4F, 0x42], result.MemoBinary);
+        Assert.Equal(DaoValidationFixture.CoreOleLvalPayloadLength, result.MemoBinary.Length);
+        Assert.Equal(DaoValidationFixture.BuildCoreOleLvalPayload(), result.MemoBinary);
     }
 
     [Fact(

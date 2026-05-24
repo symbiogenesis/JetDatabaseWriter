@@ -20,6 +20,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     internal const int CoreRowCount = 50;
     internal const int CoreTargetId = 25;
     internal const int CoreWriterRowCount = 10;
+    internal const int CoreOleLvalPayloadLength = 4096;
     internal const int ComplexAttachmentPayloadLength = 16 * 1024;
     internal const string ComplexAttachmentFileName = "compact-large.jpg";
     internal const int EncryptedCompactRowCount = 20;
@@ -380,7 +381,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
         await writer.InsertRowAsync(
             MemoFidelityTable,
-            [DBNull.Value, ExpectedMemoWithNuls, "\u4F60\u597D\u4E16\u754C", "Start\0\u00E9\u00FC\u2603\0End", new byte[] { 0x00, 0x01, 0xFF, 0xFE, 0x42, 0x4C, 0x4F, 0x42 }],
+            [DBNull.Value, ExpectedMemoWithNuls, "\u4F60\u597D\u4E16\u754C", "Start\0\u00E9\u00FC\u2603\0End", BuildCoreOleLvalPayload()],
             cancellationToken).ConfigureAwait(false);
 
         await writer.CreateTableAsync(
@@ -746,6 +747,9 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
         return bytes;
     }
+
+    internal static byte[] BuildCoreOleLvalPayload() =>
+        BuildDeterministicPayload(CoreOleLvalPayloadLength);
 
     private static string GetStressTableName(int tableOrdinal) =>
         $"Stress_T{tableOrdinal:D2}";
