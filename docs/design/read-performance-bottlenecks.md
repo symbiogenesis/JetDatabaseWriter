@@ -217,7 +217,9 @@ DataTable insertion-strategy benchmarks including `NewRow`,
 `Rows.Add(object?[])`, and `LoadDataRow`, numeric cold-scan variants for
 disabled/large page caches, and a simple table-scan read-ahead matrix for
 numeric/text/wide tables with first-row/full-scan, cold/warm, and
-`ParallelPageReadsEnabled` on/off have been added.
+`ParallelPageReadsEnabled` on/off have been added. Cold owned-page discovery
+benchmarks now compare recognized per-table usage maps against the whole-file
+fallback on the same large-file shape.
 
 - Cold first table enumeration versus warm repeat enumeration.
 - LVAL inline, single-page, and chained MEMO separately.
@@ -356,7 +358,7 @@ Completed changes:
 
 Remaining measurement:
 
-- Refresh cold first-scan benchmarks to quantify the difference between
+- Run the owned-page discovery benchmarks to quantify the difference between
   recognized usage maps and the whole-file fallback on large files.
 - Keep the current whole-file owner scan available as a safety fallback for
   unusual or corrupt databases.

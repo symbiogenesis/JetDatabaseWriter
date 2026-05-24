@@ -1,7 +1,9 @@
 namespace JetDatabaseWriter.Benchmarks;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -45,6 +47,9 @@ internal static class SyntheticDatabases
     /// <summary>OLE table whose payloads require chained LVAL pages.</summary>
     public const string OleChainedTable = "OleChained";
 
+    /// <summary>Small table used to isolate owned-page discovery cost.</summary>
+    public const string OwnedPageDiscoveryTargetTable = "OwnedMapTarget";
+
     private const int NumericRows = 25_000;
     private const int TextRows = 25_000;
     private const int WideRows = 10_000;
@@ -54,6 +59,9 @@ internal static class SyntheticDatabases
     private const int InlineLongValueLength = 32;
     private const int SinglePageLongValueLength = 2_000;
     private const int ChainedLongValueLength = 16_000;
+    private const int OwnedPageDiscoveryTargetRows = 128;
+    private const int OwnedPageDiscoveryFillerRows = 20_000;
+    private const string OwnedPageDiscoveryFillerTable = "OwnedMapFiller";
 
     private static readonly string TempRoot = Path.Combine(Path.GetTempPath(), "JetBench");
 
@@ -64,6 +72,14 @@ internal static class SyntheticDatabases
     public static string WideDbPath => Path.Combine(TempRoot, $"Wide_{WideColumnCount}c_{WideRows}.accdb");
 
     public static string MemoDbPath => Path.Combine(TempRoot, $"Memo_{MemoRows}_lv2.accdb");
+
+    public static string OwnedPageDiscoveryMappedDbPath => Path.Combine(
+        TempRoot,
+        $"OwnedPageDiscovery_{OwnedPageDiscoveryTargetRows}_{OwnedPageDiscoveryFillerRows}_mapped_v1.accdb");
+
+    public static string OwnedPageDiscoveryFallbackDbPath => Path.Combine(
+        TempRoot,
+        $"OwnedPageDiscovery_{OwnedPageDiscoveryTargetRows}_{OwnedPageDiscoveryFillerRows}_fallback_v1.accdb");
 
     /// <summary>
     /// Ensures all synthetic DBs exist on disk. Skips files that already
@@ -76,6 +92,23 @@ internal static class SyntheticDatabases
         await EnsureTextAsync().ConfigureAwait(false);
         await EnsureWideAsync().ConfigureAwait(false);
         await EnsureMemoAsync().ConfigureAwait(false);
+    }
+
+    public static async Task EnsureOwnedPageDiscoveryAsync()
+    {
+        Directory.CreateDirectory(TempRoot);
+        if (!File.Exists(OwnedPageDiscoveryMappedDbPath))
+        {
+            await CreateOwnedPageDiscoveryDatabaseAsync(OwnedPageDiscoveryMappedDbPath).ConfigureAwait(false);
+        }
+
+        if (!File.Exists(OwnedPageDiscoveryFallbackDbPath))
+        {
+            File.Copy(OwnedPageDiscoveryMappedDbPath, OwnedPageDiscoveryFallbackDbPath, overwrite: true);
+            await PatchOwnedUsageMapToUnknownTypeAsync(
+                OwnedPageDiscoveryFallbackDbPath,
+                OwnedPageDiscoveryTargetTable).ConfigureAwait(false);
+        }
     }
 
     private static async Task EnsureNumericAsync()
@@ -271,6 +304,104 @@ internal static class SyntheticDatabases
 
         await writer.InsertRowsAsync(tableName, rows).ConfigureAwait(false);
     }
+
+    private static async Task CreateOwnedPageDiscoveryDatabaseAsync(string databasePath)
+    {
+        await using var writer = await AccessWriter.CreateDatabaseAsync(databasePath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
+        await writer.CreateTableAsync(OwnedPageDiscoveryTargetTable, OwnedPageDiscoverySchema()).ConfigureAwait(false);
+        await writer.InsertRowsAsync(
+            OwnedPageDiscoveryTargetTable,
+            CreateOwnedPageDiscoveryRows(OwnedPageDiscoveryTargetRows, "T")).ConfigureAwait(false);
+
+        await writer.CreateTableAsync(OwnedPageDiscoveryFillerTable, OwnedPageDiscoverySchema()).ConfigureAwait(false);
+        await writer.InsertRowsAsync(
+            OwnedPageDiscoveryFillerTable,
+            CreateOwnedPageDiscoveryRows(OwnedPageDiscoveryFillerRows, "F")).ConfigureAwait(false);
+    }
+
+    private static ColumnDefinition[] OwnedPageDiscoverySchema() =>
+    [
+        new("Id", typeof(int)),
+        new("Payload", typeof(string), maxLength: 240),
+    ];
+
+    private static List<object[]> CreateOwnedPageDiscoveryRows(int rowCount, string prefix)
+    {
+        var rows = new List<object[]>(rowCount);
+        for (int rowNumber = 0; rowNumber < rowCount; rowNumber++)
+        {
+            rows.Add([rowNumber, prefix + "-" + rowNumber.ToString("D5", CultureInfo.InvariantCulture) + "-" + new string('x', 200)]);
+        }
+
+        return rows;
+    }
+
+    private static async Task PatchOwnedUsageMapToUnknownTypeAsync(string databasePath, string tableName)
+    {
+        int pageSize;
+        long tdefPage;
+        await using (AccessReader reader = await AccessReader.OpenAsync(
+            databasePath,
+            new AccessReaderOptions { UseLockFile = false }).ConfigureAwait(false))
+        {
+            pageSize = reader.PageSize;
+            tdefPage = await ResolveTdefPageAsync(reader, tableName).ConfigureAwait(false);
+        }
+
+        byte[] fileBytes = await File.ReadAllBytesAsync(databasePath).ConfigureAwait(false);
+        int rowAbsoluteStart = FindOwnedUsageMapRowStart(fileBytes, pageSize, tdefPage);
+        if (fileBytes[rowAbsoluteStart] != 0x00)
+        {
+            throw new InvalidDataException("Expected an INLINE owned-pages usage-map row.");
+        }
+
+        fileBytes[rowAbsoluteStart] = 0x7F;
+        await File.WriteAllBytesAsync(databasePath, fileBytes).ConfigureAwait(false);
+    }
+
+    private static async Task<long> ResolveTdefPageAsync(AccessReader reader, string tableName)
+    {
+        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("MSysObjects").ConfigureAwait(false);
+        int idIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Id", StringComparison.OrdinalIgnoreCase));
+        int nameIndex = metadata.FindIndex(static column => string.Equals(column.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        if (idIndex < 0 || nameIndex < 0)
+        {
+            throw new InvalidDataException("MSysObjects is missing Id or Name metadata.");
+        }
+
+        await foreach (object[] row in reader.Rows("MSysObjects").ConfigureAwait(false))
+        {
+            if (row[nameIndex] is string name && string.Equals(name, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                return Convert.ToInt64(row[idIndex], CultureInfo.InvariantCulture);
+            }
+        }
+
+        throw new InvalidDataException($"Could not resolve the TDEF page for table '{tableName}'.");
+    }
+
+    private static int FindOwnedUsageMapRowStart(byte[] fileBytes, int pageSize, long tdefPage)
+    {
+        const int DataPageRowsStart = 14;
+        const int OwnedPagesPointerOffset = 0x37;
+        int tdefOffset = checked((int)(tdefPage * pageSize));
+        int usageMapRow = fileBytes[tdefOffset + OwnedPagesPointerOffset];
+        int usageMapPage = ReadUInt24(fileBytes, tdefOffset + OwnedPagesPointerOffset + 1);
+        int usageMapOffset = checked(usageMapPage * pageSize);
+        int rowOffsetPosition = usageMapOffset + DataPageRowsStart + (usageMapRow * 2);
+        int rowStart = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(rowOffsetPosition, 2)) & 0x1FFF;
+        int rowAbsoluteStart = usageMapOffset + rowStart;
+
+        if (usageMapPage <= 0 || rowAbsoluteStart < usageMapOffset || rowAbsoluteStart >= usageMapOffset + pageSize)
+        {
+            throw new InvalidDataException("The owned-pages usage-map pointer is outside the file bounds.");
+        }
+
+        return rowAbsoluteStart;
+    }
+
+    private static int ReadUInt24(byte[] buffer, int offset)
+        => buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16);
 
     private static string MakeMemoBody(int seed, int length)
     {
