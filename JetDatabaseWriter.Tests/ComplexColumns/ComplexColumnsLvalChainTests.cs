@@ -80,7 +80,7 @@ public sealed class ComplexColumnsLvalChainTests
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 new AttachmentInput(fileName, payload),
                 TestContext.Current.CancellationToken);
         }

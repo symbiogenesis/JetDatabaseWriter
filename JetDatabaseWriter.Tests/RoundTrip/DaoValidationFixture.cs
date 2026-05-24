@@ -470,7 +470,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             [1, "Northwind-hosted complex row", DBNull.Value, DBNull.Value],
             cancellationToken).ConfigureAwait(false);
 
-        var parentKey = new Dictionary<string, object> { ["Id"] = 1 };
+        var parentKey = new Dictionary<string, object?> { ["Id"] = 1 };
         await writer.AddAttachmentAsync(
             ComplexTable,
             ComplexAttachmentColumn,

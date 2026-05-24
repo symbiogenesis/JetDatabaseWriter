@@ -87,7 +87,7 @@ public sealed class DataRemanenceTests
                 "UpdateRows",
                 "Id",
                 1,
-                new Dictionary<string, object> { ["Payload"] = replacementPayload },
+                new Dictionary<string, object?> { ["Payload"] = replacementPayload },
                 TestContext.Current.CancellationToken);
 
             Assert.Equal(1, updated);
@@ -142,7 +142,7 @@ public sealed class DataRemanenceTests
                 "LongValues",
                 "Id",
                 1,
-                new Dictionary<string, object> { ["Blob"] = replacementPayload },
+                new Dictionary<string, object?> { ["Blob"] = replacementPayload },
                 TestContext.Current.CancellationToken);
 
             Assert.Equal(1, updated);

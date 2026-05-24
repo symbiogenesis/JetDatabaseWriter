@@ -42,10 +42,10 @@ public interface IAccessWriter : IAccessBase
     /// Values must be in the same order as the table's columns.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
-    /// <param name="values">Column values in table-column order.</param>
+    /// <param name="values">Column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both represent database null.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    ValueTask InsertRowAsync(string tableName, object[] values, CancellationToken cancellationToken = default);
+    ValueTask InsertRowAsync(string tableName, object?[] values, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously inserts a single row by mapping a POCO's properties to the table's columns.
@@ -62,10 +62,10 @@ public interface IAccessWriter : IAccessBase
     /// Asynchronously inserts multiple rows into the specified table in a single operation.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
-    /// <param name="rows">Collection of rows, each containing column values in table-column order.</param>
+    /// <param name="rows">Collection of rows, each containing column values in table-column order. <see langword="null"/> and <see cref="System.DBNull.Value"/> both represent database null.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows inserted.</returns>
-    ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object[]> rows, CancellationToken cancellationToken = default);
+    ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object?[]> rows, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously inserts multiple rows by mapping each POCO's properties to the table's columns.
@@ -84,10 +84,10 @@ public interface IAccessWriter : IAccessBase
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="predicateColumn">Column name to filter on.</param>
     /// <param name="predicateValue">Value to match in the predicate column, or <see langword="null"/> for IS NULL matching.</param>
-    /// <param name="updatedValues">Dictionary of column-name -> new-value pairs to apply.</param>
+    /// <param name="updatedValues">Dictionary of column-name -> new-value pairs to apply. <see langword="null"/> and <see cref="System.DBNull.Value"/> both clear the column to database null.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows updated.</returns>
-    ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object> updatedValues, CancellationToken cancellationToken = default);
+    ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously deletes rows from the specified table where the predicate column matches the given value.
@@ -125,7 +125,7 @@ public interface IAccessWriter : IAccessBase
     /// <exception cref="System.InvalidOperationException">
     /// Thrown when no row, or more than one row, matches <paramref name="parentRowKey"/>.
     /// </exception>
-    ValueTask AddAttachmentAsync(string tableName, string columnName, IReadOnlyDictionary<string, object> parentRowKey, AttachmentInput attachment, CancellationToken cancellationToken = default);
+    ValueTask AddAttachmentAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, AttachmentInput attachment, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Asynchronously appends one value to a parent row's Access 2007+ Multi-Value
@@ -137,7 +137,7 @@ public interface IAccessWriter : IAccessBase
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Name of the Multi-Value column on <paramref name="tableName"/>.</param>
     /// <param name="parentRowKey">Column-name -> value pairs identifying exactly one live row.</param>
-    /// <param name="value">Element value, assignment-compatible with the column's <c>MultiValueElementType</c>.</param>
+    /// <param name="value">Element value, assignment-compatible with the column's <c>MultiValueElementType</c>. <see langword="null"/> and <see cref="System.DBNull.Value"/> both represent database null.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="System.NotSupportedException">
@@ -147,5 +147,5 @@ public interface IAccessWriter : IAccessBase
     /// <exception cref="System.InvalidOperationException">
     /// Thrown when no row, or more than one row, matches <paramref name="parentRowKey"/>.
     /// </exception>
-    ValueTask AddMultiValueItemAsync(string tableName, string columnName, IReadOnlyDictionary<string, object> parentRowKey, object value, CancellationToken cancellationToken = default);
+    ValueTask AddMultiValueItemAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, object? value, CancellationToken cancellationToken = default);
 }

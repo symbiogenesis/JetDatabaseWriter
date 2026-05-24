@@ -133,7 +133,7 @@ public sealed class ComplexColumnsRowApiTests
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 new AttachmentInput("notes.txt", payload),
                 TestContext.Current.CancellationToken);
         }
@@ -173,7 +173,7 @@ public sealed class ComplexColumnsRowApiTests
                 [1, DBNull.Value],
                 TestContext.Current.CancellationToken);
 
-            var key = new Dictionary<string, object> { ["Id"] = 1 };
+            var key = new Dictionary<string, object?> { ["Id"] = 1 };
             await writer.AddAttachmentAsync("Documents", "Files", key, new AttachmentInput("a.txt", Encoding.UTF8.GetBytes("aaa")), TestContext.Current.CancellationToken);
             await writer.AddAttachmentAsync("Documents", "Files", key, new AttachmentInput("b.txt", Encoding.UTF8.GetBytes("bbb")), TestContext.Current.CancellationToken);
         }
@@ -212,8 +212,8 @@ public sealed class ComplexColumnsRowApiTests
                 [[1, DBNull.Value], [2, DBNull.Value]],
                 TestContext.Current.CancellationToken);
 
-            await writer.AddAttachmentAsync("Documents", "Files", new Dictionary<string, object> { ["Id"] = 1 }, new AttachmentInput("one.txt", Encoding.UTF8.GetBytes("one")), TestContext.Current.CancellationToken);
-            await writer.AddAttachmentAsync("Documents", "Files", new Dictionary<string, object> { ["Id"] = 2 }, new AttachmentInput("two.txt", Encoding.UTF8.GetBytes("two")), TestContext.Current.CancellationToken);
+            await writer.AddAttachmentAsync("Documents", "Files", new Dictionary<string, object?> { ["Id"] = 1 }, new AttachmentInput("one.txt", Encoding.UTF8.GetBytes("one")), TestContext.Current.CancellationToken);
+            await writer.AddAttachmentAsync("Documents", "Files", new Dictionary<string, object?> { ["Id"] = 2 }, new AttachmentInput("two.txt", Encoding.UTF8.GetBytes("two")), TestContext.Current.CancellationToken);
         }
 
         ms.Position = 0;
@@ -246,7 +246,7 @@ public sealed class ComplexColumnsRowApiTests
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 99 },
+                new Dictionary<string, object?> { ["Id"] = 99 },
                 new AttachmentInput("x.txt", [1, 2, 3]),
                 TestContext.Current.CancellationToken));
     }
@@ -279,7 +279,7 @@ public sealed class ComplexColumnsRowApiTests
             await writer.AddAttachmentAsync(
                 "Tags",
                 "Labels",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 new AttachmentInput("x.txt", [1]),
                 TestContext.Current.CancellationToken));
     }
@@ -309,7 +309,7 @@ public sealed class ComplexColumnsRowApiTests
 
             await writer.InsertRowAsync("Tags", [1, DBNull.Value], TestContext.Current.CancellationToken);
 
-            var key = new Dictionary<string, object> { ["Id"] = 1 };
+            var key = new Dictionary<string, object?> { ["Id"] = 1 };
             await writer.AddMultiValueItemAsync("Tags", "Labels", key, 100, TestContext.Current.CancellationToken);
             await writer.AddMultiValueItemAsync("Tags", "Labels", key, 200, TestContext.Current.CancellationToken);
             await writer.AddMultiValueItemAsync("Tags", "Labels", key, 300, TestContext.Current.CancellationToken);
@@ -351,7 +351,7 @@ public sealed class ComplexColumnsRowApiTests
             await writer.AddMultiValueItemAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 42,
                 TestContext.Current.CancellationToken));
     }
@@ -388,7 +388,7 @@ public sealed class ComplexColumnsRowApiTests
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 new AttachmentInput("empty.dat", Array.Empty<byte>()),
                 TestContext.Current.CancellationToken);
         }
@@ -445,7 +445,7 @@ public sealed class ComplexColumnsRowApiTests
                 [1, DBNull.Value],
                 TestContext.Current.CancellationToken);
 
-            var key = new Dictionary<string, object> { ["Id"] = 1 };
+            var key = new Dictionary<string, object?> { ["Id"] = 1 };
 
             // Mixed lengths: empty string, short, medium, long.
             await writer.AddMultiValueItemAsync("Products", "Tags", key, string.Empty, TestContext.Current.CancellationToken);

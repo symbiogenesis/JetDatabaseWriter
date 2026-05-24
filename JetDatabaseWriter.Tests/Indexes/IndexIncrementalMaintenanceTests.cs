@@ -179,7 +179,7 @@ public sealed class IndexIncrementalMaintenanceTests
                 "T",
                 "Id",
                 2,
-                new Dictionary<string, object> { ["Score"] = 99 },
+                new Dictionary<string, object?> { ["Score"] = 99 },
                 ct);
             Assert.Equal(1, updated);
         }

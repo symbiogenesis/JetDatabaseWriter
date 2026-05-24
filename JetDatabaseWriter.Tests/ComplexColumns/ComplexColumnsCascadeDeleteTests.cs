@@ -49,19 +49,19 @@ public sealed class ComplexColumnsCascadeDeleteTests
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 new AttachmentInput("doomed-a.txt", Encoding.UTF8.GetBytes("a")),
                 TestContext.Current.CancellationToken);
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 new AttachmentInput("doomed-b.txt", Encoding.UTF8.GetBytes("b")),
                 TestContext.Current.CancellationToken);
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 2 },
+                new Dictionary<string, object?> { ["Id"] = 2 },
                 new AttachmentInput("survivor.txt", Encoding.UTF8.GetBytes("s")),
                 TestContext.Current.CancellationToken);
 
@@ -119,8 +119,8 @@ public sealed class ComplexColumnsCascadeDeleteTests
                 ],
                 TestContext.Current.CancellationToken);
 
-            var k1 = new Dictionary<string, object> { ["Id"] = 1 };
-            var k2 = new Dictionary<string, object> { ["Id"] = 2 };
+            var k1 = new Dictionary<string, object?> { ["Id"] = 1 };
+            var k2 = new Dictionary<string, object?> { ["Id"] = 2 };
             await writer.AddMultiValueItemAsync("Tags", "Labels", k1, 11, TestContext.Current.CancellationToken);
             await writer.AddMultiValueItemAsync("Tags", "Labels", k1, 12, TestContext.Current.CancellationToken);
             await writer.AddMultiValueItemAsync("Tags", "Labels", k2, 21, TestContext.Current.CancellationToken);
@@ -182,7 +182,7 @@ public sealed class ComplexColumnsCascadeDeleteTests
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 2 },
+                new Dictionary<string, object?> { ["Id"] = 2 },
                 new AttachmentInput("keep.txt", Encoding.UTF8.GetBytes("k")),
                 TestContext.Current.CancellationToken);
 
@@ -287,13 +287,13 @@ public sealed class ComplexColumnsCascadeDeleteTests
             await writer.AddAttachmentAsync(
                 "C5_Documents",
                 "Files",
-                new Dictionary<string, object> { ["DocId"] = 100 },
+                new Dictionary<string, object?> { ["DocId"] = 100 },
                 new AttachmentInput("alice.txt", Encoding.UTF8.GetBytes("alice")),
                 TestContext.Current.CancellationToken);
             await writer.AddAttachmentAsync(
                 "C5_Documents",
                 "Files",
-                new Dictionary<string, object> { ["DocId"] = 200 },
+                new Dictionary<string, object?> { ["DocId"] = 200 },
                 new AttachmentInput("bob.txt", Encoding.UTF8.GetBytes("bob")),
                 TestContext.Current.CancellationToken);
 
@@ -356,8 +356,8 @@ public sealed class ComplexColumnsCascadeDeleteTests
                 ],
                 TestContext.Current.CancellationToken);
 
-            var k1 = new Dictionary<string, object> { ["Id"] = 1 };
-            var k2 = new Dictionary<string, object> { ["Id"] = 2 };
+            var k1 = new Dictionary<string, object?> { ["Id"] = 1 };
+            var k2 = new Dictionary<string, object?> { ["Id"] = 2 };
 
             // Row 1: attachment + multi-value items (both doomed).
             await writer.AddAttachmentAsync(

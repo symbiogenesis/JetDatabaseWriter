@@ -123,14 +123,14 @@ public sealed class ComplexColumnsFlatIndexesTests
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 new AttachmentInput("a.txt", [1, 2, 3]),
                 TestContext.Current.CancellationToken);
 
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 new AttachmentInput("b.txt", [4, 5, 6]),
                 TestContext.Current.CancellationToken);
         }

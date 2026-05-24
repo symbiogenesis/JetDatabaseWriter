@@ -168,7 +168,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 child,
                 "Id",
                 1,
-                new Dictionary<string, object> { ["ParentId"] = 999 },
+                new Dictionary<string, object?> { ["ParentId"] = 999 },
                 TestContext.Current.CancellationToken));
         Assert.Contains("FK_UFk", ex.Message, StringComparison.Ordinal);
     }
@@ -250,7 +250,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 parent,
                 "Id",
                 5,
-                new Dictionary<string, object> { ["Id"] = 99 },
+                new Dictionary<string, object?> { ["Id"] = 99 },
                 TestContext.Current.CancellationToken));
         Assert.Contains("FK_UPkNoCasc", ex.Message, StringComparison.Ordinal);
     }
@@ -285,7 +285,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 parent,
                 "Id",
                 5,
-                new Dictionary<string, object> { ["Id"] = 99 },
+                new Dictionary<string, object?> { ["Id"] = 99 },
                 TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
         }
@@ -354,7 +354,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 parent,
                 "Id",
                 2,
-                new Dictionary<string, object> { ["Id"] = 222 },
+                new Dictionary<string, object?> { ["Id"] = 222 },
                 TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
         }
@@ -699,7 +699,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 parent,
                 "Id",
                 7,
-                new Dictionary<string, object> { ["Id"] = 999 },
+                new Dictionary<string, object?> { ["Id"] = 999 },
                 TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
         }
@@ -762,7 +762,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 parent,
                 "Amount",
                 1.25m,
-                new Dictionary<string, object> { ["Amount"] = 3.75m },
+                new Dictionary<string, object?> { ["Amount"] = 3.75m },
                 TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
         }
@@ -870,7 +870,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 tbl,
                 "Id",
                 7,
-                new Dictionary<string, object> { ["Id"] = 999 },
+                new Dictionary<string, object?> { ["Id"] = 999 },
                 TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
         }

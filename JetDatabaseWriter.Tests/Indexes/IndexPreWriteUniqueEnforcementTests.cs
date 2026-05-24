@@ -148,7 +148,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                     "T",
                     "Id",
                     2,
-                    new Dictionary<string, object> { ["Code"] = 100 },
+                    new Dictionary<string, object?> { ["Code"] = 100 },
                     ct));
         }
 

@@ -60,7 +60,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
                 "T",
                 "Id",
                 50,
-                new Dictionary<string, object> { ["Val"] = 999 },
+                new Dictionary<string, object?> { ["Val"] = 999 },
                 ct);
             Assert.Equal(1, updated);
         }

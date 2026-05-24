@@ -713,8 +713,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
     public async ValueTask AddComplexItemCoreAsync(
         string tableName,
         string columnName,
-        IReadOnlyDictionary<string, object> parentRowKey,
-        object payload,
+        IReadOnlyDictionary<string, object?> parentRowKey,
+        object? payload,
         bool expectAttachment,
         CancellationToken cancellationToken)
     {
@@ -781,7 +781,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         var predIndexes = new int[parentRowKey.Count];
         var predValues = new string[parentRowKey.Count];
         int pi = 0;
-        foreach (KeyValuePair<string, object> kvp in parentRowKey)
+        foreach (KeyValuePair<string, object?> kvp in parentRowKey)
         {
             int idx = parentDef.FindColumnIndex(kvp.Key);
             if (idx < 0)
@@ -815,7 +815,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
 
         // Build the flat-table row values.
         object[] flatValues = expectAttachment
-            ? BuildAttachmentFlatRow(flatDef, conceptualTableId, (AttachmentInput)payload)
+            ? BuildAttachmentFlatRow(flatDef, conceptualTableId, (AttachmentInput)payload!)
             : BuildMultiValueFlatRow(flatDef, conceptualTableId, payload);
 
         // The flat table carries an autoincrement scalar PK column.
@@ -1165,7 +1165,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         return values;
     }
 
-    private static object[] BuildMultiValueFlatRow(TableDef flatDef, int conceptualTableId, object value)
+    private static object[] BuildMultiValueFlatRow(TableDef flatDef, int conceptualTableId, object? value)
     {
         object[] values = flatDef.CreateNullValueRow();
         ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();

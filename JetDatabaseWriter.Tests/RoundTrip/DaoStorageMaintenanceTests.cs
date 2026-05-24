@@ -156,7 +156,7 @@ public sealed class DaoStorageMaintenanceTests
                 TableName,
                 "Id",
                 42,
-                new Dictionary<string, object>
+                new Dictionary<string, object?>
                 {
                     ["Code"] = "J3_UPDATED",
                     ["Score"] = -420,
@@ -248,8 +248,8 @@ public sealed class DaoStorageMaintenanceTests
                 },
                 TestContext.Current.CancellationToken);
 
-            var firstParentKey = new Dictionary<string, object> { ["Id"] = 1 };
-            var secondParentKey = new Dictionary<string, object> { ["Id"] = 2 };
+            var firstParentKey = new Dictionary<string, object?> { ["Id"] = 1 };
+            var secondParentKey = new Dictionary<string, object?> { ["Id"] = 2 };
             await writer.AddAttachmentAsync(
                 TableName,
                 "Files",
@@ -380,7 +380,7 @@ public sealed class DaoStorageMaintenanceTests
                 "SM_SecureErase",
                 "Id",
                 2,
-                new Dictionary<string, object> { ["Blob"] = replacementLargePayload },
+                new Dictionary<string, object?> { ["Blob"] = replacementLargePayload },
                 TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
 
@@ -456,7 +456,7 @@ public sealed class DaoStorageMaintenanceTests
                 TableName,
                 "Id",
                 42,
-                new Dictionary<string, object>
+                new Dictionary<string, object?>
                 {
                     ["Code"] = "Code_42_UPDATED",
                     ["GuidKey"] = BuildAdvancedGuid(4200),

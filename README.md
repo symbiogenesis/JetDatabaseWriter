@@ -228,12 +228,12 @@ For ACE `.accdb` files, attachments and multi-value items can be inserted into a
 await writer.AddAttachmentAsync(
     "Documents",
     "Files",
-    new Dictionary<string, object> { ["Id"] = 1 },
+    new Dictionary<string, object?> { ["Id"] = 1 },
     new AttachmentInput("notes.txt", File.ReadAllBytes("notes.txt")),
     cancellationToken);
 
 // Insert a multi-value tag item
-await writer.AddMultiValueItemAsync("Tags", "Items", new Dictionary<string, object> { ["Id"] = 1 }, "red", cancellationToken);
+await writer.AddMultiValueItemAsync("Tags", "Items", new Dictionary<string, object?> { ["Id"] = 1 }, "red", cancellationToken);
 
 // Read back
 IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("Documents", "Files", cancellationToken);
@@ -456,7 +456,7 @@ await writer.InsertRowsAsync("Contacts", new[]
 
 ```csharp
 int updated = await writer.UpdateRowsAsync("Contacts", "ContactID", 1,
-    new Dictionary<string, object> { ["Score"] = 99.9m });
+    new Dictionary<string, object?> { ["Score"] = 99.9m });
 
 int deleted = await writer.DeleteRowsAsync("Contacts", "ContactID", 3);
 ```
@@ -579,7 +579,7 @@ await writer.CreateRelationshipAsync(new RelationshipDefinition(
 ```csharp
 await using var tx = await writer.BeginTransactionAsync();
 await writer.InsertRowAsync("Contacts", new object[] { 7, "Grace", "grace@example.com", 90.0m });
-await writer.UpdateRowsAsync("Contacts", "ContactID", 2, new Dictionary<string, object> { ["Score"] = 93.5m });
+await writer.UpdateRowsAsync("Contacts", "ContactID", 2, new Dictionary<string, object?> { ["Score"] = 93.5m });
 await tx.CommitAsync(); // Replays all buffered pages and flushes the stream
 ```
 

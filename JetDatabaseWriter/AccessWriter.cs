@@ -1021,8 +1021,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     /// <inheritdoc/>
-    public ValueTask InsertRowAsync(string tableName, object[] values, CancellationToken cancellationToken = default)
-        => RunAutoCommitAsync(_ => InsertRowEntryAsync(tableName, values, cancellationToken), cancellationToken);
+    public ValueTask InsertRowAsync(string tableName, object?[] values, CancellationToken cancellationToken = default)
+        => RunAutoCommitAsync(_ => InsertRowEntryAsync(tableName, NormalizePublicRow(values, nameof(values)), cancellationToken), cancellationToken);
 
     private async ValueTask InsertRowEntryAsync(string tableName, object[] values, CancellationToken cancellationToken)
     {
@@ -1040,10 +1040,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     /// <inheritdoc/>
-    public ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object[]> rows, CancellationToken cancellationToken = default)
+    public ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object?[]> rows, CancellationToken cancellationToken = default)
         => RunAutoCommitAsync(_ => InsertRowsCoreAsync(tableName, rows, cancellationToken), cancellationToken);
 
-    private async ValueTask<int> InsertRowsCoreAsync(string tableName, IEnumerable<object[]> rows, CancellationToken cancellationToken)
+    private async ValueTask<int> InsertRowsCoreAsync(string tableName, IEnumerable<object?[]> rows, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(rows, nameof(rows));
@@ -1070,18 +1070,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         var pendingRows = new List<object[]>();
         try
         {
-            foreach (object[] row in rows)
+            foreach (object?[] row in rows)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 Guard.NotNull(row, nameof(rows));
+                object[] normalizedRow = NormalizePublicRow(row, nameof(rows));
                 List<(ColumnConstraint Constraint, long? PreviousValue)>? rowCp =
-                    await Constraints.ApplyAsync(tableName, tableDef, row, cancellationToken).ConfigureAwait(false);
+                    await Constraints.ApplyAsync(tableName, tableDef, normalizedRow, cancellationToken).ConfigureAwait(false);
                 if (rowCp != null)
                 {
                     (batchAutoCheckpoints ??= []).AddRange(rowCp);
                 }
 
-                pendingRows.Add(row);
+                pendingRows.Add(normalizedRow);
             }
 
             // Pre-write unique-index enforcement.
@@ -1249,10 +1250,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     /// <inheritdoc/>
-    public ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object> updatedValues, CancellationToken cancellationToken = default)
+    public ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken = default)
         => RunAutoCommitAsync(_ => UpdateRowsCoreAsync(tableName, predicateColumn, predicateValue, updatedValues, cancellationToken), cancellationToken);
 
-    private async ValueTask<int> UpdateRowsCoreAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object> updatedValues, CancellationToken cancellationToken)
+    private async ValueTask<int> UpdateRowsCoreAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
@@ -1273,8 +1274,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             throw new ArgumentException($"Column '{predicateColumn}' was not found in table '{tableName}'.", nameof(predicateColumn));
         }
 
-        var updateIndexes = new Dictionary<int, object>();
-        foreach (KeyValuePair<string, object> kvp in updatedValues)
+        var updateIndexes = new Dictionary<int, object?>();
+        foreach (KeyValuePair<string, object?> kvp in updatedValues)
         {
             int columnIndex = tableDef.FindColumnIndex(kvp.Key);
             if (columnIndex < 0)
@@ -1308,7 +1309,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
 
             object[] rowValues = snapshot.Rows[i].ItemArray;
-            foreach (KeyValuePair<int, object> update in updateIndexes)
+            foreach (KeyValuePair<int, object?> update in updateIndexes)
             {
                 rowValues[update.Key] = update.Value ?? DBNull.Value;
             }
@@ -2036,6 +2037,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         await _outerEncryptedStream.WriteAsync(cfb.AsMemory()).ConfigureAwait(false);
         _outerEncryptedStream.SetLength(cfb.Length);
         await _outerEncryptedStream.FlushAsync().ConfigureAwait(false);
+    }
+
+    private static object[] NormalizePublicRow(object?[] values, string paramName)
+    {
+        Guard.NotNull(values, paramName);
+
+        var normalized = new object[values.Length];
+        for (int i = 0; i < values.Length; i++)
+        {
+            normalized[i] = values[i] ?? DBNull.Value;
+        }
+
+        return normalized;
     }
 
     /// <summary>
@@ -3207,7 +3221,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     public ValueTask AddAttachmentAsync(
         string tableName,
         string columnName,
-        IReadOnlyDictionary<string, object> parentRowKey,
+        IReadOnlyDictionary<string, object?> parentRowKey,
         AttachmentInput attachment,
         CancellationToken cancellationToken = default)
     {
@@ -3222,8 +3236,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     public ValueTask AddMultiValueItemAsync(
         string tableName,
         string columnName,
-        IReadOnlyDictionary<string, object> parentRowKey,
-        object value,
+        IReadOnlyDictionary<string, object?> parentRowKey,
+        object? value,
         CancellationToken cancellationToken = default)
     {
         Guard.NotNull(parentRowKey, nameof(parentRowKey));

@@ -128,7 +128,7 @@ public class AccessWriterBenchmarks
 
         string predicateCol = _columns[0].Name;
         object predicateVal = _dummyRow[0];
-        var updates = new Dictionary<string, object>
+        var updates = new Dictionary<string, object?>
         {
             [_columns.Count > 1 ? _columns[1].Name : _columns[0].Name] = "UpdatedBench",
         };

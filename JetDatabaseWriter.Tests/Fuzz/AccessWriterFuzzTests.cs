@@ -162,7 +162,7 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
     {
         string predicateColumn = columns[0].Name;
         object? predicateValue = random.RandomValue(columns[0].ClrType);
-        var updatedValues = new Dictionary<string, object>(columns.Length);
+        var updatedValues = new Dictionary<string, object?>(columns.Length);
         foreach (var col in columns)
         {
             updatedValues[col.Name] = random.RandomValue(col.ClrType) ?? DBNull.Value;

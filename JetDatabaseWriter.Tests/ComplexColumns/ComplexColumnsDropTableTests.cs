@@ -47,7 +47,7 @@ public sealed class ComplexColumnsDropTableTests
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 new AttachmentInput("notes.txt", Encoding.UTF8.GetBytes("hi")),
                 TestContext.Current.CancellationToken);
 

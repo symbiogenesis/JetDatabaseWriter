@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
@@ -43,6 +44,62 @@ public sealed class ColumnConstraintTests
         Assert.Equal(2, dt.Rows.Count);
         Assert.Equal(42, dt.Rows[0]["Score"]);
         Assert.Equal(7, dt.Rows[1]["Score"]);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task NullablePublicValueShapes_TreatNullAsDatabaseNull(DatabaseFormat format)
+    {
+        await using var stream = await CreateFreshStreamAsync(format);
+        const string table = "NullableShapes";
+
+        await using (var writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Name", typeof(string), maxLength: 50),
+                    new("Score", typeof(int)) { DefaultValue = 42 },
+                ],
+                TestContext.Current.CancellationToken);
+
+            object?[] single = [1, null, null];
+            await writer.InsertRowAsync(table, single, TestContext.Current.CancellationToken);
+
+            List<object?[]> rows =
+            [
+                [2, "Bob", 12],
+                [3, null, 7],
+            ];
+            await writer.InsertRowsAsync(table, rows, TestContext.Current.CancellationToken);
+
+            IReadOnlyDictionary<string, object?> updates = new Dictionary<string, object?>
+            {
+                ["Name"] = null,
+                ["Score"] = null,
+            };
+            int updated = await writer.UpdateRowsAsync(table, "Id", 2, updates, TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
+        }
+
+        await using var reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(3, dt.Rows.Count);
+
+        DataRow first = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1);
+        DataRow second = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2);
+        DataRow third = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 3);
+
+        Assert.Equal(DBNull.Value, first["Name"]);
+        Assert.Equal(42, first["Score"]);
+
+        Assert.Equal(DBNull.Value, second["Name"]);
+        Assert.Equal(DBNull.Value, second["Score"]);
+
+        Assert.Equal(DBNull.Value, third["Name"]);
+        Assert.Equal(7, third["Score"]);
     }
 
     [Theory]

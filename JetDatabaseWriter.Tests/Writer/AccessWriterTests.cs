@@ -196,7 +196,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         string tableName = await SeedUpdateTableAsync(temp);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        var updates = new Dictionary<string, object> { ["Label"] = "UPDATED_VALUE" };
+        var updates = new Dictionary<string, object?> { ["Label"] = "UPDATED_VALUE" };
 
         int updated = await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
         Assert.True(updated > 0);
@@ -212,7 +212,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            var updates = new Dictionary<string, object> { ["Label"] = sentinel };
+            var updates = new Dictionary<string, object?> { ["Label"] = sentinel };
             await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
         }
 
@@ -234,7 +234,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            var updates = new Dictionary<string, object> { ["Label"] = "NO_COUNT_CHANGE" };
+            var updates = new Dictionary<string, object?> { ["Label"] = "NO_COUNT_CHANGE" };
             await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
         }
 
@@ -254,7 +254,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            var updates = new Dictionary<string, object> { ["Label"] = "UPDATED" };
+            var updates = new Dictionary<string, object?> { ["Label"] = "UPDATED" };
             int updated = await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
         }
@@ -1088,7 +1088,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         string tableName = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        var updates = new Dictionary<string, object> { ["SomeCol"] = "value" };
+        var updates = new Dictionary<string, object?> { ["SomeCol"] = "value" };
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.UpdateRowsAsync(tableName, "NONEXISTENT_COL_XYZ", "anything", updates, TestContext.Current.CancellationToken));
@@ -1112,7 +1112,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         object predicateVal = dt.Rows[0][0];
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        var updates = new Dictionary<string, object> { ["NONEXISTENT_COL_XYZ"] = "value" };
+        var updates = new Dictionary<string, object?> { ["NONEXISTENT_COL_XYZ"] = "value" };
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.UpdateRowsAsync(tableName, predicateCol, predicateVal, updates, TestContext.Current.CancellationToken));
@@ -1503,7 +1503,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using (var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            var updates = new Dictionary<string, object> { ["Score"] = 999 };
+            var updates = new Dictionary<string, object?> { ["Score"] = 999 };
             int updated = await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
         }
@@ -1784,7 +1784,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         var temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        var updates = new Dictionary<string, object> { ["Col"] = "val" };
+        var updates = new Dictionary<string, object?> { ["Col"] = "val" };
 
         await Assert.ThrowsAsync<ArgumentNullException>(async () =>
             await writer.UpdateRowsAsync(null!, "Col", "val", updates, TestContext.Current.CancellationToken));
@@ -1798,7 +1798,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.DisposeAsync();
 
-        var updates = new Dictionary<string, object> { ["Col"] = "val" };
+        var updates = new Dictionary<string, object?> { ["Col"] = "val" };
 
         await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
             await writer.UpdateRowsAsync("AnyTable", "Col", "val", updates, TestContext.Current.CancellationToken));
@@ -1811,7 +1811,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         var temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        var updates = new Dictionary<string, object> { ["Col"] = "val" };
+        var updates = new Dictionary<string, object?> { ["Col"] = "val" };
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.UpdateRowsAsync("NoSuchTable_XYZ_999", "Col", "val", updates, TestContext.Current.CancellationToken));
@@ -1915,7 +1915,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         string tableName = await SeedUpdateTableAsync(temp);
 
         await using var writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        var updates = new Dictionary<string, object> { ["Label"] = "NOTHING" };
+        var updates = new Dictionary<string, object?> { ["Label"] = "NOTHING" };
 
         int updated = await writer.UpdateRowsAsync(tableName, "Id", 999999, updates, TestContext.Current.CancellationToken);
 

@@ -220,7 +220,7 @@ public sealed class CalculatedColumnWriteTests
                 "CalcUpdate",
                 "Id",
                 1,
-                new Dictionary<string, object>
+                new Dictionary<string, object?>
                 {
                     ["Score"] = 3,
                     ["Label"] = "Beta",

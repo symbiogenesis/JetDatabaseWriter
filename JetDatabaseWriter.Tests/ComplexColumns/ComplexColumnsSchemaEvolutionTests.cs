@@ -79,7 +79,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 new AttachmentInput("notes.txt", Encoding.UTF8.GetBytes("hi")),
                 TestContext.Current.CancellationToken);
 
@@ -173,7 +173,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 new AttachmentInput("notes.txt", Encoding.UTF8.GetBytes("hi")),
                 TestContext.Current.CancellationToken);
 
@@ -252,7 +252,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
             await writer.AddMultiValueItemAsync(
                 "Tags",
                 "Labels",
-                new Dictionary<string, object> { ["Id"] = 1 },
+                new Dictionary<string, object?> { ["Id"] = 1 },
                 42,
                 TestContext.Current.CancellationToken);
 
@@ -339,7 +339,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         await writer.AddAttachmentAsync(
             "Documents",
             "Files",
-            new Dictionary<string, object> { ["Id"] = 1 },
+            new Dictionary<string, object?> { ["Id"] = 1 },
             new AttachmentInput("notes.txt", Encoding.UTF8.GetBytes("hi")),
             TestContext.Current.CancellationToken);
 
