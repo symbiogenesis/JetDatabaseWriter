@@ -1,13 +1,15 @@
 # Read performance bottlenecks
 
-Status: analysis, implementation slices, and measurement plan
+Status: implementation and focused measurement complete
 Date: 2026-05-20
-Last updated: 2026-05-24
+Last updated: 2026-05-25
 
 This note summarizes the slowest known bottlenecks when reading large amounts
 of data through `AccessReader`, based on the checked-in BenchmarkDotNet results
 and the current read-path implementation. It is meant to guide optimization
 work without re-opening the already-settled `OpenAsync` floor investigation.
+No remaining action items are tracked here; future read-performance work should
+start from fresh profiling or release-quality benchmark results.
 
 ## Evidence sources
 
@@ -23,7 +25,7 @@ The existing repository memory records the stable typed-row architecture:
 `Rows<T>()` can use a direct page-to-POCO decoder; and `RowsAsStrings()` remains
 the legacy string compatibility path.
 
-## Current benchmark snapshot
+## Historical benchmark snapshot
 
 Environment from the saved artifacts: Windows 11, .NET SDK 10.0.203,
 BenchmarkDotNet 0.15.8, Intel Core Ultra 7 268V.
@@ -47,6 +49,22 @@ BenchmarkDotNet 0.15.8, Intel Core Ultra 7 268V.
 the same range. Do not spend optimization time here unless new profiling data
 contradicts the current floor.
 
+## 2026-05-25 focused refresh
+
+Focused BenchmarkDotNet ShortRun jobs were run after the implementation slices
+on Windows 11, .NET SDK 10.0.300, .NET 10.0.8, BenchmarkDotNet 0.15.8, Intel
+Core Ultra 7 268V. Treat these as engineering closeout measurements rather than
+release-quality full-run numbers; they are sufficient to decide that no more
+implementation work is justified in this pass.
+
+| Area | ShortRun result | Decision |
+|---|---|---|
+| LVAL/MEMO decode | `Decode_Memo_Untyped` is 99.4 ms / 31.2 MB; `Decode_Memo_Typed` is 130.3 ms / 31.1 MB; `Decode_Memo_DataTable` is 179.1 ms / 31.7 MB. | Allocation is materially lower than the historical 146-147 MB MEMO rows. No more LVAL allocation work is justified without a new profile. |
+| Text decode | `Decode_Text_Untyped` is 14.3 ms / 4.6 MB, `Decode_Text_Typed` is 17.7 ms / 4.3 MB, and `Decode_Text_AsStrings` is 12.8 ms / 4.8 MB. | The `string.Create` and Latin-1 changes achieved the intended allocation reduction. No further text decode change is pending. |
+| DataTable strategies | Public numeric `ReadDataTableAsync` is 21.9 ms / 10.9 MB; `Rows.Add(object?[])` and `LoadDataRow` are about 21.4 ms but allocate 13.2 MB. Text alternatives are close: public 15.7 ms, `Rows.Add(object?[])` 13.7 ms, `LoadDataRow` 14.9 ms. | Keep production on the current `NewRow` path with `BeginLoadData` and `MinimumCapacity`; alternatives are not enough better to trade away conservative semantics. |
+| Owned-page discovery | Recognized per-table usage maps are about 2.3 ms for cold first-row/full-scan; forced whole-file fallback is about 15.7-15.8 ms on the same large-file shape. | Phase 4 is validated: recognized maps avoid the O(total file pages) cold-start path. |
+| Table-scan read-ahead | Warm full scans improve with `ParallelPageReadsEnabled`: numeric 10.5 ms to 8.7 ms, text 8.8 ms to 6.9 ms, wide 19.0 ms to 16.8 ms. Cold first-row latency does not improve. | Keep the one-page read-ahead as a narrow opt-in throughput benefit; do not add tunable depth or LVAL-heavy read-ahead now. |
+
 ## Ranked bottlenecks
 
 ### 1. MEMO/OLE LVAL decode
@@ -55,11 +73,12 @@ This is the largest measured hotspot. The MEMO fixture has only 5,000 rows, but
 all MEMO variants are around 157-179 ms and allocate about 146-147 MB. That is
 an order of magnitude slower than fixed-width row scans.
 
-Status: local implementation addressed, pending benchmark refresh. Avoidable
-per-value overhead in chained assembly, cycle detection, row-bound parsing,
-cached-page continuation setup, and chained OLE fallback copying has been
-reduced. Remaining cold page I/O and final value materialization are inherent to
-the storage format or tracked by the later text/allocation and prefetch sections.
+Status: local implementation addressed and focused measurement refreshed.
+Avoidable per-value overhead in chained assembly, cycle detection,
+row-bound parsing, cached-page continuation setup, and chained OLE fallback
+copying has been reduced. Remaining cold page I/O and final value
+materialization are inherent to the storage format or tracked by the later
+text/allocation and prefetch sections.
 
 Primary code path:
 
@@ -205,20 +224,20 @@ Primary code path:
 - Table scan loops in `Rows()`, `Rows<T>()`, `RowsAsStrings`,
   `ReadDataTableAsync`, `ReadFirstTableAsStringsAsync`, and list materialization paths
 
-## Implementation plan
+## Completed phases
 
 ### Phase 0: improve measurement coverage
 
 Add focused benchmarks before changing behavior:
 
-Status: benchmark definitions implemented, pending refreshed measurements. LVAL
-submode benchmarks, OLE submode benchmarks, cold-open first-scan coverage,
+Status: benchmark definitions implemented and focused measurements refreshed.
+LVAL submode benchmarks, OLE submode benchmarks, cold-open first-scan coverage,
 DataTable insertion-strategy benchmarks including `NewRow`,
 `Rows.Add(object?[])`, and `LoadDataRow`, numeric cold-scan variants for
 disabled/large page caches, and a simple table-scan read-ahead matrix for
 numeric/text/wide tables with first-row/full-scan, cold/warm, and
 `ParallelPageReadsEnabled` on/off have been added. Cold owned-page discovery
-benchmarks now compare recognized per-table usage maps against the whole-file
+benchmarks compare recognized per-table usage maps against the whole-file
 fallback on the same large-file shape.
 
 - Cold first table enumeration versus warm repeat enumeration.
@@ -254,10 +273,13 @@ Completed changes:
 - Chained OLE byte fallback reuses the owned chain buffer when no package
   extraction or payload slicing is needed.
 
-Remaining measurement:
+Latest measurement:
 
-- Refresh LVAL submode benchmarks to quantify allocation and elapsed-time deltas
-  after the implementation changes.
+- ShortRun results show MEMO allocation around 31-32 MB for mixed 5,000-row
+  scans, down materially from the historical 146-147 MB snapshot.
+- Isolated submode benchmarks are in place for inline, single-page, and chained
+  MEMO/OLE values. No additional LVAL allocation change is pending without a new
+  profile.
 
 Risks and constraints:
 
@@ -288,10 +310,11 @@ Completed changes:
 - The existing span-backed decoder remains as a compatibility fallback for any
   future span-only caller.
 
-Remaining measurement:
+Latest measurement:
 
-- Refresh text-heavy benchmarks to quantify the `string.Create` and Latin-1
-  decoder changes together.
+- ShortRun text-heavy scans are now around 4.3-4.8 MB allocated across typed,
+  untyped, and string-row paths, versus 15-16 MB in the historical snapshot.
+- No additional text decode implementation work is pending.
 
 Risks and constraints:
 
@@ -320,13 +343,14 @@ Completed changes:
 - README and public reader XML docs now nudge bulk consumers toward `Rows()` /
   `Rows<T>()` when `DataTable` materialization is not required.
 
-Remaining measurement:
+Latest measurement and decision:
 
-- Run the new DataTable materialization benchmarks to compare the public path,
-  `NewRow` variants, `Rows.Add(object?[])`, and `LoadDataRow` with bulk-load
-  mode and minimum capacity.
-- If `Rows.Add(object?[])` wins materially, decide whether production can use it
-  without adding per-row exact-array allocation or weakening null handling.
+- The public path is competitive with `Rows.Add(object?[])` and `LoadDataRow`.
+  Numeric alternatives are within noise on time and allocate more; text
+  alternatives are slightly faster but not enough to justify changing row-state
+  and null-handling semantics.
+- Keep the production path on `NewRow` plus `BeginLoadData` and
+  `MinimumCapacity`.
 
 Risks and constraints:
 
@@ -356,12 +380,12 @@ Completed changes:
   pointers to page-type `0x05` bitmap pages, with the same data-page back-pointer
   validation and fallback behavior.
 
-Remaining measurement:
+Latest measurement and decision:
 
-- Run the owned-page discovery benchmarks to quantify the difference between
-  recognized usage maps and the whole-file fallback on large files.
-- Keep the current whole-file owner scan available as a safety fallback for
-  unusual or corrupt databases.
+- Owned-page discovery benchmarks show recognized usage maps around 2.3 ms and
+  forced whole-file fallback around 15.7-15.8 ms on the same large-file shape.
+- Keep the current whole-file owner scan as a safety fallback for unusual or
+  corrupt databases.
 
 Risks and constraints:
 
@@ -380,11 +404,12 @@ Acceptance criteria:
 The option now has a conservative implementation for simple table scans; this
 phase tracks whether and how to extend it beyond that shape.
 
-Status: partially implemented. Simple table scans now use a bounded one-page
-read-ahead path when `ParallelPageReadsEnabled` is set and the page cache can
-hold previous/current/prefetched pages. MEMO/OLE/complex/attachment tables still
-use the sequential path until page-buffer ownership is made explicit enough for
-LVAL-heavy scans.
+Status: implemented for the current supported scope. Simple table scans now use
+a bounded one-page read-ahead path when `ParallelPageReadsEnabled` is set and
+the page cache can hold previous/current/prefetched pages.
+MEMO/OLE/complex/attachment tables intentionally still use the sequential path;
+extending read-ahead to those shapes is out of scope without explicit
+page-buffer ownership.
 
 Completed changes:
 
@@ -396,15 +421,13 @@ Completed changes:
 - Updated `ParallelPageReadsEnabled` API docs to describe read-ahead eligibility
   and random-access page reads rather than unconditional parallel processing.
 
-Remaining work:
+Latest measurement and decision:
 
-- Run the table-scan read-ahead benchmark matrix and compare first-row latency
-  and full-scan throughput for cold/warm simple scans with
-  `ParallelPageReadsEnabled` on/off.
-- Revisit LVAL-heavy read-ahead only if page-buffer leases or a similar
-  ownership model are introduced.
-- Consider a tunable read-ahead depth only after one-page lookahead shows a
-  measurable benefit and no cache contention regressions.
+- Read-ahead improves warm full-scan throughput for simple numeric, text, and
+  wide tables, but it does not improve cold first-row latency.
+- Keep the current one-page read-ahead as a narrow opt-in throughput benefit.
+  Do not add tunable depth or LVAL-heavy read-ahead without a page-buffer lease
+  model and a fresh profile.
 
 Risks and constraints:
 
@@ -417,17 +440,26 @@ Acceptance criteria:
 - Large cold scan benchmarks show a clear throughput or latency improvement when
   enabled, or documentation is corrected to match actual behavior.
 
-## Recommended first slice
+## Measurement commands
 
-Start with Phase 0 plus the lowest-risk parts of Phases 1-3:
+The original first implementation slice is complete, and the focused ShortRun
+refresh has been recorded above. These are the commands used for the focused
+refresh; omit `--job short` for a release-quality full BenchmarkDotNet run.
 
-1. Add the missing benchmarks for LVAL submodes, DataTable insertion variants,
-   and cold versus warm table scans.
-2. Optimize chained LVAL assembly to fill the final buffer directly.
-3. Replace Jet4 compressed text `char[]` construction with `string.Create` where
-   target frameworks allow it.
-4. Test `DataTable.BeginLoadData` / `EndLoadData` and `MinimumCapacity`.
+Run focused benchmark groups in Release:
 
-This first slice attacks the top two measured slow paths and a broad allocation
-hotspot without changing table-discovery semantics or introducing read-ahead
-concurrency.
+```powershell
+dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderRowDecodeBenchmarks* --job short
+dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *DataTableMaterializationBenchmarks* --job short
+dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderOwnedPageDiscoveryBenchmarks* --job short
+dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderTableScanReadAheadBenchmarks* --job short
+```
+
+Decisions from this refresh:
+
+- LVAL and text benchmark deltas confirm the completed allocation work is enough
+  for this pass; more decode-path work needs a new profile.
+- DataTable materialization keeps the current production path; alternatives do
+  not justify semantic risk.
+- Owned-page discovery results validate the recognized usage-map path.
+- Read-ahead stays as one-page opt-in lookahead with no tunable depth yet.
