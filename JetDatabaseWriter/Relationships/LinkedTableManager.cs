@@ -180,11 +180,7 @@ internal static class LinkedTableManager
         ThrowIfUnsupportedLinkedRead(link);
 
         AccessReaderOptions linkedOptions = reader.LinkedSourceOpenOptions;
-        string resolvedPath = ResolveLinkedSourcePath(
-            link,
-            reader.HostDatabasePath,
-            linkedOptions.LinkedSourcePathAllowlist,
-            linkedOptions.LinkedSourcePathValidator);
+        string resolvedPath = ResolveLinkedSourcePath(reader, link);
 
         if (!File.Exists(resolvedPath))
         {
@@ -227,18 +223,6 @@ internal static class LinkedTableManager
             rowCount++;
             progress?.Report(rowCount);
             yield return NormalizeStringRow(row, source.ColumnNames.Length);
-        }
-    }
-
-    internal static async IAsyncEnumerable<object[]> RowsLinkedTextAsync(
-        AccessReader reader,
-        LinkedTableInfo link,
-        IProgress<long>? progress,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        await foreach (string[] row in RowsLinkedTextAsStringsAsync(reader, link, progress, cancellationToken).ConfigureAwait(false))
-        {
-            yield return row;
         }
     }
 
@@ -366,12 +350,7 @@ internal static class LinkedTableManager
             ThrowIfUnsupportedLinkedRead(link);
         }
 
-        AccessReaderOptions linkedOptions = reader.LinkedSourceOpenOptions;
-        string resolvedDirectory = ResolveLinkedSourcePath(
-            link,
-            reader.HostDatabasePath,
-            linkedOptions.LinkedSourcePathAllowlist,
-            linkedOptions.LinkedSourcePathValidator);
+        string resolvedDirectory = ResolveLinkedSourcePath(reader, link);
 
         if (string.IsNullOrWhiteSpace(link.SourceObjectName))
         {
@@ -391,6 +370,16 @@ internal static class LinkedTableManager
         }
 
         return resolvedFilePath;
+    }
+
+    private static string ResolveLinkedSourcePath(AccessReader reader, LinkedTableInfo link)
+    {
+        AccessReaderOptions linkedOptions = reader.LinkedSourceOpenOptions;
+        return ResolveLinkedSourcePath(
+            link,
+            reader.HostDatabasePath,
+            linkedOptions.LinkedSourcePathAllowlist,
+            linkedOptions.LinkedSourcePathValidator);
     }
 
     private static async ValueTask<LinkedTextSource> GetLinkedTextSourceAsync(

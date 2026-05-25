@@ -51,16 +51,6 @@ public sealed class BinaryStringParserTests
         Assert.Equal(expected, bytes);
     }
 
-    [Fact]
-    public void TryParseHexString_DecodesDashSeparatedHex()
-    {
-        bool parsed = BinaryStringParser.TryParseHexString("CA-FE-BA-BE".AsSpan(), out byte[] bytes);
-
-        byte[] expected = [0xCA, 0xFE, 0xBA, 0xBE];
-        Assert.True(parsed);
-        Assert.Equal(expected, bytes);
-    }
-
     [Theory]
     [InlineData("CAF")]
     [InlineData("CAFG")]
@@ -73,9 +63,9 @@ public sealed class BinaryStringParserTests
     }
 
     [Fact]
-    public void TryParseDashSeparatedHex_DecodesBitConverterFormat()
+    public void TryParseHexString_DecodesDashSeparatedBitConverterFormat()
     {
-        bool parsed = BinaryStringParser.TryParseDashSeparatedHex("CA-FE-BA-BE".AsSpan(), out byte[] bytes);
+        bool parsed = BinaryStringParser.TryParseHexString("CA-FE-BA-BE".AsSpan(), out byte[] bytes);
 
         byte[] expected = [0xCA, 0xFE, 0xBA, 0xBE];
         Assert.True(parsed);
@@ -83,9 +73,9 @@ public sealed class BinaryStringParserTests
     }
 
     [Fact]
-    public void TryParseDashSeparatedHex_DecodesSingleByteFormat()
+    public void TryParseHexString_DecodesSingleByteFormat()
     {
-        bool parsed = BinaryStringParser.TryParseDashSeparatedHex("FF".AsSpan(), out byte[] bytes);
+        bool parsed = BinaryStringParser.TryParseHexString("FF".AsSpan(), out byte[] bytes);
 
         Assert.True(parsed);
         Assert.Single(bytes);
@@ -97,9 +87,9 @@ public sealed class BinaryStringParserTests
     [InlineData("CA-")]
     [InlineData("C-A")]
     [InlineData("CA-FG")]
-    public void TryParseDashSeparatedHex_RejectsMalformedInput(string value)
+    public void TryParseHexString_RejectsMalformedDashSeparatedHex(string value)
     {
-        bool parsed = BinaryStringParser.TryParseDashSeparatedHex(value.AsSpan(), out byte[] bytes);
+        bool parsed = BinaryStringParser.TryParseHexString(value.AsSpan(), out byte[] bytes);
 
         Assert.False(parsed);
         Assert.Empty(bytes);

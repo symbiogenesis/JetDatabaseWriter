@@ -278,27 +278,6 @@ internal sealed class DataPageInserter(AccessWriter writer)
         return await writer.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
     }
 
-    internal void WriteRowToPage(long pageNumber, byte[] page, byte[] rowBytes)
-    {
-        int numRows = Ru16(page, writer._dataPage.NumRows);
-        int firstRowStart = GetFirstRowStart(page, numRows);
-        int rowStart = firstRowStart - rowBytes.Length;
-        int rowOffsetPos = writer._dataPage.RowsStart + (numRows * 2);
-
-        Buffer.BlockCopy(rowBytes, 0, page, rowStart, rowBytes.Length);
-        Wu16(page, rowOffsetPos, rowStart);
-        Wu16(page, writer._dataPage.NumRows, numRows + 1);
-
-        int freeSpace = rowStart - (writer._dataPage.RowsStart + ((numRows + 1) * 2));
-        if (freeSpace < 0)
-        {
-            throw new InvalidDataException("Insufficient free space remained on the target page.");
-        }
-
-        Wu16(page, 2, freeSpace);
-        writer.WritePage(pageNumber, page);
-    }
-
     internal async ValueTask WriteRowToPageAsync(long pageNumber, byte[] page, byte[] rowBytes, CancellationToken cancellationToken)
     {
         int numRows = Ru16(page, writer._dataPage.NumRows);

@@ -59,27 +59,11 @@ internal static class BinaryStringParser
             return false;
         }
 #else
-        var buffer = new byte[value.Length / 2];
-        int sourceIndex = 0;
-        for (int i = 0; i < buffer.Length; i++)
-        {
-            int high = HexToNibble(value[sourceIndex]);
-            int low = HexToNibble(value[sourceIndex + 1]);
-            if (high < 0 || low < 0)
-            {
-                return false;
-            }
-
-            buffer[i] = (byte)((high << 4) | low);
-            sourceIndex += 2;
-        }
-
-        bytes = buffer;
-        return true;
+        return TryParseHexPairs(value, value.Length / 2, separator: '\0', out bytes);
 #endif
     }
 
-    public static bool TryParseDashSeparatedHex(ReadOnlySpan<char> value, out byte[] bytes)
+    private static bool TryParseDashSeparatedHex(ReadOnlySpan<char> value, out byte[] bytes)
     {
         bytes = [];
 
@@ -93,7 +77,14 @@ internal static class BinaryStringParser
             return false;
         }
 
-        var buffer = new byte[(value.Length + 1) / 3];
+        return TryParseHexPairs(value, (value.Length + 1) / 3, separator: '-', out bytes);
+    }
+
+    private static bool TryParseHexPairs(ReadOnlySpan<char> value, int byteCount, char separator, out byte[] bytes)
+    {
+        bytes = [];
+
+        var buffer = new byte[byteCount];
         int sourceIndex = 0;
         for (int i = 0; i < buffer.Length; i++)
         {
@@ -106,7 +97,7 @@ internal static class BinaryStringParser
 
             buffer[i] = (byte)((high << 4) | low);
             sourceIndex += 2;
-            if (sourceIndex == value.Length)
+            if (separator == '\0' || sourceIndex == value.Length)
             {
                 continue;
             }

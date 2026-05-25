@@ -1076,8 +1076,7 @@ public sealed class IndexKeyEncoderTests
 
     /// <summary>
     /// Isolated sign-byte verification for <c>T_MONEY</c> across all four
-    /// <c>asc/desc × pos/neg</c> outcomes. Money uses
-    /// <c>EncodeSignedBigEndian(scaled, 8)</c> which writes the scaled int64
+    /// <c>asc/desc × pos/neg</c> outcomes. Money writes the scaled int64
     /// in big-endian order and XORs the top byte with <c>0x80</c>. The flag
     /// byte precedes the 8-byte payload, so <c>encoded[1]</c> carries the
     /// sign information: non-negative scaled values (top BE byte &lt; 0x80

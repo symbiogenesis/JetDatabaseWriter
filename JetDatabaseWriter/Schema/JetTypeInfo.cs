@@ -497,28 +497,6 @@ internal static class JetTypeInfo
         return Encoding.Unicode.GetString(bytes);
     }
 
-    /// <summary>
-    /// Appends a UCS-2 LE byte slice to <paramref name="sb"/> without
-    /// allocating an intermediate <see cref="string"/>. The slice length
-    /// must be even; the caller is responsible for trimming any odd
-    /// trailing byte before calling.
-    /// </summary>
-    internal static void AppendUtf16LE(StringBuilder sb, ReadOnlySpan<byte> bytes)
-    {
-        if (bytes.IsEmpty)
-        {
-            return;
-        }
-
-        if (BitConverter.IsLittleEndian)
-        {
-            _ = sb.Append(MemoryMarshal.Cast<byte, char>(bytes));
-            return;
-        }
-
-        _ = sb.Append(Encoding.Unicode.GetString(bytes));
-    }
-
     // ── Typed primitive readers ───────────────────────────────
     // Used by RowMapper<T>'s compiled direct decoder. Each helper returns
     // the unboxed CLR value for a single fixed-width column type, reading
@@ -535,10 +513,6 @@ internal static class JetTypeInfo
     /// <summary>Reads a little-endian Int32 (T_LONG) at <paramref name="start"/>.</summary>
     internal static int ReadInt32LE(byte[] page, int start) =>
         BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4));
-
-    /// <summary>Reads a little-endian Int64 at <paramref name="start"/>.</summary>
-    internal static long ReadInt64LE(byte[] page, int start) =>
-        BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8));
 
     /// <summary>Reads a little-endian Single (T_FLOAT) at <paramref name="start"/>.</summary>
     internal static float ReadFloatLE(byte[] page, int start) =>

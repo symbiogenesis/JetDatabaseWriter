@@ -1,6 +1,6 @@
 # Code simplification candidates
 
-Status: todo candidates
+Status: completed cleanup pass
 Date: 2026-05-24
 Last updated: 2026-05-25
 
@@ -42,7 +42,8 @@ duplication while retaining, or expanding, existing features and performance.
 
 ## Lower-confidence or research items
 
-- [ ] Investigate `Microsoft.VisualBasic.FileIO.TextFieldParser` for linked text parsing.
+- [x] Investigate `Microsoft.VisualBasic.FileIO.TextFieldParser` for linked text parsing.
+  - Completed 2026-05-25: keep the custom linked-text parser rather than adding a CSV/text parsing dependency or a synchronous parser surface.
   - Possible upside: replace the custom delimited reader and potentially expand support toward fixed-width text files.
   - Current blocker: `TextFieldParser` appears available in the .NETCore ref pack, but not in the `netstandard2.1` reference set used by the library.
   - Risks: added package/reference surface, synchronous file IO under async APIs, cancellation behavior, and subtle behavior changes for quoted CRLF, escaped quotes, custom delimiters, and unsupported formats.
@@ -59,4 +60,8 @@ duplication while retaining, or expanding, existing features and performance.
 3. Simplify path containment with focused path-policy tests. (DONE)
 4. Add linked-table metadata caching. (DONE)
 5. Centralize `AccessReader` linked-table dispatch. (DONE)
-6. Revisit `TextFieldParser` only if a feature or benchmark justifies the tradeoff.
+6. Leave linked text parsing dependency-free; revisit `TextFieldParser` only if fixed-width support or broader Access text-driver compatibility justifies the tradeoff. (DONE)
+
+## Follow-up simplification pass
+
+- Completed 2026-05-25: collapsed linked-table dispatch helper surfaces, reduced hex parsing to one public helper entry point, removed orphaned synchronous page-write helpers, and deleted unused index/schema helper methods. The library diff is now net-negative versus the pre-cleanup baseline while keeping the linked-table, caching, path-policy, and binary parsing improvements.

@@ -343,12 +343,4 @@ internal static class IndexLeafPageBuilder
 
         return prefixLen;
     }
-
-    /// <summary>
-    /// Computes the longest byte prefix shared by every encoded key in the
-    /// supplied entries. Exposed for <see cref="IndexBTreeBuilder"/> so
-    /// intermediate (<c>0x03</c>) pages can apply the same §4.4 compression.
-    /// </summary>
-    internal static int ComputeSharedPrefixLengthExternal(IReadOnlyList<IndexEntry> entries)
-        => ComputeSharedPrefixLength(entries);
 }

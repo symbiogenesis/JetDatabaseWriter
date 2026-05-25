@@ -911,31 +911,6 @@ public abstract class AccessBase : IAccessBase
         return copy;
     }
 
-    internal void WritePage(long pageNumber, byte[] page)
-    {
-        _ioGate.Wait();
-        try
-        {
-            // Buffer into the active transaction journal (plaintext) instead
-            // of touching disk. Encryption + locks are applied at commit time.
-            if (ActiveJournal is { } journal)
-            {
-                journal.Write(pageNumber, page.AsSpan(0, _pgSz));
-                return;
-            }
-
-            byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
-            using IDisposable pageLock = _byteRangeLock.AcquirePageLock(pageNumber, _pgSz);
-            _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-            _stream.Write(toWrite, 0, _pgSz);
-            _stream.Flush();
-        }
-        finally
-        {
-            _ = _ioGate.Release();
-        }
-    }
-
     internal async ValueTask WritePageAsync(long pageNumber, byte[] page, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -961,30 +936,6 @@ public abstract class AccessBase : IAccessBase
             {
                 pageLock.Dispose();
             }
-        }
-        finally
-        {
-            _ = _ioGate.Release();
-        }
-    }
-
-    private protected long AppendPage(byte[] page)
-    {
-        _ioGate.Wait();
-        try
-        {
-            if (ActiveJournal is { } journal)
-            {
-                return journal.Append(page.AsSpan(0, _pgSz));
-            }
-
-            long pageNumber = _stream.Length / _pgSz;
-            byte[] toWrite = PrepareEncryptedPageForWrite(pageNumber, page);
-            using IDisposable pageLock = _byteRangeLock.AcquirePageLock(pageNumber, _pgSz);
-            _ = _stream.Seek(pageNumber * _pgSz, SeekOrigin.Begin);
-            _stream.Write(toWrite, 0, _pgSz);
-            _stream.Flush();
-            return pageNumber;
         }
         finally
         {

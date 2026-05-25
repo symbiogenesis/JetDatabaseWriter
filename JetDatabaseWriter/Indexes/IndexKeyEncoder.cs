@@ -568,21 +568,6 @@ internal static class IndexKeyEncoder
     }
 
     /// <summary>
-    /// Big-endian signed-integer encoding with the high bit of the most
-    /// significant byte inverted, so two's-complement values sort correctly
-    /// as unsigned bytes (negative values precede non-negative values).
-    /// </summary>
-    private static byte[] EncodeSignedBigEndian(long value, int byteCount)
-    {
-        byte[] result = new byte[byteCount];
-        Span<byte> tmp = stackalloc byte[8];
-        BinaryPrimitives.WriteInt64BigEndian(tmp, value);
-        tmp.Slice(8 - byteCount, byteCount).CopyTo(result);
-        result[0] ^= 0x80;
-        return result;
-    }
-
-    /// <summary>
     /// IEEE-754 sort-key twiddle (in-place): if the sign bit is zero (non-negative)
     /// flip the sign bit; otherwise (negative) ones-complement every byte.
     /// </summary>
@@ -599,17 +584,6 @@ internal static class IndexKeyEncoder
                 be[i] = unchecked((byte)~be[i]);
             }
         }
-    }
-
-    /// <summary>
-    /// IEEE-754 sort-key twiddle (caller has already written the value in big-endian
-    /// IEEE byte order): if the sign bit is zero (non-negative) flip the sign bit;
-    /// otherwise (negative) ones-complement every byte. Result sorts numerically.
-    /// </summary>
-    private static byte[] TwiddleIeeeBigEndian(byte[] be)
-    {
-        TwiddleIeeeBigEndianInPlace(be);
-        return be;
     }
 
     // ── Coercion helpers ────────────────────────────────────────────────
