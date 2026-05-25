@@ -441,19 +441,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
-            if (link == null)
-            {
-                return 0;
-            }
-
-            if (link.Kind == LinkedTableKind.Text)
-            {
-                return await LinkedTableManager.CountLinkedTextRowsAsync(this, link, cancellationToken).ConfigureAwait(false);
-            }
-
-            await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
-            return await source.GetRealRowCountAsync(link.SourceObjectName, cancellationToken).ConfigureAwait(false);
+            long? linkedCount = await TryGetLinkedTableRowCountAsync(tableName, cancellationToken).ConfigureAwait(false);
+            return linkedCount ?? 0;
         }
 
         long count = 0;
@@ -495,24 +484,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
-            if (link != null)
+            await foreach (object[] row in EnumerateLinkedRowsAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
             {
-                if (link.Kind == LinkedTableKind.Text)
-                {
-                    await foreach (object[] row in LinkedTableManager.RowsLinkedTextAsync(this, link, progress, cancellationToken).ConfigureAwait(false))
-                    {
-                        yield return row;
-                    }
-                }
-                else
-                {
-                    await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
-                    await foreach (object[] row in source.Rows(link.SourceObjectName, progress, cancellationToken).ConfigureAwait(false))
-                    {
-                        yield return row;
-                    }
-                }
+                yield return row;
             }
 
             yield break;
@@ -539,26 +513,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
-            if (link != null)
+            await foreach (T row in EnumerateLinkedRowsAsync<T>(tableName, progress, cancellationToken).ConfigureAwait(false))
             {
-                if (link.Kind == LinkedTableKind.Text)
-                {
-                    List<ColumnMetadata> meta = await LinkedTableManager.GetLinkedTextColumnMetadataAsync(this, link, cancellationToken).ConfigureAwait(false);
-                    Func<object?[], T> textFactory = RowMapper<T>.Build(meta);
-                    await foreach (object[] row in LinkedTableManager.RowsLinkedTextAsync(this, link, progress, cancellationToken).ConfigureAwait(false))
-                    {
-                        yield return textFactory(row);
-                    }
-                }
-                else
-                {
-                    await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
-                    await foreach (T row in source.Rows<T>(link.SourceObjectName, progress, cancellationToken).ConfigureAwait(false))
-                    {
-                        yield return row;
-                    }
-                }
+                yield return row;
             }
 
             yield break;
@@ -890,24 +847,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
-            if (link != null)
+            await foreach (string[] row in EnumerateLinkedRowsAsStringsAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
             {
-                if (link.Kind == LinkedTableKind.Text)
-                {
-                    await foreach (string[] row in LinkedTableManager.RowsLinkedTextAsStringsAsync(this, link, progress, cancellationToken).ConfigureAwait(false))
-                    {
-                        yield return row;
-                    }
-                }
-                else
-                {
-                    await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
-                    await foreach (string[] row in source.RowsAsStrings(link.SourceObjectName, progress, cancellationToken).ConfigureAwait(false))
-                    {
-                        yield return row;
-                    }
-                }
+                yield return row;
             }
 
             yield break;
@@ -941,19 +883,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
-            if (link != null)
-            {
-                if (link.Kind == LinkedTableKind.Text)
-                {
-                    return await LinkedTableManager.GetLinkedTextColumnMetadataAsync(this, link, cancellationToken).ConfigureAwait(false);
-                }
-
-                await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
-                return await source.GetColumnMetadataAsync(link.SourceObjectName, cancellationToken).ConfigureAwait(false);
-            }
-
-            return [];
+            List<ColumnMetadata>? linkedMetadata = await TryGetLinkedTableColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
+            return linkedMetadata ?? [];
         }
 
         Dictionary<string, string> complexSubtypes = new(StringComparer.OrdinalIgnoreCase);
@@ -1790,16 +1721,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
-            if (link != null)
+            DataTable? linkedTable = await TryReadLinkedDataTableAsync(tableName, maxRows, progress, preserveComplexReferences, cancellationToken).ConfigureAwait(false);
+            if (linkedTable != null)
             {
-                if (link.Kind == LinkedTableKind.Text)
-                {
-                    return await LinkedTableManager.ReadLinkedTextDataTableAsync(this, link, maxRows, progress, cancellationToken).ConfigureAwait(false);
-                }
-
-                await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
-                return await source.ReadDataTableCoreAsync(link.SourceObjectName, maxRows, progress, preserveComplexReferences, cancellationToken).ConfigureAwait(false);
+                return linkedTable;
             }
 
             return new DataTable(tableName);
@@ -1909,6 +1834,170 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             dt?.Dispose();
         }
+    }
+
+    private async ValueTask<long?> TryGetLinkedTableRowCountAsync(string tableName, CancellationToken cancellationToken)
+    {
+        LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
+        if (link == null)
+        {
+            return null;
+        }
+
+        if (link.Kind == LinkedTableKind.Text)
+        {
+            return await LinkedTableManager.CountLinkedTextRowsAsync(this, link, cancellationToken).ConfigureAwait(false);
+        }
+
+        await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
+        return await source.GetRealRowCountAsync(link.SourceObjectName, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async IAsyncEnumerable<object[]> EnumerateLinkedRowsAsync(
+        string tableName,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
+        if (link == null)
+        {
+            yield break;
+        }
+
+        if (link.Kind == LinkedTableKind.Text)
+        {
+            await foreach (object[] row in LinkedTableManager.RowsLinkedTextAsync(this, link, progress, cancellationToken).ConfigureAwait(false))
+            {
+                yield return row;
+            }
+
+            yield break;
+        }
+
+        await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
+        await foreach (object[] row in source.Rows(link.SourceObjectName, progress, cancellationToken).ConfigureAwait(false))
+        {
+            yield return row;
+        }
+    }
+
+    private async IAsyncEnumerable<T> EnumerateLinkedRowsAsync<T>(
+        string tableName,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
+        if (link == null)
+        {
+            yield break;
+        }
+
+        if (link.Kind == LinkedTableKind.Text)
+        {
+            List<ColumnMetadata> meta = await LinkedTableManager.GetLinkedTextColumnMetadataAsync(this, link, cancellationToken).ConfigureAwait(false);
+            Func<object?[], T> textFactory = RowMapper<T>.Build(meta);
+            await foreach (object[] row in LinkedTableManager.RowsLinkedTextAsync(this, link, progress, cancellationToken).ConfigureAwait(false))
+            {
+                yield return textFactory(row);
+            }
+
+            yield break;
+        }
+
+        await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
+        await foreach (T row in source.Rows<T>(link.SourceObjectName, progress, cancellationToken).ConfigureAwait(false))
+        {
+            yield return row;
+        }
+    }
+
+    private async IAsyncEnumerable<string[]> EnumerateLinkedRowsAsStringsAsync(
+        string tableName,
+        IProgress<long>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
+        if (link == null)
+        {
+            yield break;
+        }
+
+        if (link.Kind == LinkedTableKind.Text)
+        {
+            await foreach (string[] row in LinkedTableManager.RowsLinkedTextAsStringsAsync(this, link, progress, cancellationToken).ConfigureAwait(false))
+            {
+                yield return row;
+            }
+
+            yield break;
+        }
+
+        await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
+        await foreach (string[] row in source.RowsAsStrings(link.SourceObjectName, progress, cancellationToken).ConfigureAwait(false))
+        {
+            yield return row;
+        }
+    }
+
+    private async ValueTask<List<ColumnMetadata>?> TryGetLinkedTableColumnMetadataAsync(string tableName, CancellationToken cancellationToken)
+    {
+        LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
+        if (link == null)
+        {
+            return null;
+        }
+
+        if (link.Kind == LinkedTableKind.Text)
+        {
+            return await LinkedTableManager.GetLinkedTextColumnMetadataAsync(this, link, cancellationToken).ConfigureAwait(false);
+        }
+
+        await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
+        return await source.GetColumnMetadataAsync(link.SourceObjectName, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<DataTable?> TryReadLinkedDataTableAsync(
+        string tableName,
+        uint? maxRows,
+        IProgress<long>? progress,
+        bool preserveComplexReferences,
+        CancellationToken cancellationToken)
+    {
+        LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
+        if (link == null)
+        {
+            return null;
+        }
+
+        if (link.Kind == LinkedTableKind.Text)
+        {
+            return await LinkedTableManager.ReadLinkedTextDataTableAsync(this, link, maxRows, progress, cancellationToken).ConfigureAwait(false);
+        }
+
+        await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
+        return await source.ReadDataTableCoreAsync(link.SourceObjectName, maxRows, progress, preserveComplexReferences, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<DataTable?> TryReadLinkedTableAsStringsAsync(
+        string tableName,
+        uint? maxRows,
+        IProgress<long>? progress,
+        CancellationToken cancellationToken)
+    {
+        LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
+        if (link == null)
+        {
+            return null;
+        }
+
+        if (link.Kind == LinkedTableKind.Text)
+        {
+            return await LinkedTableManager.ReadLinkedTextDataTableAsync(this, link, maxRows, progress, cancellationToken).ConfigureAwait(false);
+        }
+
+        await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
+        return await source.ReadTableAsStringsAsync(link.SourceObjectName, maxRows, progress, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -2288,16 +2377,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var resolved = await ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            LinkedTableInfo? link = await LinkedTableManager.FindLinkedTableAsync(this, tableName, cancellationToken).ConfigureAwait(false);
-            if (link != null)
+            DataTable? linkedTable = await TryReadLinkedTableAsStringsAsync(tableName, maxRows, progress, cancellationToken).ConfigureAwait(false);
+            if (linkedTable != null)
             {
-                if (link.Kind == LinkedTableKind.Text)
-                {
-                    return await LinkedTableManager.ReadLinkedTextDataTableAsync(this, link, maxRows, progress, cancellationToken).ConfigureAwait(false);
-                }
-
-                await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(this, link, cancellationToken).ConfigureAwait(false);
-                return await source.ReadTableAsStringsAsync(link.SourceObjectName, maxRows, progress, cancellationToken).ConfigureAwait(false);
+                return linkedTable;
             }
 
             return new DataTable(tableName);

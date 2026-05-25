@@ -34,8 +34,8 @@ duplication while retaining, or expanding, existing features and performance.
   - Expected benefit: fewer repeated catalog scans and simpler call sites in `AccessReader` fallback paths.
   - Risk to check: writer-side catalog mutations must invalidate the linked-table cache whenever user-table catalog cache is invalidated.
 
-- [ ] Centralize linked-table dispatch in `AccessReader`.
-  - Current repetition: row count, untyped rows, typed rows, string rows, metadata, `ReadDataTableAsync`, and `ReadTableAsStringsAsync` each perform the same local-table-missing, find-link, text-vs-Access branch.
+- [x] Centralize linked-table dispatch in `AccessReader`.
+  - Completed 2026-05-25: row count, untyped rows, typed rows, string rows, metadata, `ReadDataTableAsync`, and `ReadTableAsStringsAsync` now delegate linked-table fallback through private dispatch helpers.
   - Candidate shape: after linked-table lookup is cached, introduce small private helpers for linked-table fallback dispatch instead of open-coded branches.
   - Expected benefit: fewer behavioral branches to keep synchronized when adding linked-table features.
   - Risk to check: keep async iterator disposal semantics clear for opened source readers.
@@ -60,5 +60,5 @@ duplication while retaining, or expanding, existing features and performance.
 2. Add direct linked-text row counting. (DONE)
 3. Simplify path containment with focused path-policy tests. (DONE)
 4. Add linked-table metadata caching. (DONE)
-5. Centralize `AccessReader` linked-table dispatch.
+5. Centralize `AccessReader` linked-table dispatch. (DONE)
 6. Revisit `TextFieldParser` or binary helper fast paths only if a feature or benchmark justifies the tradeoff.
