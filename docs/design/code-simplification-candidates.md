@@ -48,11 +48,9 @@ duplication while retaining, or expanding, existing features and performance.
   - Risks: added package/reference surface, synchronous file IO under async APIs, cancellation behavior, and subtle behavior changes for quoted CRLF, escaped quotes, custom delimiters, and unsupported formats.
   - Recommendation: do not replace the current parser unless fixed-width or broader Access text-driver compatibility becomes a priority.
 
-- [ ] Consider conditional modern fast paths for binary/base64 helpers.
-  - Current path: `JetDatabaseWriter/Infrastructure/BinaryStringParser.cs` supports span-based base64 and dash-separated hex parsing across target frameworks.
-  - Possible upside: newer target frameworks expose more `Convert` helpers that could shorten some code paths.
-  - Current blocker: `netstandard2.1` still needs custom logic for allocation control and dash-separated `BitConverter.ToString` formats.
-  - Recommendation: leave the existing implementation alone unless benchmarks or analyzer findings point at it.
+- [x] Consider conditional modern fast paths for binary/base64 helpers.
+  - Completed 2026-05-25: base64 already used span-based `Convert.TryFromBase64Chars`; plain-hex parsing now lives in `BinaryStringParser` and uses `Convert.FromHexString` on modern targets while keeping a `netstandard2.1` nibble-loop fallback and the dash-separated parser for `BitConverter.ToString` formats.
+  - Recommendation: keep the custom dash-separated logic unless benchmarks or analyzer findings point at a better replacement.
 
 ## Suggested order
 
@@ -61,4 +59,4 @@ duplication while retaining, or expanding, existing features and performance.
 3. Simplify path containment with focused path-policy tests. (DONE)
 4. Add linked-table metadata caching. (DONE)
 5. Centralize `AccessReader` linked-table dispatch. (DONE)
-6. Revisit `TextFieldParser` or binary helper fast paths only if a feature or benchmark justifies the tradeoff.
+6. Revisit `TextFieldParser` only if a feature or benchmark justifies the tradeoff.

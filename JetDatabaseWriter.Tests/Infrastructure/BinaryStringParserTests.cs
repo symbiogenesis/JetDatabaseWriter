@@ -42,6 +42,37 @@ public sealed class BinaryStringParserTests
     }
 
     [Fact]
+    public void TryParseHexString_DecodesPlainHex()
+    {
+        bool parsed = BinaryStringParser.TryParseHexString("CAFEbabe".AsSpan(), out byte[] bytes);
+
+        byte[] expected = [0xCA, 0xFE, 0xBA, 0xBE];
+        Assert.True(parsed);
+        Assert.Equal(expected, bytes);
+    }
+
+    [Fact]
+    public void TryParseHexString_DecodesDashSeparatedHex()
+    {
+        bool parsed = BinaryStringParser.TryParseHexString("CA-FE-BA-BE".AsSpan(), out byte[] bytes);
+
+        byte[] expected = [0xCA, 0xFE, 0xBA, 0xBE];
+        Assert.True(parsed);
+        Assert.Equal(expected, bytes);
+    }
+
+    [Theory]
+    [InlineData("CAF")]
+    [InlineData("CAFG")]
+    public void TryParseHexString_RejectsMalformedPlainHex(string value)
+    {
+        bool parsed = BinaryStringParser.TryParseHexString(value.AsSpan(), out byte[] bytes);
+
+        Assert.False(parsed);
+        Assert.Empty(bytes);
+    }
+
+    [Fact]
     public void TryParseDashSeparatedHex_DecodesBitConverterFormat()
     {
         bool parsed = BinaryStringParser.TryParseDashSeparatedHex("CA-FE-BA-BE".AsSpan(), out byte[] bytes);

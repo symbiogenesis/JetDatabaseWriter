@@ -27,6 +27,16 @@ public sealed class TypedValueParserTests
     }
 
     [Fact]
+    public void ParseValue_ByteArray_DecodesPlainHex()
+    {
+        object parsed = TypedValueParser.ParseValue("CAFEbabe", typeof(byte[]));
+
+        byte[] expected = [0xCA, 0xFE, 0xBA, 0xBE];
+        byte[] bytes = Assert.IsType<byte[]>(parsed);
+        Assert.Equal(expected, bytes);
+    }
+
+    [Fact]
     public void ParseValue_ByteArray_MalformedBase64DataUriThrowsInStrictMode()
     {
         _ = Assert.Throws<FormatException>(() =>

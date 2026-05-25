@@ -54,7 +54,7 @@ internal static class TypedValueParser
 
     private static byte[] ParseByteArray(string hexString)
     {
-        // Format: "XX-XX-XX-XX" from BitConverter.ToString
+        // Formats: plain hex or "XX-XX-XX-XX" from BitConverter.ToString.
         if (string.IsNullOrEmpty(hexString))
         {
             return [];
@@ -77,27 +77,10 @@ internal static class TypedValueParser
             }
         }
 
-        // Try to use Convert.FromHexString if input is a plain hex string (no dashes)
-#if NET5_0_OR_GREATER
-        if (hexString.AsSpan().IndexOf('-') < 0)
-        {
-            try
-            {
-                return Convert.FromHexString(hexString.AsSpan());
-            }
-            catch (FormatException)
-            {
-                // OLE / memo decoders surface diagnostic strings like
-                // "(OLE chain error: ...)" or "(memo on LVAL page)" when the
-                // long-value chain cannot be walked. These are not real binary
-                // payloads; surface them as empty byte arrays so callers can
-                // distinguish "no data decoded" from a parse failure.
-                return [];
-            }
-        }
-#endif
-
-        // Fallback: dash-separated format ("XX-XX-XX-XX")
-        return BinaryStringParser.TryParseDashSeparatedHex(hexString.AsSpan(), out byte[] dashSeparatedBytes) ? dashSeparatedBytes : [];
+        // Accept plain hex and dash-separated BitConverter.ToString format.
+        // OLE / memo decoders surface diagnostic strings like
+        // "(OLE chain error: ...)" or "(memo on LVAL page)" when the
+        // long-value chain cannot be walked; keep those as empty byte arrays.
+        return BinaryStringParser.TryParseHexString(hexString.AsSpan(), out byte[] parsedBytes) ? parsedBytes : [];
     }
 }

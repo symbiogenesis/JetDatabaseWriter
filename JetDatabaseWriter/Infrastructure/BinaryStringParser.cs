@@ -28,6 +28,57 @@ internal static class BinaryStringParser
         return true;
     }
 
+    public static bool TryParseHexString(ReadOnlySpan<char> value, out byte[] bytes)
+    {
+        bytes = [];
+
+        if (value.IsEmpty)
+        {
+            return true;
+        }
+
+        if (value.IndexOf('-') >= 0)
+        {
+            return TryParseDashSeparatedHex(value, out bytes);
+        }
+
+        if ((value.Length & 1) != 0)
+        {
+            return false;
+        }
+
+#if NET5_0_OR_GREATER
+        try
+        {
+            bytes = Convert.FromHexString(value);
+            return true;
+        }
+        catch (FormatException)
+        {
+            bytes = [];
+            return false;
+        }
+#else
+        var buffer = new byte[value.Length / 2];
+        int sourceIndex = 0;
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            int high = HexToNibble(value[sourceIndex]);
+            int low = HexToNibble(value[sourceIndex + 1]);
+            if (high < 0 || low < 0)
+            {
+                return false;
+            }
+
+            buffer[i] = (byte)((high << 4) | low);
+            sourceIndex += 2;
+        }
+
+        bytes = buffer;
+        return true;
+#endif
+    }
+
     public static bool TryParseDashSeparatedHex(ReadOnlySpan<char> value, out byte[] bytes)
     {
         bytes = [];
