@@ -567,6 +567,40 @@ public sealed class LinkedTableTests : IDisposable
     }
 
     [Fact]
+    public async Task LinkedTable_ReadLinkedTable_AllowlistRejectsSiblingDirectoryWithSharedPrefix()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string parentDirectory = Path.Combine(Path.GetTempPath(), $"LinkAllowPrefix_{Guid.NewGuid():N}");
+        string allowlistedDirectory = Path.Combine(parentDirectory, "Allowed");
+        string siblingDirectory = Path.Combine(parentDirectory, "AllowedSibling");
+        string hostDirectory = Path.Combine(parentDirectory, "Host");
+        Directory.CreateDirectory(allowlistedDirectory);
+        Directory.CreateDirectory(siblingDirectory);
+        Directory.CreateDirectory(hostDirectory);
+        _tempDirectories.Add(parentDirectory);
+
+        string sourcePath = await CreateTempAccdbDatabaseInDirectoryAsync("LinkPrefixSrc", siblingDirectory);
+        string frontEndPath = await CreateTempAccdbDatabaseInDirectoryAsync("LinkPrefixFE", hostDirectory);
+
+        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: ct))
+        {
+            await writer.CreateTableAsync("Data", [new("Id", typeof(int))], ct);
+            await writer.InsertRowAsync("Data", [1], ct);
+        }
+
+        await InjectLinkedTableEntryAsync(frontEndPath, "LinkedSibling", sourcePath, "Data", ct);
+
+        var options = new AccessReaderOptions
+        {
+            LinkedSourcePathAllowlist = [allowlistedDirectory],
+        };
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+            await reader.ReadDataTableAsync("LinkedSibling", cancellationToken: ct));
+    }
+
+    [Fact]
     public async Task LinkedTable_ListLinkedTables_ReturnsCorrectMetadata()
     {
         // Validate that the linked table metadata from the catalog is complete.

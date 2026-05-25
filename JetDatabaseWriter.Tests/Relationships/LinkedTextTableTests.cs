@@ -33,7 +33,9 @@ public sealed class LinkedTextTableTests : IDisposable
 
         await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken))
         {
+#pragma warning disable CA1859 // Intentionally use interface type to test that the method is exposed there
             IAccessSchema schema = writer;
+#pragma warning restore CA1859 // Intentionally use interface type to test that the method is exposed there
             await schema.CreateLinkedTextTableAsync(
                 "LinkedCsvData",
                 @"C:\Data\Exports",
@@ -251,6 +253,9 @@ public sealed class LinkedTextTableTests : IDisposable
         }
 
         await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        long realRowCount = await reader.GetRealRowCountAsync("LinkedCustomersCsv", ct);
+        Assert.Equal(2, realRowCount);
+
         DataTable table = await reader.ReadDataTableAsync("LinkedCustomersCsv", cancellationToken: ct);
 
         Assert.Equal("F1", table.Columns[0].ColumnName);
@@ -358,6 +363,55 @@ public sealed class LinkedTextTableTests : IDisposable
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             await reader.ReadDataTableAsync("LinkedStreamCsv", cancellationToken: ct));
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_StreamHostWithAllowlistedSourceDirectory_ReadsDelimitedRows()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string sourceDirectory = CreateTempDirectory("TextLinkStreamAllowedSource");
+        string csvFileName = $"data_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n", ct);
+
+        await using var stream = new MemoryStream();
+        await using (await AccessWriter.CreateDatabaseAsync(
+            stream,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            ct))
+        {
+        }
+
+        stream.Position = 0;
+        await using (var writer = await AccessWriter.OpenAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedAllowedCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        stream.Position = 0;
+        var options = new AccessReaderOptions
+        {
+            UseLockFile = false,
+            LinkedSourcePathAllowlist = [sourceDirectory],
+        };
+        await using var reader = await AccessReader.OpenAsync(stream, options, leaveOpen: true, ct);
+
+        DataTable table = await reader.ReadDataTableAsync("LinkedAllowedCsv", cancellationToken: ct);
+
+        Assert.Single(table.Rows);
+        Assert.Equal("Ada", table.Rows[0]["Name"]);
     }
 
     [Fact]

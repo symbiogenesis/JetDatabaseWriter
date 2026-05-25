@@ -16,14 +16,14 @@ duplication while retaining, or expanding, existing features and performance.
   - Expected benefit: less duplication, simpler future support for text-link features such as encoding or `schema.ini`, and one security/file-existence path to audit.
   - Keep coverage: `LinkedTextTableTests` and linked-table catalog writer tests.
 
-- [ ] Count linked text rows without materializing normalized rows.
-  - Current path: `CountLinkedTextRowsAsync` calls `RowsLinkedTextAsStringsAsync`, which reads column names and normalizes each record only to increment a counter.
+- [x] Count linked text rows without materializing normalized rows.
+  - Completed 2026-05-25: `CountLinkedTextRowsAsync` now resolves the text source once, parses the format, and counts records directly via `EnumerateTextDataRowsAsync` without reading column names or normalizing rows.
   - Candidate shape: resolve the source once, parse `TextLinkFormat`, enumerate data records directly with `EnumerateTextDataRowsAsync`, and increment the count.
   - Expected benefit: same behavior with less allocation and less per-row work for `GetRealRowCountAsync` on linked text tables.
   - Keep coverage: linked CSV row-count tests with header and no-header formats.
 
-- [ ] Replace path containment prefix checks with a `Path.GetRelativePath`-based helper.
-  - Current path: `ResolveLinkedSourcePath`, `ResolveLinkedTextSourceFilePath`, `IsPathWithinDirectory`, and `EnsureTrailingDirectorySeparator` use full-path normalization plus `StartsWith`.
+- [x] Replace path containment prefix checks with a `Path.GetRelativePath`-based helper.
+  - Completed 2026-05-25: `ResolveLinkedSourcePath` and `ResolveLinkedTextSourceFilePath` now share a relative-path containment helper that treats the root itself as allowed and rejects rooted or parent-directory escapes.
   - Candidate shape: use `Path.GetFullPath(path, baseDirectory)` where available and a shared containment helper that treats `.` as inside/equal and rejects rooted `..` escapes.
   - Expected benefit: clearer intent, better equality handling for the allowed root itself, and less hand-rolled path string work.
   - Risk to check: maintain `netstandard2.1` support and Windows path semantics around drive roots, UNC paths, and alternate separators.
@@ -57,8 +57,8 @@ duplication while retaining, or expanding, existing features and performance.
 ## Suggested order
 
 1. Extract linked-text source context. (DONE)
-2. Add direct linked-text row counting.
-3. Simplify path containment with focused path-policy tests.
+2. Add direct linked-text row counting. (DONE)
+3. Simplify path containment with focused path-policy tests. (DONE)
 4. Add linked-table metadata caching.
 5. Centralize `AccessReader` linked-table dispatch.
 6. Revisit `TextFieldParser` or binary helper fast paths only if a feature or benchmark justifies the tradeoff.

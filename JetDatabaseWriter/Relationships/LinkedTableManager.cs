@@ -46,7 +46,7 @@ internal static class LinkedTableManager
             }
 
             string fullPath = ResolvePath(path.Trim(), baseDirectory, "linked-source allowlist");
-            normalized.Add(EnsureTrailingDirectorySeparator(fullPath));
+            normalized.Add(fullPath);
         }
 
         return normalized.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -201,8 +201,9 @@ internal static class LinkedTableManager
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
+        LinkedTextDataSource source = GetLinkedTextDataSource(reader, link);
         long count = 0;
-        await foreach (string[] row in RowsLinkedTextAsStringsAsync(reader, link, progress: null, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, cancellationToken).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -397,6 +398,13 @@ internal static class LinkedTableManager
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
+        LinkedTextDataSource source = GetLinkedTextDataSource(reader, link);
+        string[] columnNames = await ReadLinkedTextColumnNamesAsync(source.FilePath, source.Format, cancellationToken).ConfigureAwait(false);
+        return new LinkedTextSource(source.FilePath, source.Format, columnNames);
+    }
+
+    private static LinkedTextDataSource GetLinkedTextDataSource(AccessReader reader, LinkedTableInfo link)
+    {
         string resolvedPath = ResolveLinkedTextSourceFilePath(reader, link);
         if (!File.Exists(resolvedPath))
         {
@@ -405,9 +413,7 @@ internal static class LinkedTableManager
                 resolvedPath);
         }
 
-        TextLinkFormat format = ParseTextLinkFormat(link.ConnectString);
-        string[] columnNames = await ReadLinkedTextColumnNamesAsync(resolvedPath, format, cancellationToken).ConfigureAwait(false);
-        return new LinkedTextSource(resolvedPath, format, columnNames);
+        return new LinkedTextDataSource(resolvedPath, ParseTextLinkFormat(link.ConnectString));
     }
 
     private static void ThrowIfUnsupportedLinkedRead(LinkedTableInfo link)
@@ -714,9 +720,8 @@ internal static class LinkedTableManager
     {
         try
         {
-            return Path.IsPathRooted(path)
-                ? Path.GetFullPath(path)
-                : Path.GetFullPath(Path.Combine(baseDirectory, path));
+            string fullBaseDirectory = Path.GetFullPath(baseDirectory);
+            return Path.GetFullPath(path, fullBaseDirectory);
         }
         catch (Exception ex) when (
             ex is ArgumentException ||
@@ -731,28 +736,28 @@ internal static class LinkedTableManager
 
     private static bool IsPathWithinDirectory(string path, string directory)
     {
-        string fullPath = Path.GetFullPath(path);
-        string fullDirectory = EnsureTrailingDirectorySeparator(Path.GetFullPath(directory));
-        string fullDirectoryWithoutTrailingSeparator = fullDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        string fullPathWithoutTrailingSeparator = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return string.Equals(fullPathWithoutTrailingSeparator, fullDirectoryWithoutTrailingSeparator, StringComparison.OrdinalIgnoreCase)
-            || fullPath.StartsWith(fullDirectory, StringComparison.OrdinalIgnoreCase);
+        string fullDirectory = Path.GetFullPath(directory);
+        string fullPath = Path.GetFullPath(path, fullDirectory);
+        string relativePath = Path.GetRelativePath(fullDirectory, fullPath);
+        return relativePath.Length == 0
+            || string.Equals(relativePath, ".", StringComparison.Ordinal)
+            || (!Path.IsPathRooted(relativePath) && !StartsWithParentDirectoryTraversal(relativePath));
     }
 
-    private static string EnsureTrailingDirectorySeparator(string path)
+    private static bool StartsWithParentDirectoryTraversal(string relativePath)
     {
-        if (string.IsNullOrEmpty(path))
+        if (relativePath.Equals("..", StringComparison.Ordinal))
         {
-            return path;
+            return true;
         }
 
-        char last = path[path.Length - 1];
-        if (last != Path.DirectorySeparatorChar && last != Path.AltDirectorySeparatorChar)
+        if (relativePath.Length < 3 || relativePath[0] != '.' || relativePath[1] != '.')
         {
-            return path + Path.DirectorySeparatorChar;
+            return false;
         }
 
-        return path;
+        char separator = relativePath[2];
+        return separator == Path.DirectorySeparatorChar || separator == Path.AltDirectorySeparatorChar;
     }
 
     private static string SafeGet(string[] row, int idx) =>
@@ -760,6 +765,8 @@ internal static class LinkedTableManager
 
     private static string DecodeTextForeignName(string foreignName) =>
         foreignName.Replace('#', '.');
+
+    private readonly record struct LinkedTextDataSource(string FilePath, TextLinkFormat Format);
 
     private readonly record struct LinkedTextSource(string FilePath, TextLinkFormat Format, string[] ColumnNames);
 
