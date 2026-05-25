@@ -2,7 +2,7 @@
 
 Status: todo candidates
 Date: 2026-05-24
-Last updated: 2026-05-24
+Last updated: 2026-05-25
 
 This note captures candidate cleanup items identified during the linked-table
 and read-path simplification review. The goal is to reduce code size and
@@ -10,8 +10,8 @@ duplication while retaining, or expanding, existing features and performance.
 
 ## High-confidence items
 
-- [ ] Extract a linked-text source context in `JetDatabaseWriter/Relationships/LinkedTableManager.cs`.
-  - Current repetition: `RowsLinkedTextAsStringsAsync`, `GetLinkedTextColumnMetadataAsync`, and `ReadLinkedTextDataTableAsync` each resolve the source file, check existence, parse the connect string, and read column names.
+- [x] Extract a linked-text source context in `JetDatabaseWriter/Relationships/LinkedTableManager.cs`.
+  - Completed 2026-05-25: `RowsLinkedTextAsStringsAsync`, `GetLinkedTextColumnMetadataAsync`, and `ReadLinkedTextDataTableAsync` now share one helper that resolves the source file, checks existence, parses the connect string, and reads column names.
   - Candidate shape: an internal `LinkedTextSource` record/struct plus a single async helper that returns the resolved file path, parsed `TextLinkFormat`, and column names.
   - Expected benefit: less duplication, simpler future support for text-link features such as encoding or `schema.ini`, and one security/file-existence path to audit.
   - Keep coverage: `LinkedTextTableTests` and linked-table catalog writer tests.
@@ -56,7 +56,7 @@ duplication while retaining, or expanding, existing features and performance.
 
 ## Suggested order
 
-1. Extract linked-text source context.
+1. Extract linked-text source context. (DONE)
 2. Add direct linked-text row counting.
 3. Simplify path containment with focused path-policy tests.
 4. Add linked-table metadata caching.

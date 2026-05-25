@@ -217,24 +217,15 @@ internal static class LinkedTableManager
         IProgress<long>? progress,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        string resolvedPath = ResolveLinkedTextSourceFilePath(reader, link);
-        if (!File.Exists(resolvedPath))
-        {
-            throw new FileNotFoundException(
-                $"Text source for linked table '{link.Name}' not found: {resolvedPath}",
-                resolvedPath);
-        }
-
-        TextLinkFormat format = ParseTextLinkFormat(link.ConnectString);
-        string[] columnNames = await ReadLinkedTextColumnNamesAsync(resolvedPath, format, cancellationToken).ConfigureAwait(false);
+        LinkedTextSource source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
         long rowCount = 0;
 
-        await foreach (string[] row in EnumerateTextDataRowsAsync(resolvedPath, format, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
             rowCount++;
             progress?.Report(rowCount);
-            yield return NormalizeStringRow(row, columnNames.Length);
+            yield return NormalizeStringRow(row, source.ColumnNames.Length);
         }
     }
 
@@ -255,22 +246,13 @@ internal static class LinkedTableManager
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
-        string resolvedPath = ResolveLinkedTextSourceFilePath(reader, link);
-        if (!File.Exists(resolvedPath))
-        {
-            throw new FileNotFoundException(
-                $"Text source for linked table '{link.Name}' not found: {resolvedPath}",
-                resolvedPath);
-        }
-
-        TextLinkFormat format = ParseTextLinkFormat(link.ConnectString);
-        string[] columnNames = await ReadLinkedTextColumnNamesAsync(resolvedPath, format, cancellationToken).ConfigureAwait(false);
-        var metadata = new List<ColumnMetadata>(columnNames.Length);
-        for (int i = 0; i < columnNames.Length; i++)
+        LinkedTextSource source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
+        var metadata = new List<ColumnMetadata>(source.ColumnNames.Length);
+        for (int i = 0; i < source.ColumnNames.Length; i++)
         {
             metadata.Add(new ColumnMetadata
             {
-                Name = columnNames[i],
+                Name = source.ColumnNames[i],
                 TypeName = "Text",
                 ClrType = typeof(string),
                 IsNullable = true,
@@ -290,29 +272,20 @@ internal static class LinkedTableManager
         IProgress<long>? progress,
         CancellationToken cancellationToken)
     {
-        string resolvedPath = ResolveLinkedTextSourceFilePath(reader, link);
-        if (!File.Exists(resolvedPath))
-        {
-            throw new FileNotFoundException(
-                $"Text source for linked table '{link.Name}' not found: {resolvedPath}",
-                resolvedPath);
-        }
-
-        TextLinkFormat format = ParseTextLinkFormat(link.ConnectString);
-        string[] columnNames = await ReadLinkedTextColumnNamesAsync(resolvedPath, format, cancellationToken).ConfigureAwait(false);
+        LinkedTextSource source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
         DataTable? table = null;
         try
         {
             table = new DataTable(link.Name);
-            foreach (string columnName in columnNames)
+            foreach (string columnName in source.ColumnNames)
             {
                 _ = table.Columns.Add(columnName, typeof(string));
             }
 
             long rowCount = 0;
-            await foreach (string[] row in EnumerateTextDataRowsAsync(resolvedPath, format, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, cancellationToken).ConfigureAwait(false))
             {
-                _ = table.Rows.Add(NormalizeStringRow(row, columnNames.Length));
+                _ = table.Rows.Add(NormalizeStringRow(row, source.ColumnNames.Length));
                 rowCount++;
                 progress?.Report(rowCount);
                 if (maxRows.HasValue && rowCount >= maxRows.Value)
@@ -417,6 +390,24 @@ internal static class LinkedTableManager
         }
 
         return resolvedFilePath;
+    }
+
+    private static async ValueTask<LinkedTextSource> GetLinkedTextSourceAsync(
+        AccessReader reader,
+        LinkedTableInfo link,
+        CancellationToken cancellationToken)
+    {
+        string resolvedPath = ResolveLinkedTextSourceFilePath(reader, link);
+        if (!File.Exists(resolvedPath))
+        {
+            throw new FileNotFoundException(
+                $"Text source for linked table '{link.Name}' not found: {resolvedPath}",
+                resolvedPath);
+        }
+
+        TextLinkFormat format = ParseTextLinkFormat(link.ConnectString);
+        string[] columnNames = await ReadLinkedTextColumnNamesAsync(resolvedPath, format, cancellationToken).ConfigureAwait(false);
+        return new LinkedTextSource(resolvedPath, format, columnNames);
     }
 
     private static void ThrowIfUnsupportedLinkedRead(LinkedTableInfo link)
@@ -769,6 +760,8 @@ internal static class LinkedTableManager
 
     private static string DecodeTextForeignName(string foreignName) =>
         foreignName.Replace('#', '.');
+
+    private readonly record struct LinkedTextSource(string FilePath, TextLinkFormat Format, string[] ColumnNames);
 
     private readonly record struct TextLinkFormat(bool HasHeaderRow, char Delimiter);
 }
