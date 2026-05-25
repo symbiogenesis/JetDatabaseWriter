@@ -163,7 +163,7 @@ internal static class LinkedTableManager
     /// </summary>
     internal static async ValueTask<LinkedTableInfo?> FindLinkedTableAsync(AccessReader reader, string tableName, CancellationToken cancellationToken)
     {
-        List<LinkedTableInfo> links = await GetLinkedTablesAsync(reader, cancellationToken).ConfigureAwait(false);
+        List<LinkedTableInfo> links = await reader.GetLinkedTablesCachedAsync(cancellationToken).ConfigureAwait(false);
         return links.Find(l => string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
     }
 

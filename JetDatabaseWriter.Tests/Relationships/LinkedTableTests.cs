@@ -131,6 +131,42 @@ public sealed class LinkedTableTests : IDisposable
     }
 
     [Fact]
+    public async Task LinkedTables_ListLinkedTables_ReturnsDefensiveCopiesFromCache()
+    {
+        string sourcePath = await CreateTempAccdbDatabaseAsync("LinkedCacheSrc");
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedCacheFE");
+
+        await using (var writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "RemoteData",
+                [new("Id", typeof(int))],
+                TestContext.Current.CancellationToken);
+        }
+
+        await InjectLinkedTableEntryAsync(
+            frontEndPath,
+            "LinkedRemoteData",
+            sourcePath,
+            "RemoteData",
+            TestContext.Current.CancellationToken);
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        List<LinkedTableInfo> first = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        LinkedTableInfo firstEntry = Assert.Single(first);
+        firstEntry.Name = "MutatedName";
+        firstEntry.SourceObjectName = "MutatedSource";
+        first.Clear();
+
+        List<LinkedTableInfo> second = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
+        LinkedTableInfo secondEntry = Assert.Single(second);
+
+        Assert.Equal("LinkedRemoteData", secondEntry.Name);
+        Assert.Equal("RemoteData", secondEntry.SourceObjectName);
+        Assert.Equal(sourcePath, secondEntry.SourcePath);
+    }
+
+    [Fact]
     public async Task LinkedTables_CreateLinkedOdbcTableAsync_PersistsType4EntryWithConnectString()
     {
         string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedOdbcFE");

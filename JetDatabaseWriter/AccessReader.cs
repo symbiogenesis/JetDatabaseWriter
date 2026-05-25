@@ -375,7 +375,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public async ValueTask<List<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default)
     {
         using var operation = EnterOperation();
-        return await LinkedTableManager.GetLinkedTablesAsync(this, cancellationToken).ConfigureAwait(false);
+        List<LinkedTableInfo> links = await GetLinkedTablesCachedAsync(cancellationToken).ConfigureAwait(false);
+        return CloneLinkedTables(links);
     }
 
     /// <inheritdoc/>
@@ -2481,6 +2482,17 @@ public sealed class AccessReader : AccessBase, IAccessReader
         (idx >= 0 && idx < row.Length) ? row[idx] : string.Empty;
 #pragma warning restore SA1204
 
+    private static List<LinkedTableInfo> CloneLinkedTables(List<LinkedTableInfo> links)
+    {
+        var result = new List<LinkedTableInfo>(links.Count);
+        foreach (LinkedTableInfo link in links)
+        {
+            result.Add(link with { });
+        }
+
+        return result;
+    }
+
     /// <summary>
     /// Returns true when an MSysComplexColumns row's ConceptualTableID column refers to
     /// the user table identified by <paramref name="targetTdefPage"/> (or, as a fallback,
@@ -3524,6 +3536,19 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         SetCatalogCache(result);
         return result;
+    }
+
+    internal async ValueTask<List<LinkedTableInfo>> GetLinkedTablesCachedAsync(CancellationToken cancellationToken)
+    {
+        List<LinkedTableInfo>? cached = GetLinkedTableCache();
+        if (cached != null)
+        {
+            return cached;
+        }
+
+        List<LinkedTableInfo> links = await LinkedTableManager.GetLinkedTablesAsync(this, cancellationToken).ConfigureAwait(false);
+        SetLinkedTableCache(links);
+        return links;
     }
 
     private AsyncReentrantOperationGate.Lease EnterOperation() =>

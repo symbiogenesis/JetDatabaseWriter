@@ -28,8 +28,8 @@ duplication while retaining, or expanding, existing features and performance.
   - Expected benefit: clearer intent, better equality handling for the allowed root itself, and less hand-rolled path string work.
   - Risk to check: maintain `netstandard2.1` support and Windows path semantics around drive roots, UNC paths, and alternate separators.
 
-- [ ] Cache linked-table metadata like user-table catalog metadata.
-  - Current path: `FindLinkedTableAsync` calls `GetLinkedTablesAsync`, which scans `MSysObjects` each time a missing local table might be a linked table.
+- [x] Cache linked-table metadata like user-table catalog metadata.
+  - Completed 2026-05-25: `FindLinkedTableAsync` and `ListLinkedTablesAsync` now use a cached linked-table catalog scan that is cleared by the existing catalog-cache invalidation path.
   - Candidate shape: add a linked-table cache or broader catalog snapshot that is invalidated with the existing catalog cache.
   - Expected benefit: fewer repeated catalog scans and simpler call sites in `AccessReader` fallback paths.
   - Risk to check: writer-side catalog mutations must invalidate the linked-table cache whenever user-table catalog cache is invalidated.
@@ -59,6 +59,6 @@ duplication while retaining, or expanding, existing features and performance.
 1. Extract linked-text source context. (DONE)
 2. Add direct linked-text row counting. (DONE)
 3. Simplify path containment with focused path-policy tests. (DONE)
-4. Add linked-table metadata caching.
+4. Add linked-table metadata caching. (DONE)
 5. Centralize `AccessReader` linked-table dispatch.
 6. Revisit `TextFieldParser` or binary helper fast paths only if a feature or benchmark justifies the tradeoff.

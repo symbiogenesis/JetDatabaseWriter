@@ -16,6 +16,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
@@ -77,6 +78,7 @@ public abstract class AccessBase : IAccessBase
     internal bool _disposed;
     private readonly SemaphoreSlim _ioGate = new(1, 1);
     private volatile List<CatalogEntry>? _catalogCache;
+    private volatile List<LinkedTableInfo>? _linkedTableCache;
 
     /// <summary>
     /// Cooperative JET byte-range lock helper (Win32 <c>LockFileEx</c>). Defaults to
@@ -1413,7 +1415,7 @@ public abstract class AccessBase : IAccessBase
     }
 
     // ── Catalog cache ────────────────────────────────────────────────
-    // The cache is a single reference; volatile-write of a fully-built list is atomic
+    // Each cache is a single reference; volatile-write of a fully-built list is atomic
     // in .NET, so a lock is unnecessary (subsequent readers see either the old or the
     // new list, never a torn value).
 
@@ -1423,8 +1425,18 @@ public abstract class AccessBase : IAccessBase
     /// <summary>Stores the catalog list returned by <see cref="GetUserTablesAsync"/>.</summary>
     private protected void SetCatalogCache(List<CatalogEntry> cache) => _catalogCache = cache;
 
-    /// <summary>Discards the cached catalog so the next <see cref="GetUserTablesAsync"/> call re-scans MSysObjects.</summary>
-    internal void InvalidateCatalogCache() => _catalogCache = null;
+    /// <summary>Returns the cached linked-table list, or <see langword="null"/> if not yet populated.</summary>
+    private protected List<LinkedTableInfo>? GetLinkedTableCache() => _linkedTableCache;
+
+    /// <summary>Stores the linked-table list returned by the MSysObjects linked-table scan.</summary>
+    private protected void SetLinkedTableCache(List<LinkedTableInfo> cache) => _linkedTableCache = cache;
+
+    /// <summary>Discards the cached catalog lists so the next call re-scans MSysObjects.</summary>
+    internal void InvalidateCatalogCache()
+    {
+        _catalogCache = null;
+        _linkedTableCache = null;
+    }
 
     // ── Inner types ──────────────────────────────────────────────────
 
