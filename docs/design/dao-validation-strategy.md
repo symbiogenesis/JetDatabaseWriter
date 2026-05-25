@@ -2,7 +2,7 @@
 
 **Status:** Split out of the former writer disk-format validation table on 2026-05-23.
 
-This note holds durable validation rules for writer-emitted Access disk-format bytes. The active cross-feature backlog lives in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
+This note holds durable validation rules for writer-emitted Access disk-format bytes. The cross-feature coverage map lives in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 
 ## Validation Ladder
 
@@ -28,7 +28,7 @@ Writer-created fresh databases are still valuable for bootstrap coverage, but th
 
 Encrypted source compaction must use DAO's five-argument form, with the source password supplied separately from the destination locale/password. The historical details live in [round-trip-openrecordset-hypothesis.md](round-trip-openrecordset-hypothesis.md).
 
-If a design note says Microsoft Access Compact and Repair validation is pending, replace the blanket warning with a link to the exact open checklist item in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md) or to the feature doc that owns the residual byte-level gap.
+If a design note says Microsoft Access Compact and Repair validation is pending, replace the blanket warning with a link to the relevant matrix row in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md) or to the feature doc that owns the residual byte-level gap.
 
 ## Current Coverage Shape
 
@@ -36,4 +36,4 @@ Access-equipped hosts currently cover DAO OpenRecordset row counts, DAO primary-
 
 Reader/regression coverage also guards writer-created linked Access/ODBC/text catalog rows: catalog-only negative object-id allocation, low-24 collision avoidance, Type 4/6 `MSysObjects` catalog-index splicing, fixture-aligned flags, linked-object ACE rows, and cleanup when a linked catalog splice fails. Access-file and text Type 6 links now have DAO coverage with null `Lv`/`LvProp`/`LvModule`/`LvExtra` cache columns, DAO-shaped `Database` LVAL storage, CompactDatabase, and compacted OpenRecordset. ODBC Type 4 links have CompactDatabase coverage when created with a caller-supplied Access/DAO cached-schema `LvProp`; generated ODBC links now use parseable table-level `LvProp`, and the source-column overload adds generated schema-cache targets.
 
-Use [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md) as the active todo list for remaining validation promotions and residual byte-comparison gaps.
+Use [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md) as the active coverage inventory for validation promotions and residual byte-comparison gaps.

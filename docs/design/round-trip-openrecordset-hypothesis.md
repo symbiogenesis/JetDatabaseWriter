@@ -9,8 +9,8 @@ Companion: [round-trip-test-failures.md](round-trip-test-failures.md)
 | Original issue | DAO `OpenRecordset` rejected writer-created user tables with `"Unrecognized database format ''."` even though `OpenDatabase` succeeded. |
 | Original issue status | Resolved on 2026-05-10. |
 | Follow-up status | Resolved and refreshed on 2026-05-23. The original OpenRecordset, MEMO, AutoNumber, FK, encrypted, fresh ACCDB, complex-column, and relationship rename/drop coverage passes. Adjacent regression coverage now includes catalog zero-slot bails, Jet4/ACE catalog-splice false-return rollback, and linked-table catalog row routing. |
-| Remaining known compatibility gaps from this investigation | None for the original OpenRecordset/FK/encrypted/complex scope. Writer-created linked-table DAO validation is tracked separately in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md) because links still need Access's cached linked-table schema payload in `MSysObjects.LvProp`. |
-| Current date of this log | 2026-05-23. |
+| Remaining known compatibility gaps from this investigation | None for the original OpenRecordset/FK/encrypted/complex scope. Writer-created linked-table DAO coverage is summarized in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md): Access-file and text links have DAO compact plus compacted OpenRecordset coverage, while ODBC links have CompactDatabase coverage and source-backed OpenRecordset remains DSN-dependent. |
+| Current date of this log | 2026-05-25. |
 
 ## 2. Test Matrix
 
