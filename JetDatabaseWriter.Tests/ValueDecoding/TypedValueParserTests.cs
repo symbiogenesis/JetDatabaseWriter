@@ -6,6 +6,18 @@ using Xunit;
 
 public sealed class TypedValueParserTests
 {
+    [Theory]
+    [InlineData(typeof(string))]
+    [InlineData(typeof(int))]
+    [InlineData(typeof(DateTime))]
+    [InlineData(typeof(byte[]))]
+    public void ParseValue_EmptyString_ReturnsDBNull(Type targetType)
+    {
+        object parsed = TypedValueParser.ParseValue(string.Empty, targetType);
+
+        Assert.Equal(DBNull.Value, parsed);
+    }
+
     [Fact]
     public void ParseValue_ByteArray_DecodesBase64DataUri()
     {
@@ -52,11 +64,62 @@ public sealed class TypedValueParserTests
     }
 
     [Fact]
-    public void ParseValue_ByteArray_MalformedDashSeparatedHexReturnsEmpty()
+    public void ParseValue_ByteArray_MalformedDashSeparatedHexThrowsInStrictMode()
     {
-        object parsed = TypedValueParser.ParseValue("CA--FE", typeof(byte[]));
+        FormatException exception = Assert.Throws<FormatException>(() =>
+            TypedValueParser.ParseValue("CA--FE", typeof(byte[])));
 
-        byte[] bytes = Assert.IsType<byte[]>(parsed);
-        Assert.Empty(bytes);
+        Assert.Contains("dash-separated hex", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseValue_ByteArray_MalformedDashSeparatedHexReturnsDBNullInNonStrictMode()
+    {
+        object parsed = TypedValueParser.ParseValue("CA--FE", typeof(byte[]), strictMode: false);
+
+        Assert.Equal(DBNull.Value, parsed);
+    }
+
+    [Theory]
+    [InlineData("not-an-int", typeof(int))]
+    [InlineData("999999999999999999999999999999", typeof(int))]
+    [InlineData("not-a-date", typeof(DateTime))]
+    public void ParseValue_InvalidPrimitiveThrowsInStrictMode(string value, Type targetType)
+    {
+        FormatException exception = Assert.Throws<FormatException>(() =>
+            TypedValueParser.ParseValue(value, targetType));
+
+        Assert.Contains(targetType.FullName!, exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("not-an-int", typeof(int))]
+    [InlineData("not-a-date", typeof(DateTime))]
+    public void ParseValue_InvalidPrimitiveReturnsDBNullInNonStrictMode(string value, Type targetType)
+    {
+        object parsed = TypedValueParser.ParseValue(value, targetType, strictMode: false);
+
+        Assert.Equal(DBNull.Value, parsed);
+    }
+
+    [Theory]
+    [InlineData("(OLE chain error: no chunks read)")]
+    [InlineData("(memo on LVAL page)")]
+    public void ParseValue_ByteArray_LongValueDiagnosticThrowsInStrictMode(string value)
+    {
+        FormatException exception = Assert.Throws<FormatException>(() =>
+            TypedValueParser.ParseValue(value, typeof(byte[])));
+
+        Assert.Contains("long-value decoder", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("(OLE chain error: no chunks read)")]
+    [InlineData("(memo on LVAL page)")]
+    public void ParseValue_ByteArray_LongValueDiagnosticReturnsDBNullInNonStrictMode(string value)
+    {
+        object parsed = TypedValueParser.ParseValue(value, typeof(byte[]), strictMode: false);
+
+        Assert.Equal(DBNull.Value, parsed);
     }
 }

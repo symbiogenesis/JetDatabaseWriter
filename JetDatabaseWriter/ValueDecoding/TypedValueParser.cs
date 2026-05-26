@@ -10,7 +10,6 @@ using JetDatabaseWriter.Models;
 /// </summary>
 internal static class TypedValueParser
 {
-#pragma warning disable CA1031 // Catch a more specific exception type
     public static object ParseValue(string value, Type targetType, bool strictMode = true)
     {
         if (string.IsNullOrEmpty(value))
@@ -18,69 +17,194 @@ internal static class TypedValueParser
             return DBNull.Value;
         }
 
-        try
-        {
-            return Type.GetTypeCode(targetType) switch
-            {
-                TypeCode.String => value,
-                TypeCode.Boolean => Convert.ToBoolean(value, CultureInfo.InvariantCulture),
-                TypeCode.Byte => byte.Parse(value, CultureInfo.InvariantCulture),
-                TypeCode.Int16 => short.Parse(value, CultureInfo.InvariantCulture),
-                TypeCode.Int32 => int.Parse(value, CultureInfo.InvariantCulture),
-                TypeCode.Int64 => long.Parse(value, CultureInfo.InvariantCulture),
-                TypeCode.Single => float.Parse(value, CultureInfo.InvariantCulture),
-                TypeCode.Double => double.Parse(value, CultureInfo.InvariantCulture),
-                TypeCode.Decimal => decimal.Parse(value, CultureInfo.InvariantCulture),
-                TypeCode.DateTime => DateTime.Parse(value, CultureInfo.InvariantCulture),
-                _ when targetType == typeof(Guid) => Guid.Parse(value),
-                _ when targetType == typeof(byte[]) => ParseByteArray(value),
-                _ when targetType == typeof(Hyperlink) => (object?)Hyperlink.Parse(value) ?? DBNull.Value,
-                _ => value,
-            };
-        }
-        catch (Exception) when (!strictMode)
+        return TryParseValue(value, targetType, out object parsedValue, out string? failure)
+            ? parsedValue
+            : ApplyParseFailurePolicy(value, targetType, strictMode, failure);
+    }
+
+    private static DBNull ApplyParseFailurePolicy(string value, Type targetType, bool strictMode, string? failure)
+    {
+        if (!strictMode)
         {
             return DBNull.Value;
         }
-        catch (Exception ex)
-        {
-            throw new FormatException(
-                $"Failed to parse value '{value}' as {targetType.FullName}. " +
-                "Disable strict mode (strictMode: false) to silently coerce unparseable values to DBNull.",
-                ex);
-        }
-    }
-#pragma warning restore CA1031
 
-    private static byte[] ParseByteArray(string hexString)
+        throw new FormatException(
+            $"Failed to parse value '{value}' as {targetType.FullName}: {failure ?? "unrecognized value"}. " +
+            "Disable strict mode (strictMode: false) to coerce unparseable values to DBNull.Value.");
+    }
+
+    private static bool TryParseValue(string value, Type targetType, out object parsedValue, out string? failure)
     {
-        // Formats: plain hex or "XX-XX-XX-XX" from BitConverter.ToString.
-        if (string.IsNullOrEmpty(hexString))
+        parsedValue = DBNull.Value;
+        failure = null;
+
+        switch (Type.GetTypeCode(targetType))
         {
-            return [];
+            case TypeCode.String:
+                parsedValue = value;
+                return true;
+            case TypeCode.Boolean:
+                if (bool.TryParse(value, out bool boolValue))
+                {
+                    parsedValue = boolValue;
+                    return true;
+                }
+
+                failure = "expected True or False";
+                return false;
+            case TypeCode.Byte:
+                if (byte.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out byte byteValue))
+                {
+                    parsedValue = byteValue;
+                    return true;
+                }
+
+                failure = "expected an unsigned 8-bit integer";
+                return false;
+            case TypeCode.Int16:
+                if (short.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out short shortValue))
+                {
+                    parsedValue = shortValue;
+                    return true;
+                }
+
+                failure = "expected a signed 16-bit integer";
+                return false;
+            case TypeCode.Int32:
+                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int intValue))
+                {
+                    parsedValue = intValue;
+                    return true;
+                }
+
+                failure = "expected a signed 32-bit integer";
+                return false;
+            case TypeCode.Int64:
+                if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long longValue))
+                {
+                    parsedValue = longValue;
+                    return true;
+                }
+
+                failure = "expected a signed 64-bit integer";
+                return false;
+            case TypeCode.Single:
+                if (float.TryParse(value, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out float floatValue))
+                {
+                    parsedValue = floatValue;
+                    return true;
+                }
+
+                failure = "expected a single-precision floating-point number";
+                return false;
+            case TypeCode.Double:
+                if (double.TryParse(value, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out double doubleValue))
+                {
+                    parsedValue = doubleValue;
+                    return true;
+                }
+
+                failure = "expected a double-precision floating-point number";
+                return false;
+            case TypeCode.Decimal:
+                if (decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal decimalValue))
+                {
+                    parsedValue = decimalValue;
+                    return true;
+                }
+
+                failure = "expected a decimal number";
+                return false;
+            case TypeCode.DateTime:
+                if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dateTimeValue))
+                {
+                    parsedValue = dateTimeValue;
+                    return true;
+                }
+
+                failure = "expected a date/time value";
+                return false;
         }
+
+        if (targetType == typeof(Guid))
+        {
+            if (Guid.TryParse(value, out Guid guidValue))
+            {
+                parsedValue = guidValue;
+                return true;
+            }
+
+            failure = "expected a GUID";
+            return false;
+        }
+
+        if (targetType == typeof(byte[]))
+        {
+            if (TryParseByteArray(value, out byte[] bytes, out failure))
+            {
+                parsedValue = bytes;
+                return true;
+            }
+
+            return false;
+        }
+
+        if (targetType == typeof(Hyperlink))
+        {
+            parsedValue = (object?)Hyperlink.Parse(value) ?? DBNull.Value;
+            return true;
+        }
+
+        parsedValue = value;
+        return true;
+    }
+
+    private static bool TryParseByteArray(string value, out byte[] bytes, out string? failure)
+    {
+        bytes = [];
+        failure = null;
 
         // OLE Object payloads are surfaced as RFC-2397 base64 data URLs by
         // AccessReader.DecodeLongValue (any MIME type, e.g. image/jpeg,
         // image/png, application/octet-stream); round-trip them back to raw bytes.
-        if (hexString.StartsWith("data:", StringComparison.Ordinal))
+        if (value.StartsWith("data:", StringComparison.Ordinal))
         {
-            int comma = hexString.IndexOf(',', StringComparison.Ordinal);
-            if (comma > 0 && hexString.AsSpan(0, comma).IndexOf(";base64".AsSpan(), StringComparison.Ordinal) >= 0)
+            int comma = value.IndexOf(',', StringComparison.Ordinal);
+            if (comma <= 0 || value.AsSpan(0, comma).IndexOf(";base64".AsSpan(), StringComparison.Ordinal) < 0)
             {
-                if (BinaryStringParser.TryDecodeBase64(hexString.AsSpan(comma + 1), out byte[] bytes))
-                {
-                    return bytes;
-                }
-
-                throw new FormatException("Invalid Base64 data URI payload.");
+                failure = "expected a base64 data URI payload";
+                return false;
             }
+
+            if (BinaryStringParser.TryDecodeBase64(value.AsSpan(comma + 1), out bytes))
+            {
+                return true;
+            }
+
+            failure = "invalid Base64 data URI payload";
+            return false;
         }
 
-        // Accept plain hex and dash-separated BitConverter.ToString format.
-        // OLE / memo decoders surface diagnostic strings like
-        // "(OLE chain error: ...)" or "(memo on LVAL page)" when the
-        // long-value chain cannot be walked; keep those as empty byte arrays.
-        return BinaryStringParser.TryParseHexString(hexString.AsSpan(), out byte[] parsedBytes) ? parsedBytes : [];
+        if (IsLongValueDiagnosticString(value))
+        {
+            failure = "long-value decoder returned diagnostic text instead of binary data";
+            return false;
+        }
+
+        if (BinaryStringParser.TryParseHexString(value.AsSpan(), out bytes))
+        {
+            return true;
+        }
+
+        failure = "expected plain hex, dash-separated hex, or a base64 data URI";
+        return false;
     }
+
+    private static bool IsLongValueDiagnosticString(string value) =>
+        value == "(OLE)" ||
+        value == "(memo)" ||
+        value == "(memo on LVAL page)" ||
+        value.StartsWith("(OLE chain error: ", StringComparison.Ordinal) ||
+        value.StartsWith("(memo chain error: ", StringComparison.Ordinal);
 }
