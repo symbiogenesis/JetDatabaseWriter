@@ -1015,6 +1015,96 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         Assert.Equal(2, c.Rows.Count);
     }
 
+    [Fact]
+    public async Task Delete_PkSide_WithCascade_WhenSeekCannotReadMemoChildRows_FallsBackToSnapshot()
+    {
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        string parent = MakeTableName("FDP");
+        string child = MakeTableName("FDC");
+
+        await using (var writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(
+                child,
+                [
+                    new("Id", typeof(int)),
+                    new("ParentId", typeof(int)),
+                    new("Notes", typeof(string), maxLength: int.MaxValue),
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(parent, [7], TestContext.Current.CancellationToken);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_DelMemoFallback", parent, "Id", child, "ParentId")
+                {
+                    CascadeDeletes = true,
+                },
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowsAsync(
+                child,
+                [
+                    [1, 7, "memo child one"],
+                    [2, 7, "memo child two"],
+                ],
+                TestContext.Current.CancellationToken);
+
+            int deleted = await writer.DeleteRowsAsync(parent, "Id", 7, TestContext.Current.CancellationToken);
+            Assert.Equal(1, deleted);
+        }
+
+        await using var reader = await OpenReaderAsync(temp);
+        DataTable childRows = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        Assert.Empty(childRows.Rows);
+    }
+
+    [Fact]
+    public async Task Insert_MalformedRelationshipCatalogRowWithMissingColumn_IsIgnored()
+    {
+        var temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        string parent = MakeTableName("MRP");
+        string child = MakeTableName("MRC");
+
+        await using (var writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
+
+            long relationshipsTdefPage = await writer.Relationships.FindSystemTableTdefPageAsync(
+                Constants.SystemTableNames.Relationships,
+                TestContext.Current.CancellationToken);
+            TableDef relationshipsDef = await writer.ReadRequiredTableDefAsync(
+                relationshipsTdefPage,
+                Constants.SystemTableNames.Relationships,
+                TestContext.Current.CancellationToken);
+
+            object[] malformedRow = relationshipsDef.CreateNullValueRow();
+            relationshipsDef.SetValueByName(malformedRow, "ccolumn", 1);
+            relationshipsDef.SetValueByName(malformedRow, "grbit", 0);
+            relationshipsDef.SetValueByName(malformedRow, "icolumn", 0);
+            relationshipsDef.SetValueByName(malformedRow, "szColumn", "ParentId");
+            relationshipsDef.SetValueByName(malformedRow, "szObject", child);
+            relationshipsDef.SetValueByName(malformedRow, "szReferencedColumn", string.Empty);
+            relationshipsDef.SetValueByName(malformedRow, "szReferencedObject", parent);
+            relationshipsDef.SetValueByName(malformedRow, "szRelationship", "FK_MalformedMissingColumn");
+
+            await writer.InsertSystemRowAndMaintainAsync(
+                relationshipsTdefPage,
+                relationshipsDef,
+                Constants.SystemTableNames.Relationships,
+                malformedRow,
+                cancellationToken: TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(child, [1, 999], TestContext.Current.CancellationToken);
+        }
+
+        await using var reader = await OpenReaderAsync(temp);
+        DataTable childRows = (await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken))!;
+        DataRow childRow = Assert.Single(childRows.AsEnumerable());
+        Assert.Equal(999, Convert.ToInt32(childRow["ParentId"], System.Globalization.CultureInfo.InvariantCulture));
+    }
+
     private static string MakeTableName(string prefix) =>
         $"{prefix}_{Guid.NewGuid():N}".Substring(0, Math.Min(18, prefix.Length + 11));
 

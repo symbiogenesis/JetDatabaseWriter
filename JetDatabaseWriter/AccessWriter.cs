@@ -104,11 +104,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>Owns the global page free-list allocator and maintenance operations.</summary>
     private readonly PageAllocator _pageAllocator;
 
-    /// <summary>Gets the foreign-key / relationship subsystem. The bulk of
-    /// FK code (catalog rows, per-TDEF logical-index entries, runtime
-    /// referential-integrity enforcement) lives there; <see cref="AccessWriter"/>
-    /// keeps only thin public-API forwarders. Exposed for sibling managers
-    /// (e.g. <see cref="ComplexColumnManager"/>) that need to delegate FK /
+    /// <summary>Gets the foreign-key / relationship subsystem. Relationship
+    /// lifecycle and TDEF mutation are coordinated there, while catalog rows
+    /// and runtime referential-integrity enforcement are delegated to smaller
+    /// relationship collaborators. <see cref="AccessWriter"/> keeps only thin
+    /// public-API forwarders. Exposed for sibling managers (e.g.
+    /// <see cref="ComplexColumnManager"/>) that need to delegate FK /
     /// system-table lookups.</summary>
     internal RelationshipManager Relationships { get; }
 
@@ -1023,8 +1024,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        IReadOnlyList<RelationshipManager.FkRelationship> rels = await Relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        RelationshipManager.FkContext? fkCtx = rels.Count > 0 ? new RelationshipManager.FkContext(rels) : null;
+        IReadOnlyList<FkRelationship> rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
 
         await InsertRowCoreAsync(tableName, entry.TDefPage, tableDef, values, fkCtx, cancellationToken).ConfigureAwait(false);
     }
@@ -1042,8 +1043,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        IReadOnlyList<RelationshipManager.FkRelationship> rels = await Relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        RelationshipManager.FkContext? fkCtx = rels.Count > 0 ? new RelationshipManager.FkContext(rels) : null;
+        IReadOnlyList<FkRelationship> rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
 
         // Track every row written so far + every auto-counter advance so we can
         // roll the entire batch back if the bulk MaintainIndexesAsync at the end
@@ -1084,7 +1085,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
                 if (fkCtx != null)
                 {
-                    await Relationships.EnforceFkOnInsertAsync(tableName, tableDef, row, fkCtx, cancellationToken).ConfigureAwait(false);
+                    await Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, row, fkCtx, cancellationToken).ConfigureAwait(false);
                 }
 
                 RowLocation loc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -1092,7 +1093,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 batchHintRows.Add((loc, row));
                 if (fkCtx != null)
                 {
-                    RelationshipManager.AugmentParentSetsAfterInsert(tableName, tableDef, row, fkCtx);
+                    RelationshipEnforcer.AugmentParentSetsAfterInsert(tableName, tableDef, row, fkCtx);
                 }
 
                 inserted++;
@@ -1141,8 +1142,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
         object[] mappedRow = RowMapper<T>.ToRow(tableDef, item);
 
-        IReadOnlyList<RelationshipManager.FkRelationship> relsT = await Relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        RelationshipManager.FkContext? fkCtxT = relsT.Count > 0 ? new RelationshipManager.FkContext(relsT) : null;
+        IReadOnlyList<FkRelationship> relsT = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtxT = relsT.Count > 0 ? new FkContext(relsT) : null;
 
         await InsertRowCoreAsync(tableName, entry.TDefPage, tableDef, mappedRow, fkCtxT, cancellationToken).ConfigureAwait(false);
     }
@@ -1162,8 +1163,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         CatalogEntry entry = await GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableDef tableDef = await ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        IReadOnlyList<RelationshipManager.FkRelationship> rels = await Relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        RelationshipManager.FkContext? fkCtx = rels.Count > 0 ? new RelationshipManager.FkContext(rels) : null;
+        IReadOnlyList<FkRelationship> rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
 
         var batchLocations = new List<RowLocation>();
         var batchHintRows = new List<(RowLocation Loc, object[] Row)>();
@@ -1199,7 +1200,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
                 if (fkCtx != null)
                 {
-                    await Relationships.EnforceFkOnInsertAsync(tableName, tableDef, mappedRow, fkCtx, cancellationToken).ConfigureAwait(false);
+                    await Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, mappedRow, fkCtx, cancellationToken).ConfigureAwait(false);
                 }
 
                 RowLocation loc = await InsertRowDataLocAsync(entry.TDefPage, tableDef, mappedRow, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -1207,7 +1208,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 batchHintRows.Add((loc, mappedRow));
                 if (fkCtx != null)
                 {
-                    RelationshipManager.AugmentParentSetsAfterInsert(tableName, tableDef, mappedRow, fkCtx);
+                    RelationshipEnforcer.AugmentParentSetsAfterInsert(tableName, tableDef, mappedRow, fkCtx);
                 }
 
                 inserted++;
@@ -1284,8 +1285,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // FK enforcement: build the list of new-row payloads up front so we
         // can validate FK constraints (FK-side parent presence, PK-side
         // cascade-or-reject) before mutating any disk page.
-        IReadOnlyList<RelationshipManager.FkRelationship> rels = await Relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        RelationshipManager.FkContext? fkCtx = rels.Count > 0 ? new RelationshipManager.FkContext(rels) : null;
+        IReadOnlyList<FkRelationship> rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        FkContext? fkCtx = rels.Count > 0 ? new FkContext(rels) : null;
 
         var pendingNewRows = new List<(int Index, object[] NewRow)>();
         for (int i = 0; i < total; i++)
@@ -1315,14 +1316,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             // whose foreign side is THIS table.
             foreach ((_, object[] newRow) in pendingNewRows)
             {
-                await Relationships.EnforceFkOnInsertAsync(tableName, tableDef, newRow, fkCtx, cancellationToken).ConfigureAwait(false);
+                await Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, newRow, fkCtx, cancellationToken).ConfigureAwait(false);
             }
 
             // PK-side: if any of the updated columns belongs to a PK referenced
             // by a child table, gather (oldKey, newPkValues) pairs per affected
             // row and let EnforceFkOnPrimaryUpdateAsync cascade or reject.
             var changes = new List<(string? OldKey, object?[] OldFullRow, object[] NewPkValues)>(pendingNewRows.Count);
-            foreach (RelationshipManager.FkRelationship rel in rels)
+            foreach (FkRelationship rel in rels)
             {
                 if (!string.Equals(rel.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
                 {
@@ -1356,11 +1357,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 foreach ((int rowIdx, object[] newRow) in pendingNewRows)
                 {
                     object?[] oldFullRow = snapshot.Rows[rowIdx].ItemArray;
-                    string? oldKey = IndexHelpers.BuildCompositeKey(oldFullRow, pkIdx);
+                    string? oldKey = RelationshipKeyBuilder.Build(oldFullRow, pkIdx);
                     changes.Add((oldKey, oldFullRow, newRow));
                 }
 
-                await Relationships.EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, changes, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
+                await Relationships.Enforcer.EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, changes, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -1444,10 +1445,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             }
         }
 
-        IReadOnlyList<RelationshipManager.FkRelationship> rels = await Relationships.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<FkRelationship> rels = await Relationships.Enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         if (rels.Count > 0 && matchingIndices.Count > 0)
         {
-            var fkCtx = new RelationshipManager.FkContext(rels);
+            var fkCtx = new FkContext(rels);
 
             // Snapshot the typed full row of every parent we are about to
             // delete, in primary-table column order. EnforceFkOnPrimaryDeleteAsync
@@ -1459,7 +1460,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 deletedParentRows.Add(snapshot.Rows[rowIdx].ItemArray);
             }
 
-            await Relationships.EnforceFkOnPrimaryDeleteAsync(
+            await Relationships.Enforcer.EnforceFkOnPrimaryDeleteAsync(
                 tableName,
                 tableDef,
                 deletedParentRows,
@@ -2054,7 +2055,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         long tdefPage,
         TableDef tableDef,
         object[] values,
-        RelationshipManager.FkContext? fkCtx,
+        FkContext? fkCtx,
         CancellationToken cancellationToken)
     {
         List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints =
@@ -2064,7 +2065,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             try
             {
-                await Relationships.EnforceFkOnInsertAsync(tableName, tableDef, values, fkCtx, cancellationToken).ConfigureAwait(false);
+                await Relationships.Enforcer.EnforceFkOnInsertAsync(tableName, tableDef, values, fkCtx, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
@@ -2101,7 +2102,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             if (fkCtx != null)
             {
-                RelationshipManager.AugmentParentSetsAfterInsert(tableName, tableDef, values, fkCtx);
+                RelationshipEnforcer.AugmentParentSetsAfterInsert(tableName, tableDef, values, fkCtx);
             }
 
             // fast path: try in-place leaf splice for the inserted

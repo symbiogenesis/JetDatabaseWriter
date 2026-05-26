@@ -50,13 +50,13 @@ Done criteria:
 
 ## Priority 1: Decompose Relationship Management
 
-Hotspot: [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs), especially cascade delete enforcement and seek/snapshot fallback around [EnforceFkOnPrimaryDeleteAsync](../JetDatabaseWriter/Relationships/RelationshipManager.cs#L2422-L2520)
+Hotspot: [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs) lifecycle/TDEF mutation and [RelationshipEnforcer.cs](../JetDatabaseWriter/Relationships/RelationshipEnforcer.cs) runtime cascade enforcement.
 
-- [ ] Split relationship catalog row operations from TDEF logical-index mutation.
-- [ ] Split runtime referential-integrity enforcement from schema creation/drop/rename workflows.
-- [ ] Isolate child-side index seek planning from snapshot fallback scanning.
-- [ ] Make the cascade-depth and cycle-handling policy easy to test without full catalog mutation setup.
-- [ ] Add regression tests for seek success, seek rejection with fallback, cascade delete, cascade update, self-reference, and malformed catalog rows.
+- [x] Split relationship catalog row operations from TDEF logical-index mutation.
+- [x] Split runtime referential-integrity enforcement from schema creation/drop/rename workflows.
+- [x] Isolate child-side index seek planning from snapshot fallback scanning.
+- [x] Make the cascade-depth and cycle-handling policy easy to test without full catalog mutation setup.
+- [x] Add regression tests for seek success, seek rejection with fallback, cascade delete, cascade update, self-reference, and malformed catalog rows.
 
 Done criteria:
 
@@ -99,5 +99,5 @@ Current largest production files from the smell pass:
 - [x] Fix [TypedValueParser.cs](../JetDatabaseWriter/ValueDecoding/TypedValueParser.cs#L13-L84) first because it has the highest risk of hiding bad data behind valid-looking results.
 - [x] Then reduce [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs) internal forwarder debt, because it affects subsystem boundaries across the library.
 - [x] Then carve reader-side complex column and typed-row fallback policy out of [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs).
-- [ ] Then split [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs) along lifecycle, TDEF mutation, and runtime enforcement boundaries.
+- [x] Then split [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs) along lifecycle, TDEF mutation, and runtime enforcement boundaries.
 - [ ] Refactor [CalculatedExpressionEvaluator.cs](../JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs) after adding enough golden tests to protect Access-compatible semantics.

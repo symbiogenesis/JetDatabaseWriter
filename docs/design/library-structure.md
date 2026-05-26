@@ -156,7 +156,17 @@ JetDatabaseWriter/
 │       └── PageDecryptionKeys.cs
 │
 ├── Relationships/                         (foreign keys, cascade rules, linked tables)
-│   ├── RelationshipManager.cs             (create/drop/rename relationships, cascade logic)
+│   ├── RelationshipManager.cs             (relationship lifecycle and TDEF FK logical-index mutation)
+│   ├── RelationshipCatalogStore.cs        (MSysRelationships row emission, loading, and rewrites)
+│   ├── RelationshipEnforcer.cs            (runtime FK insert/update/delete referential-integrity enforcement)
+│   ├── RelationshipSeekPlanner.cs         (parent/child FK B-tree seek-index resolution)
+│   ├── RelationshipChildRowLocator.cs     (child-row location resolution from FK-side index seeks)
+│   ├── RelationshipKeyBuilder.cs          (shared FK composite-key projection and fallback key building)
+│   ├── RelationshipCascadePolicy.cs       (cascade recursion-depth guard)
+│   ├── RelationshipPageReader.cs          (owned page-copy adapter for index seekers)
+│   ├── FkRelationship.cs                  (enforced FK metadata model)
+│   ├── FkContext.cs                       (per-mutation FK lookup cache)
+│   ├── RelationshipRowSnapshot.cs         (MSysRelationships row rewrite snapshot)
 │   └── LinkedTableManager.cs              (Access/text/ODBC linked-table metadata and Access-file read-through)
 │
 ├── ComplexColumns/                        (multi-value fields, attachments, versioned columns)
@@ -292,7 +302,10 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Pager** | `AccessBase` + `LruCache` + `PageJournal` | Dedicated page-level I/O with 256-page LRU eviction cache and before-image journaling (same pattern as SQLite's pager) |
 | **Allocator** | `PageAllocator` | Centralizes Access global free-map reuse, freed-page headers, secure erase, and tail-only shrink |
 | **Manager / Coordinator** | `RelationshipManager`, `LinkedTableManager`, `ComplexColumnManager`, `ComplexColumnReader` | Keeps feature-specific catalog and child-table workflows out of the public facades |
-| **Policy** | `TypedRowFallbackPolicy` | Encapsulates strict vs lenient handling for malformed typed row payloads |
+| **Catalog Store** | `RelationshipCatalogStore` | Keeps MSysRelationships row emission/loading/rewrites separate from TDEF logical-index mutation |
+| **Runtime Enforcer** | `RelationshipEnforcer` | Keeps FK insert/update/delete referential-integrity checks separate from create/drop/rename workflows |
+| **Planner / Locator** | `RelationshipSeekPlanner`, `RelationshipChildRowLocator` | Separates index-backed lookup planning and row-location resolution from FK fallback/enforcement workflow |
+| **Policy** | `TypedRowFallbackPolicy`, `RelationshipCascadePolicy` | Encapsulates strict vs lenient malformed-row handling and FK cascade recursion limits |
 | **Gateway** (Fowler) | `LockFileCoordinator`, `JetByteRangeLock` | Encapsulates filesystem concurrency primitives behind a clean interface |
 | **Registry** | `ConstraintRegistry` | Centralized constraint management — auto-increment, defaults, validation rules — decoupled from the writer orchestrator |
 
@@ -389,6 +402,10 @@ Classes such as `PageAllocator`, `DataPageInserter`, `TDefPageBuilder`, `Relatio
 ### 8. Linked-table metadata spans catalog and schema
 
 Linked-table public APIs live on `IAccessSchema`; linked-table discovery and read-through live in `Relationships/LinkedTableManager`; ODBC schema-cache property-map generation lives in `Schema/LinkedOdbcLvPropBuilder` because it emits `MSysObjects.LvProp` property blocks using the shared schema property-map builder.
+
+### 9. Relationship catalog and runtime helpers are split from lifecycle orchestration
+
+`RelationshipManager` owns relationship create/drop/rename workflow and per-TDEF FK logical-index mutation. `RelationshipCatalogStore` owns `MSysRelationships` row emission, loading, and rewrites, while `RelationshipEnforcer` owns insert/update/delete referential-integrity checks. The runtime path uses smaller helpers for reusable policy and lookup work: `RelationshipSeekPlanner` resolves parent/child B-tree seek indexes, `RelationshipChildRowLocator` turns child-side seek hits into live `RowLocation` values, `RelationshipKeyBuilder` keeps seek and snapshot fallback key semantics aligned, and `RelationshipCascadePolicy` owns the cascade-depth guard independently of catalog mutation setup.
 
 ---
 
