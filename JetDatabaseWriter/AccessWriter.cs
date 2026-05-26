@@ -66,8 +66,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// schemas almost never exceed depth 3.
     /// </summary>
     internal const int CascadeMaxDepth = 64;
-
-    private readonly AccessWriterOptions _options;
     private readonly LockFileCoordinator _lockFileCoordinator;
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeStateLockAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
     private readonly ReaderWriterLockSlim _stateLock = new(LockRecursionPolicy.NoRecursion);
@@ -142,7 +140,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     internal ConstraintRegistry Constraints { get; }
 
     /// <summary>Gets the writer options.</summary>
-    internal AccessWriterOptions Options => _options;
+    internal AccessWriterOptions Options { get; }
 
     /// <summary>Gets or sets the active explicit transaction.</summary>
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via DisposeActiveTransactionAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
@@ -165,7 +163,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         bool leaveOpen = false)
         : base(stream, header, path, leaveOpen)
     {
-        _options = options;
+        Options = options;
         _lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
         _outerEncryptedStream = outerEncryptedStream;
         _outerEncryptedLeaveOpen = outerEncryptedLeaveOpen;
@@ -1989,7 +1987,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // For Agile-encrypted databases the underlying _stream is an in-memory
         // copy of the *decrypted* ACCDB. Re-encrypt it before tearing down so
         // the user's outer encrypted stream/file ends up with all writes.
-        if (!_isAgileEncryptedRewrap || _outerEncryptedStream is null || _options.Password.IsEmpty)
+        if (!_isAgileEncryptedRewrap || _outerEncryptedStream is null || Options.Password.IsEmpty)
         {
             return;
         }
@@ -2028,8 +2026,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         byte[] inner = memory.ToArray();
 
         (byte[] encryptionInfo, byte[] encryptedPackage) = _outerEncryptedFormat == AccessEncryptionFormat.AccdbStandard
-            ? OfficeCryptoStandard.Encrypt(inner, _options.Password.Span)
-            : OfficeCryptoAgile.Encrypt(inner, _options.Password.Span);
+            ? OfficeCryptoStandard.Encrypt(inner, Options.Password.Span)
+            : OfficeCryptoAgile.Encrypt(inner, Options.Password.Span);
 
         byte[] cfb = EncryptionConverter.BuildOfficeCryptoCompoundFile(encryptionInfo, encryptedPackage);
 
@@ -2424,7 +2422,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             FileShare = FileShare.ReadWrite,
             ValidateOnOpen = false,
             PageCacheSize = -1,
-            Password = _options.Password,
+            Password = Options.Password,
         };
 
         AccessReader reader;
@@ -2458,7 +2456,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             FileShare = FileShare.ReadWrite,
             ValidateOnOpen = false,
             PageCacheSize = -1,
-            Password = _options.Password,
+            Password = Options.Password,
         };
 
         AccessReader reader;
@@ -2493,7 +2491,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             ValidateOnOpen = false,
             PageCacheSize = -1,
             UseLockFile = false,
-            Password = _options.Password,
+            Password = Options.Password,
         };
 
         AccessReader reader;
@@ -4207,7 +4205,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return;
         }
 
-        if (clearRowData || _options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
+        if (clearRowData || Options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
         {
             foreach (RowBound rowBound in EnumerateLiveRowBounds(page))
             {
@@ -4216,7 +4214,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     continue;
                 }
 
-                if (tableDef is not null && _options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
+                if (tableDef is not null && Options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
                 {
                     longValueRoots = CollectLongValueRoots(page, rowBound, tableDef);
                 }
