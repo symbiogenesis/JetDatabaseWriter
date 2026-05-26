@@ -243,7 +243,7 @@ internal static class IndexBTreeBuilder
 
     /// <summary>
     /// Surgical-rewrite helper. Re-emits a single intermediate (<c>0x03</c>)
-    /// page from an arbitrary list of <code>(summaryKey, dataPage, dataRow,
+    /// page from an arbitrary list of: <code>(summaryKey, dataPage, dataRow,
     /// childPage)</code> tuples (sorted by summary key), preserving the supplied
     /// <c>prev_page</c> / <c>next_page</c> / <c>tail_page</c> headers. Returns
     /// <see langword="null"/> when the entry list overflows the per-page
