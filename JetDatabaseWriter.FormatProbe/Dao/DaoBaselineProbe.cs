@@ -1,5 +1,9 @@
 // DAO baseline probe.
 //
+// DAO-authored output is the diagnostic oracle in this probe. Writer-created
+// output is only the comparison target; never promote a writer-created fresh
+// database to the source-of-truth side of the diff.
+//
 // Step 1 of docs/design/round-trip-test-failures.md "Recommended next steps":
 // build an Access-engine-authored ground-truth copy of NorthwindTraders.accdb
 // + a single empty `RT_Customers` table to diff byte-for-byte against the

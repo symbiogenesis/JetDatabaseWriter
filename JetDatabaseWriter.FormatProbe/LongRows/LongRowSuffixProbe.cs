@@ -66,6 +66,7 @@ internal static class LongRowSuffixProbe
     private const int DaoLabRowCount = DaoLabTemplateSampleStart + DaoLabTemplateSampleRowCount;
     private const string DaoLabAlphabet = " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+";
     private const int AuxInputCandidateIndex = 10;
+    private const int CrcDerivedInitSolverMaxSeedBytes = 192;
     private const uint LcMapSortKey = 0x00000400;
     private const uint LcMapHash = 0x00040000;
     private const uint NormIgnoreCase = 0x00000001;
@@ -143,7 +144,7 @@ internal static class LongRowSuffixProbe
     {
         var sb = new StringBuilder();
         AppendHeader(sb, "V2010 long-row suffix CRC-16 sweep", "long-row-crc-sweep");
-        sb.AppendLine("This mode is intentionally slow. The last known local run took about 3 minutes.");
+        sb.AppendLine("This mode enumerates the full CRC-16 search space with table-driven CRCs. The 2026-05-26 local Debug run took about 14 seconds.");
         sb.AppendLine();
 
         await DumpV2010CrcFullSweepAsync(GetV2010Fixture(fixturesDir), sb, CancellationToken.None);
@@ -1385,22 +1386,26 @@ internal static class LongRowSuffixProbe
         }
 
         RollingConstraint[] searchConstraints = BuildCrcSearchSample(constraints, maxCount: 64);
+        var normalTable = new ushort[256];
+        var reflectedTable = new ushort[256];
 
         for (int polynomial = 0; polynomial <= 0xFFFF; polynomial++)
         {
             ushort polynomialValue = (ushort)polynomial;
             ushort reflectedPolynomial = ReflectU16(polynomialValue);
+            BuildCrcTable(polynomialValue, normalTable, reflected: false);
+            BuildCrcTable(reflectedPolynomial, reflectedTable, reflected: true);
             for (int mode = 0; mode < 4; mode++)
             {
                 bool refIn = (mode & 1) != 0;
                 bool refOut = (mode & 2) != 0;
-                ushort first = CrcFull(searchConstraints[0].Input, polynomialValue, reflectedPolynomial, 0, 0, refIn, refOut);
+                ushort first = CrcFullWithTable(searchConstraints[0].Input, normalTable, reflectedTable, 0, 0, refIn, refOut);
                 ushort xorConstant = (ushort)(searchConstraints[0].Target ^ first);
 
                 bool allMatch = true;
                 for (int index = 1; index < searchConstraints.Length; index++)
                 {
-                    ushort crc = CrcFull(searchConstraints[index].Input, polynomialValue, reflectedPolynomial, 0, 0, refIn, refOut);
+                    ushort crc = CrcFullWithTable(searchConstraints[index].Input, normalTable, reflectedTable, 0, 0, refIn, refOut);
                     if ((ushort)(crc ^ xorConstant) != searchConstraints[index].Target)
                     {
                         allMatch = false;
@@ -1412,7 +1417,7 @@ internal static class LongRowSuffixProbe
                 {
                     for (int index = 0; index < constraints.Length; index++)
                     {
-                        ushort crc = CrcFull(constraints[index].Input, polynomialValue, reflectedPolynomial, 0, 0, refIn, refOut);
+                        ushort crc = CrcFullWithTable(constraints[index].Input, normalTable, reflectedTable, 0, 0, refIn, refOut);
                         if ((ushort)(crc ^ xorConstant) != constraints[index].Target)
                         {
                             allMatch = false;
@@ -1442,14 +1447,11 @@ internal static class LongRowSuffixProbe
             return constraints;
         }
 
-        var sample = new RollingConstraint[maxCount];
-        for (int index = 0; index < sample.Length; index++)
-        {
-            int sourceIndex = (int)Math.Round((double)index * (constraints.Length - 1) / (sample.Length - 1));
-            sample[index] = constraints[sourceIndex];
-        }
-
-        return sample;
+        return constraints
+            .OrderBy(static constraint => constraint.Input.Length)
+            .ThenBy(static constraint => constraint.Target)
+            .Take(maxCount)
+            .ToArray();
     }
 
     private static void AppendCrc16AffineHitLine(
@@ -2515,8 +2517,9 @@ internal static class LongRowSuffixProbe
     {
         sb.AppendLine("CRC-16 derived-init solver (sliding window):");
         sb.AppendLine();
-        sb.AppendLine("For each (polynomial, mode, start-offset), solves the init/constant from the first row, then verifies against all remaining rows.");
+        sb.AppendLine("For each (polynomial, mode, start-offset), solves the constant from the shortest non-empty row, filters against the next two shortest rows, then verifies against all remaining rows.");
         sb.AppendLine("Tests tail slices full[508+k..] for k=0..12, plus full[0..] and full[1..].");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Slices whose three-row rejection seed exceeds {CrcDerivedInitSolverMaxSeedBytes} bytes are skipped here; use `long-row-crc-sweep` for exhaustive heavy CRC windows.");
         sb.AppendLine();
 
         if (contexts.Length < 3)
@@ -2563,27 +2566,44 @@ internal static class LongRowSuffixProbe
                 .Select(context => new RollingConstraint(
                     extract(context),
                     context.Row.AccessSuffix))
+                .Where(static constraint => constraint.Input.Length > 0)
                 .ToArray();
-            byte[] data0 = constraints[0].Input;
-            byte[] data1 = constraints[1].Input;
-            byte[] data2 = constraints[2].Input;
-            if (data0.Length == 0 || data1.Length == 0 || data2.Length == 0)
+            if (constraints.Length < 3)
             {
-                sb.AppendLine(CultureInfo.InvariantCulture, $"| {label} | 0 | (empty slice) |");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"| {label} | 0 | (insufficient non-empty rows) |");
                 continue;
             }
 
-            ushort expected0 = constraints[0].Target;
-            ushort expected1 = constraints[1].Target;
-            ushort expected2 = constraints[2].Target;
+            RollingConstraint[] searchConstraints = constraints
+                .OrderBy(static constraint => constraint.Input.Length)
+                .ThenBy(static constraint => constraint.Target)
+                .Take(3)
+                .ToArray();
+            byte[] data0 = searchConstraints[0].Input;
+            byte[] data1 = searchConstraints[1].Input;
+            byte[] data2 = searchConstraints[2].Input;
+            int seedByteCount = data0.Length + data1.Length + data2.Length;
+            if (seedByteCount > CrcDerivedInitSolverMaxSeedBytes)
+            {
+                sb.AppendLine(CultureInfo.InvariantCulture, $"| {label} | 0 | (skipped; seed bytes {seedByteCount}) |");
+                continue;
+            }
+
+            ushort expected0 = searchConstraints[0].Target;
+            ushort expected1 = searchConstraints[1].Target;
+            ushort expected2 = searchConstraints[2].Target;
 
             int hitCount = 0;
             var hitDetails = new List<string>();
+            var normalTable = new ushort[256];
+            var reflectedTable = new ushort[256];
 
             for (int poly = 0; poly <= 0xFFFF; poly++)
             {
                 ushort polyVal = (ushort)poly;
                 ushort polyRef = ReflectU16(polyVal);
+                BuildCrcTable(polyVal, normalTable, reflected: false);
+                BuildCrcTable(polyRef, reflectedTable, reflected: true);
 
                 // Test 4 modes: (refIn=false, refIn=true) x (refOut matches refIn, refOut differs).
                 // For each, derive the constant from row0 and check rows 1-2.
@@ -2592,16 +2612,16 @@ internal static class LongRowSuffixProbe
                     bool refIn = (mode & 1) != 0;
                     bool refOut = (mode & 2) != 0;
 
-                    ushort crc0 = CrcFull(data0, polyVal, polyRef, 0, 0, refIn, refOut);
+                    ushort crc0 = CrcFullWithTable(data0, normalTable, reflectedTable, 0, 0, refIn, refOut);
                     ushort constant = (ushort)(expected0 ^ crc0);
 
-                    ushort crc1 = CrcFull(data1, polyVal, polyRef, 0, 0, refIn, refOut);
+                    ushort crc1 = CrcFullWithTable(data1, normalTable, reflectedTable, 0, 0, refIn, refOut);
                     if ((ushort)(crc1 ^ constant) != expected1)
                     {
                         continue;
                     }
 
-                    ushort crc2 = CrcFull(data2, polyVal, polyRef, 0, 0, refIn, refOut);
+                    ushort crc2 = CrcFullWithTable(data2, normalTable, reflectedTable, 0, 0, refIn, refOut);
                     if ((ushort)(crc2 ^ constant) != expected2)
                     {
                         continue;
@@ -2609,16 +2629,10 @@ internal static class LongRowSuffixProbe
 
                     // Passed 3 constraints. Validate against ALL contexts.
                     bool allMatch = true;
-                    for (int i = 3; i < constraints.Length; i++)
+                    for (int i = 0; i < constraints.Length; i++)
                     {
                         byte[] dataI = constraints[i].Input;
-                        if (dataI.Length == 0)
-                        {
-                            allMatch = false;
-                            break;
-                        }
-
-                        ushort crcI = CrcFull(dataI, polyVal, polyRef, 0, 0, refIn, refOut);
+                        ushort crcI = CrcFullWithTable(dataI, normalTable, reflectedTable, 0, 0, refIn, refOut);
                         if ((ushort)(crcI ^ constant) != constraints[i].Target)
                         {
                             allMatch = false;
@@ -5244,7 +5258,7 @@ internal static class LongRowSuffixProbe
         int encodedLongCount = encoded.Count(encodedKey => encodedKey.Key.Length == LongRowEntryLength);
         int prefixMatches = 0;
         var examples = new List<CorpusSuffixExample>();
-        var usedEncodedIndexes = new bool[encoded.Count];
+        Dictionary<byte[], Queue<int>> encodedPrefixLookup = BuildEncodedPrefixLookup(encoded);
         for (int indexPosition = 0; indexPosition < sortedOnDisk.Count; indexPosition++)
         {
             byte[] onDiskKey = sortedOnDisk[indexPosition].Key;
@@ -5253,12 +5267,11 @@ internal static class LongRowSuffixProbe
                 continue;
             }
 
-            int encodedIndex = FindEncodedPrefixMatch(encoded, usedEncodedIndexes, onDiskKey);
+            int encodedIndex = FindEncodedPrefixMatch(encodedPrefixLookup, onDiskKey);
             bool prefixMatch = encodedIndex >= 0;
             if (prefixMatch)
             {
                 prefixMatches++;
-                usedEncodedIndexes[encodedIndex] = true;
             }
 
             if (examples.Count < maxExamples)
@@ -5288,27 +5301,41 @@ internal static class LongRowSuffixProbe
         return new CorpusIndexScanResult(encodedLongCount, prefixMatches, examples);
     }
 
-    private static int FindEncodedPrefixMatch(
-        List<EncodedCorpusKey> encoded,
-        bool[] usedEncodedIndexes,
-        byte[] onDiskKey)
+    private static Dictionary<byte[], Queue<int>> BuildEncodedPrefixLookup(List<EncodedCorpusKey> encoded)
     {
+        var lookup = new Dictionary<byte[], Queue<int>>(LongRowPrefixEqualityComparer.Instance);
         for (int encodedIndex = 0; encodedIndex < encoded.Count; encodedIndex++)
         {
-            if (usedEncodedIndexes[encodedIndex])
+            byte[] encodedKey = encoded[encodedIndex].Key;
+            if (encodedKey.Length < PrefixMatchLength)
             {
                 continue;
             }
 
-            byte[] encodedKey = encoded[encodedIndex].Key;
-            if (encodedKey.Length >= PrefixMatchLength
-                && onDiskKey.AsSpan(0, PrefixMatchLength).SequenceEqual(encodedKey.AsSpan(0, PrefixMatchLength)))
+            if (!lookup.TryGetValue(encodedKey, out Queue<int>? indexes))
             {
-                return encodedIndex;
+                indexes = new Queue<int>();
+                lookup.Add(encodedKey, indexes);
             }
+
+            indexes.Enqueue(encodedIndex);
         }
 
-        return -1;
+        return lookup;
+    }
+
+    private static int FindEncodedPrefixMatch(
+        Dictionary<byte[], Queue<int>> encodedPrefixLookup,
+        byte[] onDiskKey)
+    {
+        if (onDiskKey.Length < PrefixMatchLength
+            || !encodedPrefixLookup.TryGetValue(onDiskKey, out Queue<int>? indexes)
+            || indexes.Count == 0)
+        {
+            return -1;
+        }
+
+        return indexes.Dequeue();
     }
 
     private static void AppendCorpusIndexReport(
@@ -5639,16 +5666,24 @@ internal static class LongRowSuffixProbe
                 $row12Template = Get-TemplateText $db $tableName 'row12'
                 $rs = $db.OpenRecordset($tableName, 2)
                 try {
+                    $fields = $rs.Fields
+                    $dataField = $fields.Item('data')
+                    $labFields = New-Object System.Collections.ArrayList
+                    for ($fieldIndex = 0; $fieldIndex -lt $fields.Count; $fieldIndex++) {
+                        $field = $fields.Item($fieldIndex)
+                        if ($field.Name -ine 'data') {
+                            [void] $labFields.Add($field)
+                        }
+                    }
+
                     for ($seed = 0; $seed -lt $rowCount; $seed++) {
                         $text = [string] (New-LabText $seed $row10Template $row11Template $row12Template)
                         $rs.AddNew()
-                        for ($fieldIndex = 0; $fieldIndex -lt $rs.Fields.Count; $fieldIndex++) {
-                            $field = $rs.Fields.Item($fieldIndex)
-                            if ($field.Name -ieq 'data') { continue }
+                        foreach ($field in $labFields) {
                             Set-LabFieldValue $field ($seed + $offset + 100000)
                         }
 
-                        $rs.Fields.Item('data').AppendChunk($text)
+                        $dataField.AppendChunk($text)
                         $rs.Update()
                     }
                 } finally {
@@ -5658,12 +5693,26 @@ internal static class LongRowSuffixProbe
 
             $engine = New-Object -ComObject DAO.DBEngine.120
             try {
+                $workspace = $engine.Workspaces.Item(0)
                 $db = $engine.OpenDatabase($dbPath)
                 try {
                     Write-TableFields $db 'Table11'
                     Write-TableFields $db 'Table11_desc'
-                    Add-LabRows $db 'Table11' 0
-                    Add-LabRows $db 'Table11_desc' 1000
+                    $transactionStarted = $false
+                    try {
+                        $workspace.BeginTrans()
+                        $transactionStarted = $true
+                        Add-LabRows $db 'Table11' 0
+                        Add-LabRows $db 'Table11_desc' 1000
+                        $workspace.CommitTrans()
+                        $transactionStarted = $false
+                    } catch {
+                        if ($transactionStarted) {
+                            $workspace.Rollback()
+                        }
+
+                        throw
+                    }
                 } finally {
                     $db.Close()
                 }
@@ -5927,42 +5976,57 @@ internal static class LongRowSuffixProbe
         sb.AppendLine("Filter: a (poly, mode, inputIdx) survives only if it satisfies all constraints simultaneously.");
         sb.AppendLine();
 
-        var hits = new List<string>();
+        var hits = new List<CrcSweepHit>();
         ConstraintSet firstConstraint = constraints[0];
+        var normalTable = new ushort[256];
+        var reflectedTable = new ushort[256];
 
-        for (int inputIndex = 0; inputIndex < candidateCount; inputIndex++)
+        for (int polynomial = 0; polynomial <= 0xFFFF; polynomial++)
         {
-            byte[] firstInput = firstConstraint.Inputs[inputIndex];
-            if (firstInput.Length == 0)
-            {
-                continue;
-            }
+            ushort polynomialValue = (ushort)polynomial;
+            ushort reflectedPolynomial = ReflectU16(polynomialValue);
+            BuildCrcTable(polynomialValue, normalTable, reflected: false);
+            BuildCrcTable(reflectedPolynomial, reflectedTable, reflected: true);
 
-            for (int polynomial = 0; polynomial <= 0xFFFF; polynomial++)
+            for (int inputIndex = 0; inputIndex < candidateCount; inputIndex++)
             {
-                ushort polynomialValue = (ushort)polynomial;
-                ushort reflectedPolynomial = ReflectU16(polynomialValue);
-                for (int mode = 0; mode < 16; mode++)
+                byte[] firstInput = firstConstraint.Inputs[inputIndex];
+                if (firstInput.Length == 0)
+                {
+                    continue;
+                }
+
+                for (int mode = 0; mode < 8; mode++)
                 {
                     bool refIn = (mode & 1) != 0;
                     bool refOut = (mode & 2) != 0;
                     ushort init = (mode & 4) != 0 ? (ushort)0xFFFF : (ushort)0;
-                    ushort xorOut = (mode & 8) != 0 ? (ushort)0xFFFF : (ushort)0;
 
-                    ushort got = CrcFull(firstInput, polynomialValue, reflectedPolynomial, init, xorOut, refIn, refOut);
-                    if (got != firstConstraint.Expected)
+                    ushort got = CrcFullWithTable(firstInput, normalTable, reflectedTable, init, 0, refIn, refOut);
+                    ushort xorOut;
+                    if (got == firstConstraint.Expected)
+                    {
+                        xorOut = 0;
+                    }
+                    else if ((ushort)(got ^ 0xFFFF) == firstConstraint.Expected)
+                    {
+                        xorOut = 0xFFFF;
+                    }
+                    else
                     {
                         continue;
                     }
+
+                    int fullMode = mode | (xorOut == 0 ? 0 : 8);
 
                     bool allMatch = true;
                     for (int constraintIndex = 1; constraintIndex < constraints.Count; constraintIndex++)
                     {
                         ConstraintSet constraint = constraints[constraintIndex];
-                        ushort constraintGot = CrcFull(
+                        ushort constraintGot = CrcFullWithTable(
                             constraint.Inputs[inputIndex],
-                            polynomialValue,
-                            reflectedPolynomial,
+                            normalTable,
+                            reflectedTable,
                             init,
                             xorOut,
                             refIn,
@@ -5976,14 +6040,20 @@ internal static class LongRowSuffixProbe
 
                     if (allMatch)
                     {
-                        string hit = string.Create(
-                            CultureInfo.InvariantCulture,
-                            $"HIT poly=0x{polynomialValue:X4} init=0x{init:X4} xorOut=0x{xorOut:X4} refIn={refIn} refOut={refOut} inputIdx={inputIndex} input={InputCandidateNames[inputIndex]}");
-                        hits.Add(hit);
-                        sb.AppendLine(hit);
+                        hits.Add(new CrcSweepHit(polynomialValue, init, xorOut, refIn, refOut, inputIndex, fullMode));
                     }
                 }
             }
+        }
+
+        foreach (CrcSweepHit hit in hits
+            .OrderBy(static hit => hit.InputIndex)
+            .ThenBy(static hit => hit.Polynomial)
+            .ThenBy(static hit => hit.Mode))
+        {
+            sb.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"HIT poly=0x{hit.Polynomial:X4} init=0x{hit.Init:X4} xorOut=0x{hit.XorOut:X4} refIn={hit.RefIn} refOut={hit.RefOut} inputIdx={hit.InputIndex} input={InputCandidateNames[hit.InputIndex]}");
         }
 
         sb.AppendLine();
@@ -6204,6 +6274,68 @@ internal static class LongRowSuffixProbe
                             ? (ushort)((crc << 1) ^ poly)
                             : (ushort)(crc << 1);
                     }
+                }
+            }
+
+            if (refIn != refOut)
+            {
+                crc = ReflectU16(crc);
+            }
+
+            return (ushort)(crc ^ xorOut);
+        }
+    }
+
+    private static void BuildCrcTable(ushort polynomial, ushort[] table, bool reflected)
+    {
+        unchecked
+        {
+            for (int tableIndex = 0; tableIndex < 256; tableIndex++)
+            {
+                ushort crc = reflected
+                    ? (ushort)tableIndex
+                    : (ushort)(tableIndex << 8);
+
+                for (int bitIndex = 0; bitIndex < 8; bitIndex++)
+                {
+                    crc = reflected
+                        ? (crc & 1) != 0
+                            ? (ushort)((crc >> 1) ^ polynomial)
+                            : (ushort)(crc >> 1)
+                        : (crc & 0x8000) != 0
+                            ? (ushort)((crc << 1) ^ polynomial)
+                            : (ushort)(crc << 1);
+                }
+
+                table[tableIndex] = crc;
+            }
+        }
+    }
+
+    private static ushort CrcFullWithTable(
+        byte[] data,
+        ushort[] normalTable,
+        ushort[] reflectedTable,
+        ushort init,
+        ushort xorOut,
+        bool refIn,
+        bool refOut)
+    {
+        unchecked
+        {
+            ushort crc = init;
+            if (refIn)
+            {
+                foreach (byte value in data)
+                {
+                    crc = (ushort)((crc >> 8) ^ reflectedTable[(crc ^ value) & 0xFF]);
+                }
+            }
+            else
+            {
+                foreach (byte value in data)
+                {
+                    crc = (ushort)((crc << 8) ^ normalTable[((crc >> 8) ^ value) & 0xFF]);
                 }
             }
 
@@ -6737,6 +6869,15 @@ internal static class LongRowSuffixProbe
     private readonly record struct RowData(int RowIndex, ushort ExpectedSuffix, byte[] Full, string Text);
 
     private readonly record struct ConstraintSet(string Label, byte[][] Inputs, ushort Expected);
+
+    private readonly record struct CrcSweepHit(
+        ushort Polynomial,
+        ushort Init,
+        ushort XorOut,
+        bool RefIn,
+        bool RefOut,
+        int InputIndex,
+        int Mode);
 
     private readonly record struct SuffixPatternTable(
         string TableName,
