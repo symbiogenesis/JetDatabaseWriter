@@ -14,8 +14,6 @@ using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
 using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
 using UniqueIndexDescriptor = JetDatabaseWriter.Indexes.IndexLayout.UniqueIndexDescriptor;
 
-#pragma warning disable CA1822 // Mark members as static
-
 /// <summary>
 /// Pre-write unique-index enforcement: detects duplicate keys before any
 /// disk page is mutated. Owned by <see cref="AccessWriter"/>.
@@ -247,10 +245,10 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             for (int d = 0; d < descriptors.Count; d++)
             {
                 UniqueIndexDescriptor descriptor = descriptors[d];
-                int[] numericTargetScales = BuildNumericScales(descriptor);
+                int[] numericTargetScales = UniqueIndexChecker.BuildNumericScales(descriptor);
 
                 // Map from the columnOrdinalsArray position back to the full row object[].
-                object[] fullRow = BuildRowFromPartialValues(descriptor, values, columnOrdinalsArray);
+                object[] fullRow = UniqueIndexChecker.BuildRowFromPartialValues(descriptor, values, columnOrdinalsArray);
                 byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, fullRow, numericTargetScales);
                 _ = seenSets[d].Add(key);
             }
@@ -262,7 +260,7 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             for (int d = 0; d < descriptors.Count; d++)
             {
                 UniqueIndexDescriptor descriptor = descriptors[d];
-                int[] numericTargetScales = BuildNumericScales(descriptor);
+                int[] numericTargetScales = UniqueIndexChecker.BuildNumericScales(descriptor);
                 byte[] key = EncodeCompositeKeyForUniqueCheck(descriptor, pendingRows[p], numericTargetScales);
 
                 if (!seenSets[d].Add(key))
@@ -273,49 +271,6 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
                 }
             }
         }
-    }
-
-    private int[] BuildNumericScales(UniqueIndexDescriptor descriptor)
-    {
-        int[] scales = new int[descriptor.KeyColumns.Count];
-        for (int k = 0; k < descriptor.KeyColumns.Count; k++)
-        {
-            ColumnInfo kCol = descriptor.KeyColumns[k].Col;
-            scales[k] = kCol.Type == T_NUMERIC ? kCol.NumericScale : -1;
-        }
-
-        return scales;
-    }
-
-    private object[] BuildRowFromPartialValues(UniqueIndexDescriptor descriptor, object?[] partialValues, int[] columnOrdinalsArray)
-    {
-        // Build a row array sized to cover all key column snap indices.
-        int maxIdx = 0;
-        foreach ((_, int snapIdx, _) in descriptor.KeyColumns)
-        {
-            if (snapIdx > maxIdx)
-            {
-                maxIdx = snapIdx;
-            }
-        }
-
-        var row = new object[maxIdx + 1];
-        for (int i = 0; i < row.Length; i++)
-        {
-            row[i] = DBNull.Value;
-        }
-
-        // Map: columnOrdinalsArray[i] → partialValues[i]
-        for (int i = 0; i < columnOrdinalsArray.Length; i++)
-        {
-            int ord = columnOrdinalsArray[i];
-            if (ord < row.Length)
-            {
-                row[ord] = partialValues[i] ?? DBNull.Value;
-            }
-        }
-
-        return row;
     }
 
     /// <summary>
@@ -347,6 +302,49 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         }
 
         CheckUniqueIndexesCore(tableName, descriptors, snapshot, pendingInsertRows: [], replaceAtSnapshotIndex: replaceAt);
+    }
+
+    private static int[] BuildNumericScales(UniqueIndexDescriptor descriptor)
+    {
+        int[] scales = new int[descriptor.KeyColumns.Count];
+        for (int k = 0; k < descriptor.KeyColumns.Count; k++)
+        {
+            ColumnInfo kCol = descriptor.KeyColumns[k].Col;
+            scales[k] = kCol.Type == T_NUMERIC ? kCol.NumericScale : -1;
+        }
+
+        return scales;
+    }
+
+    private static object[] BuildRowFromPartialValues(UniqueIndexDescriptor descriptor, object?[] partialValues, int[] columnOrdinalsArray)
+    {
+        // Build a row array sized to cover all key column snap indices.
+        int maxIdx = 0;
+        foreach ((_, int snapIdx, _) in descriptor.KeyColumns)
+        {
+            if (snapIdx > maxIdx)
+            {
+                maxIdx = snapIdx;
+            }
+        }
+
+        var row = new object[maxIdx + 1];
+        for (int i = 0; i < row.Length; i++)
+        {
+            row[i] = DBNull.Value;
+        }
+
+        // Map: columnOrdinalsArray[i] → partialValues[i]
+        for (int i = 0; i < columnOrdinalsArray.Length; i++)
+        {
+            int ord = columnOrdinalsArray[i];
+            if (ord < row.Length)
+            {
+                row[ord] = partialValues[i] ?? DBNull.Value;
+            }
+        }
+
+        return row;
     }
 
     /// <summary>

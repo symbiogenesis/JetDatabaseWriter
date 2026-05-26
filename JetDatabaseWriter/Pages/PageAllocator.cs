@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using static JetDatabaseWriter.AccessBase;
 
-#pragma warning disable CA1822 // Helper methods are kept instance-local for allocator readability.
 #pragma warning disable SA1204 // Static helpers stay near related instance helpers.
 
 /// <summary>
@@ -445,7 +444,7 @@ internal sealed class PageAllocator(AccessWriter writer)
         }
     }
 
-    private bool TryGetInlineFreeState(byte[] globalPage, int rowStart, int rowSize, long pageNumber, out bool isFree)
+    private static bool TryGetInlineFreeState(byte[] globalPage, int rowStart, int rowSize, long pageNumber, out bool isFree)
     {
         isFree = false;
         if (rowSize <= InlineMapHeaderSize)

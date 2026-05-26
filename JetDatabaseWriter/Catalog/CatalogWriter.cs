@@ -11,8 +11,6 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 
-#pragma warning disable CA1822 // Mark members as static
-
 /// <summary>
 /// Catalog (MSysObjects) write operations for <see cref="AccessWriter"/>.
 /// Owns insertion of catalog entries, ACE rows, table renames, and
@@ -263,6 +261,9 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
 #endif
     }
 
+    private static bool IsCatalogSpliceFailure(InvalidOperationException exception)
+        => exception.Message.StartsWith("Could not maintain MSysObjects catalog indexes", StringComparison.Ordinal);
+
     private async ValueTask<object> EncodeLinkedMemoFieldAsync(string value, CancellationToken cancellationToken)
     {
         object? encoded = await writer.ForceEncodeMemoAsLvalAsync(value, compress: false, cancellationToken).ConfigureAwait(false);
@@ -315,9 +316,6 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes for '{objectName}'.");
         }
     }
-
-    private bool IsCatalogSpliceFailure(InvalidOperationException exception)
-        => exception.Message.StartsWith("Could not maintain MSysObjects catalog indexes", StringComparison.Ordinal);
 
     private async ValueTask RemoveUnindexedCatalogRowAsync(RowLocation loc, CancellationToken cancellationToken)
     {

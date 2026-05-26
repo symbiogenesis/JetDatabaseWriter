@@ -14,8 +14,6 @@ using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
-#pragma warning disable CA1822 // Mark members as static
-
 /// <summary>
 /// Encodes oversized MEMO / OLE / Attachment payloads into LVAL page chains.
 /// Owned by <see cref="AccessWriter"/>; the writer delegates long-value

@@ -17,7 +17,6 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
 using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
 
-#pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202
 #pragma warning disable SA1204
 

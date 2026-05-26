@@ -20,7 +20,6 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
-#pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202
 #pragma warning disable SA1204
 

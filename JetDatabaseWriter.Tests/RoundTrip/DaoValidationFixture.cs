@@ -332,7 +332,6 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         }
     }
 
-#pragma warning disable CA1822 // Keep helper workflow grouped after instance members without tripping static member ordering.
     private async Task PrepareCoreValidationDatabaseAsync(string dbPath, CancellationToken cancellationToken)
     {
         await using var writer = await AccessWriter.OpenAsync(

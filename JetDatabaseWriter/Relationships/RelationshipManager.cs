@@ -21,7 +21,6 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
-#pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202
 #pragma warning disable SA1204
 #pragma warning disable SA1648
@@ -667,7 +666,7 @@ internal sealed class RelationshipManager(AccessWriter writer, IndexMaintainer i
     /// order); -1 when no covering real-idx exists. Jet4 col_map is fixed at
     /// 10 slots × {col_num(2), col_order(1)}.
     /// </summary>
-    private int FindCoveringRealIdx(byte[] td, int[] columnNumbers, int realIdxDescStart, int numRealIdx)
+    private static int FindCoveringRealIdx(byte[] td, int[] columnNumbers, int realIdxDescStart, int numRealIdx)
     {
         for (int ri = 0; ri < numRealIdx; ri++)
         {
@@ -1549,7 +1548,7 @@ internal sealed class RelationshipManager(AccessWriter writer, IndexMaintainer i
     /// Returns <c>-1</c> when no entry matches; on success
     /// <paramref name="realIdxNum"/> is the matched real-idx slot.
     /// </summary>
-    private int FindFkLogicalIdxEntry(
+    private static int FindFkLogicalIdxEntry(
         byte[] td,
         in FkTDefLayout layout,
         int[] columnNumbers,
