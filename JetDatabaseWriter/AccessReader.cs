@@ -2009,12 +2009,20 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         List<ColumnMetadata> meta = await GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
+        uint? linkedTextMaxMaterializedRows = await LinkedTableManager.GetLinkedTextMaterializedRowLimitAsync(
+            this,
+            tableName,
+            cancellationToken).ConfigureAwait(false);
         var factoryFallback = RowMapper<T>.Build(meta);
         var items = new List<T>();
         int count = 0;
 
         await foreach (object[] row in Rows(tableName, cancellationToken: cancellationToken).ConfigureAwait(false))
         {
+            LinkedTableManager.ThrowIfLinkedTextMaterializedRowLimitExceeded(
+                tableName,
+                count,
+                linkedTextMaxMaterializedRows);
             items.Add(factoryFallback(row));
             count++;
             if (maxRows.HasValue && count >= maxRows.Value)

@@ -118,4 +118,34 @@ public sealed class AccessReaderOptions : IAccessOptions
     /// Return true to allow opening the source; false to block it.
     /// </summary>
     public Func<LinkedTableInfo, string, bool>? LinkedSourcePathValidator { get; init; }
+
+    /// <summary>
+    /// Gets the maximum number of characters accepted in a single linked text/CSV record.
+    /// Default: <c>1048576</c> characters.
+    /// </summary>
+    public int LinkedTextMaxRecordLength { get; init; } = 1_048_576;
+
+    /// <summary>
+    /// Gets the maximum number of decoded characters accepted in a single linked text/CSV field.
+    /// Default: <c>1048576</c> characters.
+    /// </summary>
+    public int LinkedTextMaxFieldLength { get; init; } = 1_048_576;
+
+    /// <summary>
+    /// Gets the maximum number of columns accepted in a linked text/CSV record.
+    /// Default: <c>255</c>, matching the Access table column limit.
+    /// </summary>
+    public int LinkedTextMaxColumnCount { get; init; } = 255;
+
+    /// <summary>
+    /// Gets an optional maximum source-file size, in bytes, for linked text/CSV read-through.
+    /// Leave <see langword="null"/> to allow files of any size while still enforcing record, field, and column limits.
+    /// </summary>
+    public long? LinkedTextMaxSourceFileBytes { get; init; }
+
+    /// <summary>
+    /// Gets an optional maximum number of linked text/CSV rows that fully materializing APIs may load.
+    /// Streaming row APIs and row-count scans are not capped by this option.
+    /// </summary>
+    public uint? LinkedTextMaxMaterializedRows { get; init; }
 }

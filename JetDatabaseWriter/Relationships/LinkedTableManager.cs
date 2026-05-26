@@ -23,6 +23,9 @@ using JetDatabaseWriter.Schema.Models;
 /// </summary>
 internal static class LinkedTableManager
 {
+    private const int MaxLinkedTableMetadataRows = 4096;
+    private static readonly char[] PathSeparators = [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar];
+
     /// <summary>
     /// Normalises the caller-supplied allowlist of directories that linked-table
     /// source paths must reside under. Relative entries are resolved against the
@@ -77,6 +80,11 @@ internal static class LinkedTableManager
             LockFileMachineName = options.LockFileMachineName,
             LinkedSourcePathAllowlist = NormalizeAllowlist(options.LinkedSourcePathAllowlist, hostDatabasePath),
             LinkedSourcePathValidator = options.LinkedSourcePathValidator,
+            LinkedTextMaxRecordLength = options.LinkedTextMaxRecordLength,
+            LinkedTextMaxFieldLength = options.LinkedTextMaxFieldLength,
+            LinkedTextMaxColumnCount = options.LinkedTextMaxColumnCount,
+            LinkedTextMaxSourceFileBytes = options.LinkedTextMaxSourceFileBytes,
+            LinkedTextMaxMaterializedRows = options.LinkedTextMaxMaterializedRows,
         };
     }
 
@@ -143,6 +151,12 @@ internal static class LinkedTableManager
                 ? LinkedTableKind.Odbc
                 : isText ? LinkedTableKind.Text : LinkedTableKind.Access;
 
+            if (result.Count >= MaxLinkedTableMetadataRows)
+            {
+                throw new InvalidDataException(
+                    $"Linked-table metadata exceeds the per-reader limit of {MaxLinkedTableMetadataRows} entries.");
+            }
+
             result.Add(new LinkedTableInfo
             {
                 Name = nameStr,
@@ -164,7 +178,8 @@ internal static class LinkedTableManager
     internal static async ValueTask<LinkedTableInfo?> FindLinkedTableAsync(AccessReader reader, string tableName, CancellationToken cancellationToken)
     {
         List<LinkedTableInfo> links = await reader.GetLinkedTablesCachedAsync(cancellationToken).ConfigureAwait(false);
-        return links.Find(l => string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
+        LinkedTableInfo? link = links.Find(l => string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
+        return link is null ? null : link with { };
     }
 
     /// <summary>
@@ -199,7 +214,7 @@ internal static class LinkedTableManager
     {
         LinkedTextDataSource source = GetLinkedTextDataSource(reader, link);
         long count = 0;
-        await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, source.Limits, cancellationToken).ConfigureAwait(false))
         {
             _ = row;
             count++;
@@ -217,7 +232,7 @@ internal static class LinkedTableManager
         LinkedTextSource source = await GetLinkedTextSourceAsync(reader, link, cancellationToken).ConfigureAwait(false);
         long rowCount = 0;
 
-        await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, cancellationToken).ConfigureAwait(false))
+        await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, source.Limits, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
             rowCount++;
@@ -268,8 +283,9 @@ internal static class LinkedTableManager
             }
 
             long rowCount = 0;
-            await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, source.Limits, cancellationToken).ConfigureAwait(false))
             {
+                ThrowIfLinkedTextMaterializedRowLimitExceeded(link.Name, rowCount, source.Limits.MaxMaterializedRows);
                 _ = table.Rows.Add(NormalizeStringRow(row, source.ColumnNames.Length));
                 rowCount++;
                 progress?.Report(rowCount);
@@ -288,6 +304,98 @@ internal static class LinkedTableManager
         finally
         {
             table?.Dispose();
+        }
+    }
+
+    internal static async ValueTask<uint?> GetLinkedTextMaterializedRowLimitAsync(
+        AccessReader reader,
+        string tableName,
+        CancellationToken cancellationToken)
+    {
+        LinkedTableInfo? link = await FindLinkedTableAsync(reader, tableName, cancellationToken).ConfigureAwait(false);
+        if (link?.Kind != LinkedTableKind.Text)
+        {
+            return null;
+        }
+
+        return CreateLinkedTextLimits(reader.LinkedSourceOpenOptions).MaxMaterializedRows;
+    }
+
+    internal static void ThrowIfLinkedTextMaterializedRowLimitExceeded(
+        string tableName,
+        long rowCount,
+        uint? maxMaterializedRows)
+    {
+        if (maxMaterializedRows.HasValue && rowCount >= maxMaterializedRows.Value)
+        {
+            throw new InvalidDataException(
+                $"Linked text table '{tableName}' exceeds AccessReaderOptions.{nameof(AccessReaderOptions.LinkedTextMaxMaterializedRows)} ({maxMaterializedRows.Value}).");
+        }
+    }
+
+    private static LinkedTextLimits CreateLinkedTextLimits(AccessReaderOptions options)
+    {
+        ValidatePositiveLimit(
+            options.LinkedTextMaxRecordLength,
+            nameof(AccessReaderOptions.LinkedTextMaxRecordLength));
+        ValidatePositiveLimit(
+            options.LinkedTextMaxFieldLength,
+            nameof(AccessReaderOptions.LinkedTextMaxFieldLength));
+        ValidatePositiveLimit(
+            options.LinkedTextMaxColumnCount,
+            nameof(AccessReaderOptions.LinkedTextMaxColumnCount));
+
+        if (options.LinkedTextMaxSourceFileBytes.HasValue)
+        {
+            ValidatePositiveLimit(
+                options.LinkedTextMaxSourceFileBytes.Value,
+                nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes));
+        }
+
+        if (options.LinkedTextMaxMaterializedRows.HasValue && options.LinkedTextMaxMaterializedRows.Value == 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.LinkedTextMaxMaterializedRows.Value,
+                $"{nameof(AccessReaderOptions.LinkedTextMaxMaterializedRows)} must be positive when set.");
+        }
+
+        return new LinkedTextLimits(
+            options.LinkedTextMaxRecordLength,
+            options.LinkedTextMaxFieldLength,
+            options.LinkedTextMaxColumnCount,
+            options.LinkedTextMaxSourceFileBytes,
+            options.LinkedTextMaxMaterializedRows);
+    }
+
+    private static void ValidatePositiveLimit(int value, string optionName)
+    {
+        if (value <= 0)
+        {
+            throw new ArgumentOutOfRangeException(optionName, value, $"{optionName} must be positive.");
+        }
+    }
+
+    private static void ValidatePositiveLimit(long value, string optionName)
+    {
+        if (value <= 0)
+        {
+            throw new ArgumentOutOfRangeException(optionName, value, $"{optionName} must be positive.");
+        }
+    }
+
+    private static void ValidateLinkedTextSourceFileSize(string filePath, LinkedTextLimits limits, string tableName)
+    {
+        if (!limits.MaxSourceFileBytes.HasValue)
+        {
+            return;
+        }
+
+        long length = new FileInfo(filePath).Length;
+        if (length > limits.MaxSourceFileBytes.Value)
+        {
+            throw new InvalidDataException(
+                $"Linked text table '{tableName}' source file exceeds AccessReaderOptions.{nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes)} ({limits.MaxSourceFileBytes.Value}).");
         }
     }
 
@@ -312,6 +420,7 @@ internal static class LinkedTableManager
         string resolvedPath = ResolvePath(rawPath, baseDirectory, $"linked table '{link.Name}'");
         bool isWithinHostDatabaseDirectory = hasHostDatabasePath && IsPathWithinDirectory(resolvedPath, baseDirectory);
         bool callbackApproved = linkedSourcePathValidator?.Invoke(link, resolvedPath) ?? false;
+        string? allowlistRoot = linkedSourcePathAllowlist.FirstOrDefault(root => IsPathWithinDirectory(resolvedPath, root));
 
         if (!hasHostDatabasePath && linkedSourcePathAllowlist.Count == 0 && !callbackApproved)
         {
@@ -328,7 +437,7 @@ internal static class LinkedTableManager
         }
 
         if (linkedSourcePathAllowlist.Count > 0 &&
-            !linkedSourcePathAllowlist.Any(root => IsPathWithinDirectory(resolvedPath, root)))
+            allowlistRoot == null)
         {
             throw new UnauthorizedAccessException(
                 $"Linked table '{link.Name}' source path '{resolvedPath}' is not permitted by AccessReaderOptions.LinkedSourcePathAllowlist.");
@@ -339,6 +448,14 @@ internal static class LinkedTableManager
             throw new UnauthorizedAccessException(
                 $"Linked table '{link.Name}' source path '{resolvedPath}' was rejected by AccessReaderOptions.LinkedSourcePathValidator.");
         }
+
+        string trustedDirectory = allowlistRoot
+            ?? (isWithinHostDatabaseDirectory ? baseDirectory : Path.GetDirectoryName(resolvedPath) ?? resolvedPath);
+        EnsurePathDoesNotCrossReparsePoint(
+            resolvedPath,
+            trustedDirectory,
+            targetIsDirectory: link.Kind == LinkedTableKind.Text,
+            context: $"linked table '{link.Name}' source path");
 
         return resolvedPath;
     }
@@ -369,6 +486,12 @@ internal static class LinkedTableManager
                 $"Linked text table '{link.Name}' source file '{link.SourceObjectName}' is outside its source directory.");
         }
 
+        EnsurePathDoesNotCrossReparsePoint(
+            resolvedFilePath,
+            resolvedDirectory,
+            targetIsDirectory: false,
+            context: $"linked text table '{link.Name}' source file");
+
         return resolvedFilePath;
     }
 
@@ -388,12 +511,13 @@ internal static class LinkedTableManager
         CancellationToken cancellationToken)
     {
         LinkedTextDataSource source = GetLinkedTextDataSource(reader, link);
-        string[] columnNames = await ReadLinkedTextColumnNamesAsync(source.FilePath, source.Format, cancellationToken).ConfigureAwait(false);
-        return new LinkedTextSource(source.FilePath, source.Format, columnNames);
+        string[] columnNames = await ReadLinkedTextColumnNamesAsync(source.FilePath, source.Format, source.Limits, cancellationToken).ConfigureAwait(false);
+        return new LinkedTextSource(source.FilePath, source.Format, source.Limits, columnNames);
     }
 
     private static LinkedTextDataSource GetLinkedTextDataSource(AccessReader reader, LinkedTableInfo link)
     {
+        LinkedTextLimits limits = CreateLinkedTextLimits(reader.LinkedSourceOpenOptions);
         string resolvedPath = ResolveLinkedTextSourceFilePath(reader, link);
         if (!File.Exists(resolvedPath))
         {
@@ -402,7 +526,8 @@ internal static class LinkedTableManager
                 resolvedPath);
         }
 
-        return new LinkedTextDataSource(resolvedPath, ParseTextLinkFormat(link.ConnectString));
+        ValidateLinkedTextSourceFileSize(resolvedPath, limits, link.Name);
+        return new LinkedTextDataSource(resolvedPath, ParseTextLinkFormat(link.ConnectString), limits);
     }
 
     private static void ThrowIfUnsupportedLinkedRead(LinkedTableInfo link)
@@ -513,10 +638,11 @@ internal static class LinkedTableManager
     private static async ValueTask<string[]> ReadLinkedTextColumnNamesAsync(
         string filePath,
         TextLinkFormat format,
+        LinkedTextLimits limits,
         CancellationToken cancellationToken)
     {
         using var reader = new StreamReader(filePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        string[]? firstRecord = await ReadDelimitedRecordAsync(reader, format.Delimiter, cancellationToken).ConfigureAwait(false);
+        string[]? firstRecord = await ReadDelimitedRecordAsync(reader, format.Delimiter, limits, cancellationToken).ConfigureAwait(false);
         if (firstRecord is null)
         {
             return [];
@@ -530,13 +656,14 @@ internal static class LinkedTableManager
     private static async IAsyncEnumerable<string[]> EnumerateTextDataRowsAsync(
         string filePath,
         TextLinkFormat format,
+        LinkedTextLimits limits,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         using var reader = new StreamReader(filePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         bool isFirstRecord = true;
         while (true)
         {
-            string[]? record = await ReadDelimitedRecordAsync(reader, format.Delimiter, cancellationToken).ConfigureAwait(false);
+            string[]? record = await ReadDelimitedRecordAsync(reader, format.Delimiter, limits, cancellationToken).ConfigureAwait(false);
             if (record is null)
             {
                 yield break;
@@ -558,11 +685,14 @@ internal static class LinkedTableManager
     private static async ValueTask<string[]?> ReadDelimitedRecordAsync(
         StreamReader reader,
         char delimiter,
+        LinkedTextLimits limits,
         CancellationToken cancellationToken)
     {
         var fields = new List<string>();
         var field = new StringBuilder();
         var singleChar = new char[1];
+        int recordLength = 0;
+        int fieldLength = 0;
         bool inQuotes = false;
         bool atFieldStart = true;
         bool sawAnyCharacter = false;
@@ -578,10 +708,19 @@ internal static class LinkedTableManager
                     return null;
                 }
 
-                fields.Add(field.ToString());
+                if (inQuotes)
+                {
+                    throw new InvalidDataException("Linked text source contains a quoted field without a closing quote.");
+                }
+
+                AddDelimitedField(fields, field, limits);
                 return fields.ToArray();
             }
 
+            recordLength = IncrementLinkedTextLength(
+                recordLength,
+                limits.MaxRecordLength,
+                nameof(AccessReaderOptions.LinkedTextMaxRecordLength));
             char ch = (char)value;
             sawAnyCharacter = true;
 
@@ -592,7 +731,11 @@ internal static class LinkedTableManager
                     if (reader.Peek() == '"')
                     {
                         _ = await ReadCharAsync(reader, singleChar, cancellationToken).ConfigureAwait(false);
-                        field.Append('"');
+                        recordLength = IncrementLinkedTextLength(
+                            recordLength,
+                            limits.MaxRecordLength,
+                            nameof(AccessReaderOptions.LinkedTextMaxRecordLength));
+                        fieldLength = AppendDelimitedFieldCharacter(field, '"', fieldLength, limits);
                     }
                     else
                     {
@@ -601,7 +744,7 @@ internal static class LinkedTableManager
                 }
                 else
                 {
-                    field.Append(ch);
+                    fieldLength = AppendDelimitedFieldCharacter(field, ch, fieldLength, limits);
                 }
 
                 continue;
@@ -616,8 +759,9 @@ internal static class LinkedTableManager
 
             if (ch == delimiter)
             {
-                fields.Add(field.ToString());
+                AddDelimitedField(fields, field, limits);
                 _ = field.Clear();
+                fieldLength = 0;
                 atFieldStart = true;
                 continue;
             }
@@ -627,19 +771,23 @@ internal static class LinkedTableManager
                 if (reader.Peek() == '\n')
                 {
                     _ = await ReadCharAsync(reader, singleChar, cancellationToken).ConfigureAwait(false);
+                    recordLength = IncrementLinkedTextLength(
+                        recordLength,
+                        limits.MaxRecordLength,
+                        nameof(AccessReaderOptions.LinkedTextMaxRecordLength));
                 }
 
-                fields.Add(field.ToString());
+                AddDelimitedField(fields, field, limits);
                 return fields.ToArray();
             }
 
             if (ch == '\n')
             {
-                fields.Add(field.ToString());
+                AddDelimitedField(fields, field, limits);
                 return fields.ToArray();
             }
 
-            field.Append(ch);
+            fieldLength = AppendDelimitedFieldCharacter(field, ch, fieldLength, limits);
             atFieldStart = false;
         }
     }
@@ -651,21 +799,67 @@ internal static class LinkedTableManager
         return read == 0 ? -1 : buffer[0];
     }
 
+    private static int AppendDelimitedFieldCharacter(
+        StringBuilder field,
+        char ch,
+        int fieldLength,
+        LinkedTextLimits limits)
+    {
+        int newLength = IncrementLinkedTextLength(
+            fieldLength,
+            limits.MaxFieldLength,
+            nameof(AccessReaderOptions.LinkedTextMaxFieldLength));
+        field.Append(ch);
+        return newLength;
+    }
+
+    private static int IncrementLinkedTextLength(int currentLength, int maxLength, string optionName)
+    {
+        if (currentLength >= maxLength)
+        {
+            throw new InvalidDataException(
+                $"Linked text source exceeds AccessReaderOptions.{optionName} ({maxLength}).");
+        }
+
+        return currentLength + 1;
+    }
+
+    private static void AddDelimitedField(List<string> fields, StringBuilder field, LinkedTextLimits limits)
+    {
+        if (fields.Count >= limits.MaxColumnCount)
+        {
+            throw new InvalidDataException(
+                $"Linked text source exceeds AccessReaderOptions.{nameof(AccessReaderOptions.LinkedTextMaxColumnCount)} ({limits.MaxColumnCount}).");
+        }
+
+        fields.Add(field.ToString());
+    }
+
     private static string[] NormalizeColumnNames(string[] rawColumnNames)
     {
         var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var nextSuffixByBaseName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var columnNames = new string[rawColumnNames.Length];
         for (int i = 0; i < rawColumnNames.Length; i++)
         {
             string baseName = string.IsNullOrWhiteSpace(rawColumnNames[i]) ? $"F{i + 1}" : rawColumnNames[i].Trim();
-            string candidate = baseName;
-            int suffix = 1;
-            while (!usedNames.Add(candidate))
+
+            if (usedNames.Add(baseName))
             {
-                suffix++;
-                candidate = baseName + suffix.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                columnNames[i] = baseName;
+                continue;
             }
 
+            int suffix = nextSuffixByBaseName.TryGetValue(baseName, out int nextSuffix) ? nextSuffix : 2;
+            string candidate;
+            do
+            {
+                candidate = baseName + suffix.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                suffix++;
+            }
+            while (!usedNames.Add(candidate));
+
+            nextSuffixByBaseName[baseName] = suffix;
             columnNames[i] = candidate;
         }
 
@@ -723,6 +917,89 @@ internal static class LinkedTableManager
         }
     }
 
+    private static void EnsurePathDoesNotCrossReparsePoint(
+        string path,
+        string trustedDirectory,
+        bool targetIsDirectory,
+        string context)
+    {
+        string fullTrustedDirectory = Path.GetFullPath(trustedDirectory);
+        string fullPath = Path.GetFullPath(path, fullTrustedDirectory);
+        if (!IsPathWithinDirectory(fullPath, fullTrustedDirectory))
+        {
+            throw new UnauthorizedAccessException(
+                $"{context} '{path}' is outside trusted directory '{trustedDirectory}'.");
+        }
+
+        string directoryToCheck = targetIsDirectory ? fullPath : Path.GetDirectoryName(fullPath) ?? fullTrustedDirectory;
+        CheckExistingDirectoryForReparsePoint(fullTrustedDirectory, context);
+
+        string relativeDirectory = Path.GetRelativePath(fullTrustedDirectory, directoryToCheck);
+        if (!string.Equals(relativeDirectory, ".", StringComparison.Ordinal))
+        {
+            string current = fullTrustedDirectory;
+            string[] segments = relativeDirectory.Split(
+                PathSeparators,
+                StringSplitOptions.RemoveEmptyEntries);
+            foreach (string segment in segments)
+            {
+                current = Path.Combine(current, segment);
+                CheckExistingDirectoryForReparsePoint(current, context);
+            }
+        }
+
+        if (!targetIsDirectory && File.Exists(fullPath))
+        {
+            CheckExistingFileForReparsePoint(fullPath, context);
+        }
+    }
+
+    private static void CheckExistingDirectoryForReparsePoint(string directoryPath, string context)
+    {
+        if (!Directory.Exists(directoryPath))
+        {
+            return;
+        }
+
+        CheckExistingPathForReparsePoint(directoryPath, context);
+    }
+
+    private static void CheckExistingFileForReparsePoint(string filePath, string context)
+    {
+        if (!File.Exists(filePath))
+        {
+            return;
+        }
+
+        CheckExistingPathForReparsePoint(filePath, context);
+    }
+
+    private static void CheckExistingPathForReparsePoint(string path, string context)
+    {
+        try
+        {
+            if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new UnauthorizedAccessException(
+                    $"{context} '{path}' crosses a filesystem reparse point.");
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (
+            ex is IOException ||
+            ex is ArgumentException ||
+            ex is NotSupportedException ||
+            ex is PathTooLongException)
+        {
+            throw new UnauthorizedAccessException(
+                $"Unable to verify {context} '{path}' for filesystem reparse points.",
+                ex);
+        }
+    }
+
     private static bool IsPathWithinDirectory(string path, string directory)
     {
         string fullDirectory = Path.GetFullPath(directory);
@@ -755,9 +1032,16 @@ internal static class LinkedTableManager
     private static string DecodeTextForeignName(string foreignName) =>
         foreignName.Replace('#', '.');
 
-    private readonly record struct LinkedTextDataSource(string FilePath, TextLinkFormat Format);
+    private readonly record struct LinkedTextDataSource(string FilePath, TextLinkFormat Format, LinkedTextLimits Limits);
 
-    private readonly record struct LinkedTextSource(string FilePath, TextLinkFormat Format, string[] ColumnNames);
+    private readonly record struct LinkedTextSource(string FilePath, TextLinkFormat Format, LinkedTextLimits Limits, string[] ColumnNames);
+
+    private readonly record struct LinkedTextLimits(
+        int MaxRecordLength,
+        int MaxFieldLength,
+        int MaxColumnCount,
+        long? MaxSourceFileBytes,
+        uint? MaxMaterializedRows);
 
     private readonly record struct TextLinkFormat(bool HasHeaderRow, char Delimiter);
 }

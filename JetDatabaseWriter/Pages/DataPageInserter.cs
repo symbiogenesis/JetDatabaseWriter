@@ -81,7 +81,7 @@ internal sealed class DataPageInserter(AccessWriter writer)
         // them surfaces "Invalid argument" from DAO.OpenDatabase. Freshly
         // created databases have low page numbers too, so the writer records
         // the TDEFs whose owned-page maps it created and can safely maintain.
-        if (tdefPage > 1024 || writer.IsOwnedMapWritableTdef(tdefPage))
+        if (await writer.CanMaintainOwnedMapAsync(tdefPage, cancellationToken).ConfigureAwait(false))
         {
             await MarkPageInOwnedMapAsync(tdefPage, newPageNumber, cancellationToken).ConfigureAwait(false);
         }

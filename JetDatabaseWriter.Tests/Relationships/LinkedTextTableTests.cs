@@ -296,6 +296,394 @@ public sealed class LinkedTextTableTests : IDisposable
     }
 
     [Fact]
+    public async Task LinkedTextTable_CsvFile_FieldLengthBudget_ThrowsInvalidData()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkFieldBudgetFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"field_budget_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id,Note\r\n1,abcdef\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedFieldBudgetCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        var options = new AccessReaderOptions { LinkedTextMaxFieldLength = 4 };
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await reader.ReadDataTableAsync("LinkedFieldBudgetCsv", cancellationToken: ct));
+        Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxFieldLength), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_RecordLengthBudget_ThrowsInvalidData()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkRecordBudgetFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"record_budget_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id,Note\r\n1,record-is-too-long\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedRecordBudgetCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        var options = new AccessReaderOptions { LinkedTextMaxRecordLength = 10 };
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await reader.ReadDataTableAsync("LinkedRecordBudgetCsv", cancellationToken: ct));
+        Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxRecordLength), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_MissingClosingQuote_ThrowsInvalidData()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkMissingQuoteFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"missing_quote_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id,Note\r\n1,\"unterminated\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedMissingQuoteCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await reader.ReadDataTableAsync("LinkedMissingQuoteCsv", cancellationToken: ct));
+        Assert.Contains("closing quote", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_ColumnCountBudget_ThrowsBeforeDataTableColumns()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkColumnBudgetFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"column_budget_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "A,B,C,D\r\n1,2,3,4\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedColumnBudgetCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        var options = new AccessReaderOptions { LinkedTextMaxColumnCount = 3 };
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await reader.ReadDataTableAsync("LinkedColumnBudgetCsv", cancellationToken: ct));
+        Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxColumnCount), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_ManyDuplicateHeaders_NormalizesLinearly()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkDuplicateHeadersFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"duplicate_headers_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        string header = string.Join(",", Enumerable.Repeat("A", 64));
+        string row = string.Join(",", Enumerable.Range(1, 64));
+        await File.WriteAllTextAsync(csvPath, header + "\r\n" + row + "\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedDuplicateHeadersCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        var options = new AccessReaderOptions { LinkedTextMaxColumnCount = 128 };
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+        List<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedDuplicateHeadersCsv", ct);
+
+        Assert.Equal(64, metadata.Count);
+        Assert.Equal("A", metadata[0].Name);
+        Assert.Equal("A2", metadata[1].Name);
+        Assert.Equal("A64", metadata[63].Name);
+        Assert.Equal(64, metadata.Select(column => column.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_CancellationDuringLongQuotedRecord_ThrowsOperationCanceled()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkCancelLongRecordFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"cancel_long_record_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        string longQuotedValue = new('x', 2_000_000);
+        await File.WriteAllTextAsync(csvPath, "Id,Note\r\n1,\"" + longQuotedValue + "\"\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedCancelLongRecordCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        var options = new AccessReaderOptions
+        {
+            LinkedTextMaxFieldLength = 3_000_000,
+            LinkedTextMaxRecordLength = 3_000_100,
+        };
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(1));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await reader.GetRealRowCountAsync("LinkedCancelLongRecordCsv", timeout.Token));
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_MaxRowsPreview_DoesNotParseOversizedLaterRecord()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkPreviewBudgetFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"preview_budget_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id,Note\r\n1,ok\r\n2,oversized\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedPreviewBudgetCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        var options = new AccessReaderOptions { LinkedTextMaxFieldLength = 8 };
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+
+        DataTable preview = await reader.ReadDataTableAsync("LinkedPreviewBudgetCsv", maxRows: 1, cancellationToken: ct);
+        Assert.Single(preview.Rows);
+        Assert.Equal("ok", preview.Rows[0]["Note"]);
+
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await reader.ReadDataTableAsync("LinkedPreviewBudgetCsv", cancellationToken: ct));
+        Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxFieldLength), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_SourceFileSizeLimit_ThrowsInvalidData()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkSourceSizeFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"source_size_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedSourceSizeCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        var options = new AccessReaderOptions { LinkedTextMaxSourceFileBytes = 8 };
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await reader.ReadDataTableAsync("LinkedSourceSizeCsv", cancellationToken: ct));
+        Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_MaterializedRowLimit_ThrowsBeforeAddingExtraRows()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkMaterializedRowsFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"materialized_rows_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n2,Grace\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedMaterializedRowsCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        var options = new AccessReaderOptions { LinkedTextMaxMaterializedRows = 1 };
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+
+        DataTable preview = await reader.ReadDataTableAsync("LinkedMaterializedRowsCsv", maxRows: 1, cancellationToken: ct);
+        Assert.Single(preview.Rows);
+
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await reader.ReadDataTableAsync("LinkedMaterializedRowsCsv", cancellationToken: ct));
+        Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxMaterializedRows), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_MaterializedRowLimit_AppliesToTypedReads()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkTypedRowsFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"typed_rows_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n2,Grace\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedTypedRowsCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        var options = new AccessReaderOptions { LinkedTextMaxMaterializedRows = 1 };
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+
+        List<LinkedTextRow> preview = await reader.ReadTableAsync<LinkedTextRow>("LinkedTypedRowsCsv", maxRows: 1, ct);
+        LinkedTextRow row = Assert.Single(preview);
+        Assert.Equal("Ada", row.Name);
+
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await reader.ReadTableAsync<LinkedTextRow>("LinkedTypedRowsCsv", cancellationToken: ct));
+        Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxMaterializedRows), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_SourceDirectoryReparsePoint_IsBlockedByDefault()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string hostDirectory = CreateTempDirectory("TextLinkReparseHost");
+        string targetDirectory = CreateTempDirectory("TextLinkReparseTarget");
+        string linkDirectory = Path.Combine(hostDirectory, "LinkedSource");
+        if (!TryCreateDirectorySymlink(linkDirectory, targetDirectory))
+        {
+            Assert.Skip("Directory symbolic links are unavailable on this machine.");
+        }
+
+        string frontEndPath = await CreateTempAccdbDatabaseInDirectoryAsync("TextLinkReparseFE", hostDirectory);
+        string csvFileName = $"reparse_source_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(targetDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedReparseCsv",
+                linkDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+
+        UnauthorizedAccessException exception = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+            await reader.ReadDataTableAsync("LinkedReparseCsv", cancellationToken: ct));
+        Assert.Contains("reparse", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LinkedTextTable_CsvFile_PathValidatorMutation_DoesNotPoisonLinkedTableCache()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("TextLinkValidatorMutationFE");
+        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
+        string csvFileName = $"validator_mutation_{Guid.NewGuid():N}.csv";
+        string csvPath = Path.Combine(sourceDirectory, csvFileName);
+        _tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n", ct);
+
+        await using (var writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedValidatorMutationCsv",
+                sourceDirectory,
+                csvFileName,
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        var options = new AccessReaderOptions
+        {
+            LinkedSourcePathValidator = (link, _) =>
+            {
+                link.Name = "Poisoned";
+                link.SourcePath = @"C:\Blocked";
+                link.SourceObjectName = "blocked.csv";
+                return true;
+            },
+        };
+        await using var reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+
+        DataTable table = await reader.ReadDataTableAsync("LinkedValidatorMutationCsv", cancellationToken: ct);
+        Assert.Single(table.Rows);
+
+        List<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(ct);
+        LinkedTableInfo entry = Assert.Single(linked, link =>
+            string.Equals(link.Name, "LinkedValidatorMutationCsv", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(sourceDirectory, entry.SourcePath);
+        Assert.Equal(csvFileName, entry.SourceObjectName);
+    }
+
+    [Fact]
     public async Task LinkedTextTable_CsvFile_RelativeForeignNameTraversal_IsBlockedByDefault()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -501,6 +889,20 @@ public sealed class LinkedTextTableTests : IDisposable
         return directory;
     }
 
+    private bool TryCreateDirectorySymlink(string linkPath, string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+            _tempDirectories.Add(linkPath);
+            return (File.GetAttributes(linkPath) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return false;
+        }
+    }
+
     private async ValueTask<string> CreateTempAccdbDatabaseAsync(string prefix)
     {
         string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.accdb");
@@ -529,5 +931,12 @@ public sealed class LinkedTextTableTests : IDisposable
 
         _tempFiles.Add(temp);
         return temp;
+    }
+
+    private sealed class LinkedTextRow
+    {
+        public string Id { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
     }
 }

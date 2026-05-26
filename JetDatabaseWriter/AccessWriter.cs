@@ -4134,6 +4134,49 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     internal bool IsOwnedMapWritableTdef(long tdefPageNumber) => _ownedMapWritableTdefs.Contains(tdefPageNumber);
 
+    internal async ValueTask<bool> CanMaintainOwnedMapAsync(long tdefPageNumber, CancellationToken cancellationToken)
+    {
+        if (_format == DatabaseFormat.Jet3Mdb || tdefPageNumber <= 0)
+        {
+            return false;
+        }
+
+        if (IsOwnedMapWritableTdef(tdefPageNumber))
+        {
+            return true;
+        }
+
+        if (tdefPageNumber == 2)
+        {
+            return false;
+        }
+
+        TableDef? msys = await ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (msys is null)
+        {
+            return false;
+        }
+
+        List<CatalogRow> rows = await GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in rows)
+        {
+            if (row.TDefPage != tdefPageNumber || row.ObjectType != Constants.SystemObjects.UserTableType)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrEmpty(row.Name) || row.Name.StartsWith("MSys", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            RegisterOwnedMapWritableTdef(tdefPageNumber);
+            return true;
+        }
+
+        return false;
+    }
+
     internal void RegisterOwnedMapWritableTdef(long tdefPageNumber) => _ownedMapWritableTdefs.Add(tdefPageNumber);
 
     internal ValueTask DeallocatePageAsync(long pageNumber, CancellationToken cancellationToken)
