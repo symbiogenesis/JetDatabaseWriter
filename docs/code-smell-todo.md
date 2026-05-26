@@ -82,12 +82,12 @@ Done criteria:
 
 Current largest production files from the smell pass:
 
-- [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs): about 4,175 lines.
-- [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs): about 3,806 lines.
-- [IndexMaintainer.cs](../JetDatabaseWriter/Indexes/IndexMaintainer.cs): about 2,947 lines.
-- [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs): about 2,779 lines.
-- [CalculatedExpressionEvaluator.cs](../JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs): about 2,064 lines.
-- [ComplexColumnManager.cs](../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs): about 1,611 lines.
+- [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs): about 4,083 lines.
+- [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs): about 4,330 lines.
+- [IndexMaintainer.cs](../JetDatabaseWriter/Indexes/IndexMaintainer.cs): about 3,389 lines.
+- [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs): about 1,603 lines.
+- [CalculatedExpressionEvaluator.cs](../JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs): about 2,334 lines.
+- [ComplexColumnManager.cs](../JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs): about 1,824 lines.
 
 - [ ] Decide whether this project wants a soft file-size review threshold for production code.
 - [ ] Track broad file-level suppressions such as `CA1822`, `SA1202`, `SA1204`, `SA1648`, and `CA1031` as cleanup markers rather than permanent background noise.
