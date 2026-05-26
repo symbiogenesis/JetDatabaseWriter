@@ -31,7 +31,7 @@ public sealed record ColumnMetadata
     /// When <see langword="true"/>, <see cref="ClrType"/> is <see cref="Hyperlink"/> and the
     /// reader auto-materializes row values as <see cref="Hyperlink"/> instances parsed from
     /// the encoded <c>displaytext#address#subaddress#screentip</c> form.
-    /// See <c>docs/design/hyperlink-format-notes.md</c>.
+    /// See <see href="docs/design/hyperlink-format-notes.md" />.
     /// </summary>
     public bool IsHyperlink { get; init; }
 

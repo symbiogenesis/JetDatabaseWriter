@@ -19,7 +19,7 @@ using Xunit;
 ///
 /// This invariant is required for DAO Compact &amp; Repair: when the two
 /// disagree DAO aborts compact with "could not find the object 'MSysDb'".
-/// See <c>docs/design/round-trip-test-failures.md</c> hypothesis #2
+/// See <see href="docs/design/round-trip-test-failures.md" /> hypothesis #2
 /// and the corresponding fix in <c>AccessWriter.UpdateRowCountAsync</c>.
 ///
 /// The invariant is exercised in two paths:

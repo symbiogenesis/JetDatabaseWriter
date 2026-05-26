@@ -13,7 +13,7 @@ using Xunit;
 /// leaf-page layouts are covered via <c>[Theory]</c> parameters; the format-specific
 /// offsets (bitmask position, first-entry offset, page size) are derived from the
 /// <see cref="IndexLeafPageBuilder.LeafPageLayout"/> descriptor.
-/// Layout is described in <c>docs/design/index-and-relationship-format-notes.md</c>
+/// Layout is described in <see href="docs/design/index-and-relationship-format-notes.md" />
 /// §4.1 (page header), §4.2 (entry-start bitmask), and §4.3 (per-entry record).
 /// </summary>
 public sealed class IndexLeafPageBuilderTests

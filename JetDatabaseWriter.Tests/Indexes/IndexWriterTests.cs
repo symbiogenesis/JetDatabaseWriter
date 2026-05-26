@@ -28,7 +28,7 @@ using Xunit;
 /// These tests do <em>not</em> assert any seek / lookup behaviour — the leaf is
 /// empty at table-creation time. Index maintenance on subsequent inserts is
 /// covered by <c>IndexMaintenanceTests</c> and <c>IndexWriterAdvancedTests</c>.
-/// See <c>docs/design/index-and-relationship-format-notes.md</c>.
+/// See <see href="docs/design/index-and-relationship-format-notes.md" />.
 /// </para>
 /// </summary>
 public sealed class IndexWriterTests

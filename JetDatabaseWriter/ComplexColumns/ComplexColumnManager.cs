@@ -33,7 +33,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// flat-child-table emission, the row-level Add* APIs that backfill
 /// flat tables, and cascade / drop / rename plumbing for the artifacts
 /// when the parent column or table changes shape. See
-/// <c>docs/design/complex-columns-format-notes.md</c>.
+/// <see href="docs/design/complex-columns-format-notes.md" />.
 /// </summary>
 internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer indexes, PageAllocator pageAllocator)
 {
@@ -212,7 +212,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// per-kind <c>MSysComplexType_*</c> template tables. Each entry maps
     /// the canonical Access template name to the column schema Access emits for that
     /// template (verified against <c>ComplexFields.accdb</c> in
-    /// <c>docs/format-probe/format-probe-appendix-complex.md</c> §<c>MSysComplexType_*</c>).
+    /// <see href="docs/format-probe/format-probe-appendix-complex.md" /> §<c>MSysComplexType_*</c>).
     /// All templates are zero-row, zero-index tables; their <c>MSysObjects.Id</c>
     /// (= TDEF page) is what <c>MSysComplexColumns.ComplexTypeObjectID</c> points at.
     /// </summary>
@@ -247,7 +247,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <c>MSysObjects.Flags = 0x80030000</c> (system + the 0x30000 marker Access uses
     /// for type-template tables) so the templates are excluded from
     /// <c>ListTablesAsync</c>. Schema verified against <c>ComplexFields.accdb</c> —
-    /// see <c>docs/format-probe/format-probe-appendix-complex.md</c>.
+    /// see <see href="docs/format-probe/format-probe-appendix-complex.md" />.
     /// </summary>
     private async ValueTask CreateMSysComplexTypeTemplatesAsync(CancellationToken cancellationToken)
     {
@@ -337,8 +337,8 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <summary>
     /// Creates the empty <c>MSysComplexColumns</c> system table.
     /// Schema verified against <c>ComplexFields.accdb</c> (see
-    /// <c>docs/format-probe/format-probe-appendix-complex.md</c> and
-    /// <c>docs/design/complex-columns-format-notes.md</c> §2.2): four
+    /// <see href="docs/format-probe/format-probe-appendix-complex.md" /> and
+    /// <see href="docs/design/complex-columns-format-notes.md" /> §2.2): four
     /// <c>T_LONG</c> columns (<c>ComplexTypeObjectID</c>, <c>FlatTableID</c>,
     /// <c>ConceptualTableID</c>, <c>ComplexID</c>) plus a <c>ColumnName</c>
     /// <c>T_TEXT(510)</c> variable column. The catalog row carries flag
@@ -494,7 +494,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
 
     /// <summary>
     /// post-flight: for each user-declared complex column on the parent
-    /// table, build a hidden flat child table per <c>docs/design/complex-columns-format-notes.md</c>
+    /// table, build a hidden flat child table per <see href="docs/design/complex-columns-format-notes.md" />
     /// §2.3 / §2.4 and append the corresponding <c>MSysComplexColumns</c> row so
     /// readers can join parent rows to their child values.
     /// </summary>
@@ -682,7 +682,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// <summary>
     /// Inserts one row into <c>MSysComplexColumns</c> linking a parent column's
     /// <see cref="ComplexColumnAllocation.ComplexId"/> to its hidden flat-table TDEF
-    /// page. Schema verified in <c>format-probe-appendix-complex.md</c>.
+    /// page. Schema verified in <see href="format-probe-appendix-complex.md" />.
     /// </summary>
     private async ValueTask InsertMSysComplexColumnsRowAsync(
         string parentColumnName,

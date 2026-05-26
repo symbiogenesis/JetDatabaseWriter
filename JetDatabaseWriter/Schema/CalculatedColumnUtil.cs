@@ -13,7 +13,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Wrap / unwrap helpers for the 23-byte on-disk envelope every Access 2010+
 /// calculated-column value carries. Translated from Jackcess
 /// <c>CalculatedColumnUtil</c> (<c>wrapCalculatedValue</c> / <c>unwrapCalculatedValue</c>);
-/// see <c>docs/design/calculated-columns-format-notes.md</c> for the layout.
+/// see <see href="docs/design/calculated-columns-format-notes.md" /> for the layout.
 /// </summary>
 /// <remarks>
 /// Per Jackcess: bytes 0..15 of the wrapper are reserved (Access uses them for

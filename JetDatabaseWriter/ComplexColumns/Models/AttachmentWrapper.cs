@@ -11,7 +11,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Encodes / decodes the Access 2007+ Attachment <c>FileData</c> wrapper per
-/// <c>docs/design/complex-columns-format-notes.md</c> §3. The encoder is the
+/// <see href="docs/design/complex-columns-format-notes.md" /> §3. The encoder is the
 /// authoritative round-trip path used by the writer; the decoder is also used
 /// by the typed
 /// <see cref="IAccessReader.GetAttachmentsAsync(string, string, System.Threading.CancellationToken)"/>

@@ -12,7 +12,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// (re-emit unknown chunks unchanged) is supported via <see cref="UnknownChunks"/>.
 /// </summary>
 /// <remarks>
-/// On-disk layout per <c>docs/design/persisted-column-properties-format-notes.md</c>
+/// On-disk layout per <see href="docs/design/persisted-column-properties-format-notes.md" />
 /// — derived from mdbtools <c>src/libmdb/props.c</c>. The format-notes document
 /// supersedes §3.2 of the parent design doc.
 /// </remarks>

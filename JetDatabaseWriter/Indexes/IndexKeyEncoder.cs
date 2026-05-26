@@ -12,7 +12,7 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// <summary>
 /// JET index sort-key encoder for fixed-width numeric and date/time column types.
 /// Encodes a single column value into the per-entry byte sequence
-/// described in <c>docs/design/index-and-relationship-format-notes.md</c> §4.3
+/// described in <see href="docs/design/index-and-relationship-format-notes.md" /> §4.3
 /// (entry flag byte) and §5 (per-type sort-key encoding).
 /// <para>
 /// Supported column types: <c>T_BYTE (0x02)</c>, <c>T_INT (0x03)</c>,
@@ -233,7 +233,7 @@ internal static class IndexKeyEncoder
     /// The format-probe corpus does not contain a GUID-keyed index leaf;
     /// these byte sequences come from Jackcess <c>IndexData.writeGeneralBinaryEntry</c>
     /// and have not been independently verified against an Access-authored
-    /// fixture. See <c>docs/design/index-and-relationship-format-notes.md</c> §8.
+    /// fixture. See <see href="docs/design/index-and-relationship-format-notes.md" /> §8.
     /// </para>
     /// </summary>
     private static byte[] EncodeGuidEntry(object value, bool ascending)
@@ -277,7 +277,7 @@ internal static class IndexKeyEncoder
     /// BINARY-keyed index leaf; these byte sequences come from Jackcess
     /// <c>IndexData.writeGeneralBinaryEntry</c> and have not been independently
     /// verified against an Access-authored fixture. See
-    /// <c>docs/design/index-and-relationship-format-notes.md</c> §8.
+    /// <see href="docs/design/index-and-relationship-format-notes.md" /> §8.
     /// </para>
     /// </summary>
     private static byte[] EncodeBinaryEntry(object value, bool ascending)
@@ -410,7 +410,7 @@ internal static class IndexKeyEncoder
     /// NUMERIC-keyed index leaf; these byte sequences come directly from
     /// Jackcess and have not been independently verified against an
     /// Access-authored fixture. See
-    /// <c>docs/design/index-and-relationship-format-notes.md</c> §8.
+    /// <see href="docs/design/index-and-relationship-format-notes.md" /> §8.
     /// </para>
     /// </summary>
     public static byte[] EncodeNumericEntry(object? value, bool ascending, int targetScale, bool legacy)

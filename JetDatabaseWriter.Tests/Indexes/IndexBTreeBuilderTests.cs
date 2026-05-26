@@ -11,7 +11,7 @@ using Xunit;
 /// splitting, sibling chains, and intermediate (<c>0x03</c>) page emission.
 /// Tests run against both Jet3 and Jet4/ACE layouts via <c>[Theory]</c> parameters.
 /// Page format references in
-/// <c>docs/design/index-and-relationship-format-notes.md</c> §4.1–4.3.
+/// <see href="docs/design/index-and-relationship-format-notes.md" /> §4.1–4.3.
 /// </summary>
 public sealed class IndexBTreeBuilderTests
 {

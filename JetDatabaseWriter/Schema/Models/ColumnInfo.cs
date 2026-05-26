@@ -65,7 +65,7 @@ internal sealed class ColumnInfo
     /// the <c>ComplexID</c> that joins the parent column to its
     /// <c>MSysComplexColumns</c> row and (transitively) to the hidden flat child
     /// table. Zero for non-complex columns.
-    /// See <c>docs/design/complex-columns-format-notes.md</c> §2.1.
+    /// See <see href="docs/design/complex-columns-format-notes.md" /> §2.1.
     /// </summary>
     public int Misc { get; set; }
 

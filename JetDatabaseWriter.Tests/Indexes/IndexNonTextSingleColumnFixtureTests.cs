@@ -135,7 +135,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                 // (<c>"TODO long rows not handled completely yet in V2010 —
                 // seems to truncate entry at 508 bytes"</c>). The text-key
                 // analogue is documented in
-                // <c>docs/format-probe/format-probe-long-row-index-encoding.md</c>.
+                // <see href="docs/format-probe/format-probe-long-row-index-encoding.md" />.
                 if (colMeta.ClrType == typeof(byte[]))
                 {
                     continue;

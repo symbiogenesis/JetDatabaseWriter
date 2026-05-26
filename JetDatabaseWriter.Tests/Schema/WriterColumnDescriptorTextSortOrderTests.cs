@@ -14,7 +14,7 @@ using Xunit;
 /// Tests round-trip-openrecordset hypothesis H24: that the writer leaves the
 /// "<c>misc_ext</c>" / text-sort-order-version field at column-descriptor
 /// bytes 13-14 of the Jet4/ACE 25-byte column descriptor as <c>0x0000</c>
-/// for TEXT/MEMO columns. Per mdbtools <c>HACKING.md</c> ("text sort order
+/// for TEXT/MEMO columns. Per mdbtools <see href="HACKING.md" /> ("text sort order
 /// version num is 2nd byte" of the misc_ext slot) and Jackcess
 /// <c>ColumnImpl</c>, the bytes 11-14 four-byte slot for TEXT columns
 /// encodes the LCID in the low word (bytes 11-12) and the sort-order

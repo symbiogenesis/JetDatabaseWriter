@@ -15,7 +15,7 @@ using Xunit;
 /// parent row is removed via <see cref="IAccessWriter.DeleteRowsAsync"/>
 /// (directly or through an FK cascade), its associated rows in the hidden
 /// flat child table must also be removed. See
-/// <c>docs/design/complex-columns-format-notes.md</c> §4.3.
+/// <see href="docs/design/complex-columns-format-notes.md" /> §4.3.
 /// </summary>
 public sealed class ComplexColumnsCascadeDeleteTests
 {

@@ -13,7 +13,7 @@ using JetDatabaseWriter.Interfaces;
 /// The wrapper format (4-byte type flag plus optional deflate compression)
 /// is decoded by the reader; <see cref="FileData"/> is the raw payload bytes
 /// after wrapper / deflate removal. See
-/// <c>docs/design/complex-columns-format-notes.md</c> §3.
+/// <see href="docs/design/complex-columns-format-notes.md" /> §3.
 /// </remarks>
 public sealed record AttachmentRecord
 {

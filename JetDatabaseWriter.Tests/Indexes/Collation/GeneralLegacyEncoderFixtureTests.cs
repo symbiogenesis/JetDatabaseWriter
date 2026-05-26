@@ -50,7 +50,7 @@ public sealed class GeneralLegacyEncoderFixtureTests
     // fixtures (separator <c>08 07 08 04</c> for General Legacy, single
     // unified extras/unprintable/crazy block, descending-pass complement
     // applied to the joined chunks). See
-    // <c>docs/format-probe/format-probe-long-row-index-encoding.md</c>.
+    // <see href="docs/format-probe/format-probe-long-row-index-encoding.md" />.
     private static readonly HashSet<string> LongRowStressTables = new(StringComparer.OrdinalIgnoreCase);
 
     [Theory]

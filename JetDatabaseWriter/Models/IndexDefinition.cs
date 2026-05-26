@@ -18,7 +18,7 @@ using JetDatabaseWriter.Interfaces;
 /// time, then maintains the B-tree on every subsequent row mutation.
 /// Primary keys are emitted via <see cref="IsPrimaryKey"/>; the multi-column
 /// constructor exists primarily to support multi-column primary keys. See
-/// <c>docs/design/index-and-relationship-format-notes.md</c> for the on-disk
+/// <see href="docs/design/index-and-relationship-format-notes.md" /> for the on-disk
 /// layout.
 /// </para>
 /// <para>

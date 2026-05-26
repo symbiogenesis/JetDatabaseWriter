@@ -14,7 +14,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 /// <remarks>
 /// Mirrors the on-disk layout consumed by <see cref="ColumnPropertyBlock.Parse(byte[], DatabaseFormat)"/>;
-/// see <c>docs/design/persisted-column-properties-format-notes.md</c> §2 for the
+/// see <see href="docs/design/persisted-column-properties-format-notes.md" /> §2 for the
 /// authoritative byte layout.
 ///
 /// Round-trip guarantee: an unmodified blob parsed via

@@ -7,7 +7,7 @@ using Xunit;
 /// <summary>
 /// Unit tests for <see cref="IndexKeyEncoder"/>. The assertions verify
 /// the encoder produces the byte sequences described in
-/// <c>docs/design/index-and-relationship-format-notes.md</c> §4.3 (entry flag
+/// <see href="docs/design/index-and-relationship-format-notes.md" /> §4.3 (entry flag
 /// byte) and §5 (per-type sort-key encoding), and that lexicographic byte
 /// comparison of the encoded forms matches the natural numeric ordering of
 /// the input values for every supported fixed-width type.

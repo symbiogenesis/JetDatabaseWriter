@@ -10,7 +10,7 @@ internal static class Constants
 {
     /// <summary>
     /// JET column-type discriminator codes as documented in the mdbtools
-    /// <c>HACKING.md</c> reference. Stored in the <c>col_type</c> byte of each
+    /// <see href="HACKING.md" /> reference. Stored in the <c>col_type</c> byte of each
     /// TDEF column descriptor; also used as the runtime tag for every value
     /// crack / encode path. Names mirror mdbtools' <c>MDB_*</c> identifiers
     /// (with the customary <c>T_</c> prefix used throughout this codebase).
@@ -148,7 +148,7 @@ internal static class Constants
     /// reject the on-disk markers below.
     /// </summary>
     /// <remarks>
-    /// See <c>docs/design/calculated-columns-format-notes.md</c> for the full
+    /// See <see href="docs/design/calculated-columns-format-notes.md" /> for the full
     /// on-disk layout.
     /// </remarks>
     public static class CalculatedColumn
@@ -235,7 +235,7 @@ internal static class Constants
     /// <summary>
     /// Constants describing rows in <c>MSysObjects</c> (catalog object types
     /// and the flag bitmask that distinguishes system tables from user tables).
-    /// Names in parentheses correspond to the mdbtools <c>HACKING.md</c>
+    /// Names in parentheses correspond to the mdbtools <see href="HACKING.md" />
     /// <c>MDB_TABLE_*</c> / <c>OBJ_*</c> nomenclature.
     /// </summary>
     public static class SystemObjects
@@ -593,7 +593,7 @@ internal static class Constants
     /// <summary>
     /// Page-layout constants for JET index pages
     /// (leaf <c>0x04</c> and intermediate <c>0x03</c>) as documented in
-    /// <c>docs/design/index-and-relationship-format-notes.md</c>
+    /// <see href="docs/design/index-and-relationship-format-notes.md" />
     /// §4.1 (header) and §4.2 (entry-start bitmask + first entry).
     /// The bitmask / first-entry offsets are shared by both page types
     /// because the §4.1 header layout is identical between them.
@@ -707,7 +707,7 @@ internal static class Constants
     /// On-disk constants for the per-table TDEF page header and the index
     /// sub-sections (real-idx physical descriptors, logical-idx entries) that
     /// follow the column descriptors. See
-    /// <c>docs/design/index-and-relationship-format-notes.md</c> §3.
+    /// <see href="docs/design/index-and-relationship-format-notes.md" /> §3.
     /// </summary>
     public static class TableDefinition
     {
@@ -821,7 +821,7 @@ internal static class Constants
 
                 /// <summary>
                 /// Start of the 30-byte <c>col_map</c> block (10 × {col_num(2), col_order(1)}).
-                /// Per mdbtools <c>HACKING.md</c>: in Jet3 the phys descriptor is
+                /// Per mdbtools <see href="HACKING.md" />: in Jet3 the phys descriptor is
                 /// <c>col_map(30) + used_pages(4) + first_dp(4) + flags(1) = 39</c>
                 /// with no leading magic prefix (the <c>0</c> here vs Jet4's
                 /// <c>4</c> reflects exactly that — Jet4 has a 4-byte magic
@@ -889,7 +889,7 @@ internal static class Constants
                 /// Constant 4-byte value DAO/Access stamps at the start (bytes 0..3) of
                 /// every real-idx physical descriptor in a Jet4/ACE TDEF. Empirically
                 /// observed at <c>0x00000783</c> across all real-idx descriptors in
-                /// NorthwindTraders.accdb (see <c>docs/design/format-probe-appendix-index.md</c>).
+                /// NorthwindTraders.accdb (see <see href="docs/design/format-probe-appendix-index.md" />).
                 /// DAO refuses to <c>OpenRecordset</c> on tables whose real-idx descriptors
                 /// have a different leading word ("Unrecognized database format"), so
                 /// the writer must emit this exact value rather than the format-wide

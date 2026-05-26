@@ -16,7 +16,7 @@ using Xunit;
 /// Tests for <see cref="IAccessReader.GetComplexColumnsAsync"/> against the
 /// <c>ComplexFields.accdb</c> fixture.
 /// Schema assertions are grounded in
-/// <c>docs/design/format-probe-appendix-complex.md</c>.
+/// <see href="docs/design/format-probe-appendix-complex.md" />.
 /// </summary>
 public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

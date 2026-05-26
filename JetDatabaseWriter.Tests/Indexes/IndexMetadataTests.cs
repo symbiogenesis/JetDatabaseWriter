@@ -14,7 +14,7 @@ using Xunit;
 /// Tests for <see cref="IAccessReader.ListIndexesAsync"/> against the
 /// <c>NorthwindTraders.accdb</c> and <c>ComplexFields.accdb</c> fixtures.
 /// Layout assertions are grounded in
-/// <c>docs/design/format-probe-appendix-index.md</c>.
+/// <see href="docs/design/format-probe-appendix-index.md" />.
 /// </summary>
 public sealed class IndexMetadataTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

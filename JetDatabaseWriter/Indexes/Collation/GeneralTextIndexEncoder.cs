@@ -5,7 +5,7 @@ using System;
 /// <summary>
 /// "General" (Access 2010+ default) text-index sort-key encoder. Port of
 /// <c>com.healthmarketscience.jackcess.impl.GeneralIndexCodes</c> (Apache
-/// 2.0 — see <c>THIRD-PARTY-NOTICES.md</c>).
+/// 2.0 — see <see href="THIRD-PARTY-NOTICES.md" />).
 /// <para>
 /// Structurally identical to <see cref="GeneralLegacyTextIndexEncoder"/>:
 /// upstream Jackcess models <c>GeneralIndexCodes</c> as a subclass of

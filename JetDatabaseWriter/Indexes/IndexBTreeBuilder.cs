@@ -12,7 +12,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// entries: one or more leaf pages (<c>0x04</c>) chained through
 /// <c>prev_page</c> / <c>next_page</c>, plus zero or more levels of
 /// intermediate pages (<c>0x03</c>) above them. The page layouts are
-/// described in <c>docs/design/index-and-relationship-format-notes.md</c>
+/// described in <see href="docs/design/index-and-relationship-format-notes.md" />
 /// §4.1 (header), §4.2 (entry-start bitmask), §4.3 (per-entry record), and
 /// §4.5 (tail-page chain).
 /// <para>

@@ -20,7 +20,7 @@ using Xunit;
 /// <see cref="IAccessSchema.DropColumnAsync"/> /
 /// <see cref="IAccessSchema.RenameColumnAsync"/>) on parent tables that
 /// already contain Attachment / MultiValue columns. See
-/// <c>docs/design/complex-columns-format-notes.md</c> §4.2.
+/// <see href="docs/design/complex-columns-format-notes.md" /> §4.2.
 /// </summary>
 public sealed class ComplexColumnsSchemaEvolutionTests
 {

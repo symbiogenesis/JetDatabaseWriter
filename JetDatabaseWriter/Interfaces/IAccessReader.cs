@@ -149,7 +149,7 @@ public interface IAccessReader : IAccessBase
     /// Returns every attachment row stored in the hidden flat child table backing
     /// the Access 2007+ Attachment column <paramref name="columnName"/> on
     /// <paramref name="tableName"/>. Each result is decoded per
-    /// <c>docs/design/complex-columns-format-notes.md</c> §3 — wrapper stripped
+    /// <see href="docs/design/complex-columns-format-notes.md" /> §3 — wrapper stripped
     /// and (when present) deflate decompression applied to <c>FileData</c>.
     /// </summary>
     /// <param name="tableName">Parent table name (case-insensitive).</param>

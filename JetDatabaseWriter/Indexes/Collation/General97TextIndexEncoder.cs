@@ -11,7 +11,7 @@ using System.Text;
 /// <summary>
 /// "General 97" (Access 1997 / Jet3) text-index sort-key encoder. Port of
 /// <c>com.healthmarketscience.jackcess.impl.General97IndexCodes</c> (Apache
-/// 2.0 — see <c>THIRD-PARTY-NOTICES.md</c>).
+/// 2.0 — see <see href="THIRD-PARTY-NOTICES.md" />).
 /// <para>
 /// Differs from <see cref="GeneralLegacyTextIndexEncoder"/> in two ways:
 /// </para>

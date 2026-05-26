@@ -105,7 +105,7 @@ public interface IAccessWriter : IAccessBase
     /// allocates a per-row complex reference value, patches the parent row's
     /// complex-column slot with that ID, and inserts a row into the hidden flat
     /// child table carrying the wrapper-encoded payload (per
-    /// <c>docs/design/complex-columns-format-notes.md</c> §3).
+    /// <see href="docs/design/complex-columns-format-notes.md" /> §3).
     /// </summary>
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Name of the Attachment column on <paramref name="tableName"/>.</param>

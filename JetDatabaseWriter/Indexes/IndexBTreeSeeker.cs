@@ -15,7 +15,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// supplied encoded composite key matches any entry. Used by the writer's
 /// referential-integrity enforcement path so an INSERT into a child table can
 /// validate parent-side existence in O(log N) page reads instead of an O(N)
-/// linear parent scan (see <c>docs/design/index-and-relationship-format-notes.md</c>
+/// linear parent scan (see <see href="docs/design/index-and-relationship-format-notes.md" />
 /// §4 and §7 R3).
 /// <para>
 /// Jet4 / ACE only — bitmask at <c>0x1B</c>, first entry at <c>0x1E0</c>,

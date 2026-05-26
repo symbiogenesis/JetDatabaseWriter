@@ -12,7 +12,7 @@ using Xunit;
 /// <summary>
 /// Tests for per-flat-table PK / FK indexes. The attachment flat-table
 /// layout is verified against
-/// <c>format-probe-appendix-complex.md</c>
+/// <see href="format-probe-appendix-complex.md" />
 /// (the <c>f_A3DF50CFC033433899AF0AC1A4CF4171_Attachments</c> probe of
 /// <c>ComplexFields.accdb</c>); the multi-value layout mirrors that pattern
 /// minus the composite secondary index because no real-Access fixture

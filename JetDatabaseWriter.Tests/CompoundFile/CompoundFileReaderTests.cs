@@ -10,7 +10,7 @@ using Xunit;
 
 /// <summary>
 /// Tests for <see cref="CompoundFileReader"/> using fixtures borrowed from
-/// the OpenMcdf project (see <c>THIRD-PARTY-NOTICES.md</c>).
+/// the OpenMcdf project (see <see href="THIRD-PARTY-NOTICES.md" />).
 ///
 /// The OpenMcdf "TestStream_v{3,4}_{N}.cfs" corpus contains a single
 /// top-level stream named "TestStream" of length N filled with bytes equal

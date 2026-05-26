@@ -112,7 +112,7 @@ internal readonly struct IndexLayout
     /// Gets the byte offset of the <c>col_map</c> block within a real-idx
     /// physical descriptor. Format-dependent because Jet4/ACE prepends a
     /// 4-byte “magic” cookie before <c>col_map</c> that Jet3 does not
-    /// (Jet3: 0, Jet4/ACE: 4). Per mdbtools <c>HACKING.md</c>: Jet3 phys
+    /// (Jet3: 0, Jet4/ACE: 4). Per mdbtools <see href="HACKING.md" />: Jet3 phys
     /// descriptor is <c>col_map(30) + used_pages(4) + first_dp(4) + flags(1)</c>;
     /// Jet4 phys descriptor is <c>magic(4) + col_map(30) + …</c>.
     /// </summary>

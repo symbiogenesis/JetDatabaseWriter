@@ -22,7 +22,7 @@ using Xunit;
 /// <see cref="IAccessReader.GetAttachmentsAsync"/>,
 /// <see cref="IAccessReader.GetMultiValueItemsAsync"/>, and the
 /// <see cref="AttachmentWrapper"/> encoder / decoder per
-/// <c>docs/design/complex-columns-format-notes.md</c> §3.
+/// <see href="docs/design/complex-columns-format-notes.md" /> §3.
 /// </summary>
 public sealed class ComplexColumnsRowApiTests
 {

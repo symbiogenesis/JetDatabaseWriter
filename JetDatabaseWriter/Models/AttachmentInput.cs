@@ -12,7 +12,7 @@ using JetDatabaseWriter.Interfaces;
 /// for one file attached to a parent row's complex (Attachment) column.
 /// </summary>
 /// <remarks>
-/// See <c>docs/design/complex-columns-format-notes.md</c> §3 for the
+/// See <see href="docs/design/complex-columns-format-notes.md" /> §3 for the
 /// wrapper-encoded on-disk format the writer applies to <see cref="FileData"/>.
 /// </remarks>
 public sealed record AttachmentInput

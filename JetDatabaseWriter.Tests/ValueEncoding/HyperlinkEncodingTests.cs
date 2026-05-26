@@ -14,7 +14,7 @@ using Xunit;
 /// <summary>
 /// Positive coverage for Hyperlink columns — the format-flag bit (<c>HYPERLINK_FLAG_MASK = 0x80</c>)
 /// plus the <c>displaytext # address #subaddress # screentip</c> value layer.
-/// See <c>docs/design/hyperlink-format-notes.md</c>.
+/// See <see href="docs/design/hyperlink-format-notes.md" />.
 /// </summary>
 public sealed class HyperlinkEncodingTests
 {

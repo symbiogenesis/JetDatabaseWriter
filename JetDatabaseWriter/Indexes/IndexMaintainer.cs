@@ -3015,7 +3015,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     /// relationship, and linked-table rows, while preserving the byte-for-byte
     /// content of existing catalog row payloads the writer cannot losslessly
     /// re-encode. See
-    /// <c>docs/design/catalog-index-maintenance-notes.md</c>.
+    /// <see href="docs/design/catalog-index-maintenance-notes.md" />.
     /// </para>
     /// <para>
     /// Current catalog-splice scope:

@@ -77,7 +77,7 @@ public sealed record ColumnDefinition
     /// if the bit is requested on a non-text column. Surfaced to readers via
     /// <see cref="ColumnMetadata.IsHyperlink"/>; values are auto-materialized as
     /// <see cref="Hyperlink"/> instances when the bit is observed on read.
-    /// See <c>docs/design/hyperlink-format-notes.md</c>.
+    /// See <see href="docs/design/hyperlink-format-notes.md" />.
     /// </summary>
     public bool IsHyperlink { get; init; }
 
@@ -259,7 +259,7 @@ public sealed record ColumnDefinition
     /// when <see cref="CalculationExpression"/> is in the supported row-local
     /// subset, and recomputes values on update. Microsoft Access will recompute
     /// the value when it opens the file.
-    /// See <c>docs/design/calculated-columns-format-notes.md</c>.
+    /// See <see href="docs/design/calculated-columns-format-notes.md" />.
     /// </para>
     /// </remarks>
     public bool IsCalculated { get; init; }

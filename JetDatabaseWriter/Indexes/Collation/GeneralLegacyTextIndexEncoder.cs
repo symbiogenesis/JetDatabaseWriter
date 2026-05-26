@@ -13,7 +13,7 @@ using System.Text;
 /// "General Legacy" (Access 2000–2007 default; Access 2010+ legacy fallback)
 /// text-index sort-key encoder. Port of
 /// <c>com.healthmarketscience.jackcess.impl.GeneralLegacyIndexCodes</c>
-/// (Apache 2.0 — see <c>THIRD-PARTY-NOTICES.md</c>).
+/// (Apache 2.0 — see <see href="THIRD-PARTY-NOTICES.md" />).
 /// <para>
 /// Returns the complete per-column entry block: a leading flag byte
 /// (<c>0x7F</c> ascending non-null / <c>0x80</c> descending non-null /
@@ -28,7 +28,7 @@ using System.Text;
 /// <b>Validation status:</b> the per-codepoint code tables come verbatim
 /// from Jackcess and the state machine is a faithful port. Byte sequences
 /// have not been independently re-validated against an Access-authored
-/// fixture; see <c>docs/design/index-and-relationship-format-notes.md</c>
+/// fixture; see <see href="docs/design/index-and-relationship-format-notes.md" />
 /// §8 for the standing Microsoft Access compact-and-repair gap.
 /// </para>
 /// </summary>

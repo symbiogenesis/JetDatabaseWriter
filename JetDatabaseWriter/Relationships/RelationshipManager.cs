@@ -60,7 +60,7 @@ internal sealed class RelationshipManager
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <remarks>
-    /// Per <c>docs/design/index-and-relationship-format-notes.md</c> §7. The
+    /// Per <see href="docs/design/index-and-relationship-format-notes.md" /> §7. The
     /// MSysRelationships catalog rows are what the Microsoft Access
     /// Relationships designer reads. The per-TDEF FK logical-index entries
     /// (<c>index_type = 0x02</c>, <c>rel_idx_num</c>, <c>rel_tbl_page</c>)

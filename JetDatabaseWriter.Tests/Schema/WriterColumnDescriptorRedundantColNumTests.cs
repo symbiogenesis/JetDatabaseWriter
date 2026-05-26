@@ -13,7 +13,7 @@ using Xunit;
 /// <summary>
 /// Tests round-trip-openrecordset hypothesis H22: that the writer omits the
 /// "redundant <c>col_num</c>" field at column-descriptor byte offset 9-10
-/// of the Jet4/ACE 25-byte column descriptor. Per mdbtools <c>HACKING.md</c>,
+/// of the Jet4/ACE 25-byte column descriptor. Per mdbtools <see href="HACKING.md" />,
 /// the Jet4 column descriptor stores <c>col_num</c> twice — once at offset
 /// 5-6 (the primary slot) and again at offset 9-10. The writer currently
 /// only writes the primary slot, leaving offset 9-10 either as the page-init

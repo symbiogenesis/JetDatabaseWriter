@@ -16,7 +16,7 @@ using Xunit;
 /// Tests round-trip-openrecordset hypothesis H23: that the writer places the
 /// real-idx <c>flags</c> byte at offset 46 within the 52-byte Jet4/ACE
 /// physical descriptor, while ground-truth (DAO-authored) ACCDBs place it
-/// at offset 42 (per mdbtools <c>HACKING.md</c>).
+/// at offset 42 (per mdbtools <see href="HACKING.md" />).
 ///
 /// <para>
 /// Diagnostic strategy: per Jackcess <c>IndexData.UNKNOWN_INDEX_FLAG = 0x80</c>

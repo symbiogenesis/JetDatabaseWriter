@@ -9,7 +9,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Builds JET index leaf pages (page type <c>0x04</c>). Encodes the
-/// fixed page header described in <c>docs/design/index-and-relationship-format-notes.md</c>
+/// fixed page header described in <see href="docs/design/index-and-relationship-format-notes.md" />
 /// §4.1, the entry-start bitmask in §4.2, and the per-entry record layout in
 /// §4.3 (excluding the intermediate-page child pointer — deferred to
 /// <see cref="IndexBTreeBuilder"/>). §4.4 prefix compression is supported.

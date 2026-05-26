@@ -25,7 +25,7 @@ using Xunit;
 /// these tests verify maintenance by scanning the on-disk byte stream for
 /// leaf pages (<c>page_type = 0x04</c>) and counting their entry-start
 /// bitmask bits (one implicit first entry plus one bit per subsequent entry,
-/// see <c>docs/design/index-and-relationship-format-notes.md</c> §4.2).
+/// see <see href="docs/design/index-and-relationship-format-notes.md" /> §4.2).
 /// Old leaf pages are orphaned by maintenance, so we check the highest-page
 /// leaf (always the most recent rebuild) when the row count is expected to
 /// shrink, and the highest entry count across all leafs otherwise.

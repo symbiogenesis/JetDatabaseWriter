@@ -11,7 +11,7 @@ using Xunit;
 /// Round-trip tests for the 23-byte calculated-value envelope helper used by
 /// Access 2010+ calculated (expression) columns. Translated from Jackcess
 /// <c>CalculatedColumnUtil</c>; see
-/// <c>docs/design/calculated-columns-format-notes.md</c>.
+/// <see href="docs/design/calculated-columns-format-notes.md" />.
 /// </summary>
 public sealed class CalculatedColumnUtilTests
 {

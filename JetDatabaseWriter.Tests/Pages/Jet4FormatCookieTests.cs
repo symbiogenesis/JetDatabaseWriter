@@ -22,7 +22,7 @@ using Xunit;
 ///
 /// These invariants are required for DAO Compact &amp; Repair — omitting
 /// any one of them causes err 3011 "could not find the object 'MSysDb'".
-/// See <c>docs/design/round-trip-test-failures.md</c>.
+/// See <see href="docs/design/round-trip-test-failures.md" />.
 /// </summary>
 public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

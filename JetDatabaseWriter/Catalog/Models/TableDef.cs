@@ -161,7 +161,7 @@ internal sealed class TableDef
     /// <summary>
     /// Locates the FK back-reference column on a hidden complex-column flat
     /// child table: the single <c>T_LONG</c> (type code <c>0x04</c>) column whose
-    /// name starts with <c>"_"</c> per <c>complex-columns-format-notes.md</c> §2.4,
+    /// name starts with <c>"_"</c> per <see href="complex-columns-format-notes.md" /> §2.4,
     /// falling back to the first <c>T_LONG</c> column when no underscore-prefixed
     /// candidate exists. Throws when no <c>T_LONG</c> column is present.
     /// </summary>

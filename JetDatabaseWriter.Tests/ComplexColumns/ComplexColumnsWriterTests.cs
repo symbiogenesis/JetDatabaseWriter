@@ -14,7 +14,7 @@ using Xunit;
 
 /// <summary>
 /// Tests for the complex-columns writer surface
-/// (see <c>docs/design/complex-columns-format-notes.md</c>).
+/// (see <see href="docs/design/complex-columns-format-notes.md" />).
 /// <list type="bullet">
 ///   <item><c>MSysComplexColumns</c> system table is scaffolded into every fresh ACCDB.</item>
 ///   <item><see cref="ColumnDefinition.IsAttachment"/> / <see cref="ColumnDefinition.IsMultiValue"/>

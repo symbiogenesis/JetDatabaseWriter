@@ -22,7 +22,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// or any single-page tree whose post-mutation entry list overflows the
 /// payload area — falls back to the bulk <c>MaintainIndexesAsync</c> rebuild
 /// path or the multi-leaf surgical paths. See
-/// <c>docs/design/index-and-relationship-format-notes.md</c> §7.
+/// <see href="docs/design/index-and-relationship-format-notes.md" /> §7.
 /// </para>
 /// </summary>
 internal static class IndexLeafIncremental

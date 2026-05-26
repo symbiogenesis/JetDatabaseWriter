@@ -23,7 +23,7 @@ internal static class JetTypeInfo
     /// Returns the on-disk fixed byte size for a fixed-length JET column type
     /// (<c>BYTE/INT/LONG/MONEY/FLOAT/DOUBLE/DATETIME/GUID/NUMERIC</c>), or
     /// <c>0</c> for variable-length types and unknown codes. Mirrors the
-    /// per-type sizes documented in mdbtools <c>HACKING.md</c>.
+    /// per-type sizes documented in mdbtools <see href="HACKING.md" />.
     /// </summary>
     /// <param name="type">JET column-type code (see <see cref="Constants.ColumnTypes"/>).</param>
     public static int GetFixedSize(byte type) => type switch
@@ -96,7 +96,7 @@ internal static class JetTypeInfo
     /// Returns <see langword="true"/> when the column is a MEMO whose TDEF flag
     /// byte has Jackcess <c>HYPERLINK_FLAG_MASK = 0x80</c> set — Microsoft Access
     /// surfaces such columns through the Hyperlink data-format affordance.
-    /// See <c>docs/design/hyperlink-format-notes.md</c>.
+    /// See <see href="docs/design/hyperlink-format-notes.md" />.
     /// </summary>
     public static bool IsHyperlinkColumn(ColumnInfo col)
         => col.Type == T_MEMO && (col.Flags & Constants.ColumnDescriptorFlags.Hyperlink) != 0;

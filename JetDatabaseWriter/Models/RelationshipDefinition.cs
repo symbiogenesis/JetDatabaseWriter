@@ -17,7 +17,7 @@ using JetDatabaseWriter.Interfaces;
 /// per-TDEF foreign-key logical-index entries (with <c>index_type = 0x02</c>,
 /// <c>rel_idx_num</c>, <c>rel_tbl_page</c>) that drive runtime referential-
 /// integrity enforcement by the JET engine. See
-/// <c>docs/design/index-and-relationship-format-notes.md</c> for the on-disk
+/// <see href="docs/design/index-and-relationship-format-notes.md" /> for the on-disk
 /// layout.
 /// </para>
 /// <para>
