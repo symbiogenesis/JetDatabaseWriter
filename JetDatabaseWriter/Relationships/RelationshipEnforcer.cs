@@ -10,7 +10,6 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages.Models;
-using JetDatabaseWriter.Schema.Models;
 
 internal sealed class RelationshipEnforcer(AccessWriter writer, IndexMaintainer indexes, RelationshipCatalogStore catalog)
 {
