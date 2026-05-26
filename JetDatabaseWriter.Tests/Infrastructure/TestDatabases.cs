@@ -282,9 +282,9 @@ internal static class TestDatabases
 
     /// <summary>
     /// Gets every Jackcess fixture that exists on disk and can be opened by the reader.
-    /// Use for broad-coverage round-trip tests; expect this to skip
-    /// any fixture that requires reader features not yet implemented (encrypted,
-    /// query-only, calculated fields, etc.).
+    /// Use for broad-coverage round-trip tests; expect this to skip fixtures
+    /// outside the current reader scope (encrypted, query-only, calculated fields,
+    /// etc.).
     /// </summary>
     public static TheoryData<string> JackcessAll => ToTheoryData(
         AllJackcessDatabases.Where(IsReadable));

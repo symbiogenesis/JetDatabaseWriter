@@ -64,9 +64,9 @@ internal static class OfficeCryptoAgile
 
     /// <summary>
     /// Returns true when the EncryptionInfo header indicates the ECMA-376
-    /// "Standard" encryption variant (version 3.2 or 4.2, AES-128-ECB).
-    /// This format is used by Office 2007 (Access 2007) password-encrypted
-    /// .accdb files but is not yet supported by this library.
+    /// "Standard" encryption variant (version 3.2 or 4.2). This format is
+    /// used by Office 2007 (Access 2007) password-encrypted .accdb files and
+    /// is handled by <see cref="OfficeCryptoStandard"/>.
     /// </summary>
     public static bool IsStandardEncryptionInfo(byte[] encryptionInfo)
     {

@@ -203,10 +203,8 @@ public sealed class PersistedColumnPropertiesTests
 
     // ── End-to-end: CreateTableAsync persists; AccessReader reads back ─
 
-    // Sample fixture sized to fit within the 256-byte inline OLE limit (write-side
-    // LVAL chain support is not yet implemented). With UTF-16LE encoding the four
-    // long strings on one column plus a description on a second column total ~190
-    // bytes for the LvProp blob.
+    // Keep this fixture small enough for inline LvProp storage so the test focuses
+    // on property persistence rather than external LVAL-page placement.
     private static List<ColumnDefinition> SampleColumnsWithProperties() =>
     [
         new("Qty", typeof(int))

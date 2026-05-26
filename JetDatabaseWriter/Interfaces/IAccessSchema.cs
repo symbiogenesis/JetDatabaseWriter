@@ -51,7 +51,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="columns">Column definitions for the new table.</param>
     /// <param name="indexes">
     /// Logical-index schema entries to write into the new table's TDEF page chain.
-    /// See <see cref="IndexDefinition"/> for the constraints in force today (single
+    /// See <see cref="IndexDefinition"/> for the enforced constraints (single
     /// column, non-unique, ascending, Jet4/ACE only). Index leaves are emitted at
     /// table-creation time and maintained by supported writer insert / update /
     /// delete paths.

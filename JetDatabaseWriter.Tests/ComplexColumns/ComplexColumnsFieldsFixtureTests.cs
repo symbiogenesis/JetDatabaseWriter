@@ -14,28 +14,18 @@ using Xunit;
 /// Access 16 COM automation. It contains:
 ///   • Table <c>Documents</c> — columns ID (LONG), Title (TEXT), Attachments (ATTACHMENT / 0x12).
 ///     Two rows inserted, each with one attached .txt file.
-///   • Table <c>Tags</c> — plain text column (created for future multi-value testing).
-///
-/// README limitation: "Complex fields (0x11/0x12) — Metadata reported correctly;
-/// cell values not yet decoded."
+///   • Table <c>Tags</c> — plain text column used as a non-complex control table.
 ///
 /// ── Important ACE format finding ────────────────────────────────────────────
 /// Access 2007+ ACCDB stores Attachment columns as column_type = 0x12 (T_COMPLEX)
 /// in the TDEF column descriptor, NOT as 0x11 (T_ATTACHMENT).
 /// The specific subtype (Attachment vs. Multi-Value vs. Version History) is
 /// stored in the system table <c>MSysComplexColumns</c>.
-/// Until the reader consults MSysComplexColumns, it reports TypeName = "Complex"
-/// for all complex columns rather than the subtype-specific "Attachment".
 ///
-/// ── What passes today ───────────────────────────────────────────────────────
-///   • Safety: file opens, ReadTable / StreamRows don't throw, row count correct.
-///   • ClrType = byte[] and Size = LVAL are correctly inferred from type 0x12.
-///   • Tags table exists and is readable.
-///
-/// ── Complex-field decoding ───────────────────────────────────────────────────
+/// ── Complex-field coverage ──────────────────────────────────────────────────
 ///   • TypeName — resolved via MSysComplexColumns lookup.
 ///   • Cell values — attachment cells are decoded by resolving the complex_id
-///     against the hidden MSysComplexType_Attachment system table.
+///     against the hidden flat attachment table recorded in MSysComplexColumns.
 /// </summary>
 public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
@@ -45,11 +35,6 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
     // ═══════════════════════════════════════════════════════════════════
     // 1. SCHEMA
     // ═══════════════════════════════════════════════════════════════════
-    //
-    // Most schema tests pass today. The exception is TypeNameIsAttachment:
-    // Access stores Attachment columns as 0x12 (Complex) in the TDEF, not
-    // 0x11 (Attachment). The reader currently returns TypeName="Complex".
-    // Reading MSysComplexColumns is required to return "Attachment".
 
     [Fact]
     public async Task ComplexFields_DocumentsTable_Exists()
@@ -112,14 +97,14 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
     //
     // How attachment storage works (mdbtools HACKING.md, Jackcess docs):
     //   • The variable-length column slot stores a 4-byte "complex_id" integer.
-    //   • Actual attachment rows live in a hidden system table named
-    //     MSysCM_<tablename>_<fieldname> (e.g. MSysCM_Documents_Attachments).
+    //   • Actual attachment rows live in the hidden flat table referenced by
+    //     MSysComplexColumns.FlatTableID.
     //   • Each row in that table holds: complex_id (FK), FileName, FileType, FileData.
     //
-    // To decode attachment cells the reader must:
+    // To decode attachment cells the reader:
     //   1. Read the 4-byte complex_id from the variable slot.
-    //   2. Scan the relevant MSysCM_ table for matching rows.
-    //   3. Return a non-null, non-empty value per attachment (byte[], struct, or IList<>).
+    //   2. Scan the relevant flat table for matching rows.
+    //   3. Return the decoded attachment payload bytes.
 
     [Fact]
     public async Task ComplexFields_Attachment_Row1_CellValueIsNotDbNull()
@@ -134,7 +119,7 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
 
         Assert.True(
             row1[attachIdx] is not DBNull,
-            $"Row 1 attachment cell should not be DBNull (complex_id decoding not yet implemented). Got: {row1[attachIdx]}");
+            $"Row 1 attachment cell should not be DBNull after complex_id decoding. Got: {row1[attachIdx]}");
     }
 
     [Fact]
@@ -152,7 +137,7 @@ public sealed class ComplexColumnsFieldsFixtureTests(DatabaseCache db) : IClassF
 
         Assert.True(
             row2[attachIdx] is not DBNull,
-            $"Row 2 attachment cell should not be DBNull (complex_id decoding not yet implemented). Got: {row2[attachIdx]}");
+            $"Row 2 attachment cell should not be DBNull after complex_id decoding. Got: {row2[attachIdx]}");
     }
 
     [Fact]

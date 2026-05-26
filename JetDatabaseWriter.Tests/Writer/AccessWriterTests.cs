@@ -663,7 +663,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
     }
 
-    // ── Guard clauses (already wired in stubs) ────────────────────────
+    // ── Guard clauses ─────────────────────────────────────────────────
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]

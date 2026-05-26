@@ -552,7 +552,7 @@ internal static class JetTypeInfo
 
     // ── UTF-16LE bytes \u2192 string helpers ─────────────────────────────────
     // The on-disk text encoding for Jet4/ACE is UCS-2 LE, which is the exact
-    // in-memory layout of <c>char</c> on every platform .NET supports today
+    // in-memory layout of <c>char</c> on supported .NET runtimes
     // (all little-endian). Re-interpreting the byte span as a char span
     // therefore skips the validation pass and intermediate buffers that
     // <c>Encoding.Unicode.GetString</c> performs. On a hypothetical big-endian

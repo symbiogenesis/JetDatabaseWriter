@@ -1584,8 +1584,8 @@ internal static class FormatProbeApplication
                         //   byte 18     cascade_dels(1)
                         //   byte 19     index_type(1)   — 0x01 PK, 0x02 FK
                         //
-                        // This matches what AccessReader.ParseIndexMetadata reads today
-                        // for the Jet3 best-effort path. Verify in the hex dump above:
+                        // This matches AccessReader.ParseIndexMetadata's Jet3
+                        // best-effort path. Verify in the hex dump above:
                         // index_type at byte 19 should be 0x01 for the PK entry.
                         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- bytes  0..3  index_num:     {U32(bytes, start + 0)}");
                         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- bytes  4..7  index_num2:    {U32(bytes, start + 4)}");

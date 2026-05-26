@@ -44,8 +44,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </para>
 /// <para>
 /// <b>Out of scope:</b> Jet3 page layouts (Jet3 index emission is supported
-/// by the writer but the FK-side seeker is currently Jet4 / ACE only —
-/// Jet3 RI enforcement falls back to the O(N) HashSet snapshot path).
+/// by the writer, while Jet3 RI enforcement uses the O(N) HashSet snapshot path).
 /// </para>
 /// </summary>
 internal static class IndexBTreeSeeker

@@ -291,10 +291,9 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
 
             Assert.NotNull(actual);
 
-            // Reader returns OLE payloads as byte[] at the row level even
-            // though the column metadata's CLR type is currently typeof(string).
-            // Tolerate either representation so this round-trip test pins the
-            // value-preservation contract independently of the metadata gap.
+            // Reader returns OLE payloads as byte[] at the row level. Tolerate
+            // the older string representation so this round-trip test pins the
+            // value-preservation contract independently of representation.
             switch (actual![1])
             {
                 case byte[] roundTripped:

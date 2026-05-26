@@ -1856,7 +1856,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// and no explicit transaction is currently active, wraps
     /// <paramref name="work"/> in a private <see cref="JetTransaction"/> so a
     /// crash mid-call leaves the database in its pre-call state. Otherwise
-    /// invokes <paramref name="work"/> directly (today's flush-per-page path).
+    /// invokes <paramref name="work"/> directly using the flush-per-page path.
     /// </summary>
     internal ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
         => _transactionLifecycle.RunAutoCommitAsync(work, cancellationToken);
@@ -2560,7 +2560,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // Hydrate persisted-property fields from MSysObjects.LvProp so that
         // DefaultValueExpression / ValidationRuleExpression / ValidationText / Description
         // round-trip through Add/Drop/Rename semantically. Forward-compat note: unknown
-        // chunks and table-level property targets are not yet preserved by this path.
+        // chunks and table-level property targets are intentionally not preserved by this path.
         ColumnPropertyBlock? originalProperties =
             await ReadLvPropBlockAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
@@ -3823,10 +3823,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// Reads <paramref name="columnOrdinals"/>'s typed values out of a single
     /// row at <paramref name="loc"/> on a data page belonging to
     /// <paramref name="tableDef"/>. Returns <see langword="null"/> when the
-    /// row layout cannot be parsed OR when any requested column points at
-    /// a long-value (T_MEMO, T_OLE) or complex (T_COMPLEX, T_ATTACHMENT)
-    /// column — those require LVAL chain traversal which the writer does
-    /// not implement; the cascade-seek caller falls back to the snapshot
+    /// row layout cannot be parsed OR when any requested column needs
+    /// long-value (T_MEMO, T_OLE) or complex (T_COMPLEX, T_ATTACHMENT)
+    /// traversal outside this inline reader; the cascade-seek caller falls back to the snapshot
     /// path in that case. Index-key column types (the focus of this helper)
     /// only include scalar fixed and var-inline kinds — JET indexes cannot
     /// cover MEMO / OLE / Complex columns at all (rejected by
@@ -3922,7 +3921,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <see langword="null"/> on unsupported / malformed types so callers
     /// fall back to the snapshot path. T_NUMERIC uses the descriptor scale
     /// carried on <paramref name="column"/>; T_MEMO / T_OLE / T_COMPLEX /
-    /// T_ATTACHMENT return null since they require LVAL chain traversal.
+    /// T_ATTACHMENT return null because they require LVAL or complex-table traversal.
     /// </summary>
     private object? TryDecodeColumnSlice(byte[] page, int start, ColumnInfo column, int size)
     {

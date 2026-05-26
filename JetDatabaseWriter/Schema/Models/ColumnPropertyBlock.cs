@@ -54,7 +54,7 @@ internal sealed class ColumnPropertyBlock
 
         bool isJet3 = magic == MagicKkd;
         Encoding stringEncoding = isJet3
-            ? Encoding.GetEncoding(1252) // Jet3 codepage placeholder; AccessReader passes per-DB codepage when wiring in real reads.
+            ? Encoding.GetEncoding(1252) // Jet3 fallback until per-database codepages flow into LvProp parsing.
             : Encoding.Unicode;
 
         var nameTable = new List<string>();

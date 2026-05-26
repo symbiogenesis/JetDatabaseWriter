@@ -192,9 +192,8 @@ internal sealed class DataPageInserter(AccessWriter writer, PageAllocator pageAl
     /// then a 64-byte bitmap covering 512 consecutive pages from startPage. On first use
     /// the startPage remains zero for low page numbers and is otherwise initialized to
     /// <c>(dataPageNumber / 8) * 8</c> so the bit fits in the bitmap. If the page is already
-    /// outside the existing INLINE window, the row is left untouched (REFERENCE-form maps
-    /// are not yet implemented; this is acceptable because the writer always appends pages
-    /// monotonically in a single session).
+    /// outside the existing INLINE window, the row is left untouched; this append-only
+    /// path does not rewrite REFERENCE-form maps.
     /// </summary>
     internal async ValueTask MarkPageInOwnedMapAsync(long tdefPageNumber, long dataPageNumber, CancellationToken cancellationToken)
     {

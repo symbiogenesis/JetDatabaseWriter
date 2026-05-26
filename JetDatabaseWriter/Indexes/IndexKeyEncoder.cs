@@ -50,7 +50,7 @@ using static JetDatabaseWriter.Constants.IndexEntryFlags;
 /// (no fixture in this repo carries one for these specific types, and the
 /// writer pipeline that would let us synthesise one is leaf-page emission, which is what
 /// uses this encoder). Round-trip via the in-repo reader still works because
-/// the reader does not consult leaf pages today; Microsoft Access itself is
+/// the reader does not use leaf pages for row enumeration; Microsoft Access itself is
 /// the only consumer that will exercise these bytes, and it must validate
 /// after a Compact &amp; Repair (see §8 of the design doc).
 /// </para>
@@ -516,7 +516,7 @@ internal static class IndexKeyEncoder
             // Mirror Access: cells whose natural scale exceeds the column's
             // declared scale are rounded half-to-even to fit. (Access stores
             // every T_NUMERIC cell at the declared scale on insert; we don't
-            // round at the row-write boundary today, but the index key MUST
+            // round at the row-write boundary, but the index key MUST
             // be canonical or unique enforcement and seeks both break.)
             d = decimal.Round(d, declaredScale, MidpointRounding.ToEven);
         }

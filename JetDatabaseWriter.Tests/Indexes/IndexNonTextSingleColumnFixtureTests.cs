@@ -31,8 +31,8 @@ using Xunit;
 /// </para>
 /// <para>
 /// Excludes Text/Memo (covered by the GeneralLegacy fixture suite) and
-/// composite-key indexes (covered by <see cref="CompositeTextIndexFixtureTests"/>
-/// for text-only and not yet for mixed). Skips fixtures that produce zero
+/// composite-key indexes (covered separately by <see cref="CompositeTextIndexFixtureTests"/>
+/// for text-only composites). Skips fixtures that produce zero
 /// matching indexes.
 /// </para>
 /// </summary>

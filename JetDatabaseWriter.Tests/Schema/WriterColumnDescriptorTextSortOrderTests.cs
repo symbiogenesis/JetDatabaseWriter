@@ -21,12 +21,8 @@ using Xunit;
 /// encodes the LCID in the low word (bytes 11-12) and the sort-order
 /// VERSION in the high word (bytes 13-14). Access 2010+ ACE files default
 /// to the "General" sort order (version 1); legacy Jet4 / ACE 2007 use
-/// "General Legacy" (version 0). The writer currently stamps
-/// <c>0x00000409</c> as a single 4-byte little-endian write at offset 11,
-/// which leaves bytes 13-14 == 0 (i.e. always version 0 / "General
-/// Legacy"). DAO post-2010 may reject TEXT columns whose sort version
-/// disagrees with the database's declared format, surfacing as
-/// "Unrecognized database format ''.".
+/// "General Legacy" (version 0). This test compares the writer's stamped
+/// LCID / sort-version pair against the observed DAO-authored baseline.
 ///
 /// <para>Test strategy:</para>
 /// <list type="number">
@@ -205,12 +201,10 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
 
         string failureMessage =
             $$"""
-            H24 reproduced: writer-authored Customers TDEF stamps a different (LCID, sort-version) than DAO.
+            Regression: writer-authored Customers TDEF stamps a different (LCID, sort-version) than DAO.
             DAO baseline (mode across NorthwindTraders TEXT/MEMO columns): LCID=0x{{expectedLcid:X4}} version={{expectedVersion}}.
             Writer mismatches: [{{string.Join("; ", mismatches)}}].
-            Fix: in JetDatabaseWriter/Schema/TDefPageBuilder.cs the TEXT/MEMO branch currently writes
-            Wi32(page, o + MiscOff, 0x00000409), zeroing bytes 13-14 (sort-order version).
-            For ACE 2010+ this should be 0x00010409 (LCID 0x0409, version 1 = 'General' sort).
+            Update JetDatabaseWriter/Schema/TDefPageBuilder.cs to match the observed DAO baseline for this database format.
             """;
 
         Assert.True(mismatches.Length == 0, failureMessage);

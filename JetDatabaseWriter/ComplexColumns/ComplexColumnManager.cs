@@ -442,7 +442,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     }
 
     /// <summary>
-    /// Returns one greater than the largest <c>ComplexID</c> currently stored in
+    /// Returns one greater than the largest <c>ComplexID</c> stored in
     /// <c>MSysComplexColumns</c>, or <c>1</c> when the table is empty.
     /// </summary>
     private async ValueTask<int> GetNextComplexIdAsync(long msysComplexPg, CancellationToken cancellationToken)
@@ -497,13 +497,11 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     /// readers can join parent rows to their child values.
     /// </summary>
     /// <remarks>
-    /// MVP scope: emits the bare flat-table schema (FK + per-kind value columns) with no
-    /// PK, no autoincrement, and no indexes. This is sufficient for round-trip through
-    /// this library's reader; Microsoft Access compatibility requires a Compact &amp; Repair
-    /// pass to rebuild the missing PK / FK back-reference indexes (validation gap noted in
-    /// the design doc §5). <c>ComplexTypeObjectID</c> is set to <c>0</c> because the
-    /// <c>MSysComplexType_*</c> template tables are not yet scaffolded; the reader's
-    /// classifier falls back to <see cref="ComplexColumnKind.Unknown"/> in that case.
+    /// Emits the hidden flat-table schema, including the FK back-reference,
+    /// per-kind value columns, Access-style scalar PK, and the known supporting
+    /// indexes. Full-catalog ACCDB databases also point <c>ComplexTypeObjectID</c>
+    /// at the matching <c>MSysComplexType_*</c> template; slim-catalog databases
+    /// keep <c>0</c> for byte-hash compatibility.
     /// </remarks>
     public async ValueTask EmitComplexColumnArtifactsAsync(
         string parentTableName,
@@ -1101,7 +1099,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
     }
 
     /// <summary>
-    /// Returns one greater than the largest FK value currently stored in the
+    /// Returns one greater than the largest FK value stored in the
     /// flat table, or <c>1</c> when the table is empty. The FK column is the
     /// single <c>T_LONG</c> column whose name starts with <c>"_"</c> per
     /// <c>BuildFlatTableSchema</c>.

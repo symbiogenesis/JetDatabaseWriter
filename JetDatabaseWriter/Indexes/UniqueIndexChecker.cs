@@ -159,9 +159,9 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
         }
 
         // Fast path: read only the key columns directly from data pages via
-        // TryReadColumnValuesTypedAsync. Falls back to the full-table
-        // snapshot when a key column uses T_NUMERIC because that narrow
-        // inline decoder does not yet have a ColumnInfo-aware numeric branch.
+        // TryReadColumnValuesTypedAsync. Keep T_NUMERIC indexes on the full-table
+        // snapshot path until the byte-for-byte key normalization is validated
+        // against the descriptor scale and Jet4/ACE numeric encoding variants.
         bool needsSnapshot = false;
         foreach (UniqueIndexDescriptor desc in descriptors)
         {

@@ -11,10 +11,8 @@ using Xunit;
 /// <summary>
 /// Validates that foreign-key surrogate indexes (the auto-created indexes
 /// that back relationship constraints) are surfaced correctly by
-/// <see cref="AccessReader.ListIndexesAsync"/>. The current reader
-/// exposes them with <see cref="IndexMetadata.IsForeignKey"/> = true.
-/// Closes §1.4 gap: "Foreign-key surrogate indexes — round-trip + listing
-/// semantics; we filter them out today.".
+/// <see cref="AccessReader.ListIndexesAsync"/> and marked with
+/// <see cref="IndexMetadata.IsForeignKey"/> = true.
 /// </summary>
 public sealed class ForeignKeySurrogateIndexTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {

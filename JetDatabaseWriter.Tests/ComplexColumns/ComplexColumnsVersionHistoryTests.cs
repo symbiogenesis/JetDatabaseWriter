@@ -63,9 +63,8 @@ public sealed class ComplexColumnsVersionHistoryTests(DatabaseCache db) : IClass
 
     /// <summary>
     /// All three complex column subtypes are present in the fixture:
-    /// Attachment, MultiValue, and a version-history column (currently
-    /// classified as Unknown — see class-level doc). This confirms the
-    /// fixture exercises the full complex-column range.
+    /// Attachment, MultiValue, and VersionHistory. This confirms the fixture
+    /// exercises the full complex-column range.
     /// </summary>
     [Theory]
     [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]

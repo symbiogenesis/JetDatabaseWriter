@@ -24,8 +24,7 @@ using Xunit;
 public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     // Auto-increment values start at 1 and increase monotonically when null
-    // is supplied for the column, across each integral CLR type the writer
-    // currently supports for FLAG_AUTO_LONG (int and short).
+    // is supplied for each FLAG_AUTO_LONG CLR type supported by the writer.
     [Theory]
     [InlineData(typeof(int), 1, 2, 3)]
     [InlineData(typeof(short), (short)1, (short)2, (short)3)]
@@ -70,8 +69,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     }
 
     // FLAG_AUTO_LONG (0x04) is persisted in the TDEF column flags and surfaced
-    // through ColumnMetadata on reopen, across the integral CLR types the
-    // writer currently supports.
+    // through ColumnMetadata on reopen for the supported writer mappings.
     [Theory]
     [InlineData(typeof(short))]
     [InlineData(typeof(int))]
@@ -190,9 +188,9 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     }
 
     // Documents the gap relative to Jackcess: byte and long auto-increment
-    // (Jet "BigInt"/Large Number autonumber and tiny-int autonumber) are
-    // not yet supported by the writer. The Jackcess analogue is
-    // AutoNumberTest#testInsertLongAutoNumber.
+    // (Jet "BigInt"/Large Number autonumber and tiny-int autonumber) remain
+    // outside the writer's supported auto-number schema. The Jackcess analogue
+    // is AutoNumberTest#testInsertLongAutoNumber.
     [Theory]
     [InlineData(typeof(byte))]
     [InlineData(typeof(long))]

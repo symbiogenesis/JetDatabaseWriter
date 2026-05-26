@@ -11,14 +11,10 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
-/// Tests round-trip-openrecordset hypothesis H22: that the writer omits the
-/// "redundant <c>col_num</c>" field at column-descriptor byte offset 9-10
-/// of the Jet4/ACE 25-byte column descriptor. Per mdbtools <see href="HACKING.md" />,
-/// the Jet4 column descriptor stores <c>col_num</c> twice — once at offset
-/// 5-6 (the primary slot) and again at offset 9-10. The writer currently
-/// only writes the primary slot, leaving offset 9-10 either as the page-init
-/// zero (most types) or as the literal <c>0x0001</c> stamped by the
-/// TEXT/MEMO branch in <see cref="JetDatabaseWriter.Schema.TDefPageBuilder"/>.
+/// Regression coverage for round-trip-openrecordset hypothesis H22: Jet4/ACE
+/// 25-byte column descriptors store <c>col_num</c> twice — once at offset 5-6
+/// (the primary slot) and again at offset 9-10 (the redundant slot). DAO reads
+/// both copies and rejects a table when they disagree.
 ///
 /// <para>Test strategy:</para>
 /// <list type="number">
@@ -28,8 +24,7 @@ using Xunit;
 ///     descriptor must have bytes 9-10 == bytes 5-6 (== <c>col_num</c>).</item>
 ///   <item><see cref="WriterAuthored_RedundantColNum_MatchesPrimary"/>
 ///     — runs the same byte-level check against a freshly writer-created
-///     database. If H22 is correct, this test FAILS today and proves the
-///     defect; once a fix lands in <c>TDefPageBuilder</c> it must pass.</item>
+///     database so the writer keeps both descriptor copies synchronized.</item>
 /// </list>
 /// </summary>
 public sealed class WriterColumnDescriptorRedundantColNumTests
@@ -83,10 +78,8 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken))
         {
-            // Mix column types so we exercise BOTH branches of TDefPageBuilder:
-            //   - non-text columns: writer leaves bytes 9-10 = 0x0000 (page init)
-            //   - text columns:     writer stamps 0x0001 at byte 9 ("misc_flags")
-            // Either pattern reproduces H22 unless col_num happens to equal 0/1.
+            // Mix column types so the regression guard covers descriptor branches
+            // that historically stamped the redundant col_num differently.
             await writer.CreateTableAsync(
                 "Customers",
                 [
@@ -122,12 +115,10 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
 
         string detail = string.Join("; ", mismatches.Select(m => $"col[{m.Index}] primary={m.Primary} redundant={m.Redundant}"));
         string failureMessage = $"""
-            H22 reproduced: writer-authored Customers TDEF has column descriptors whose redundant col_num
+            Regression: writer-authored Customers TDEF has column descriptors whose redundant col_num
             (bytes 9-10) does not match the primary col_num (bytes 5-6). Per mdbtools HACKING.md the Jet4
             column descriptor stores col_num twice. DAO OpenRecordset reads the second copy and rejects
             the table when it disagrees with the first. Mismatches: [{detail}].
-            Fix: in JetDatabaseWriter/Schema/TDefPageBuilder.cs write col.ColNum at o + 9 unconditionally
-            for the Jet4/ACE branch (currently only TEXT/MEMO writes a literal 0x0001 there).
             """;
 
         Assert.True(mismatches.Length == 0, failureMessage);

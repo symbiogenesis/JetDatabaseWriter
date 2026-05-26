@@ -9,8 +9,8 @@ using Xunit;
 
 /// <summary>
 /// Pinning tests for the limitations documented in README "Limitations".
-/// Each test asserts a documented limitation is in effect today. They are
-/// expected to FAIL the day a limitation is lifted — at which point the
+/// Each test asserts that a documented limitation remains intentionally
+/// enforced. They are expected to FAIL when a limitation is lifted, at which point the
 /// README, the test, and (for behavioural pins) the relevant write path
 /// must be updated together.
 /// </summary>

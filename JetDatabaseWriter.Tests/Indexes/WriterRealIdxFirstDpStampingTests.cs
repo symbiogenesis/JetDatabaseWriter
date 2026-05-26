@@ -12,12 +12,10 @@ using JetDatabaseWriter.Models;
 using Xunit;
 
 /// <summary>
-/// Tests round-trip-openrecordset hypothesis H21: that the user-table real-idx
-/// physical descriptor's <c>first_dp</c> (root index page pointer) is zero or
-/// otherwise wrong on writer-authored TDEFs. The hypothesis predicts DAO
-/// <c>OpenRecordset</c> reads page 0 (the database header) when <c>first_dp = 0</c>,
-/// fails its index-page tag check (header page tag is <c>0x00</c>, not
-/// <c>0x03</c> / <c>0x04</c>), and reports <c>"Unrecognized database format ''."</c>.
+/// Regression coverage for round-trip-openrecordset hypothesis H21: each
+/// user-table real-idx physical descriptor's <c>first_dp</c> must point at the
+/// root index page. A zero or invalid pointer sends DAO to the wrong page and
+/// surfaces as <c>"Unrecognized database format ''."</c>.
 /// <para>
 /// The tests below directly inspect the on-disk TDEF for every user-table
 /// non-FK index and assert that:
@@ -126,12 +124,12 @@ public sealed class WriterRealIdxFirstDpStampingTests
             int checkedCount = 0;
             foreach (IndexMetadata idx in indexes.Where(i => !i.IsForeignKey))
             {
-                string rangeMessage = $"{tableName}.{idx.Name}: FirstDp={idx.FirstDp} out of range (must be > 1 and < {totalPages}). H21 reproduced: writer emitted a zero / invalid real-idx first_dp stamp.";
+                string rangeMessage = $"{tableName}.{idx.Name}: FirstDp={idx.FirstDp} out of range (must be > 1 and < {totalPages}). Regression: writer emitted a zero / invalid real-idx first_dp stamp.";
                 Assert.True(idx.FirstDp > 1 && idx.FirstDp < totalPages, rangeMessage);
 
                 byte[] page = await reader.GetRawPageBytesAsync(idx.FirstDp, ct);
                 byte tag = page[0];
-                string tagMessage = $"{tableName}.{idx.Name}: page {idx.FirstDp} (FirstDp target) has page tag 0x{tag:X2}, expected 0x04 (leaf) or 0x03 (intermediate). H21 reproduced: writer's first_dp does not point at an index B-tree page.";
+                string tagMessage = $"{tableName}.{idx.Name}: page {idx.FirstDp} (FirstDp target) has page tag 0x{tag:X2}, expected 0x04 (leaf) or 0x03 (intermediate). Regression: writer's first_dp does not point at an index B-tree page.";
                 Assert.True(tag == 0x04 || tag == 0x03, tagMessage);
 
                 checkedCount++;
@@ -176,7 +174,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
             {
                 int phys = namePos + (i * 52);
                 int firstDpRaw = BinaryPrimitives.ReadInt32LittleEndian(fileBytes.AsSpan(phys + 38, 4));
-                string rawMessage = $"{tableName}: real-idx[{i}] raw first_dp at TDEF byte 0x{phys + 38:X} = {firstDpRaw} (out of range 2..{totalPages - 1}). H21 reproduced at the byte level — writer emitted an unstamped real-idx descriptor.";
+                string rawMessage = $"{tableName}: real-idx[{i}] raw first_dp at TDEF byte 0x{phys + 38:X} = {firstDpRaw} (out of range 2..{totalPages - 1}). Regression: writer emitted an unstamped real-idx descriptor.";
                 Assert.True(firstDpRaw > 1 && firstDpRaw < totalPages, rawMessage);
             }
         }

@@ -317,8 +317,8 @@ internal static class IndexHelpers
     /// <summary>
     /// Default <c>RewriteTableAsync</c> index projection: forwards every
     /// surviving Normal / PrimaryKey index whose key columns are still present
-    /// (case-insensitive name match) in the rebuilt schema. FK indexes are
-    /// not forwarded today.
+    /// (case-insensitive name match) in the rebuilt schema. Relationship-owned
+    /// FK indexes are excluded from this default projection.
     /// </summary>
     public static List<IndexDefinition> DefaultIndexProjection(IReadOnlyList<IndexMetadata> existing, IReadOnlyList<ColumnDefinition> newDefs)
     {

@@ -153,7 +153,7 @@ public sealed class AccessWriterOptions : IAccessOptions
     /// no recovery pass is attempted.
     /// </para>
     /// <para>
-    /// Default: <see langword="false"/> (preserves today's flush-per-page
+    /// Default: <see langword="false"/> (preserves the flush-per-page
     /// behaviour). The flag is intentionally opt-in for the first release;
     /// the plan is to flip the default in a later major version once it has
     /// bake time.
