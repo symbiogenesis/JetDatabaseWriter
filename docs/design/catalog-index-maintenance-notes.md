@@ -103,7 +103,7 @@ No public API changes. The splicer lives on `IndexMaintainer`:
 - `IndexMaintainer.TrySpliceCatalogIndexEntryAsync` — per-real-idx splice with an index-entry rebuild fallback for catalog split/ancestor cases that cannot be safely updated in place. It returns `false` only when malformed pages, impossible key encoding, an oversized single entry, or append-position mismatch prevents a safe splice/tree update. Catalog callers require success and throw on `false` for every writer format.
 - `AccessWriter.TrySpliceCatalogIndexEntryAsync` — thin forwarding wrapper, called from `InsertCatalogEntryAsync` immediately after `InsertRowDataLocAsync`.
 
-Append-only tail-leaf maintenance for ordinary index paths is handled by `IndexMaintainer.TryAppendToTailLeafAsync`; the catalog splice path has its own key-based leaf selection and split handling.
+Append-only tail-leaf maintenance for ordinary index paths is handled by `IndexBTreeEditor.TryAppendToTailLeafAsync`; the catalog splice path has its own key-based leaf selection and split handling, with the page-level mutation work delegated to the same editor.
 
 ### 4.3 Algorithm (per real-idx slot)
 

@@ -18,6 +18,7 @@ Primary files:
 - [../../JetDatabaseWriter/Indexes/IndexMaintainer.cs](../../JetDatabaseWriter/Indexes/IndexMaintainer.cs)
 - [../../JetDatabaseWriter/Indexes/IndexLeafIncremental.cs](../../JetDatabaseWriter/Indexes/IndexLeafIncremental.cs)
 - [../../JetDatabaseWriter/Indexes/IndexBTreeBuilder.cs](../../JetDatabaseWriter/Indexes/IndexBTreeBuilder.cs)
+- [../../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs](../../JetDatabaseWriter/Indexes/IndexBTreeEditor.cs)
 - [../../JetDatabaseWriter/Indexes/IndexCursor.cs](../../JetDatabaseWriter/Indexes/IndexCursor.cs)
 - [../../JetDatabaseWriter/Indexes/IndexPageCodec.cs](../../JetDatabaseWriter/Indexes/IndexPageCodec.cs)
 - [../../JetDatabaseWriter/Indexes/UniqueIndexChecker.cs](../../JetDatabaseWriter/Indexes/UniqueIndexChecker.cs)
@@ -40,7 +41,7 @@ Target shape:
       the codec or a successor descriptor.
 - [x] Extract an `IndexCursor` that performs layout-aware descent, leaf-chain
       walks, tail-page fall-through, and exact-key row-location collection.
-- [ ] Extract a mutation planner, such as `IndexBTreeEditor`, that can model
+- [x] Extract a mutation planner, such as `IndexBTreeEditor`, that can model
       insert/delete changes against one or more leaves and decide between
       in-place rewrite, split, ancestor propagation, or full-tree rebuild.
 - [x] Remove `IndexBTreeSeeker` and route exact-key seeks through the cursor.
@@ -54,8 +55,9 @@ Target shape:
 Progress 2026-05-26: read-only index seeking now flows through
 `Indexes/IndexCursor.cs`, backed by `Indexes/IndexPageCodec.cs`. The legacy
 `IndexBTreeSeeker` facade was deleted; public reader seeks, relationship FK
-enforcement, and child-row location call the cursor directly. Mutation planning
-and editor work remain open.
+enforcement, and child-row location call the cursor directly. Mutation editing
+now flows through `Indexes/IndexBTreeEditor.cs`, leaving `IndexMaintainer` as
+the TDEF/catalog orchestration surface.
 
 Guardrails:
 
@@ -253,10 +255,9 @@ package acceptability. If no dependency qualifies, leave this mostly alone.
 
 ## Suggested Order
 
-1. IndexPageCodec plus read-only IndexCursor: completed 2026-05-26; mutation
-      editing remains next.
-2. RowDecodePlan, gated by BenchmarkDotNet evidence.
-3. IndexBTreeEditor mutation planner, once the cursor/codec is trusted.
+1. IndexPageCodec plus read-only IndexCursor: completed 2026-05-26.
+2. IndexBTreeEditor mutation planner: completed 2026-05-26.
+3. RowDecodePlan, gated by BenchmarkDotNet evidence.
 4. Declarative catalog artifact planning, after index/system-table maintenance
    surfaces are cleaner.
 5. CFB dependency decision, when dependency policy is worth revisiting.
