@@ -55,6 +55,7 @@ JetDatabaseWriter/
 │
 ├── Catalog/                               (system-table reading/writing)
 │   ├── CatalogWriter.cs                   (InsertCatalogEntry, RewriteTable, RenameInCatalog)
+│   ├── CatalogValueReader.cs              (safe MSys* row access and tolerant invariant scalar parsing)
 │   └── Models/
 │       ├── CatalogEntry.cs
 │       ├── CatalogRow.cs
@@ -357,6 +358,10 @@ Every type gets its own file. Previously-nested types (`ColumnConstraint`, `PreE
 ### 5. Embedded resources follow their consumer
 
 The `CodeTables/` directory (gzipped collation lookup data) lives under `Indexes/` alongside the `Collation/` encoders that consume it — not in a generic resources folder.
+
+### 6. Catalog row parsing stays with catalog ownership
+
+`CatalogValueReader` lives in `Catalog/` because it handles tolerant scalar reads from system-table rows (`MSysObjects`, `MSysRelationships`, `MSysComplexColumns`, etc.): safe `string[]` cell access, missing-column defaults, and invariant integer parsing of catalog metadata. It is not a general user-value parser. User table column values continue to flow through `ValueDecoding/TypedValueParser`, and write-path values through `ValueEncoding/`.
 
 ---
 

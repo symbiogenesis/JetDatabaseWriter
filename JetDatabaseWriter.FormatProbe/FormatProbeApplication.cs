@@ -11,6 +11,7 @@ using System.Globalization;
 using System.Text;
 using System.Threading;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Enums;
 
 internal static class FormatProbeApplication
@@ -903,22 +904,16 @@ internal static class FormatProbeApplication
         var result = new List<(long Id, string Name, int Type, long Flags, long TdefPage)>();
         await foreach (var row in reader.EnumerateMSysObjectsRowsAsync(msys, default))
         {
-            long id = ParseLong(SafeGet(row, idxId));
-            string name = SafeGet(row, idxName);
-            int type = (int)ParseLong(SafeGet(row, idxType));
-            long flags = ParseLong(SafeGet(row, idxFlags));
+            long id = CatalogValueReader.ParseInt64OrZero(row, idxId);
+            string name = CatalogValueReader.GetStringOrEmpty(row, idxName);
+            int type = CatalogValueReader.ParseInt32OrZero(row, idxType);
+            long flags = CatalogValueReader.ParseInt64OrZero(row, idxFlags);
             long page = id & 0x00FFFFFFL;
             result.Add((id, name, type, flags, page));
         }
 
         return result;
     }
-
-    private static string SafeGet(string[] row, int idx) =>
-        (idx >= 0 && idx < row.Length) ? row[idx] : string.Empty;
-
-    private static long ParseLong(string s) =>
-        long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out long v) ? v : 0;
 
     private static bool HasComplexColumn(byte[] td, DatabaseFormat fmt)
     {

@@ -9,6 +9,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
@@ -117,8 +118,7 @@ internal static class LinkedTableManager
 
         await foreach (string[] row in reader.EnumerateMSysObjectsRowsAsync(msys, cancellationToken).ConfigureAwait(false))
         {
-            string typeStr = SafeGet(row, idxType);
-            if (!int.TryParse(typeStr, out int objType))
+            if (!CatalogValueReader.TryParseInt32(row, idxType, out int objType))
             {
                 continue;
             }
@@ -128,24 +128,23 @@ internal static class LinkedTableManager
                 continue;
             }
 
-            string nameStr = SafeGet(row, idxName);
+            string nameStr = CatalogValueReader.GetStringOrEmpty(row, idxName);
             if (string.IsNullOrEmpty(nameStr))
             {
                 continue;
             }
 
-            string flagsStr = SafeGet(row, idxFlags);
-            if (long.TryParse(flagsStr, out long flagsLong) &&
+            if (CatalogValueReader.TryParseInt64(row, idxFlags, out long flagsLong) &&
                 (unchecked((uint)flagsLong) & Constants.SystemObjects.SystemTableMask) != 0)
             {
                 continue;
             }
 
             bool isOdbc = objType == Constants.SystemObjects.LinkedOdbcType;
-            string connectStr = SafeGet(row, idxConnect);
-            string foreignName = SafeGet(row, idxForeignName);
+            string connectStr = CatalogValueReader.GetStringOrEmpty(row, idxConnect);
+            string foreignName = CatalogValueReader.GetStringOrEmpty(row, idxForeignName);
             bool isText = !isOdbc && !string.IsNullOrEmpty(connectStr);
-            string sourcePath = SafeGet(row, idxDatabase);
+            string sourcePath = CatalogValueReader.GetStringOrEmpty(row, idxDatabase);
             LinkedTableKind kind = isOdbc
                 ? LinkedTableKind.Odbc
                 : isText ? LinkedTableKind.Text : LinkedTableKind.Access;
@@ -1024,9 +1023,6 @@ internal static class LinkedTableManager
         char separator = relativePath[2];
         return separator == Path.DirectorySeparatorChar || separator == Path.AltDirectorySeparatorChar;
     }
-
-    private static string SafeGet(string[] row, int idx) =>
-        (idx >= 0 && idx < row.Length) ? row[idx] : string.Empty;
 
     private static string DecodeTextForeignName(string foreignName) =>
         foreignName.Replace('#', '.');

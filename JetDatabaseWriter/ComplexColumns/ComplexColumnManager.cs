@@ -7,6 +7,7 @@ using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Encryption;
@@ -474,7 +475,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     if (idCol != null)
                     {
                         string idText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idCol);
-                        if (int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) && v > maxId)
+                        if (CatalogValueReader.TryParseInt32(idText, out int v) && v > maxId)
                         {
                             maxId = v;
                         }
@@ -927,13 +928,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     }
 
                     string idText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, complexIdCol);
-                    if (complexId != 0 && (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid) || rid != complexId))
+                    if (complexId != 0 && (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId))
                     {
                         continue;
                     }
 
                     string flatText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
-                    if (long.TryParse(flatText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long flatId))
+                    if (CatalogValueReader.TryParseInt64(flatText, out long flatId))
                     {
                         return flatId & 0x00FFFFFFL;
                     }
@@ -1132,7 +1133,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     string text = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
-                    if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) && v > maxId)
+                    if (CatalogValueReader.TryParseInt32(text, out int v) && v > maxId)
                     {
                         maxId = v;
                     }
@@ -1367,7 +1368,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
                     {
                         string fkText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, fkCol);
-                        if (int.TryParse(fkText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int fk)
+                        if (CatalogValueReader.TryParseInt32(fkText, out int fk)
                             && ids.Contains(fk))
                         {
                             rowsToDelete.Add(row.RowIndex);
@@ -1448,13 +1449,13 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     }
 
                     string idText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
-                    if (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid) || rid != complexId)
+                    if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
                     {
                         continue;
                     }
 
                     string flatText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
-                    if (long.TryParse(flatText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long fid))
+                    if (CatalogValueReader.TryParseInt64(flatText, out long fid))
                     {
                         flatTdefPage = fid & 0x00FFFFFFL;
                     }
@@ -1560,7 +1561,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     }
 
                     string idText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
-                    if (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid) || rid != complexId)
+                    if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
                     {
                         continue;
                     }
@@ -1636,7 +1637,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 foreach (RowLocation row in _writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
                     string idText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
-                    if (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid) || rid != complexId)
+                    if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
                     {
                         continue;
                     }
@@ -1758,7 +1759,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 {
                     string rowName = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameCol);
                     string idText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, cxIdCol);
-                    if (!int.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rid))
+                    if (!CatalogValueReader.TryParseInt32(idText, out int rid))
                     {
                         continue;
                     }
@@ -1769,7 +1770,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     }
 
                     string flatText = _writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flatIdCol);
-                    if (long.TryParse(flatText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long flatId))
+                    if (CatalogValueReader.TryParseInt64(flatText, out long flatId))
                     {
                         _ = flatTdefPages.Add(flatId & 0x00FFFFFFL);
                     }

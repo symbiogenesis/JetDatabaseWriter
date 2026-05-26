@@ -13,6 +13,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Encryption;
@@ -1614,7 +1615,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         var result = new List<ComplexColumnInfo>(byComplexId.Count);
         await foreach (string[] row in EnumerateRowsForTdefAsync(msysTdef, msys, cancellationToken).ConfigureAwait(false))
         {
-            if (!int.TryParse(SafeGet(row, idxComplexId), out int complexId))
+            if (!CatalogValueReader.TryParseInt32(row, idxComplexId, out int complexId))
             {
                 continue;
             }
@@ -1624,11 +1625,11 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            int flatId = idxFlatTable >= 0 && int.TryParse(SafeGet(row, idxFlatTable), out int fid) ? fid : 0;
-            int conceptualId = idxConceptualTable >= 0 && int.TryParse(SafeGet(row, idxConceptualTable), out int cid) ? cid : 0;
-            int typeObjectId = idxComplexType >= 0 && int.TryParse(SafeGet(row, idxComplexType), out int tid) ? tid : 0;
+            int flatId = CatalogValueReader.ParseInt32OrZero(row, idxFlatTable);
+            int conceptualId = CatalogValueReader.ParseInt32OrZero(row, idxConceptualTable);
+            int typeObjectId = CatalogValueReader.ParseInt32OrZero(row, idxComplexType);
 
-            string columnName = idxColumnName >= 0 ? SafeGet(row, idxColumnName) : parent.Name;
+            string columnName = CatalogValueReader.GetStringOrDefault(row, idxColumnName, parent.Name);
             string flatName = flatId != 0 && objectNamesById.TryGetValue(flatId, out string? fn) ? fn : string.Empty;
             string typeName = typeObjectId != 0 && objectNamesById.TryGetValue(typeObjectId, out string? tn) ? tn : string.Empty;
 
@@ -1667,9 +1668,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         await foreach (string[] row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
         {
-            if (long.TryParse(SafeGet(row, idxId), out long id))
+            if (CatalogValueReader.TryParseInt64(row, idxId, out long id))
             {
-                map[id] = SafeGet(row, idxName);
+                map[id] = CatalogValueReader.GetStringOrEmpty(row, idxName);
             }
         }
 
@@ -2517,22 +2518,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
     }
 
-    private async ValueTask DisposeReaderResourcesAsync()
-    {
-        _pageCache?.Clear();
-        _pageCache?.Dispose();
-        _rowBoundsCache?.Clear();
-        _rowBoundsCache?.Dispose();
-        _ownedDataPageIndex.Dispose();
-        InvalidateCatalogCache();
-        await base.DisposeAsync().ConfigureAwait(false);
-    }
-
-#pragma warning disable SA1204 // Helper kept beside its sole caller (DisposeAsync) for readability.
-    private static string SafeGet(string[] row, int idx) =>
-        (idx >= 0 && idx < row.Length) ? row[idx] : string.Empty;
-#pragma warning restore SA1204
-
+#pragma warning disable SA1204 // Static helper section follows the public reader API methods.
     /// <summary>
     /// Returns true when an MSysComplexColumns row's ConceptualTableID column refers to
     /// the user table identified by <paramref name="targetTdefPage"/> (or, as a fallback,
@@ -2546,13 +2532,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return true;
         }
 
-        if (long.TryParse(tableIdStr, out long tableId))
+        if (CatalogValueReader.TryParseInt64(tableIdStr, out long tableId))
         {
             return (tableId & 0x00FFFFFFL) == targetTdefPage;
         }
 
         return tableName != null && string.Equals(tableIdStr, tableName, StringComparison.OrdinalIgnoreCase);
     }
+#pragma warning restore SA1204
 
     private static FileStream CreateStream(string path, AccessReaderOptions options)
     {
@@ -3164,6 +3151,17 @@ public sealed class AccessReader : AccessBase, IAccessReader
             : buffer.AsSpan(offset, length).ToArray();
     }
 
+    private async ValueTask DisposeReaderResourcesAsync()
+    {
+        _pageCache?.Clear();
+        _pageCache?.Dispose();
+        _rowBoundsCache?.Clear();
+        _rowBoundsCache?.Dispose();
+        _ownedDataPageIndex.Dispose();
+        InvalidateCatalogCache();
+        await base.DisposeAsync().ConfigureAwait(false);
+    }
+
     private async ValueTask<IReadOnlyList<long>> GetOwnedDataPagesAsync(long tdefPage, CancellationToken cancellationToken)
     {
         if (tdefPage <= 0)
@@ -3523,16 +3521,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
             await foreach (string[] row in EnumerateRowsAsync(pageNumber, page, msys, cancellationToken).ConfigureAwait(false))
             {
                 allRows++;
-                string typeStr = SafeGet(row, idxType);
-                string nameStr = SafeGet(row, idxName);
-                string flagsStr = SafeGet(row, idxFlags);
+                string typeStr = CatalogValueReader.GetStringOrEmpty(row, idxType);
+                string nameStr = CatalogValueReader.GetStringOrEmpty(row, idxName);
+                string flagsStr = CatalogValueReader.GetStringOrEmpty(row, idxFlags);
 
-                if (!int.TryParse(typeStr, out int objType) || objType != Constants.SystemObjects.UserTableType)
+                if (!CatalogValueReader.TryParseInt32(typeStr, out int objType) || objType != Constants.SystemObjects.UserTableType)
                 {
                     continue;
                 }
 
-                if (!long.TryParse(flagsStr, out long flagsLong))
+                if (!CatalogValueReader.TryParseInt64(flagsStr, out long flagsLong))
                 {
                     flagsLong = 0;
                 }
@@ -3550,7 +3548,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 long tdefPage = 0;
                 if (idxId >= 0)
                 {
-                    if (!long.TryParse(SafeGet(row, idxId), out long id))
+                    if (!CatalogValueReader.TryParseInt64(row, idxId, out long id))
                     {
                         id = 0;
                     }
@@ -4507,7 +4505,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         await foreach (string[] row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
         {
-            if (!long.TryParse(SafeGet(row, idxId), out long id))
+            if (!CatalogValueReader.TryParseInt64(row, idxId, out long id))
             {
                 continue;
             }
@@ -4517,7 +4515,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 continue;
             }
 
-            byte[]? blob = TryDecodeBase64DataUrl(SafeGet(row, idxLvProp));
+            byte[]? blob = TryDecodeBase64DataUrl(CatalogValueReader.GetStringOrEmpty(row, idxLvProp));
             return ColumnPropertyBlock.Parse(blob, _format);
         }
 
@@ -4575,12 +4573,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
             await foreach (string[] row in EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
             {
                 if (idxConceptualTable >= 0 &&
-                    !ConceptualTableMatches(SafeGet(row, idxConceptualTable), targetTdefPage, tableName))
+                    !ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), targetTdefPage, tableName))
                 {
                     continue;
                 }
 
-                string colName = SafeGet(row, idxCol);
+                string colName = CatalogValueReader.GetStringOrEmpty(row, idxCol);
                 result[colName] = "Attachment";
             }
         }
@@ -4634,18 +4632,18 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         await foreach (string[] row in EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
         {
-            string nameStr = SafeGet(row, idxName);
+            string nameStr = CatalogValueReader.GetStringOrEmpty(row, idxName);
             if (!nameMatches(nameStr))
             {
                 continue;
             }
 
-            if (!int.TryParse(SafeGet(row, idxType), out int objType) || (objType != Constants.SystemObjects.UserTableType && objType != Constants.SystemObjects.LinkedOdbcType))
+            if (!CatalogValueReader.TryParseInt32(row, idxType, out int objType) || (objType != Constants.SystemObjects.UserTableType && objType != Constants.SystemObjects.LinkedOdbcType))
             {
                 continue;
             }
 
-            if (long.TryParse(SafeGet(row, idxId), out long id))
+            if (CatalogValueReader.TryParseInt64(row, idxId, out long id))
             {
                 long tdefPage = id & 0x00FFFFFFL;
                 if (tdefPage > 0)
@@ -4726,20 +4724,19 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             await foreach (string[] row in EnumerateRowsForTdefAsync(msysTdef, td, cancellationToken).ConfigureAwait(false))
             {
-                string colName = SafeGet(row, idxCol);
+                string colName = CatalogValueReader.GetStringOrEmpty(row, idxCol);
                 if (!string.Equals(colName, columnName, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
 
                 if (idxConceptualTable >= 0 &&
-                    !ConceptualTableMatches(SafeGet(row, idxConceptualTable), targetTdefPage, tableName: null))
+                    !ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), targetTdefPage, tableName: null))
                 {
                     continue;
                 }
 
-                string flatIdStr = SafeGet(row, idxFlatTable);
-                if (long.TryParse(flatIdStr, out long flatId))
+                if (CatalogValueReader.TryParseInt64(row, idxFlatTable, out long flatId))
                 {
                     long flatTdef = flatId & 0x00FFFFFFL;
                     if (flatTdef > 0)
@@ -4803,17 +4800,17 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             await foreach (var row in EnumerateRowsForTdefAsync(tdefPage, td, cancellationToken).ConfigureAwait(false))
             {
-                if (!int.TryParse(SafeGet(row, idxFk), out int parentId))
+                if (!CatalogValueReader.TryParseInt32(row, idxFk, out int parentId))
                 {
                     continue;
                 }
 
-                byte[] fileNameBytes = idxFileName >= 0 && SafeGet(row, idxFileName) is { Length: > 0 } fileName
+                byte[] fileNameBytes = CatalogValueReader.GetStringOrEmpty(row, idxFileName) is { Length: > 0 } fileName
                     ? Encoding.Unicode.GetBytes(fileName)
                     : [];
 
                 byte[] fileDataBytes = idxFileData >= 0
-                    ? DecodeAttachmentFileData(DecodeColumnBytes(SafeGet(row, idxFileData) ?? string.Empty, td.Columns[idxFileData].Type))
+                    ? DecodeAttachmentFileData(DecodeColumnBytes(CatalogValueReader.GetStringOrEmpty(row, idxFileData), td.Columns[idxFileData].Type))
                     : [];
 
                 if (fileNameBytes.Length == 0 && fileDataBytes.Length == 0)

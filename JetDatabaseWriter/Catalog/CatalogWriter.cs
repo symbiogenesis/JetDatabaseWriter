@@ -237,16 +237,6 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             useRelationshipGroupAcm: true,
             cancellationToken).ConfigureAwait(false);
 
-    private static long ParseInt64(string value)
-    {
-        return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed) ? parsed : 0L;
-    }
-
-    private static int ParseInt32(string value)
-    {
-        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) ? parsed : 0;
-    }
-
     private static int GetLinkedTableFlags(short objectType, string? connectString) =>
         objectType == Constants.SystemObjects.LinkedOdbcType
             ? Constants.SystemObjects.LinkedOdbcFlags
@@ -465,17 +455,17 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             {
                 long id = idColumn is null
                     ? 0
-                    : ParseInt64(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn));
+                    : CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn));
                 long parentId = parentIdColumn is null
                     ? 0
-                    : ParseInt64(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, parentIdColumn));
+                    : CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, parentIdColumn));
 
                 result.Add(new CatalogRow(
                     PageNumber: row.PageNumber,
                     RowIndex: row.RowIndex,
                     Name: writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, nameColumn),
-                    ObjectType: writer.ParseInt32(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, typeColumn)),
-                    Flags: ParseInt64(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flagsColumn!)),
+                    ObjectType: CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, typeColumn)),
+                    Flags: CatalogValueReader.ParseInt64OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, flagsColumn!)),
                     TDefPage: id & 0x00FFFFFFL,
                     Id: id,
                     ParentId: parentId));
@@ -526,7 +516,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
 
                 foreach (RowLocation row in writer.EnumerateLiveRowLocations(pageNumber, page))
                 {
-                    int id = ParseInt32(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn));
+                    int id = CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, idColumn));
                     _ = usedIds.Add(id);
                     if (id != 0)
                     {

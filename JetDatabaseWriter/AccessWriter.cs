@@ -32,7 +32,6 @@ using JetDatabaseWriter.ValueEncoding;
 using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
 
-#pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
 #pragma warning disable SA1204 // Static members grouped logically alongside related instance members
 
@@ -3507,7 +3506,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 foreach (RowLocation row in EnumerateLiveRowLocations(pageNumber, page))
                 {
                     string objectIdText = DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, objectIdColumn);
-                    if (int.TryParse(objectIdText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int objectId)
+                    if (CatalogValueReader.TryParseInt32(objectIdText, out int objectId)
                         && ids.Contains(objectId))
                     {
                         object[] deletedIndexRow = acesDef.CreateNullValueRow();
@@ -3890,12 +3889,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     internal ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
         => _catalogWriter.GetCatalogRowsAsync(msys, cancellationToken);
-
-    internal int ParseInt32(string value)
-    {
-        int parsed;
-        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed) ? parsed : 0;
-    }
 
     internal async ValueTask<List<RowLocation>> GetLiveRowLocationsAsync(long tdefPage, CancellationToken cancellationToken)
     {

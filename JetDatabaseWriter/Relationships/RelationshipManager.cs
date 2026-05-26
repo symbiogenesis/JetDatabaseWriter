@@ -7,6 +7,7 @@ using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
@@ -1028,9 +1029,9 @@ internal sealed class RelationshipManager(AccessWriter writer, IndexMaintainer i
                             ? DBNull.Value
                             : col.Type switch
                             {
-                                T_LONG => writer.ParseInt32(raw),
-                                T_INT => (short)writer.ParseInt32(raw),
-                                T_BYTE => (byte)writer.ParseInt32(raw),
+                                T_LONG => CatalogValueReader.ParseInt32OrZero(raw),
+                                T_INT => (short)CatalogValueReader.ParseInt32OrZero(raw),
+                                T_BYTE => (byte)CatalogValueReader.ParseInt32OrZero(raw),
                                 _ => raw,
                             };
                     }
@@ -1042,9 +1043,9 @@ internal sealed class RelationshipManager(AccessWriter writer, IndexMaintainer i
                         writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, refObjCol),
                         writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, colCol),
                         writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, refColCol),
-                        writer.ParseInt32(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, icolCol)),
-                        writer.ParseInt32(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, ccolCol)),
-                        writer.ParseInt32(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, grbitCol)),
+                        CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, icolCol)),
+                        CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, ccolCol)),
+                        CatalogValueReader.ParseInt32OrZero(writer.DecodeSimpleColumnValue(page, row.RowStart, row.RowSize, grbitCol)),
                         values));
                 }
             }
