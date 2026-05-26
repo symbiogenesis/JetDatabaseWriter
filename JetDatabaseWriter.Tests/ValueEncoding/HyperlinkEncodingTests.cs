@@ -10,7 +10,6 @@ using JetDatabaseWriter.Models;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
-#pragma warning disable SA1201
 
 /// <summary>
 /// Positive coverage for Hyperlink columns — the format-flag bit (<c>HYPERLINK_FLAG_MASK = 0x80</c>)
