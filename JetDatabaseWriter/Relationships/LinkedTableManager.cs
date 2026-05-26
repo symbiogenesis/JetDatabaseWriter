@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.DelimitedText;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 
@@ -211,14 +212,9 @@ internal static class LinkedTableManager
         CancellationToken cancellationToken)
     {
         LinkedTextDataSource source = GetLinkedTextDataSource(reader, link);
-        long count = 0;
-        await foreach (string[] row in EnumerateTextDataRowsAsync(source.FilePath, source.Format, source.Limits, cancellationToken).ConfigureAwait(false))
-        {
-            _ = row;
-            count++;
-        }
-
-        return count;
+        using var textReader = new StreamReader(source.FilePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        using var delimitedReader = new DelimitedTextReader(textReader, source.Format, source.Limits.Delimited);
+        return await delimitedReader.CountRecordsAsync(source.Format.HasHeaderRow, cancellationToken).ConfigureAwait(false);
     }
 
     internal static async IAsyncEnumerable<string[]> RowsLinkedTextAsStringsAsync(
@@ -358,10 +354,16 @@ internal static class LinkedTableManager
                 $"{nameof(AccessReaderOptions.LinkedTextMaxMaterializedRows)} must be positive when set.");
         }
 
-        return new LinkedTextLimits(
+        var delimitedLimits = new DelimitedTextLimits(
             options.LinkedTextMaxRecordLength,
             options.LinkedTextMaxFieldLength,
             options.LinkedTextMaxColumnCount,
+            $"{nameof(AccessReaderOptions)}.{nameof(AccessReaderOptions.LinkedTextMaxRecordLength)}",
+            $"{nameof(AccessReaderOptions)}.{nameof(AccessReaderOptions.LinkedTextMaxFieldLength)}",
+            $"{nameof(AccessReaderOptions)}.{nameof(AccessReaderOptions.LinkedTextMaxColumnCount)}");
+
+        return new LinkedTextLimits(
+            delimitedLimits,
             options.LinkedTextMaxSourceFileBytes,
             options.LinkedTextMaxMaterializedRows);
     }
@@ -546,7 +548,7 @@ internal static class LinkedTableManager
             $"Linked {kindDescription} table '{link.Name}' is metadata-only; JetDatabaseWriter opens Access-file linked tables and reads delimited text links.");
     }
 
-    private static TextLinkFormat ParseTextLinkFormat(string? connectString)
+    private static DelimitedTextFormat ParseTextLinkFormat(string? connectString)
     {
         bool hasHeaderRow = false;
         char delimiter = ',';
@@ -605,7 +607,7 @@ internal static class LinkedTableManager
             }
         }
 
-        return new TextLinkFormat(hasHeaderRow, delimiter);
+        return new DelimitedTextFormat(hasHeaderRow, delimiter, trimValues: true);
     }
 
     private static IEnumerable<string> SplitConnectStringParts(string connectString)
@@ -635,34 +637,36 @@ internal static class LinkedTableManager
 
     private static async ValueTask<string[]> ReadLinkedTextColumnNamesAsync(
         string filePath,
-        TextLinkFormat format,
+        DelimitedTextFormat format,
         LinkedTextLimits limits,
         CancellationToken cancellationToken)
     {
         using var reader = new StreamReader(filePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        string[]? firstRecord = await ReadDelimitedRecordAsync(reader, format.Delimiter, limits, cancellationToken).ConfigureAwait(false);
-        if (firstRecord is null)
+        using var delimitedReader = new DelimitedTextReader(reader, format, limits.Delimited);
+        DelimitedTextRecord? firstRecord = await delimitedReader.ReadRecordAsync(cancellationToken).ConfigureAwait(false);
+        if (firstRecord is not { } record)
         {
             return [];
         }
 
         return format.HasHeaderRow
-            ? NormalizeColumnNames(firstRecord)
-            : CreateGeneratedColumnNames(firstRecord.Length);
+            ? DelimitedTextColumnNames.Normalize(record.Fields)
+            : DelimitedTextColumnNames.CreateGenerated(record.FieldCount);
     }
 
     private static async IAsyncEnumerable<string[]> EnumerateTextDataRowsAsync(
         string filePath,
-        TextLinkFormat format,
+        DelimitedTextFormat format,
         LinkedTextLimits limits,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         using var reader = new StreamReader(filePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        using var delimitedReader = new DelimitedTextReader(reader, format, limits.Delimited);
         bool isFirstRecord = true;
         while (true)
         {
-            string[]? record = await ReadDelimitedRecordAsync(reader, format.Delimiter, limits, cancellationToken).ConfigureAwait(false);
-            if (record is null)
+            DelimitedTextRecord? record = await delimitedReader.ReadRecordAsync(cancellationToken).ConfigureAwait(false);
+            if (record is not { } current)
             {
                 yield break;
             }
@@ -676,203 +680,8 @@ internal static class LinkedTableManager
                 }
             }
 
-            yield return record;
+            yield return current.Fields;
         }
-    }
-
-    private static async ValueTask<string[]?> ReadDelimitedRecordAsync(
-        StreamReader reader,
-        char delimiter,
-        LinkedTextLimits limits,
-        CancellationToken cancellationToken)
-    {
-        var fields = new List<string>();
-        var field = new StringBuilder();
-        var singleChar = new char[1];
-        int recordLength = 0;
-        int fieldLength = 0;
-        bool inQuotes = false;
-        bool atFieldStart = true;
-        bool sawAnyCharacter = false;
-
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            int value = await ReadCharAsync(reader, singleChar, cancellationToken).ConfigureAwait(false);
-            if (value < 0)
-            {
-                if (!sawAnyCharacter && fields.Count == 0 && field.Length == 0)
-                {
-                    return null;
-                }
-
-                if (inQuotes)
-                {
-                    throw new InvalidDataException("Linked text source contains a quoted field without a closing quote.");
-                }
-
-                AddDelimitedField(fields, field, limits);
-                return fields.ToArray();
-            }
-
-            recordLength = IncrementLinkedTextLength(
-                recordLength,
-                limits.MaxRecordLength,
-                nameof(AccessReaderOptions.LinkedTextMaxRecordLength));
-            char ch = (char)value;
-            sawAnyCharacter = true;
-
-            if (inQuotes)
-            {
-                if (ch == '"')
-                {
-                    if (reader.Peek() == '"')
-                    {
-                        _ = await ReadCharAsync(reader, singleChar, cancellationToken).ConfigureAwait(false);
-                        recordLength = IncrementLinkedTextLength(
-                            recordLength,
-                            limits.MaxRecordLength,
-                            nameof(AccessReaderOptions.LinkedTextMaxRecordLength));
-                        fieldLength = AppendDelimitedFieldCharacter(field, '"', fieldLength, limits);
-                    }
-                    else
-                    {
-                        inQuotes = false;
-                    }
-                }
-                else
-                {
-                    fieldLength = AppendDelimitedFieldCharacter(field, ch, fieldLength, limits);
-                }
-
-                continue;
-            }
-
-            if (atFieldStart && ch == '"')
-            {
-                inQuotes = true;
-                atFieldStart = false;
-                continue;
-            }
-
-            if (ch == delimiter)
-            {
-                AddDelimitedField(fields, field, limits);
-                _ = field.Clear();
-                fieldLength = 0;
-                atFieldStart = true;
-                continue;
-            }
-
-            if (ch == '\r')
-            {
-                if (reader.Peek() == '\n')
-                {
-                    _ = await ReadCharAsync(reader, singleChar, cancellationToken).ConfigureAwait(false);
-                    recordLength = IncrementLinkedTextLength(
-                        recordLength,
-                        limits.MaxRecordLength,
-                        nameof(AccessReaderOptions.LinkedTextMaxRecordLength));
-                }
-
-                AddDelimitedField(fields, field, limits);
-                return fields.ToArray();
-            }
-
-            if (ch == '\n')
-            {
-                AddDelimitedField(fields, field, limits);
-                return fields.ToArray();
-            }
-
-            fieldLength = AppendDelimitedFieldCharacter(field, ch, fieldLength, limits);
-            atFieldStart = false;
-        }
-    }
-
-    private static async ValueTask<int> ReadCharAsync(StreamReader reader, char[] buffer, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        int read = await reader.ReadAsync(buffer, 0, 1).ConfigureAwait(false);
-        return read == 0 ? -1 : buffer[0];
-    }
-
-    private static int AppendDelimitedFieldCharacter(
-        StringBuilder field,
-        char ch,
-        int fieldLength,
-        LinkedTextLimits limits)
-    {
-        int newLength = IncrementLinkedTextLength(
-            fieldLength,
-            limits.MaxFieldLength,
-            nameof(AccessReaderOptions.LinkedTextMaxFieldLength));
-        field.Append(ch);
-        return newLength;
-    }
-
-    private static int IncrementLinkedTextLength(int currentLength, int maxLength, string optionName)
-    {
-        if (currentLength >= maxLength)
-        {
-            throw new InvalidDataException(
-                $"Linked text source exceeds AccessReaderOptions.{optionName} ({maxLength}).");
-        }
-
-        return currentLength + 1;
-    }
-
-    private static void AddDelimitedField(List<string> fields, StringBuilder field, LinkedTextLimits limits)
-    {
-        if (fields.Count >= limits.MaxColumnCount)
-        {
-            throw new InvalidDataException(
-                $"Linked text source exceeds AccessReaderOptions.{nameof(AccessReaderOptions.LinkedTextMaxColumnCount)} ({limits.MaxColumnCount}).");
-        }
-
-        fields.Add(field.ToString());
-    }
-
-    private static string[] NormalizeColumnNames(string[] rawColumnNames)
-    {
-        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var nextSuffixByBaseName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var columnNames = new string[rawColumnNames.Length];
-        for (int i = 0; i < rawColumnNames.Length; i++)
-        {
-            string baseName = string.IsNullOrWhiteSpace(rawColumnNames[i]) ? $"F{i + 1}" : rawColumnNames[i].Trim();
-
-            if (usedNames.Add(baseName))
-            {
-                columnNames[i] = baseName;
-                continue;
-            }
-
-            int suffix = nextSuffixByBaseName.TryGetValue(baseName, out int nextSuffix) ? nextSuffix : 2;
-            string candidate;
-            do
-            {
-                candidate = baseName + suffix.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                suffix++;
-            }
-            while (!usedNames.Add(candidate));
-
-            nextSuffixByBaseName[baseName] = suffix;
-            columnNames[i] = candidate;
-        }
-
-        return columnNames;
-    }
-
-    private static string[] CreateGeneratedColumnNames(int columnCount)
-    {
-        var columnNames = new string[columnCount];
-        for (int i = 0; i < columnNames.Length; i++)
-        {
-            columnNames[i] = $"F{i + 1}";
-        }
-
-        return columnNames;
     }
 
     private static string[] NormalizeStringRow(string[] row, int columnCount)
@@ -1027,16 +836,12 @@ internal static class LinkedTableManager
     private static string DecodeTextForeignName(string foreignName) =>
         foreignName.Replace('#', '.');
 
-    private readonly record struct LinkedTextDataSource(string FilePath, TextLinkFormat Format, LinkedTextLimits Limits);
+    private readonly record struct LinkedTextDataSource(string FilePath, DelimitedTextFormat Format, LinkedTextLimits Limits);
 
-    private readonly record struct LinkedTextSource(string FilePath, TextLinkFormat Format, LinkedTextLimits Limits, string[] ColumnNames);
+    private readonly record struct LinkedTextSource(string FilePath, DelimitedTextFormat Format, LinkedTextLimits Limits, string[] ColumnNames);
 
     private readonly record struct LinkedTextLimits(
-        int MaxRecordLength,
-        int MaxFieldLength,
-        int MaxColumnCount,
+        DelimitedTextLimits Delimited,
         long? MaxSourceFileBytes,
         uint? MaxMaterializedRows);
-
-    private readonly record struct TextLinkFormat(bool HasHeaderRow, char Delimiter);
 }

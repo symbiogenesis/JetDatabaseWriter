@@ -412,6 +412,52 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             "DAO OpenRecordset compacted text linked table data");
     }
 
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    public async Task CreateLinkedTextTableAsync_TextSource_DaoOpenRecordsetTrimsValueWhitespace()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string sourceDirectory = Path.Combine(Path.GetTempPath(), $"LinkedTextWhitespaceSource_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceDirectory);
+        tempDirs.Add(sourceDirectory);
+        await File.WriteAllTextAsync(
+            Path.Combine(sourceDirectory, "data.csv"),
+            "ID,Unquoted,Quoted,AfterQuote,LeadingSpaceBeforeQuote\r\n" +
+            "1,  unquoted  ,\"  quoted  \",\"closed\"  , \"not-starting-quote\" \r\n",
+            ct);
+
+        string frontEndPath = await CreateTempAccdbDatabaseAsync("LinkedTextWhitespaceDao");
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            frontEndPath,
+            new AccessWriterOptions { UseLockFile = false },
+            ct))
+        {
+            await writer.CreateTableAsync(
+                "LocalAnchor",
+                [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false }],
+                ct);
+            await writer.InsertRowAsync("LocalAnchor", [1], ct);
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedCsv",
+                sourceDirectory,
+                "data.csv",
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        string workDir = Path.GetDirectoryName(frontEndPath)!;
+        string compactedPath = Path.Combine(Path.GetTempPath(), $"LinkedTextWhitespaceDao_{Guid.NewGuid():N}.accdb");
+        tempFiles.Add(compactedPath);
+        AssertDaoSuccess(
+            AccessRoundTripEnvironment.RunDaoCompact(frontEndPath, compactedPath, TimeSpan.FromSeconds(60)),
+            "DAO CompactDatabase text linked table whitespace data");
+        AssertDaoSuccess(
+            AccessRoundTripEnvironment.RunDaoDatabaseScript(compactedPath, LinkedCsvWhitespaceScript("LinkedCsv"), workDir, TimeSpan.FromSeconds(60)),
+            "DAO OpenRecordset linked text whitespace data");
+    }
+
     [Fact]
     public async Task CreateLinkedTableAsync_DuplicateLinkedTableName_Throws()
     {
@@ -728,6 +774,40 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
                 $rs.MoveNext()
                 if (-not $rs.EOF) { throw 'Expected exactly two CSV rows.' }
+            } finally {
+                $rs.Close()
+            }
+            """;
+    }
+
+    private static string LinkedCsvWhitespaceScript(string tableName)
+    {
+        string escapedName = tableName.Replace("'", "''", StringComparison.Ordinal);
+        string expectedUnquoted = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral("unquoted");
+        string expectedQuoted = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral("  quoted");
+        string expectedAfterQuote = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral("closed");
+        string expectedLeadingSpaceBeforeQuote = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral("not-starting-quote");
+        return $$"""
+            $rs = $db.OpenRecordset('SELECT [ID], [Unquoted], [Quoted], [AfterQuote], [LeadingSpaceBeforeQuote] FROM [{{escapedName}}]', 4)
+            try {
+                if ($rs.EOF) { throw 'Expected first CSV row.' }
+                $id = [int]$rs.Fields.Item('ID').Value
+                if ($id -ne 1) { throw "Unexpected CSV ID: $id" }
+
+                $unquoted = [string]$rs.Fields.Item('Unquoted').Value
+                $quoted = [string]$rs.Fields.Item('Quoted').Value
+                $afterQuote = [string]$rs.Fields.Item('AfterQuote').Value
+                $leadingSpaceBeforeQuote = [string]$rs.Fields.Item('LeadingSpaceBeforeQuote').Value
+
+                if ($unquoted -cne {{expectedUnquoted}} -or
+                    $quoted -cne {{expectedQuoted}} -or
+                    $afterQuote -cne {{expectedAfterQuote}} -or
+                    $leadingSpaceBeforeQuote -cne {{expectedLeadingSpaceBeforeQuote}}) {
+                    throw "Unexpected whitespace values: Unquoted=[$unquoted] length=$($unquoted.Length); Quoted=[$quoted] length=$($quoted.Length); AfterQuote=[$afterQuote] length=$($afterQuote.Length); LeadingSpaceBeforeQuote=[$leadingSpaceBeforeQuote] length=$($leadingSpaceBeforeQuote.Length)"
+                }
+
+                $rs.MoveNext()
+                if (-not $rs.EOF) { throw 'Expected exactly one CSV row.' }
             } finally {
                 $rs.Close()
             }

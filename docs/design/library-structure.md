@@ -63,6 +63,13 @@ JetDatabaseWriter/
 │       ├── CatalogRow.cs
 │       └── TableDef.cs
 │
+├── DelimitedText/                         (internal CSV/delimited text parsing for linked text tables)
+│   ├── DelimitedTextReader.cs             (buffered record parser with quote, CR/LF, and limit handling)
+│   ├── DelimitedTextColumnNames.cs        (header normalization and generated F1/F2/... names)
+│   ├── DelimitedTextFormat.cs             (validated delimiter and header-row options)
+│   ├── DelimitedTextLimits.cs             (record/field/column parser safety limits)
+│   └── DelimitedTextRecord.cs             (parsed row fields plus row/line tracking metadata)
+│
 ├── ValueEncoding/                         (write-path: typed values → bytes)
 │   ├── RowEncoder.cs                      (SerializeRow, EncodeFixed/Variable/Text/Binary)
 │   ├── LongValueEncoder.cs               (LVAL chain allocation, OLE wrapping)
@@ -209,7 +216,7 @@ The library follows a **Layered Codec / Service Architecture** — the dominant 
 |-------|---------|----------------|
 | **Infrastructure** | `Infrastructure/`, `CompoundFile/` | Generic helpers, stream compatibility shims, CFB container parsing/writing |
 | **Storage / Page Services** | `Pages/`, `Transactions/`, `Encryption/` | Page layouts, allocation/free-list reuse, journaling, locking, page encryption |
-| **Codec / Domain Services** | `ValueEncoding/`, `ValueDecoding/`, `Indexes/`, `Catalog/`, `Schema/`, `Relationships/`, `ComplexColumns/` | Encode/decode values, rows, index keys; read/write system tables; manage feature-specific catalog artifacts |
+| **Codec / Domain Services** | `ValueEncoding/`, `ValueDecoding/`, `DelimitedText/`, `Indexes/`, `Catalog/`, `Schema/`, `Relationships/`, `ComplexColumns/` | Encode/decode values, rows, index keys, and linked text records; read/write system tables; manage feature-specific catalog artifacts |
 | **API / Orchestration** | Root (`AccessReader`, `AccessWriter`, `AccessBase`), `Interfaces/`, public `Models/`, public `Enums/` | User-facing operations, options, DTOs, and orchestration |
 
 The orchestration layer is intentionally thin — `AccessReader` and `AccessWriter` act as **facades** (GoF) that compose domain modules rather than embedding logic directly. Most pure layout/codec helpers keep one-way dependencies. Several writer-owned services (`DataPageInserter`, `PageAllocator`, `TDefPageBuilder`, relationship and complex-column managers) intentionally receive `AccessWriter` as a context object so they can coordinate page I/O, encryption, transactions, catalog caches, and format-specific layouts without duplicating state.
@@ -223,6 +230,7 @@ Dependency flow is acyclic. The current high-level dependency map is:
 ```
 Infrastructure/        → (nothing — leaf)
 CompoundFile/          → Infrastructure/
+DelimitedText/         → (nothing — leaf parser/codec module)
 Pages/                 → Infrastructure/, Catalog.Models/, AccessWriter context for writer-owned services
 Encryption/            → CompoundFile/, Infrastructure/, Pages/
 Transactions/          → Pages/, Infrastructure/, AccessWriter context for lifecycle orchestration
@@ -231,7 +239,7 @@ ValueEncoding/         → Schema/, ValueEncoding.Models/   [never depends on Va
 Indexes/               → Pages/, ValueEncoding/ (key encoding), Schema/, AccessWriter context for maintenance
 Catalog/               → Pages/, ValueDecoding/, Schema/, Indexes/, AccessWriter context for writes
 Schema/                → Models/, Indexes/, Pages/, AccessWriter context for writer-owned builders
-Relationships/         → Catalog/, Indexes/, Pages/, Schema/, AccessReader/AccessWriter context
+Relationships/         → Catalog/, DelimitedText/, Indexes/, Pages/, Schema/, AccessReader/AccessWriter context
 ComplexColumns/        → Catalog/, Indexes/, Pages/, Schema/, ValueDecoding/, AccessReader/AccessWriter context
 AccessBase (root)      → Pages/, Encryption/, Infrastructure/
 AccessReader (root)    → ValueDecoding/, Catalog/, Indexes/, Pages/, ComplexColumns/, Relationships/
@@ -256,6 +264,7 @@ Every folder maps 1:1 to a namespace per the .NET Framework Design Guidelines (�
 | `Exceptions/` | `JetDatabaseWriter.Exceptions` |
 | `Catalog/` | `JetDatabaseWriter.Catalog` |
 | `Catalog/Models/` | `JetDatabaseWriter.Catalog.Models` |
+| `DelimitedText/` | `JetDatabaseWriter.DelimitedText` |
 | `ValueEncoding/` | `JetDatabaseWriter.ValueEncoding` |
 | `ValueEncoding/Models/` | `JetDatabaseWriter.ValueEncoding.Models` |
 | `ValueDecoding/` | `JetDatabaseWriter.ValueDecoding` |
@@ -312,6 +321,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Manager / Coordinator** | `RelationshipManager`, `LinkedTableManager`, `ComplexColumnManager`, `ComplexColumnReader` | Keeps feature-specific catalog and child-table workflows out of the public facades |
 | **Catalog Store** | `RelationshipCatalogStore` | Keeps MSysRelationships row emission/loading/rewrites separate from TDEF logical-index mutation |
 | **Runtime Enforcer** | `RelationshipEnforcer` | Keeps FK insert/update/delete referential-integrity checks separate from create/drop/rename workflows |
+| **Streaming Parser** | `DelimitedTextReader` | Parses linked CSV/delimited text records one at a time with bounded memory, quote handling, and line tracking |
 | **Planner / Locator** | `RelationshipSeekPlanner`, `RelationshipChildRowLocator` | Separates index-backed lookup planning and row-location resolution from FK fallback/enforcement workflow |
 | **Policy** | `TypedRowFallbackPolicy`, `RelationshipCascadePolicy` | Encapsulates strict vs lenient malformed-row handling and FK cascade recursion limits |
 | **Gateway** (Fowler) | `LockFileCoordinator`, `JetByteRangeLock` | Encapsulates filesystem concurrency primitives behind a clean interface |
@@ -407,9 +417,9 @@ The `CodeTables/` directory (gzipped collation lookup data) lives under `Indexes
 
 Classes such as `PageAllocator`, `DataPageInserter`, `TDefPageBuilder`, `RelationshipManager`, and `ComplexColumnManager` live beside the disk-format concern they manipulate, even when they receive `AccessWriter` as a context object. This keeps the folder structure domain-first while avoiding a large writer god class.
 
-### 8. Linked-table metadata spans catalog and schema
+### 8. Linked-table metadata spans catalog, schema, and delimited text parsing
 
-Linked-table public APIs live on `IAccessSchema`; linked-table discovery and read-through live in `Relationships/LinkedTableManager`; ODBC schema-cache property-map generation lives in `Schema/LinkedOdbcLvPropBuilder` because it emits `MSysObjects.LvProp` property blocks using the shared schema property-map builder.
+Linked-table public APIs live on `IAccessSchema`; linked-table discovery and read-through live in `Relationships/LinkedTableManager`; ODBC schema-cache property-map generation lives in `Schema/LinkedOdbcLvPropBuilder` because it emits `MSysObjects.LvProp` property blocks using the shared schema property-map builder. Text/CSV linked-table read-through delegates record parsing to `DelimitedText/`, keeping separator, quote, line-ending, header-normalization, and parser-limit behavior reusable outside the linked-table manager.
 
 ### 9. Relationship catalog and runtime helpers are split from lifecycle orchestration
 

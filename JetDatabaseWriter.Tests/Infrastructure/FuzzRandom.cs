@@ -5,7 +5,7 @@ using System;
 #pragma warning disable SCS0005, CA5394 // Using non-cryptographic random for fuzz testing is acceptable.
 
 /// <summary>
-/// A random number generator that uses fuzzed bytes as entropy and falls back to a standard Random instance if the fuzzed bytes are exhausted.
+/// A random number generator that uses fuzzed bytes as entropy and falls back to a deterministic Random instance if the fuzzed bytes are exhausted.
 /// </summary>
 internal sealed class FuzzRandom : Random
 {
@@ -16,6 +16,7 @@ internal sealed class FuzzRandom : Random
     private FuzzRandom(byte[] bytes)
     {
         _bytes = bytes;
+        _fallback = new Random(CreateFallbackSeed(bytes));
         _pos = 0;
     }
 
@@ -27,7 +28,7 @@ internal sealed class FuzzRandom : Random
     public static FuzzRandom Create(byte[]? fuzzedBytes)
         => fuzzedBytes?.Length > 0
             ? new FuzzRandom(fuzzedBytes)
-            : new FuzzRandom(new Random());
+            : new FuzzRandom(new Random(0));
 
     private int NextByte()
     {
@@ -49,6 +50,8 @@ internal sealed class FuzzRandom : Random
         return (b1 << 24) | (b2 << 16) | (b3 << 8) | b4;
     }
 
+    public override int Next(int maxValue) => Next(0, maxValue);
+
     public override int Next(int minValue, int maxValue)
     {
         if (minValue >= maxValue)
@@ -56,9 +59,9 @@ internal sealed class FuzzRandom : Random
             return minValue;
         }
 
-        int range = maxValue - minValue;
-        int value = Math.Abs(Next()) % range;
-        return minValue + value;
+        long range = (long)maxValue - minValue;
+        uint value = unchecked((uint)Next());
+        return (int)(minValue + (long)(value % (ulong)range));
     }
 
     public override double NextDouble()
@@ -116,4 +119,19 @@ internal sealed class FuzzRandom : Random
         _ when type == typeof(byte[]) => RandomBytes(),
         _ => null,
     };
+
+    private static int CreateFallbackSeed(byte[] bytes)
+    {
+        unchecked
+        {
+            uint hash = 2166136261u;
+            foreach (byte value in bytes)
+            {
+                hash ^= value;
+                hash *= 16777619u;
+            }
+
+            return (int)hash;
+        }
+    }
 }
