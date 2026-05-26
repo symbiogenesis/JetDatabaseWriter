@@ -72,7 +72,7 @@ JetDatabaseWriter/
 │
 ├── ValueEncoding/                         (write-path: typed values → bytes)
 │   ├── RowEncoder.cs                      (SerializeRow, EncodeFixed/Variable/Text/Binary)
-│   ├── LongValueEncoder.cs               (pre-encodes oversized MEMO/OLE values)
+│   ├── LongValueEncoder.cs               (pre-encodes oversized MEMO/OLE/attachment values)
 │   ├── NumericEncoder.cs                  (BCD decimal encoding)
 │   └── Models/
 │       └── PreEncodedLongValue.cs
@@ -80,7 +80,7 @@ JetDatabaseWriter/
 ├── LongValues/                            (shared LVAL storage codec)
 │   ├── LongValueStore.cs                  (descriptor/page helpers, chain traversal, deallocation)
 │   └── Models/
-│       ├── LongValueDescriptor.cs         (12-byte MEMO/OLE descriptor parser/serializer)
+│       ├── LongValueDescriptor.cs         (12-byte MEMO/OLE/attachment descriptor parser/serializer)
 │       └── LvalChainResult.cs             (bounded chain-read result)
 │
 ├── ValueDecoding/                         (read-path: bytes → typed values)
@@ -320,7 +320,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 |---------|--------------|-----------|
 | **Facade** (GoF) | `AccessReader`, `AccessWriter` | Thin orchestrators that delegate to domain modules; keeps public API surface small |
 | **Symmetric Codec** | `ValueEncoding/` ↔ `ValueDecoding/`, `LongValueEncoder` ↔ `LongValueDecoder` | Matched encode/decode pairs (same pattern as protobuf's `CodedOutputStream`/`CodedInputStream`) |
-| **Shared Storage Codec** | `LongValues/LongValueStore`, `LongValueDescriptor` | Centralizes LVAL descriptor parsing, page-buffer emission, chain traversal, and secure-delete page reclamation |
+| **Shared Storage Codec** | `LongValues/LongValueStore`, `LongValueDescriptor` | Centralizes LVAL descriptor parsing, page-buffer emission, chain traversal, and secure-erase page reclamation |
 | **Builder** | `TDefPageBuilder`, `IndexBTreeBuilder`, `IndexLeafPageBuilder`, `ColumnPropertyBlockBuilder`, `DirectRowDecoderBuilder` | Constructs complex page buffers incrementally |
 | **Strategy via layout structs** | `DataPageLayout`, `IndexLayout` | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; cache-friendly |
 | **Pager** | `AccessBase` + `LruCache` + `PageJournal` | Dedicated page-level I/O with 256-page LRU eviction cache and before-image journaling (same pattern as SQLite's pager) |

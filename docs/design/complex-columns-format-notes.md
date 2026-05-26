@@ -210,7 +210,7 @@ Phase C8 lifts the inline cap that limited C4 attachment payloads to ~256 bytes.
 
 LVAL page layout (one row per page, written by `LongValueStore.BuildSinglePageBuffer` / `BuildChainedPageBuffer`):
 
-- `page_type = 0x01` (data page; the reader does not treat type `0x05` LVAL pages, so this matches the on-disk reader contract).
+- `page_type = 0x01` (ordinary data page with an `LVAL` marker in bytes 4..7; `0x05` is the usage-map page type in this codebase, not the writer's LVAL page form).
 - bytes 4..7 are ASCII `LVAL`.
 - bytes 8..11 store the descriptor token from header bytes 8..11.
 - `num_rows = 1`, single row offset entry pointing at byte 20 (`Constants.LongValue.LvalRowStart`).
@@ -227,7 +227,7 @@ Chunking math:
 C8 caveats:
 
 - **Upper limit is `Constants.LongValue.MaxPayloadBytes = (1 << 24) − 1`** (~16 MiB) per single MEMO / OLE / Attachment value, set by the on-disk 24-bit `memo_len` field. Larger payloads throw `JetLimitationException`.
-- **No LVAL page reuse on update/delete**: `UpdateRowsAsync` rewrites the row through `InsertRowDataAsync` and re-allocates a fresh LVAL chain; the old LVAL pages stay on disk and are reclaimed by Access on the next Compact & Repair pass (same model used by the W5 stale-leaf path).
+- **Default update/delete do not reclaim old LVAL pages**: `UpdateRowsAsync` rewrites the row through `InsertRowDataAsync` and allocates a fresh LVAL chain; `DeleteRowsAsync` marks the owning row deleted. With `SecureEraseMode.None`, old LVAL pages remain on disk for Compact & Repair or a rebuild. With `SecureEraseMode.DeletedRowsAndFreedPages`, `LongValueStore.DeallocateExternalPagesAsync` walks the single-page or chained descriptor, scrubs the old pages, and returns them to the Access global free list.
 - **System-table OLE columns (`MSysObjects.LvProp` / `LvModule` / `LvExtra`) keep the 256-byte inline cap.** Internal system-table writes bypass the pre-encode hook because the property blobs the writer emits today are well under the inline limit; lifting the cap there would require routing every system-table writer through `InsertRowDataLocAsync`.
 - **Validation.** Round-trip through this library's reader is verified in `JetDatabaseWriter.Tests/ComplexColumns/ComplexColumnsLvalChainTests.cs` (single-page form, chained form, deflate-compressed text payload). Automated DAO CompactDatabase coverage now includes fresh writer-created complex attachment payload bytes in `FreshWriterCreatedComplexColumns_SurviveCompactAndRepair` and a Northwind-hosted writer-created attachment table with a chained-LVAL `.jpg` payload in `DaoCompact_ComplexColumnsWithLvalPayload_SurviveCompactAndRepair`; see [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 

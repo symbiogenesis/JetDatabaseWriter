@@ -20,7 +20,7 @@ optimization threads.
 - Benchmark fixture sizes: `JetDatabaseWriter.Benchmarks/SyntheticDatabases.cs`
 - Main read path: `JetDatabaseWriter/AccessReader.cs`
 - Shared page, row, and text decode helpers: `JetDatabaseWriter/AccessBase.cs`
-- Long-value decode path: `JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs`
+- Long-value decode path: `JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs` plus shared LVAL chain traversal in `JetDatabaseWriter/LongValues/LongValueStore.cs`
 
 ## Current architecture
 
@@ -115,6 +115,7 @@ Primary code path:
 - `LongValueDecoder.ReadLvalChainAsync`
 - `LongValueDecoder.LocateLvalRowAsync`
 - `LongValueDecoder.DecodeLongValue`
+- `LongValueStore.ReadChainedPayloadAsync`
 
 ### 2. DataTable materialization
 

@@ -66,8 +66,10 @@ overload adds generated schema-cache targets.
 
 **Data remanence semantics: REGRESSION-GUARDED.** Default delete/update behavior
 preserves normal JET logical-delete semantics: user-row slots are marked deleted
-with the `0x8000` row-offset bit and old row/LVAL payload bytes may remain until
-reuse. Secure erase remains opt-in through `SecureEraseMode.DeletedRowsAndFreedPages`.
+with the `0x8000` row-offset bit, old row payload bytes may remain until slot or
+page reuse, and old LVAL pages may remain on disk rather than being returned to
+the free list. Secure erase remains opt-in through
+`SecureEraseMode.DeletedRowsAndFreedPages`.
 The separate `0x4000` row-offset bit is treated as non-live/overflow, not as the
 deletion marker the writer should set.
 

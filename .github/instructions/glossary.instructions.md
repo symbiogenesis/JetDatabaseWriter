@@ -24,7 +24,7 @@ applyTo: "**"
 | Acronym | Meaning |
 |---------|---------|
 | **TDEF** | Table Definition — page type storing column metadata, index defs, and row counts |
-| **LVAL** | Long Value — pages storing MEMO/OLE data that exceeds inline limits |
+| **LVAL** | Long Value — descriptor/page form for MEMO, OLE, and attachment payloads; oversized payloads live on external data pages marked with the `LVAL` signature |
 | **EOD** | End of Data — marker in the variable-length column trailer |
 | **PK** | Primary Key |
 | **FK** | Foreign Key |
@@ -70,7 +70,7 @@ applyTo: "**"
 | Acronym | Meaning |
 |---------|---------|
 | **GUID** | Globally Unique Identifier — column type 0x0F |
-| **BLOB** | Binary Large Object — large binary data stored via LVAL |
+| **BLOB** | Binary Large Object — large binary payload, often stored through OLE/attachment LVAL storage when it exceeds inline limits |
 | **MEMO** | Memo field — column type 0x0C; long text |
 | **BCD** | Binary-Coded Decimal — format for `T_NUMERIC` (0x10) columns |
 | **T_BOOL** | Type Boolean (0x01) |
