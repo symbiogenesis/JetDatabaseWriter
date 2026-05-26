@@ -6,9 +6,6 @@ using System.Security.Cryptography;
 using System.Text;
 using JetDatabaseWriter.Tests.Encryption;
 
-#pragma warning disable CA5358 // ECMA-376 Agile encryption uses fixed cipher modes per spec.
-#pragma warning disable CA5379 // SHA-512 is the spec-mandated hash for Agile here.
-
 /// <summary>
 /// Builds a real, ECMA-376 §2.3.4 "Agile"–encrypted .accdb fixture in
 /// memory. The output is a CFB v4 (4096-byte sector) compound document
