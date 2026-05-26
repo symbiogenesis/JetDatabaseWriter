@@ -3083,8 +3083,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <summary>Reads a page through the cache when one is configured (PageCacheSize &gt; 0) and no transaction journal is active.</summary>
     internal async ValueTask<byte[]> ReadPageCachedAsync(long n, CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
-        cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfDisposedOrCancelled(cancellationToken);
 
         if (ActiveJournal is not null)
         {

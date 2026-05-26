@@ -898,6 +898,18 @@ public abstract class AccessBase : IAccessBase
     internal void ThrowIfDisposed() => Guard.ThrowIfDisposed(_disposed, this);
 
     /// <summary>
+    /// Combined disposed-and-cancelled guard. Mirrors the call-site pattern
+    /// <c>ThrowIfDisposed(); cancellationToken.ThrowIfCancellationRequested();</c>
+    /// that opens nearly every public writer entry point.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void ThrowIfDisposedOrCancelled(CancellationToken cancellationToken)
+    {
+        Guard.ThrowIfDisposed(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    /// <summary>
     /// Reads a single column name from the TDEF byte array at <paramref name="pos"/>,
     /// advancing <paramref name="pos"/> past the name bytes.
     /// Returns the byte length consumed, or -1 if the name extends beyond <paramref name="td"/>.
