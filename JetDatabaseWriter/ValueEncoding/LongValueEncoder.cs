@@ -21,7 +21,7 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// Owned by <see cref="AccessWriter"/>; the writer delegates long-value
 /// pre-encoding through this class.
 /// </summary>
-internal sealed class LongValueEncoder(AccessWriter writer)
+internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAllocator)
 {
     private const int MaxInlineMemoBytes = 1024;
     private const int MaxInlineOleBytes = 256;
@@ -200,7 +200,7 @@ internal sealed class LongValueEncoder(AccessWriter writer)
             byte[] page = BuildSingleLvalPageBuffer(data, lvalToken, packRowsAtEnd);
             try
             {
-                long pageNumber = await writer.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
+                long pageNumber = await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
                 header[3] = 0x40;
                 uint lvalDp = unchecked((uint)((pageNumber << 8) | 0));
                 AccessBase.Wi32(header, 4, (int)lvalDp);
@@ -225,7 +225,7 @@ internal sealed class LongValueEncoder(AccessWriter writer)
             byte[] page = BuildChainLvalPageBuffer(data, chunkStart, chunkLen, nextDp, lvalToken, packRowsAtEnd);
             try
             {
-                long pageNumber = await writer.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
+                long pageNumber = await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
                 nextDp = unchecked((uint)((pageNumber << 8) | 0));
             }
             finally

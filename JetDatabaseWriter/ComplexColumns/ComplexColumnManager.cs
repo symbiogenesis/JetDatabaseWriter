@@ -12,8 +12,10 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
@@ -33,7 +35,7 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// when the parent column or table changes shape. See
 /// <c>docs/design/complex-columns-format-notes.md</c>.
 /// </summary>
-internal sealed class ComplexColumnManager(AccessWriter writer)
+internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer indexes, PageAllocator pageAllocator)
 {
     private readonly AccessWriter _writer = writer;
 
@@ -252,7 +254,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         {
             TableDef tableDef = AccessWriter.BuildTableDefinition(cols, _writer._format);
             (byte[] tdefPage, _) = _writer.BuildTDefPageWithIndexOffsets(tableDef, []);
-            long tdefPageNumber = await _writer.AllocatePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+            long tdefPageNumber = await pageAllocator.AllocatePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
             await _writer.InsertCatalogEntryAsync(
                 name,
@@ -827,7 +829,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer)
         await _writer.Constraints.ApplyAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
 
         await _writer.InsertRowDataAsync(flatTdefPage, flatDef, flatValues, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await _writer.MaintainIndexesAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);
+        await indexes.MaintainIndexesAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);
     }
 
     private static ComplexColumnKind ClassifyComplexColumnKind(byte parentType, TableDef flatDef)

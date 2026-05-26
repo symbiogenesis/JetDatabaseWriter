@@ -15,6 +15,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -32,7 +33,7 @@ using static JetDatabaseWriter.Constants.ColumnTypes;
 /// Owned by an <see cref="AccessWriter"/> instance via a private field;
 /// AccessWriter exposes thin forwarders for the public CRUD entry points.
 /// </summary>
-internal sealed class RelationshipManager(AccessWriter writer)
+internal sealed class RelationshipManager(AccessWriter writer, IndexMaintainer indexes, PageAllocator pageAllocator)
 {
     // ════════════════════════════════════════════════════════════════
     // Foreign-key relationships — MSysRelationships row emission
@@ -182,11 +183,11 @@ internal sealed class RelationshipManager(AccessWriter writer)
             // relationship existed. Re-read TDEFs because the emit mutates
             // both sides' TDEF pages in place.
             TableDef primaryDefAfter = await writer.ReadRequiredTableDefAsync(primaryEntry.TDefPage, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
-            await writer.MaintainIndexesAsync(primaryEntry.TDefPage, primaryDefAfter, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(primaryEntry.TDefPage, primaryDefAfter, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
             if (foreignEntry.TDefPage != primaryEntry.TDefPage)
             {
                 TableDef foreignDefAfter = await writer.ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
-                await writer.MaintainIndexesAsync(foreignEntry.TDefPage, foreignDefAfter, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+                await indexes.MaintainIndexesAsync(foreignEntry.TDefPage, foreignDefAfter, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -262,14 +263,14 @@ internal sealed class RelationshipManager(AccessWriter writer)
         if (pkPlan.AllocatesNewRealIdx)
         {
             byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(writer._pgSz, primaryTdefPage, []);
-            long lp = await writer.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
+            long lp = await pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
             pkPlan = pkPlan.WithLeafPage(lp);
         }
 
         if (fkPlan.AllocatesNewRealIdx)
         {
             byte[] leaf = IndexLeafPageBuilder.BuildJet4LeafPage(writer._pgSz, foreignTdefPage, []);
-            long lp = await writer.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
+            long lp = await pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
             fkPlan = fkPlan.WithLeafPage(lp);
         }
 
@@ -1406,7 +1407,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
 
         for (int pageIndex = retainedCount; pageIndex < pageCount; pageIndex++)
         {
-            pageNumbers[pageIndex] = await writer.AllocatePageAsync(new byte[writer._pgSz], cancellationToken).ConfigureAwait(false);
+            pageNumbers[pageIndex] = await pageAllocator.AllocatePageAsync(new byte[writer._pgSz], cancellationToken).ConfigureAwait(false);
         }
 
         logicalBytes[0] = 0x02;
@@ -1423,7 +1424,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
 
         for (int pageIndex = pageCount; pageIndex < existingPageNumbers.Count; pageIndex++)
         {
-            await writer.DeallocatePageAsync(existingPageNumbers[pageIndex], cancellationToken).ConfigureAwait(false);
+            await pageAllocator.DeallocatePageAsync(existingPageNumbers[pageIndex], cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -2602,7 +2603,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
             if (deleted > 0)
             {
                 await writer.AdjustTDefRowCountAsync(childEntry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
-                await writer.MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+                await indexes.MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -2834,7 +2835,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
         if (deleted > 0)
         {
             await writer.AdjustTDefRowCountAsync(childEntry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
-            await writer.MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
         }
 
         return true;
@@ -2977,7 +2978,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
                 await writer.InsertRowDataAsync(childEntry.TDefPage, childDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
 
-            await writer.MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -3067,7 +3068,7 @@ internal sealed class RelationshipManager(AccessWriter writer)
             await writer.InsertRowDataAsync(childEntry.TDefPage, childDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
-        await writer.MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+        await indexes.MaintainIndexesAsync(childEntry.TDefPage, childDef, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
         return true;
     }
 

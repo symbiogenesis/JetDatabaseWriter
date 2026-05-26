@@ -9,6 +9,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using Xunit;
 
@@ -322,7 +323,8 @@ public sealed class IndexIncrementalMaintenanceTests
             (new RowLocation(10, 0, 0, 0), [1]),
         };
 
-        bool incremental = await reopened.TryMaintainIndexesIncrementalAsync(
+        var indexMaintainer = new IndexMaintainer(reopened, new PageAllocator(reopened));
+        bool incremental = await indexMaintainer.TryMaintainIndexesIncrementalAsync(
             tdefPage,
             tableDef,
             insertedRows,

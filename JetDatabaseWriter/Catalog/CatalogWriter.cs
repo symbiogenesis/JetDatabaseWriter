@@ -7,6 +7,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 
@@ -15,9 +16,9 @@ using JetDatabaseWriter.Schema.Models;
 /// <summary>
 /// Catalog (MSysObjects) write operations for <see cref="AccessWriter"/>.
 /// Owns insertion of catalog entries, ACE rows, table renames, and
-/// catalog row scanning. The writer exposes thin instance forwarders.
+/// catalog row scanning.
 /// </summary>
-internal sealed class CatalogWriter(AccessWriter writer)
+internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes)
 {
     /// <summary>
     /// Inserts a new row into <c>MSysObjects</c> with default flags.
@@ -318,7 +319,7 @@ internal sealed class CatalogWriter(AccessWriter writer)
         string objectName,
         CancellationToken cancellationToken)
     {
-        bool spliced = await writer.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
+        bool spliced = await indexes.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
         if (!spliced)
         {
             throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes for '{objectName}'.");

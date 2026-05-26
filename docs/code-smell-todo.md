@@ -22,11 +22,11 @@ Done criteria:
 
 Hotspot: [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs#L40-L132), especially the forwarder sections around [relationship APIs](../JetDatabaseWriter/AccessWriter.cs#L1739-L1750) and [index/page maintenance](../JetDatabaseWriter/AccessWriter.cs#L4119-L4145)
 
-- [ ] Inventory all thin forwarders and categorize them as public API boundary, internal compatibility shim, or removable call-site debt.
-- [ ] Move internal call sites to the owning subsystem where that does not leak too much writer state.
-- [ ] Replace broad friend-style access to the writer with narrow collaborator APIs where practical.
-- [ ] Remove or reduce file-level suppressions once the compatibility wrappers shrink.
-- [ ] Keep public API behavior unchanged while internal ownership moves.
+- [x] Inventory all thin forwarders and categorize them as public API boundary, internal compatibility shim, or removable call-site debt.
+- [x] Move internal call sites to the owning subsystem where that does not leak too much writer state.
+- [x] Replace broad friend-style access to the writer with narrow collaborator APIs where practical.
+- [x] Remove or reduce file-level suppressions once the compatibility wrappers shrink.
+- [x] Keep public API behavior unchanged while internal ownership moves.
 
 Done criteria:
 
@@ -96,8 +96,8 @@ Current largest production files from the smell pass:
 
 ## Suggested Order Of Attack
 
-- [ ] Fix [TypedValueParser.cs](../JetDatabaseWriter/ValueDecoding/TypedValueParser.cs#L13-L84) first because it has the highest risk of hiding bad data behind valid-looking results.
-- [ ] Then reduce [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs) internal forwarder debt, because it affects subsystem boundaries across the library.
+- [x] Fix [TypedValueParser.cs](../JetDatabaseWriter/ValueDecoding/TypedValueParser.cs#L13-L84) first because it has the highest risk of hiding bad data behind valid-looking results.
+- [x] Then reduce [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs) internal forwarder debt, because it affects subsystem boundaries across the library.
 - [ ] Then carve reader-side complex column and typed-row fallback policy out of [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs).
 - [ ] Then split [RelationshipManager.cs](../JetDatabaseWriter/Relationships/RelationshipManager.cs) along lifecycle, TDEF mutation, and runtime enforcement boundaries.
 - [ ] Refactor [CalculatedExpressionEvaluator.cs](../JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs) after adding enough golden tests to protect Access-compatible semantics.

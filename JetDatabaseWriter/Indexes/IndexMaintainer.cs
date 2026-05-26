@@ -11,6 +11,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
@@ -26,10 +27,10 @@ using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
 /// (<see cref="MaintainIndexesAsync"/>), incremental fast-path
 /// (<see cref="TryMaintainIndexesIncrementalAsync"/>), and the
 /// catalog-index splice (<see cref="TrySpliceCatalogIndexEntryAsync"/>).
-/// Owned by an <see cref="AccessWriter"/> via a private field; the writer
-/// exposes thin instance forwarders.
+/// Owned by an <see cref="AccessWriter"/> via a private field, with direct
+/// access to the writer's page allocator for index page reservation and cleanup.
 /// </summary>
-internal sealed class IndexMaintainer(AccessWriter writer)
+internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAllocator)
 {
     /// <summary>
     /// Gets the most recent reason
@@ -438,7 +439,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
             }
             else
             {
-                long reservedFirstPage = await writer.ReserveContiguousPagesAsync(build.Pages.Count, cancellationToken).ConfigureAwait(false);
+                long reservedFirstPage = await pageAllocator.ReserveContiguousPagesAsync(build.Pages.Count, cancellationToken).ConfigureAwait(false);
                 if (reservedFirstPage != firstPageNumber)
                 {
                     firstPageNumber = reservedFirstPage;
@@ -620,7 +621,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                     && deallocatedPages.Add(oldPageNumber)
                     && await IsReplacedIndexPageAsync(oldPageNumber, tdefPage, cancellationToken).ConfigureAwait(false))
                 {
-                    await writer.DeallocatePageAsync(oldPageNumber, cancellationToken).ConfigureAwait(false);
+                    await pageAllocator.DeallocatePageAsync(oldPageNumber, cancellationToken).ConfigureAwait(false);
                 }
             }
         }
@@ -3227,7 +3228,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
                 }
 
                 int splitCount = splitPages.Count;
-                long firstFreshPage = await writer.ReserveContiguousPagesAsync(splitCount - 1, cancellationToken).ConfigureAwait(false);
+                long firstFreshPage = await pageAllocator.ReserveContiguousPagesAsync(splitCount - 1, cancellationToken).ConfigureAwait(false);
                 long[] pageNumbers = AllocateSplitPageNumbers(targetLeafPage, splitCount, firstFreshPage);
 
                 byte[][]? pageBytesAll = TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
@@ -3363,7 +3364,7 @@ internal sealed class IndexMaintainer(AccessWriter writer)
         {
             long provisionalFirstPage = writer._stream.Length / writer._pgSz;
             build = IndexBTreeBuilder.Build(layout, writer._pgSz, tdefPage, spliced, provisionalFirstPage);
-            long firstNewPage = await writer.ReserveContiguousPagesAsync(build.Pages.Count, cancellationToken).ConfigureAwait(false);
+            long firstNewPage = await pageAllocator.ReserveContiguousPagesAsync(build.Pages.Count, cancellationToken).ConfigureAwait(false);
             if (firstNewPage != provisionalFirstPage)
             {
                 build = IndexBTreeBuilder.Build(layout, writer._pgSz, tdefPage, spliced, firstNewPage);

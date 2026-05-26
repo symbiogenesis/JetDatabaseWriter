@@ -40,7 +40,6 @@ using UniqueIndexDescriptor = JetDatabaseWriter.Indexes.IndexLayout.UniqueIndexD
 #pragma warning disable CA1822 // Mark members as static
 #pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
 #pragma warning disable SA1204 // Static members grouped logically alongside related instance members
-#pragma warning disable SA1648 // Private compatibility helpers still carry inherited docs from previous public API
 
 /// <summary>
 /// Last maintenance path used by <see cref="AccessWriter.InsertSystemRowAndMaintainAsync"/>.
@@ -84,8 +83,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     private readonly bool _isAgileEncryptedRewrap;
 
     /// <summary>The single instance owning index B-tree maintenance: bulk rebuild,
-    /// incremental fast paths, and the catalog-index splice. AccessWriter keeps only
-    /// thin instance forwarders.</summary>
+    /// incremental fast paths, and the catalog-index splice.</summary>
     private readonly IndexMaintainer _indexMaintainer;
     private readonly HashSet<long> _ownedMapWritableTdefs = [];
 
@@ -173,17 +171,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         _outerEncryptedLeaveOpen = outerEncryptedLeaveOpen;
         _outerEncryptedFormat = outerEncryptedFormat;
         _isAgileEncryptedRewrap = outerEncryptedFormat != AccessEncryptionFormat.None;
-        Relationships = new RelationshipManager(this);
-        _indexMaintainer = new IndexMaintainer(this);
-        ComplexColumns = new ComplexColumnManager(this);
+        _pageAllocator = new PageAllocator(this);
+        _indexMaintainer = new IndexMaintainer(this, _pageAllocator);
+        Relationships = new RelationshipManager(this, _indexMaintainer, _pageAllocator);
+        ComplexColumns = new ComplexColumnManager(this, _indexMaintainer, _pageAllocator);
         _tdefPageBuilder = new TDefPageBuilder(this);
-        _longValueEncoder = new LongValueEncoder(this);
+        _longValueEncoder = new LongValueEncoder(this, _pageAllocator);
         _uniqueIndexChecker = new UniqueIndexChecker(this);
         _transactionLifecycle = new TransactionLifecycle(this);
-        _catalogWriter = new CatalogWriter(this);
+        _catalogWriter = new CatalogWriter(this, _indexMaintainer);
         _rowEncoder = new RowEncoder(this);
-        _dataPageInserter = new DataPageInserter(this);
-        _pageAllocator = new PageAllocator(this);
+        _dataPageInserter = new DataPageInserter(this, _pageAllocator);
         Constraints = new ConstraintRegistry(
             async (tableName, ct) => await ReadTableSnapshotAsync(tableName, ct).ConfigureAwait(false),
             async (tableName, ct) =>
@@ -570,7 +568,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 nextPage: 0,
                 tailPage: 0,
                 enablePrefixCompression: false);
-            long leafPageNumber = await AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
+            long leafPageNumber = await _pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
             leafPageNumbers[i] = leafPageNumber;
             WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
         }
@@ -597,7 +595,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     private ValueTask<long> ReserveFreshCoreSystemTablePagesAsync(DatabaseFormat format, bool fullCatalogSchema, CancellationToken cancellationToken)
         => format == DatabaseFormat.AceAccdb && fullCatalogSchema
-            ? ReserveContiguousPagesAsync(3, cancellationToken)
+            ? _pageAllocator.ReserveContiguousPagesAsync(3, cancellationToken)
             : new ValueTask<long>(0L);
 
     private static IReadOnlyList<ColumnDefinition> BuildFullCatalogColumnDefinitions()
@@ -660,7 +658,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // stay contiguous (tdefPages[i] lives at file page tdefPageNumber + i).
         long tdefPageNumber = reservedTdefPageNumber > 0
             ? reservedTdefPageNumber
-            : await ReserveContiguousPagesAsync(tdefPages.Length, cancellationToken).ConfigureAwait(false);
+            : await _pageAllocator.ReserveContiguousPagesAsync(tdefPages.Length, cancellationToken).ConfigureAwait(false);
 
         // Stamp the next-page pointer at offset 4 of every non-last TDEF page.
         for (int p = 0; p < tdefPages.Length - 1; p++)
@@ -699,7 +697,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     nextPage: 0,
                     tailPage: 0,
                     enablePrefixCompression: false);
-                long leafPageNumber = await AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
+                long leafPageNumber = await _pageAllocator.AllocatePageAsync(leafPage, cancellationToken).ConfigureAwait(false);
                 leafPageNumbers[i] = leafPageNumber;
                 WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
             }
@@ -1118,7 +1116,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     cancellationToken).ConfigureAwait(false);
                 if (!incremental)
                 {
-                    await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                    await _indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
                 }
 
                 await UpdateTDefAutoNumberHighWaterAsync(entry.TDefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
@@ -1233,7 +1231,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     cancellationToken).ConfigureAwait(false);
                 if (!incremental)
                 {
-                    await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                    await _indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
                 }
 
                 await UpdateTDefAutoNumberHighWaterAsync(entry.TDefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
@@ -1407,7 +1405,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 cancellationToken).ConfigureAwait(false);
             if (!incremental)
             {
-                await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                await _indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -1514,7 +1512,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 cancellationToken).ConfigureAwait(false);
             if (!incremental)
             {
-                await MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                await _indexMaintainer.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -2125,7 +2123,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 cancellationToken).ConfigureAwait(false);
             if (!incremental)
             {
-                await MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+                await _indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
             }
 
             await UpdateTDefAutoNumberHighWaterAsync(tdefPage, tableDef, new List<object[]>(1) { values }, cancellationToken).ConfigureAwait(false);
@@ -2707,7 +2705,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // so we don't pay the rebuild cost per row.
         if (projectedIndexes.Count > 0 && snapshot.Rows.Count > 0)
         {
-            await MaintainIndexesAsync(tempEntry.TDefPage, tempDef, tempName, cancellationToken).ConfigureAwait(false);
+            await _indexMaintainer.MaintainIndexesAsync(tempEntry.TDefPage, tempDef, tempName, cancellationToken).ConfigureAwait(false);
         }
 
         // Drop the original table, then rename the temp catalog entry to take its place.
@@ -2815,7 +2813,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         await ReplaceCatalogEntryAsync(tableName, originalTdefPage, lvProp, cancellationToken).ConfigureAwait(false);
         await DeleteCatalogRowsForTDefPageAsync(tempName, tempTdefPage, cancellationToken).ConfigureAwait(false);
         await DeleteAceRowsForObjectIdsAsync([tempTdefPage], cancellationToken).ConfigureAwait(false);
-        await DeallocatePageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
+        await _pageAllocator.DeallocatePageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
         InvalidateCatalogCache();
     }
 
@@ -3143,7 +3141,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         int freeSpace = rowStart - (_dataPage.RowsStart + (rowCount * 2));
         Wu16(page, 2, freeSpace);
 
-        return await AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
+        return await _pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
     }
 
     internal async ValueTask UpdateTableIndexUsageMapRowsAsync(long usageMapPageNumber, IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
@@ -3417,7 +3415,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         {
             if (pageNumber > 2)
             {
-                await DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                await _pageAllocator.DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -3860,7 +3858,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         await AdjustTDefRowCountAsync(tdefPage, rows.Count - tableDef.RowCount, cancellationToken).ConfigureAwait(false);
         tableDef.RowCount = rows.Count;
-        await MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        await _indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
     }
 
     internal bool TryGetCachedInsertPageNumber(long tdefPage, out long pageNumber)
@@ -4115,24 +4113,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
     }
 
-    // ════════════════════════════════════════════════════════════════
-    // Index-maintenance forwarders. The actual implementations live on
-    // <see cref="IndexMaintainer"/>; AccessWriter exposes thin instance
-    // forwarders so the many existing call sites (and the public
-    // RelationshipManager → writer.MaintainIndexesAsync calls) keep
-    // working.
-    // ════════════════════════════════════════════════════════════════
-
-    internal ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
-        => _indexMaintainer.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken);
-
-    internal ValueTask<long> AllocatePageAsync(byte[] page, CancellationToken cancellationToken)
-        => _pageAllocator.AllocatePageAsync(page, cancellationToken);
-
-    internal ValueTask<long> ReserveContiguousPagesAsync(int pageCount, CancellationToken cancellationToken)
-        => _pageAllocator.ReserveContiguousPagesAsync(pageCount, cancellationToken);
-
-    internal bool IsOwnedMapWritableTdef(long tdefPageNumber) => _ownedMapWritableTdefs.Contains(tdefPageNumber);
+    private bool IsOwnedMapWritableTdef(long tdefPageNumber) => _ownedMapWritableTdefs.Contains(tdefPageNumber);
 
     internal async ValueTask<bool> CanMaintainOwnedMapAsync(long tdefPageNumber, CancellationToken cancellationToken)
     {
@@ -4177,21 +4158,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         return false;
     }
 
-    internal void RegisterOwnedMapWritableTdef(long tdefPageNumber) => _ownedMapWritableTdefs.Add(tdefPageNumber);
-
-    internal ValueTask DeallocatePageAsync(long pageNumber, CancellationToken cancellationToken)
-        => _pageAllocator.DeallocatePageAsync(pageNumber, cancellationToken);
-
-    internal ValueTask MarkPageInOwnedMapAsync(long tdefPageNumber, long dataPageNumber, CancellationToken cancellationToken)
-        => _dataPageInserter.MarkPageInOwnedMapAsync(tdefPageNumber, dataPageNumber, cancellationToken);
-
-    internal ValueTask<bool> TryMaintainIndexesIncrementalAsync(
-        long tdefPage,
-        TableDef tableDef,
-        List<(RowLocation Loc, object[] Row)>? insertedRows,
-        List<(RowLocation Loc, object[] Row)>? deletedRows,
-        CancellationToken cancellationToken)
-        => _indexMaintainer.TryMaintainIndexesIncrementalAsync(tdefPage, tableDef, insertedRows, deletedRows, cancellationToken);
+    private void RegisterOwnedMapWritableTdef(long tdefPageNumber) => _ownedMapWritableTdefs.Add(tdefPageNumber);
 
     internal async ValueTask RequireMsysObjectsIndexMaintenanceAsync(
         TableDef msys,
@@ -4200,7 +4167,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         string operation,
         CancellationToken cancellationToken)
     {
-        bool incremental = await TryMaintainIndexesIncrementalAsync(
+        bool incremental = await _indexMaintainer.TryMaintainIndexesIncrementalAsync(
             2,
             msys,
             insertedRows,
@@ -4216,16 +4183,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes while {operation}.");
         }
 
-        await MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        await _indexMaintainer.MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
     }
-
-    internal ValueTask<bool> TrySpliceCatalogIndexEntryAsync(
-        long tdefPage,
-        TableDef tableDef,
-        RowLocation newRowLoc,
-        object[] newRowValues,
-        CancellationToken cancellationToken)
-        => _indexMaintainer.TrySpliceCatalogIndexEntryAsync(tdefPage, tableDef, newRowLoc, newRowValues, cancellationToken);
 
     internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
         => MarkRowDeletedAsync(pageNumber, rowIndex, tableDef: null, clearRowData: false, cancellationToken);
@@ -4337,7 +4296,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         if (!root.IsChained)
         {
             long singlePageNumber = root.FirstDp >> 8;
-            await DeallocatePageAsync(singlePageNumber, cancellationToken).ConfigureAwait(false);
+            await _pageAllocator.DeallocatePageAsync(singlePageNumber, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -4374,7 +4333,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 ReturnPage(lvalPage);
             }
 
-            await DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            await _pageAllocator.DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             currentDp = nextDp;
         }
     }
