@@ -1,10 +1,11 @@
-namespace JetDatabaseWriter.Benchmarks;
+namespace JetDatabaseWriter.Benchmarks.Reader;
 
 using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
+using JetDatabaseWriter.Benchmarks.Infrastructure;
 using JetDatabaseWriter.Models;
 
 /// <summary>

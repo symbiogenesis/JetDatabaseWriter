@@ -1,8 +1,9 @@
-namespace JetDatabaseWriter.Benchmarks;
+namespace JetDatabaseWriter.Benchmarks.Reader;
 
 using System;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
+using JetDatabaseWriter.Benchmarks.Infrastructure;
 
 public enum TableScanBenchmarkShape
 {

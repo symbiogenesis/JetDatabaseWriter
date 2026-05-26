@@ -1,7 +1,8 @@
-namespace JetDatabaseWriter.Benchmarks;
+namespace JetDatabaseWriter.Benchmarks.Reader;
 
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
+using JetDatabaseWriter.Benchmarks.Infrastructure;
 using JetDatabaseWriter.Benchmarks.Models;
 
 /// <summary>

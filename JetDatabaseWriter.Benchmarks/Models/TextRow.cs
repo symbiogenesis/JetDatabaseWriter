@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Benchmarks.Models;
 
 /// <summary>
 /// DTO that mirrors the synthetic <c>TextHeavy</c> table (see
-/// <see cref="SyntheticDatabases"/>).
+/// <see cref="Infrastructure.SyntheticDatabases"/>).
 /// </summary>
 public sealed class TextRow
 {

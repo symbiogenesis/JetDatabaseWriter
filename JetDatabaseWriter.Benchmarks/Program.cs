@@ -1,4 +1,3 @@
 using BenchmarkDotNet.Running;
-using JetDatabaseWriter.Benchmarks;
 
-BenchmarkSwitcher.FromAssembly(typeof(RowMapperBenchmarks).Assembly).Run(args);
+BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);

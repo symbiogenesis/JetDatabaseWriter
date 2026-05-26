@@ -4,7 +4,7 @@ using System;
 
 /// <summary>
 /// DTO that mirrors the synthetic <c>Numeric</c> table (see
-/// <see cref="SyntheticDatabases"/>). Used by the typed
+/// <see cref="Infrastructure.SyntheticDatabases"/>). Used by the typed
 /// <c>Rows&lt;T&gt;</c> decode benchmark.
 /// </summary>
 public sealed class NumericRow

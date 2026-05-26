@@ -1,9 +1,10 @@
-namespace JetDatabaseWriter.Benchmarks;
+namespace JetDatabaseWriter.Benchmarks.Reader;
 
 using System;
 using System.IO;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
+using JetDatabaseWriter.Benchmarks.Infrastructure;
 
 /// <summary>
 /// Open-floor benchmarks: measure <see cref="AccessReader.OpenAsync(string, AccessReaderOptions?, System.Threading.CancellationToken)"/>

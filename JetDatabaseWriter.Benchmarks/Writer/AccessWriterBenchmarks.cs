@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Benchmarks;
+namespace JetDatabaseWriter.Benchmarks.Writer;
 
 using System;
 using System.Collections.Generic;

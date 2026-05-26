@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Benchmarks;
+namespace JetDatabaseWriter.Benchmarks.Schema;
 
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Schema.Models;
