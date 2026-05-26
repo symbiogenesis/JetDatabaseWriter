@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -129,5 +130,5 @@ public sealed class AccessReaderTruncationMatrixTests(DatabaseCache db) : IClass
             or OverflowException
             or IndexOutOfRangeException
             or KeyNotFoundException
-            or JetDatabaseWriter.Exceptions.JetLimitationException;
+            or JetLimitationException;
 }

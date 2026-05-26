@@ -70,7 +70,7 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
         // At least one parameter row must reference "User Name".
         Assert.Contains(
             paramRows,
-            r => r["Name1"]?.ToString()?.Contains("User Name", System.StringComparison.Ordinal) == true);
+            r => r["Name1"]?.ToString()?.Contains("User Name", StringComparison.Ordinal) == true);
     }
 
     /// <summary>

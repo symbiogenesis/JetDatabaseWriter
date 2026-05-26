@@ -707,7 +707,7 @@ public sealed class LockFileTests : IDisposable
     private static void OpenAndAbandonSlot(string dbPath)
     {
 #pragma warning disable CA2000 // Intentional: this test exercises the finalizer when the caller forgets to dispose.
-        _ = JetDatabaseWriter.Transactions.LockFileSlotWriter.Open(
+        _ = LockFileSlotWriter.Open(
             dbPath,
             ownerTypeName: nameof(LockFileTests),
             respectExisting: false);
