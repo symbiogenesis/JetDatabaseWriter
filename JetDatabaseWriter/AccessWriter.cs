@@ -126,7 +126,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// complex-reference allocation, hidden flat-child-table emission, the row-level
     /// Add* APIs, and cascade / drop / rename plumbing for the artifacts.
     /// <see cref="AccessWriter"/> keeps only thin public-API forwarders.
-    /// Exposed for sibling managers (e.g. <see cref="Relationships.RelationshipManager"/>)
+    /// Exposed for sibling managers (e.g. <see cref="RelationshipManager"/>)
     /// that can delegate cascade-on-delete to the complex children.</summary>
     internal ComplexColumnManager ComplexColumns { get; }
 
@@ -135,7 +135,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// and the schema-evolution helpers. Keyed by table name (case-insensitive). The list is
     /// kept positionally aligned with the table's columns and is consulted at insert time to
     /// apply default values, auto-increment, required-field, and validation rule semantics.
-    /// Exposed for sibling managers (e.g. <see cref="ComplexColumns.ComplexColumnManager"/>)
+    /// Exposed for sibling managers (e.g. <see cref="ComplexColumnManager"/>)
     /// that apply constraints directly without a pass-through forwarder.</summary>
     internal ConstraintRegistry Constraints { get; }
 
