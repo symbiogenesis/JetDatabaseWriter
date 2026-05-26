@@ -2,11 +2,11 @@ namespace JetDatabaseWriter.Encryption;
 
 using System;
 using System.Buffers;
-using System.Buffers.Binary;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using JetDatabaseWriter.Infrastructure;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable CA5350 // SHA-1 is mandated by the MS-OFFCRYPTO Standard encryption spec.
 #pragma warning disable CA5358 // AES-CBC with IV=0 is the spec-mandated mode for Standard encryption.
@@ -110,7 +110,7 @@ internal static class OfficeCryptoStandard
             throw new InvalidDataException("EncryptionInfo is too short to contain a header size.");
         }
 
-        int headerSize = BinaryPrimitives.ReadInt32LittleEndian(encryptionInfo.AsSpan(8, 4));
+        int headerSize = Ri32(encryptionInfo, 8);
         int headerStart = 12;
         int headerEnd = headerStart + headerSize;
 
@@ -123,11 +123,11 @@ internal static class OfficeCryptoStandard
         ReadOnlySpan<byte> hdr = encryptionInfo.AsSpan(headerStart, headerSize);
 
         // Parse EncryptionHeader fields.
-        // uint flags = BinaryPrimitives.ReadUInt32LittleEndian(hdr.Slice(0, 4));
-        // uint sizeExtra = BinaryPrimitives.ReadUInt32LittleEndian(hdr.Slice(4, 4));
-        int algId = BinaryPrimitives.ReadInt32LittleEndian(hdr.Slice(8, 4));
-        int algIdHash = BinaryPrimitives.ReadInt32LittleEndian(hdr.Slice(12, 4));
-        int keyBits = BinaryPrimitives.ReadInt32LittleEndian(hdr.Slice(16, 4));
+        // uint flags = Ru32(hdr, 0);
+        // uint sizeExtra = Ru32(hdr, 4);
+        int algId = Ri32(hdr, 8);
+        int algIdHash = Ri32(hdr, 12);
+        int keyBits = Ri32(hdr, 16);
 
         if (algId != AlgIdAes128 && algId != AlgIdAes192 && algId != AlgIdAes256)
         {
@@ -149,7 +149,7 @@ internal static class OfficeCryptoStandard
         }
 
         ReadOnlySpan<byte> ver = encryptionInfo.AsSpan(verifierStart);
-        int saltSize = BinaryPrimitives.ReadInt32LittleEndian(ver.Slice(0, 4));
+        int saltSize = Ri32(ver, 0);
         if (saltSize != 16)
         {
             throw new InvalidDataException($"Standard encryption salt size must be 16, got {saltSize}.");
@@ -157,7 +157,7 @@ internal static class OfficeCryptoStandard
 
         byte[] salt = ver.Slice(4, 16).ToArray();
         byte[] encryptedVerifier = ver.Slice(20, 16).ToArray();
-        int verifierHashSize = BinaryPrimitives.ReadInt32LittleEndian(ver.Slice(36, 4));
+        int verifierHashSize = Ri32(ver, 36);
 
         // EncryptedVerifierHash is keyBits/8 bytes for the key length,
         // but always at least 32 bytes (padded to AES block boundary above SHA-1's 20-byte output).
@@ -229,7 +229,7 @@ internal static class OfficeCryptoStandard
                 byte[] iterBuf = new byte[4 + HashBytes]; // 4-byte iterator + 20-byte hash
                 for (int i = 0; i < spinCount; i++)
                 {
-                    BinaryPrimitives.WriteInt32LittleEndian(iterBuf.AsSpan(0, 4), i);
+                    Wi32(iterBuf, 0, i);
                     h.AsSpan().CopyTo(iterBuf.AsSpan(4));
                     OfficeCryptoPrimitives.HashSha1(iterBuf, scratchHash);
                     (h, scratchHash) = (scratchHash, h);
@@ -331,7 +331,7 @@ internal static class OfficeCryptoStandard
             throw new InvalidDataException("EncryptedPackage stream is too small (missing size prefix).");
         }
 
-        long decryptedSize = BinaryPrimitives.ReadInt64LittleEndian(encryptedPackage.AsSpan(0, 8));
+        long decryptedSize = Ri64(encryptedPackage, 0);
         if (decryptedSize < 0 || decryptedSize > int.MaxValue)
         {
             throw new InvalidDataException($"EncryptedPackage decrypted size out of range: {decryptedSize}.");
@@ -369,7 +369,7 @@ internal static class OfficeCryptoStandard
 
         // Prepend 8-byte LE size prefix.
         byte[] result = new byte[8 + cipher.Length];
-        BinaryPrimitives.WriteInt64LittleEndian(result.AsSpan(0, 8), plaintext.Length);
+        Wi64(result, 0, plaintext.Length);
         Buffer.BlockCopy(cipher, 0, result, 8, cipher.Length);
         return result;
     }
@@ -396,33 +396,33 @@ internal static class OfficeCryptoStandard
         int pos = 0;
 
         // Version: (4, 2) for Standard encryption with mandatory AES+SHA1.
-        BinaryPrimitives.WriteUInt16LittleEndian(info.AsSpan(pos, 2), 4);
+        Wu16(info, pos, 4);
         pos += 2;
-        BinaryPrimitives.WriteUInt16LittleEndian(info.AsSpan(pos, 2), 2);
+        Wu16(info, pos, 2);
         pos += 2;
 
         // Flags: fCryptoAPI (0x04) | fAES (0x20) = 0x24.
-        BinaryPrimitives.WriteUInt32LittleEndian(info.AsSpan(pos, 4), 0x24);
+        Wu32(info, pos, 0x24);
         pos += 4;
 
         // HeaderSize.
-        BinaryPrimitives.WriteInt32LittleEndian(info.AsSpan(pos, 4), headerSize);
+        Wi32(info, pos, headerSize);
         pos += 4;
 
         // EncryptionHeader fields.
-        BinaryPrimitives.WriteUInt32LittleEndian(info.AsSpan(pos, 4), 0x24); // Flags (same)
+        Wu32(info, pos, 0x24); // Flags (same)
         pos += 4;
-        BinaryPrimitives.WriteUInt32LittleEndian(info.AsSpan(pos, 4), 0); // SizeExtra
+        Wu32(info, pos, 0); // SizeExtra
         pos += 4;
-        BinaryPrimitives.WriteInt32LittleEndian(info.AsSpan(pos, 4), AlgIdAes128); // AlgID
+        Wi32(info, pos, AlgIdAes128); // AlgID
         pos += 4;
-        BinaryPrimitives.WriteInt32LittleEndian(info.AsSpan(pos, 4), AlgIdHashSha1); // AlgIDHash
+        Wi32(info, pos, AlgIdHashSha1); // AlgIDHash
         pos += 4;
-        BinaryPrimitives.WriteInt32LittleEndian(info.AsSpan(pos, 4), keyBits); // KeySize
+        Wi32(info, pos, keyBits); // KeySize
         pos += 4;
-        BinaryPrimitives.WriteUInt32LittleEndian(info.AsSpan(pos, 4), 0x18); // ProviderType (AES)
+        Wu32(info, pos, 0x18); // ProviderType (AES)
         pos += 4;
-        BinaryPrimitives.WriteUInt32LittleEndian(info.AsSpan(pos, 4), 0); // Reserved1
+        Wu32(info, pos, 0); // Reserved1
         pos += 4;
 
         // Reserved2 is not stored separately — it's part of the CSPName area.
@@ -430,13 +430,13 @@ internal static class OfficeCryptoStandard
         pos += cspNameBytes.Length;
 
         // EncryptionVerifier.
-        BinaryPrimitives.WriteInt32LittleEndian(info.AsSpan(pos, 4), 16); // SaltSize
+        Wi32(info, pos, 16); // SaltSize
         pos += 4;
         Buffer.BlockCopy(salt, 0, info, pos, 16); // Salt
         pos += 16;
         Buffer.BlockCopy(encryptedVerifier, 0, info, pos, 16); // EncryptedVerifier
         pos += 16;
-        BinaryPrimitives.WriteInt32LittleEndian(info.AsSpan(pos, 4), 20); // VerifierHashSize (SHA-1)
+        Wi32(info, pos, 20); // VerifierHashSize (SHA-1)
         pos += 4;
         Buffer.BlockCopy(encryptedVerifierHash, 0, info, pos, encryptedVerifierHash.Length);
 

@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Encryption;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
@@ -12,6 +11,7 @@ using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Implements the read-decrypt-rewrite pipeline used by
@@ -260,7 +260,7 @@ internal static class EncryptionConverter
         // Generate a random 32-bit RC4 db key.
         byte[] dbKeyBytes = new byte[4];
         RandomNumberGenerator.Fill(dbKeyBytes);
-        uint dbKey = BinaryPrimitives.ReadUInt32LittleEndian(dbKeyBytes);
+        uint dbKey = Ru32(dbKeyBytes, 0);
 
         Buffer.BlockCopy(dbKeyBytes, 0, result, 0x3E, 4);
         EncodeJet4StylePassword(result, password, useAccdbLegacyMask: false);
@@ -532,8 +532,8 @@ internal static class EncryptionConverter
             return false;
         }
 
-        ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.MajorVersion, 2));
-        ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.SectorShift, 2));
+        ushort majorVersion = Ru16(header, Constants.CompoundFile.HeaderOffsets.MajorVersion);
+        ushort sectorShift = Ru16(header, Constants.CompoundFile.HeaderOffsets.SectorShift);
 
         return (majorVersion == Constants.CompoundFile.V3.MajorVersion && sectorShift == Constants.CompoundFile.V3.SectorShift) ||
             (majorVersion == Constants.CompoundFile.V4.MajorVersion && sectorShift == Constants.CompoundFile.V4.SectorShift);

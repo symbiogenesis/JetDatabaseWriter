@@ -2,7 +2,6 @@ namespace JetDatabaseWriter;
 
 using System;
 using System.Buffers;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -23,6 +22,7 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1401 // Field should be private — fields are private protected (assembly-only)
 
@@ -239,34 +239,16 @@ public abstract class AccessBase : IAccessBase
         ArrayPool<byte>.Shared.Return(page);
     }
 
-    internal static ushort Ru16(byte[] b, int o) =>
-        BinaryPrimitives.ReadUInt16LittleEndian(b.AsSpan(o, 2));
-
-    internal static ushort Ru16(ReadOnlySpan<byte> b, int o) =>
-        BinaryPrimitives.ReadUInt16LittleEndian(b.Slice(o, 2));
-
-    internal static int Ri32(byte[] b, int o) =>
-        BinaryPrimitives.ReadInt32LittleEndian(b.AsSpan(o, 4));
-
-    internal static uint Ru32(byte[] b, int o) =>
-        BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(o, 4));
-
-    internal static void Wu16(byte[] b, int o, int value) =>
-        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(o, 2), (ushort)value);
-
-    internal static void Wi32(byte[] b, int o, int value) =>
-        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(o, 4), value);
-
-    // Pure byte-decoding helpers (ReadUInt24LittleEndian / ReadUInt24BigEndian /
-    // ReadSingleLittleEndian / ReadDoubleLittleEndian / ToHexStringNoSeparator)
-    // live in JetTypeInfo so the per-type byte→value switches don't take an
-    // upward dependency on Core.
+    // Little-endian primitives (Ru16/Ri32/Ru32/Ri64/Wu16/Wu32/Wi32/Wi64) and
+    // float/24-bit/hex helpers live in JetTypeInfo so non-Core callers
+    // (Encryption layer, IndexLeafIncremental, …) can use them without
+    // taking an upward dependency on AccessBase. They are surfaced here
+    // through the file-level `using static JetDatabaseWriter.Schema.JetTypeInfo;`.
 
     internal static void WriteUInt24(byte[] b, int o, int value)
     {
-        Span<byte> span = b.AsSpan(o, 3);
-        BinaryPrimitives.WriteUInt16LittleEndian(span, (ushort)(value & 0xFFFF));
-        span[2] = (byte)((value >> 16) & 0xFF);
+        Wu16(b, o, value & 0xFFFF);
+        b[o + 2] = (byte)((value >> 16) & 0xFF);
     }
 
     internal static void WriteField(byte[] b, int o, int fieldSize, int value)

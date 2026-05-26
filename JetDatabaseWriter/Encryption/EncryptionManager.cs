@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Encryption;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
@@ -13,6 +12,7 @@ using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Transactions;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Centralizes all JET / ACE / ACCDB encryption logic — header detection,
@@ -139,7 +139,7 @@ internal static class EncryptionManager
             return 0;
         }
 
-        return BinaryPrimitives.ReadUInt16LittleEndian(copy.AsSpan(CodePageOffsetInCopy, 2));
+        return Ru16(copy, CodePageOffsetInCopy);
     }
 
     /// <summary>
@@ -412,7 +412,7 @@ internal static class EncryptionManager
 
                 if ((encFlag & 0x02) != 0)
                 {
-                    rc4DbKey = BinaryPrimitives.ReadUInt32LittleEndian(hdr.AsSpan(0x3E, 4));
+                    rc4DbKey = Ru32(hdr, 0x3E);
                 }
             }
         }
@@ -870,8 +870,8 @@ internal static class EncryptionManager
     private static void DeriveRc4PageKey(uint dbKey, uint pageNumber, Span<byte> destination)
     {
         Span<byte> input = stackalloc byte[8];
-        BinaryPrimitives.WriteUInt32LittleEndian(input.Slice(0, 4), dbKey);
-        BinaryPrimitives.WriteUInt32LittleEndian(input.Slice(4, 4), pageNumber);
+        Wu32(input, 0, dbKey);
+        Wu32(input, 4, pageNumber);
         Span<byte> hash = stackalloc byte[16];
 #pragma warning disable CA5351, SCS0006 // MD5 is required by the Jet4 RC4 key derivation spec, and this code is not used for any security-sensitive purpose. The 8-byte input is too short to be meaningfully brute-forced, and the output is truncated to 4 bytes for the actual key, so collision resistance is not a concern.
         using (var md5 = MD5.Create())

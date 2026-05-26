@@ -2,7 +2,6 @@ namespace JetDatabaseWriter;
 
 using System;
 using System.Buffers;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics.CodeAnalysis;
@@ -28,6 +27,7 @@ using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Pure-managed reader for Microsoft Access JET databases (.mdb / .accdb).
@@ -2391,24 +2391,24 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         int valueEnd = Math.Min(start + len, buffer.Length);
         ReadOnlySpan<byte> value = buffer.AsSpan(start, valueEnd - start);
-        if (value.Length < 24 || BinaryPrimitives.ReadUInt16LittleEndian(value) != OlePackageSignature)
+        if (value.Length < 24 || Ru16(value, 0) != OlePackageSignature)
         {
             return false;
         }
 
-        int headerSize = BinaryPrimitives.ReadUInt16LittleEndian(value.Slice(2, 2));
+        int headerSize = Ru16(value, 2);
         if (headerSize < 20 || headerSize > value.Length - 24)
         {
             return false;
         }
 
         int oleHeaderOffset = headerSize;
-        if (BinaryPrimitives.ReadInt32LittleEndian(value.Slice(oleHeaderOffset, 4)) != OleVersion)
+        if (Ri32(value, oleHeaderOffset) != OleVersion)
         {
             return false;
         }
 
-        int typeNameLength = BinaryPrimitives.ReadInt32LittleEndian(value.Slice(oleHeaderOffset + 8, 4));
+        int typeNameLength = Ri32(value, oleHeaderOffset + 8);
         if (typeNameLength <= 0)
         {
             return false;
@@ -2420,7 +2420,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return false;
         }
 
-        int dataBlockLength = BinaryPrimitives.ReadInt32LittleEndian(value.Slice(dataBlockLengthOffset, 4));
+        int dataBlockLength = Ri32(value, dataBlockLengthOffset);
         int dataBlockOffset = dataBlockLengthOffset + 4;
         if (dataBlockLength <= 0 || dataBlockOffset + dataBlockLength > value.Length)
         {
@@ -2428,7 +2428,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         }
 
         ReadOnlySpan<byte> dataBlock = value.Slice(dataBlockOffset, dataBlockLength);
-        if (dataBlock.Length < 2 || BinaryPrimitives.ReadUInt16LittleEndian(dataBlock) != OlePackageStreamSignature)
+        if (dataBlock.Length < 2 || Ru16(dataBlock, 0) != OlePackageStreamSignature)
         {
             return false;
         }
@@ -2441,14 +2441,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
             return false;
         }
 
-        int packageType = BinaryPrimitives.ReadInt32LittleEndian(dataBlock.Slice(cursor, 4));
+        int packageType = Ri32(dataBlock, cursor);
         cursor += 4;
         if (packageType != EmbeddedFilePackageType)
         {
             return false;
         }
 
-        int localFilePathLength = BinaryPrimitives.ReadInt32LittleEndian(dataBlock.Slice(cursor, 4));
+        int localFilePathLength = Ri32(dataBlock, cursor);
         cursor += 4;
         if (localFilePathLength < 0 || cursor + localFilePathLength + 4 > dataBlock.Length)
         {
@@ -2457,7 +2457,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         cursor += localFilePathLength;
 
-        int embeddedLength = BinaryPrimitives.ReadInt32LittleEndian(dataBlock.Slice(cursor, 4));
+        int embeddedLength = Ri32(dataBlock, cursor);
         cursor += 4;
         if (embeddedLength <= 0 || cursor + embeddedLength > dataBlock.Length)
         {

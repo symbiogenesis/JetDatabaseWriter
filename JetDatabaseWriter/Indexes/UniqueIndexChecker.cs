@@ -10,6 +10,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
 using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
 using UniqueIndexDescriptor = JetDatabaseWriter.Indexes.IndexLayout.UniqueIndexDescriptor;
@@ -41,9 +42,9 @@ internal sealed class UniqueIndexChecker(AccessWriter writer)
             AccessBase.ReturnPage(tdefPageBytes);
         }
 
-        int numCols = AccessBase.Ru16(tdefBuffer, writer._tdef.NumCols);
-        int numIdx = AccessBase.Ri32(tdefBuffer, writer._tdef.NumCols + 2);
-        int numRealIdx = AccessBase.Ri32(tdefBuffer, writer._tdef.NumRealIdx);
+        int numCols = Ru16(tdefBuffer, writer._tdef.NumCols);
+        int numIdx = Ri32(tdefBuffer, writer._tdef.NumCols + 2);
+        int numRealIdx = Ri32(tdefBuffer, writer._tdef.NumRealIdx);
         if (numIdx <= 0 || numRealIdx <= 0
             || numIdx > Constants.TableDefinition.MaxIndexes
             || numRealIdx > Constants.TableDefinition.MaxIndexes)

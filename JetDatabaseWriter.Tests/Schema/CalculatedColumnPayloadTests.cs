@@ -15,6 +15,7 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Byte-level coverage for Access-authored calculated-column cached values.
@@ -150,7 +151,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         for (long pageNumber = 1; pageNumber < pageCount; pageNumber++)
         {
             byte[] page = await reader.GetRawPageBytesAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (page[0] != 0x01 || AccessBase.Ri32(page, dataPage.TDefOff) != entry.TDefPage)
+            if (page[0] != 0x01 || Ri32(page, dataPage.TDefOff) != entry.TDefPage)
             {
                 continue;
             }

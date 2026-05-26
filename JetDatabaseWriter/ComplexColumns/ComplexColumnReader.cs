@@ -19,6 +19,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 internal sealed class ComplexColumnReader(AccessReader reader)
 {
@@ -81,8 +82,8 @@ internal sealed class ComplexColumnReader(AccessReader reader)
             return [];
         }
 
-        int numCols = AccessBase.Ru16(td, _reader._tdef.NumCols);
-        int numRealIdx = AccessBase.Ri32(td, _reader._tdef.NumRealIdx);
+        int numCols = Ru16(td, _reader._tdef.NumCols);
+        int numRealIdx = Ri32(td, _reader._tdef.NumRealIdx);
         if (numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
             numRealIdx = 0;
@@ -105,13 +106,13 @@ internal sealed class ComplexColumnReader(AccessReader reader)
                 continue;
             }
 
-            int complexId = AccessBase.Ri32(td, offset + _reader._colDesc.MiscOff);
+            int complexId = Ri32(td, offset + _reader._colDesc.MiscOff);
             if (complexId <= 0)
             {
                 continue;
             }
 
-            int colNum = AccessBase.Ru16(td, offset + _reader._colDesc.NumOff);
+            int colNum = Ru16(td, offset + _reader._colDesc.NumOff);
             ColumnInfo? info = resolved.Value.Td.Columns.Find(c => c.ColNum == colNum);
             string name = info?.Name ?? string.Empty;
             byComplexId[complexId] = (name, type);

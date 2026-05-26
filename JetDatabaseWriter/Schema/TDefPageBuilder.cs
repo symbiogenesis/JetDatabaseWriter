@@ -12,6 +12,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1204
 
@@ -149,10 +150,10 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         page[0] = Constants.PageTypes.TableDefinition;
         page[1] = 0x01;
         page[writer._tdef.NumCols - 5] = 0x4E;
-        AccessBase.Wu16(page, writer._tdef.NumCols - 4, numCols);
-        AccessBase.Wu16(page, writer._tdef.NumCols, numCols);
-        AccessBase.Wi32(page, writer._tdef.NumCols + 2, numIdx);
-        AccessBase.Wi32(page, writer._tdef.NumRealIdx, numRealIdx);
+        Wu16(page, writer._tdef.NumCols - 4, numCols);
+        Wu16(page, writer._tdef.NumCols, numCols);
+        Wi32(page, writer._tdef.NumCols + 2, numIdx);
+        Wi32(page, writer._tdef.NumRealIdx, numRealIdx);
 
         int numVarCols = 0;
         for (int i = 0; i < numCols; i++)
@@ -168,11 +169,11 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             page[o + writer._colDesc.TypeOff] = col.Type;
             if (jet4)
             {
-                AccessBase.Wi32(page, o + 1, Constants.TableDefinition.Jet4.FormatMagic);
+                Wi32(page, o + 1, Constants.TableDefinition.Jet4.FormatMagic);
             }
 
-            AccessBase.Wu16(page, o + writer._colDesc.NumOff, col.ColNum);
-            AccessBase.Wu16(page, o + writer._colDesc.VarOff, col.VarIdx);
+            Wu16(page, o + writer._colDesc.NumOff, col.ColNum);
+            Wu16(page, o + writer._colDesc.VarOff, col.VarIdx);
 
             if (jet4)
             {
@@ -182,16 +183,16 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 // copy and rejects the table with "Unrecognized database format ''."
                 // when the two disagree. Verified against DAO-authored
                 // NorthwindTraders.accdb in WriterColumnDescriptorRedundantColNumTests.
-                AccessBase.Wu16(page, o + 9, col.ColNum);
+                Wu16(page, o + 9, col.ColNum);
             }
 
             page[o + writer._colDesc.FlagsOff] = col.Flags;
-            AccessBase.Wu16(page, o + writer._colDesc.FixedOff, col.FixedOff);
-            AccessBase.Wu16(page, o + writer._colDesc.SzOff, col.Size);
+            Wu16(page, o + writer._colDesc.FixedOff, col.FixedOff);
+            Wu16(page, o + writer._colDesc.SzOff, col.Size);
 
             if (col.Type == T_ATTACHMENT || col.Type == T_COMPLEX)
             {
-                AccessBase.Wi32(page, o + writer._colDesc.MiscOff, col.Misc);
+                Wi32(page, o + writer._colDesc.MiscOff, col.Misc);
             }
             else if (col.Type == T_NUMERIC && writer._format != DatabaseFormat.Jet3Mdb)
             {
@@ -223,7 +224,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 //                     here through ColumnInfo.ExtraFlags. The reader
                 //                     decodes the FF FE compressed marker regardless of
                 //                     the bit.
-                AccessBase.Wi32(page, o + writer._colDesc.MiscOff, 0x00000409);
+                Wi32(page, o + writer._colDesc.MiscOff, 0x00000409);
                 page[o + writer._colDesc.FlagsOff + 1] = col.ExtraFlags;
             }
             else if (jet4 && col.IsCalculated)
@@ -234,7 +235,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             {
                 if (col.Misc != 0)
                 {
-                    AccessBase.Wi32(page, o + writer._colDesc.MiscOff, col.Misc);
+                    Wi32(page, o + writer._colDesc.MiscOff, col.Misc);
                 }
 
                 if (col.ExtraFlags != 0)
@@ -253,7 +254,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
             if (jet4)
             {
-                AccessBase.Wu16(page, namePos, nameBytes.Length);
+                Wu16(page, namePos, nameBytes.Length);
             }
             else
             {
@@ -265,7 +266,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             namePos += nameBytes.Length;
         }
 
-        AccessBase.Wu16(page, writer._tdef.NumCols - 2, numVarCols);
+        Wu16(page, writer._tdef.NumCols - 2, numVarCols);
 
         int[] firstDpOffsets = numIdx > 0 ? new int[numIdx] : [];
         int[] usedPagesOffsets = numIdx > 0 ? new int[numIdx] : [];
@@ -287,7 +288,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 int phys = writer._indexLayout.RealIdxPhysOffset(realIdxPhysStart, i);
                 if (jet4)
                 {
-                    AccessBase.Wi32(page, phys, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
+                    Wi32(page, phys, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
                 }
 
                 for (int slot = 0; slot < IndexLayout.ColMapSlotCount; slot++)
@@ -295,14 +296,14 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                     int so = writer._indexLayout.ColMapSlotOffset(phys, slot);
                     if (slot < ri.ColumnNumbers.Count)
                     {
-                        AccessBase.Wu16(page, so, ri.ColumnNumbers[slot]);
+                        Wu16(page, so, ri.ColumnNumbers[slot]);
                         page[so + 2] = ri.Ascending[slot]
                             ? Constants.TableDefinition.ColMapAscendingFlag
                             : Constants.TableDefinition.ColMapDescendingFlag;
                     }
                     else
                     {
-                        AccessBase.Wu16(page, so, IndexLayout.ColMapPaddingSlot);
+                        Wu16(page, so, IndexLayout.ColMapPaddingSlot);
                         page[so + 2] = Constants.TableDefinition.ColMapDescendingFlag;
                     }
                 }
@@ -338,12 +339,12 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
                 int log = writer._indexLayout.LogicalIdxFieldsOffset(logIdxStart, i);
                 if (jet4)
                 {
-                    AccessBase.Wi32(page, log - writer._indexLayout.LogicalEntryFieldsOffset, Constants.TableDefinition.Jet4.FormatMagic);
+                    Wi32(page, log - writer._indexLayout.LogicalEntryFieldsOffset, Constants.TableDefinition.Jet4.FormatMagic);
                 }
 
-                AccessBase.Wi32(page, log + IndexLayout.IndexNumFieldOffset, i);
-                AccessBase.Wi32(page, log + IndexLayout.IndexNum2FieldOffset, i);
-                AccessBase.Wi32(page, log + IndexLayout.RelIdxNumFieldOffset, -1);
+                Wi32(page, log + IndexLayout.IndexNumFieldOffset, i);
+                Wi32(page, log + IndexLayout.IndexNum2FieldOffset, i);
+                Wi32(page, log + IndexLayout.RelIdxNumFieldOffset, -1);
 
                 // DAO-authored TDEFs always set the cascade_ups / cascade_dels bytes
                 // to 0x04 even on non-FK indexes (PK and regular). The exact semantic of
@@ -368,7 +369,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
                 if (jet4)
                 {
-                    AccessBase.Wu16(page, npos, nameBytes.Length);
+                    Wu16(page, npos, nameBytes.Length);
                 }
                 else
                 {
@@ -384,7 +385,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             // immediately after the last index name. Required for OpenRecordset.
             if (jet4 && numIdx > 0)
             {
-                AccessBase.Wu16(page, npos, 0xFFFF);
+                Wu16(page, npos, 0xFFFF);
                 npos += 2;
             }
 
@@ -402,12 +403,12 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             namePos = npos;
         }
 
-        AccessBase.Wi32(page, 8, Math.Max(0, namePos - 8));
+        Wi32(page, 8, Math.Max(0, namePos - 8));
         if (jet4)
         {
-            AccessBase.Wi32(page, 0x0C, Constants.TableDefinition.Jet4.FormatMagic);
+            Wi32(page, 0x0C, Constants.TableDefinition.Jet4.FormatMagic);
             int tdefLen = Math.Max(0, namePos - 8);
-            AccessBase.Wu16(page, 2, Math.Max(0, writer._pgSz - tdefLen - 8));
+            Wu16(page, 2, Math.Max(0, writer._pgSz - tdefLen - 8));
         }
 
         var (pages, logicalFirstDpOffsets) = SplitLogicalTDefIntoPages(page, namePos, firstDpOffsets);
@@ -467,11 +468,11 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
         db[0x19] = 0x01;
         db[0x1C] = 0x01;
         db[0x1D] = 0x01;
-        AccessBase.Wi32(db, 0x20, 2);
-        AccessBase.Wi32(db, 0x24, 3);
-        AccessBase.Wi32(db, 0x28, 4);
-        AccessBase.Wi32(db, 0x2C, 5);
-        AccessBase.Wu16(db, 0x3C, 1252);
+        Wi32(db, 0x20, 2);
+        Wi32(db, 0x24, 3);
+        Wi32(db, 0x28, 4);
+        Wi32(db, 0x2C, 5);
+        Wu16(db, 0x3C, 1252);
 
         for (int offset = 0x42; offset < 0x6A; offset += 4)
         {
@@ -479,13 +480,13 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             db[offset + 1] = 0xB4;
         }
 
-        AccessBase.Wu16(db, 0x6A, 0x11A6);
-        AccessBase.Wu16(db, 0x6E, 0x0409);
+        Wu16(db, 0x6A, 0x11A6);
+        Wu16(db, 0x6E, 0x0409);
 
         ReadOnlySpan<byte> creationDate = [0x08, 0x6E, 0x41, 0x1D, 0x7C, 0x8A, 0xE6, 0x40];
         creationDate.CopyTo(db.AsSpan(0x72));
 
-        AccessBase.Wi32(db, 0x98, 0x0654);
+        Wi32(db, 0x98, 0x0654);
         db[0x9C] = (byte)'4';
         db[0x9D] = (byte)'.';
         db[0x9E] = (byte)'0';
@@ -501,15 +502,15 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
         db[pageOffset] = 0x01;
         db[pageOffset + 1] = 0x01;
-        AccessBase.Wu16(db, pageOffset + 2, row1Start - slotTableEnd);
-        AccessBase.Wi32(db, pageOffset + dataPage.TDefOff, 1);
-        AccessBase.Wu16(db, pageOffset + dataPage.NumRows, 2);
-        AccessBase.Wu16(db, pageOffset + dataPage.RowsStart, rowStart);
-        AccessBase.Wu16(db, pageOffset + dataPage.RowsStart + 2, row1Start);
+        Wu16(db, pageOffset + 2, row1Start - slotTableEnd);
+        Wi32(db, pageOffset + dataPage.TDefOff, 1);
+        Wu16(db, pageOffset + dataPage.NumRows, 2);
+        Wu16(db, pageOffset + dataPage.RowsStart, rowStart);
+        Wu16(db, pageOffset + dataPage.RowsStart + 2, row1Start);
         db[pageOffset + rowStart] = 0x00;
-        AccessBase.Wi32(db, pageOffset + rowStart + 1, 0);
+        Wi32(db, pageOffset + rowStart + 1, 0);
         db[pageOffset + row1Start] = 0x00;
-        AccessBase.Wi32(db, pageOffset + row1Start + 1, 0);
+        Wi32(db, pageOffset + row1Start + 1, 0);
     }
 
     private static int GetDeclaredSize(byte type, int maxLength, DatabaseFormat format)
@@ -586,11 +587,11 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
 
         db[offset] = 0x02;
         db[offset + 1] = 0x01;
-        AccessBase.Wi32(db, offset + 4, 0);
+        Wi32(db, offset + 4, 0);
         db[offset + tdNumCols - 5] = 0x53;
-        AccessBase.Wu16(db, offset + tdNumCols - 4, numCols);
-        AccessBase.Wu16(db, offset + tdNumCols - 2, numVarCols);
-        AccessBase.Wu16(db, offset + tdNumCols, numCols);
+        Wu16(db, offset + tdNumCols - 4, numCols);
+        Wu16(db, offset + tdNumCols - 2, numVarCols);
+        Wu16(db, offset + tdNumCols, numCols);
 
         int colStart = offset + tdBlockEnd;
         int namePos = colStart + (numCols * colDescSz);
@@ -603,22 +604,22 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             db[o + colTypeOff] = col.Type;
             if (!isJet3)
             {
-                AccessBase.Wi32(db, o + 1, Constants.TableDefinition.Jet4.FormatMagic);
+                Wi32(db, o + 1, Constants.TableDefinition.Jet4.FormatMagic);
             }
 
-            AccessBase.Wu16(db, o + colNumOff, col.ColNum);
-            AccessBase.Wu16(db, o + colVarOff, col.VarIdx);
+            Wu16(db, o + colNumOff, col.ColNum);
+            Wu16(db, o + colVarOff, col.VarIdx);
 
             if (!isJet3)
             {
                 // Jet4/ACE: redundant col_num at offset 9-10 (see TDefPageBuilder
                 // user-table path and WriterColumnDescriptorRedundantColNumTests).
-                AccessBase.Wu16(db, o + 9, col.ColNum);
+                Wu16(db, o + 9, col.ColNum);
             }
 
             db[o + colFlagsOff] = col.Flags;
-            AccessBase.Wu16(db, o + colFixedOff, col.FixedOff);
-            AccessBase.Wu16(db, o + colSzOff, col.Size);
+            Wu16(db, o + colFixedOff, col.FixedOff);
+            Wu16(db, o + colSzOff, col.Size);
 
             byte[] nameBytes = isJet3 ? Encoding.ASCII.GetBytes(col.Name) : Encoding.Unicode.GetBytes(col.Name);
             if (isJet3)
@@ -628,7 +629,7 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             }
             else
             {
-                AccessBase.Wu16(db, namePos, nameBytes.Length);
+                Wu16(db, namePos, nameBytes.Length);
                 namePos += 2;
             }
 
@@ -636,13 +637,13 @@ internal sealed class TDefPageBuilder(AccessWriter writer)
             namePos += nameBytes.Length;
         }
 
-        AccessBase.Wi32(db, offset + 8, Math.Max(0, namePos - offset - 8));
+        Wi32(db, offset + 8, Math.Max(0, namePos - offset - 8));
         if (!isJet3)
         {
-            AccessBase.Wi32(db, offset + 0x0C, Constants.TableDefinition.Jet4.FormatMagic);
+            Wi32(db, offset + 0x0C, Constants.TableDefinition.Jet4.FormatMagic);
             int tdefLen = Math.Max(0, namePos - offset - 8);
             int pgSz = AccessBase.GetPageSize(format);
-            AccessBase.Wu16(db, offset + 2, Math.Max(0, pgSz - tdefLen - 8));
+            Wu16(db, offset + 2, Math.Max(0, pgSz - tdefLen - 8));
         }
     }
 

@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueEncoding.Models;
-using static JetDatabaseWriter.AccessBase;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Reads LVAL (Long Value) pages from a JET database, resolving MEMO and

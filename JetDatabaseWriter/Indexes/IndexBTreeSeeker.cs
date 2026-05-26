@@ -1,11 +1,11 @@
 namespace JetDatabaseWriter.Indexes;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Read-only B-tree seeker over JET index pages emitted by
@@ -122,7 +122,7 @@ internal static class IndexBTreeSeeker
             long? next = SelectChildPage(pageSize, page, searchKey);
             if (next == null)
             {
-                long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(TailPageOffset, 4));
+                long tail = (uint)Ri32(page, TailPageOffset);
                 if (tail <= 0)
                 {
                     return false;
@@ -189,7 +189,7 @@ internal static class IndexBTreeSeeker
             long? next = SelectChildPage(pageSize, page, searchKey);
             if (next == null)
             {
-                long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(TailPageOffset, 4));
+                long tail = (uint)Ri32(page, TailPageOffset);
                 if (tail <= 0)
                 {
                     return matches;
@@ -223,8 +223,8 @@ internal static class IndexBTreeSeeker
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(PrefLenOffset, 2));
-            int payloadEnd = pageSize - BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+            int pref = Ru16(page, PrefLenOffset);
+            int payloadEnd = pageSize - Ru16(page, 2);
             byte[]? sharedPrefix = null;
 
             // Verify the search key's prefix matches this page's shared
@@ -302,7 +302,7 @@ internal static class IndexBTreeSeeker
             // equals the search key (canonically) — if not, sibling leaves
             // cannot contain it (entries are sorted globally). Only then walk
             // next_page.
-            long nextPageNumber = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(NextPageOffset, 4));
+            long nextPageNumber = Ri32(page, NextPageOffset);
             if (nextPageNumber <= 0 || lastEntryStart < 0)
             {
                 return false;
@@ -339,8 +339,8 @@ internal static class IndexBTreeSeeker
     /// </summary>
     private static long? SelectChildPage(int pageSize, byte[] page, byte[] searchKey)
     {
-        int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(PrefLenOffset, 2));
-        int payloadEnd = pageSize - BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+        int pref = Ru16(page, PrefLenOffset);
+        int payloadEnd = pageSize - Ru16(page, 2);
         byte[]? sharedPrefix = null;
 
         int entryStart = FirstEntryOffset;
@@ -527,8 +527,8 @@ internal static class IndexBTreeSeeker
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(PrefLenOffset, 2));
-            int payloadEnd = pageSize - BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+            int pref = Ru16(page, PrefLenOffset);
+            int payloadEnd = pageSize - Ru16(page, 2);
             byte[]? sharedPrefix = null;
 
             if (pref > 0 && searchKey.Length < pref)
@@ -593,7 +593,7 @@ internal static class IndexBTreeSeeker
             // searchKey, no sibling leaf can hold further matches (entries
             // are sorted globally). Otherwise, when last == searchKey OR
             // last < searchKey but tail-page may overshoot, walk next_page.
-            long nextPageNumber = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(NextPageOffset, 4));
+            long nextPageNumber = Ri32(page, NextPageOffset);
             if (nextPageNumber <= 0 || lastEntryStart < 0)
             {
                 return;

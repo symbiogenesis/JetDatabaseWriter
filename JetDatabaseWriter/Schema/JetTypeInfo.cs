@@ -25,7 +25,7 @@ internal static class JetTypeInfo
     /// <c>0</c> for variable-length types and unknown codes. Mirrors the
     /// per-type sizes documented in mdbtools <c>HACKING.md</c>.
     /// </summary>
-    /// <param name="type">JET column-type code (see <see cref="JetDatabaseWriter.Constants.ColumnTypes"/>).</param>
+    /// <param name="type">JET column-type code (see <see cref="Constants.ColumnTypes"/>).</param>
     public static int GetFixedSize(byte type) => type switch
     {
         T_BYTE => 1,
@@ -191,9 +191,9 @@ internal static class JetTypeInfo
                 case T_BYTE:
                     return row[start].ToString(CultureInfo.InvariantCulture);
                 case T_INT:
-                    return ((short)BinaryPrimitives.ReadUInt16LittleEndian(row.Slice(start, 2))).ToString(CultureInfo.InvariantCulture);
+                    return Ri16(row, start).ToString(CultureInfo.InvariantCulture);
                 case T_LONG:
-                    return BinaryPrimitives.ReadInt32LittleEndian(row.Slice(start, 4)).ToString(CultureInfo.InvariantCulture);
+                    return Ri32(row, start).ToString(CultureInfo.InvariantCulture);
                 case T_FLOAT:
                     return ReadSingleLittleEndian(row.Slice(start, 4)).ToString("G", CultureInfo.InvariantCulture);
                 case T_DOUBLE:
@@ -201,14 +201,14 @@ internal static class JetTypeInfo
                 case T_DATETIME:
                     return DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8))).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
                 case T_MONEY:
-                    return decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(row.Slice(start, 8))).ToString("F4", CultureInfo.InvariantCulture);
+                    return decimal.FromOACurrency(Ri64(row, start)).ToString("F4", CultureInfo.InvariantCulture);
                 case T_GUID:
                     return new Guid(row.Slice(start, 16)).ToString("B");
                 case T_NUMERIC:
                     return ReadNumericString(row, start, scale: 0, strictNumeric);
                 case T_COMPLEX:
                 case T_ATTACHMENT:
-                    return size >= 4 ? $"__CX:{BinaryPrimitives.ReadInt32LittleEndian(row.Slice(start, 4))}__" : string.Empty;
+                    return size >= 4 ? $"__CX:{Ri32(row, start)}__" : string.Empty;
                 default:
                     return ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8)));
             }
@@ -272,14 +272,13 @@ internal static class JetTypeInfo
                 case T_BYTE:
                     return row[start];
                 case T_INT:
-                    // BinaryPrimitives.ReadInt16LittleEndian sign-extends correctly
-                    // under <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>;
+                    // Ri16 sign-extends correctly under <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>;
                     // the legacy "(short)Ru16(...)" cast throws OverflowException for
                     // values with the high bit set and ReadFixedString silently maps
                     // those to string.Empty → DBNull. The typed path keeps the value.
-                    return BinaryPrimitives.ReadInt16LittleEndian(row.Slice(start, 2));
+                    return Ri16(row, start);
                 case T_LONG:
-                    return BinaryPrimitives.ReadInt32LittleEndian(row.Slice(start, 4));
+                    return Ri32(row, start);
                 case T_FLOAT:
                     return ReadSingleLittleEndian(row.Slice(start, 4));
                 case T_DOUBLE:
@@ -287,7 +286,7 @@ internal static class JetTypeInfo
                 case T_DATETIME:
                     return DateTime.FromOADate(ReadDoubleLittleEndian(row.Slice(start, 8)));
                 case T_MONEY:
-                    return decimal.FromOACurrency(BinaryPrimitives.ReadInt64LittleEndian(row.Slice(start, 8)));
+                    return decimal.FromOACurrency(Ri64(row, start));
                 case T_GUID:
                     return new Guid(row.Slice(start, 16));
                 case T_NUMERIC:
@@ -295,7 +294,7 @@ internal static class JetTypeInfo
                 case T_COMPLEX:
                 case T_ATTACHMENT:
                     return size >= 4
-                        ? new ComplexIdRef(BinaryPrimitives.ReadInt32LittleEndian(row.Slice(start, 4)))
+                        ? new ComplexIdRef(Ri32(row, start))
                         : DBNull.Value;
                 default:
                     return ToHexStringNoSeparator(row.Slice(start, Math.Min(size, 8)));
@@ -402,9 +401,9 @@ internal static class JetTypeInfo
 
         try
         {
-            uint lo = BinaryPrimitives.ReadUInt32LittleEndian(magnitudeLe.Slice(0, 4));
-            uint mid = BinaryPrimitives.ReadUInt32LittleEndian(magnitudeLe.Slice(4, 4));
-            uint hi = BinaryPrimitives.ReadUInt32LittleEndian(magnitudeLe.Slice(8, 4));
+            uint lo = Ru32(magnitudeLe, 0);
+            uint mid = Ru32(magnitudeLe, 4);
+            uint hi = Ru32(magnitudeLe, 8);
             value = new decimal(unchecked((int)lo), unchecked((int)mid), unchecked((int)hi), negative, (byte)scale);
             return true;
         }
@@ -422,7 +421,21 @@ internal static class JetTypeInfo
 
     internal static void FixNumericByteOrder(Span<byte> bytes)
     {
-        for (int i = 0; i + 3 < bytes.Length; i += 4)
+#if NET8_0_OR_GREATER
+        // .NET 8 JIT emits efficient code for uint endianness reversal; process
+        // full 4-byte words first, then handle any trailing bytes defensively.
+        Span<uint> words = MemoryMarshal.Cast<byte, uint>(bytes);
+        for (int i = 0; i < words.Length; i++)
+        {
+            words[i] = BinaryPrimitives.ReverseEndianness(words[i]);
+        }
+
+        int tailStart = words.Length * sizeof(uint);
+#else
+        const int tailStart = 0;
+#endif
+
+        for (int i = tailStart; i + 3 < bytes.Length; i += 4)
         {
             (bytes[i], bytes[i + 3]) = (bytes[i + 3], bytes[i]);
             (bytes[i + 1], bytes[i + 2]) = (bytes[i + 2], bytes[i + 1]);
@@ -434,6 +447,76 @@ internal static class JetTypeInfo
     // switches don't take an upward dependency on Core, and so non-Core
     // callers (IndexLeafIncremental, etc.) can use them without going through
     // the AccessBase inheritance chain.
+
+    // Terse little-endian primitives — workhorses called from row/page/index
+    // crackers and the encryption layer. R = read, W = write; u/i = unsigned/
+    // signed; bit width. Each accepts a byte[] or (ReadOnly)Span<byte> base
+    // plus an absolute offset.
+    internal static short Ri16(byte[] b, int o) =>
+        BinaryPrimitives.ReadInt16LittleEndian(b.AsSpan(o, 2));
+
+    internal static short Ri16(ReadOnlySpan<byte> b, int o) =>
+        BinaryPrimitives.ReadInt16LittleEndian(b.Slice(o, 2));
+
+    internal static ushort Ru16(byte[] b, int o) =>
+        BinaryPrimitives.ReadUInt16LittleEndian(b.AsSpan(o, 2));
+
+    internal static ushort Ru16(ReadOnlySpan<byte> b, int o) =>
+        BinaryPrimitives.ReadUInt16LittleEndian(b.Slice(o, 2));
+
+    internal static int Ri32(byte[] b, int o) =>
+        BinaryPrimitives.ReadInt32LittleEndian(b.AsSpan(o, 4));
+
+    internal static int Ri32(ReadOnlySpan<byte> b, int o) =>
+        BinaryPrimitives.ReadInt32LittleEndian(b.Slice(o, 4));
+
+    internal static uint Ru32(byte[] b, int o) =>
+        BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(o, 4));
+
+    internal static uint Ru32(ReadOnlySpan<byte> b, int o) =>
+        BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(o, 4));
+
+    internal static long Ri64(byte[] b, int o) =>
+        BinaryPrimitives.ReadInt64LittleEndian(b.AsSpan(o, 8));
+
+    internal static long Ri64(ReadOnlySpan<byte> b, int o) =>
+        BinaryPrimitives.ReadInt64LittleEndian(b.Slice(o, 8));
+
+    internal static void Wu16(byte[] b, int o, int value) =>
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(o, 2), (ushort)value);
+
+    internal static void Wu16(Span<byte> b, int o, int value) =>
+        BinaryPrimitives.WriteUInt16LittleEndian(b.Slice(o, 2), (ushort)value);
+
+    internal static void Wu32(byte[] b, int o, uint value) =>
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(o, 4), value);
+
+    internal static void Wu32(Span<byte> b, int o, uint value) =>
+        BinaryPrimitives.WriteUInt32LittleEndian(b.Slice(o, 4), value);
+
+    internal static void Wu32(byte[] b, int o, int value) =>
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(o, 4), unchecked((uint)value));
+
+    internal static void Wu32(Span<byte> b, int o, int value) =>
+        BinaryPrimitives.WriteUInt32LittleEndian(b.Slice(o, 4), unchecked((uint)value));
+
+    internal static void Wi16(byte[] b, int o, int value) =>
+        BinaryPrimitives.WriteInt16LittleEndian(b.AsSpan(o, 2), (short)value);
+
+    internal static void Wi16(Span<byte> b, int o, int value) =>
+        BinaryPrimitives.WriteInt16LittleEndian(b.Slice(o, 2), (short)value);
+
+    internal static void Wi32(byte[] b, int o, int value) =>
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(o, 4), value);
+
+    internal static void Wi32(Span<byte> b, int o, int value) =>
+        BinaryPrimitives.WriteInt32LittleEndian(b.Slice(o, 4), value);
+
+    internal static void Wi64(byte[] b, int o, long value) =>
+        BinaryPrimitives.WriteInt64LittleEndian(b.AsSpan(o, 8), value);
+
+    internal static void Wi64(Span<byte> b, int o, long value) =>
+        BinaryPrimitives.WriteInt64LittleEndian(b.Slice(o, 8), value);
 
     /// <summary>Reads a 24-bit little-endian unsigned integer.</summary>
     internal static int ReadUInt24LittleEndian(ReadOnlySpan<byte> source) =>
@@ -531,7 +614,7 @@ internal static class JetTypeInfo
 
     /// <summary>Reads a T_GUID (16-byte) at <paramref name="start"/>.</summary>
     internal static Guid ReadGuidAt(byte[] page, int start) =>
-        new Guid(page.AsSpan(start, 16));
+        new(page.AsSpan(start, 16));
 
     /// <summary>
     /// Reads a T_NUMERIC value at <paramref name="start"/> as a typed

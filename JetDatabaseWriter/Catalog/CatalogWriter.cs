@@ -10,6 +10,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Catalog (MSysObjects) write operations for <see cref="AccessWriter"/>.
@@ -341,7 +342,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != Constants.PageTypes.Data || AccessBase.Ri32(page, writer._dataPage.TDefOff) != acesTdefPage)
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, writer._dataPage.TDefOff) != acesTdefPage)
                 {
                     continue;
                 }
@@ -443,7 +444,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
                 continue;
             }
 
-            if (AccessBase.Ri32(page, writer._dataPage.TDefOff) != 2)
+            if (Ri32(page, writer._dataPage.TDefOff) != 2)
             {
                 AccessBase.ReturnPage(page);
                 continue;
@@ -507,7 +508,7 @@ internal sealed class CatalogWriter(AccessWriter writer, IndexMaintainer indexes
             byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != Constants.PageTypes.Data || AccessBase.Ri32(page, writer._dataPage.TDefOff) != 2)
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, writer._dataPage.TDefOff) != 2)
                 {
                     continue;
                 }

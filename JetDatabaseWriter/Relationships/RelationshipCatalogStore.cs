@@ -12,6 +12,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 internal sealed class RelationshipCatalogStore(AccessWriter writer)
 {
@@ -96,7 +97,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                     continue;
                 }
 
-                if (AccessBase.Ri32(page, writer._dataPage.TDefOff) != msysRelTdefPage)
+                if (Ri32(page, writer._dataPage.TDefOff) != msysRelTdefPage)
                 {
                     continue;
                 }
@@ -309,7 +310,7 @@ internal sealed class RelationshipCatalogStore(AccessWriter writer)
                     continue;
                 }
 
-                if (AccessBase.Ri32(page, writer._dataPage.TDefOff) != msysRelTdefPage)
+                if (Ri32(page, writer._dataPage.TDefOff) != msysRelTdefPage)
                 {
                     continue;
                 }

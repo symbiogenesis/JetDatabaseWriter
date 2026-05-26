@@ -1,12 +1,12 @@
 namespace JetDatabaseWriter.Schema;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Text;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Schema.Models;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Mutable builder + serializer for <c>MSysObjects.LvProp</c> blobs
@@ -364,13 +364,13 @@ internal sealed class ColumnPropertyBlockBuilder
 
     private static void WriteUInt16(byte[] buffer, ref int offset, ushort value)
     {
-        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset), value);
+        Wu16(buffer, offset, value);
         offset += sizeof(ushort);
     }
 
     private static void WriteUInt32(byte[] buffer, ref int offset, uint value)
     {
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(offset), value);
+        Wu32(buffer, offset, value);
         offset += sizeof(uint);
     }
 

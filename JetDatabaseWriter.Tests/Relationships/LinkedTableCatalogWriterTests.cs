@@ -17,6 +17,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Regression coverage for writer-created linked-table catalog rows in
@@ -753,8 +754,8 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         byte[] tdef = await writer.ReadPageAsync(2, cancellationToken);
         try
         {
-            int numCols = AccessBase.Ru16(tdef, writer._tdef.NumCols);
-            int numRealIdx = AccessBase.Ri32(tdef, writer._tdef.NumRealIdx);
+            int numCols = Ru16(tdef, writer._tdef.NumCols);
+            int numRealIdx = Ri32(tdef, writer._tdef.NumRealIdx);
 
             int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
             int namePos = colStart + (numCols * writer._colDesc.Size);
@@ -770,7 +771,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             for (int ri = 0; ri < numRealIdx; ri++)
             {
                 int physStart = layout.RealIdxPhysOffset(realIdxDescStart, ri);
-                int firstDp = AccessBase.Ri32(tdef, layout.FirstDpAbsoluteOffset(physStart));
+                int firstDp = Ri32(tdef, layout.FirstDpAbsoluteOffset(physStart));
                 if (firstDp <= 0)
                 {
                     continue;
@@ -803,8 +804,8 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         byte[] tdef = await writer.ReadPageAsync(2, cancellationToken);
         try
         {
-            int numCols = AccessBase.Ru16(tdef, writer._tdef.NumCols);
-            int numRealIdx = AccessBase.Ri32(tdef, writer._tdef.NumRealIdx);
+            int numCols = Ru16(tdef, writer._tdef.NumCols);
+            int numRealIdx = Ri32(tdef, writer._tdef.NumRealIdx);
             Assert.True(numRealIdx > 0, "Expected MSysObjects to declare at least one real index.");
 
             int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
@@ -818,7 +819,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             int realIdxDescStart = namePos;
             IndexLayout layout = writer._indexLayout;
             int physStart = layout.RealIdxPhysOffset(realIdxDescStart, 0);
-            int firstDp = AccessBase.Ri32(tdef, layout.FirstDpAbsoluteOffset(physStart));
+            int firstDp = Ri32(tdef, layout.FirstDpAbsoluteOffset(physStart));
             Assert.True(firstDp > 0, "Expected MSysObjects first real-index root page to be allocated.");
 
             byte[] root = await writer.ReadPageAsync(firstDp, cancellationToken);

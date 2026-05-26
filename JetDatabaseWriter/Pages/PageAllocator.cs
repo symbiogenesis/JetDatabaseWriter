@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using static JetDatabaseWriter.AccessBase;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1204 // Static helpers stay near related instance helpers.
 

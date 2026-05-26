@@ -1,12 +1,12 @@
 namespace JetDatabaseWriter.Encryption;
 
 using System;
-using System.Buffers.Binary;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml;
 using JetDatabaseWriter.Infrastructure;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable CA5358 // Cipher modes are fixed by the ECMA-376 Agile spec.
 #pragma warning disable CA5379 // SHA-512 is the spec-mandated Agile hash; spinCount is honoured.
@@ -56,9 +56,9 @@ internal static class OfficeCryptoAgile
             return false;
         }
 
-        ushort major = BinaryPrimitives.ReadUInt16LittleEndian(encryptionInfo.AsSpan(0, 2));
-        ushort minor = BinaryPrimitives.ReadUInt16LittleEndian(encryptionInfo.AsSpan(2, 2));
-        uint flags = BinaryPrimitives.ReadUInt32LittleEndian(encryptionInfo.AsSpan(4, 4));
+        ushort major = Ru16(encryptionInfo, 0);
+        ushort minor = Ru16(encryptionInfo, 2);
+        uint flags = Ru32(encryptionInfo, 4);
 
         // Agile = (4, 4) with AgileEncryption flag (0x40) set.
         return major == Constants.AgileEncryption.VersionMajor
@@ -79,8 +79,8 @@ internal static class OfficeCryptoAgile
             return false;
         }
 
-        ushort major = BinaryPrimitives.ReadUInt16LittleEndian(encryptionInfo.AsSpan(0, 2));
-        ushort minor = BinaryPrimitives.ReadUInt16LittleEndian(encryptionInfo.AsSpan(2, 2));
+        ushort major = Ru16(encryptionInfo, 0);
+        ushort minor = Ru16(encryptionInfo, 2);
 
         // Standard encryption: version (3, 2) or (4, 2) per MS-OFFCRYPTO §2.3.6.
         return (major == 3 || major == 4) && minor == 2;
@@ -200,8 +200,8 @@ internal static class OfficeCryptoAgile
             byte[] encryptionInfo = new byte[8 + xmlBytes.Length];
 
             // 4-byte version + 4-byte flags.
-            BinaryPrimitives.WriteUInt16LittleEndian(encryptionInfo.AsSpan(0, 2), Constants.AgileEncryption.VersionMajor);
-            BinaryPrimitives.WriteUInt16LittleEndian(encryptionInfo.AsSpan(2, 2), Constants.AgileEncryption.VersionMinor);
+            Wu16(encryptionInfo, 0, Constants.AgileEncryption.VersionMajor);
+            Wu16(encryptionInfo, 2, Constants.AgileEncryption.VersionMinor);
             encryptionInfo[4] = (byte)Constants.AgileEncryption.Flags;
             Buffer.BlockCopy(xmlBytes, 0, encryptionInfo, 8, xmlBytes.Length);
 
@@ -253,7 +253,7 @@ internal static class OfficeCryptoAgile
         Buffer.BlockCopy(result, 0, headerPage, 0, headerPage.Length);
         EncryptionManager.TransformHeaderMask(headerPage);
         Buffer.BlockCopy(encodingKey, 0, headerPage, FlatEncodingKeyOffset, encodingKey.Length);
-        BinaryPrimitives.WriteUInt16LittleEndian(headerPage.AsSpan(FlatEncryptionInfoLengthOffset, 2), checked((ushort)encryptionInfo.Length));
+        Wu16(headerPage, FlatEncryptionInfoLengthOffset, checked((ushort)encryptionInfo.Length));
         Buffer.BlockCopy(encryptionInfo, 0, headerPage, FlatEncryptionInfoOffset, encryptionInfo.Length);
         EncryptionManager.TransformHeaderMask(headerPage);
         Buffer.BlockCopy(headerPage, 0, result, 0, headerPage.Length);
@@ -508,7 +508,7 @@ internal static class OfficeCryptoAgile
             byte[] iter = new byte[4 + h.Length];
             for (int i = 0; i < spinCount; i++)
             {
-                BinaryPrimitives.WriteInt32LittleEndian(iter.AsSpan(0, 4), i);
+                Wi32(iter, 0, i);
 
                 Buffer.BlockCopy(h, 0, iter, 4, h.Length);
                 OfficeCryptoPrimitives.HashSha512(iter, scratchHash);
@@ -548,7 +548,7 @@ internal static class OfficeCryptoAgile
             throw new InvalidDataException("EncryptedPackage stream is too small (missing size prefix).");
         }
 
-        long decryptedSize = BinaryPrimitives.ReadInt64LittleEndian(encryptedPackage.AsSpan(0, 8));
+        long decryptedSize = Ri64(encryptedPackage, 0);
 
         if (decryptedSize < 0 || decryptedSize > int.MaxValue)
         {
@@ -593,7 +593,7 @@ internal static class OfficeCryptoAgile
     {
         byte[] data = new byte[keyDataSalt.Length + 4];
         Buffer.BlockCopy(keyDataSalt, 0, data, 0, keyDataSalt.Length);
-        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(keyDataSalt.Length, 4), segmentIndex);
+        Wi32(data, keyDataSalt.Length, segmentIndex);
 
         byte[] hash = OfficeCryptoPrimitives.Sha512(data);
 
@@ -603,7 +603,7 @@ internal static class OfficeCryptoAgile
     private static byte[] FlatPageIv(byte[] keyDataSalt, byte[] encodingKey, int pageNumber, int blockSize)
     {
         byte[] blockKey = new byte[encodingKey.Length];
-        BinaryPrimitives.WriteInt32LittleEndian(blockKey, pageNumber);
+        Wi32(blockKey, 0, pageNumber);
         for (int i = 0; i < encodingKey.Length; i++)
         {
             blockKey[i] ^= encodingKey[i];
@@ -759,7 +759,7 @@ internal static class OfficeCryptoAgile
             byte[] iter = new byte[4 + h.Length];
             for (int i = 0; i < Constants.AgileEncryption.SpinCount; i++)
             {
-                BinaryPrimitives.WriteInt32LittleEndian(iter.AsSpan(0, 4), i);
+                Wi32(iter, 0, i);
 
                 Buffer.BlockCopy(h, 0, iter, 4, h.Length);
                 OfficeCryptoPrimitives.HashSha512(iter, scratchHash);
@@ -924,8 +924,8 @@ internal static class OfficeCryptoAgile
 
             byte[] xmlBytes = Encoding.UTF8.GetBytes(xml);
             byte[] encryptionInfo = new byte[8 + xmlBytes.Length];
-            BinaryPrimitives.WriteUInt16LittleEndian(encryptionInfo.AsSpan(0, 2), Constants.AgileEncryption.VersionMajor);
-            BinaryPrimitives.WriteUInt16LittleEndian(encryptionInfo.AsSpan(2, 2), Constants.AgileEncryption.VersionMinor);
+            Wu16(encryptionInfo, 0, Constants.AgileEncryption.VersionMajor);
+            Wu16(encryptionInfo, 2, Constants.AgileEncryption.VersionMinor);
             encryptionInfo[4] = (byte)Constants.AgileEncryption.Flags;
             Buffer.BlockCopy(xmlBytes, 0, encryptionInfo, 8, xmlBytes.Length);
 
@@ -957,7 +957,7 @@ internal static class OfficeCryptoAgile
             return false;
         }
 
-        int infoLength = BinaryPrimitives.ReadUInt16LittleEndian(headerPage.AsSpan(FlatEncryptionInfoLengthOffset, 2));
+        int infoLength = Ru16(headerPage, FlatEncryptionInfoLengthOffset);
         if (infoLength < 8 || FlatEncryptionInfoOffset + infoLength > database.Length)
         {
             return false;

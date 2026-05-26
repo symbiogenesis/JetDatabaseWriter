@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Indexes.Helpers;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -11,6 +10,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// State-free index-related helpers extracted from <see cref="AccessWriter"/>.
@@ -62,7 +62,7 @@ internal static class IndexHelpers
         for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
         {
             int so = phys + Constants.TableDefinition.Jet4.RealIdx.ColMapOffset + (slot * Constants.TableDefinition.ColMapSlotSize);
-            int cn = BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(so, 2));
+            int cn = Ru16(td, so);
             if (slot < columnNumbers.Length)
             {
                 if (cn != columnNumbers[slot])

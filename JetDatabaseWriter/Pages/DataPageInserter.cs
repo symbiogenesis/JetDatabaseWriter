@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Pages.Models;
 using static JetDatabaseWriter.AccessBase;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Owns data-page allocation and row insertion mechanics for

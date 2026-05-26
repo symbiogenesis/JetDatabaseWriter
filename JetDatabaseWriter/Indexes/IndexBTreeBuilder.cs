@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Builds a complete JET index B-tree from a sorted list of leaf
@@ -469,12 +470,6 @@ internal static class IndexBTreeBuilder
 
         return prefixLen;
     }
-
-    private static void Wu16(byte[] b, int o, int value) =>
-        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(o, 2), (ushort)value);
-
-    private static void Wi32(byte[] b, int o, int value) =>
-        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(o, 4), value);
 
     private static void WriteUInt24Be(byte[] b, int o, int value)
     {

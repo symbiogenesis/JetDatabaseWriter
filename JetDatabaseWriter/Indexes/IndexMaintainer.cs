@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Indexes;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.Threading;
@@ -14,6 +13,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 using KeyColumnInfo = JetDatabaseWriter.Indexes.IndexLayout.KeyColumnInfo;
 using RealIdxEntry = JetDatabaseWriter.Indexes.IndexLayout.RealIdxEntry;
 
@@ -85,9 +85,9 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
     {
         byte[] buffer = await ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
-        int numCols = AccessBase.Ru16(buffer, writer._tdef.NumCols);
-        int numIdx = AccessBase.Ri32(buffer, writer._tdef.NumCols + 2);
-        int numRealIdx = AccessBase.Ri32(buffer, writer._tdef.NumRealIdx);
+        int numCols = Ru16(buffer, writer._tdef.NumCols);
+        int numIdx = Ri32(buffer, writer._tdef.NumCols + 2);
+        int numRealIdx = Ri32(buffer, writer._tdef.NumRealIdx);
 
         if (numIdx <= 0 || numRealIdx <= 0)
         {
@@ -234,7 +234,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 tailPage: 0,
                 enablePrefixCompression: true,
                 maxPrefixLength: maxPrefixLength);
-            freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+            freeSpace = Ru16(page, 2);
             return true;
         }
         catch (ArgumentOutOfRangeException)
@@ -428,7 +428,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             long rootPageNumber = build.RootPageNumber;
             long[] pageNumbers;
 
-            int oldRootPageNumber = AccessBase.Ri32(tdefBuffer, rie.FirstDpOffset);
+            int oldRootPageNumber = Ri32(tdefBuffer, rie.FirstDpOffset);
             if (build.Pages.Count == 1 && await CanReuseSingleLeafPageAsync(oldRootPageNumber, tdefPage, cancellationToken).ConfigureAwait(false))
             {
                 await writer.WritePageAsync(oldRootPageNumber, build.Pages[0], cancellationToken).ConfigureAwait(false);
@@ -453,7 +453,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 }
             }
 
-            AccessBase.Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)rootPageNumber));
+            Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)rootPageNumber));
             if (rebuiltIndexPageGroups is not null)
             {
                 rebuiltIndexPageGroups[rieKey] = pageNumbers;
@@ -564,7 +564,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                     continue;
                 }
 
-                int basePage = AccessBase.Ri32(page, rowBound.RowStart + 1);
+                int basePage = Ri32(page, rowBound.RowStart + 1);
                 int bitCapacity = (rowBound.RowSize - 5) * 8;
                 var pageNumbers = new List<long>();
                 for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
@@ -636,7 +636,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         try
         {
             return page[0] is Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf
-                && AccessBase.Ri32(page, 4) == tdefPage;
+                && Ri32(page, 4) == tdefPage;
         }
         finally
         {
@@ -654,7 +654,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         byte[] page = await writer.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            return page[0] == Constants.PageTypes.IndexLeaf && AccessBase.Ri32(page, 4) == tdefPage;
+            return page[0] == Constants.PageTypes.IndexLeaf && Ri32(page, 4) == tdefPage;
         }
         finally
         {
@@ -721,7 +721,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 return false;
             }
 
-            long rootPage = (uint)AccessBase.Ri32(tdefBuffer, entry.FirstDpOffset);
+            long rootPage = (uint)Ri32(tdefBuffer, entry.FirstDpOffset);
             if (rootPage <= 0)
             {
                 continue;
@@ -775,7 +775,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             }
 
             byte[] page = await ReadAndClonePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (AccessBase.Ri32(page, 4) != tdefPage)
+            if (Ri32(page, 4) != tdefPage)
             {
                 return null;
             }
@@ -965,7 +965,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             }
 
             // Read the index root; require a single-leaf root.
-            long firstDp = (uint)AccessBase.Ri32(tdefBuffer, rie.FirstDpOffset);
+            long firstDp = (uint)Ri32(tdefBuffer, rie.FirstDpOffset);
             if (firstDp <= 0)
             {
                 LastIncrementalBail = $"C3 firstDp={firstDp}";
@@ -1153,7 +1153,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                     await writer.AppendPageAsync(page, cancellationToken).ConfigureAwait(false);
                 }
 
-                AccessBase.Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)mlBuild.RootPageNumber));
+                Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)mlBuild.RootPageNumber));
                 tdefDirty = true;
                 continue;
             }
@@ -1287,7 +1287,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             return false;
         }
 
-        int originalTailPrefLen = BinaryPrimitives.ReadUInt16LittleEndian(tailLeaf.AsSpan(layout.PrefLenOffset, 2));
+        int originalTailPrefLen = Ru16(tailLeaf, layout.PrefLenOffset);
 
         List<IndexEntry> existingTail = IndexLeafIncremental.DecodeEntries(layout, tailLeaf, writer._pgSz);
 
@@ -1445,7 +1445,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         long leafPrev = IndexLeafIncremental.ReadPrevPage(layout, leaf);
         long leafNext = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
         long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
-        int originalPrefLen = BinaryPrimitives.ReadUInt16LittleEndian(leaf.AsSpan(layout.PrefLenOffset, 2));
+        int originalPrefLen = Ru16(leaf, layout.PrefLenOffset);
 
         byte[] oldMaxKey = existingLeafEntries[existingLeafEntries.Count - 1].Key;
 
@@ -1545,7 +1545,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             byte[] nextLeaf = await ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
 
             // prev_page is per layout (§4.1).
-            BinaryPrimitives.WriteInt32LittleEndian(nextLeaf.AsSpan(layout.PrevPageOffset, 4), checked((int)pageNumbers[splitCount - 1]));
+            Wi32(nextLeaf, layout.PrevPageOffset, checked((int)pageNumbers[splitCount - 1]));
             await writer.WritePageAsync(leafNext, nextLeaf, cancellationToken).ConfigureAwait(false);
         }
 
@@ -1681,7 +1681,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
             byte[] pageBytes = step.PageBytes;
             var (prev, next, tail) = IndexLeafIncremental.ReadSiblingPointers(layout, pageBytes);
-            int originalPrefLen = BinaryPrimitives.ReadUInt16LittleEndian(pageBytes.AsSpan(layout.PrefLenOffset, 2));
+            int originalPrefLen = Ru16(pageBytes, layout.PrefLenOffset);
 
             byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
                 layout, writer._pgSz, tdefPage, newEntries, prev, next, tail, originalPrefLen);
@@ -1758,7 +1758,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
         byte[] parentBytes = step.PageBytes;
         var (parentPrev, parentNext, parentTail) = IndexLeafIncremental.ReadSiblingPointers(layout, parentBytes);
-        int originalPrefLen = BinaryPrimitives.ReadUInt16LittleEndian(parentBytes.AsSpan(layout.PrefLenOffset, 2));
+        int originalPrefLen = Ru16(parentBytes, layout.PrefLenOffset);
 
         byte[]? rebuiltParent = IndexBTreeBuilder.TryBuildIntermediatePage(
             layout, writer._pgSz, tdefPage, newEntries, parentPrev, parentNext, parentTail, originalPrefLen);
@@ -1986,7 +1986,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             long leafPrev = IndexLeafIncremental.ReadPrevPage(layout, leaf);
             long leafNext = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
             long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
-            int originalPrefLen = BinaryPrimitives.ReadUInt16LittleEndian(leaf.AsSpan(layout.PrefLenOffset, 2));
+            int originalPrefLen = Ru16(leaf, layout.PrefLenOffset);
 
             if (spliced.Count == 0)
             {
@@ -2273,7 +2273,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             byte[] neighbour = await ReadAndClonePageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
 
             // §4.1 prev_page (per layout).
-            BinaryPrimitives.WriteInt32LittleEndian(neighbour.AsSpan(layout.PrevPageOffset, 4), checked((int)newPrevValue));
+            Wi32(neighbour, layout.PrevPageOffset, checked((int)newPrevValue));
             await writer.WritePageAsync(neighbourPage, neighbour, cancellationToken).ConfigureAwait(false);
         }
 
@@ -2282,7 +2282,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             byte[] neighbour = await ReadAndClonePageAsync(neighbourPage, cancellationToken).ConfigureAwait(false);
 
             // §4.1 next_page (per layout).
-            BinaryPrimitives.WriteInt32LittleEndian(neighbour.AsSpan(layout.NextPageOffset, 4), checked((int)newNextValue));
+            Wi32(neighbour, layout.NextPageOffset, checked((int)newNextValue));
             await writer.WritePageAsync(neighbourPage, neighbour, cancellationToken).ConfigureAwait(false);
         }
 
@@ -2301,7 +2301,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         {
             byte[] tdefBytes = await ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
-            BinaryPrimitives.WriteInt32LittleEndian(tdefBytes.AsSpan(firstDpOffset, 4), checked((int)newRootPage.Value));
+            Wi32(tdefBytes, firstDpOffset, checked((int)newRootPage.Value));
             await writer.WritePageAsync(tdefPage, tdefBytes, cancellationToken).ConfigureAwait(false);
         }
 
@@ -2993,7 +2993,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             return 0;
         }
 
-        int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+        int freeSpace = Ru16(page, 2);
         int payloadEnd = pageSize - freeSpace;
         if (payloadEnd < layout.FirstEntryOffset + 8)
         {
@@ -3087,7 +3087,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
 
         foreach ((int ri, RealIdxEntry rie) in catalog.RealIdxByNum)
         {
-            long firstDp = (uint)AccessBase.Ri32(tdefBuf, rie.FirstDpOffset);
+            long firstDp = (uint)Ri32(tdefBuf, rie.FirstDpOffset);
             if (firstDp <= 0)
             {
                 LastIncrementalBail = $"S2 ri={ri} firstDp=0";
@@ -3184,7 +3184,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
             long leafPrev = IndexLeafIncremental.ReadPrevPage(layout, leaf);
             long leafNext = IndexLeafIncremental.ReadNextLeafPage(layout, leaf);
             long leafTail = IndexLeafIncremental.ReadTailPage(layout, leaf);
-            int originalPrefLen = BinaryPrimitives.ReadUInt16LittleEndian(leaf.AsSpan(layout.PrefLenOffset, 2));
+            int originalPrefLen = Ru16(leaf, layout.PrefLenOffset);
 
             List<IndexEntry> existing = IndexLeafIncremental.DecodeEntries(layout, leaf, writer._pgSz);
 
@@ -3299,7 +3299,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
                 if (leafNext > 0)
                 {
                     byte[] nextLeafBuf = await ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
-                    BinaryPrimitives.WriteInt32LittleEndian(nextLeafBuf.AsSpan(layout.PrevPageOffset, 4), checked((int)pageNumbers[splitCount - 1]));
+                    Wi32(nextLeafBuf, layout.PrevPageOffset, checked((int)pageNumbers[splitCount - 1]));
                     await writer.WritePageAsync(leafNext, nextLeafBuf, cancellationToken).ConfigureAwait(false);
                 }
 
@@ -3384,7 +3384,7 @@ internal sealed class IndexMaintainer(AccessWriter writer, PageAllocator pageAll
         }
 
         byte[] currentTdef = await ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        AccessBase.Wi32(currentTdef, firstDpOffset, checked((int)build.RootPageNumber));
+        Wi32(currentTdef, firstDpOffset, checked((int)build.RootPageNumber));
         await writer.WritePageAsync(tdefPage, currentTdef, cancellationToken).ConfigureAwait(false);
         return true;
     }

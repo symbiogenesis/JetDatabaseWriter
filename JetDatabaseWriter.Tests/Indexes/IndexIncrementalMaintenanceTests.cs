@@ -12,6 +12,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using Xunit;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Round-trip tests for the single-leaf incremental B-tree maintenance
@@ -415,8 +416,8 @@ public sealed class IndexIncrementalMaintenanceTests
         byte[] tdef = await writer.ReadPageAsync(tdefPage, cancellationToken);
         try
         {
-            int numCols = AccessBase.Ru16(tdef, writer._tdef.NumCols);
-            int numRealIdx = AccessBase.Ri32(tdef, writer._tdef.NumRealIdx);
+            int numCols = Ru16(tdef, writer._tdef.NumCols);
+            int numRealIdx = Ri32(tdef, writer._tdef.NumRealIdx);
             Assert.True(numRealIdx > 0, "Expected the test fixture to declare at least one real index.");
 
             int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
@@ -443,7 +444,7 @@ public sealed class IndexIncrementalMaintenanceTests
                 for (int colMapSlot = 0; colMapSlot < IndexLayout.ColMapSlotCount; colMapSlot++)
                 {
                     int colMapOffset = layout.ColMapSlotOffset(slot.PhysStart, colMapSlot);
-                    AccessBase.Wu16(tdef, colMapOffset, IndexLayout.ColMapPaddingSlot);
+                    Wu16(tdef, colMapOffset, IndexLayout.ColMapPaddingSlot);
                     tdef[colMapOffset + 2] = 0;
                 }
             }

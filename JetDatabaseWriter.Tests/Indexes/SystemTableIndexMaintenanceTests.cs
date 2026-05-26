@@ -8,6 +8,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 public sealed class SystemTableIndexMaintenanceTests
 {
@@ -124,8 +125,8 @@ public sealed class SystemTableIndexMaintenanceTests
         byte[] tdef = await writer.ReadPageAsync(tdefPage, cancellationToken);
         try
         {
-            int numCols = AccessBase.Ru16(tdef, writer._tdef.NumCols);
-            int numRealIdx = AccessBase.Ri32(tdef, writer._tdef.NumRealIdx);
+            int numCols = Ru16(tdef, writer._tdef.NumCols);
+            int numRealIdx = Ri32(tdef, writer._tdef.NumRealIdx);
             Assert.True(numRealIdx > 0, $"Expected TDEF page {tdefPage} to declare at least one real index.");
 
             int colStart = writer._tdef.BlockEnd + (numRealIdx * writer._tdef.RealIdxEntrySz);
@@ -138,7 +139,7 @@ public sealed class SystemTableIndexMaintenanceTests
 
             int realIdxDescStart = namePos;
             int physStart = writer._indexLayout.RealIdxPhysOffset(realIdxDescStart, 0);
-            int firstDp = AccessBase.Ri32(tdef, writer._indexLayout.FirstDpAbsoluteOffset(physStart));
+            int firstDp = Ri32(tdef, writer._indexLayout.FirstDpAbsoluteOffset(physStart));
             Assert.True(firstDp > 0, $"Expected TDEF page {tdefPage} first real-index root page to be allocated.");
 
             byte[] root = await writer.ReadPageAsync(firstDp, cancellationToken);

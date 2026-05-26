@@ -7,6 +7,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Constants;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Wrap / unwrap helpers for the 23-byte on-disk envelope every Access 2010+
@@ -35,7 +36,7 @@ internal static class CalculatedColumnUtil
     {
         Guard.NotNull(payload, nameof(payload));
         var wrapped = new byte[CalculatedColumn.ExtraDataLen + payload.Length];
-        BinaryPrimitives.WriteInt32LittleEndian(wrapped.AsSpan(CalculatedColumn.DataLenOffset, 4), payload.Length);
+        Wi32(wrapped, CalculatedColumn.DataLenOffset, payload.Length);
         Buffer.BlockCopy(payload, 0, wrapped, CalculatedColumn.DataOffset, payload.Length);
         return wrapped;
     }
@@ -53,7 +54,7 @@ internal static class CalculatedColumnUtil
             return data;
         }
 
-        int dataLen = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(CalculatedColumn.DataLenOffset, 4));
+        int dataLen = Ri32(data, CalculatedColumn.DataLenOffset);
         int available = data.Length - CalculatedColumn.DataOffset;
         int copyLen = Math.Max(0, Math.Min(available, dataLen));
         var unwrapped = new byte[copyLen];
@@ -68,7 +69,7 @@ internal static class CalculatedColumnUtil
             return data.ToArray();
         }
 
-        int dataLen = BinaryPrimitives.ReadInt32LittleEndian(data.Slice(CalculatedColumn.DataLenOffset, 4));
+        int dataLen = Ri32(data, CalculatedColumn.DataLenOffset);
         int available = data.Length - CalculatedColumn.DataOffset;
         int copyLen = Math.Max(0, Math.Min(available, dataLen));
         var unwrapped = new byte[copyLen];
@@ -126,7 +127,7 @@ internal static class CalculatedColumnUtil
             return DBNull.Value;
         }
 
-        short storedLen = BinaryPrimitives.ReadInt16LittleEndian(payload.Slice(0, 2));
+        short storedLen = Ri16(payload, 0);
         int mantissaLen = AlignToFour((storedLen > 0 ? storedLen : payload.Length - 2) - 2);
         mantissaLen = Math.Min(mantissaLen, payload.Length - 4);
         if (mantissaLen <= 0)

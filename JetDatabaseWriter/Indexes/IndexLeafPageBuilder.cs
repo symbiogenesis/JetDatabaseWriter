@@ -1,11 +1,11 @@
 namespace JetDatabaseWriter.Indexes;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Builds JET index leaf pages (page type <c>0x04</c>). Encodes the
@@ -298,12 +298,6 @@ internal static class IndexLeafPageBuilder
     /// <param name="parentTdefPage">Page number of the table's TDEF page.</param>
     public static byte[] BuildJet3EmptyLeafPage(int pageSize, long parentTdefPage)
         => BuildLeafPage(LeafPageLayout.Jet3, pageSize, parentTdefPage, [], prevPage: 0, nextPage: 0, tailPage: 0, enablePrefixCompression: false);
-
-    private static void Wu16(byte[] b, int o, int value) =>
-        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(o, 2), (ushort)value);
-
-    private static void Wi32(byte[] b, int o, int value) =>
-        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(o, 4), value);
 
     private static void WriteUInt24Be(byte[] b, int o, int value)
     {

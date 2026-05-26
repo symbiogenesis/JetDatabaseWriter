@@ -1,10 +1,10 @@
 namespace JetDatabaseWriter.Indexes;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Schema.Models;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Encapsulates the per-format byte offsets and entry sizes for a TDEF
@@ -147,7 +147,7 @@ internal readonly struct IndexLayout
         for (int slot = 0; slot < ColMapSlotCount; slot++)
         {
             int so = colMapStart + (slot * ColMapSlotSize);
-            int colNum = BinaryPrimitives.ReadUInt16LittleEndian(td.Slice(so, 2));
+            int colNum = Ru16(td, so);
             if (colNum == ColMapPaddingSlot)
             {
                 continue;
@@ -181,7 +181,7 @@ internal readonly struct IndexLayout
         for (int slot = 0; slot < ColMapSlotCount; slot++)
         {
             int so = colMapStart + (slot * ColMapSlotSize);
-            int colNum = BinaryPrimitives.ReadUInt16LittleEndian(td.Slice(so, 2));
+            int colNum = Ru16(td, so);
             if (colNum == ColMapPaddingSlot)
             {
                 continue;
@@ -368,10 +368,10 @@ internal readonly struct IndexLayout
 
         entry = new LogicalIdxEntry(
             e,
-            BinaryPrimitives.ReadInt32LittleEndian(td.Slice(e + IndexNumFieldOffset, 4)),
-            BinaryPrimitives.ReadInt32LittleEndian(td.Slice(e + IndexNum2FieldOffset, 4)),
-            BinaryPrimitives.ReadInt32LittleEndian(td.Slice(e + RelIdxNumFieldOffset, 4)),
-            BinaryPrimitives.ReadInt32LittleEndian(td.Slice(e + RelTblPageFieldOffset, 4)),
+            Ri32(td, e + IndexNumFieldOffset),
+            Ri32(td, e + IndexNum2FieldOffset),
+            Ri32(td, e + RelIdxNumFieldOffset),
+            Ri32(td, e + RelTblPageFieldOffset),
             td[e + CascadeUpsFieldOffset],
             td[e + CascadeDelsFieldOffset],
             (IndexKind)td[e + IndexTypeFieldOffset]);

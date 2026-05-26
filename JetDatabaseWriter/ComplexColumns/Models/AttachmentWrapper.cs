@@ -1,13 +1,13 @@
 namespace JetDatabaseWriter.ComplexColumns.Models;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Encodes / decodes the Access 2007+ Attachment <c>FileData</c> wrapper per
@@ -46,9 +46,9 @@ internal static class AttachmentWrapper
         int headerLen = 12 + extBytes.Length;
 
         byte[] contentStream = new byte[headerLen + payload.Length];
-        BinaryPrimitives.WriteUInt32LittleEndian(contentStream.AsSpan(0, 4), (uint)headerLen);
-        BinaryPrimitives.WriteUInt32LittleEndian(contentStream.AsSpan(4, 4), 1u); // unknownFlag (Jackcess writes 1)
-        BinaryPrimitives.WriteUInt32LittleEndian(contentStream.AsSpan(8, 4), (uint)extBytes.Length);
+        Wu32(contentStream, 0, headerLen);
+        Wu32(contentStream, 4, 1u); // unknownFlag (Jackcess writes 1)
+        Wu32(contentStream, 8, extBytes.Length);
         Buffer.BlockCopy(extBytes, 0, contentStream, 12, extBytes.Length);
         Buffer.BlockCopy(payload, 0, contentStream, headerLen, payload.Length);
 
@@ -56,8 +56,8 @@ internal static class AttachmentWrapper
         uint typeFlag = compress ? 1u : 0u;
 
         byte[] wrapped = new byte[8 + body.Length];
-        BinaryPrimitives.WriteUInt32LittleEndian(wrapped.AsSpan(0, 4), typeFlag);
-        BinaryPrimitives.WriteUInt32LittleEndian(wrapped.AsSpan(4, 4), (uint)body.Length);
+        Wu32(wrapped, 0, typeFlag);
+        Wu32(wrapped, 4, body.Length);
         Buffer.BlockCopy(body, 0, wrapped, 8, body.Length);
         return wrapped;
     }
@@ -76,8 +76,8 @@ internal static class AttachmentWrapper
             return false;
         }
 
-        uint typeFlag = BinaryPrimitives.ReadUInt32LittleEndian(wrapped.AsSpan(0, 4));
-        uint dataLen = BinaryPrimitives.ReadUInt32LittleEndian(wrapped.AsSpan(4, 4));
+        uint typeFlag = Ru32(wrapped, 0);
+        uint dataLen = Ru32(wrapped, 4);
         if (typeFlag > 1)
         {
             return false;
@@ -110,8 +110,8 @@ internal static class AttachmentWrapper
             return false;
         }
 
-        uint headerLen = BinaryPrimitives.ReadUInt32LittleEndian(content.AsSpan(0, 4));
-        uint extLen = BinaryPrimitives.ReadUInt32LittleEndian(content.AsSpan(8, 4));
+        uint headerLen = Ru32(content, 0);
+        uint extLen = Ru32(content, 8);
         if (headerLen < 12 || headerLen > content.Length || 12 + extLen > headerLen)
         {
             return false;

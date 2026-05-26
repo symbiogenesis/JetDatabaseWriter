@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Schema;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Single-leaf fast-path helper: in-place incremental insert and delete
@@ -61,7 +62,7 @@ internal static class IndexLeafIncremental
             return 0;
         }
 
-        return (uint)BinaryPrimitives.ReadInt32LittleEndian(leafPage.AsSpan(layout.NextPageOffset, 4));
+        return (uint)Ri32(leafPage, layout.NextPageOffset);
     }
 
     /// <summary>
@@ -85,7 +86,7 @@ internal static class IndexLeafIncremental
             return 0;
         }
 
-        return (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.TailPageOffset, 4));
+        return (uint)Ri32(page, layout.TailPageOffset);
     }
 
     /// <summary>
@@ -106,7 +107,7 @@ internal static class IndexLeafIncremental
             return 0;
         }
 
-        return (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.PrevPageOffset, 4));
+        return (uint)Ri32(page, layout.PrevPageOffset);
     }
 
     /// <summary>
@@ -123,9 +124,9 @@ internal static class IndexLeafIncremental
             return (0, 0, 0);
         }
 
-        long prev = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.PrevPageOffset, 4));
-        long next = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.NextPageOffset, 4));
-        long tail = (uint)BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(layout.TailPageOffset, 4));
+        long prev = (uint)Ri32(page, layout.PrevPageOffset);
+        long next = (uint)Ri32(page, layout.NextPageOffset);
+        long tail = (uint)Ri32(page, layout.TailPageOffset);
         return (prev, next, tail);
     }
 
@@ -152,7 +153,7 @@ internal static class IndexLeafIncremental
             return 0;
         }
 
-        int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(intermediatePage.AsSpan(2, 2));
+        int freeSpace = Ru16(intermediatePage, 2);
         int payloadEnd = pageSize - freeSpace;
         if (payloadEnd <= layout.FirstEntryOffset)
         {
@@ -239,8 +240,8 @@ internal static class IndexLeafIncremental
     public static List<IndexEntry> DecodeEntries(IndexLeafPageBuilder.LeafPageLayout layout, byte[] page, int pageSize)
     {
         var result = new List<IndexEntry>();
-        int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(layout.PrefLenOffset, 2));
-        int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+        int pref = Ru16(page, layout.PrefLenOffset);
+        int freeSpace = Ru16(page, 2);
         int payloadEnd = pageSize - freeSpace;
         if (payloadEnd <= layout.FirstEntryOffset)
         {
@@ -476,8 +477,8 @@ internal static class IndexLeafIncremental
             return result;
         }
 
-        int pref = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(layout.PrefLenOffset, 2));
-        int freeSpace = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2, 2));
+        int pref = Ru16(page, layout.PrefLenOffset);
+        int freeSpace = Ru16(page, 2);
         int payloadEnd = pageSize - freeSpace;
         if (payloadEnd <= layout.FirstEntryOffset)
         {

@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.ValueEncoding;
 
 using System;
-using System.Buffers.Binary;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Shared <see cref="decimal"/> decomposition for the JET 17-byte NUMERIC
@@ -23,9 +23,9 @@ internal static class NumericEncoder
         int flags = bits[3];
         negative = (flags & unchecked((int)0x80000000)) != 0;
         scale = (flags >> 16) & 0x7F;
-        BinaryPrimitives.WriteInt32LittleEndian(mantissaLe.Slice(0, 4), bits[0]);
-        BinaryPrimitives.WriteInt32LittleEndian(mantissaLe.Slice(4, 4), bits[1]);
-        BinaryPrimitives.WriteInt32LittleEndian(mantissaLe.Slice(8, 4), bits[2]);
+        Wi32(mantissaLe, 0, bits[0]);
+        Wi32(mantissaLe, 4, bits[1]);
+        Wi32(mantissaLe, 8, bits[2]);
     }
 
     /// <summary>
@@ -35,9 +35,9 @@ internal static class NumericEncoder
     /// </summary>
     public static byte ComputePrecision(ReadOnlySpan<byte> mantissaLe)
     {
-        int lo = BinaryPrimitives.ReadInt32LittleEndian(mantissaLe.Slice(0, 4));
-        int mid = BinaryPrimitives.ReadInt32LittleEndian(mantissaLe.Slice(4, 4));
-        int hi = BinaryPrimitives.ReadInt32LittleEndian(mantissaLe.Slice(8, 4));
+        int lo = Ri32(mantissaLe, 0);
+        int mid = Ri32(mantissaLe, 4);
+        int hi = Ri32(mantissaLe, 8);
         var mantissa = new decimal(lo, mid, hi, isNegative: false, scale: 0);
         byte precision = 1;
         while (mantissa >= 10m)

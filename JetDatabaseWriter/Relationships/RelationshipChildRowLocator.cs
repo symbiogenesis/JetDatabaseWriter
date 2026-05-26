@@ -8,6 +8,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages.Models;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 internal sealed class RelationshipChildRowLocator(AccessWriter writer)
 {
@@ -67,7 +68,7 @@ internal sealed class RelationshipChildRowLocator(AccessWriter writer)
             byte[] page = await writer.ReadPageAsync(pageRows.Key, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != Constants.PageTypes.Data || AccessBase.Ri32(page, writer._dataPage.TDefOff) != childEntry.TDefPage)
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, writer._dataPage.TDefOff) != childEntry.TDefPage)
                 {
                     return null;
                 }

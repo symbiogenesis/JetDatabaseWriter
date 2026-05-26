@@ -19,6 +19,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1202
 #pragma warning disable SA1204
@@ -194,10 +195,10 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
         try
         {
             EncryptionManager.TransformHeaderMask(header);
-            AccessBase.Wi32(header, 0x20, 2);
-            AccessBase.Wi32(header, 0x24, checked((int)acesTdefPage));
-            AccessBase.Wi32(header, 0x28, checked((int)queriesTdefPage));
-            AccessBase.Wi32(header, 0x2C, checked((int)relationshipsTdefPage));
+            Wi32(header, 0x20, 2);
+            Wi32(header, 0x24, checked((int)acesTdefPage));
+            Wi32(header, 0x28, checked((int)queriesTdefPage));
+            Wi32(header, 0x2C, checked((int)relationshipsTdefPage));
             EncryptionManager.TransformHeaderMask(header);
             await _writer.WritePageAsync(0, header, cancellationToken).ConfigureAwait(false);
         }
@@ -465,7 +466,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (AccessBase.Ri32(page, _writer._dataPage.TDefOff) != msysComplexPg)
+                if (Ri32(page, _writer._dataPage.TDefOff) != msysComplexPg)
                 {
                     continue;
                 }
@@ -914,7 +915,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (AccessBase.Ri32(page, _writer._dataPage.TDefOff) != msysPg)
+                if (Ri32(page, _writer._dataPage.TDefOff) != msysPg)
                 {
                     continue;
                 }
@@ -973,7 +974,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (AccessBase.Ri32(page, _writer._dataPage.TDefOff) != parentTdefPage)
+                if (Ri32(page, _writer._dataPage.TDefOff) != parentTdefPage)
                 {
                     continue;
                 }
@@ -1045,7 +1046,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
             int slotOff = parentRowStart + _writer._rowSz.NumCols + complexCol.FixedOff;
             if (slotSet && slotOff + 4 <= parentRowStart + parentRowSize)
             {
-                int existing = AccessBase.Ri32(page, slotOff);
+                int existing = Ri32(page, slotOff);
                 if (existing > 0)
                 {
                     return existing;
@@ -1085,7 +1086,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                 throw new InvalidDataException("Complex column slot is out of row bounds.");
             }
 
-            AccessBase.Wi32(page, slotOff, conceptualTableId);
+            Wi32(page, slotOff, conceptualTableId);
             int byteOff = nullMaskPos + (complexCol.ColNum / 8);
             int bitOff = complexCol.ColNum % 8;
             if (byteOff < rowSize)
@@ -1125,7 +1126,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (AccessBase.Ri32(page, _writer._dataPage.TDefOff) != flatTdefPage)
+                if (Ri32(page, _writer._dataPage.TDefOff) != flatTdefPage)
                 {
                     continue;
                 }
@@ -1306,7 +1307,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    int ctid = AccessBase.Ri32(page, slotOff);
+                    int ctid = Ri32(page, slotOff);
                     if (ctid > 0)
                     {
                         _ = ids.Add(ctid);
@@ -1360,7 +1361,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                         continue;
                     }
 
-                    if (AccessBase.Ri32(page, _writer._dataPage.TDefOff) != flatTdefPage)
+                    if (Ri32(page, _writer._dataPage.TDefOff) != flatTdefPage)
                     {
                         continue;
                     }
@@ -1435,7 +1436,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (AccessBase.Ri32(page, _writer._dataPage.TDefOff) != msysCxPg)
+                if (Ri32(page, _writer._dataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
@@ -1547,7 +1548,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (AccessBase.Ri32(page, _writer._dataPage.TDefOff) != msysCxPg)
+                if (Ri32(page, _writer._dataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
@@ -1629,7 +1630,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (AccessBase.Ri32(page, _writer._dataPage.TDefOff) != msysCxPg)
+                if (Ri32(page, _writer._dataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }
@@ -1750,7 +1751,7 @@ internal sealed class ComplexColumnManager(AccessWriter writer, IndexMaintainer 
                     continue;
                 }
 
-                if (AccessBase.Ri32(page, _writer._dataPage.TDefOff) != msysCxPg)
+                if (Ri32(page, _writer._dataPage.TDefOff) != msysCxPg)
                 {
                     continue;
                 }

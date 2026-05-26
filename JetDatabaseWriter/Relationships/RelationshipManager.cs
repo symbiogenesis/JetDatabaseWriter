@@ -14,6 +14,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1202
 #pragma warning disable SA1204
@@ -463,7 +464,7 @@ internal sealed class RelationshipManager
             //              tables with FK indexes; leaving the wrong magic
             //              here surfaces as AssertTdefMagicStampsAsync
             //              ("real-idx[1] magic = 0x00000659, expected 0x00000783").
-            AccessBase.Wi32(newTd, phys, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
+            Wi32(newTd, phys, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
 
             // bytes 4..33  col_map: 10 × {col_num(2), col_order(1)}
             for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
@@ -472,12 +473,12 @@ internal sealed class RelationshipManager
                     + (slot * Constants.TableDefinition.ColMapSlotSize);
                 if (slot < columnNumbers.Length)
                 {
-                    AccessBase.Wu16(newTd, so, columnNumbers[slot]);
+                    Wu16(newTd, so, columnNumbers[slot]);
                     newTd[so + 2] = Constants.TableDefinition.ColMapAscendingFlag;
                 }
                 else
                 {
-                    AccessBase.Wu16(newTd, so, Constants.TableDefinition.ColMapPaddingSlot);
+                    Wu16(newTd, so, Constants.TableDefinition.ColMapPaddingSlot);
                     newTd[so + 2] = Constants.TableDefinition.ColMapDescendingFlag;
                 }
             }
@@ -485,7 +486,7 @@ internal sealed class RelationshipManager
             // bytes 34..37 used_pages = 0 initially; MaintainIndexesAsync
             // patches the DAO-shaped index usage-map pointer after rebuilding.
             // bytes 38..41 first_dp = preAllocatedLeafPage
-            AccessBase.Wi32(newTd, phys + Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset, checked((int)preAllocatedLeafPage));
+            Wi32(newTd, phys + Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset, checked((int)preAllocatedLeafPage));
 
             // bytes 42..45 unknown(4) = 0
             // byte  46     flags: 0x80 (unknown-flag bit always set per Jackcess)
@@ -505,12 +506,12 @@ internal sealed class RelationshipManager
         //              this during CompactDatabase.
         // bytes 24..27 trailing(4) = 0
         int newLogEntry = newLogIdxStart;
-        AccessBase.Wi32(newTd, newLogEntry, Constants.TableDefinition.Jet4.FormatMagic);
-        AccessBase.Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset, logicalIdxNumThisSide);
-        AccessBase.Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset, realIdxNumThisSide);
+        Wi32(newTd, newLogEntry, Constants.TableDefinition.Jet4.FormatMagic);
+        Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset, logicalIdxNumThisSide);
+        Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset, realIdxNumThisSide);
         newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelTblTypeOffset] = relTblTypeThisSide;
-        AccessBase.Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelIdxNumOffset, relIdxNumOtherSide);
-        AccessBase.Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelTblPageOffset, checked((int)relTblPageOther));
+        Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelIdxNumOffset, relIdxNumOtherSide);
+        Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelTblPageOffset, checked((int)relTblPageOther));
         newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.CascadeUpsOffset] = cascadeUps;
         newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.CascadeDelsOffset] = cascadeDels;
         newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset] = (byte)IndexKind.ForeignKey;
@@ -521,7 +522,7 @@ internal sealed class RelationshipManager
         // Logical-idx names follow the same order as their entries.
         int newLogIdxNamesStart = existingLogIdxStart + oldLogIdxLen;
         int newNameOffset = newLogIdxNamesStart;
-        AccessBase.Wu16(newTd, newNameOffset, nameBytes.Length);
+        Wu16(newTd, newNameOffset, nameBytes.Length);
         Buffer.BlockCopy(nameBytes, 0, newTd, newNameOffset + 2, nameBytes.Length);
 
         int existingNamesOffset = newNameOffset + nameRecordSize;
@@ -535,15 +536,15 @@ internal sealed class RelationshipManager
         }
 
         // Update header counts.
-        AccessBase.Wi32(newTd, writer._tdef.NumCols + 2, numIdx + 1);
+        Wi32(newTd, writer._tdef.NumCols + 2, numIdx + 1);
         if (allocateNewRealIdx)
         {
-            AccessBase.Wi32(newTd, writer._tdef.NumRealIdx, numRealIdx + 1);
+            Wi32(newTd, writer._tdef.NumRealIdx, numRealIdx + 1);
         }
 
         // tdef_len at offset 8 = (newEnd - 8). The page header (8 bytes) is
         // not counted in tdef_len, matching BuildTDefPageWithIndexOffsets.
-        AccessBase.Wi32(newTd, 8, newTrailingStart + trailingLen - 8);
+        Wi32(newTd, 8, newTrailingStart + trailingLen - 8);
 
         await WriteLogicalTDefChainAsync(
             chain.PageNumbers,
@@ -679,7 +680,7 @@ internal sealed class RelationshipManager
         for (int li = 0; li < layout.NumIdx; li++)
         {
             int entry = layout.LogIdxStart + (li * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
-            int indexNum = AccessBase.Ri32(td, entry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset);
+            int indexNum = Ri32(td, entry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset);
             if (indexNum > max)
             {
                 max = indexNum;
@@ -995,8 +996,8 @@ internal sealed class RelationshipManager
         Array.Clear(td, finalEnd, layout.CurrentEnd - finalEnd);
 
         // Update header counts.
-        AccessBase.Wi32(td, writer._tdef.NumCols + 2, layout.NumIdx - 1);
-        AccessBase.Wi32(td, 8, finalEnd - 8);
+        Wi32(td, writer._tdef.NumCols + 2, layout.NumIdx - 1);
+        Wi32(td, 8, finalEnd - 8);
 
         await WriteLogicalTDefChainAsync(chain.PageNumbers, td, finalEnd, cancellationToken).ConfigureAwait(false);
         return releasedRealIdxNum;
@@ -1046,7 +1047,7 @@ internal sealed class RelationshipManager
         for (int li = 0; li < layout.NumIdx; li++)
         {
             int e = layout.LogIdxStart + (li * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
-            int realIdxNum = AccessBase.Ri32(td, e + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset);
+            int realIdxNum = Ri32(td, e + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset);
             if (realIdxNum >= 0 && realIdxNum < layout.NumRealIdx)
             {
                 referenced[realIdxNum] = true;
@@ -1093,8 +1094,8 @@ internal sealed class RelationshipManager
         Array.Clear(td, finalEnd, layout.CurrentEnd - finalEnd);
 
         // Update header counts.
-        AccessBase.Wi32(td, writer._tdef.NumRealIdx, layout.NumRealIdx - reclaim);
-        AccessBase.Wi32(td, 8, finalEnd - 8);
+        Wi32(td, writer._tdef.NumRealIdx, layout.NumRealIdx - reclaim);
+        Wi32(td, 8, finalEnd - 8);
 
         await WriteLogicalTDefChainAsync(chain.PageNumbers, td, finalEnd, cancellationToken).ConfigureAwait(false);
     }
@@ -1171,11 +1172,11 @@ internal sealed class RelationshipManager
         }
 
         // Write the new length-prefixed name into the freed slot.
-        AccessBase.Wu16(td, oldNameStart, newNameBytes.Length);
+        Wu16(td, oldNameStart, newNameBytes.Length);
         Buffer.BlockCopy(newNameBytes, 0, td, oldNameStart + 2, newNameBytes.Length);
 
         // Update tdef_len.
-        AccessBase.Wi32(td, 8, finalEnd - 8);
+        Wi32(td, 8, finalEnd - 8);
 
         await WriteLogicalTDefChainAsync(chain.PageNumbers, td, finalEnd, cancellationToken).ConfigureAwait(false);
         return true;
@@ -1215,7 +1216,7 @@ internal sealed class RelationshipManager
 
             parts.Add(page);
             pageNumbers.Add(pageNumber);
-            pageNumber = AccessBase.Ru32(page, 4);
+            pageNumber = Ru32(page, 4);
         }
 
         if (parts.Count == 0)
@@ -1292,8 +1293,8 @@ internal sealed class RelationshipManager
         logicalBytes[0] = Constants.PageTypes.TableDefinition;
         logicalBytes[1] = 0x01;
         int tdefLen = Math.Max(0, usedLength - 8);
-        AccessBase.Wi32(logicalBytes, 8, tdefLen);
-        AccessBase.Wu16(logicalBytes, 2, Math.Max(0, writer._pgSz - tdefLen - 8));
+        Wi32(logicalBytes, 8, tdefLen);
+        Wu16(logicalBytes, 2, Math.Max(0, writer._pgSz - tdefLen - 8));
 
         byte[][] pages = MaterializeLogicalTDefPages(logicalBytes, usedLength, pageNumbers);
         for (int pageIndex = 0; pageIndex < pages.Length; pageIndex++)
@@ -1313,7 +1314,7 @@ internal sealed class RelationshipManager
 
         pages[0] = new byte[writer._pgSz];
         Buffer.BlockCopy(logicalBytes, 0, pages[0], 0, Math.Min(writer._pgSz, logicalBytes.Length));
-        AccessBase.Wi32(pages[0], 4, pageNumbers.Length > 1 ? checked((int)pageNumbers[1]) : 0);
+        Wi32(pages[0], 4, pageNumbers.Length > 1 ? checked((int)pageNumbers[1]) : 0);
 
         int bodyPerContinuation = writer._pgSz - 8;
         for (int pageIndex = 1; pageIndex < pageNumbers.Length; pageIndex++)
@@ -1321,7 +1322,7 @@ internal sealed class RelationshipManager
             byte[] page = new byte[writer._pgSz];
             page[0] = Constants.PageTypes.TableDefinition;
             page[1] = 0x01;
-            AccessBase.Wi32(page, 4, pageIndex + 1 < pageNumbers.Length ? checked((int)pageNumbers[pageIndex + 1]) : 0);
+            Wi32(page, 4, pageIndex + 1 < pageNumbers.Length ? checked((int)pageNumbers[pageIndex + 1]) : 0);
 
             int sourceOffset = writer._pgSz + ((pageIndex - 1) * bodyPerContinuation);
             int copyLength = Math.Min(bodyPerContinuation, Math.Max(0, usedLength - sourceOffset));
@@ -1368,9 +1369,9 @@ internal sealed class RelationshipManager
             return false;
         }
 
-        int numCols = AccessBase.Ru16(td, writer._tdef.NumCols);
-        int numIdx = AccessBase.Ri32(td, writer._tdef.NumCols + 2);
-        int numRealIdx = AccessBase.Ri32(td, writer._tdef.NumRealIdx);
+        int numCols = Ru16(td, writer._tdef.NumCols);
+        int numIdx = Ri32(td, writer._tdef.NumCols + 2);
+        int numRealIdx = Ri32(td, writer._tdef.NumRealIdx);
         if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns
             || numIdx < 0 || numIdx > Constants.TableDefinition.MaxIndexes
             || numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
@@ -1393,7 +1394,7 @@ internal sealed class RelationshipManager
         }
 
         int trailingStart = logIdxNamesStart + logIdxNamesLen;
-        int storedTdefLen = AccessBase.Ri32(td, 8);
+        int storedTdefLen = Ri32(td, 8);
         int currentEnd = storedTdefLen + 8;
         if (currentEnd < trailingStart)
         {
@@ -1445,13 +1446,13 @@ internal sealed class RelationshipManager
                 continue;
             }
 
-            int relTblPage = AccessBase.Ri32(td, e + Constants.TableDefinition.Jet4.LogicalIdx.RelTblPageOffset);
+            int relTblPage = Ri32(td, e + Constants.TableDefinition.Jet4.LogicalIdx.RelTblPageOffset);
             if (relTblPage != otherTdefPage)
             {
                 continue;
             }
 
-            int rin = AccessBase.Ri32(td, e + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset);
+            int rin = Ri32(td, e + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset);
             if (rin < 0 || rin >= layout.NumRealIdx)
             {
                 continue;

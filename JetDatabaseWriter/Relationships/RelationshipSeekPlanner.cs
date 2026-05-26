@@ -8,6 +8,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 internal sealed class RelationshipSeekPlanner(AccessWriter writer)
 {
@@ -184,13 +185,13 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
     {
         byte[] tableDefinition = await RelationshipPageReader.ReadOwnedAsync(writer, tdefPage, cancellationToken).ConfigureAwait(false);
 
-        if (tableDefinition[0] != Constants.PageTypes.TableDefinition || AccessBase.Ru32(tableDefinition, 4) != 0)
+        if (tableDefinition[0] != Constants.PageTypes.TableDefinition || Ru32(tableDefinition, 4) != 0)
         {
             return null;
         }
 
-        int numColumns = AccessBase.Ru16(tableDefinition, writer._tdef.NumCols);
-        int numRealIndexes = AccessBase.Ri32(tableDefinition, writer._tdef.NumRealIdx);
+        int numColumns = Ru16(tableDefinition, writer._tdef.NumCols);
+        int numRealIndexes = Ri32(tableDefinition, writer._tdef.NumRealIdx);
         if (numColumns < 0 || numColumns > Constants.TableDefinition.MaxColumns
             || numRealIndexes <= 0 || numRealIndexes > Constants.TableDefinition.MaxIndexes)
         {
@@ -218,7 +219,7 @@ internal sealed class RelationshipSeekPlanner(AccessWriter writer)
                 ascending[slot] = (tableDefinition[physicalDescriptorOffset + 4 + (slot * 3) + 2] & 0x01) != 0;
             }
 
-            int firstDataPage = AccessBase.Ri32(tableDefinition, physicalDescriptorOffset + 38);
+            int firstDataPage = Ri32(tableDefinition, physicalDescriptorOffset + 38);
             if (firstDataPage <= 0)
             {
                 continue;

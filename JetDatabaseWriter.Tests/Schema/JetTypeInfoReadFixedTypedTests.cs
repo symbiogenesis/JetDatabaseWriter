@@ -55,29 +55,19 @@ public sealed class JetTypeInfoReadFixedTypedTests
     }
 
     /// <summary>
-    /// Negative shorts trip the legacy <c>(short)Ru16(...)</c> cast under
-    /// <c>&lt;CheckForOverflowUnderflow&gt;true&lt;/CheckForOverflowUnderflow&gt;</c>:
-    /// <see cref="JetTypeInfo.ReadFixedString(System.ReadOnlySpan{byte}, int, byte, int, bool)"/> catches the
-    /// <see cref="OverflowException"/> and returns <see cref="string.Empty"/>,
-    /// which <see cref="TypedValueParser.ParseValue"/> maps to
-    /// <see cref="DBNull.Value"/>. The typed path uses
-    /// <see cref="BinaryPrimitives.ReadInt16LittleEndian(System.ReadOnlySpan{byte})"/>
-    /// and keeps the correct value.
+    /// Negative shorts should decode losslessly through both paths.
+    /// This verifies the legacy string formatter reads T_INT as signed
+    /// little-endian rather than unsigned+cast under checked arithmetic.
     /// </summary>
     [Theory]
     [InlineData((short)-1)]
     [InlineData(short.MinValue)]
-    public void Int_Negative_TypedKeepsValue_RoundTripDropsToDBNull(short value)
+    public void Int_Negative_RoundTripsThroughParseValue(short value)
     {
         byte[] row = new byte[2];
         BinaryPrimitives.WriteInt16LittleEndian(row, value);
 
-        object typed = JetTypeInfo.ReadFixedTyped(row, start: 0, T_INT, size: 2);
-        Assert.Equal(value, typed);
-
-        string formatted = JetTypeInfo.ReadFixedString(row, start: 0, T_INT, size: 2);
-        object viaRoundTrip = TypedValueParser.ParseValue(formatted, typeof(short));
-        Assert.Equal(DBNull.Value, viaRoundTrip);
+        AssertParity(row, start: 0, T_INT, size: 2, expected: value);
     }
 
     [Theory]

@@ -13,6 +13,7 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Encodes oversized MEMO / OLE / Attachment payloads into LVAL page chains.
@@ -48,10 +49,10 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
         page[5] = (byte)'V';
         page[6] = (byte)'A';
         page[7] = (byte)'L';
-        AccessBase.Wi32(page, 8, unchecked((int)lvalToken));
-        AccessBase.Wu16(page, 12, 1);
-        AccessBase.Wu16(page, 14, rowStart);
-        AccessBase.Wu16(page, 2, rowStart - 16);
+        Wi32(page, 8, unchecked((int)lvalToken));
+        Wu16(page, 12, 1);
+        Wu16(page, 14, rowStart);
+        Wu16(page, 2, rowStart - 16);
     }
 
     private static uint ComputeLvalToken(byte[] data)
@@ -187,7 +188,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
 
         var header = new byte[Constants.LongValue.HeaderSize];
         AccessBase.WriteUInt24(header, 0, data.Length);
-        AccessBase.Wi32(header, 8, unchecked((int)lvalToken));
+        Wi32(header, 8, unchecked((int)lvalToken));
 
         if (data.Length <= singleRowMax)
         {
@@ -197,7 +198,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
                 long pageNumber = await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
                 header[3] = Constants.LongValue.SinglePageStorageMode;
                 uint lvalDp = unchecked((uint)((pageNumber << 8) | 0));
-                AccessBase.Wi32(header, 4, (int)lvalDp);
+                Wi32(header, 4, (int)lvalDp);
                 return header;
             }
             finally
@@ -229,7 +230,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
         }
 
         header[3] = Constants.LongValue.ChainedStorageMode;
-        AccessBase.Wi32(header, 4, (int)nextDp);
+        Wi32(header, 4, (int)nextDp);
         return header;
     }
 
@@ -266,7 +267,7 @@ internal sealed class LongValueEncoder(AccessWriter writer, PageAllocator pageAl
         page[1] = 0x01;
         int rowStart = packRowsAtEnd ? pgSz - (length + 4) : Constants.LongValue.LvalRowStart;
         WriteLvalPageHeader(page, lvalToken, rowStart);
-        AccessBase.Wi32(page, rowStart, (int)nextDp);
+        Wi32(page, rowStart, (int)nextDp);
         Buffer.BlockCopy(data, offset, page, rowStart + 4, length);
         return page;
     }

@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics.CodeAnalysis;
@@ -31,6 +30,7 @@ using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueEncoding;
 using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Constants.ColumnTypes;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1202 // Keep member order stable while synchronous APIs remain private compatibility helpers
 #pragma warning disable SA1204 // Static members grouped logically alongside related instance members
@@ -1626,7 +1626,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         }
 
         uint expectedMagic = _format == DatabaseFormat.Jet3Mdb ? 0x00444B4BU : 0x0032524DU;
-        if (copy.Length < sizeof(uint) || BinaryPrimitives.ReadUInt32LittleEndian(copy.AsSpan(0, sizeof(uint))) != expectedMagic)
+        if (copy.Length < sizeof(uint) || Ru32(copy, 0) != expectedMagic)
         {
             throw new ArgumentException("Cached schema LvProp must use the property-block magic for this database format.", paramName);
         }
@@ -3984,15 +3984,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             case T_BYTE:
                 return page[start];
             case T_INT:
-                return size >= 2 ? BinaryPrimitives.ReadInt16LittleEndian(page.AsSpan(start, 2)) : null;
+                return size >= 2 ? Ri16(page, start) : null;
             case T_LONG:
-                return size >= 4 ? BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(start, 4)) : null;
+                return size >= 4 ? Ri32(page, start) : null;
             case T_FLOAT:
                 return size >= 4 ? JetTypeInfo.ReadSingleLittleEndian(page.AsSpan(start, 4)) : null;
             case T_DOUBLE:
                 return size >= 8 ? JetTypeInfo.ReadDoubleLittleEndian(page.AsSpan(start, 8)) : null;
             case T_MONEY:
-                return size >= 8 ? BinaryPrimitives.ReadInt64LittleEndian(page.AsSpan(start, 8)) / 10000m : null;
+                return size >= 8 ? Ri64(page, start) / 10000m : null;
 
             case T_DATETIME:
                 if (size < 8)
