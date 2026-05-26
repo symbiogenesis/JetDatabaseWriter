@@ -88,8 +88,8 @@ public sealed class IndexBTreeStructuralFixtureTests
 
     /// <summary>
     /// Mirrors Jackcess <c>IndexTest.testComplexIndex</c>:
-    /// <c>assertEquals(512, countRows(t));
-    /// assertEquals(512, index.getIndexData().getEntryCount())</c>.
+    /// <code>assertEquals(512, countRows(t));
+    /// assertEquals(512, index.getIndexData().getEntryCount())</code>.
     /// </summary>
     /// <param name="fixturePath">Absolute path to the compIndexTest fixture under test.</param>
     [Theory]

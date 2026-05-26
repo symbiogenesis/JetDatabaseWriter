@@ -41,9 +41,9 @@ public sealed class AccessWriterOptions : IAccessOptions
 
     /// <summary>
     /// Gets a value indicating whether <see cref="AccessWriter.CreateDatabaseAsync(string, DatabaseFormat, AccessWriterOptions?, System.Threading.CancellationToken)"/>
-    /// emits the full 17-column Microsoft Access <c>MSysObjects</c> catalog schema
-    /// (<c>Id, ParentId, Name, Type, DateCreate, DateUpdate, Owner, Flags, Database,
-    /// Connect, ForeignName, RmtInfoShort, RmtInfoLong, Lv, LvProp, LvModule, LvExtra</c>)
+    /// emits the full 17-column Microsoft Access <c>MSysObjects</c> catalog schema.
+    /// (<code>Id, ParentId, Name, Type, DateCreate, DateUpdate, Owner, Flags, Database,
+    /// Connect, ForeignName, RmtInfoShort, RmtInfoLong, Lv, LvProp, LvModule, LvExtra</code>)
     /// instead of the historical 9-column slim schema.
     /// <para>
     /// The full schema is required to persist column-level properties such as

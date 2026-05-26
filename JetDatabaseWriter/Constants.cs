@@ -910,8 +910,8 @@ internal static class Constants
                 /// <c>flags</c> (1 byte): bit 0 = unique, bit 1 = ignore_nulls,
                 /// bit 3 = required. Per Jackcess <c>IndexData.writeDefinition</c>
                 /// the Jet4 physical descriptor is laid out as
-                /// <c>magic(4) + col_map(30) + umap_row(1) + umap_page(3) +
-                /// first_dp(4) + unknown(4) + flags(1) + unknown(5)</c>, so the
+                /// <code>magic(4) + col_map(30) + umap_row(1) + umap_page(3) +
+                /// first_dp(4) + unknown(4) + flags(1) + unknown(5)</code>, so the
                 /// flags byte sits at absolute offset 46 within the 52-byte slot,
                 /// not at offset 42 (which is the start of the 4-byte
                 /// “unknown” gap immediately following <c>first_dp</c>).

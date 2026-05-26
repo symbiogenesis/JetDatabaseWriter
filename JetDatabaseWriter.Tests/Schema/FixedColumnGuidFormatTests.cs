@@ -7,7 +7,7 @@ using Xunit;
 /// <summary>
 /// Pins the string format produced by <see cref="JetTypeInfo.ReadFixedString(System.ReadOnlySpan{byte}, int, byte, int, bool)"/>
 /// for <c>T_GUID</c> columns. The format is:
-/// <code>{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}</code>
+/// <c>{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}</c>
 /// — braces, lowercase hex, with the first three groups stored little-endian
 /// on disk (matching <see cref="Guid(byte[])"/>'s mixed-endian byte layout
 /// and <see cref="Guid.ToString(string)"/> with format <c>"B"</c>).

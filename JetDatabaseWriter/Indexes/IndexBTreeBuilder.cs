@@ -243,8 +243,8 @@ internal static class IndexBTreeBuilder
 
     /// <summary>
     /// Surgical-rewrite helper. Re-emits a single intermediate (<c>0x03</c>)
-    /// page from an arbitrary list of <c>(summaryKey, dataPage, dataRow,
-    /// childPage)</c> tuples (sorted by summary key), preserving the supplied
+    /// page from an arbitrary list of <code>(summaryKey, dataPage, dataRow,
+    /// childPage)</code> tuples (sorted by summary key), preserving the supplied
     /// <c>prev_page</c> / <c>next_page</c> / <c>tail_page</c> headers. Returns
     /// <see langword="null"/> when the entry list overflows the per-page
     /// payload area; callers fall back to <see cref="Build(IndexLeafPageBuilder.LeafPageLayout, int, long, IReadOnlyList{IndexEntry}, long)"/>

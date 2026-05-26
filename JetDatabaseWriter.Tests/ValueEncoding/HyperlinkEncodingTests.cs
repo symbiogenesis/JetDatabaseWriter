@@ -13,10 +13,9 @@ using Xunit;
 #pragma warning disable SA1201
 
 /// <summary>
-/// Positive coverage for Hyperlink columns — the format-flag bit
-/// (<c>HYPERLINK_FLAG_MASK = 0x80</c>) plus the <c>displaytext # address #
-/// subaddress # screentip</c> value layer. See
-/// <c>docs/design/hyperlink-format-notes.md</c>.
+/// Positive coverage for Hyperlink columns — the format-flag bit (<c>HYPERLINK_FLAG_MASK = 0x80</c>)
+/// plus the <c>displaytext # address #subaddress # screentip</c> value layer.
+/// See <c>docs/design/hyperlink-format-notes.md</c>.
 /// </summary>
 public sealed class HyperlinkEncodingTests
 {
